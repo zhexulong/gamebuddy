@@ -61,7 +61,9 @@ function createFake() {
           state: "succeeded",
           reasonCode: "soil_tilled",
           revision,
-          evidence: { detail: `location=Farm;target=${args.x},${args.y};before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2` },
+          evidence: {
+            detail: `location=Farm;target=${args.x},${args.y};before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2`,
+          },
         });
         return receipt;
       }
@@ -96,8 +98,7 @@ test("till-soil runner passes with a reachable bare soil tile", async () => {
 
 test("till-soil runner rejects a non-isolated action policy", async () => {
   const client = createFake();
-  await assert.rejects(
-    runTillSoilSmoke(client, [], fixtureConfig({ DeniedActions: ["till_soil"] })),
-    (error) => error?.message?.startsWith("native_fixture_policy_denies_required"),
+  await assert.rejects(runTillSoilSmoke(client, [], fixtureConfig({ DeniedActions: ["till_soil"] })), (error) =>
+    error?.message?.startsWith("native_fixture_policy_denies_required"),
   );
 });

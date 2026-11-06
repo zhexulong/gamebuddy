@@ -15,8 +15,7 @@ const FOREIGN_TARGET_ID = "animal_door_0123456789abcdef";
 const FREE_SLOT = 6;
 const OCCUPIED_SLOTS = [0, 1, 2, 3, 4, 5, 7, 8];
 
-const hatTargetId = (occupantId) =>
-  `wearable_hat_${occupantId === null ? "0000000000000000" : "1111111111111111"}`;
+const hatTargetId = (occupantId) => `wearable_hat_${occupantId === null ? "0000000000000000" : "1111111111111111"}`;
 
 /** The Mod's own token rule: `wearable_<body_slot>_<16 hex>`, and nothing else names a body slot. */
 function bodySlotFromTargetId(targetId) {
@@ -54,8 +53,7 @@ function world({ hatOccupant = HAT_ITEM, occupied = OCCUPIED_SLOTS } = {}) {
   };
 }
 
-const fullInventoryWorld = () =>
-  world({ occupied: Array.from({ length: 36 }, (_, slot) => slot) });
+const fullInventoryWorld = () => world({ occupied: Array.from({ length: 36 }, (_, slot) => slot) });
 
 function isInventoryFull(state) {
   const occupied = new Set(state.inventoryItemFacts.map((entry) => entry.slot));
@@ -75,9 +73,13 @@ function applyUnequip(state, { destinationSlot, bodySlot = "hat", keepIdentity =
           occupantDisplayName: null,
         },
   );
-  const inventoryItemFacts = destinationSlot === null
-    ? state.inventoryItemFacts
-    : [...state.inventoryItemFacts, { slot: destinationSlot, qualifiedItemId: HAT_ITEM, displayName: "Hat", stack: 1 }];
+  const inventoryItemFacts =
+    destinationSlot === null
+      ? state.inventoryItemFacts
+      : [
+          ...state.inventoryItemFacts,
+          { slot: destinationSlot, qualifiedItemId: HAT_ITEM, displayName: "Hat", stack: 1 },
+        ];
   return { ...state, revision: state.revision + 1, wearableTargets, inventoryItemFacts };
 }
 
@@ -173,7 +175,8 @@ function makeClient({ initialWorld = world(), scenario = SCENARIO_ORDINARY, hook
           };
           if (!hooks.skipWorldMove)
             client.state.snapshot = applyUnequip(current, {
-              destinationSlot: hooks.destinationSlotForSuccess === undefined ? request.args.slot : hooks.destinationSlotForSuccess,
+              destinationSlot:
+                hooks.destinationSlotForSuccess === undefined ? request.args.slot : hooks.destinationSlotForSuccess,
               keepIdentity: hooks.stateIndependentIdentity === true,
             });
         }
@@ -368,7 +371,9 @@ test("unequip_wearable: evidence that omits the observed destination fails the r
   session.client.execute = async (request) => {
     const receipt = await original(request);
     if (receipt.reasonCode === "wearable_unequipped")
-      receipt.evidence = { detail: "body_slot=hat;destination_slot=6;occupant_before=(H)0;occupant_after=none;removed=(H)0" };
+      receipt.evidence = {
+        detail: "body_slot=hat;destination_slot=6;occupant_before=(H)0;occupant_after=none;removed=(H)0",
+      };
     return receipt;
   };
   const result = await session.result();

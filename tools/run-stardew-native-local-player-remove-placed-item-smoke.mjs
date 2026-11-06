@@ -39,12 +39,7 @@ const TWIG_ITEM_ID = "(O)294";
  *      and must leave the world untouched;
  *   5. a stale target and an empty tool slot are refused too, each with its own code.
  */
-export async function runRemovePlacedItemSmoke(
-  client,
-  receipts,
-  _config,
-  { terminalTimeoutMs = 5_000 } = {},
-) {
+export async function runRemovePlacedItemSmoke(client, receipts, _config, { terminalTimeoutMs = 5_000 } = {}) {
   const trace = [];
   try {
     const snapshot = await observeFresh(client, { actionable: true });
@@ -64,8 +59,17 @@ export async function runRemovePlacedItemSmoke(
       timeoutMs: 30_000,
     });
     const wrongToolTerminal = await waitForTerminal(receipts, wrongToolAccepted, terminalTimeoutMs);
-    trace.push({ step: "remove_wrong_tool", action: ACTION, target: twig.targetId, tool: "pickaxe", receipt: summarizeReceipt(wrongToolTerminal) });
-    if (wrongToolTerminal.state !== "rejected" || wrongToolTerminal.reasonCode !== "remove_placed_item_tool_cannot_remove_target")
+    trace.push({
+      step: "remove_wrong_tool",
+      action: ACTION,
+      target: twig.targetId,
+      tool: "pickaxe",
+      receipt: summarizeReceipt(wrongToolTerminal),
+    });
+    if (
+      wrongToolTerminal.state !== "rejected" ||
+      wrongToolTerminal.reasonCode !== "remove_placed_item_tool_cannot_remove_target"
+    )
       throw new Error(
         `remove_placed_item_wrong_tool_not_refused:${wrongToolTerminal.state}/${wrongToolTerminal.reasonCode};item=${twig.qualifiedItemId};tool=pickaxe;slot=${pickaxeSlot};tile=${twig.x},${twig.y}`,
       );
@@ -90,7 +94,13 @@ export async function runRemovePlacedItemSmoke(
       timeoutMs: 30_000,
     });
     const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
-    trace.push({ step: "remove", action: ACTION, target: freshTarget.targetId, tool: "axe", receipt: summarizeReceipt(terminal) });
+    trace.push({
+      step: "remove",
+      action: ACTION,
+      target: freshTarget.targetId,
+      tool: "axe",
+      receipt: summarizeReceipt(terminal),
+    });
     if (terminal.state !== "succeeded" || terminal.reasonCode !== "placed_item_removed")
       throw new Error(
         `remove_placed_item_failed:${terminal.state}/${terminal.reasonCode};tile=${freshTarget.x},${freshTarget.y};slot=${axeSlot};item=${freshTarget.qualifiedItemId}`,
@@ -107,13 +117,16 @@ export async function runRemovePlacedItemSmoke(
       throw new Error(`remove_placed_item_swings_unobserved:${evidence.swings ?? "missing"}`);
     const drops = parseDrops(evidence);
     if (!drops.includes(freshTarget.qualifiedItemId))
-      throw new Error(`remove_placed_item_drop_unobserved:drops=${evidence.drops ?? "missing"};expected=${freshTarget.qualifiedItemId}`);
+      throw new Error(
+        `remove_placed_item_drop_unobserved:drops=${evidence.drops ?? "missing"};expected=${freshTarget.qualifiedItemId}`,
+      );
 
     // The world change, re-read after the terminal: the object is gone from that tile.
     const after = await observeFresh(client, { actionable: true });
     assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     const gone = existingObjectAt(after, freshTarget.x, freshTarget.y);
-    if (gone != null) throw new Error(`remove_placed_item_world_unchanged:${gone.targetId};tile=${freshTarget.x},${freshTarget.y}`);
+    if (gone != null)
+      throw new Error(`remove_placed_item_world_unchanged:${gone.targetId};tile=${freshTarget.x},${freshTarget.y}`);
 
     // Negative 2: the same target against a tile that no longer holds an object.
     const staleRequestId = `native_local_remove_placed_item_stale_${Date.now()}`;
@@ -126,7 +139,12 @@ export async function runRemovePlacedItemSmoke(
       timeoutMs: 30_000,
     });
     const staleTerminal = await waitForTerminal(receipts, staleAccepted, terminalTimeoutMs);
-    trace.push({ step: "remove_stale_target", action: ACTION, target: freshTarget.targetId, receipt: summarizeReceipt(staleTerminal) });
+    trace.push({
+      step: "remove_stale_target",
+      action: ACTION,
+      target: freshTarget.targetId,
+      receipt: summarizeReceipt(staleTerminal),
+    });
     if (staleTerminal.state !== "rejected" || staleTerminal.reasonCode !== "remove_placed_item_target_not_found")
       throw new Error(
         `remove_placed_item_stale_target_not_refused:${staleTerminal.state}/${staleTerminal.reasonCode};tile=${freshTarget.x},${freshTarget.y};slot=${axeSlot}`,
@@ -146,8 +164,17 @@ export async function runRemovePlacedItemSmoke(
       timeoutMs: 30_000,
     });
     const emptySlotTerminal = await waitForTerminal(receipts, emptySlotAccepted, terminalTimeoutMs);
-    trace.push({ step: "remove_empty_slot", action: ACTION, target: twig.targetId, slot: emptySlot, receipt: summarizeReceipt(emptySlotTerminal) });
-    if (emptySlotTerminal.state !== "rejected" || emptySlotTerminal.reasonCode !== "remove_placed_item_tool_not_equipped_in_requested_slot")
+    trace.push({
+      step: "remove_empty_slot",
+      action: ACTION,
+      target: twig.targetId,
+      slot: emptySlot,
+      receipt: summarizeReceipt(emptySlotTerminal),
+    });
+    if (
+      emptySlotTerminal.state !== "rejected" ||
+      emptySlotTerminal.reasonCode !== "remove_placed_item_tool_not_equipped_in_requested_slot"
+    )
       throw new Error(
         `remove_placed_item_empty_slot_not_refused:${emptySlotTerminal.state}/${emptySlotTerminal.reasonCode};slot=${emptySlot};slot_item=${describeSlot(unchanged, emptySlot)}`,
       );
@@ -200,13 +227,20 @@ async function equipTool(client, receipts, trace, tool, terminalTimeoutMs) {
   });
   const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
   trace.push({ step: `equip_${tool}`, action: "equip_tool", receipt: summarizeReceipt(terminal) });
-  if (terminal.state !== "succeeded" || (terminal.reasonCode !== "tool_equipped" && terminal.reasonCode !== "already_equipped"))
+  if (
+    terminal.state !== "succeeded" ||
+    (terminal.reasonCode !== "tool_equipped" && terminal.reasonCode !== "already_equipped")
+  )
     throw new Error(`remove_placed_item_equip_failed:${tool}:${terminal.state}/${terminal.reasonCode}`);
   const after = await observeFresh(client, { actionable: true });
   const label = tool === "axe" ? "(T)Axe" : "(T)Pickaxe";
-  const slots = (after.toolSlots ?? []).filter((entry) => entry != null && entry.label === label && Number.isSafeInteger(entry.slot));
+  const slots = (after.toolSlots ?? []).filter(
+    (entry) => entry != null && entry.label === label && Number.isSafeInteger(entry.slot),
+  );
   if (slots.length !== 1)
-    throw new Error(`remove_placed_item_tool_slot_ambiguous:${tool}:${slots.length};toolSlots=${describeToolSlots(after)}`);
+    throw new Error(
+      `remove_placed_item_tool_slot_ambiguous:${tool}:${slots.length};toolSlots=${describeToolSlots(after)}`,
+    );
   return { slot: slots[0].slot };
 }
 
@@ -215,9 +249,14 @@ function chooseExistingObject(snapshot, qualifiedItemId, action) {
   const entries = snapshot.worldObjectTargets;
   if (entries == null) throw new Error(`${action}_no_world_object_projection`);
   if (!Array.isArray(entries)) throw new Error(`${action}_world_object_projection_malformed`);
-  const match = entries.find((entry) => isProjectionEntry(entry) && entry.kind !== "placement_candidate" && entry.qualifiedItemId === qualifiedItemId);
+  const match = entries.find(
+    (entry) =>
+      isProjectionEntry(entry) && entry.kind !== "placement_candidate" && entry.qualifiedItemId === qualifiedItemId,
+  );
   if (match == null)
-    throw new Error(`${action}_declared_given_absent:item=${qualifiedItemId};candidates=${describeCandidates(snapshot)}`);
+    throw new Error(
+      `${action}_declared_given_absent:item=${qualifiedItemId};candidates=${describeCandidates(snapshot)}`,
+    );
   return match;
 }
 
@@ -235,7 +274,9 @@ function firstNonToolSlot(snapshot) {
   const slots = Number.isSafeInteger(snapshot.inventorySlots) ? snapshot.inventorySlots : 0;
   const toolSlots = new Set((snapshot.toolSlots ?? []).map((entry) => entry?.slot));
   for (let slot = 0; slot < slots; slot += 1) if (!toolSlots.has(slot)) return slot;
-  throw new Error(`remove_placed_item_no_non_tool_slot:inventorySlots=${slots};toolSlots=${describeToolSlots(snapshot)}`);
+  throw new Error(
+    `remove_placed_item_no_non_tool_slot:inventorySlots=${slots};toolSlots=${describeToolSlots(snapshot)}`,
+  );
 }
 
 function describeSlot(snapshot, slot) {
@@ -265,7 +306,11 @@ function describeCandidates(snapshot) {
   const entries = snapshot.worldObjectTargets;
   if (entries == null) return "none";
   if (!Array.isArray(entries)) return "malformed";
-  return entries.map((entry) => `${entry?.kind ?? "?"}:${entry?.qualifiedItemId ?? "?"}@${entry?.x ?? "?"},${entry?.y ?? "?"}`).join("|") || "empty";
+  return (
+    entries
+      .map((entry) => `${entry?.kind ?? "?"}:${entry?.qualifiedItemId ?? "?"}@${entry?.x ?? "?"},${entry?.y ?? "?"}`)
+      .join("|") || "empty"
+  );
 }
 
 function parseDrops(evidence) {

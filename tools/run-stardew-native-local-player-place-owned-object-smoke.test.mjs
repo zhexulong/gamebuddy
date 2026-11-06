@@ -26,8 +26,30 @@ function snapshotWith({ revision, placed, slot = TAPPER_SLOT }) {
     capabilities: ["cancel_active_execution", "inspect_self", ACTION],
     worldObjectTargets: [
       ...(placed
-        ? [{ targetId: placedObjectTargetId, kind: "removable_object", location: "Farm", x: TILE.x, y: TILE.y, slot: 7, qualifiedItemId: ITEM, displayName: "Tapper" }]
-        : [{ targetId: placementTargetId(slot), kind: "placement_candidate", location: "Farm", x: TILE.x, y: TILE.y, slot, qualifiedItemId: ITEM, displayName: "Tapper" }]),
+        ? [
+            {
+              targetId: placedObjectTargetId,
+              kind: "removable_object",
+              location: "Farm",
+              x: TILE.x,
+              y: TILE.y,
+              slot: 7,
+              qualifiedItemId: ITEM,
+              displayName: "Tapper",
+            },
+          ]
+        : [
+            {
+              targetId: placementTargetId(slot),
+              kind: "placement_candidate",
+              location: "Farm",
+              x: TILE.x,
+              y: TILE.y,
+              slot,
+              qualifiedItemId: ITEM,
+              displayName: "Tapper",
+            },
+          ]),
     ],
   };
 }
@@ -137,7 +159,12 @@ test("place_owned_object: a placement that left the item in the pack fails the r
   const session = run();
   mutate(session, (receipt) => {
     if (receipt.state === "succeeded")
-      receipt.evidence = { detail: receipt.evidence.detail.replace("inventory_before=2;inventory_after=1", "inventory_before=2;inventory_after=2") };
+      receipt.evidence = {
+        detail: receipt.evidence.detail.replace(
+          "inventory_before=2;inventory_after=1",
+          "inventory_before=2;inventory_after=2",
+        ),
+      };
     return receipt;
   });
   const result = await session.result();
@@ -173,7 +200,16 @@ test("place_owned_object: the occupied negative that still moved the world fails
       session.client.state.snapshot = {
         ...session.client.state.snapshot,
         worldObjectTargets: [
-          { targetId: "placed_item_second_tapper", kind: "removable_object", location: "Farm", x: TILE.x, y: TILE.y, slot: 7, qualifiedItemId: ITEM, displayName: "Tapper" },
+          {
+            targetId: "placed_item_second_tapper",
+            kind: "removable_object",
+            location: "Farm",
+            x: TILE.x,
+            y: TILE.y,
+            slot: 7,
+            qualifiedItemId: ITEM,
+            displayName: "Tapper",
+          },
         ],
       };
     }
@@ -209,7 +245,12 @@ test("place_owned_object: evidence that omits the observed tapper effect fails t
   const session = run();
   mutate(session, (receipt) => {
     if (receipt.state === "succeeded")
-      receipt.evidence = { detail: receipt.evidence.detail.replace(";terrain_feature=Tree;terrain_feature_tapped=true", ";terrain_feature=Tree;terrain_feature_tapped=none") };
+      receipt.evidence = {
+        detail: receipt.evidence.detail.replace(
+          ";terrain_feature=Tree;terrain_feature_tapped=true",
+          ";terrain_feature=Tree;terrain_feature_tapped=none",
+        ),
+      };
     return receipt;
   });
   const result = await session.result();
@@ -227,7 +268,19 @@ test("place_owned_object: a placement candidate that stayed published fails the 
       const state = session.client.state.snapshot;
       session.client.state.snapshot = {
         ...state,
-        worldObjectTargets: [...state.worldObjectTargets, { targetId: placementTargetId(TAPPER_SLOT), kind: "placement_candidate", location: "Farm", x: TILE.x, y: TILE.y, slot: TAPPER_SLOT, qualifiedItemId: ITEM, displayName: "Tapper" }],
+        worldObjectTargets: [
+          ...state.worldObjectTargets,
+          {
+            targetId: placementTargetId(TAPPER_SLOT),
+            kind: "placement_candidate",
+            location: "Farm",
+            x: TILE.x,
+            y: TILE.y,
+            slot: TAPPER_SLOT,
+            qualifiedItemId: ITEM,
+            displayName: "Tapper",
+          },
+        ],
       };
     }
     return receipt;

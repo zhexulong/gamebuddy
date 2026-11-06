@@ -173,8 +173,7 @@ async function observeMinecartActionable(client) {
   const snapshot = await observeFresh(client, { actionable: true });
   if (!Number.isInteger(snapshot.tile?.x) || !Number.isInteger(snapshot.tile?.y))
     throw new Error("native_local_minecart_snapshot_invalid");
-  if (!Array.isArray(snapshot.minecartTargets))
-    throw new Error("native_local_minecart_targets_missing");
+  if (!Array.isArray(snapshot.minecartTargets)) throw new Error("native_local_minecart_targets_missing");
   return snapshot;
 }
 

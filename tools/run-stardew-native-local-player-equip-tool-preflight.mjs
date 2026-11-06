@@ -18,29 +18,24 @@ import { readPublishedStardewActionIds } from "./lib/stardew-published-action-re
 const ACTION = "equip_tool";
 const READY = "READY";
 const BLOCKED = "BLOCKED";
-const EXPECTED_SCOPE_KEYS = Object.freeze([
-  "integrationId",
-  "saveId",
-  "worldId",
-  "playerId",
-  "companionId",
-]);
+const EXPECTED_SCOPE_KEYS = Object.freeze(["integrationId", "saveId", "worldId", "playerId", "companionId"]);
 const EXPECTED_SCOPE = Object.freeze({ integrationId: "stardew" });
 
 /**
  * Run the production preflight. `dependencies` is intentionally private to
  * this module's test-only factory and is not accepted by the CLI path.
  */
-export async function runEquipToolPreflight(
-  { client, scope, readPublishedActionIds = readPublishedStardewActionIds } = {},
-) {
+export async function runEquipToolPreflight({
+  client,
+  scope,
+  readPublishedActionIds = readPublishedStardewActionIds,
+} = {}) {
   const reasons = [];
   let snapshot = null;
   let observed = false;
 
   if (!client || typeof client !== "object") reasons.push("bridge_unavailable");
-  if (client?.state?.connected === false || client?.state?.authenticated === false)
-    reasons.push("bridge_unavailable");
+  if (client?.state?.connected === false || client?.state?.authenticated === false) reasons.push("bridge_unavailable");
   if (!isExactScope(scope)) reasons.push("scope_mismatch");
   if (typeof readPublishedActionIds !== "function") reasons.push("registry_unavailable");
 
@@ -79,7 +74,8 @@ export async function runEquipToolPreflight(
     state: ready ? READY : BLOCKED,
     ready,
     freshSnapshotCount: observed ? 1 : 0,
-    capabilityDeclared: snapshot !== null && Array.isArray(snapshot.capabilities) && snapshot.capabilities.includes(ACTION),
+    capabilityDeclared:
+      snapshot !== null && Array.isArray(snapshot.capabilities) && snapshot.capabilities.includes(ACTION),
     publicationDeclared: hasAction(published),
     eligibleToolSlotCount: snapshot === null ? 0 : countEligibleToolSlots(snapshot),
     activeExecution: snapshot !== null && snapshot.activeExecution != null,
@@ -109,16 +105,18 @@ if (import.meta.main) {
     console.log(JSON.stringify(result));
     if (result.state !== READY) process.exitCode = 2;
   } catch {
-    console.log(JSON.stringify({
-      state: BLOCKED,
-      ready: false,
-      freshSnapshotCount: 0,
-      capabilityDeclared: false,
-      publicationDeclared: false,
-      eligibleToolSlotCount: 0,
-      activeExecution: false,
-      reasons: ["bridge_unavailable"],
-    }));
+    console.log(
+      JSON.stringify({
+        state: BLOCKED,
+        ready: false,
+        freshSnapshotCount: 0,
+        capabilityDeclared: false,
+        publicationDeclared: false,
+        eligibleToolSlotCount: 0,
+        activeExecution: false,
+        reasons: ["bridge_unavailable"],
+      }),
+    );
     process.exitCode = 2;
   } finally {
     session?.close();
@@ -144,20 +142,19 @@ function hasAction(value) {
 }
 
 function eligibleToolSlot(snapshot) {
-  return (
-    Array.isArray(snapshot?.toolSlots)
-      ? snapshot.toolSlots.find(
-          (entry) =>
-            Number.isInteger(entry?.slot) &&
-            typeof entry?.label === "string" &&
-            entry.label.length > 0 &&
-            entry.label !== snapshot.currentTool,
-        ) ??
+  return Array.isArray(snapshot?.toolSlots)
+    ? (snapshot.toolSlots.find(
+        (entry) =>
+          Number.isInteger(entry?.slot) &&
+          typeof entry?.label === "string" &&
+          entry.label.length > 0 &&
+          entry.label !== snapshot.currentTool,
+      ) ??
         snapshot.toolSlots.find(
           (entry) => Number.isInteger(entry?.slot) && typeof entry?.label === "string" && entry.label.length > 0,
-        ) ?? null
-      : null
-  );
+        ) ??
+        null)
+    : null;
 }
 
 function countEligibleToolSlots(snapshot) {

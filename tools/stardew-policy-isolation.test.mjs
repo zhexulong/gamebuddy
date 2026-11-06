@@ -52,8 +52,12 @@ function computeEnabledActions(rows, { deniedActions = [], deniedActionFamilies 
   const deniedFamilies = new Set(deniedActionFamilies);
   const enabled = new Set(
     rows
-      .filter((r) => (r.lifecycle === "published" || r.lifecycle === "live_verified")
-        && !denied.has(r.actionId) && !deniedFamilies.has(r.familyId))
+      .filter(
+        (r) =>
+          (r.lifecycle === "published" || r.lifecycle === "live_verified") &&
+          !denied.has(r.actionId) &&
+          !deniedFamilies.has(r.familyId),
+      )
       .map((r) => r.actionId),
   );
   for (const action of experimentalActions) {
@@ -73,7 +77,10 @@ test("the catalog is readable and its lifecycles are the expected three", () => 
 
 test("default consent exposes the live rungs and leaks no unopted experimental action", () => {
   const enabled = computeEnabledActions(catalog);
-  const expected = catalog.filter((r) => r.lifecycle !== "experimental").map((r) => r.actionId).sort();
+  const expected = catalog
+    .filter((r) => r.lifecycle !== "experimental")
+    .map((r) => r.actionId)
+    .sort();
   // Exact equality in both directions: nothing missing, and -- the point of this
   // test -- no experimental action smuggled in.
   assert.deepEqual([...enabled].sort(), expected);
@@ -140,11 +147,16 @@ test("the shared validator refuses a config that denies an action the run requir
   const shape = { DeniedActions: [], DeniedActionFamilies: [], ExperimentalActions: [] };
   assert.doesNotThrow(() => validateNativeLocalFixturePolicy(shape, { requiredActions: ["move_to_tile"] }));
   assert.throws(
-    () => validateNativeLocalFixturePolicy({ ...shape, DeniedActions: ["move_to_tile"] }, { requiredActions: ["move_to_tile"] }),
+    () =>
+      validateNativeLocalFixturePolicy(
+        { ...shape, DeniedActions: ["move_to_tile"] },
+        { requiredActions: ["move_to_tile"] },
+      ),
     /native_fixture_policy_denies_required/,
   );
   assert.throws(
-    () => validateNativeLocalFixturePolicy({ ...shape, ExperimentalActions: ["pet_animal"] }, { experimentalActions: [] }),
+    () =>
+      validateNativeLocalFixturePolicy({ ...shape, ExperimentalActions: ["pet_animal"] }, { experimentalActions: [] }),
     /native_fixture_policy_illegal_opt_in/,
   );
 });

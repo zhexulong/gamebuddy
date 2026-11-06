@@ -6,6 +6,8 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
+// prelive-l3-opt-out b: a fixture SETUP step for the crab-pot placement lane (it validates the provisioned surface
+// and issues no action), so the action->runner map has no entry for it.
 const ACTION = "place_crab_pot";
 const EXPECTED_ACTIONS = ["move_to_tile", "travel", "place_crab_pot"];
 

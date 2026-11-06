@@ -10,7 +10,10 @@ function fixture({ terminal = {}, evidence = {}, observations } = {}) {
     activeExecution: null,
     capabilities: ["cancel_active_execution", "equip_tool"],
     currentTool: "Axe",
-    toolSlots: [{ slot: 0, label: "Axe" }, { slot: 1, label: "Hoe" }],
+    toolSlots: [
+      { slot: 0, label: "Axe" },
+      { slot: 1, label: "Hoe" },
+    ],
   };
   const after = { ...before, revision: 5, currentTool: "Hoe" };
   const reads = observations ? [...observations] : [before, after];
@@ -22,7 +25,10 @@ function fixture({ terminal = {}, evidence = {}, observations } = {}) {
       return snapshot;
     },
     execute: async (request) => {
-      assert.deepEqual({ action: request.action, args: request.args, expectedRevision: request.expectedRevision }, { action: "equip_tool", args: { tool: "hoe" }, expectedRevision: 4 });
+      assert.deepEqual(
+        { action: request.action, args: request.args, expectedRevision: request.expectedRevision },
+        { action: "equip_tool", args: { tool: "hoe" }, expectedRevision: 4 },
+      );
       const accepted = { requestId: request.requestId, executionId: "equip-execution", state: "accepted", revision: 4 };
       receipts.push({
         requestId: request.requestId,
@@ -55,8 +61,22 @@ test("equip-tool v2 accepts already_equipped as a deterministic success", async 
     terminal: { reasonCode: "already_equipped", revision: 5 },
     evidence: { detail: "tool=hoe;before=Hoe;expected=Hoe;after=Hoe" },
     observations: [
-      { revision: 4, actionable: true, activeExecution: null, capabilities: ["equip_tool"], currentTool: "Hoe", toolSlots: [{ slot: 1, label: "Hoe" }] },
-      { revision: 5, actionable: true, activeExecution: null, capabilities: ["equip_tool"], currentTool: "Hoe", toolSlots: [{ slot: 1, label: "Hoe" }] },
+      {
+        revision: 4,
+        actionable: true,
+        activeExecution: null,
+        capabilities: ["equip_tool"],
+        currentTool: "Hoe",
+        toolSlots: [{ slot: 1, label: "Hoe" }],
+      },
+      {
+        revision: 5,
+        actionable: true,
+        activeExecution: null,
+        capabilities: ["equip_tool"],
+        currentTool: "Hoe",
+        toolSlots: [{ slot: 1, label: "Hoe" }],
+      },
     ],
   });
   const result = await runEquipToolSmoke(client, receipts, {}, { toolCategory: "hoe" });
@@ -73,13 +93,34 @@ test("equip-tool v2 runner fails closed for wrong identity, missing/changed evid
     fixture({ evidence: { detail: "tool=hoe;expected=Hoe;after=Hoe" } }),
     fixture({ evidence: { detail: "tool=hoe;before=Axe;expected=Hoe;after=Axe" } }),
     fixture({ terminal: { revision: 6 } }),
-    fixture({ observations: [
-      { revision: 4, actionable: true, activeExecution: null, capabilities: ["equip_tool"], currentTool: "Axe", toolSlots: [{ slot: 1, label: "Hoe" }] },
-      { revision: 6, actionable: true, activeExecution: null, capabilities: ["equip_tool"], currentTool: "Axe", toolSlots: [{ slot: 1, label: "Hoe" }] },
-    ] }),
+    fixture({
+      observations: [
+        {
+          revision: 4,
+          actionable: true,
+          activeExecution: null,
+          capabilities: ["equip_tool"],
+          currentTool: "Axe",
+          toolSlots: [{ slot: 1, label: "Hoe" }],
+        },
+        {
+          revision: 6,
+          actionable: true,
+          activeExecution: null,
+          capabilities: ["equip_tool"],
+          currentTool: "Axe",
+          toolSlots: [{ slot: 1, label: "Hoe" }],
+        },
+      ],
+    }),
   ];
   for (const value of cases) {
-    const result = await runEquipToolSmoke(value.client, value.receipts, {}, { terminalTimeoutMs: 5, postconditionTimeoutMs: 5, toolCategory: "hoe" });
+    const result = await runEquipToolSmoke(
+      value.client,
+      value.receipts,
+      {},
+      { terminalTimeoutMs: 5, postconditionTimeoutMs: 5, toolCategory: "hoe" },
+    );
     assert.equal(result.state, "blocked");
   }
 });

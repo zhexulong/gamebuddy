@@ -35,8 +35,8 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
 const SCENARIO = "native_multi_day_v1";
 /** The MILESTONE half's world: the same night with the milestone skill left unchosen, so both cards are live. */
 const MILESTONE_SCENARIO = "native_level_up_branch_v1";
-const EXPECTED_ACTIONS = ["advance_day", "respond_level_up", "move_to_tile", "observe_scene"];
-const REQUIRED_CAPABILITIES = ["advance_day", "respond_level_up", "move_to_tile", "observe_scene"].sort();
+const EXPECTED_ACTIONS = ["sleep", "respond_level_up", "move_to_tile", "observe_scene"];
+const REQUIRED_CAPABILITIES = ["sleep", "respond_level_up", "move_to_tile", "observe_scene"].sort();
 
 /** The pair the multi-day Given arms: combat (skill 4) at level 6, an ordinary level, never a milestone. */
 const EXPECTED_SKILL = 4;
@@ -127,16 +127,15 @@ export async function runRespondLevelUpSmoke(
 
     // ---- phase 1: the night the fixture's pending level-up is queued for ----
     const nightAccepted = await executeFresh(client, {
-      action: "advance_day",
+      action: "sleep",
       args: {},
       snapshot: home,
       requestId: `respond_level_up_night_${String(Date.now())}`,
       idempotencyKey: `respond_level_up_night_${String(Date.now())}_idem`,
       timeoutMs: terminalTimeoutMs,
     });
-    trace.push({ step: "night_dispatch", action: "advance_day", state: nightAccepted.state });
-    if (nightAccepted.state !== "accepted")
-      throw new Error(`advance_day_not_accepted:${String(nightAccepted.reasonCode)}`);
+    trace.push({ step: "night_dispatch", action: "sleep", state: nightAccepted.state });
+    if (nightAccepted.state !== "accepted") throw new Error(`sleep_not_accepted:${String(nightAccepted.reasonCode)}`);
     // The terminal is awaited AFTER the rollover's menus are settled, not here: the night only ends once the engine
     // reports `DayStarted`, which the engine gates on `endOfNightMenus.Count == 0 && activeClickableMenu == null`
     // (`Game1.cs:4292-4296`) - and this fixture seeds a shippable object, so a `ShippingMenu` is pushed at the same
@@ -193,7 +192,7 @@ export async function runRespondLevelUpSmoke(
     // settlement menu this world's rollover also pushes has been settled.
     const nightTerminal = await waitForTerminal(receipts, nightAccepted, nightTimeoutMs);
     if (nightTerminal.state !== "succeeded" || nightTerminal.reasonCode !== "day_advanced") {
-      throw new Error(`advance_day_not_completed:${String(nightTerminal.state)}/${String(nightTerminal.reasonCode)}`);
+      throw new Error(`sleep_not_completed:${String(nightTerminal.state)}/${String(nightTerminal.reasonCode)}`);
     }
     trace.push({ step: "night", receipt: summarizeReceipt(nightTerminal) });
 
@@ -283,15 +282,14 @@ export async function runRespondLevelUpBranchSmoke(
     trace.push({ step: "milestone", skill: milestone.skill, level: milestone.level, choice, chosen, other });
 
     const nightAccepted = await executeFresh(client, {
-      action: "advance_day",
+      action: "sleep",
       args: {},
       snapshot,
       requestId: `respond_level_up_branch_night_${String(Date.now())}`,
       idempotencyKey: `respond_level_up_branch_night_${String(Date.now())}_idem`,
       timeoutMs: terminalTimeoutMs,
     });
-    if (nightAccepted.state !== "accepted")
-      throw new Error(`advance_day_not_accepted:${String(nightAccepted.reasonCode)}`);
+    if (nightAccepted.state !== "accepted") throw new Error(`sleep_not_accepted:${String(nightAccepted.reasonCode)}`);
 
     const onMenu = await waitForFreshSnapshot(client, {
       timeoutMs: postconditionTimeoutMs,
@@ -357,7 +355,7 @@ export async function runRespondLevelUpBranchSmoke(
     // The night's terminal, awaited now that nothing holds the actor.
     const nightTerminal = await waitForTerminal(receipts, nightAccepted, nightTimeoutMs);
     if (nightTerminal.state !== "succeeded" || nightTerminal.reasonCode !== "day_advanced")
-      throw new Error(`advance_day_not_completed:${String(nightTerminal.state)}/${String(nightTerminal.reasonCode)}`);
+      throw new Error(`sleep_not_completed:${String(nightTerminal.state)}/${String(nightTerminal.reasonCode)}`);
 
     return {
       scenario: MILESTONE_SCENARIO,

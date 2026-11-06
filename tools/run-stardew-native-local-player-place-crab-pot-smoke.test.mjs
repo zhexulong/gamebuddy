@@ -115,16 +115,16 @@ test("place-crab-pot runner fails closed on capability profile and target misses
       throw new Error("must not dispatch");
     },
   };
-await assert.rejects(
-  // Denying an action the run needs is the deny-by-exception equivalent of the
-  // retired allowlist narrowing, and the shared validator refuses it.
-  runPlaceCrabPotSmoke(client, { ...config, DeniedActions: ["place_crab_pot"] }),
-  /native_fixture_policy_denies_required/,
-);
-await assert.rejects(
-  runPlaceCrabPotSmoke(client, { ...config, DeniedActions: ["move_to_tile", "place_crab_pot"] }),
-  /native_fixture_policy_denies_required/,
-);
+  await assert.rejects(
+    // Denying an action the run needs is the deny-by-exception equivalent of the
+    // retired allowlist narrowing, and the shared validator refuses it.
+    runPlaceCrabPotSmoke(client, { ...config, DeniedActions: ["place_crab_pot"] }),
+    /native_fixture_policy_denies_required/,
+  );
+  await assert.rejects(
+    runPlaceCrabPotSmoke(client, { ...config, DeniedActions: ["move_to_tile", "place_crab_pot"] }),
+    /native_fixture_policy_denies_required/,
+  );
   const missingCapability = { ...before, capabilities: ["cancel_active_execution", "move_to_tile", "travel"] };
   const client2 = {
     state: { snapshot: missingCapability },

@@ -85,10 +85,10 @@ export async function runPlantSaplingSmoke(
   }
 }
 
-
 function chooseAdjacentSaplingTarget(snapshot) {
   const targets = snapshot.treeSaplingTargets ?? [];
-  if (!Array.isArray(targets) || targets.length === 0) throw new Error("plant_sapling_target_count_expected_at_least_1_got_0");
+  if (!Array.isArray(targets) || targets.length === 0)
+    throw new Error("plant_sapling_target_count_expected_at_least_1_got_0");
   const wellFormed = targets.filter(
     (entry) =>
       entry?.targetId &&

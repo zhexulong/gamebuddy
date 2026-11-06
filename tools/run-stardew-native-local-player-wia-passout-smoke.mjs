@@ -234,7 +234,12 @@ function parseTargetCoordinates(value) {
 }
 function validateNativeLocalFixtureConfig(value) {
   if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-  if (value.Portfolio?.Enable === true || value.HostAutomation?.Enable === true || value.HostFarmhandProvisioning?.Enable === true || value.FarmhandProvisioner?.Enable === true)
+  if (
+    value.Portfolio?.Enable === true ||
+    value.HostAutomation?.Enable === true ||
+    value.HostFarmhandProvisioning?.Enable === true ||
+    value.FarmhandProvisioner?.Enable === true
+  )
     throw new Error("native_local_fixture_topology_not_isolated");
   validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }

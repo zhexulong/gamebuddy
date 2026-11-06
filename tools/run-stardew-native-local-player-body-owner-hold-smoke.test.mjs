@@ -31,7 +31,13 @@ const SOIL = [
   { x: 26, y: 20 }, // six tiles away: far enough that the walk cannot settle before the next request
 ];
 
-function makeClient({ ownerKind = "body_owned_by_movement", interruptible = true, inFlight = true, secondRefused = false, firstNeverTerminal = false } = {}) {
+function makeClient({
+  ownerKind = "body_owned_by_movement",
+  interruptible = true,
+  inFlight = true,
+  secondRefused = false,
+  firstNeverTerminal = false,
+} = {}) {
   const state = { tile: { x: 20, y: 20 }, revision: 10, active: null };
   const cache = { snapshot: { revision: 10 } };
   const receipts = [];
@@ -46,7 +52,14 @@ function makeClient({ ownerKind = "body_owned_by_movement", interruptible = true
         tile: state.tile,
         actionable: state.active === null,
         activeExecution: state.active,
-        capabilities: ["inspect_self", "move_to_tile", "navigate_to_destination", "observe_scene", "till_soil", "travel"],
+        capabilities: [
+          "inspect_self",
+          "move_to_tile",
+          "navigate_to_destination",
+          "observe_scene",
+          "till_soil",
+          "travel",
+        ],
         soilTiles: SOIL,
         toolSlots: [],
         currentTool: "Axe",
@@ -59,25 +72,76 @@ function makeClient({ ownerKind = "body_owned_by_movement", interruptible = true
       const executionId = `exec_${moveCount}`;
       if (moveCount === 1) {
         state.revision += 1;
-        state.active = inFlight ? { executionId, requestId: request.requestId, action: "move_to_tile", state: "accepted", reasonCode: "accepted", evidence: null, ownerKind, interruptible } : null;
+        state.active = inFlight
+          ? {
+              executionId,
+              requestId: request.requestId,
+              action: "move_to_tile",
+              state: "accepted",
+              reasonCode: "accepted",
+              evidence: null,
+              ownerKind,
+              interruptible,
+            }
+          : null;
         if (!firstNeverTerminal) {
           // The walk ends as soon as the second directive arrives, which is what the guidance promises.
           state.revision += 1;
-          receipts.push({ executionId, requestId: request.requestId, state: "rejected", reasonCode: "superseded_by_new_directive", revision: state.revision, evidence: null });
+          receipts.push({
+            executionId,
+            requestId: request.requestId,
+            state: "rejected",
+            reasonCode: "superseded_by_new_directive",
+            revision: state.revision,
+            evidence: null,
+          });
         }
-        return { requestId: request.requestId, executionId, state: "accepted", reasonCode: "accepted", revision: state.revision };
+        return {
+          requestId: request.requestId,
+          executionId,
+          state: "accepted",
+          reasonCode: "accepted",
+          revision: state.revision,
+        };
       }
-      if (secondRefused) return { requestId: request.requestId, executionId, state: "rejected", reasonCode: "body_release_unavailable", revision: state.revision };
+      if (secondRefused)
+        return {
+          requestId: request.requestId,
+          executionId,
+          state: "rejected",
+          reasonCode: "body_release_unavailable",
+          revision: state.revision,
+        };
       state.revision += 1;
       state.active = null;
       // The second walk reaches its own terminal, so the wait for it is satisfied by evidence rather than by the
       // body merely being free (which would also be true before the walk started).
       state.revision += 1;
-      receipts.push({ executionId, requestId: request.requestId, state: "succeeded", reasonCode: "target_reached", revision: state.revision, evidence: { detail: "arrived=true" } });
-      return { requestId: request.requestId, executionId, state: "accepted", reasonCode: "accepted", revision: state.revision };
+      receipts.push({
+        executionId,
+        requestId: request.requestId,
+        state: "succeeded",
+        reasonCode: "target_reached",
+        revision: state.revision,
+        evidence: { detail: "arrived=true" },
+      });
+      return {
+        requestId: request.requestId,
+        executionId,
+        state: "accepted",
+        reasonCode: "accepted",
+        revision: state.revision,
+      };
     },
   };
-  return { client, receipts, config: CONFIG, get moves() { return moveCount; } };
+  return {
+    client,
+    receipts,
+    config: CONFIG,
+    get moves() {
+      return moveCount;
+    },
+  };
 }
 
 test("the body-owner hold passes: the in-flight owner is observable and a new directive supersedes it", async () => {
@@ -134,7 +198,10 @@ test("the gate refuses a fixture whose scenario or actions drifted", async () =>
   // A drifted fixture is a harness fault rather than a product verdict, but it must still REPORT: an escaping
   // throw leaves the harness able to say only "did not pass", which is the diagnosis failure this run hit live.
   const { client, receipts } = makeClient();
-  const drifted = await runBodyOwnerHoldSmoke(client, receipts, { ...CONFIG, NativeLocalPlayerFixture: { ...CONFIG.NativeLocalPlayerFixture, FixtureScenario: "native_move_v1" } });
+  const drifted = await runBodyOwnerHoldSmoke(client, receipts, {
+    ...CONFIG,
+    NativeLocalPlayerFixture: { ...CONFIG.NativeLocalPlayerFixture, FixtureScenario: "native_move_v1" },
+  });
   assert.equal(drifted.state, "blocked");
   assert.match(drifted.reasonCode, /^native_local_fixture_config_invalid/);
   const unisolated = await runBodyOwnerHoldSmoke(client, receipts, { ...CONFIG, HostAutomation: { Enable: true } });
@@ -144,7 +211,13 @@ test("the gate refuses a fixture whose scenario or actions drifted", async () =>
 
 test("a walk target closer than three tiles is refused as too near to prove anything", async () => {
   const { client, receipts } = makeClient();
-  const near = { ...client, async observe() { const s = await client.observe(); return { ...s, soilTiles: [{ x: s.tile.x + 1, y: s.tile.y }] }; } };
+  const near = {
+    ...client,
+    async observe() {
+      const s = await client.observe();
+      return { ...s, soilTiles: [{ x: s.tile.x + 1, y: s.tile.y }] };
+    },
+  };
   const result = await runBodyOwnerHoldSmoke(near, receipts, CONFIG);
   assert.equal(result.state, "blocked");
   assert.match(result.reasonCode, /^body_owner_hold_no_walk_target/);

@@ -49,7 +49,10 @@ export async function runRefillWateringCanSmoke(
       snapshot = await move(client, receipts, snapshot, target, trace, stabilizeTimeoutMs, moveTimeoutMs);
     const equipped = await execute(client, trace, "equip", "equip_tool", { tool: "watering_can" }, snapshot);
     const equipTerminal = await waitForTerminal(receipts, equipped, terminalTimeoutMs);
-    if (equipTerminal.state !== "succeeded" || (equipTerminal.reasonCode !== "tool_equipped" && equipTerminal.reasonCode !== "already_equipped"))
+    if (
+      equipTerminal.state !== "succeeded" ||
+      (equipTerminal.reasonCode !== "tool_equipped" && equipTerminal.reasonCode !== "already_equipped")
+    )
       throw new Error(`equip_failed:${equipTerminal.reasonCode}`);
 
     // The request binds fresh opaque target facts from the snapshot that
@@ -105,13 +108,13 @@ export async function runRefillWateringCanSmoke(
       topology: "native_local_player_fixture",
       reasonCode: passed ? "watering_can_refilled" : "refill_watering_can_postcondition_mismatch",
       target: freshTarget,
-    can: freshCan,
-    receipt: summarizeReceipt(terminal),
-    // The receipt summary carries no identity by design (4a52188), so the
-    // exact-execution correlation this runner proves is exposed here.
-    executionId: terminal.executionId,
-    requestId: terminal.requestId,
-    evidence,
+      can: freshCan,
+      receipt: summarizeReceipt(terminal),
+      // The receipt summary carries no identity by design (4a52188), so the
+      // exact-execution correlation this runner proves is exposed here.
+      executionId: terminal.executionId,
+      requestId: terminal.requestId,
+      evidence,
       trace,
       after: { ...summarizeSnapshot(after), wateringCanFacts: after.wateringCanFacts ?? [] },
       durationMs: Date.now() - startedAt,

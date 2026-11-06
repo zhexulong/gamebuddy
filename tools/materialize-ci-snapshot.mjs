@@ -2,11 +2,7 @@ import { spawn } from "node:child_process";
 import { lstat, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-  cleanupAtomicDirectory,
-  commitAtomicDirectory,
-  prepareAtomicDirectory,
-} from "./lib/atomic-directory.mjs";
+import { cleanupAtomicDirectory, commitAtomicDirectory, prepareAtomicDirectory } from "./lib/atomic-directory.mjs";
 import {
   assertCanonicalDirectory,
   assertFrozenSnapshotIndex,
@@ -182,31 +178,36 @@ export async function materializeCiSnapshot({
   const activeCandidates = await collectUntrackedCandidates(activeRoot, manifest.requiredInputs);
   if (JSON.stringify(activeCandidates) !== JSON.stringify(report.classified))
     fail("untracked_candidate_inventory_mismatch");
-   const transaction = await prepareAtomicDirectory(output, { code: ATOMIC_DIRECTORY_CODE, create: false });
+  const transaction = await prepareAtomicDirectory(output, { code: ATOMIC_DIRECTORY_CODE, create: false });
   try {
     // The full hash is resolved from this local repository. No remote ref is
     // consulted and clone --no-local prevents accidental local working-tree reuse.
-     await git(dirname(transaction.stagingPath), ["clone", "--no-local", pathToFileURL(repository).href, transaction.stagingPath]);
-     await git(transaction.stagingPath, ["checkout", "--detach", manifest.baseCommit]);
-     await git(transaction.stagingPath, ["apply", "--index", "--binary", patchPath]);
-     await copyVerifiedRequiredInputs({
-       sourceRoot: activeRoot,
-       destinationRoot: transaction.stagingPath,
+    await git(dirname(transaction.stagingPath), [
+      "clone",
+      "--no-local",
+      pathToFileURL(repository).href,
+      transaction.stagingPath,
+    ]);
+    await git(transaction.stagingPath, ["checkout", "--detach", manifest.baseCommit]);
+    await git(transaction.stagingPath, ["apply", "--index", "--binary", patchPath]);
+    await copyVerifiedRequiredInputs({
+      sourceRoot: activeRoot,
+      destinationRoot: transaction.stagingPath,
       inputs: manifest.requiredInputs,
       control: manifest.requiredInputsConfig,
     });
-     const copiedInputs = await readRequiredInputs(transaction.stagingPath);
+    const copiedInputs = await readRequiredInputs(transaction.stagingPath);
     if (JSON.stringify(copiedInputs) !== JSON.stringify(manifest.requiredInputs))
       fail("required_inputs_config_mismatch");
-     const source = await createSourceManifest(transaction.stagingPath);
+    const source = await createSourceManifest(transaction.stagingPath);
     if (
       source.digest !== manifest.source.digest ||
       JSON.stringify(source.entries) !== JSON.stringify(manifest.source.entries)
     )
       fail("source_manifest_mismatch");
-     await git(transaction.stagingPath, ["add", "-A"]);
-     await assertFrozenSnapshotIndex(transaction.stagingPath);
-     await commitAtomicDirectory(transaction);
+    await git(transaction.stagingPath, ["add", "-A"]);
+    await assertFrozenSnapshotIndex(transaction.stagingPath);
+    await commitAtomicDirectory(transaction);
     return Object.freeze({
       outputRoot: output,
       sourceDigest: source.digest,
@@ -214,7 +215,7 @@ export async function materializeCiSnapshot({
       staged: true,
     });
   } catch (error) {
-     await cleanupAtomicDirectory(transaction, { recursive: true });
+    await cleanupAtomicDirectory(transaction, { recursive: true });
     throw error;
   }
 }

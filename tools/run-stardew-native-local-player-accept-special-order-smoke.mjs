@@ -94,7 +94,9 @@ export async function runAcceptSpecialOrderSmoke(client, receipts, _config, { te
       .filter(([, ok]) => ok === false || ok === "not_checked")
       .map(([name]) => name);
     if (failed.length > 0)
-      throw new Error(`accept_special_order live contract failed: ${failed.join(",")};checks=${JSON.stringify(checks)}`);
+      throw new Error(
+        `accept_special_order live contract failed: ${failed.join(",")};checks=${JSON.stringify(checks)}`,
+      );
 
     // Negative case: the stale id names an offer that has already been taken. A second accepted receipt, or
     // a world that moves, fails the run rather than passing on a green receipt.
@@ -108,7 +110,12 @@ export async function runAcceptSpecialOrderSmoke(client, receipts, _config, { te
       timeoutMs: 30_000,
     });
     const staleTerminal = await waitForTerminal(receipts, stale, terminalTimeoutMs);
-    trace.push({ step: "stale_target", action: ACTION, target: target.targetId, receipt: summarizeReceipt(staleTerminal) });
+    trace.push({
+      step: "stale_target",
+      action: ACTION,
+      target: target.targetId,
+      receipt: summarizeReceipt(staleTerminal),
+    });
     checks.staleTargetRefused = staleTerminal.state === "rejected" && STALE_REFUSALS.includes(staleTerminal.reasonCode);
     if (checks.staleTargetRefused !== true)
       throw new Error(`accept_special_order_stale_not_refused:${staleTerminal.state}/${staleTerminal.reasonCode}`);

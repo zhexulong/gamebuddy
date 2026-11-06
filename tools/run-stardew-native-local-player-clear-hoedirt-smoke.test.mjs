@@ -26,9 +26,9 @@ const config = {
     Bootstrap: { Enable: false },
     FixtureScenario: "native_clear_hoedirt_v1",
   },
-    DeniedActions: [],
-    DeniedActionFamilies: [],
-    ExperimentalActions: [],
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
   SaveId: "save",
   WorldId: "world",
   PlayerId: "player",
@@ -135,9 +135,8 @@ test("clear-hoedirt runner blocks on mismatched native evidence", async () => {
 
 test("clear-hoedirt runner rejects a non-isolated action policy", async () => {
   const client = createFake();
-  await assert.rejects(
-      runClearHoeDirtSmoke(client, [], { ...config, DeniedActions: ["clear_hoedirt"] }),
-      (error) => error?.message?.startsWith("native_fixture_policy_denies_required"),
+  await assert.rejects(runClearHoeDirtSmoke(client, [], { ...config, DeniedActions: ["clear_hoedirt"] }), (error) =>
+    error?.message?.startsWith("native_fixture_policy_denies_required"),
   );
 });
 

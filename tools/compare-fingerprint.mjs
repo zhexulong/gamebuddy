@@ -21,8 +21,12 @@ const baseTests = new Map(base.tests.map((t) => [t.testName, t]));
 const afterTests = new Map(after.tests.map((t) => [t.testName, t]));
 
 // 1. test names present in exactly one side (order-sensitive: report position too)
-base.tests.forEach((t, i) => { if (!afterTests.has(t.testName)) diffs.push(`test removed: [${i}] ${t.testName}`); });
-after.tests.forEach((t, i) => { if (!baseTests.has(t.testName)) diffs.push(`test added:   [${i}] ${t.testName}`); });
+base.tests.forEach((t, i) => {
+  if (!afterTests.has(t.testName)) diffs.push(`test removed: [${i}] ${t.testName}`);
+});
+after.tests.forEach((t, i) => {
+  if (!baseTests.has(t.testName)) diffs.push(`test added:   [${i}] ${t.testName}`);
+});
 
 // 2. per-test detail comparison (only for tests present on both sides)
 for (const [name, b] of baseTests) {

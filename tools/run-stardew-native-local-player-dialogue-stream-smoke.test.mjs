@@ -42,7 +42,12 @@ function makeClient({ pages, speaker = "Lewis", emit = true }) {
   };
   const talkRunner = async () => {
     if (emit) client.emitDialogue();
-    return { state: "passed", reasonCode: "talk_to_npc_talked", npc: speaker, configuredFixtureScenario: "native_talk_to_npc_multi_page_v1" };
+    return {
+      state: "passed",
+      reasonCode: "talk_to_npc_talked",
+      npc: speaker,
+      configuredFixtureScenario: "native_talk_to_npc_multi_page_v1",
+    };
   };
   return { client, talkRunner };
 }

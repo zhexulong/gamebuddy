@@ -23,7 +23,8 @@ import { assertPrizeTicketRedemption } from "./run-stardew-native-local-player-p
 const TICKET = "(O)PrizeTicket";
 const PRIZE = "(O)688";
 
-const pack = (...entries) => entries.map(([qualifiedItemId, stack], slot) => ({ slot, qualifiedItemId, displayName: qualifiedItemId, stack }));
+const pack = (...entries) =>
+  entries.map(([qualifiedItemId, stack], slot) => ({ slot, qualifiedItemId, displayName: qualifiedItemId, stack }));
 const before = () => pack([TICKET, 3], ["(O)388", 12]);
 const after = () => pack([TICKET, 2], ["(O)388", 12], [PRIZE, 2]);
 const evidence = (overrides = {}) => ({
@@ -68,13 +69,17 @@ test("the Mod's own success shape satisfies every check", () => {
 });
 
 test("a receipt whose ticket stack did not fall is refused", () => {
-  const checks = judge({ after: after().map((entry) => (entry.qualifiedItemId === TICKET ? { ...entry, stack: 3 } : entry)) });
+  const checks = judge({
+    after: after().map((entry) => (entry.qualifiedItemId === TICKET ? { ...entry, stack: 3 } : entry)),
+  });
   assert.equal(checks.ticketStackFellByOne, false);
   assert.ok(failed(checks).includes("ticketStackFellByOne"));
 });
 
 test("a receipt whose ticket stack fell by TWO is refused: that is destruction, not a redemption", () => {
-  const checks = judge({ after: after().map((entry) => (entry.qualifiedItemId === TICKET ? { ...entry, stack: 1 } : entry)) });
+  const checks = judge({
+    after: after().map((entry) => (entry.qualifiedItemId === TICKET ? { ...entry, stack: 1 } : entry)),
+  });
   assert.equal(checks.ticketStackFellByOne, false);
   assert.equal(checks.receiptAgreesWithWorld, false, "the receipt says 2 and the pack says 1");
 });
@@ -129,7 +134,12 @@ test("a stale replay that was refused while the world moved anyway is refused", 
 });
 
 test("a surface that cannot show the pack reads not_checked, never true", () => {
-  const checks = assertPrizeTicketRedemption({ before: null, after: null, evidence: evidence(), stale: { state: "rejected", reasonCode: "prize_ticket_unavailable", after: null } });
+  const checks = assertPrizeTicketRedemption({
+    before: null,
+    after: null,
+    evidence: evidence(),
+    stale: { state: "rejected", reasonCode: "prize_ticket_unavailable", after: null },
+  });
   assert.equal(checks.ticketStackFellByOne, "not_checked");
   assert.equal(checks.prizeEnteredInventory, "not_checked");
   assert.equal(checks.receiptAgreesWithWorld, "not_checked");
@@ -137,7 +147,12 @@ test("a surface that cannot show the pack reads not_checked, never true", () => 
   // The two facts the receipt alone carries are still judged, so a blind surface does not silently
   // turn the whole contract into a pass either.
   assert.equal(checks.choiceNamed, true);
-  assert.deepEqual(failed(checks).sort(), ["prizeEnteredInventory", "receiptAgreesWithWorld", "staleWorldUnchanged", "ticketStackFellByOne"]);
+  assert.deepEqual(failed(checks).sort(), [
+    "prizeEnteredInventory",
+    "receiptAgreesWithWorld",
+    "staleWorldUnchanged",
+    "ticketStackFellByOne",
+  ]);
 });
 
 test("a receipt that names no item, or a non-positive stack, is refused", () => {

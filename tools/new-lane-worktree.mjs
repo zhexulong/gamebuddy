@@ -8,7 +8,10 @@
  * `host_verification_artifact_dependency_outside_repository`. Every lane paid for that discovery on its own. This
  * script gives the lane its own install instead, and puts the three things around it in the only order that works:
  *
- *   1. submodules    `git submodule update --init` from the shared object store: no fetch, no network.
+ *   1. submodules    copied from the main tree's checkout. `git submodule update --init` inside a linked worktree
+ *                     is not offline in practice: it clones from the recorded URL, which on this machine hangs on a
+ *                     credential prompt with no terminal to answer it. The two trees are at the same pinned commits,
+ *                     so a copy is the same source.
  *   2. vendored dist  a submodule checkout carries no build output, so every package that has a `dist` in the main
  *                     tree and not here gets a copy. The submodule commit is identical on both sides, so the artifact
  *                     describes the same source. Without it the compiler reports `Cannot find module
@@ -34,7 +37,7 @@
  * It prints every action and every refusal, one line each. No game, no network, no model.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { cpSync, existsSync } from "node:fs";
 import { cp, readdir, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -97,12 +100,18 @@ function createWorktree({ target, branch }) {
  * recorded commits are already there and this fetches nothing.
  */
 function initSubmodules({ target }) {
-  const outcome = git(["submodule", "update", "--init", ...VENDORED_SUBMODULES], { cwd: target });
-  if (outcome.status !== 0) {
-    process.stderr.write(`git submodule update --init failed (exit=${outcome.status}):\n${outcome.stderr ?? ""}`);
-    return false;
+  for (const submodule of VENDORED_SUBMODULES) {
+    const source = join(REPOSITORY_ROOT, submodule);
+    if (!existsSync(source)) {
+      refuse(`the main tree has no ${submodule} checkout to copy from`);
+      return false;
+    }
+    cpSync(source, join(target, submodule), {
+      recursive: true,
+      filter: (path) => !/[\\/]\.git([\\/]|$)/u.test(path) && !/[\\/]node_modules([\\/]|$)/u.test(path),
+    });
+    print(`submodules: ${submodule} copied from the main tree at the same pinned commit (no fetch)`);
   }
-  print(`submodules: ${VENDORED_SUBMODULES.join(", ")} at their pinned commits (shared object store, no fetch)`);
   return true;
 }
 

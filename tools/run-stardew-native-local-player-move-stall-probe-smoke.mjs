@@ -158,7 +158,8 @@ export async function runMoveStallProbe(client, receipts, config) {
   // blocker. deadline_expired IS different: it can also mean the caller's
   // deadline was simply too short, so it needs the actor to have moved to be
   // attributable to the block.
-  const moved = phase1.finalTile !== null && (phase1.finalTile.x !== before.tile.x || phase1.finalTile.y !== before.tile.y);
+  const moved =
+    phase1.finalTile !== null && (phase1.finalTile.x !== before.tile.x || phase1.finalTile.y !== before.tile.y);
   const measurementValid =
     nativeSelfResolved ||
     phase1.terminal?.reasonCode === "native_path_ended" ||
@@ -185,7 +186,8 @@ export async function runMoveStallProbe(client, receipts, config) {
     nativeSelfResolved,
     retryResolved,
     moved,
-    blockerStillOnRoute: phase2 === null ? null : phase2.blockerAtEnd !== null && phase2.blockerAtEnd.y === before.tile.y + 1,
+    blockerStillOnRoute:
+      phase2 === null ? null : phase2.blockerAtEnd !== null && phase2.blockerAtEnd.y === before.tile.y + 1,
     elapsedMs,
     phase1,
     phase2,

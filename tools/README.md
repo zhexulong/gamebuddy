@@ -282,7 +282,8 @@ The runner does not use Computer Use, keyboard injection, or UI navigation. It o
 Farmhand action runners are selected only through `tools/stardew-action-gate-descriptors.mjs`. Each published action resolves to one `run-stardew-native-local-player-*-smoke.mjs` runner, which uses the shared `stardew-native-smoke-harness-v1.mjs` connection, receipt, fresh-reread, and teardown mechanics. The disposable fixture launcher selects the same runner identity:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/run-stardew-native-local-player-move-fixture.ps1 `
+# Run with pwsh (PowerShell 7): the harness uses [IO.Path]::IsPathFullyQualified, absent from 5.1.
+pwsh -NoProfile -File tools/run-stardew-native-local-player-move-fixture.ps1 `
   -GamePath "D:\\Steam\\steamapps\\common\\Stardew Valley" `
   -ModsPath "C:\\Users\\you\\AppData\\Local\\GameBuddy\\stardew-fixture-mods" `
   -FixtureRoot "C:\\Users\\you\\AppData\\Local\\GameBuddy\\stardew-fixtures" `

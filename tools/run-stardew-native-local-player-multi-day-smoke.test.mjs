@@ -11,7 +11,7 @@ import {
   runMultiDaySmoke,
 } from "./run-stardew-native-local-player-multi-day-smoke.mjs";
 
-const CAPABILITIES = ["advance_day", "dismiss_modal"];
+const CAPABILITIES = ["sleep", "dismiss_modal"];
 
 function fixtureConfig(scenario, overrides = {}) {
   return {
@@ -126,7 +126,7 @@ function createFake({ scenario = "native_multi_day_v1", plan = [] } = {}) {
   client.execute = async ({ requestId, action }) => {
     const executionId = `exec-${requestId}`;
     revision += 1;
-    if (action === "advance_day") {
+    if (action === "sleep") {
       night = { index: nightsStarted, requestId, executionId, sawModal: false };
       nightsStarted += 1;
       const accepted = { requestId, executionId, state: "accepted", reasonCode: "accepted", revision };
@@ -259,7 +259,7 @@ test("three days are crossed, the ShippingMenu is cleared mid-night, and every r
   assert.equal(dismissals.length, 1, "exactly one menu needed the product's dismiss");
   assert.equal(result.dayRecords[1].menus.map((menu) => menu.menuType).join(","), "SaveGameMenu");
   const actions = result.trace.map((entry) => `${entry.day}:${entry.action}`);
-  assert.deepEqual(actions, ["1:advance_day", "2:advance_day", "3:advance_day"]);
+  assert.deepEqual(actions, ["1:sleep", "2:sleep", "3:sleep"]);
 });
 
 test("a LevelUpMenu stops the run BY NAME, and never by timeout", async () => {
@@ -287,8 +287,7 @@ test("a night that never completes is reported with the hold it is under", async
   // so the run must name the persisting menu instead of waiting out the night budget.
   client.execute = async ({ requestId, action }) => {
     const executionId = `exec-${requestId}`;
-    if (action === "advance_day")
-      return { requestId, executionId, state: "accepted", reasonCode: "accepted", revision: 11 };
+    if (action === "sleep") return { requestId, executionId, state: "accepted", reasonCode: "accepted", revision: 11 };
     return {
       requestId,
       executionId,

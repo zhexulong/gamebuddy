@@ -77,13 +77,18 @@ function handle(request, world, revision) {
   });
   const args = request.args;
   const atTile = [world.load, world.collect].filter((entry) => entry.x === args.x && entry.y === args.y);
-  if (atTile.length === 0) return terminal("rejected", "building_chest_target_not_found", `tile=${args.x},${args.y};building=none`);
+  if (atTile.length === 0)
+    return terminal("rejected", "building_chest_target_not_found", `tile=${args.x},${args.y};building=none`);
   const named = atTile.find((entry) => entry.targetId === args.expectedTargetId);
   const identity = `tile=${args.x},${args.y};location=Farm;target=${args.expectedTargetId};building_type=Mill;building_origin=31,20`;
   if (named === undefined)
     return terminal("rejected", "building_chest_target_changed", `${identity};declared_chests=2;live_match=none`);
   if (named.branch !== "collect")
-    return terminal("rejected", "building_chest_not_collectable", `${identity};chest_id=${named.chestId};branch=${named.branch};action=collect`);
+    return terminal(
+      "rejected",
+      "building_chest_not_collectable",
+      `${identity};chest_id=${named.chestId};branch=${named.branch};action=collect`,
+    );
 
   const item = "(O)262";
   const stacksBefore = named.stackCount;
@@ -93,9 +98,9 @@ function handle(request, world, revision) {
     return terminal(
       "rejected",
       reasonCode,
-      `${identity};chest_id=${named.chestId};branch=collect;item=${stacksBefore === 0 ? "absent" : item}`
-        + `;chest_slots_before=${stacksBefore};chest_slots_after=${stacksBefore};chest_item_before=${itemsBefore};chest_item_after=${itemsBefore}`
-        + `;moved_count=0;carried_before=${world.carried};carried_after=${world.carried};native_accepted=false;native_menu_opened=false`,
+      `${identity};chest_id=${named.chestId};branch=collect;item=${stacksBefore === 0 ? "absent" : item}` +
+        `;chest_slots_before=${stacksBefore};chest_slots_after=${stacksBefore};chest_item_before=${itemsBefore};chest_item_after=${itemsBefore}` +
+        `;moved_count=0;carried_before=${world.carried};carried_after=${world.carried};native_accepted=false;native_menu_opened=false`,
     );
   }
 
@@ -106,9 +111,9 @@ function handle(request, world, revision) {
   return terminal(
     "succeeded",
     "building_chest_output_collected",
-    `${identity};chest_id=${named.chestId};branch=collect;item=${item}`
-      + `;chest_slots_before=${stacksBefore};chest_slots_after=0;chest_item_before=${itemsBefore};chest_item_after=0;moved_count=${moved}`
-      + `;carried_before=${world.carried - moved};carried_after=${world.carried};native_accepted=true;native_menu_opened=false`,
+    `${identity};chest_id=${named.chestId};branch=collect;item=${item}` +
+      `;chest_slots_before=${stacksBefore};chest_slots_after=0;chest_item_before=${itemsBefore};chest_item_after=0;moved_count=${moved}` +
+      `;carried_before=${world.carried - moved};carried_after=${world.carried};native_accepted=true;native_menu_opened=false`,
   );
 }
 
@@ -116,7 +121,8 @@ const run = (options) => {
   const session = makeClient(options);
   return {
     ...session,
-    result: () => runCollectBuildingChestOutputSmoke(session.client, session.receipts, {}, { terminalTimeoutMs: 1_000 }),
+    result: () =>
+      runCollectBuildingChestOutputSmoke(session.client, session.receipts, {}, { terminalTimeoutMs: 1_000 }),
   };
 };
 
@@ -140,7 +146,10 @@ test("collect_building_chest_output: a request with no terminal names the last f
   const result = await session.result();
   assert.equal(result.state, "blocked");
   assert.match(result.reasonCode, /building_chest_collect_terminal_absent:last=meaningful_progress\/tile_advanced/);
-  assert.deepEqual(result.trace.find((step) => step.step === "wrong_branch").receipt.reasonCode, "building_chest_not_collectable");
+  assert.deepEqual(
+    result.trace.find((step) => step.step === "wrong_branch").receipt.reasonCode,
+    "building_chest_not_collectable",
+  );
 });
 
 test("collect_building_chest_output: the single advertised stack must leave the chest and arrive", async () => {
@@ -231,7 +240,9 @@ test("collect_building_chest_output: a success that left a menu open fails the r
   session.client.execute = async (request) => {
     const receipt = await original(request);
     if (receipt.state === "succeeded")
-      receipt.evidence = { detail: receipt.evidence.detail.replace("native_menu_opened=false", "native_menu_opened=true") };
+      receipt.evidence = {
+        detail: receipt.evidence.detail.replace("native_menu_opened=false", "native_menu_opened=true"),
+      };
     return receipt;
   };
   const result = await session.result();

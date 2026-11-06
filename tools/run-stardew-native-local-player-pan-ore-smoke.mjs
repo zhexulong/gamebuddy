@@ -56,7 +56,9 @@ export async function runPanOreSmoke(client, receipts, _config, { terminalTimeou
     if (terminal.requestId !== requestId || terminal.executionId !== submitted.executionId)
       throw new Error(`pan_ore_terminal_identity_mismatch:${terminal.requestId}:${terminal.executionId}`);
     if (terminal.state !== "succeeded" || terminal.reasonCode !== "ore_panned")
-      throw new Error(`pan_ore_failed:${terminal.state}/${terminal.reasonCode};${summarizeEvidence(terminal.evidence)}`);
+      throw new Error(
+        `pan_ore_failed:${terminal.state}/${terminal.reasonCode};${summarizeEvidence(terminal.evidence)}`,
+      );
 
     const evidence = parseEvidence(terminal.evidence);
     assertEvidence(evidence, "slot", String(slot));
@@ -172,8 +174,7 @@ function panSiteAt(snapshot, x, y) {
 }
 
 function assertEvidence(evidence, key, expected) {
-  if (evidence[key] !== expected)
-    throw new Error(`pan_ore_evidence_${key}:${evidence[key] ?? "missing"}:${expected}`);
+  if (evidence[key] !== expected) throw new Error(`pan_ore_evidence_${key}:${evidence[key] ?? "missing"}:${expected}`);
 }
 
 function summarizeEvidence(evidence) {

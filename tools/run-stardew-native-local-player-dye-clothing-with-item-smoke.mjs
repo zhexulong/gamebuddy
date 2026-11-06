@@ -60,7 +60,14 @@ export async function runDyeClothingWithItemSmoke(client, receipts, _config, { t
     snapshot,
     timeoutMs: 30_000,
   });
-  trace.push({ step: "dye", action: ACTION, target: target.targetId, garment: target.leftQualifiedItemId, dye: target.rightQualifiedItemId, receipt: summarizeReceipt(accepted) });
+  trace.push({
+    step: "dye",
+    action: ACTION,
+    target: target.targetId,
+    garment: target.leftQualifiedItemId,
+    dye: target.rightQualifiedItemId,
+    receipt: summarizeReceipt(accepted),
+  });
   const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
   if (terminal.requestId !== requestId || terminal.executionId !== accepted.executionId)
     throw new Error("dye_clothing_with_item terminal does not belong to this request");
@@ -81,13 +88,23 @@ export async function runDyeClothingWithItemSmoke(client, receipts, _config, { t
       garmentSlot: slotOf(after, target.leftSlot, target.leftQualifiedItemId),
     },
   });
-  trace.push({ step: "observed", target: target.targetId, evidence, garmentColourBefore: target.garmentColour, garmentColourAfter: colourOfTarget(after, target.targetId), checks });
+  trace.push({
+    step: "observed",
+    target: target.targetId,
+    evidence,
+    garmentColourBefore: target.garmentColour,
+    garmentColourAfter: colourOfTarget(after, target.targetId),
+    checks,
+  });
 
   const wrongKindId = target.targetId.replace("tailoring_dye_", "tailoring_recipe_");
   const wrongKind = await executeNegative(client, receipts, args, wrongKindId, target, terminalTimeoutMs);
   const flipped = `${target.targetId.slice(0, -1)}${target.targetId.slice(-1) === "0" ? "1" : "0"}`;
   const stale = await executeNegative(client, receipts, args, flipped, target, terminalTimeoutMs);
-  trace.push({ step: "negative_wrong_kind", receipt: wrongKind.receipt }, { step: "negative_stale_id", receipt: stale.receipt });
+  trace.push(
+    { step: "negative_wrong_kind", receipt: wrongKind.receipt },
+    { step: "negative_stale_id", receipt: stale.receipt },
+  );
 
   checks.wrongKindRefused = wrongKind.refused && wrongKind.reasonCode === "tailoring_target_not_found";
   checks.staleIdRefused = stale.refused && stale.reasonCode === "tailoring_target_changed";
@@ -97,7 +114,9 @@ export async function runDyeClothingWithItemSmoke(client, receipts, _config, { t
     .filter(([, ok]) => ok === false || ok === "not_checked")
     .map(([name]) => name);
   if (failures.length > 0)
-    throw new Error(`dye_clothing_with_item live contract failed: ${failures.join(",")};trace=${JSON.stringify(trace)}`);
+    throw new Error(
+      `dye_clothing_with_item live contract failed: ${failures.join(",")};trace=${JSON.stringify(trace)}`,
+    );
 
   return { state: "passed", reasonCode: "clothing_dyed", trace, checks, evidence };
 }
@@ -110,12 +129,17 @@ export async function runDyeClothingWithItemSmoke(client, receipts, _config, { t
  * Every world half that cannot be read is `not_checked`, never a pass.
  */
 export function assertDyeClothingPostconditions({ target, evidence, before, after }) {
-  const observable = after?.inventory !== null && after?.inventory !== undefined && before?.inventory !== null && before?.inventory !== undefined;
+  const observable =
+    after?.inventory !== null &&
+    after?.inventory !== undefined &&
+    before?.inventory !== null &&
+    before?.inventory !== undefined;
   const colourObservable = typeof before?.garmentColour === "string" && typeof after?.garmentColour === "string";
   const dyeBefore = Number(evidence.dye_before);
   const dyeAfter = Number(evidence.dye_after);
   const dyeSpent = evidence.dye_spent === "true";
-  const countsAreIntegers = Number.isSafeInteger(dyeBefore) && Number.isSafeInteger(dyeAfter) && dyeBefore >= 0 && dyeAfter >= 0;
+  const countsAreIntegers =
+    Number.isSafeInteger(dyeBefore) && Number.isSafeInteger(dyeAfter) && dyeBefore >= 0 && dyeAfter >= 0;
   const colourBefore = before?.garmentColour;
   const colourExpected = evidence.colour_expected;
   const colourAfter = evidence.colour_after;
@@ -142,12 +166,14 @@ export function assertDyeClothingPostconditions({ target, evidence, before, afte
         : after.garmentColour !== colourBefore
       : "not_checked",
     worldShowsDyeConsumed: observable
-      ? (before.inventory[target.rightQualifiedItemId] ?? 0) - (after.inventory[target.rightQualifiedItemId] ?? 0) === (dyeSpent ? 1 : 0)
+      ? (before.inventory[target.rightQualifiedItemId] ?? 0) - (after.inventory[target.rightQualifiedItemId] ?? 0) ===
+        (dyeSpent ? 1 : 0)
       : "not_checked",
     // The garment is still the same item in the same slot: a dye that removed it is not a dye.
-    worldShowsGarmentStillOwned: before?.garmentSlot !== null && before?.garmentSlot !== undefined
-      ? after?.garmentSlot !== null && after?.garmentSlot !== undefined
-      : "not_checked",
+    worldShowsGarmentStillOwned:
+      before?.garmentSlot !== null && before?.garmentSlot !== undefined
+        ? after?.garmentSlot !== null && after?.garmentSlot !== undefined
+        : "not_checked",
   };
 }
 
@@ -167,7 +193,10 @@ async function executeNegative(client, receipts, args, expectedTargetId, target,
   const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
   const fresh = await observeFresh(client, { actionable: true });
   const after = { inventory: inventoryItemCounts(fresh), colour: colourOfTarget(fresh, target.targetId) };
-  const sameInventory = before.inventory !== null && after.inventory !== null && JSON.stringify(before.inventory) === JSON.stringify(after.inventory);
+  const sameInventory =
+    before.inventory !== null &&
+    after.inventory !== null &&
+    JSON.stringify(before.inventory) === JSON.stringify(after.inventory);
   const sameColour = before.colour === after.colour;
   return {
     refused: terminal.state === "rejected",

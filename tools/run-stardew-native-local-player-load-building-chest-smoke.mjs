@@ -56,7 +56,9 @@ export async function runLoadBuildingChestSmoke(client, receipts, _config, { ter
     });
     trace.push({ step: "wrong_branch", receipt: summarizeReceipt(wrongBranch.terminal) });
     if (wrongBranch.terminal.state !== "rejected" || wrongBranch.terminal.reasonCode !== "building_chest_not_loadable")
-      throw new Error(`building_chest_wrong_branch_not_refused:${wrongBranch.terminal.state}/${wrongBranch.terminal.reasonCode}`);
+      throw new Error(
+        `building_chest_wrong_branch_not_refused:${wrongBranch.terminal.state}/${wrongBranch.terminal.reasonCode}`,
+      );
     await assertWorldUnchanged(client, sibling, "building_chest_wrong_branch_moved_world");
 
     // 2. A target id that does not describe the tree it is sent with: the LOAD chest's tile with the
@@ -70,7 +72,9 @@ export async function runLoadBuildingChestSmoke(client, receipts, _config, { ter
     });
     trace.push({ step: "mismatched_identity", receipt: summarizeReceipt(mismatched.terminal) });
     if (mismatched.terminal.state !== "rejected" || mismatched.terminal.reasonCode !== "building_chest_target_changed")
-      throw new Error(`building_chest_mismatch_not_refused:${mismatched.terminal.state}/${mismatched.terminal.reasonCode}`);
+      throw new Error(
+        `building_chest_mismatch_not_refused:${mismatched.terminal.state}/${mismatched.terminal.reasonCode}`,
+      );
     await assertWorldUnchanged(client, target, "building_chest_mismatch_moved_world");
 
     // 3. A slot that holds nothing. The native Load branch reads who.ActiveObject, so a request that
@@ -83,7 +87,9 @@ export async function runLoadBuildingChestSmoke(client, receipts, _config, { ter
     });
     trace.push({ step: "empty_slot", receipt: summarizeReceipt(emptySlot.terminal) });
     if (emptySlot.terminal.state !== "rejected" || emptySlot.terminal.reasonCode !== "item_not_owned_in_slot")
-      throw new Error(`building_chest_empty_slot_not_refused:${emptySlot.terminal.state}/${emptySlot.terminal.reasonCode}`);
+      throw new Error(
+        `building_chest_empty_slot_not_refused:${emptySlot.terminal.state}/${emptySlot.terminal.reasonCode}`,
+      );
     await assertWorldUnchanged(client, target, "building_chest_empty_slot_moved_world");
 
     // 4. The honest load, with the slot the Mod itself published for this chest.
@@ -107,10 +113,12 @@ export async function runLoadBuildingChestSmoke(client, receipts, _config, { ter
     if (moved % required !== 0) throw new Error(`building_chest_quantum_mismatch:${moved}:${required}`);
     const heldBefore = integer(evidence.held_stack_before, "held_stack_before");
     const heldAfter = integer(evidence.held_stack_after, "held_stack_after");
-    if (heldBefore - heldAfter !== moved) throw new Error(`building_chest_held_half_mismatch:${heldBefore}:${heldAfter}:${moved}`);
+    if (heldBefore - heldAfter !== moved)
+      throw new Error(`building_chest_held_half_mismatch:${heldBefore}:${heldAfter}:${moved}`);
     const chestBefore = integer(evidence.chest_item_before, "chest_item_before");
     const chestAfter = integer(evidence.chest_item_after, "chest_item_after");
-    if (chestAfter - chestBefore !== moved) throw new Error(`building_chest_chest_half_mismatch:${chestBefore}:${chestAfter}:${moved}`);
+    if (chestAfter - chestBefore !== moved)
+      throw new Error(`building_chest_chest_half_mismatch:${chestBefore}:${chestAfter}:${moved}`);
 
     // The world change, re-read after the terminal, by TILE rather than by id: if the identity had
     // followed the contents the old id would be gone, and that is itself the defect to report.

@@ -36,7 +36,14 @@ function fixtureConfig(scenario, overrides = {}) {
  *   retryResolved      -- phase 1 fails with `native_path_ended`, phase 2 succeeds.
  *   neither            -- both fail; re-issuing the same move is NOT the answer.
  */
-function createFake({ scenario, phase1Succeeds = true, phase2Succeeds = true, phase1ReasonCode = "native_path_ended", phase1Advanced = true, phase2ReasonCode = "native_path_ended" } = {}) {
+function createFake({
+  scenario,
+  phase1Succeeds = true,
+  phase2Succeeds = true,
+  phase1ReasonCode = "native_path_ended",
+  phase1Advanced = true,
+  phase2ReasonCode = "native_path_ended",
+} = {}) {
   const listeners = new Set();
   let revision = 21;
   let tile = { x: 10, y: 10 };
@@ -83,7 +90,13 @@ function createFake({ scenario, phase1Succeeds = true, phase2Succeeds = true, ph
       revision += 1;
       if (succeeds) {
         tile = { ...target };
-        publish({ ...receipt, state: "succeeded", reasonCode: "target_reached", revision, evidence: "tile=10,12;target=10,12;arrival=exact;path=stardew_native" });
+        publish({
+          ...receipt,
+          state: "succeeded",
+          reasonCode: "target_reached",
+          revision,
+          evidence: "tile=10,12;target=10,12;arrival=exact;path=stardew_native",
+        });
       } else {
         // The actor advances one tile (pushing worked) but stops short.
         const advancing = attemptNumber === 1 ? phase1Advanced : true;
@@ -123,7 +136,11 @@ test("blocked once then resolved on retry: retry_resolved carries the finding", 
   // This is the decisive reading: the native block did NOT resolve in one pass,
   // but re-observing and re-issuing did. That is direct evidence the 5.3
   // increment (bounded re-plan) has a real job to do.
-  const client = createFake({ scenario: "native_move_stall_probe_npc_v1", phase1Succeeds: false, phase2Succeeds: true });
+  const client = createFake({
+    scenario: "native_move_stall_probe_npc_v1",
+    phase1Succeeds: false,
+    phase2Succeeds: true,
+  });
   const result = await runMoveStallProbe(client, client.receipts, fixtureConfig("native_move_stall_probe_npc_v1"));
   assert.equal(result.state, "measured");
   assert.equal(result.conclusion, "retry_resolved");
@@ -138,7 +155,11 @@ test("blocker survives the retry: the finding is recorded, not papered over", as
   // move" would be wrong, and the probe has to say so instead of reporting
   // success. Note this is still a MEASURED result, not an invalid one: the probe
   // answered its question.
-  const client = createFake({ scenario: "native_move_stall_probe_pet_v1", phase1Succeeds: false, phase2Succeeds: false });
+  const client = createFake({
+    scenario: "native_move_stall_probe_pet_v1",
+    phase1Succeeds: false,
+    phase2Succeeds: false,
+  });
   const result = await runMoveStallProbe(client, client.receipts, fixtureConfig("native_move_stall_probe_pet_v1"));
   assert.equal(result.state, "measured");
   assert.equal(result.conclusion, "blocker_survived");

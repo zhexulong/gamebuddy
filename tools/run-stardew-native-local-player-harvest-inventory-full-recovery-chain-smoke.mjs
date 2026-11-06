@@ -83,7 +83,14 @@ export async function runHarvestInventoryFullRecoveryChainSmoke(
 
     // The fixture's declared Given is a FULL backpack, so the breakpoint below is
     // deterministic. Reach a lawful crop target first.
-    snapshot = await waitForReachableHarvestTarget(client, snapshot, trace, receipts, stabilizeTimeoutMs, moveTimeoutMs);
+    snapshot = await waitForReachableHarvestTarget(
+      client,
+      snapshot,
+      trace,
+      receipts,
+      stabilizeTimeoutMs,
+      moveTimeoutMs,
+    );
     const breakpointTarget = chooseOnlyFreshHarvestTarget(snapshot);
 
     // 1. Breakpoint: harvest with a full backpack -> deterministic rejection
@@ -483,8 +490,7 @@ async function moveToTile(client, receipts, snapshot, target, phase, trace, stab
     timeoutMs: stabilizeTimeoutMs,
     requireActionable: true,
     check: (latest) =>
-      latest.activeExecution == null &&
-      (sameTile(latest.tile, target) || cardinalAdjacent(latest.tile, target)),
+      latest.activeExecution == null && (sameTile(latest.tile, target) || cardinalAdjacent(latest.tile, target)),
   });
 }
 
@@ -634,7 +640,7 @@ function validateNativeLocalFixtureConfig(value) {
     value.HostAutomation?.Enable === true ||
     value.HostFarmhandProvisioning?.Enable === true ||
     value.FarmhandProvisioner?.Enable === true ||
-    (value.Portfolio?.Enable === true)
+    value.Portfolio?.Enable === true
   )
     throw new Error(
       `native_local_fixture_topology_not_isolated:${JSON.stringify({

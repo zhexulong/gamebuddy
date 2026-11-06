@@ -12,10 +12,7 @@
  * The result is emitted in the shape `tools/check-stardew-dialogue-stream.mjs` reads, so an INDEPENDENT checker can
  * re-judge the same evidence instead of trusting this runner's own verdict.
  */
-import {
-  connectNativeLocalClient,
-  readNativeClientConfig,
-} from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { connectNativeLocalClient, readNativeClientConfig } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 import { runTalkToNpcSmoke } from "./run-stardew-native-local-player-talk-to-npc-smoke.mjs";
 import { dialoguePayloadOf } from "./check-stardew-dialogue-stream.mjs";
@@ -73,7 +70,8 @@ export async function runDialogueStreamSmoke(client, receipts, config, options =
       return {
         state: "unobserved",
         reasonCode: "npc_dialogue_not_reported:the_mod_emitted_no_fact_for_this_dialogue",
-        configuredFixtureScenario: talk.configuredFixtureScenario ?? config?.NativeLocalPlayerFixture?.FixtureScenario ?? null,
+        configuredFixtureScenario:
+          talk.configuredFixtureScenario ?? config?.NativeLocalPlayerFixture?.FixtureScenario ?? null,
         bridgeFacts: [],
         talk: { state: talk.state, reasonCode: talk.reasonCode },
       };
@@ -113,7 +111,8 @@ export async function runDialogueStreamSmoke(client, receipts, config, options =
       configuredFixtureScenario:
         talk.configuredFixtureScenario ?? config?.NativeLocalPlayerFixture?.FixtureScenario ?? null,
       bridgeFacts: dialogueFacts,
-      talk: { state: talk.state, reasonCode: talk.reasonCode },      observed: {
+      talk: { state: talk.state, reasonCode: talk.reasonCode },
+      observed: {
         facts: dialogueFacts.length,
         parsedPayloads: payloads.length,
         maxPages,

@@ -366,7 +366,14 @@ async function travelToFarm(client, receipts, snapshot, trace, stabilizeTimeoutM
       stabilizeTimeoutMs,
       terminalTimeoutMs,
     );
-  const accepted = await execute("travel_to_farm", "travel", { x: warp.sourceX, y: warp.sourceY }, fresh, trace, client);
+  const accepted = await execute(
+    "travel_to_farm",
+    "travel",
+    { x: warp.sourceX, y: warp.sourceY },
+    fresh,
+    trace,
+    client,
+  );
   if (accepted.state !== "accepted") throw new Error(`travel_not_accepted:${accepted.reasonCode}`);
   const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
   if (terminal.state !== "succeeded" || terminal.reasonCode !== "travel_completed")
@@ -435,8 +442,7 @@ async function moveToTile(client, receipts, snapshot, target, phase, trace, stab
     timeoutMs: stabilizeTimeoutMs,
     requireActionable: true,
     check: (latest) =>
-      latest.activeExecution == null &&
-      (sameTile(latest.tile, target) || cardinalAdjacent(latest.tile, target)),
+      latest.activeExecution == null && (sameTile(latest.tile, target) || cardinalAdjacent(latest.tile, target)),
   });
 }
 
@@ -573,7 +579,7 @@ function validateNativeLocalFixtureConfig(value) {
     value.HostAutomation?.Enable === true ||
     value.HostFarmhandProvisioning?.Enable === true ||
     value.FarmhandProvisioner?.Enable === true ||
-    (value.Portfolio?.Enable === true)
+    value.Portfolio?.Enable === true
   )
     throw new Error(
       `native_local_fixture_topology_not_isolated:${JSON.stringify({

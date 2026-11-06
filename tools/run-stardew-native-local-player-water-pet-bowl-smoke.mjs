@@ -58,7 +58,14 @@ export async function runWaterPetBowlSmoke(
 
     const wateringCan = chooseWateringCan(snapshot);
     if (snapshot.currentTool !== wateringCan.label) {
-      const equipped = await execute(client, trace, "equip_watering_can", "equip_tool", { tool: "watering_can" }, snapshot);
+      const equipped = await execute(
+        client,
+        trace,
+        "equip_watering_can",
+        "equip_tool",
+        { tool: "watering_can" },
+        snapshot,
+      );
       const equipTerminal = await waitForTerminal(receipts, equipped, terminalTimeoutMs);
       if (
         equipTerminal.state !== "succeeded" ||

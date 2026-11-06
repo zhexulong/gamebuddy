@@ -42,7 +42,9 @@ test("buildABProgram emits an RFC 6901-bound inspect→load program", () => {
   assert.equal(program.nodes[0].actionId, "machine_inspect");
   assert.equal(program.nodes[1].actionId, "machine_load");
   assert.deepEqual(program.nodes[1].dependsOn, ["inspect"]);
-  assert.deepEqual(program.nodes[1].bindings, { expectedTargetId: { nodeId: "inspect", factName: "machine_target_id" } });
+  assert.deepEqual(program.nodes[1].bindings, {
+    expectedTargetId: { nodeId: "inspect", factName: "machine_target_id" },
+  });
   assert.equal(program.nodes[0].arguments.expectedTargetId.canonicalValue, "keg-target");
   assert.equal(program.nodes[1].arguments.expectedQualifiedItemId.canonicalValue, "(O)433");
   // Nodes never carry a clock field; the Mod derives the watchdog at admission.
@@ -62,23 +64,47 @@ test("admission responder grants only visible actions and rejects stale catalog"
   };
   const respond = createLocalAdmissionResponder(client);
   const granted = await respond({
-    programId: "ab_1", nodeId: "inspect", nodeAttempt: 1, admissionAttempt: 1,
-    stopEpoch: 0, catalogRevision: 7, policyIdentity: { value: "policy/1", capabilityRevision: 1 },
-    actionId: "machine_inspect", canonicalBoundArgs: {}, derivedResourceClaims: {}, deadlineMs: 1_000_000,
+    programId: "ab_1",
+    nodeId: "inspect",
+    nodeAttempt: 1,
+    admissionAttempt: 1,
+    stopEpoch: 0,
+    catalogRevision: 7,
+    policyIdentity: { value: "policy/1", capabilityRevision: 1 },
+    actionId: "machine_inspect",
+    canonicalBoundArgs: {},
+    derivedResourceClaims: {},
+    deadlineMs: 1_000_000,
   });
   assert.equal(granted.result, "granted");
   assert.equal(granted.grantId, "host_grant_1");
   const stale = await respond({
-    programId: "ab_1", nodeId: "load", nodeAttempt: 1, admissionAttempt: 1,
-    stopEpoch: 0, catalogRevision: 8, policyIdentity: { value: "policy/1", capabilityRevision: 1 },
-    actionId: "machine_load", canonicalBoundArgs: {}, derivedResourceClaims: {}, deadlineMs: 1_000_000,
+    programId: "ab_1",
+    nodeId: "load",
+    nodeAttempt: 1,
+    admissionAttempt: 1,
+    stopEpoch: 0,
+    catalogRevision: 8,
+    policyIdentity: { value: "policy/1", capabilityRevision: 1 },
+    actionId: "machine_load",
+    canonicalBoundArgs: {},
+    derivedResourceClaims: {},
+    deadlineMs: 1_000_000,
   });
   assert.equal(stale.result, "rejected");
   assert.equal(stale.code, "catalog_stale");
   const denied = await respond({
-    programId: "ab_1", nodeId: "x", nodeAttempt: 1, admissionAttempt: 1,
-    stopEpoch: 0, catalogRevision: 7, policyIdentity: { value: "policy/1", capabilityRevision: 1 },
-    actionId: "not_visible", canonicalBoundArgs: {}, derivedResourceClaims: {}, deadlineMs: 1_000_000,
+    programId: "ab_1",
+    nodeId: "x",
+    nodeAttempt: 1,
+    admissionAttempt: 1,
+    stopEpoch: 0,
+    catalogRevision: 7,
+    policyIdentity: { value: "policy/1", capabilityRevision: 1 },
+    actionId: "not_visible",
+    canonicalBoundArgs: {},
+    derivedResourceClaims: {},
+    deadlineMs: 1_000_000,
   });
   assert.equal(denied.result, "rejected");
   assert.equal(denied.code, "policy_denied");
@@ -106,7 +132,18 @@ function makeSuccessMock() {
       assert.equal(program.nodes[0].actionId, "machine_inspect");
       assert.equal(program.nodes[1].actionId, "machine_load");
       programAccepted = true;
-      return { code: "accepted", verification: { accepted: true, catalogRevision: 1, diagnostics: [] }, snapshot: { programId: program.programId, state: "active", catalogRevision: 1, stopEpoch: 0, eventHighWater: 0, nodes: [] } };
+      return {
+        code: "accepted",
+        verification: { accepted: true, catalogRevision: 1, diagnostics: [] },
+        snapshot: {
+          programId: program.programId,
+          state: "active",
+          catalogRevision: 1,
+          stopEpoch: 0,
+          eventHighWater: 0,
+          nodes: [],
+        },
+      };
     },
     programStatus: async ({ programId }) => {
       if (!programAccepted) return { code: "not_found", snapshot: null };
@@ -123,7 +160,7 @@ function makeSuccessMock() {
         revision: 2,
         evidence: {
           detail:
-            "location=FarmHouse;target=keg-target;tile=2,1;machine=(BC)12;slot=3;input=(O)433;input_stack_before=5;input_stack_after=removed;last_input=(O)433;held=(O)395;ready_for_harvest=false;minutes_until_ready=120;expected_minutes_until_ready=120;native_check_action=true",
+            "location=FarmHouse;target=keg-target;tile=2,1;machine=(BC)12;slot=3;input=(O)433;input_stack_before=5;input_consumed=5;input_stack_after=0;last_input=(O)433;held=(O)395;ready_for_harvest=false;minutes_until_ready=120;expected_minutes_until_ready=120;native_check_action=true",
         },
       };
       if (succeeded && !receipts.includes(receipt)) receipts.push(receipt);
@@ -193,7 +230,18 @@ test("A→B smoke stays blocked (not forged) when the program never reaches term
   const client = {
     state: { snapshot },
     observe: async () => snapshot,
-    programSubmit: async (program) => ({ code: "accepted", verification: { accepted: true, catalogRevision: 1, diagnostics: [] }, snapshot: { programId: program.programId, state: "active", catalogRevision: 1, stopEpoch: 0, eventHighWater: 0, nodes: [] } }),
+    programSubmit: async (program) => ({
+      code: "accepted",
+      verification: { accepted: true, catalogRevision: 1, diagnostics: [] },
+      snapshot: {
+        programId: program.programId,
+        state: "active",
+        catalogRevision: 1,
+        stopEpoch: 0,
+        eventHighWater: 0,
+        nodes: [],
+      },
+    }),
     programStatus: async ({ programId }) => ({
       code: "found",
       snapshot: { programId, state: "active", catalogRevision: 1, stopEpoch: 0, eventHighWater: 0, nodes: [] },
@@ -212,7 +260,14 @@ test("waitForProgramTerminal resolves on Succeeded and surfaces the snapshot", a
   const client = {
     programStatus: async () => ({
       code: "found",
-      snapshot: { programId: "ab_2", state: "succeeded", catalogRevision: 1, stopEpoch: 0, eventHighWater: 1, nodes: [] },
+      snapshot: {
+        programId: "ab_2",
+        state: "succeeded",
+        catalogRevision: 1,
+        stopEpoch: 0,
+        eventHighWater: 1,
+        nodes: [],
+      },
     }),
   };
   const terminal = await waitForProgramTerminal(client, "ab_2", { timeoutMs: 5_000, intervalMs: 10 });

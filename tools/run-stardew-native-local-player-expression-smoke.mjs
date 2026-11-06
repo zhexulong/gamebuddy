@@ -43,10 +43,8 @@ export async function runExpressionSmoke(
     // a value the caller can record.
     validateNativeLocalFixtureConfig(config);
     const before = await observeFresh(client, { actionable: true });
-    if (!before.capabilities.includes(EMOTE_ACTION))
-      throw new Error("native_local_express_emote_capability_missing");
-    if (!before.capabilities.includes(FACING_ACTION))
-      throw new Error("native_local_face_direction_capability_missing");
+    if (!before.capabilities.includes(EMOTE_ACTION)) throw new Error("native_local_express_emote_capability_missing");
+    if (!before.capabilities.includes(FACING_ACTION)) throw new Error("native_local_face_direction_capability_missing");
     // doEmote is a no-op while an emote is armed (`emote_busy`), so the fixture
     // must start from a settled actor rather than replacing an in-flight emote.
     if (before.activeExecution != null) throw new Error("native_local_expression_actor_busy");
@@ -78,14 +76,7 @@ export async function runExpressionSmoke(
     // re-deriving facing from a snapshot field the Host does not publish.
     const facingTarget = await observeFresh(client, { actionable: true });
     const requested = chooseFacingDirection();
-    const facing = await dispatch(
-      client,
-      trace,
-      "facing",
-      FACING_ACTION,
-      { direction: requested },
-      facingTarget,
-    );
+    const facing = await dispatch(client, trace, "facing", FACING_ACTION, { direction: requested }, facingTarget);
     if (facing.state !== "accepted" && !isTerminalState(facing.state))
       throw new Error(`face_direction_not_accepted:${facing.reasonCode}`);
     const facingTerminal = await waitForTerminal(receipts, facing, terminalTimeoutMs);
@@ -204,8 +195,7 @@ function parseFacingEvidence(evidence) {
 }
 
 function parseDetailEntries(evidence, expectedKeys, code) {
-  if (evidence === null || typeof evidence !== "object" || Array.isArray(evidence))
-    throw new Error(code);
+  if (evidence === null || typeof evidence !== "object" || Array.isArray(evidence)) throw new Error(code);
   const detail = typeof evidence.detail === "string" ? evidence.detail : "";
   const entries = detail.split(";").map((part) => {
     const index = part.indexOf("=");
@@ -247,8 +237,7 @@ function assertExactProof({ emote, emoteTerminal, facing, facingTerminal, afterE
   // emote receipt, and the reread snapshots must not lag their own receipt.
   if (!Number.isSafeInteger(emoteTerminal.revision) || !Number.isSafeInteger(facingTerminal.revision))
     throw new Error("expression_revision_invalid");
-  if (facingTerminal.revision <= emoteTerminal.revision)
-    throw new Error("expression_revision_not_monotonic");
+  if (facingTerminal.revision <= emoteTerminal.revision) throw new Error("expression_revision_not_monotonic");
   if (afterEmote.revision < emoteTerminal.revision || afterFacing.revision < facingTerminal.revision)
     throw new Error("expression_postcondition_revision_mismatch");
 }

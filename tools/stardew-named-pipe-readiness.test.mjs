@@ -52,7 +52,9 @@ function runPowerShell(command) {
   return new Promise((resolve, reject) => {
     const child = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command]);
     let stderr = "";
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
     child.once("error", reject);
     child.once("close", (code) => resolve({ code, stderr }));
   });

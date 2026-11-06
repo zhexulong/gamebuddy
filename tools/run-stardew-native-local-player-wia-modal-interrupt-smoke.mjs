@@ -50,7 +50,14 @@ export async function runWiaModalInterruptSmoke(
     const target = chooseDistantSoilTile(snapshot);
     if (target === null) throw new Error("no_distant_live_soil_tile");
     const fresh = await waitForActionable(client, snapshot, stabilizeTimeoutMs);
-    const accepted = await execute("wia_modal_interrupt", "move_to_tile", { x: target.x, y: target.y }, fresh, trace, client);
+    const accepted = await execute(
+      "wia_modal_interrupt",
+      "move_to_tile",
+      { x: target.x, y: target.y },
+      fresh,
+      trace,
+      client,
+    );
     if (accepted.state !== "accepted") throw new Error(`wia_modal_interrupt_not_accepted:${accepted.reasonCode}`);
 
     const receipt = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
@@ -233,7 +240,12 @@ function parseTargetCoordinates(value) {
 }
 function validateNativeLocalFixtureConfig(value) {
   if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-  if (value.Portfolio?.Enable === true || value.HostAutomation?.Enable === true || value.HostFarmhandProvisioning?.Enable === true || value.FarmhandProvisioner?.Enable === true)
+  if (
+    value.Portfolio?.Enable === true ||
+    value.HostAutomation?.Enable === true ||
+    value.HostFarmhandProvisioning?.Enable === true ||
+    value.FarmhandProvisioner?.Enable === true
+  )
     throw new Error("native_local_fixture_topology_not_isolated");
   validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }

@@ -39,7 +39,10 @@ export async function runCutgrassSmoke(
     });
     trace.push({ phase: "equip_tool", receipt: summarizeReceipt(equipped) });
     const equipTerminal = await waitForTerminal(receipts, equipped, terminalTimeoutMs);
-    if (equipTerminal.state !== "succeeded" || !["tool_equipped", "already_equipped"].includes(equipTerminal.reasonCode))
+    if (
+      equipTerminal.state !== "succeeded" ||
+      !["tool_equipped", "already_equipped"].includes(equipTerminal.reasonCode)
+    )
       throw new Error(`equip_failed:${equipTerminal.reasonCode}`);
 
     snapshot = await observeFresh(client, { actionable: true, minRevision: equipTerminal.revision });
@@ -120,7 +123,8 @@ function parseStrictEvidence(evidence) {
 
 function chooseAdjacentGrassTarget(snapshot) {
   const targets = snapshot.grassTargets ?? [];
-  if (!Array.isArray(targets) || targets.length === 0) throw new Error("cut_grass_target_count_expected_at_least_1_got_0");
+  if (!Array.isArray(targets) || targets.length === 0)
+    throw new Error("cut_grass_target_count_expected_at_least_1_got_0");
   const wellFormed = targets.filter(
     (entry) => entry?.targetId && Number.isInteger(entry.x) && Number.isInteger(entry.y),
   );

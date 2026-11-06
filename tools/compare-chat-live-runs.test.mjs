@@ -154,7 +154,8 @@ test("a comparison across two generations makes the build change visible", () =>
     before: "gen-0001",
     after: "gen-0002",
     verdict: "neutral",
-    detail: "the published generation this run measured; when it changes, the comparison also covers a build change, not only the system change under test",
+    detail:
+      "the published generation this run measured; when it changes, the comparison also covers a build change, not only the system change under test",
   });
   assert.equal(rowOf(parsed, "artifact.inventoryDigest").verdict, "neutral");
 });
@@ -273,10 +274,7 @@ function probeEvent(code, meta = {}) {
 }
 
 test("probe outcomes are graded per their dimension and carry their own row per distance", () => {
-  const { code, parsed } = compareTraces(
-    buildTrace(),
-    buildTrace({ extraEvents: [probeEvent("needle.hit")] }),
-  );
+  const { code, parsed } = compareTraces(buildTrace(), buildTrace({ extraEvents: [probeEvent("needle.hit")] }));
   assert.equal(code, 0, "a probe hit is a measurement, not a defect");
   const row = rowOf(parsed, "probe.needle.hit.distance.turn");
   assert.ok(row, JSON.stringify(parsed.rows.map((entry) => entry.name)));
@@ -308,9 +306,16 @@ test("a probe miss, a confused distractor and a failed supersede are measurement
   assert.equal(rowOf(parsed, "probe.needle.miss.distance.fold").verdict, "regression");
   assert.equal(rowOf(parsed, "probe.distractor.confused.distance.turn").verdict, "regression");
   assert.equal(rowOf(parsed, "probe.supersede.fail.distance.turn").verdict, "regression");
-  assert.equal(parsed.summary.regressions, 6, "three probe codes, each reported as an event row and a per-distance row");
+  assert.equal(
+    parsed.summary.regressions,
+    6,
+    "three probe codes, each reported as an event row and a per-distance row",
+  );
   assert.deepEqual(
-    parsed.rows.filter((row) => row.verdict === "regression").map((row) => row.name).sort(),
+    parsed.rows
+      .filter((row) => row.verdict === "regression")
+      .map((row) => row.name)
+      .sort(),
     [
       "event.probe.distractor.confused",
       "event.probe.needle.miss",
@@ -399,7 +404,11 @@ test("a probe trace with an unbound result is rejected before any comparison", (
       probeEvent("isolation.breach", { distance: "turn", dimension: "retention" }),
       /must carry meta\.dimension=isolation/,
     ],
-    ["probe-content-key.json", probeEvent("needle.hit", { needle: "private" }), /meta\.needle is not an allowed meta key/],
+    [
+      "probe-content-key.json",
+      probeEvent("needle.hit", { needle: "private" }),
+      /meta\.needle is not an allowed meta key/,
+    ],
   ];
   for (const [name, event, pattern] of cases) {
     const path = write(dir, name, buildTrace({ extraEvents: [{ ...event, at: 1000 }] }));
@@ -490,9 +499,7 @@ test("a duration absent from either trace is not compared", () => {
 test("a trace that never reached a terminal state while the provider was sent is an integrity finding", () => {
   const unsettled = buildTrace({ states: ["completed"], providerSentPerTurn: true });
   const stuck = JSON.parse(JSON.stringify(unsettled));
-  stuck.events = stuck.events.filter(
-    (event) => event.code !== "turn.terminal" && event.code !== "settled",
-  );
+  stuck.events = stuck.events.filter((event) => event.code !== "turn.terminal" && event.code !== "settled");
   const { code, parsed } = compareTraces(unsettled, stuck);
   assert.equal(code, 1);
   assert.equal(rowOf(parsed, "provider_boundary_unsettled").verdict, "regression");
@@ -547,8 +554,8 @@ test("malformed or invalid input exits 2 without a partial comparison", () => {
       JSON.stringify({
         ...buildTrace(),
         events: [
-    { at: 100, kind: "lifecycle", actor: "harness", code: "run.started" },
-    { at: 50, kind: "sse", actor: "host", code: "frame.received" },
+          { at: 100, kind: "lifecycle", actor: "harness", code: "run.started" },
+          { at: 50, kind: "sse", actor: "host", code: "frame.received" },
         ],
       }),
       /precedes/,

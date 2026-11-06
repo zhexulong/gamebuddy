@@ -93,8 +93,7 @@ export async function runRideBusSmoke(client, receipts, config, { rideTimeoutMs 
 
     // The world, not the receipt, is the authority on the arrival.
     const after = await waitForFreshSnapshot(client, { minRevision: terminal.revision });
-    if (after.location !== BUS_DESTINATION)
-      throw new Error(`ride_bus_arrival_not_observed:${after.location}`);
+    if (after.location !== BUS_DESTINATION) throw new Error(`ride_bus_arrival_not_observed:${after.location}`);
 
     const detail = {
       reasonCode: TERMINAL_REASON,
@@ -132,7 +131,9 @@ export function assertRideBusPostconditions(detail) {
   if (detail.after?.hasLocation !== true) throw new Error("ride_bus_after_missing");
   if (!Number.isFinite(detail.fare) || detail.fare <= 0) throw new Error(`ride_bus_fare_not_positive:${detail.fare}`);
   if (detail.moneyAfter !== detail.moneyBefore - detail.fare)
-    throw new Error(`ride_bus_fare_not_deducted:before=${detail.moneyBefore};after=${detail.moneyAfter};fare=${detail.fare}`);
+    throw new Error(
+      `ride_bus_fare_not_deducted:before=${detail.moneyBefore};after=${detail.moneyAfter};fare=${detail.fare}`,
+    );
   if (!detail.trace?.some((entry) => entry.action === "ride_bus")) throw new Error("ride_bus_trace");
   return detail;
 }
@@ -166,7 +167,9 @@ export function parseStrictEvidence(evidence) {
     // Say WHAT arrived instead of only that something was missing: the empty case
     // is the difference between "the Mod omitted evidence" and "the wrong receipt
     // won the terminal race", and those have different owners.
-    throw new Error(`ride_bus_evidence_missing:type=${typeof evidence};shape=${JSON.stringify(evidence)?.slice(0, 160) ?? "n/a"}`);
+    throw new Error(
+      `ride_bus_evidence_missing:type=${typeof evidence};shape=${JSON.stringify(evidence)?.slice(0, 160) ?? "n/a"}`,
+    );
   }
   const fields = {};
   for (const part of text.split(";")) {

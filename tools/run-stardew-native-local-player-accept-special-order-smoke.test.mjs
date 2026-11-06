@@ -12,7 +12,12 @@ import { assertAcceptSpecialOrderPostconditions } from "./run-stardew-native-loc
  * silent pass.
  */
 
-const TARGET = { targetId: "special_order_0123456789abcdef", questKey: "Museum_Order", orderType: "", generationSeed: 4242 };
+const TARGET = {
+  targetId: "special_order_0123456789abcdef",
+  questKey: "Museum_Order",
+  orderType: "",
+  generationSeed: 4242,
+};
 
 const EVIDENCE = {
   special_order_id: TARGET.targetId,
@@ -35,7 +40,10 @@ const PASSING = {
 };
 
 /** The checks that would fail the run: `false` and `not_checked` both count. */
-const failures = (checks) => Object.entries(checks).filter(([, ok]) => ok === false || ok === "not_checked").map(([name]) => name);
+const failures = (checks) =>
+  Object.entries(checks)
+    .filter(([, ok]) => ok === false || ok === "not_checked")
+    .map(([name]) => name);
 
 test("the honest happy path passes every check", () => {
   const checks = assertAcceptSpecialOrderPostconditions(PASSING);
@@ -119,7 +127,9 @@ test("an offer still advertised after the accept fails: the published fact must 
 test("a DIFFERENT offer still on the board fails: the fixture published exactly one", () => {
   const checks = assertAcceptSpecialOrderPostconditions({
     ...PASSING,
-    targetsAfter: [{ targetId: "special_order_fedcba9876543210", questKey: "Qi_Order", orderType: "Qi", generationSeed: 7 }],
+    targetsAfter: [
+      { targetId: "special_order_fedcba9876543210", questKey: "Qi_Order", orderType: "Qi", generationSeed: 7 },
+    ],
   });
   assert.equal(checks.offerNoLongerAdvertised, true);
   assert.equal(checks.noOfferLeftOnTheBoard, false);

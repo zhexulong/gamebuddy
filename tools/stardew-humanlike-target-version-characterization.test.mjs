@@ -17,13 +17,7 @@ const ARTIFACT_PATH = path.resolve(
 );
 
 test("parseCliArgs parses arguments and env variables correctly", () => {
-  const custom = parseCliArgs([
-    "--game-path",
-    "C:/custom/game",
-    "--out",
-    "evidence.json",
-    "--pretty",
-  ]);
+  const custom = parseCliArgs(["--game-path", "C:/custom/game", "--out", "evidence.json", "--pretty"]);
   assert.equal(custom.gamePath, "C:/custom/game");
   assert.equal(custom.out, "evidence.json");
   assert.equal(custom.pretty, true);
@@ -47,27 +41,21 @@ test("parseCliArgs parses arguments and env variables correctly", () => {
 });
 
 test("characterizeStardewTargetVersion throws game_path_required when no path is provided", async () => {
-  await assert.rejects(
-    characterizeStardewTargetVersion({ gamePath: undefined }),
-    (error) => {
-      assert.equal(error.code, "game_path_required");
-      assert.match(error.message, /game_path_required/);
-      return true;
-    },
-  );
+  await assert.rejects(characterizeStardewTargetVersion({ gamePath: undefined }), (error) => {
+    assert.equal(error.code, "game_path_required");
+    assert.match(error.message, /game_path_required/);
+    return true;
+  });
 });
 
 test("characterizeStardewTargetVersion throws target_assembly_missing when Stardew Valley.dll is absent", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "gamebuddy-test-empty-"));
   try {
-    await assert.rejects(
-      characterizeStardewTargetVersion({ gamePath: tempDir }),
-      (error) => {
-        assert.equal(error.code, "target_assembly_missing");
-        assert.match(error.message, /Missing Stardew Valley.dll/);
-        return true;
-      },
-    );
+    await assert.rejects(characterizeStardewTargetVersion({ gamePath: tempDir }), (error) => {
+      assert.equal(error.code, "target_assembly_missing");
+      assert.match(error.message, /Missing Stardew Valley.dll/);
+      return true;
+    });
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
@@ -84,15 +72,12 @@ test("characterizeStardewTargetVersion throws target_installation_mismatch when 
       productVersion: "1.5.6",
     });
 
-    await assert.rejects(
-      characterizeStardewTargetVersion({ gamePath: tempDir, runner: mockRunner }),
-      (error) => {
-        assert.equal(error.code, "target_installation_mismatch");
-        assert.match(error.message, /Expected Stardew 1.6.15 build 24356/);
-        assert.match(error.message, /1.5.6.22010/);
-        return true;
-      },
-    );
+    await assert.rejects(characterizeStardewTargetVersion({ gamePath: tempDir, runner: mockRunner }), (error) => {
+      assert.equal(error.code, "target_installation_mismatch");
+      assert.match(error.message, /Expected Stardew 1.6.15 build 24356/);
+      assert.match(error.message, /1.5.6.22010/);
+      return true;
+    });
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

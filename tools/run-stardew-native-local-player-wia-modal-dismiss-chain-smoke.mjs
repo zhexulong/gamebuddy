@@ -15,7 +15,13 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const SCENARIO = "native_wia_modal_dismiss_chain_v1";
 const EXPECTED_ACTIONS = ["cancel_active_execution", "dismiss_modal", "move_to_tile", "travel", "observe_scene"];
-const REQUIRED_CAPABILITIES = ["cancel_active_execution", "move_to_tile", "observe_scene", "travel", "dismiss_modal"].sort();
+const REQUIRED_CAPABILITIES = [
+  "cancel_active_execution",
+  "move_to_tile",
+  "observe_scene",
+  "travel",
+  "dismiss_modal",
+].sort();
 
 /**
  * WIA §4.2 full modal-handling chain live proof:
@@ -137,7 +143,9 @@ export async function runWiaModalDismissChain(
       minRevision: interrupted.revision,
       timeoutMs: postconditionTimeoutMs,
     });
-    const accepted2 = await execute("dismiss", "dismiss_modal", {}, fresh2, trace, client, { requireActionable: false });
+    const accepted2 = await execute("dismiss", "dismiss_modal", {}, fresh2, trace, client, {
+      requireActionable: false,
+    });
     // dismiss_modal is instantaneous: the bridge immediate response IS the
     // terminal (succeeded/modal_dismissed). Accept either that or the
     // accepted-then-journal-terminal shape.
@@ -161,10 +169,14 @@ export async function runWiaModalDismissChain(
     trace.push({ step: "observed", action: "dismiss_modal", evidence: dismissEvidence });
 
     // ---- phase 3: resume (resumption leg) ----
-    const fresh3 = await waitForActionable(client, await waitForFreshSnapshot(client, {
-      minRevision: dismissed.revision,
-      timeoutMs: postconditionTimeoutMs,
-    }), stabilizeTimeoutMs);
+    const fresh3 = await waitForActionable(
+      client,
+      await waitForFreshSnapshot(client, {
+        minRevision: dismissed.revision,
+        timeoutMs: postconditionTimeoutMs,
+      }),
+      stabilizeTimeoutMs,
+    );
     if (fresh3.activeExecution != null) throw new Error("resume_player_busy_after_dismiss");
     const accepted3 = await execute("resume", "move_to_tile", { x: target.x, y: target.y }, fresh3, trace, client);
     if (accepted3.state !== "accepted") throw new Error(`resume_not_accepted:${accepted3.reasonCode}`);
@@ -354,7 +366,12 @@ function parseTargetCoordinates(value) {
 }
 function validateNativeLocalFixtureConfig(value) {
   if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-  if (value.Portfolio?.Enable === true || value.HostAutomation?.Enable === true || value.HostFarmhandProvisioning?.Enable === true || value.FarmhandProvisioner?.Enable === true)
+  if (
+    value.Portfolio?.Enable === true ||
+    value.HostAutomation?.Enable === true ||
+    value.HostFarmhandProvisioning?.Enable === true ||
+    value.FarmhandProvisioner?.Enable === true
+  )
     throw new Error("native_local_fixture_topology_not_isolated");
   validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }

@@ -40,7 +40,13 @@ const bun = (args, cwd) => execFileSync("cmd", ["/c", "bun", ...args], { cwd, en
 
 const currentPrompt = () => readFileSync(promptFile, "utf8");
 const legacyPrompt = () => `${git("show", `${VOICE_COMMIT}^:${promptPath}`).trimEnd()}\n`;
-const restorePrompt = () => git("checkout", "--", promptPath, "packages/plugin/src/hooks/magic-context/ongoing-interaction-historian-prompt.generated.ts");
+const restorePrompt = () =>
+  git(
+    "checkout",
+    "--",
+    promptPath,
+    "packages/plugin/src/hooks/magic-context/ongoing-interaction-historian-prompt.generated.ts",
+  );
 
 function setPrompt(text) {
   writeFileSync(promptFile, `${text.trimEnd()}\n`);
@@ -97,7 +103,8 @@ function runFixture() {
     rmSync(config, { force: true });
   }
   const kept = /kept root: (.+)/u.exec(out);
-  if (kept === null) throw new Error(`the fixture reported no kept root: ${out.trim().split("\n").slice(-3).join(" | ")}`);
+  if (kept === null)
+    throw new Error(`the fixture reported no kept root: ${out.trim().split("\n").slice(-3).join(" | ")}`);
   return kept[1].trim();
 }
 

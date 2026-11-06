@@ -48,21 +48,24 @@ export async function runMineElevatorSmoke(client, receipts, config, { floorsTim
     assertRequiredCapabilities(before, EXPECTED_CAPABILITIES);
 
     const floorsBefore = readFloorTargets(before);
-    if (floorsBefore.length === 0)
-      throw new Error(`mine_elevator_no_floors_advertised:location=${before.location}`);
+    if (floorsBefore.length === 0) throw new Error(`mine_elevator_no_floors_advertised:location=${before.location}`);
 
     // Pick a floor that is neither the entrance nor the current one: selecting the
     // current floor is a native no-op the action refuses, and floor 0 is a different
     // native path ("return to the entrance"), so neither proves a floor change.
     const chosen = floorsBefore.find((f) => !f.isMineEntrance && !f.isCurrentFloor);
-    if (!chosen)
-      throw new Error(
-        `mine_elevator_no_selectable_floor:${floorsBefore.map((f) => f.floor).join("/")}`,
-      );
+    if (!chosen) throw new Error(`mine_elevator_no_selectable_floor:${floorsBefore.map((f) => f.floor).join("/")}`);
 
-    const dispatched = await execute(client, trace, "select", "select_mine_elevator_floor", {
-      expectedTargetId: chosen.targetId,
-    }, before);
+    const dispatched = await execute(
+      client,
+      trace,
+      "select",
+      "select_mine_elevator_floor",
+      {
+        expectedTargetId: chosen.targetId,
+      },
+      before,
+    );
 
     // The dispatch is accepted, not terminal: Game1.enterMine performs a warp, and the
     // single terminal arrives on the Warped edge (measured live: reading the level in

@@ -5,7 +5,7 @@ import { runMachineCollectOutputSmoke } from "./run-stardew-native-local-player-
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", "machine_load", "machine_collect_output"];
 
 const COLLECT_EVIDENCE =
-  "location=Farm;target=machine-1;tile=5,6;machine=(BC)12;output=(O)395;input=(O)433;ready_before=true;minutes_until_ready_before=0;inventory_coffee_before=0;inventory_coffee_after=1;held_after=none;ready_after=false;native_check_action=true";
+  "location=Farm;target=machine-1;tile=5,6;machine=(BC)12;output=(O)395;output_stack=1;input=(O)433;ready_before=true;minutes_until_ready_before=0;inventory_output_before=0;inventory_output_after=1;held_after=none;ready_after=false;native_check_action=true";
 
 function fixtureConfig(overrides = {}) {
   return {

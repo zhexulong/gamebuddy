@@ -168,16 +168,16 @@ compareStage(
   after.interaction?.passed ?? null,
   "companion interaction gate",
 );
-compareStage("agentTurn.settled", base.agentTurn?.settled ?? null, after.agentTurn?.settled ?? null, "agent turn settled");
+compareStage(
+  "agentTurn.settled",
+  base.agentTurn?.settled ?? null,
+  after.agentTurn?.settled ?? null,
+  "agent turn settled",
+);
 compareStage("voice.state", base.voice?.state ?? null, after.voice?.state ?? null, "voice lane result");
 
 for (const stage of Object.keys(base.receipts)) {
-  compareStage(
-    `receipt.${stage}`,
-    base.receipts[stage],
-    after.receipts[stage],
-    "stage receipt reason code",
-  );
+  compareStage(`receipt.${stage}`, base.receipts[stage], after.receipts[stage], "stage receipt reason code");
 }
 
 const regressions = rows.filter((row) => row.verdict === "regression");

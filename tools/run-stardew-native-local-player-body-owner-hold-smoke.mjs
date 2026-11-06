@@ -72,7 +72,9 @@ export async function runBodyOwnerHoldSmoke(
     // gate needs no soil adjacency - only an idle actor on the Farm and a target far enough away to still be
     // walking when the second directive is issued - so the step is omitted rather than worked around.
     if (snapshot.actionable !== true || snapshot.activeExecution != null)
-      throw new Error(`body_owner_hold_not_idle:actionable=${snapshot.actionable};active=${snapshot.activeExecution?.action}`);
+      throw new Error(
+        `body_owner_hold_not_idle:actionable=${snapshot.actionable};active=${snapshot.activeExecution?.action}`,
+      );
 
     // The walk: a target far enough away that it cannot complete before the next request is issued. The soil
     // tile list gives reachable coordinates, and the farthest of them is used precisely to create that window.
@@ -114,7 +116,9 @@ export async function runBodyOwnerHoldSmoke(
     // Name this failure locally: the harness reports a bare `native_terminal_receipt_missing_or_stale`, which
     // does not say WHICH walk had no terminal, and "the walk I just superseded never ended" is the whole point.
     const superseded = await waitForTerminal(receipts, firstAccepted, terminalTimeoutMs).catch((error) => {
-      throw new Error(`body_owner_supersede_missing:first_walk_had_no_terminal:${String(error instanceof Error ? error.message : error)}`);
+      throw new Error(
+        `body_owner_supersede_missing:first_walk_had_no_terminal:${String(error instanceof Error ? error.message : error)}`,
+      );
     });
     const supersededEvidence = superseded.evidence == null ? {} : parseStrictEvidence(superseded.evidence);
     const supersede = {
@@ -132,7 +136,9 @@ export async function runBodyOwnerHoldSmoke(
     // the second request arrives. Both are honest outcomes; what is NOT honest is a second acceptance that
     // leaves the first execution unaccounted for.
     if (!supersede.firstIsTerminal || !supersede.firstReasonReported || !supersede.reasonMatchesGuidance)
-      throw new Error(`body_owner_supersede_missing:${JSON.stringify(supersede)};state=${superseded.state};reason=${superseded.reasonCode}`);
+      throw new Error(
+        `body_owner_supersede_missing:${JSON.stringify(supersede)};state=${superseded.state};reason=${superseded.reasonCode}`,
+      );
 
     const secondTerminal = await waitForTerminal(receipts, secondAccepted, terminalTimeoutMs);
     if (!["succeeded", "rejected", "invalidated", "cancelled", "uncertain"].includes(secondTerminal.state))
@@ -253,8 +259,6 @@ async function executeWalking(phase, action, args, snapshot, trace, client) {
 function singleRequestFor(snapshot) {
   return { ...snapshot, activeExecution: null };
 }
-
-
 
 // The CLI entry point. Its ABSENCE was a real defect: the harness runs this file directly, so a runner without
 // it imports the module and exits 0 - the batch read that as PASS while nothing had run at all, and the same

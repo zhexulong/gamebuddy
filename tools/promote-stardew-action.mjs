@@ -56,8 +56,13 @@
  *               with the world the runner is handed (`""` means "no scenario", and
  *               the row then omits the fifth argument and the id does not enter
  *               the fixture-backed list);
- *   terminal    the action's EMITTED success receipt code, corroborated against
- *               the runner source that asserts it.
+ *   terminal    the action's EMITTED success receipt code, read from a RECORDED
+ *               RUN in one of the two durable stores `check-stardew-action-promotion.mjs`
+ *               describes (the receipt corpus, or a
+ *               `gamebuddy-stardew-native-local-live-run-evidence/v1` bundle), then
+ *               corroborated against the runner source that asserts it. With no
+ *               recorded run the tool falls back to the runner's single verdict
+ *               and refuses outright when the runner asserts more than one.
  *
  * The terminal is deliberately NOT the Mod descriptor's `postcondition.name`.
  * They usually agree, but they are different fields: `talk_to_npc`'s descriptor
@@ -82,6 +87,7 @@ import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readDurableLiveEvidence } from "./check-stardew-action-promotion.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -92,7 +98,6 @@ export const PROMOTION_PATHS = Object.freeze({
   gateDescriptors: "tools/stardew-action-gate-descriptors.mjs",
   descriptorTest: "tools/stardew-action-gate-descriptors.test.mjs",
   modCatalog: "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
-  receiptCorpus: "host/src/test-fixtures/stardew-live-receipts.json",
 });
 
 /** The six responsibilities, in order, for the operator-facing report. */
@@ -480,21 +485,19 @@ export function runPromotionGates({ root, gates = PROMOTION_GATES, spawn = spawn
 
 /** Read the real repository's promotion sources. */
 export async function readPromotionSources({ root = ROOT } = {}) {
-  const [gateDescriptors, descriptorTest, modCatalog] = await Promise.all([
+  const [gateDescriptors, descriptorTest, modCatalog, durable] = await Promise.all([
     readFile(resolve(root, PROMOTION_PATHS.gateDescriptors), "utf8"),
     readFile(resolve(root, PROMOTION_PATHS.descriptorTest), "utf8"),
     readFile(resolve(root, PROMOTION_PATHS.modCatalog), "utf8"),
+    // The recorded runs, not the status file: this is where the terminal comes
+    // from, and both stores are described in `check-stardew-action-promotion.mjs`.
+    readDurableLiveEvidence({ root }),
   ]);
-  let receiptCorpus = { receipts: [] };
-  try {
-    receiptCorpus = JSON.parse(await readFile(resolve(root, PROMOTION_PATHS.receiptCorpus), "utf8"));
-  } catch {
-    receiptCorpus = { receipts: [] };
-  }
+  if (durable.problems.length > 0) throw new Error(durable.problems.join(","));
   return {
     sources: { gateDescriptors, descriptorTest, modCatalog },
     readRunner: (fileName) => readFileSync(resolve(root, "tools", fileName), "utf8"),
-    receiptCorpus,
+    receiptCorpus: { receipts: durable.receipts },
   };
 }
 

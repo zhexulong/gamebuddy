@@ -17,7 +17,7 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
-const ACTION = "advance_day";
+const ACTION = "sleep";
 const DISMISS_ACTION = "dismiss_modal";
 const SCENARIO = "native_multi_day_v1";
 const REQUIRED_CAPABILITIES = [ACTION, DISMISS_ACTION];

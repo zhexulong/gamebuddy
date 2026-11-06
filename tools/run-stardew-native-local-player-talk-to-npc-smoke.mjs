@@ -171,7 +171,12 @@ const SHARED_WORLD_ACTIONABLE_POLL_MS = 100;
  * discovery projection the Mod publishes (the same list npc_relationship and
  * interact_npc_with_item read), and the Mod re-resolves the person on the game thread.
  */
-export async function runTalkToNpcSmoke(client, receipts, config, { terminalTimeoutMs = 5_000, stepTimeoutMs = SHARED_WORLD_STEP_TIMEOUT_MS } = {}) {
+export async function runTalkToNpcSmoke(
+  client,
+  receipts,
+  config,
+  { terminalTimeoutMs = 5_000, stepTimeoutMs = SHARED_WORLD_STEP_TIMEOUT_MS } = {},
+) {
   const trace = [];
   const topology = classifyTopology(config);
   try {
@@ -181,7 +186,9 @@ export async function runTalkToNpcSmoke(client, receipts, config, { terminalTime
     );
     assertRequiredCapabilities(
       snapshot,
-      topology === "shared_world_farmhand" ? [...REQUIRED_CAPABILITIES, ...SHARED_WORLD_WALK_CAPABILITIES] : REQUIRED_CAPABILITIES,
+      topology === "shared_world_farmhand"
+        ? [...REQUIRED_CAPABILITIES, ...SHARED_WORLD_WALK_CAPABILITIES]
+        : REQUIRED_CAPABILITIES,
     );
     // The actor's location is the CLIENT's own Given. In the shared world the Farmhand joins in its
     // own Cabin interior, and no shipped villager dialogue table has a key reachable from there - so
@@ -399,14 +406,25 @@ export async function runTalkToNpcSmoke(client, receipts, config, { terminalTime
  * a native `talk_to_npc_not_handled` reached from the wrong map looks like a product
  * defect.
  */
-async function walkSharedWorldActorToTalk(client, receipts, trace, { navigationTimeoutMs, stepTimeoutMs, navigationAttempts }) {
+async function walkSharedWorldActorToTalk(
+  client,
+  receipts,
+  trace,
+  { navigationTimeoutMs, stepTimeoutMs, navigationAttempts },
+) {
   // One guard over the WHOLE walk, so every await inside it - the search, the navigation dispatch,
   // the drive, the approach, the adjacent move - is covered by construction. The context is
   // mutable and updated as the walk progresses, so whatever goes wrong can be reported with where
   // the walk had got to.
   const context = { phase: "start", attempt: 0, location: null, tile: null, lastHop: "none" };
   try {
-    const arrived = await walkSharedWorldActorToDestination(client, receipts, trace, { navigationTimeoutMs, stepTimeoutMs, navigationAttempts }, context);
+    const arrived = await walkSharedWorldActorToDestination(
+      client,
+      receipts,
+      trace,
+      { navigationTimeoutMs, stepTimeoutMs, navigationAttempts },
+      context,
+    );
     context.phase = "stand_adjacent";
     return await standAdjacentToVillager(client, receipts, trace, arrived, { stepTimeoutMs });
   } catch (error) {
@@ -514,7 +532,9 @@ function chooseWarpItemRoute(snapshot) {
 function describeWarpItemTargets(snapshot) {
   const targets = Array.isArray(snapshot.warpItemTargets) ? snapshot.warpItemTargets : [];
   if (targets.length === 0) return "none";
-  return targets.map((entry) => `${entry?.qualifiedItemId ?? "?"}@slot${entry?.slot ?? "?"}->${entry?.destination ?? "?"}`).join("|");
+  return targets
+    .map((entry) => `${entry?.qualifiedItemId ?? "?"}@slot${entry?.slot ?? "?"}->${entry?.destination ?? "?"}`)
+    .join("|");
 }
 
 /**
@@ -562,8 +582,17 @@ function formatTile(tile) {
  * is actually standing on is the cheaper thing to reason about, and the trace records which
  * search answered which attempt, with the full answer.
  */
-async function walkSharedWorldActorToDestination(client, receipts, trace, { navigationTimeoutMs, stepTimeoutMs, navigationAttempts }, context) {
-  let current = await observeTopologySnapshot(client, "shared_world_farmhand", { actionable: true, timeoutMs: stepTimeoutMs });
+async function walkSharedWorldActorToDestination(
+  client,
+  receipts,
+  trace,
+  { navigationTimeoutMs, stepTimeoutMs, navigationAttempts },
+  context,
+) {
+  let current = await observeTopologySnapshot(client, "shared_world_farmhand", {
+    actionable: true,
+    timeoutMs: stepTimeoutMs,
+  });
   if (current.location === SHARED_WORLD_DECLARED_LOCATION) return current;
   // Where the walk has already stood. A hop back into a map it left is how a bounded walk oscillates
   // instead of progressing, so a visited location is not a FORWARD hop target - but it may be
@@ -584,7 +613,10 @@ async function walkSharedWorldActorToDestination(client, receipts, trace, { navi
     context.tile = current.tile ?? null;
     if (current.location === SHARED_WORLD_DECLARED_LOCATION) {
       context.phase = "arrive_observe";
-      return await observeTopologySnapshot(client, "shared_world_farmhand", { actionable: true, timeoutMs: stepTimeoutMs });
+      return await observeTopologySnapshot(client, "shared_world_farmhand", {
+        actionable: true,
+        timeoutMs: stepTimeoutMs,
+      });
     }
 
     context.phase = "search";
@@ -653,7 +685,10 @@ async function walkSharedWorldActorToDestination(client, receipts, trace, { navi
 
     if (terminal.state === "succeeded" && terminal.reasonCode === "navigation_completed") {
       context.phase = "navigate_arrival_observe";
-      const at = await observeTopologySnapshot(client, "shared_world_farmhand", { actionable: true, timeoutMs: stepTimeoutMs });
+      const at = await observeTopologySnapshot(client, "shared_world_farmhand", {
+        actionable: true,
+        timeoutMs: stepTimeoutMs,
+      });
       if (at.location !== SHARED_WORLD_DECLARED_LOCATION)
         throw new Error(
           `talk_to_npc_shared_world_walk_navigation_location_mismatch:${at.location ?? "unknown"}` +
@@ -697,7 +732,11 @@ async function walkSharedWorldActorToDestination(client, receipts, trace, { navi
         arrived = hop.arrived;
         break;
       }
-      tried.push({ target: candidate.entry.targetLocation, source: { x: candidate.entry.sourceX, y: candidate.entry.sourceY }, refusals: hop.refusals });
+      tried.push({
+        target: candidate.entry.targetLocation,
+        source: { x: candidate.entry.sourceX, y: candidate.entry.sourceY },
+        refusals: hop.refusals,
+      });
       refusedTransitions.add(`${candidate.entry.targetLocation}@${candidate.entry.sourceX},${candidate.entry.sourceY}`);
       // Pace the refusals: see SHARED_WORLD_REJECTED_CANDIDATE_PAUSE_MS.
       await delay(SHARED_WORLD_REJECTED_CANDIDATE_PAUSE_MS);
@@ -754,14 +793,24 @@ async function walkSharedWorldActorToDestination(client, receipts, trace, { navi
  * budget walks around a detour and why a walk that cannot progress stops with every candidate
  * and its search state named.
  */
-async function chooseProductHop(client, snapshot, visited, trace, { cameFrom = null, retreatAllowed = false, refusedTransitions = new Set() } = {}) {
+async function chooseProductHop(
+  client,
+  snapshot,
+  visited,
+  trace,
+  { cameFrom = null, retreatAllowed = false, refusedTransitions = new Set() } = {},
+) {
   const transitions = locationTransitions(snapshot)
     .slice(0, SHARED_WORLD_HOP_CANDIDATE_LIMIT)
     .filter((entry) => !refusedTransitions.has(`${entry.targetLocation}@${entry.sourceX},${entry.sourceY}`));
   const probes = [];
   for (const entry of transitions) probes.push({ entry, answer: await probeHopCandidate(client, entry) });
-  const goal = probes.filter(({ entry }) => entry.targetLocation === SHARED_WORLD_DECLARED_LOCATION && !visited.has(entry.targetLocation));
-  const forward = probes.filter(({ entry }) => !visited.has(entry.targetLocation) && entry.targetLocation !== SHARED_WORLD_DECLARED_LOCATION);
+  const goal = probes.filter(
+    ({ entry }) => entry.targetLocation === SHARED_WORLD_DECLARED_LOCATION && !visited.has(entry.targetLocation),
+  );
+  const forward = probes.filter(
+    ({ entry }) => !visited.has(entry.targetLocation) && entry.targetLocation !== SHARED_WORLD_DECLARED_LOCATION,
+  );
   // Prefer a target the product's own search can NAME. Reported per candidate in the trace, and it
   // is a preference and not a gate: measured live, the search answered `not_found` for a neighbour
   // whose transition drove perfectly, so an unnamed neighbour must still be taken when it is all
@@ -821,7 +870,10 @@ async function probeHopCandidate(client, entry) {
 function describeHopCandidates(probes) {
   if (probes.length === 0) return "none";
   return probes
-    .map(({ entry, answer }) => `${entry.targetLocation}@${entry.sourceX},${entry.sourceY}=${answer.status ?? "?"}/${answer.unlockState ?? "?"}`)
+    .map(
+      ({ entry, answer }) =>
+        `${entry.targetLocation}@${entry.sourceX},${entry.sourceY}=${answer.status ?? "?"}/${answer.unlockState ?? "?"}`,
+    )
     .join("|");
 }
 
@@ -928,7 +980,9 @@ async function observeActionableActor(client, timeoutMs) {
   let held = null;
   let polls = 0;
   while (Date.now() < deadline) {
-    held = await observeTopologySnapshot(client, "shared_world_farmhand", { timeoutMs: Math.max(1, deadline - Date.now()) });
+    held = await observeTopologySnapshot(client, "shared_world_farmhand", {
+      timeoutMs: Math.max(1, deadline - Date.now()),
+    });
     polls++;
     if (held.actionable === true && held.activeExecution == null) return { snapshot: held, held: null, polls };
     await delay(SHARED_WORLD_ACTIONABLE_POLL_MS);
@@ -991,20 +1045,34 @@ async function takeTransition(client, receipts, trace, transition, timeoutMs, co
       trace.push({ step: action, source, attempt, receipt: summarizeReceipt(terminal) });
       if (terminal.state !== "succeeded") {
         if (attempt === 0 && SHARED_WORLD_TRANSITION_RANGE_REASONS.includes(terminal.reasonCode)) {
-          const closer = await approachTransitionSource(client, receipts, trace, source, timeoutMs, refusals, { force: true });
+          const closer = await approachTransitionSource(client, receipts, trace, source, timeoutMs, refusals, {
+            force: true,
+          });
           if (closer !== null) {
             snapshot = closer;
             continue;
           }
         }
-        refusals.push({ action, state: terminal.state, reasonCode: terminal.reasonCode, sourceX: source.x, sourceY: source.y });
+        refusals.push({
+          action,
+          state: terminal.state,
+          reasonCode: terminal.reasonCode,
+          sourceX: source.x,
+          sourceY: source.y,
+        });
         break;
       }
       const after = await observeTopologySnapshot(client, "shared_world_farmhand", { timeoutMs });
       if (after.location === transition.targetLocation) return { arrived: after, refusals };
       // The call succeeded and the actor is somewhere else: name where it went instead of
       // reading as a refusal.
-      refusals.push({ action, state: terminal.state, reasonCode: `arrived_at_${after.location ?? "unknown"}`, sourceX: source.x, sourceY: source.y });
+      refusals.push({
+        action,
+        state: terminal.state,
+        reasonCode: `arrived_at_${after.location ?? "unknown"}`,
+        sourceX: source.x,
+        sourceY: source.y,
+      });
       break;
     }
   }
@@ -1037,13 +1105,28 @@ async function moveActorOntoTile(client, receipts, trace, tile, timeoutMs) {
   // `target_enclosed`, `route_exists_cardinal`, `component_tiles`. Summarising the receipt threw
   // all of it away, which is why the terrain question stayed open across three rounds while the
   // answer rode on every refusal.
-  trace.push({ step: "move_to_tile", tile, receipt: summarizeReceipt(terminal), evidence: receiptEvidenceDetail(terminal) });
+  trace.push({
+    step: "move_to_tile",
+    tile,
+    receipt: summarizeReceipt(terminal),
+    evidence: receiptEvidenceDetail(terminal),
+  });
   if (terminal.state !== "succeeded" || terminal.reasonCode !== "target_reached")
     return {
       arrived: null,
-      refusal: { action: "move_to_tile", state: terminal.state, reasonCode: terminal.reasonCode, sourceX: tile.x, sourceY: tile.y, evidence: receiptEvidenceDetail(terminal) },
+      refusal: {
+        action: "move_to_tile",
+        state: terminal.state,
+        reasonCode: terminal.reasonCode,
+        sourceX: tile.x,
+        sourceY: tile.y,
+        evidence: receiptEvidenceDetail(terminal),
+      },
     };
-  return { arrived: await observeTopologySnapshot(client, "shared_world_farmhand", { actionable: true, timeoutMs }), refusal: null };
+  return {
+    arrived: await observeTopologySnapshot(client, "shared_world_farmhand", { actionable: true, timeoutMs }),
+    refusal: null,
+  };
 }
 
 /**
@@ -1063,7 +1146,13 @@ async function standAdjacentToVillager(client, receipts, trace, snapshot, { step
         `:tile=${formatTile(snapshot.tile)}:published=${describePublishedVillagers(snapshot)}`,
     );
   if (adjacentTile(snapshot.tile, located.tile)) {
-    trace.push({ step: "stand_adjacent", villager: located.npcName, tile: located.tile, source: located.source, actorTile: snapshot.tile });
+    trace.push({
+      step: "stand_adjacent",
+      villager: located.npcName,
+      tile: located.tile,
+      source: located.source,
+      actorTile: snapshot.tile,
+    });
     return snapshot;
   }
   const candidates = candidateStandingTiles(located.tile).filter(
@@ -1075,7 +1164,13 @@ async function standAdjacentToVillager(client, receipts, trace, snapshot, { step
     const after = moved.arrived;
     const fresh = locateVillagerTile(after) ?? located;
     if (adjacentTile(after.tile, fresh.tile)) {
-      trace.push({ step: "stand_adjacent", villager: fresh.npcName, tile: fresh.tile, source: fresh.source, actorTile: after.tile });
+      trace.push({
+        step: "stand_adjacent",
+        villager: fresh.npcName,
+        tile: fresh.tile,
+        source: fresh.source,
+        actorTile: after.tile,
+      });
       return after;
     }
   }
@@ -1096,7 +1191,8 @@ function locateVillagerTile(snapshot) {
   const target = (snapshot.npcRelationshipTargets ?? []).find(
     (entry) => typeof entry?.npcName === "string" && Number.isInteger(entry.x) && Number.isInteger(entry.y),
   );
-  if (target !== undefined) return { tile: { x: target.x, y: target.y }, source: "npcRelationshipTargets", npcName: target.npcName };
+  if (target !== undefined)
+    return { tile: { x: target.x, y: target.y }, source: "npcRelationshipTargets", npcName: target.npcName };
   const whereabouts = (snapshot.villagerWhereabouts ?? []).find(
     (entry) =>
       typeof entry?.npcName === "string" &&
@@ -1105,12 +1201,19 @@ function locateVillagerTile(snapshot) {
       Number.isInteger(entry.y),
   );
   if (whereabouts !== undefined)
-    return { tile: { x: whereabouts.x, y: whereabouts.y }, source: "villagerWhereabouts", npcName: whereabouts.npcName };
+    return {
+      tile: { x: whereabouts.x, y: whereabouts.y },
+      source: "villagerWhereabouts",
+      npcName: whereabouts.npcName,
+    };
   return null;
 }
 
 /** Every villager the snapshot publishes here, for a named failure. */
-function describePublishedVillagers(snapshot) {  const near = (snapshot.npcRelationshipTargets ?? []).map((entry) => `${entry?.npcName ?? "?"}@${entry?.x},${entry?.y}`);
+function describePublishedVillagers(snapshot) {
+  const near = (snapshot.npcRelationshipTargets ?? []).map(
+    (entry) => `${entry?.npcName ?? "?"}@${entry?.x},${entry?.y}`,
+  );
   const world = (snapshot.villagerWhereabouts ?? [])
     .filter((entry) => entry?.location === snapshot.location)
     .map((entry) => `${entry?.npcName ?? "?"}@${entry?.x},${entry?.y}`);
@@ -1196,7 +1299,9 @@ function describeSelector(selector) {
 /** Every native form a hop tried, with ITS OWN reason code and the tile it aimed at. */
 function describeRefusals(refusals) {
   if (refusals.length === 0) return "none";
-  return refusals.map((entry) => `${entry.action}:${entry.state}/${entry.reasonCode}@${entry.sourceX},${entry.sourceY}`).join("|");
+  return refusals
+    .map((entry) => `${entry.action}:${entry.state}/${entry.reasonCode}@${entry.sourceX},${entry.sourceY}`)
+    .join("|");
 }
 
 /**

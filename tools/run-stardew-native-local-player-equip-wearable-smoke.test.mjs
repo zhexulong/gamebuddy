@@ -60,11 +60,36 @@ function world({ hatOccupant = null, sourceSlotPresent = true } = {}) {
         occupantQualifiedItemId: hatOccupant,
         occupantDisplayName: hatOccupant === null ? null : "Hat",
       },
-      { targetId: "wearable_boots_state_empty", bodySlot: "boots", occupantQualifiedItemId: null, occupantDisplayName: null },
-      { targetId: "wearable_shirt_state_empty", bodySlot: "shirt", occupantQualifiedItemId: null, occupantDisplayName: null },
-      { targetId: "wearable_pants_state_empty", bodySlot: "pants", occupantQualifiedItemId: null, occupantDisplayName: null },
-      { targetId: "wearable_left_ring_state_empty", bodySlot: "left_ring", occupantQualifiedItemId: null, occupantDisplayName: null },
-      { targetId: "wearable_right_ring_state_empty", bodySlot: "right_ring", occupantQualifiedItemId: null, occupantDisplayName: null },
+      {
+        targetId: "wearable_boots_state_empty",
+        bodySlot: "boots",
+        occupantQualifiedItemId: null,
+        occupantDisplayName: null,
+      },
+      {
+        targetId: "wearable_shirt_state_empty",
+        bodySlot: "shirt",
+        occupantQualifiedItemId: null,
+        occupantDisplayName: null,
+      },
+      {
+        targetId: "wearable_pants_state_empty",
+        bodySlot: "pants",
+        occupantQualifiedItemId: null,
+        occupantDisplayName: null,
+      },
+      {
+        targetId: "wearable_left_ring_state_empty",
+        bodySlot: "left_ring",
+        occupantQualifiedItemId: null,
+        occupantDisplayName: null,
+      },
+      {
+        targetId: "wearable_right_ring_state_empty",
+        bodySlot: "right_ring",
+        occupantQualifiedItemId: null,
+        occupantDisplayName: null,
+      },
     ],
   };
 }
@@ -250,7 +275,8 @@ test("equip_wearable: an unknown target that still moved the world fails the run
   const original = session.client.execute;
   session.client.execute = async (request) => {
     const receipt = await original(request);
-    if (receipt.reasonCode === "wearable_target_not_found") session.client.state.snapshot = equip(session.client.state.snapshot);
+    if (receipt.reasonCode === "wearable_target_not_found")
+      session.client.state.snapshot = equip(session.client.state.snapshot);
     return receipt;
   };
   const result = await session.result();

@@ -5,12 +5,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import {
-OPERATIONAL_GATE_TIMEOUT_MS,
-parseArguments,
-prepareReportTarget,
-runOperationalGateIpc,
-terminateOwnedProcessTree,
-validateGateWindowMode,
+  OPERATIONAL_GATE_TIMEOUT_MS,
+  parseArguments,
+  prepareReportTarget,
+  runOperationalGateIpc,
+  terminateOwnedProcessTree,
+  validateGateWindowMode,
   writeOperationalGateReport,
 } from "./run-game-operational-gate.mjs";
 
@@ -70,17 +70,36 @@ function transportHarness({ stdout = "", terminateResult = true } = {}) {
   return {
     transport,
     stdout,
-    emit(message) { emitter.emit("message", message); },
-    disconnect() { emitter.emit("disconnect"); },
-    error() { emitter.emit("error", new Error("child_error")); },
-    exit(code = 0, signal = null) { emitter.emit("exit", code, signal); },
-    get dispatched() { return dispatched; },
-    get terminateCalls() { return terminateCalls; },
+    emit(message) {
+      emitter.emit("message", message);
+    },
+    disconnect() {
+      emitter.emit("disconnect");
+    },
+    error() {
+      emitter.emit("error", new Error("child_error"));
+    },
+    exit(code = 0, signal = null) {
+      emitter.emit("exit", code, signal);
+    },
+    get dispatched() {
+      return dispatched;
+    },
+    get terminateCalls() {
+      return terminateCalls;
+    },
   };
 }
 
 async function passed(harness, options = {}) {
-  const result = runOperationalGateIpc({ transport: harness.transport, task: "inspect the chest", nonceSha256: nonce, timeoutMs: 200, teardownTimeoutMs: 200, ...options });
+  const result = runOperationalGateIpc({
+    transport: harness.transport,
+    task: "inspect the chest",
+    nonceSha256: nonce,
+    timeoutMs: 200,
+    teardownTimeoutMs: 200,
+    ...options,
+  });
   harness.emit(ready);
   await new Promise((resolve) => setImmediate(resolve));
   harness.emit(terminal);
@@ -118,16 +137,53 @@ test("malformed, foreign, duplicate, stdout-forged, timeout, disconnect, and tea
   const cases = [
     ["malformed ready", (h) => h.emit({ ...ready, extra: true }), "game_task_ready_invalid"],
     ["foreign nonce", (h) => h.emit({ ...ready, nonceSha256: "b".repeat(64) }), "game_task_ready_correlation_mismatch"],
-    ["malformed terminal", async (h) => { h.emit(ready); await new Promise((resolve) => setImmediate(resolve)); h.emit({ ...terminal, transitions: {} }); }, "game_task_terminal_evidence_invalid"],
-    ["foreign terminal", async (h) => { h.emit(ready); await new Promise((resolve) => setImmediate(resolve)); h.emit({ ...terminal, piSessionId: "foreign_pi" }); }, "game_task_terminal_evidence_correlation_mismatch"],
-    ["duplicate ready", async (h) => { h.emit(ready); await new Promise((resolve) => setImmediate(resolve)); h.emit(ready); }, "game_task_ready_duplicate"],
+    [
+      "malformed terminal",
+      async (h) => {
+        h.emit(ready);
+        await new Promise((resolve) => setImmediate(resolve));
+        h.emit({ ...terminal, transitions: {} });
+      },
+      "game_task_terminal_evidence_invalid",
+    ],
+    [
+      "foreign terminal",
+      async (h) => {
+        h.emit(ready);
+        await new Promise((resolve) => setImmediate(resolve));
+        h.emit({ ...terminal, piSessionId: "foreign_pi" });
+      },
+      "game_task_terminal_evidence_correlation_mismatch",
+    ],
+    [
+      "duplicate ready",
+      async (h) => {
+        h.emit(ready);
+        await new Promise((resolve) => setImmediate(resolve));
+        h.emit(ready);
+      },
+      "game_task_ready_duplicate",
+    ],
     ["disconnect", (h) => h.disconnect(), "game_task_disconnect"],
     ["child error", (h) => h.error(), "production_wrapper_process_error"],
-    ["stdout forgery", async (h) => { assert.match(h.stdout, /gamebuddy-game-operational-gate-evidence\/v2/); await new Promise((resolve) => setTimeout(resolve, 5)); }, "harness_timeout"],
+    [
+      "stdout forgery",
+      async (h) => {
+        assert.match(h.stdout, /gamebuddy-game-operational-gate-evidence\/v2/);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      },
+      "harness_timeout",
+    ],
   ];
   for (const [name, trigger, reason] of cases) {
     const h = transportHarness({ stdout: name === "stdout forgery" ? JSON.stringify(terminal) : "" });
-    const resultPromise = runOperationalGateIpc({ transport: h.transport, task: "inspect", nonceSha256: nonce, timeoutMs: name === "stdout forgery" ? 20 : 200, teardownTimeoutMs: 30 });
+    const resultPromise = runOperationalGateIpc({
+      transport: h.transport,
+      task: "inspect",
+      nonceSha256: nonce,
+      timeoutMs: name === "stdout forgery" ? 20 : 200,
+      teardownTimeoutMs: 30,
+    });
     await trigger(h);
     const result = await resultPromise;
     assert.deepEqual(
@@ -141,7 +197,13 @@ test("malformed, foreign, duplicate, stdout-forged, timeout, disconnect, and tea
   }
 
   const duplicateTerminal = transportHarness();
-  const duplicateResult = runOperationalGateIpc({ transport: duplicateTerminal.transport, task: "inspect", nonceSha256: nonce, timeoutMs: 200, teardownTimeoutMs: 200 });
+  const duplicateResult = runOperationalGateIpc({
+    transport: duplicateTerminal.transport,
+    task: "inspect",
+    nonceSha256: nonce,
+    timeoutMs: 200,
+    teardownTimeoutMs: 200,
+  });
   duplicateTerminal.emit(ready);
   await new Promise((resolve) => setImmediate(resolve));
   duplicateTerminal.emit(terminal);
@@ -149,7 +211,13 @@ test("malformed, foreign, duplicate, stdout-forged, timeout, disconnect, and tea
   assert.deepEqual(await duplicateResult, { state: "BLOCKED", reasonCode: "game_task_terminal_evidence_duplicate" });
 
   const timeout = transportHarness({ terminateResult: true });
-  const timedOut = await runOperationalGateIpc({ transport: timeout.transport, task: "inspect", nonceSha256: nonce, timeoutMs: 5, teardownTimeoutMs: 30 });
+  const timedOut = await runOperationalGateIpc({
+    transport: timeout.transport,
+    task: "inspect",
+    nonceSha256: nonce,
+    timeoutMs: 5,
+    teardownTimeoutMs: 30,
+  });
   assert.deepEqual(timedOut, { state: "GATE_FAILED", reasonCode: "harness_timeout" });
 
   const teardown = transportHarness({ terminateResult: false });
@@ -159,7 +227,13 @@ test("malformed, foreign, duplicate, stdout-forged, timeout, disconnect, and tea
   // A real forced-kill teardown (taskkill /T /F) leaves the victim with a
   // non-zero exit code; that must not downgrade an already-PASSED outcome.
   const forcedKill = transportHarness({ terminateResult: true });
-  const forcedKillResult = runOperationalGateIpc({ transport: forcedKill.transport, task: "inspect the chest", nonceSha256: nonce, timeoutMs: 200, teardownTimeoutMs: 200 });
+  const forcedKillResult = runOperationalGateIpc({
+    transport: forcedKill.transport,
+    task: "inspect the chest",
+    nonceSha256: nonce,
+    timeoutMs: 200,
+    teardownTimeoutMs: 200,
+  });
   forcedKill.emit(ready);
   await new Promise((resolve) => setImmediate(resolve));
   forcedKill.emit(terminal);
@@ -204,11 +278,14 @@ test("process-tree termination uses the exact owned PID and fails closed when th
 });
 
 test("fixture contains only schema, natural language task, target facts, and environment facts", async () => {
-  const fixture = JSON.parse(await readFile(new URL("../fixtures/stardew/game-operational-task.example.json", import.meta.url), "utf8"));
+  const fixture = JSON.parse(
+    await readFile(new URL("../fixtures/stardew/game-operational-task.example.json", import.meta.url), "utf8"),
+  );
   assert.deepEqual(Object.keys(fixture).sort(), ["environment", "profile", "schema", "targetVersion", "task"]);
   assert.equal(typeof fixture.task, "string");
   assert.doesNotMatch(fixture.task, /\b(?:walk|inspect|put|equip|use|move|route|then|after)\b/i);
-  for (const key of ["actions", "routes", "tools", "capabilitySubset", "budget"]) assert.equal(Object.hasOwn(fixture, key), false);
+  for (const key of ["actions", "routes", "tools", "capabilitySubset", "budget"])
+    assert.equal(Object.hasOwn(fixture, key), false);
   assert.equal(fixture.environment.platform, "windows");
 });
 
@@ -244,8 +321,14 @@ test("current owner records both predecessors as closed and the direct route as 
 test("runner source uses the production launcher-owned manifest and fresh STOP composition", async () => {
   const source = await readFile(new URL("./run-game-operational-gate.mjs", import.meta.url), "utf8");
   const launcher = await readFile(new URL("../host/scripts/start-production-artifact.mjs", import.meta.url), "utf8");
-  const internalLauncher = await readFile(new URL("../host/scripts/start-artifact.internal.mjs", import.meta.url), "utf8");
-  const controlLaunch = await readFile(new URL("../host/scripts/production-control-launch.mjs", import.meta.url), "utf8");
+  const internalLauncher = await readFile(
+    new URL("../host/scripts/start-artifact.internal.mjs", import.meta.url),
+    "utf8",
+  );
+  const controlLaunch = await readFile(
+    new URL("../host/scripts/production-control-launch.mjs", import.meta.url),
+    "utf8",
+  );
   assert.match(source, /start-production-artifact\.mjs/);
   assert.match(source, /gamebuddy-game-operational-gate-evidence\/v2/);
   assert.match(source, /taskkill\.exe/);
@@ -264,13 +347,25 @@ test("runner source uses the production launcher-owned manifest and fresh STOP c
     source,
     /\[\s*PRODUCTION_LAUNCHER,\s*"main\.js",\s*"--deployment-manifest-ref",\s*config\.deploymentManifestRef,\s*"--operational-nonce",\s*nonceSha256,\s*\]/,
   );
-  assert.match(launcher, /import \{ recheckProductionEntry, resolveProductionEntry \} from "\.\/production-artifact\.mjs"/);
+  assert.match(
+    launcher,
+    /import \{ recheckProductionEntry, resolveProductionEntry \} from "\.\/production-artifact\.mjs"/,
+  );
   assert.match(launcher, /import \{ startArtifact \} from "\.\/start-artifact\.internal\.mjs"/);
-  assert.match(launcher, /await startArtifact\(\{ resolveEntry: resolveProductionEntry, recheckEntry: recheckProductionEntry \}\)/);
-  assert.match(internalLauncher, /const selected = await resolveEntry\(\{ hostRoot, outputRoot: resolve\(hostRoot, "dist"\), entry \}\)/);
+  assert.match(
+    launcher,
+    /await startArtifact\(\{ resolveEntry: resolveProductionEntry, recheckEntry: recheckProductionEntry \}\)/,
+  );
+  assert.match(
+    internalLauncher,
+    /const selected = await resolveEntry\(\{ hostRoot, outputRoot: resolve\(hostRoot, "dist"\), entry \}\)/,
+  );
   assert.match(internalLauncher, /await recheckEntry\(\{ hostRoot, selected \}\)/);
   assert.match(internalLauncher, /await recheckEntry\(\{ hostRoot, selected \}\);[\s\S]*?const child = spawn/);
-  assert.match(internalLauncher, /createProductionChildEnvironment\(entry, process\.env, undefined, undefined, activeStopProofBinding\)/);
+  assert.match(
+    internalLauncher,
+    /createProductionChildEnvironment\(entry, process\.env, undefined, undefined, activeStopProofBinding\)/,
+  );
   assert.match(controlLaunch, /GAMEBUDDY_CONTROL_PIPE/);
   assert.match(controlLaunch, /GAMEBUDDY_CONTROL_TOKEN/);
   assert.match(controlLaunch, /material \?\? mintProductionControlLaunch\(\)/);
@@ -352,8 +447,22 @@ test("gate config rejects gameOperatorConfigPath and any raw Stardew fact field"
     await writeFile(configPath, JSON.stringify({ ...base, gameOperatorConfigPath: "C:\\sentinel.json" }), "utf8");
     const source = await readFile(new URL("./run-game-operational-gate.mjs", import.meta.url), "utf8");
     assert.equal(source.includes("gameOperatorConfigPath"), false);
-    for (const leaked of ["pipeName", "bridgeToken", "launchGeneration", "locator", "profilePath", "sessionId", "pid", "job", "guardianInstanceId"])
-      assert.equal(source.includes(`config.${leaked}`) || source.includes(`parsed.${leaked}`), false, `leaked field: ${leaked}`);
+    for (const leaked of [
+      "pipeName",
+      "bridgeToken",
+      "launchGeneration",
+      "locator",
+      "profilePath",
+      "sessionId",
+      "pid",
+      "job",
+      "guardianInstanceId",
+    ])
+      assert.equal(
+        source.includes(`config.${leaked}`) || source.includes(`parsed.${leaked}`),
+        false,
+        `leaked field: ${leaked}`,
+      );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

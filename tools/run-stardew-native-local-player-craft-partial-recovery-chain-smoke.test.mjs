@@ -162,8 +162,10 @@ test("craft partial chain: partial craft -> store retained -> same recipe now co
         if (calls.filter((entry) => entry.action === "craft_item").length === 1) {
           // Breakpoint: the 999 cap retains one, four leave the backpack, and the
           // backpack stays full so the native debris homing cannot deliver them.
-          const revision = mock.advance({ retainedStack: EXISTING_STACK + BREAKPOINT_GAINED, count: PRODUCED_STACK })
-            .revision;
+          const revision = mock.advance({
+            retainedStack: EXISTING_STACK + BREAKPOINT_GAINED,
+            count: PRODUCED_STACK,
+          }).revision;
           return {
             requestId: request.requestId,
             executionId: "breakpoint-execution",
@@ -171,13 +173,21 @@ test("craft partial chain: partial craft -> store retained -> same recipe now co
             reasonCode: SOURCE_CRAFT_REASON,
             revision,
             evidence: {
-              detail: CRAFT_EVIDENCE(SOURCE_PARTIAL_DISPOSITION, BREAKPOINT_GAINED, BREAKPOINT_DROPPED, 0, PRODUCED_STACK),
+              detail: CRAFT_EVIDENCE(
+                SOURCE_PARTIAL_DISPOSITION,
+                BREAKPOINT_GAINED,
+                BREAKPOINT_DROPPED,
+                0,
+                PRODUCED_STACK,
+              ),
             },
           };
         }
         // Retry: the freed slot lets the product fit completely.
-        const revision = mock.advance({ carriedStack: BREAKPOINT_DROPPED + PRODUCED_STACK, count: PRODUCED_STACK * 2 })
-          .revision;
+        const revision = mock.advance({
+          carriedStack: BREAKPOINT_DROPPED + PRODUCED_STACK,
+          count: PRODUCED_STACK * 2,
+        }).revision;
         return {
           requestId: request.requestId,
           executionId: "retry-execution",
@@ -185,13 +195,7 @@ test("craft partial chain: partial craft -> store retained -> same recipe now co
           reasonCode: SOURCE_CRAFT_REASON,
           revision,
           evidence: {
-            detail: CRAFT_EVIDENCE(
-              SOURCE_FULL_DISPOSITION,
-              PRODUCED_STACK,
-              0,
-              PRODUCED_STACK,
-              PRODUCED_STACK * 2,
-            ),
+            detail: CRAFT_EVIDENCE(SOURCE_FULL_DISPOSITION, PRODUCED_STACK, 0, PRODUCED_STACK, PRODUCED_STACK * 2),
           },
         };
       }
@@ -293,10 +297,13 @@ test("craft partial chain fails closed when the drop has no debris chunk behind 
         reasonCode: SOURCE_CRAFT_REASON,
         revision,
         evidence: {
-          detail: CRAFT_EVIDENCE(SOURCE_PARTIAL_DISPOSITION, BREAKPOINT_GAINED, PRODUCED_STACK - BREAKPOINT_GAINED, 0, PRODUCED_STACK).replace(
-            ";dropped_debris=1",
-            ";dropped_debris=0",
-          ),
+          detail: CRAFT_EVIDENCE(
+            SOURCE_PARTIAL_DISPOSITION,
+            BREAKPOINT_GAINED,
+            PRODUCED_STACK - BREAKPOINT_GAINED,
+            0,
+            PRODUCED_STACK,
+          ).replace(";dropped_debris=1", ";dropped_debris=0"),
         },
       };
     },
@@ -348,8 +355,10 @@ test("craft partial chain fails closed when the chest did not receive the retain
   const client = createClient(mock, {
     execute: async (request) => {
       if (request.action === "craft_item") {
-        const revision = mock.advance({ retainedStack: EXISTING_STACK + BREAKPOINT_GAINED, count: PRODUCED_STACK })
-          .revision;
+        const revision = mock.advance({
+          retainedStack: EXISTING_STACK + BREAKPOINT_GAINED,
+          count: PRODUCED_STACK,
+        }).revision;
         return {
           requestId: request.requestId,
           executionId: "breakpoint-execution",
@@ -357,7 +366,13 @@ test("craft partial chain fails closed when the chest did not receive the retain
           reasonCode: SOURCE_CRAFT_REASON,
           revision,
           evidence: {
-            detail: CRAFT_EVIDENCE(SOURCE_PARTIAL_DISPOSITION, BREAKPOINT_GAINED, BREAKPOINT_DROPPED, 0, PRODUCED_STACK),
+            detail: CRAFT_EVIDENCE(
+              SOURCE_PARTIAL_DISPOSITION,
+              BREAKPOINT_GAINED,
+              BREAKPOINT_DROPPED,
+              0,
+              PRODUCED_STACK,
+            ),
           },
         };
       }

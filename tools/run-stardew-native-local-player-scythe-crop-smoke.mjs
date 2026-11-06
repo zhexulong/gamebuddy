@@ -39,7 +39,10 @@ export async function runScythecropSmoke(
     });
     trace.push({ phase: "equip_tool", receipt: summarizeReceipt(equipped) });
     const equipTerminal = await waitForTerminal(receipts, equipped, terminalTimeoutMs);
-    if (equipTerminal.state !== "succeeded" || !["tool_equipped", "already_equipped"].includes(equipTerminal.reasonCode))
+    if (
+      equipTerminal.state !== "succeeded" ||
+      !["tool_equipped", "already_equipped"].includes(equipTerminal.reasonCode)
+    )
       throw new Error(`equip_failed:${equipTerminal.reasonCode}`);
 
     snapshot = await observeFresh(client, { actionable: true, minRevision: equipTerminal.revision });

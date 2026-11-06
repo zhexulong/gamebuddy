@@ -65,14 +65,20 @@ export async function runWaterSlimeHutchTroughSmoke(
       minRevision: snapshot.revision,
       timeoutMs: stabilizeTimeoutMs,
       requireActionable: true,
-      check: (latest) =>
-        typeof latest.location === "string" && /^Slime ?Hutch/i.test(latest.location),
+      check: (latest) => typeof latest.location === "string" && /^Slime ?Hutch/i.test(latest.location),
     });
     assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
 
     const wateringCan = chooseWateringCan(snapshot);
     if (snapshot.currentTool !== wateringCan.label) {
-      const equipped = await execute(client, trace, "equip_watering_can", "equip_tool", { tool: "watering_can" }, snapshot);
+      const equipped = await execute(
+        client,
+        trace,
+        "equip_watering_can",
+        "equip_tool",
+        { tool: "watering_can" },
+        snapshot,
+      );
       const equipTerminal = await waitForTerminal(receipts, equipped, terminalTimeoutMs);
       if (
         equipTerminal.state !== "succeeded" ||
@@ -96,8 +102,7 @@ export async function runWaterSlimeHutchTroughSmoke(
     const troughTargetCountBefore = validTroughTargets(snapshot).length;
     // More than one tile of the column can be in reach at once; the contract is
     // only that at least one lawful target exists before the request is sent.
-    if (troughTargetCountBefore < 1)
-      throw new Error("native_local_water_slime_hutch_trough_fixture_target_missing");
+    if (troughTargetCountBefore < 1) throw new Error("native_local_water_slime_hutch_trough_fixture_target_missing");
     const accepted = await execute(
       client,
       trace,

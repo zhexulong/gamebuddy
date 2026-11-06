@@ -91,21 +91,36 @@ function passedRun(role, overrides = {}) {
 const passedRuns = () => NARRATIVE_RUN_PLAN.map((role) => passedRun(role));
 
 test("mounted profile mapping validates exact identity, membership, and opaque evidence", () => {
-  assert.equal(validateMountedProfileOperationEvidence({ mountedProfile, operationEvidenceMapping: validMapping() }).valid, true);
   assert.equal(
-    validateMountedProfileOperationEvidence({ mountedProfile, operationEvidenceMapping: validMapping({ profile: { ...mountedProfile } }) }).valid,
+    validateMountedProfileOperationEvidence({ mountedProfile, operationEvidenceMapping: validMapping() }).valid,
+    true,
+  );
+  assert.equal(
+    validateMountedProfileOperationEvidence({
+      mountedProfile,
+      operationEvidenceMapping: validMapping({ profile: { ...mountedProfile } }),
+    }).valid,
     false,
   );
   assert.equal(
-    validateMountedProfileOperationEvidence({ mountedProfile, operationEvidenceMapping: validMapping({ operations: { "chat.list": [token(12)] } }) }).valid,
+    validateMountedProfileOperationEvidence({
+      mountedProfile,
+      operationEvidenceMapping: validMapping({ operations: { "chat.list": [token(12)] } }),
+    }).valid,
     false,
   );
   assert.equal(
-    validateMountedProfileOperationEvidence({ mountedProfile, operationEvidenceMapping: validMapping({ operations: { "chat.submit": ["dialogue-content"] } }) }).valid,
+    validateMountedProfileOperationEvidence({
+      mountedProfile,
+      operationEvidenceMapping: validMapping({ operations: { "chat.submit": ["dialogue-content"] } }),
+    }).valid,
     false,
   );
   assert.equal(
-    validateMountedProfileOperationEvidence({ mountedProfile, operationEvidenceMapping: validMapping({ operations: { "chat.submit": ["C:/Users/someone/Downloads"] } }) }).valid,
+    validateMountedProfileOperationEvidence({
+      mountedProfile,
+      operationEvidenceMapping: validMapping({ operations: { "chat.submit": ["C:/Users/someone/Downloads"] } }),
+    }).valid,
     false,
   );
 });
@@ -228,9 +243,7 @@ test("the completeness check refuses a mapping that skips a declared operation",
     },
   });
   assert.equal(validation.valid, false);
-  const missing = validation.checks.filter(
-    (check) => check.id === "mounted_profile_operation_evidence_completeness",
-  );
+  const missing = validation.checks.filter((check) => check.id === "mounted_profile_operation_evidence_completeness");
   assert.equal(missing.length, 2, "draft.discard and chat.submit were never exercised");
 
   // The same profile with every operation mapped is accepted, so the check is
@@ -634,10 +647,7 @@ test("runs against different artifacts cannot pass as one release", async () => 
     prerequisites: passingPrerequisites,
   });
   assert.notEqual(report.verdict, "passed");
-  assert.ok(
-    report.blockerIds.includes("narrative_run_artifact_identity"),
-    "the multi-artifact evidence must be named",
-  );
+  assert.ok(report.blockerIds.includes("narrative_run_artifact_identity"), "the multi-artifact evidence must be named");
 
   // The same three runs against one artifact still pass, so the rule is
   // agreement and not an accidental always-fail.
@@ -668,11 +678,14 @@ test("Tavern live gate passes when prerequisites, real runs, and operation evide
   assert.deepEqual(report.blockerIds, []);
   assert.deepEqual(report.checks, []);
   assert.deepEqual(report.mappedOperationIds, ["chat.submit"]);
-  assert.deepEqual(report.runEvidence.map(({ role, state }) => ({ role, state })), [
-    { role: "main", state: "passed" },
-    { role: "failure", state: "passed" },
-    { role: "recovery", state: "passed" },
-  ]);
+  assert.deepEqual(
+    report.runEvidence.map(({ role, state }) => ({ role, state })),
+    [
+      { role: "main", state: "passed" },
+      { role: "failure", state: "passed" },
+      { role: "recovery", state: "passed" },
+    ],
+  );
 });
 
 test("a passed verdict names the exact operation evidence it was decided on", async () => {
@@ -765,7 +778,10 @@ test("Tavern live gate blocks and skips every narrative run when an automated pr
   const report = await runTavernReleaseLiveOrchestrator({
     mountedProfile,
     operationEvidenceMapping: validMapping(),
-    prerequisites: async () => ({ verdict: "blocked", checks: [{ id: "magic_context_stable_source", status: "blocked" }] }),
+    prerequisites: async () => ({
+      verdict: "blocked",
+      checks: [{ id: "magic_context_stable_source", status: "blocked" }],
+    }),
     runNarrative: async () => {
       calls += 1;
       return passedRun("main");
@@ -804,11 +820,14 @@ test("Tavern live gate is inconclusive when a planned run is missing or incomple
   });
   assert.equal(missing.verdict, "inconclusive");
   assert.equal(missing.reasonCode, "narrative_run_evidence_incomplete");
-  assert.deepEqual(missing.runEvidence.find(({ role }) => role === "recovery"), {
-    role: "recovery",
-    state: "blocked",
-    reasonCode: "narrative_run_not_executed",
-  });
+  assert.deepEqual(
+    missing.runEvidence.find(({ role }) => role === "recovery"),
+    {
+      role: "recovery",
+      state: "blocked",
+      reasonCode: "narrative_run_not_executed",
+    },
+  );
 
   for (const override of [
     { state: "blocked", reasonCode: "provider_request_pending" },
@@ -896,7 +915,10 @@ test("Tavern live gate never accepts an operator record or an operator observati
   });
   assert.equal(withRecord.verdict, "blocked");
   assert.equal(
-    withRecord.checks.some((check) => check.id.startsWith("operator_") || check.id.startsWith("record_") || check.id.startsWith("observation_")),
+    withRecord.checks.some(
+      (check) =>
+        check.id.startsWith("operator_") || check.id.startsWith("record_") || check.id.startsWith("observation_"),
+    ),
     false,
   );
 
@@ -995,10 +1017,16 @@ test("release orchestrator aggregates content-free run summaries and reaches the
     },
     temporaryReportPath: (role) => `/tmp/${role}.json`,
   });
-  assert.deepEqual(calls.map(({ role }) => role), [...NARRATIVE_RUN_PLAN]);
+  assert.deepEqual(
+    calls.map(({ role }) => role),
+    [...NARRATIVE_RUN_PLAN],
+  );
   assert.equal(report.verdict, "passed");
   assert.equal("reasonCode" in report, false);
-  assert.deepEqual(report.runs.map(({ role }) => role), [...NARRATIVE_RUN_PLAN]);
+  assert.deepEqual(
+    report.runs.map(({ role }) => role),
+    [...NARRATIVE_RUN_PLAN],
+  );
   assert.equal(report.runs[0].state, "passed");
   assert.equal(report.runs[0].runnerRunId, token(20));
   assert.equal("prompt" in report.runs[0], false);
@@ -1020,11 +1048,14 @@ test("release orchestrator records a runner exception as a blocked attempt witho
   });
   assert.equal(report.verdict, "inconclusive");
   assert.equal(report.reasonCode, "narrative_run_evidence_incomplete");
-  assert.deepEqual(report.runs.map(({ role, state }) => ({ role, state })), [
-    { role: "main", state: "blocked" },
-    { role: "failure", state: "blocked" },
-    { role: "recovery", state: "blocked" },
-  ]);
+  assert.deepEqual(
+    report.runs.map(({ role, state }) => ({ role, state })),
+    [
+      { role: "main", state: "blocked" },
+      { role: "failure", state: "blocked" },
+      { role: "recovery", state: "blocked" },
+    ],
+  );
   assert.equal(report.runs[2].reasonCode, "narrative_runner_internal_error");
 });
 
@@ -1035,7 +1066,10 @@ test("release orchestrator accepts only the orchestrate mode and its four flags"
     mountedProfilePath: undefined,
     operationEvidenceMappingPath: undefined,
   });
-  assert.equal(parseArguments(["--orchestrate", "--profile", CHAT_TAVERN_LIVE_PROFILE]).profile, CHAT_TAVERN_LIVE_PROFILE);
+  assert.equal(
+    parseArguments(["--orchestrate", "--profile", CHAT_TAVERN_LIVE_PROFILE]).profile,
+    CHAT_TAVERN_LIVE_PROFILE,
+  );
   assert.throws(() => parseArguments(["--record", "record.json"]), /usage:/);
   assert.throws(() => parseArguments(["--orchestrate", "--record", "record.json"]), /usage:/);
   assert.throws(() => parseArguments(["--orchestrate", "--profile"]), /usage:/);

@@ -1,7 +1,8 @@
+import { GATE_EXEMPT_PUBLISHED_ACTIONS } from "./lib/stardew-published-action-registry.mjs";
 import {
-  GATE_EXEMPT_PUBLISHED_ACTIONS,
-} from "./lib/stardew-published-action-registry.mjs";
-import { STARDEW_EXPERIMENTAL_ACTION_RUNNERS, STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
+  STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
+  STARDEW_PUBLISHED_ACTION_GATES,
+} from "./stardew-action-gate-descriptors.mjs";
 
 /**
  * Resolve the one current shared-harness runner for a Farmhand action.

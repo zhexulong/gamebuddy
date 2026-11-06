@@ -37,7 +37,8 @@ const topLevelHelpers = [];
   let parenDepth = 0;
   let inHelper = false;
   let current = null;
-  const helperDefRe = /^(?:export )?(?:async )?function\s+([A-Za-z0-9_]+)\s*\(|^const\s+([A-Za-z0-9_]+)\s*=\s*(?:async\s*)?[({]/;
+  const helperDefRe =
+    /^(?:export )?(?:async )?function\s+([A-Za-z0-9_]+)\s*\(|^const\s+([A-Za-z0-9_]+)\s*=\s*(?:async\s*)?[({]/;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!inHelper) {
@@ -91,9 +92,16 @@ for (let b = 0; b < blockStarts.length - 1; b++) {
   const helperCalls = {};
   let rootPrefix = null;
   const helpers = [
-    "createHarness", "createRoot", "reserveFresh", "mintPair", "mintOwnedTriple",
-    "ownerPath", "withPathLock", "bindWindowsStaleLockReclaimer",
-    "launchStagedPlayerHostForTesting", "createOwnerTransitions",
+    "createHarness",
+    "createRoot",
+    "reserveFresh",
+    "mintPair",
+    "mintOwnedTriple",
+    "ownerPath",
+    "withPathLock",
+    "bindWindowsStaleLockReclaimer",
+    "launchStagedPlayerHostForTesting",
+    "createOwnerTransitions",
     "assertAttemptFixtureUnchanged",
   ];
 
@@ -141,7 +149,11 @@ for (let i = 0; i < lines.length; i++) {
 
 const aggregate = {
   totalTests: tests.length,
-  assertKinds: (() => { const a = {}; for (const t of tests) for (const [k, v] of Object.entries(t.asserts ?? {})) a[k] = (a[k] ?? 0) + v; return a; })(),
+  assertKinds: (() => {
+    const a = {};
+    for (const t of tests) for (const [k, v] of Object.entries(t.asserts ?? {})) a[k] = (a[k] ?? 0) + v;
+    return a;
+  })(),
   rootPrefixes: [...new Set(tests.map((t) => t.rootPrefix).filter((p) => p !== null))].sort(),
   fileRootPrefixes: [...fileRootPrefixes].sort(),
   errorCodes: [...new Set(tests.flatMap((t) => t.errorCodes ?? []))].sort(),

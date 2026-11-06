@@ -14,6 +14,9 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
 import { assessCompanionBehaviourRubric } from "./lib/companion-behaviour-rubric.mjs";
 import { runAgentDrivenLoop } from "./lib/stardew-multiplayer-agent-runtime.mjs";
 
+// prelive-l3-opt-out b: launched by `tools/run-stardew-multiplayer-live-loop.mjs` against the shared-world (farmhand)
+// topology; it drives a whole session rather than one action, so the action->runner map has no entry for it.
+
 /**
  * The multiplayer live-run loop: one long-lived session in the two-process shared world, driven by an allocation and
  * RECORDED so a reviewer can reconstruct it.

@@ -61,7 +61,11 @@ export async function runEquipWearableSmoke(client, receipts, _config, { termina
       requestId: unknownRequestId,
       idempotencyKey: `${unknownRequestId}_idem`,
       action: ACTION,
-      args: { slot: candidate.slot, expectedQualifiedItemId: candidate.qualifiedItemId, expectedTargetId: UNKNOWN_TARGET_ID },
+      args: {
+        slot: candidate.slot,
+        expectedQualifiedItemId: candidate.qualifiedItemId,
+        expectedTargetId: UNKNOWN_TARGET_ID,
+      },
       snapshot,
       timeoutMs: 30_000,
     });
@@ -93,7 +97,11 @@ export async function runEquipWearableSmoke(client, receipts, _config, { termina
       requestId,
       idempotencyKey: `${requestId}_idem`,
       action: ACTION,
-      args: { slot: candidate.slot, expectedQualifiedItemId: candidate.qualifiedItemId, expectedTargetId: candidate.targetId },
+      args: {
+        slot: candidate.slot,
+        expectedQualifiedItemId: candidate.qualifiedItemId,
+        expectedTargetId: candidate.targetId,
+      },
       snapshot: afterUnknown,
       timeoutMs: 30_000,
     });
@@ -150,7 +158,11 @@ export async function runEquipWearableSmoke(client, receipts, _config, { termina
       requestId: repeatRequestId,
       idempotencyKey: `${repeatRequestId}_idem`,
       action: ACTION,
-      args: { slot: candidate.slot, expectedQualifiedItemId: candidate.qualifiedItemId, expectedTargetId: candidate.targetId },
+      args: {
+        slot: candidate.slot,
+        expectedQualifiedItemId: candidate.qualifiedItemId,
+        expectedTargetId: candidate.targetId,
+      },
       snapshot: after,
       timeoutMs: 30_000,
     });
@@ -187,7 +199,10 @@ export async function runEquipWearableSmoke(client, receipts, _config, { termina
       target: candidate.targetId,
       targetAfter: moved.targetId,
       negatives: {
-        unknownTarget: { reasonCode: unknownTerminal.reasonCode, occupant: untouched.occupantQualifiedItemId ?? "none" },
+        unknownTarget: {
+          reasonCode: unknownTerminal.reasonCode,
+          occupant: untouched.occupantQualifiedItemId ?? "none",
+        },
         repeat: { reasonCode: repeatTerminal.reasonCode, moved: "false" },
       },
       evidence,
@@ -239,8 +254,7 @@ function wearableTarget(snapshot, bodySlot) {
   const entry = targets.find((candidate) => candidate?.bodySlot === bodySlot);
   if (entry === undefined)
     throw new Error(`equip_wearable_body_slot_not_advertised:${bodySlot};published=${describeTargets(targets)}`);
-  if (typeof entry.targetId !== "string")
-    throw new Error(`equip_wearable_target_projection_incomplete:${bodySlot}`);
+  if (typeof entry.targetId !== "string") throw new Error(`equip_wearable_target_projection_incomplete:${bodySlot}`);
   return entry;
 }
 
@@ -251,9 +265,7 @@ function inventoryFactAt(snapshot, slot) {
 }
 
 function describeTargets(targets) {
-  return targets
-    .map((entry) => `${entry?.bodySlot ?? "?"}=${entry?.occupantQualifiedItemId ?? "empty"}`)
-    .join("|");
+  return targets.map((entry) => `${entry?.bodySlot ?? "?"}=${entry?.occupantQualifiedItemId ?? "empty"}`).join("|");
 }
 
 /** The wire carries the Mod's evidence string as `{ detail: "..." }`. */

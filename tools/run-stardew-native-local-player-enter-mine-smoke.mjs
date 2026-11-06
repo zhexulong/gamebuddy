@@ -70,10 +70,15 @@ function chooseMineEntranceTarget(snapshot) {
 function parseEvidence(evidence) {
   const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
   if (!detail) throw new Error("enter_mine_evidence_empty");
-  return Object.fromEntries(detail.split(";").map((pair) => {
-    const index = pair.indexOf("=");
-    return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-  }).filter(Boolean));
+  return Object.fromEntries(
+    detail
+      .split(";")
+      .map((pair) => {
+        const index = pair.indexOf("=");
+        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
+      })
+      .filter(Boolean),
+  );
 }
 
 if (import.meta.main) {

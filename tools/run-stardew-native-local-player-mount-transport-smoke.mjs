@@ -36,8 +36,7 @@ export async function runMountTransportSmoke(client, receipts, config, { termina
     if (terminal.state !== "succeeded" || terminal.reasonCode !== "horse_mounted")
       throw new Error(`mount_transport_failed:${terminal.reasonCode}`);
     const evidence = parseEvidence(terminal.evidence);
-    const passed =
-      evidence.mounted === "true" && evidence.mounting === "false" && evidence.target === target.targetId;
+    const passed = evidence.mounted === "true" && evidence.mounting === "false" && evidence.target === target.targetId;
     return {
       state: passed ? "passed" : "blocked",
       topology: "native_local_player_fixture",
@@ -70,10 +69,15 @@ function chooseHorseTarget(snapshot) {
 function parseEvidence(evidence) {
   const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
   if (!detail) throw new Error("mount_transport_evidence_empty");
-  return Object.fromEntries(detail.split(";").map((pair) => {
-    const index = pair.indexOf("=");
-    return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-  }).filter(Boolean));
+  return Object.fromEntries(
+    detail
+      .split(";")
+      .map((pair) => {
+        const index = pair.indexOf("=");
+        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
+      })
+      .filter(Boolean),
+  );
 }
 
 if (import.meta.main) {

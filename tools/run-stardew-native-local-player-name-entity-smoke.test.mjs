@@ -29,7 +29,8 @@ const EVIDENCE = {
   player_horse_name_updated: "true",
 };
 
-const advertised = (names) => names.map((name, index) => ({ targetId: `horse_00000000000000${index}`, x: 65, y: 15, name }));
+const advertised = (names) =>
+  names.map((name, index) => ({ targetId: `horse_00000000000000${index}`, x: 65, y: 15, name }));
 
 test("the honest happy path passes every check", () => {
   const checks = assertNameEntityPostconditions({

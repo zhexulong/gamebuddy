@@ -65,7 +65,9 @@ for (const side of [merged, control]) {
   // would then be incomplete, and an incomplete comparison is exactly how a regression hides.
   // (More names than the summary is tolerated: the same failure can be listed per file.)
   if (side.claimed > 0 && side.names.size < side.claimed) {
-    problems.push(`${side.path} reports ${side.claimed} failure(s) but only ${side.names.size} could be parsed from its output`);
+    problems.push(
+      `${side.path} reports ${side.claimed} failure(s) but only ${side.names.size} could be parsed from its output`,
+    );
   }
   if (side.claimed === 0 && side.names.size === 0) {
     problems.push(`${side.path} reports no failures at all; a comparison needs a run that reached the suite`);
@@ -85,7 +87,8 @@ const report = Object.freeze({
   problems: Object.freeze(problems),
 });
 
-if (options.report !== undefined) writeFileSync(resolve(options.report), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+if (options.report !== undefined)
+  writeFileSync(resolve(options.report), `${JSON.stringify(report, null, 2)}\n`, "utf8");
 
 process.stderr.write(
   `[fork-failures] merged=${merged.names.size}/${merged.claimed} control=${control.names.size}/${control.claimed} ` +

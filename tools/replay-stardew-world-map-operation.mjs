@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
-import {
-  newEnvelope,
-  validateBridgeMessage,
-} from "../host/dist-test/protocol.js";
+import { newEnvelope, validateBridgeMessage } from "../host/dist-test/protocol.js";
 import { parseStrictBridgeJson } from "../host/dist-test/strict-bridge-json.js";
 
 const scope = {
@@ -27,12 +24,16 @@ const validRequest = frame("navigation_read_request", {
   operation: "inspect_world_map",
   args: { nodeRef },
 });
-const validResult = frame("navigation_read_result", {
-  status: "succeeded",
-  reason: "world_map_observed",
-  entries: [{ label: "Mines", nodeRef, destination: { kind: "ref", ref } }],
-  nextCursor: cursor,
-}, validRequest.correlationId);
+const validResult = frame(
+  "navigation_read_result",
+  {
+    status: "succeeded",
+    reason: "world_map_observed",
+    entries: [{ label: "Mines", nodeRef, destination: { kind: "ref", ref } }],
+    nextCursor: cursor,
+  },
+  validRequest.correlationId,
+);
 
 for (const value of [validRequest, validResult]) {
   const parsed = parseStrictBridgeJson(JSON.stringify(value));
@@ -54,7 +55,11 @@ for (const payload of [
   );
 }
 for (const payload of [
-  { status: "succeeded", reason: "world_map_observed", entries: [{ label: "Mines", nodeRef: `dr1_${"A".repeat(22)}` }] },
+  {
+    status: "succeeded",
+    reason: "world_map_observed",
+    entries: [{ label: "Mines", nodeRef: `dr1_${"A".repeat(22)}` }],
+  },
   { status: "succeeded", reason: "world_map_observed", entries: [], receipt: {} },
 ]) {
   assert.equal(
@@ -63,4 +68,9 @@ for (const payload of [
   );
 }
 
-console.log(JSON.stringify({ state: "world_map_replay_completed", validation: { valid: true, mutationCount: 0, executionReceiptCount: 0 } }));
+console.log(
+  JSON.stringify({
+    state: "world_map_replay_completed",
+    validation: { valid: true, mutationCount: 0, executionReceiptCount: 0 },
+  }),
+);

@@ -22,19 +22,21 @@ function terminalFromSource(file, anchor, re) {
   return m[1];
 }
 
-const TILL_SOURCE = fileURLToPath(new URL("../integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs", import.meta.url));
+const TILL_SOURCE = fileURLToPath(
+  new URL("../integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs", import.meta.url),
+);
 const ITEM_SOURCE = fileURLToPath(new URL("../integrations/stardew/farmhandexecutioncontroller.cs", import.meta.url));
 
 /** The Mod's till_soil success terminal (unique in source). */
 const SOURCE_TILL_REASON = terminalFromSource(
   TILL_SOURCE,
-  "tilled ? \"",
+  'tilled ? "',
   /tilled \? "([a-z_]+)" : "soil_postcondition_unavailable"/,
 );
 /** The Mod's use_item success terminal (unique in source). */
 const SOURCE_ITEM_REASON = terminalFromSource(
   ITEM_SOURCE,
-  "ExecutionState.Succeeded, \"item_used\"",
+  'ExecutionState.Succeeded, "item_used"',
   /ExecutionState\.Succeeded, "(item_used)"/,
 );
 
@@ -93,7 +95,16 @@ function createMock({ revision, stamina, breakpointSoil, resumeSoil }) {
       ...(state.breakpointSoil ? [{ ...SOIL_BREAKPOINT }] : []),
       ...(state.resumeSoil ? [{ ...SOIL_RESUME }] : []),
     ],
-    foodTargets: [{ slot: FOOD.slot, qualifiedItemId: FOOD.qualifiedItemId, displayName: "Bread", stack: 1, edibility: 25, isDrink: false }],
+    foodTargets: [
+      {
+        slot: FOOD.slot,
+        qualifiedItemId: FOOD.qualifiedItemId,
+        displayName: "Bread",
+        stack: 1,
+        edibility: 25,
+        isDrink: false,
+      },
+    ],
   });
   const advance = (patch) => {
     state.revision += 1;
@@ -304,7 +315,10 @@ test("stamina chain's evidence keys and reason codes exist in the Mod source", (
     new URL("../integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs", import.meta.url),
     "utf8",
   );
-  const itemUse = readFileSync(new URL("../integrations/stardew/farmhandexecutioncontroller.cs", import.meta.url), "utf8");
+  const itemUse = readFileSync(
+    new URL("../integrations/stardew/farmhandexecutioncontroller.cs", import.meta.url),
+    "utf8",
+  );
   const runner = readFileSync(
     new URL("./run-stardew-native-local-player-stamina-recovery-chain-smoke.mjs", import.meta.url),
     "utf8",
@@ -348,8 +362,14 @@ test("stamina chain reads edibles from the Mod's real food target field", () => 
   // The Mod advertises edibles under FoodTargets (record BridgeFoodTarget), gated on
   // the `use_item` capability. A runner reading a differently-named field would see
   // no food and fail closed for the wrong reason.
-  assert.match(controller, /advertisedCapabilities\.Contains\("use_item", StringComparer\.Ordinal\) \? DiscoverFoodTargets\(player\)/);
-  assert.match(models, /record BridgeFoodTarget\(int Slot, string QualifiedItemId, string DisplayName, int Stack, int Edibility, bool IsDrink\)/);
+  assert.match(
+    controller,
+    /advertisedCapabilities\.Contains\("use_item", StringComparer\.Ordinal\) \? DiscoverFoodTargets\(player\)/,
+  );
+  assert.match(
+    models,
+    /record BridgeFoodTarget\(int Slot, string QualifiedItemId, string DisplayName, int Stack, int Edibility, bool IsDrink\)/,
+  );
   assert.match(runner, /snapshot\.foodTargets/);
   assert.doesNotMatch(runner, /snapshot\.inventoryItemFacts/);
 });

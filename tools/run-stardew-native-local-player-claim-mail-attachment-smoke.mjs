@@ -23,12 +23,7 @@ const ACTION = "claim_mail_attachment";
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 
 /** Claim one pending letter and prove the claim plus its attachment delivery. */
-export async function runClaimMailAttachmentSmoke(
-  client,
-  receipts,
-  _config,
-  { terminalTimeoutMs = 5_000 } = {},
-) {
+export async function runClaimMailAttachmentSmoke(client, receipts, _config, { terminalTimeoutMs = 5_000 } = {}) {
   const trace = [];
   try {
     const snapshot = await observeFresh(client, { actionable: true });
@@ -103,7 +98,9 @@ export async function runClaimMailAttachmentSmoke(
       throw new Error(`claim_mail_attachment_stale_reread:${after.revision}:${terminal.revision}`);
     const claimed = mailboxAt(after, mailbox.x, mailbox.y);
     if (claimed == null)
-      throw new Error(`claim_mail_attachment_mailbox_gone:tile=${mailbox.x},${mailbox.y};mailboxTargets=${JSON.stringify(after.mailboxTargets ?? [])}`);
+      throw new Error(
+        `claim_mail_attachment_mailbox_gone:tile=${mailbox.x},${mailbox.y};mailboxTargets=${JSON.stringify(after.mailboxTargets ?? [])}`,
+      );
     if (claimed.pendingCount !== mailbox.pendingCount - 1)
       throw new Error(
         `claim_mail_attachment_world_unchanged:tile=${mailbox.x},${mailbox.y};before=${mailbox.pendingCount};after=${claimed.pendingCount}`,
@@ -140,8 +137,7 @@ export async function runClaimMailAttachmentSmoke(
 
     const unchanged = await observeFresh(client);
     const stillThere = mailboxAt(unchanged, mailbox.x, mailbox.y);
-    if (stillThere == null)
-      throw new Error(`claim_mail_attachment_stale_mailbox_gone:tile=${mailbox.x},${mailbox.y}`);
+    if (stillThere == null) throw new Error(`claim_mail_attachment_stale_mailbox_gone:tile=${mailbox.x},${mailbox.y}`);
     if (stillThere.pendingCount !== claimed.pendingCount)
       throw new Error(
         `claim_mail_attachment_stale_moved_world:before=${claimed.pendingCount};after=${stillThere.pendingCount}`,
@@ -189,9 +185,7 @@ function chooseMailboxWithPending(snapshot) {
       entry.pendingCount >= 1,
   );
   if (pending.length === 0)
-    throw new Error(
-      `claim_mail_attachment_declared_given_absent:mailboxTargets=${JSON.stringify(targets)}`,
-    );
+    throw new Error(`claim_mail_attachment_declared_given_absent:mailboxTargets=${JSON.stringify(targets)}`);
   return pending[0];
 }
 

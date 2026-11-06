@@ -16,7 +16,13 @@ import {
 
 const ACTION = "navigate_to_destination";
 const SCENARIO = "navigation_mutation_v1";
-const EXPECTED_CAPABILITIES = ["cancel_active_execution", "find_destination", "inspect_self", "inspect_world_map", ACTION];
+const EXPECTED_CAPABILITIES = [
+  "cancel_active_execution",
+  "find_destination",
+  "inspect_self",
+  "inspect_world_map",
+  ACTION,
+];
 
 async function loadDistTestClient(entry) {
   const { LocalStardewBridgeClient } = await import(`../host/dist-test/${entry}`);
@@ -25,10 +31,13 @@ async function loadDistTestClient(entry) {
 
 async function main() {
   const config = await readNativeClientConfig();
-  const scenario = process.argv.includes("--scenario=deadline") ? "deadline"
-    : process.argv.includes("--scenario=stop") ? "stop"
-    : process.argv.includes("--scenario=resploss") ? "resploss"
-    : "both";
+  const scenario = process.argv.includes("--scenario=deadline")
+    ? "deadline"
+    : process.argv.includes("--scenario=stop")
+      ? "stop"
+      : process.argv.includes("--scenario=resploss")
+        ? "resploss"
+        : "both";
   let stage = "connect";
   const session = await connectNativeLocalClient(config, { loadModule: loadDistTestClient });
   const report = { scenarios: [] };
@@ -36,7 +45,10 @@ async function main() {
     stage = "observe_before";
     const before = await observeFresh(session.client, { actionable: true });
     stage = "find_destination";
-    const found = await session.client.navigationRead({ operation: "find_destination", args: { query: config.NativeLocalPlayerFixture.NavigationMutationTargetLabel } });
+    const found = await session.client.navigationRead({
+      operation: "find_destination",
+      args: { query: config.NativeLocalPlayerFixture.NavigationMutationTargetLabel },
+    });
     const destination = requireResolvedLabelDestination(found, before.location);
 
     report.targetLabel = destination.label;
@@ -95,9 +107,7 @@ async function main() {
       // revision (cancel/deadline settle with no new action leaves the world
       // revision unchanged, so re-observing returns the same revision and is
       // rejected by the client's fail-closed admission).
-      const deadlineSnapshot = scenario === "deadline"
-        ? before
-        : session.client.state?.snapshot ?? before;
+      const deadlineSnapshot = scenario === "deadline" ? before : (session.client.state?.snapshot ?? before);
       const accepted = await executeFresh(session.client, {
         requestId,
         idempotencyKey: `${requestId}_idem`,
@@ -125,9 +135,7 @@ async function main() {
     if (scenario === "both" || scenario === "resploss") {
       const requestId = `nav_resploss_${Date.now()}`;
       stage = "resploss_execute";
-      const resplossSnapshot = scenario === "resploss"
-        ? before
-        : session.client.state?.snapshot ?? before;
+      const resplossSnapshot = scenario === "resploss" ? before : (session.client.state?.snapshot ?? before);
       const accepted = await executeFresh(session.client, {
         requestId,
         idempotencyKey: `${requestId}_idem`,
@@ -198,7 +206,10 @@ async function waitForPipeListening(pipeName, timeoutMs) {
   while (Date.now() < deadline) {
     const ok = await new Promise((resolve) => {
       const socket = createConnection(`\\.\pipe\${pipeName}`);
-      const done = (value) => { socket.destroy(); resolve(value); };
+      const done = (value) => {
+        socket.destroy();
+        resolve(value);
+      };
       socket.once("connect", () => done(true));
       socket.once("error", () => done(false));
       socket.setTimeout(2_000, () => done(false));

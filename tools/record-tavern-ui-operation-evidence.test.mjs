@@ -23,13 +23,24 @@ test("records only a fully-passed declared UI operation set as the mapping", asy
     // Every declared operation must have passed; `not_applicable` is a finding,
     // not evidence. The mapping is the proof the whole mounted surface worked,
     // so a skipped operation must never be silently dropped (design/28 §7).
-    await writeFile(inputPath, JSON.stringify({ profile, operations: [
-      { operationId: "chat.rename", outcome: "passed" },
-      { operationId: "draft.save", outcome: "passed" },
-      { operationId: "draft.discard", outcome: "not_applicable" },
-    ]}));
-    await assert.rejects(recordTavernUiOperationEvidence({ inputPath, outputPath }), /ui_operation_not_passed|ui_operation_incomplete/);
-  } finally { await rm(root, { recursive: true, force: true }); }
+    await writeFile(
+      inputPath,
+      JSON.stringify({
+        profile,
+        operations: [
+          { operationId: "chat.rename", outcome: "passed" },
+          { operationId: "draft.save", outcome: "passed" },
+          { operationId: "draft.discard", outcome: "not_applicable" },
+        ],
+      }),
+    );
+    await assert.rejects(
+      recordTavernUiOperationEvidence({ inputPath, outputPath }),
+      /ui_operation_not_passed|ui_operation_incomplete/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 // The all-passed case is the only shape that produces a mapping today.
@@ -38,11 +49,17 @@ test("produces the mapping when every declared operation passed", async () => {
   try {
     const inputPath = join(root, "input.json");
     const outputPath = join(root, "mapping.json");
-    await writeFile(inputPath, JSON.stringify({ profile, operations: [
-      { operationId: "chat.rename", outcome: "passed" },
-      { operationId: "draft.save", outcome: "passed" },
-      { operationId: "draft.discard", outcome: "passed" },
-    ]}));
+    await writeFile(
+      inputPath,
+      JSON.stringify({
+        profile,
+        operations: [
+          { operationId: "chat.rename", outcome: "passed" },
+          { operationId: "draft.save", outcome: "passed" },
+          { operationId: "draft.discard", outcome: "passed" },
+        ],
+      }),
+    );
     const result = await recordTavernUiOperationEvidence({ inputPath, outputPath });
     assert.equal(result.evidence_kind, "automation_evidence");
     assert.deepEqual(Object.keys(result.operations), ["chat.rename", "draft.save", "draft.discard"]);
@@ -52,7 +69,9 @@ test("produces the mapping when every declared operation passed", async () => {
     assert.equal(Object.hasOwn(written, "title"), false);
     assert.equal(Object.hasOwn(written, "content"), false);
     assert.equal(Object.hasOwn(written, "operator_id"), false);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("rejects undeclared and duplicate UI operation outcomes", async () => {
@@ -60,12 +79,20 @@ test("rejects undeclared and duplicate UI operation outcomes", async () => {
   try {
     const inputPath = join(root, "input.json");
     const outputPath = join(root, "mapping.json");
-    await writeFile(inputPath, JSON.stringify({ profile, operations: [
-      { operationId: "chat.rename", outcome: "passed" },
-      { operationId: "chat.rename", outcome: "passed" },
-    ]}));
+    await writeFile(
+      inputPath,
+      JSON.stringify({
+        profile,
+        operations: [
+          { operationId: "chat.rename", outcome: "passed" },
+          { operationId: "chat.rename", outcome: "passed" },
+        ],
+      }),
+    );
     await assert.rejects(recordTavernUiOperationEvidence({ inputPath, outputPath }), /ui_operation_outcome_invalid/);
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 // The test above builds its own three-operation profile, so it accepts whatever
@@ -103,17 +130,22 @@ test("accepts the operation ids the Host actually mounts", async () => {
   try {
     const inputPath = join(root, "input.json");
     const outputPath = join(root, "mapping.json");
-    await writeFile(inputPath, JSON.stringify({
-      profile: {
-        profileId: "gamebuddy.tavern-management.chat-list-title",
-        releaseTier: "tavern_management",
-        routeIds: mounted,
-        operationIds: mounted,
-        navigationItemIds: ["chat", "memory"],
-      },
-      operations: mounted.map((operationId) => ({ operationId, outcome: "passed" })),
-    }));
+    await writeFile(
+      inputPath,
+      JSON.stringify({
+        profile: {
+          profileId: "gamebuddy.tavern-management.chat-list-title",
+          releaseTier: "tavern_management",
+          routeIds: mounted,
+          operationIds: mounted,
+          navigationItemIds: ["chat", "memory"],
+        },
+        operations: mounted.map((operationId) => ({ operationId, outcome: "passed" })),
+      }),
+    );
     const result = await recordTavernUiOperationEvidence({ inputPath, outputPath });
     assert.deepEqual(Object.keys(result.operations).sort(), [...mounted].sort());
-  } finally { await rm(root, { recursive: true, force: true }); }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

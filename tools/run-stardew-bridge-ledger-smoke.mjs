@@ -57,7 +57,11 @@ try {
     expectedRevision: beforeValid.revision,
     deadlineMs: Date.now() + 30_000,
   });
-  if (first.state !== "succeeded" || (first.reasonCode !== "tool_equipped" && first.reasonCode !== "already_equipped") || !hasToolEvidence(first.evidence))
+  if (
+    first.state !== "succeeded" ||
+    (first.reasonCode !== "tool_equipped" && first.reasonCode !== "already_equipped") ||
+    !hasToolEvidence(first.evidence)
+  )
     failures.push("first_idempotent_request_not_succeeded");
 
   const beforeConflict = await client.observe();
@@ -85,7 +89,11 @@ try {
     expectedRevision: beforeRestore.revision,
     deadlineMs: Date.now() + 30_000,
   });
-  if (restored.state !== "succeeded" || (restored.reasonCode !== "tool_equipped" && restored.reasonCode !== "already_equipped") || !hasToolEvidence(restored.evidence))
+  if (
+    restored.state !== "succeeded" ||
+    (restored.reasonCode !== "tool_equipped" && restored.reasonCode !== "already_equipped") ||
+    !hasToolEvidence(restored.evidence)
+  )
     failures.push("restore_not_succeeded");
 
   console.log(

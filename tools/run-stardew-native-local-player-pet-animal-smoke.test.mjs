@@ -125,13 +125,7 @@ test("pet-animal runner accepts the shared-world surface as a required subset", 
     tile: { x: 1, y: 1 },
     actionable: true,
     activeExecution: null,
-    capabilities: [
-      "cancel_active_execution",
-      "inspect_self",
-      "pet_animal",
-      "move_to_tile",
-      "machine_inspect",
-    ],
+    capabilities: ["cancel_active_execution", "inspect_self", "pet_animal", "move_to_tile", "machine_inspect"],
     petTargets: [target],
   };
   const receipts = [];

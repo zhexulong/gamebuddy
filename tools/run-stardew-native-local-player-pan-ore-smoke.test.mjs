@@ -131,7 +131,10 @@ test("pan_ore: a receipt that claims success while the site is still live fails 
   const original = session.client.execute;
   session.client.execute = async (request) => {
     const accepted = await original(request);
-    session.client.state.snapshot = snapshotWith({ revision: session.client.state.snapshot.revision, panSites: [SITE] });
+    session.client.state.snapshot = snapshotWith({
+      revision: session.client.state.snapshot.revision,
+      panSites: [SITE],
+    });
     return accepted;
   };
   const result = await session.result();

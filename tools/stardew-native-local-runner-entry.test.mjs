@@ -4,7 +4,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { STARDEW_EXPERIMENTAL_ACTION_RUNNERS, STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
+import {
+  STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
+  STARDEW_PUBLISHED_ACTION_GATES,
+} from "./stardew-action-gate-descriptors.mjs";
 
 /**
  * Every runner the gate tables name must be RUNNABLE BY THE HARNESS.
@@ -55,5 +58,9 @@ test("the gate tables are not empty, so the checks above cannot pass vacuously",
   const names = runnerNames();
   assert.ok(names.length >= 40, `expected the registered runner set, got ${names.length}`);
   // And the one this guard was written for is in there.
-  assert.ok(Object.values(STARDEW_EXPERIMENTAL_ACTION_RUNNERS).includes("run-stardew-native-local-player-body-owner-hold-smoke.mjs"));
+  assert.ok(
+    Object.values(STARDEW_EXPERIMENTAL_ACTION_RUNNERS).includes(
+      "run-stardew-native-local-player-body-owner-hold-smoke.mjs",
+    ),
+  );
 });

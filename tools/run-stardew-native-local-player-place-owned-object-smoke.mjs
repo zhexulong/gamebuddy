@@ -119,7 +119,12 @@ export async function runPlaceOwnedObjectSmoke(
       timeoutMs: 30_000,
     });
     const staleTerminal = await waitForTerminal(receipts, staleAccepted, terminalTimeoutMs);
-    trace.push({ step: "place_occupied_tile", action: ACTION, target: target.targetId, receipt: summarizeReceipt(staleTerminal) });
+    trace.push({
+      step: "place_occupied_tile",
+      action: ACTION,
+      target: target.targetId,
+      receipt: summarizeReceipt(staleTerminal),
+    });
     if (staleTerminal.state !== "rejected" || staleTerminal.reasonCode !== "place_owned_object_tile_occupied")
       throw new Error(
         `place_owned_object_occupied_not_refused:${staleTerminal.state}/${staleTerminal.reasonCode};tile=${target.x},${target.y};slot=${target.slot}`,
@@ -150,8 +155,16 @@ export async function runPlaceOwnedObjectSmoke(
       timeoutMs: 30_000,
     });
     const wrongSlotTerminal = await waitForTerminal(receipts, wrongSlotAccepted, terminalTimeoutMs);
-    trace.push({ step: "place_wrong_slot", action: ACTION, slot: wrongSlot, receipt: summarizeReceipt(wrongSlotTerminal) });
-    if (wrongSlotTerminal.state !== "rejected" || wrongSlotTerminal.reasonCode !== "place_owned_object_not_owned_in_slot")
+    trace.push({
+      step: "place_wrong_slot",
+      action: ACTION,
+      slot: wrongSlot,
+      receipt: summarizeReceipt(wrongSlotTerminal),
+    });
+    if (
+      wrongSlotTerminal.state !== "rejected" ||
+      wrongSlotTerminal.reasonCode !== "place_owned_object_not_owned_in_slot"
+    )
       throw new Error(
         `place_owned_object_wrong_slot_not_refused:${wrongSlotTerminal.state}/${wrongSlotTerminal.reasonCode};slot=${wrongSlot};item=${target.qualifiedItemId}`,
       );
@@ -188,9 +201,14 @@ function choosePlacementTarget(snapshot, qualifiedItemId) {
   const entries = snapshot.worldObjectTargets;
   if (entries == null) throw new Error("place_owned_object_no_world_object_projection");
   if (!Array.isArray(entries)) throw new Error("place_owned_object_world_object_projection_malformed");
-  const candidates = entries.filter((entry) => isProjectionEntry(entry) && entry.kind === "placement_candidate" && entry.qualifiedItemId === qualifiedItemId);
+  const candidates = entries.filter(
+    (entry) =>
+      isProjectionEntry(entry) && entry.kind === "placement_candidate" && entry.qualifiedItemId === qualifiedItemId,
+  );
   if (candidates.length === 0)
-    throw new Error(`place_owned_object_declared_given_absent:item=${qualifiedItemId};candidates=${describeCandidates(snapshot)}`);
+    throw new Error(
+      `place_owned_object_declared_given_absent:item=${qualifiedItemId};candidates=${describeCandidates(snapshot)}`,
+    );
   const target = candidates[0];
   if (!Number.isSafeInteger(target.slot) || target.slot < 0)
     throw new Error(`place_owned_object_candidate_slot_missing:${target.targetId};slot=${target.slot}`);
@@ -199,16 +217,26 @@ function choosePlacementTarget(snapshot, qualifiedItemId) {
 
 function placementCandidateAt(snapshot, x, y, qualifiedItemId) {
   return (snapshot.worldObjectTargets ?? []).find(
-    (entry) => isProjectionEntry(entry) && entry.kind === "placement_candidate" && entry.x === x && entry.y === y && entry.qualifiedItemId === qualifiedItemId,
+    (entry) =>
+      isProjectionEntry(entry) &&
+      entry.kind === "placement_candidate" &&
+      entry.x === x &&
+      entry.y === y &&
+      entry.qualifiedItemId === qualifiedItemId,
   );
 }
 
 /** The object the world now reports on that tile, or a named failure. */
 function existingObjectAt(snapshot, x, y) {
   const entry = (snapshot.worldObjectTargets ?? []).find(
-    (candidate) => isProjectionEntry(candidate) && candidate.kind !== "placement_candidate" && candidate.x === x && candidate.y === y,
+    (candidate) =>
+      isProjectionEntry(candidate) &&
+      candidate.kind !== "placement_candidate" &&
+      candidate.x === x &&
+      candidate.y === y,
   );
-  if (entry == null) throw new Error(`place_owned_object_world_object_missing:${x},${y};candidates=${describeCandidates(snapshot)}`);
+  if (entry == null)
+    throw new Error(`place_owned_object_world_object_missing:${x},${y};candidates=${describeCandidates(snapshot)}`);
   return entry;
 }
 
@@ -230,7 +258,11 @@ function describeCandidates(snapshot) {
   const entries = snapshot.worldObjectTargets;
   if (entries == null) return "none";
   if (!Array.isArray(entries)) return "malformed";
-  return entries.map((entry) => `${entry?.kind ?? "?"}:${entry?.qualifiedItemId ?? "?"}@${entry?.x ?? "?"},${entry?.y ?? "?"}`).join("|") || "empty";
+  return (
+    entries
+      .map((entry) => `${entry?.kind ?? "?"}:${entry?.qualifiedItemId ?? "?"}@${entry?.x ?? "?"},${entry?.y ?? "?"}`)
+      .join("|") || "empty"
+  );
 }
 
 function assertEvidence(evidence, key, expected) {

@@ -32,7 +32,10 @@ const EVIDENCE = {
 const PASSING = { target: TARGET, evidence: EVIDENCE, targetsAfter: [] };
 
 /** The checks that would fail the run: `false` and `not_checked` both count. */
-const failures = (checks) => Object.entries(checks).filter(([, ok]) => ok === false || ok === "not_checked").map(([name]) => name);
+const failures = (checks) =>
+  Object.entries(checks)
+    .filter(([, ok]) => ok === false || ok === "not_checked")
+    .map(([name]) => name);
 
 test("the honest happy path passes every check", () => {
   const checks = assertClaimMuseumRewardPostconditions(PASSING);
@@ -57,7 +60,13 @@ test("a receipt that does not claim the collection fails", () => {
 test("an empty published set is not the declared Given", () => {
   const checks = assertClaimMuseumRewardPostconditions({
     ...PASSING,
-    evidence: { ...EVIDENCE, rewards_before: "0", rewards_returned: "0", rewards_delivered: "0", rewards_recorded: "0" },
+    evidence: {
+      ...EVIDENCE,
+      rewards_before: "0",
+      rewards_returned: "0",
+      rewards_delivered: "0",
+      rewards_recorded: "0",
+    },
   });
   assert.equal(checks.returnedTheWholePublishedSet, false);
   assert.equal(checks.deliveredAndRecordedTheWholeSet, false);

@@ -66,12 +66,22 @@ export async function runSendMultiplayerChatSmoke(client, receipts, config, { te
   trace.push({ step: "primary", receipt: summarizeReceipt(primary) });
   const primaryTerminal = await waitForTerminal(receipts, primary, terminalTimeoutMs);
   const primaryEvidence = parseChatEvidence(primaryTerminal.evidence);
-  trace.push({ step: "primary_terminal", executionId: primaryTerminal.executionId, terminal: summarizeReceipt(primaryTerminal), evidence: primaryEvidence });
+  trace.push({
+    step: "primary_terminal",
+    executionId: primaryTerminal.executionId,
+    terminal: summarizeReceipt(primaryTerminal),
+    evidence: primaryEvidence,
+  });
 
   // The negative half: immediately after a send the same Mod-owned ledger refuses
   // another one by NAME, before the game's egress is ever consulted.
   const beforeRateProbe = await observeTopologySnapshot(client, topology, { actionable: true });
-  const rateProbe = await dispatchChat(client, beforeRateProbe, "rate_limit_probe", "Second line, expected inside the minimum interval.");
+  const rateProbe = await dispatchChat(
+    client,
+    beforeRateProbe,
+    "rate_limit_probe",
+    "Second line, expected inside the minimum interval.",
+  );
   trace.push({ step: "rate_limit_probe", receipt: summarizeReceipt(rateProbe) });
   const limitedTerminal = await waitForTerminal(receipts, rateProbe, terminalTimeoutMs);
   const limitedEvidence = parseChatEvidence(limitedTerminal.evidence);

@@ -86,7 +86,8 @@ function handle(request, world, revision) {
   });
   const args = request.args;
   const atTile = [world.load, world.collect].filter((entry) => entry.x === args.x && entry.y === args.y);
-  if (atTile.length === 0) return terminal("rejected", "building_chest_target_not_found", `tile=${args.x},${args.y};building=none`);
+  if (atTile.length === 0)
+    return terminal("rejected", "building_chest_target_not_found", `tile=${args.x},${args.y};building=none`);
   const named = atTile.find((entry) => entry.targetId === args.expectedTargetId);
   if (named === undefined)
     return terminal(
@@ -101,7 +102,11 @@ function handle(request, world, revision) {
       `tile=${args.x},${args.y};location=Farm;target=${args.expectedTargetId};building_type=Mill;chest_id=${named.chestId};branch=${named.branch};action=load`,
     );
   if (args.slot !== world.load.loadInputSlot)
-    return terminal("rejected", "item_not_owned_in_slot", `tile=${args.x},${args.y};target=${args.expectedTargetId};chest_id=${named.chestId};slot=${args.slot}`);
+    return terminal(
+      "rejected",
+      "item_not_owned_in_slot",
+      `tile=${args.x},${args.y};target=${args.expectedTargetId};chest_id=${named.chestId};slot=${args.slot}`,
+    );
 
   // The native branch's own quantum: `Math.Min(capacity, stack) / RequiredCount * RequiredCount`
   // (Building.cs:783) with INTEGER division, so a remainder below one quantum is never taken.
@@ -123,11 +128,11 @@ function handle(request, world, revision) {
   return terminal(
     "succeeded",
     "building_chest_loaded",
-    `tile=${args.x},${args.y};location=Farm;target=${args.expectedTargetId};building_type=Mill;building_origin=31,20;chest_id=${named.chestId};branch=load`
-      + `;item=(O)262;held_stack_before=${heldBefore};held_stack_after=${heldAfter}`
-      + `;chest_item_before=${chestBefore};chest_item_after=${chestAfter};chest_slots_before=0;chest_slots_after=1`
-      + `;moved_count=${moved};released_count=${moved};required_count=${world.load.requiredCount ?? REQUIRED_COUNT};chest_capacity_before=36`
-      + ";item_accepted=true;native_accepted=true;native_refusal=none;native_menu_opened=false",
+    `tile=${args.x},${args.y};location=Farm;target=${args.expectedTargetId};building_type=Mill;building_origin=31,20;chest_id=${named.chestId};branch=load` +
+      `;item=(O)262;held_stack_before=${heldBefore};held_stack_after=${heldAfter}` +
+      `;chest_item_before=${chestBefore};chest_item_after=${chestAfter};chest_slots_before=0;chest_slots_after=1` +
+      `;moved_count=${moved};released_count=${moved};required_count=${world.load.requiredCount ?? REQUIRED_COUNT};chest_capacity_before=36` +
+      ";item_accepted=true;native_accepted=true;native_refusal=none;native_menu_opened=false",
   );
 }
 
@@ -213,8 +218,7 @@ test("load_building_chest: an identity that moves with the chest contents fails 
   const original = session.client.execute;
   session.client.execute = async (request) => {
     const receipt = await original(request);
-    if (receipt.state === "succeeded")
-      session.world.load.targetId = "building_chest_cccccccccccccccc";
+    if (receipt.state === "succeeded") session.world.load.targetId = "building_chest_cccccccccccccccc";
     return receipt;
   };
   const result = await session.result();
@@ -403,7 +407,9 @@ test("load_building_chest: a refusal story in a success receipt fails the run", 
   session.client.execute = async (request) => {
     const receipt = await original(request);
     if (receipt.state === "succeeded")
-      receipt.evidence = { detail: receipt.evidence.detail.replace("native_refusal=none", "native_refusal=InvalidItemMessage") };
+      receipt.evidence = {
+        detail: receipt.evidence.detail.replace("native_refusal=none", "native_refusal=InvalidItemMessage"),
+      };
     return receipt;
   };
   const result = await session.result();
@@ -419,7 +425,9 @@ test("load_building_chest: a success that opened a container menu fails the run"
   session.client.execute = async (request) => {
     const receipt = await original(request);
     if (receipt.state === "succeeded")
-      receipt.evidence = { detail: receipt.evidence.detail.replace("native_menu_opened=false", "native_menu_opened=true") };
+      receipt.evidence = {
+        detail: receipt.evidence.detail.replace("native_menu_opened=false", "native_menu_opened=true"),
+      };
     return receipt;
   };
   const result = await session.result();
@@ -456,7 +464,9 @@ test("load_building_chest: a success whose native call was refused fails the run
 });
 
 test("load_building_chest: a target with no loadable slot is not the declared Given", async () => {
-  const session = run({ load: loadTarget({ loadInputSlot: undefined, loadInputQualifiedItemId: undefined, loadInputStack: undefined }) });
+  const session = run({
+    load: loadTarget({ loadInputSlot: undefined, loadInputQualifiedItemId: undefined, loadInputStack: undefined }),
+  });
   const result = await session.result();
   assert.equal(result.state, "blocked");
   assert.match(result.reasonCode, /building_chest_load_input_slot_missing/);

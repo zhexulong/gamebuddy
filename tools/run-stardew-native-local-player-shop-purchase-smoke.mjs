@@ -77,20 +77,21 @@ export async function runShopPurchaseSmoke(client, config, { timeoutMs = 30_000 
       phase: "shop_target_shape",
       // The raw keys the Mod actually sent, so a stale artifact or a renamed field is
       // visible instead of presenting as an undefined property.
-      rawKeys: Array.isArray(before?.shopTargets) && before.shopTargets.length > 0
-        ? Object.keys(before.shopTargets[0] ?? {}).sort()
-        : null,
-      sample: Array.isArray(before?.shopTargets) && before.shopTargets.length > 0
-        ? Object.fromEntries(
-            Object.entries(before.shopTargets[0] ?? {}).map(([k, v]) => [
-              k,
-              Array.isArray(v) ? `array(${v.length})` : typeof v === "object" ? "object" : String(v),
-            ]),
-          )
-        : null,
+      rawKeys:
+        Array.isArray(before?.shopTargets) && before.shopTargets.length > 0
+          ? Object.keys(before.shopTargets[0] ?? {}).sort()
+          : null,
+      sample:
+        Array.isArray(before?.shopTargets) && before.shopTargets.length > 0
+          ? Object.fromEntries(
+              Object.entries(before.shopTargets[0] ?? {}).map(([k, v]) => [
+                k,
+                Array.isArray(v) ? `array(${v.length})` : typeof v === "object" ? "object" : String(v),
+              ]),
+            )
+          : null,
     });
-    if (shops.length === 0)
-      throw new Error(`shop_no_targets_advertised:location=${before.location}`);
+    if (shops.length === 0) throw new Error(`shop_no_targets_advertised:location=${before.location}`);
     // Prefer a shop that can actually sell something: an advertised shop with empty stock
     // cannot demonstrate a purchase, and that is a finding, not a failure of the action.
     // Read defensively on purpose: a raw TypeError here would erase the very evidence
@@ -147,8 +148,8 @@ export async function runShopPurchaseSmoke(client, config, { timeoutMs = 30_000 
 
     if (receipt.state !== "succeeded" || receipt.reasonCode !== TERMINAL_REASON) {
       throw new Error(
-        `shop_terminal_mismatch:state=${receipt.state};reason=${receipt.reasonCode}`
-          + (evidence ? `;evidence=${evidenceText(receipt)}` : ";evidence=unparseable"),
+        `shop_terminal_mismatch:state=${receipt.state};reason=${receipt.reasonCode}` +
+          (evidence ? `;evidence=${evidenceText(receipt)}` : ";evidence=unparseable"),
       );
     }
     if (evidence === null) throw new Error(`shop_evidence_unparseable:${evidenceProblem}`);
@@ -224,8 +225,7 @@ export function assertShopPurchasePostconditions(detail) {
     );
   if (detail.ownedAfter - detail.ownedBefore !== detail.purchased)
     throw new Error(`shop_goods_not_received:${detail.ownedBefore}->${detail.ownedAfter} for ${detail.purchased}`);
-  if (detail.gained !== detail.purchased)
-    throw new Error(`shop_gained_mismatch:${detail.gained}!=${detail.purchased}`);
+  if (detail.gained !== detail.purchased) throw new Error(`shop_gained_mismatch:${detail.gained}!=${detail.purchased}`);
 
   // The body must be free afterwards, so the next action can run.
   if (detail.menuClosed !== true) throw new Error("shop_menu_left_open");

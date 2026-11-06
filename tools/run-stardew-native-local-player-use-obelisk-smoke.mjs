@@ -58,25 +58,41 @@ export async function runUseObeliskSmoke(client, receipts, config, { arrivalTime
     assertRequiredCapabilities(before, EXPECTED_CAPABILITIES);
 
     const targets = readObeliskTargets(before);
-    if (targets.length === 0)
-      throw new Error(`use_obelisk_no_target_advertised:location=${before.location}`);
+    if (targets.length === 0) throw new Error(`use_obelisk_no_target_advertised:location=${before.location}`);
     // This fixture declares the BUILDING Given only, so an advertised island tile
     // would mean the world is not the one this scenario claims to arm.
     const chosen = targets.find((target) => target.route === FIXTURE_ROUTE);
-    if (!chosen)
-      throw new Error(`use_obelisk_fixture_route_missing:routes=${targets.map((t) => t.route).join("/")}`);
+    if (!chosen) throw new Error(`use_obelisk_fixture_route_missing:routes=${targets.map((t) => t.route).join("/")}`);
 
-    const dispatched = await execute(client, trace, "use", "use_obelisk", {
-      x: chosen.x,
-      y: chosen.y,
-      expectedTargetId: chosen.targetId,
-    }, before);
+    const dispatched = await execute(
+      client,
+      trace,
+      "use",
+      "use_obelisk",
+      {
+        x: chosen.x,
+        y: chosen.y,
+        expectedTargetId: chosen.targetId,
+      },
+      before,
+    );
 
     if (dispatched.state !== "accepted" && dispatched.state !== "succeeded")
       throw new Error(
-        "use_obelisk_dispatch_not_accepted:state=" + dispatched.state + ";reason=" + dispatched.reasonCode +
-        ";evidence=" + (evidenceText(dispatched) ?? "(none)") +
-        ";target=" + chosen.targetId + ";xy=" + chosen.x + "," + chosen.y + ";route=" + chosen.route,
+        "use_obelisk_dispatch_not_accepted:state=" +
+          dispatched.state +
+          ";reason=" +
+          dispatched.reasonCode +
+          ";evidence=" +
+          (evidenceText(dispatched) ?? "(none)") +
+          ";target=" +
+          chosen.targetId +
+          ";xy=" +
+          chosen.x +
+          "," +
+          chosen.y +
+          ";route=" +
+          chosen.route,
       );
     if (dispatched.state === "accepted" && dispatched.reasonCode !== ACCEPTED_REASON)
       throw new Error(`use_obelisk_accept_reason_mismatch:${dispatched.reasonCode}`);
@@ -106,10 +122,22 @@ export async function runUseObeliskSmoke(client, receipts, config, { arrivalTime
 
     if (terminal.state !== "succeeded" || terminal.reasonCode !== TERMINAL_REASON)
       throw new Error(
-        "use_obelisk_terminal_mismatch:state=" + terminal.state + ";reason=" + terminal.reasonCode +
-        ";evidence=" + (evidenceText(terminal) ?? "(none)") +
-        ";dispatched=" + (evidenceText(dispatched) ?? "(none)") +
-        ";target=" + chosen.targetId + ";xy=" + chosen.x + "," + chosen.y + ";route=" + chosen.route,
+        "use_obelisk_terminal_mismatch:state=" +
+          terminal.state +
+          ";reason=" +
+          terminal.reasonCode +
+          ";evidence=" +
+          (evidenceText(terminal) ?? "(none)") +
+          ";dispatched=" +
+          (evidenceText(dispatched) ?? "(none)") +
+          ";target=" +
+          chosen.targetId +
+          ";xy=" +
+          chosen.x +
+          "," +
+          chosen.y +
+          ";route=" +
+          chosen.route,
       );
 
     const dispatch = parseStrictEvidence(evidenceText(dispatched));
@@ -120,7 +148,13 @@ export async function runUseObeliskSmoke(client, receipts, config, { arrivalTime
 
     const detail = {
       reasonCode: TERMINAL_REASON,
-      requested: { targetId: chosen.targetId, x: chosen.x, y: chosen.y, route: chosen.route, destination: chosen.destination },
+      requested: {
+        targetId: chosen.targetId,
+        x: chosen.x,
+        y: chosen.y,
+        route: chosen.route,
+        destination: chosen.destination,
+      },
       dispatchedRoute: dispatch.route ?? null,
       dispatchedTarget: dispatch.target ?? null,
       dispatchedTargetTile: dispatch.target_tile ?? null,
@@ -171,7 +205,9 @@ export function assertUseObeliskPostconditions(detail) {
 
   // The destination is the target's own, not a client-supplied one.
   if (detail.dispatchedDestination !== detail.requested?.destination)
-    throw new Error(`use_obelisk_destination_mismatch:${detail.dispatchedDestination}!=${detail.requested?.destination}`);
+    throw new Error(
+      `use_obelisk_destination_mismatch:${detail.dispatchedDestination}!=${detail.requested?.destination}`,
+    );
 
   // The world moved: the arrival location IS the advertised destination, and it is
   // not where the dispatch started (an arrival equal to the origin would mean no

@@ -37,7 +37,12 @@ const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION
  * so a request that DOES take the approach leg is observed to the Mod's own terminal instead of being
  * reported as a missing receipt.
  */
-export async function runCollectBuildingChestOutputSmoke(client, receipts, _config, { terminalTimeoutMs = 20_000 } = {}) {
+export async function runCollectBuildingChestOutputSmoke(
+  client,
+  receipts,
+  _config,
+  { terminalTimeoutMs = 20_000 } = {},
+) {
   const trace = [];
   try {
     const opening = await observeFresh(client, { actionable: true });
@@ -55,16 +60,32 @@ export async function runCollectBuildingChestOutputSmoke(client, receipts, _conf
       expectedTargetId: sibling.targetId,
     });
     trace.push({ step: "wrong_branch", receipt: summarizeReceipt(wrongBranch.terminal) });
-    if (wrongBranch.terminal.state !== "rejected" || wrongBranch.terminal.reasonCode !== "building_chest_not_collectable")
-      throw new Error(`building_chest_wrong_branch_not_refused:${wrongBranch.terminal.state}/${wrongBranch.terminal.reasonCode}`);
+    if (
+      wrongBranch.terminal.state !== "rejected" ||
+      wrongBranch.terminal.reasonCode !== "building_chest_not_collectable"
+    )
+      throw new Error(
+        `building_chest_wrong_branch_not_refused:${wrongBranch.terminal.state}/${wrongBranch.terminal.reasonCode}`,
+      );
     await assertWorldUnchanged(client, sibling, "building_chest_wrong_branch_moved_world");
 
     if (target.stackCount >= 2) {
       // The declared Given is the >= 2-stack world: the refusal is the proof.
-      const refused = await request(client, receipts, terminalTimeoutMs, { x: target.x, y: target.y, expectedTargetId: target.targetId });
-      trace.push({ step: "menu_refusal", action: ACTION, target: target.targetId, receipt: summarizeReceipt(refused.terminal) });
+      const refused = await request(client, receipts, terminalTimeoutMs, {
+        x: target.x,
+        y: target.y,
+        expectedTargetId: target.targetId,
+      });
+      trace.push({
+        step: "menu_refusal",
+        action: ACTION,
+        target: target.targetId,
+        receipt: summarizeReceipt(refused.terminal),
+      });
       if (refused.terminal.state !== "rejected" || refused.terminal.reasonCode !== "building_chest_requires_menu")
-        throw new Error(`building_chest_multi_stack_not_refused:${refused.terminal.state}/${refused.terminal.reasonCode}`);
+        throw new Error(
+          `building_chest_multi_stack_not_refused:${refused.terminal.state}/${refused.terminal.reasonCode}`,
+        );
       const evidence = parseEvidence(refused.terminal.evidence);
       assertEvidence(evidence, "native_menu_opened", "false");
       assertEvidence(evidence, "native_accepted", "false");
@@ -87,8 +108,17 @@ export async function runCollectBuildingChestOutputSmoke(client, receipts, _conf
       throw new Error(`building_chest_collect_declared_given_absent:stacks=${target.stackCount}`);
 
     // 2. The honest collect of the single advertised stack.
-    const collected = await request(client, receipts, terminalTimeoutMs, { x: target.x, y: target.y, expectedTargetId: target.targetId });
-    trace.push({ step: "collect", action: ACTION, target: target.targetId, receipt: summarizeReceipt(collected.terminal) });
+    const collected = await request(client, receipts, terminalTimeoutMs, {
+      x: target.x,
+      y: target.y,
+      expectedTargetId: target.targetId,
+    });
+    trace.push({
+      step: "collect",
+      action: ACTION,
+      target: target.targetId,
+      receipt: summarizeReceipt(collected.terminal),
+    });
     if (collected.terminal.state !== "succeeded" || collected.terminal.reasonCode !== "building_chest_output_collected")
       throw new Error(`building_chest_collect_failed:${collected.terminal.state}/${collected.terminal.reasonCode}`);
     const evidence = parseEvidence(collected.terminal.evidence);
@@ -101,10 +131,12 @@ export async function runCollectBuildingChestOutputSmoke(client, receipts, _conf
     if (slotsAfter >= slotsBefore) throw new Error(`building_chest_slot_half_mismatch:${slotsBefore}:${slotsAfter}`);
     const chestBefore = integer(evidence.chest_item_before, "chest_item_before");
     const chestAfter = integer(evidence.chest_item_after, "chest_item_after");
-    if (chestBefore - chestAfter !== moved) throw new Error(`building_chest_chest_half_mismatch:${chestBefore}:${chestAfter}:${moved}`);
+    if (chestBefore - chestAfter !== moved)
+      throw new Error(`building_chest_chest_half_mismatch:${chestBefore}:${chestAfter}:${moved}`);
     const carriedBefore = integer(evidence.carried_before, "carried_before");
     const carriedAfter = integer(evidence.carried_after, "carried_after");
-    if (carriedAfter - carriedBefore !== moved) throw new Error(`building_chest_carried_half_mismatch:${carriedBefore}:${carriedAfter}:${moved}`);
+    if (carriedAfter - carriedBefore !== moved)
+      throw new Error(`building_chest_carried_half_mismatch:${carriedBefore}:${carriedAfter}:${moved}`);
 
     // The world change, re-read after the terminal, by TILE rather than by id: the identity names
     // the chest, not its contents, so it must NOT have moved either.
@@ -122,7 +154,12 @@ export async function runCollectBuildingChestOutputSmoke(client, receipts, _conf
       reasonCode: "building_chest_output_collected",
       target: target.targetId,
       building: target.buildingType,
-      chest: { id: target.chestId, stacksBefore: target.stackCount, stacksAfter: reread.stackCount, itemsAfter: reread.itemCount },
+      chest: {
+        id: target.chestId,
+        stacksBefore: target.stackCount,
+        stacksAfter: reread.stackCount,
+        itemsAfter: reread.itemCount,
+      },
       moved,
       negative: { wrongBranch: wrongBranch.terminal.reasonCode },
       evidence,

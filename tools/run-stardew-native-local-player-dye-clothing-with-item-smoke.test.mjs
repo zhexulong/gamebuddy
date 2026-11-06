@@ -77,7 +77,10 @@ test("the honest run satisfies every check", () => {
 });
 
 test("a colour that did not move is not a dye, on either surface", () => {
-  const checks = judge({ evidence: honestEvidence({ colour_after: "255,255,255", colour_changed: "false" }), after: { ...AFTER, garmentColour: "255,255,255" } });
+  const checks = judge({
+    evidence: honestEvidence({ colour_after: "255,255,255", colour_changed: "false" }),
+    after: { ...AFTER, garmentColour: "255,255,255" },
+  });
   assert.equal(checks.receiptSaysColourApplied, false);
   assert.equal(checks.worldShowsColourMoved, false);
   assert.equal(checks.worldShowsColourAfter, true);
@@ -85,7 +88,12 @@ test("a colour that did not move is not a dye, on either surface", () => {
 
 test("a dye that carries the colour the garment already has must NOT move it", () => {
   const checks = judge({
-    evidence: honestEvidence({ colour_before: "0,0,255", colour_expected: "0,0,255", colour_after: "0,0,255", colour_changed: "false" }),
+    evidence: honestEvidence({
+      colour_before: "0,0,255",
+      colour_expected: "0,0,255",
+      colour_after: "0,0,255",
+      colour_changed: "false",
+    }),
     before: { ...BEFORE, garmentColour: "0,0,255" },
     after: { ...AFTER, garmentColour: "0,0,255" },
   });
@@ -93,7 +101,12 @@ test("a dye that carries the colour the garment already has must NOT move it", (
   assert.equal(checks.worldShowsColourMoved, true);
   // ...and a colour that moved anyway is the same lie in the other direction.
   const moved = judge({
-    evidence: honestEvidence({ colour_before: "0,0,255", colour_expected: "0,0,255", colour_after: "10,0,255", colour_changed: "true" }),
+    evidence: honestEvidence({
+      colour_before: "0,0,255",
+      colour_expected: "0,0,255",
+      colour_after: "10,0,255",
+      colour_changed: "true",
+    }),
     before: { ...BEFORE, garmentColour: "0,0,255" },
     after: { ...AFTER, garmentColour: "10,0,255" },
   });
@@ -112,14 +125,23 @@ test("a receipt whose BEFORE is not the colour the world showed fails", () => {
 });
 
 test("a dye item that stayed in the backpack fails, and a recipe that spends no right item is judged by what it does", () => {
-  assert.equal(judge({ evidence: honestEvidence({ dye_after: "3" }), after: { ...AFTER, inventory: { "(S)1001": 1, "(O)684": 3 } } }).receiptSaysDyeConsumed, false);
+  assert.equal(
+    judge({
+      evidence: honestEvidence({ dye_after: "3" }),
+      after: { ...AFTER, inventory: { "(S)1001": 1, "(O)684": 3 } },
+    }).receiptSaysDyeConsumed,
+    false,
+  );
   const unspent = judge({
     evidence: honestEvidence({ dye_spent: "false", dye_after: "3" }),
     after: { ...AFTER, inventory: { "(S)1001": 1, "(O)684": 3 } },
   });
   assert.equal(unspent.receiptSaysDyeConsumed, true);
   assert.equal(unspent.worldShowsDyeConsumed, true);
-  assert.equal(judge({ evidence: honestEvidence({ dye_spent: "false", dye_after: "2" }) }).receiptSaysDyeConsumed, false);
+  assert.equal(
+    judge({ evidence: honestEvidence({ dye_spent: "false", dye_after: "2" }) }).receiptSaysDyeConsumed,
+    false,
+  );
 });
 
 test("a garment the act removed is not a dye", () => {
@@ -129,7 +151,10 @@ test("a garment the act removed is not a dye", () => {
 test("a receipt that names another target fails", () => {
   assert.equal(judge({ evidence: honestEvidence({ garment: "(S)1002" }) }).receiptNamesTheTarget, false);
   assert.equal(judge({ evidence: honestEvidence({ dye: "(O)685" }) }).receiptNamesTheTarget, false);
-  assert.equal(judge({ evidence: honestEvidence({ target: "tailoring_dye_ffffffffffffffff" }) }).receiptNamesTheTarget, false);
+  assert.equal(
+    judge({ evidence: honestEvidence({ target: "tailoring_dye_ffffffffffffffff" }) }).receiptNamesTheTarget,
+    false,
+  );
 });
 
 test("non-integer counts fail before anything is compared", () => {

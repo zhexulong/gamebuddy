@@ -42,7 +42,10 @@ export async function runClearHoeDirtSmoke(
     const target = chooseHoeDirt(snapshot);
     const pickaxe = choosePickaxe(snapshot);
     const equipped = await execute("equip_pickaxe", "equip_tool", { tool: "pickaxe" }, snapshot);
-    if (equipped.state !== "succeeded" || (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped"))
+    if (
+      equipped.state !== "succeeded" ||
+      (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped")
+    )
       throw new Error(`pickaxe_equip_failed:${equipped.reasonCode}`);
 
     snapshot = await observeFresh(client, { actionable: true });
@@ -77,10 +80,10 @@ export async function runClearHoeDirtSmoke(
       reasonCode: passed ? "hoedirt_cleared" : "clear_hoedirt_postcondition_mismatch",
       target: freshTarget,
       receipt: summarizeReceipt(accepted),
-    // `summarizeReceipt` deliberately carries no identity (4a52188), so the
-    // execution correlation is proven here against the raw receipt: the terminal
-    // the runner accepted is the exact execution it later reads back.
-    executionId: accepted.executionId,
+      // `summarizeReceipt` deliberately carries no identity (4a52188), so the
+      // execution correlation is proven here against the raw receipt: the terminal
+      // the runner accepted is the exact execution it later reads back.
+      executionId: accepted.executionId,
       evidence,
       trace,
       before: summary(snapshot),
@@ -162,11 +165,7 @@ if (import.meta.main) {
 
 function validateConfig(value) {
   const fixture = value?.NativeLocalPlayerFixture;
-  if (
-    fixture?.Enable !== true ||
-    fixture.Bootstrap?.Enable === true ||
-    fixture.FixtureScenario !== SCENARIO
-  )
+  if (fixture?.Enable !== true || fixture.Bootstrap?.Enable === true || fixture.FixtureScenario !== SCENARIO)
     throw new Error("native_local_clear_hoedirt_fixture_config_invalid");
   if (
     value.Portfolio?.Enable === true ||

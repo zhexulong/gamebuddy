@@ -38,7 +38,14 @@ const config = {
   },
 };
 
-const CAPABILITIES = ["cancel_active_execution", "chest_store", "harvest_crop", "inspect_self", "move_to_tile", "travel"];
+const CAPABILITIES = [
+  "cancel_active_execution",
+  "chest_store",
+  "harvest_crop",
+  "inspect_self",
+  "move_to_tile",
+  "travel",
+];
 
 // Field spellings must match the Mod exactly: the handler emits
 // `regrowsAfterHarvest.ToString().ToLowerInvariant()`, i.e. a lowercase boolean.

@@ -38,7 +38,10 @@ export async function runUseRaftSmoke(client, receipts, config, { terminalTimeou
       throw new Error(`use_raft_failed:${terminal.reasonCode}`);
     const evidence = parseEvidence(terminal.evidence);
     const after = await observeFresh(client, { actionable: false, minRevision: terminal.revision });
-    const passed = after.revision >= terminal.revision && evidence.is_rafting === "true" && evidence.tile === `${target.x},${target.y}`;
+    const passed =
+      after.revision >= terminal.revision &&
+      evidence.is_rafting === "true" &&
+      evidence.tile === `${target.x},${target.y}`;
     return {
       state: passed ? "passed" : "blocked",
       topology: "native_local_player_fixture",
@@ -70,7 +73,11 @@ function chooseRaftTarget(snapshot) {
 }
 
 function chooseRaftSlot(snapshot) {
-  const matches = (snapshot.toolSlots ?? []).filter((entry) => Number.isInteger(entry?.slot) && (entry.label === "Raft" || entry.label === "(T)Raft" || entry.label?.endsWith("Raft")));
+  const matches = (snapshot.toolSlots ?? []).filter(
+    (entry) =>
+      Number.isInteger(entry?.slot) &&
+      (entry.label === "Raft" || entry.label === "(T)Raft" || entry.label?.endsWith("Raft")),
+  );
   if (matches.length !== 1) throw new Error(matches.length ? "ambiguous_raft_slot" : "raft_slot_missing");
   return matches[0].slot;
 }
@@ -78,10 +85,15 @@ function chooseRaftSlot(snapshot) {
 function parseEvidence(evidence) {
   const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
   if (!detail) throw new Error("use_raft_evidence_empty");
-  return Object.fromEntries(detail.split(";").map((pair) => {
-    const index = pair.indexOf("=");
-    return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-  }).filter(Boolean));
+  return Object.fromEntries(
+    detail
+      .split(";")
+      .map((pair) => {
+        const index = pair.indexOf("=");
+        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
+      })
+      .filter(Boolean),
+  );
 }
 
 if (import.meta.main) {

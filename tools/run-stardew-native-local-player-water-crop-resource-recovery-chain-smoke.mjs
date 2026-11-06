@@ -134,8 +134,7 @@ export async function runWaterCropResourceRecoveryChainSmoke(
 
     // 1. Breakpoint: water_crop with an empty equipped can -> deterministic
     //    rejection before any native ingress.
-    if (!hasCropTarget(snapshot, target))
-      throw new Error("breakpoint_crop_target_missing_after_equip");
+    if (!hasCropTarget(snapshot, target)) throw new Error("breakpoint_crop_target_missing_after_equip");
     const breakpointAccepted = await execute(
       "breakpoint_water",
       "water_crop",
@@ -212,8 +211,7 @@ export async function runWaterCropResourceRecoveryChainSmoke(
 
     // 3. Retry the SAME target -> authoritative succeeded receipt + fresh
     //    postcondition. The crop target must have survived the whole chain.
-    if (!hasCropTarget(snapshot, target))
-      throw new Error("retry_crop_target_missing_after_recovery");
+    if (!hasCropTarget(snapshot, target)) throw new Error("retry_crop_target_missing_after_recovery");
     const retryAccepted = await execute(
       "retry_water",
       "water_crop",
@@ -254,7 +252,9 @@ export async function runWaterCropResourceRecoveryChainSmoke(
     });
     const freshTargetGone =
       Array.isArray(after.cropTargets) &&
-      !after.cropTargets.some((entry) => entry?.targetId === target.targetId || (entry?.x === target.x && entry?.y === target.y));
+      !after.cropTargets.some(
+        (entry) => entry?.targetId === target.targetId || (entry?.x === target.x && entry?.y === target.y),
+      );
     const retryWaterBefore = Number(evidence.water_before);
     const retryWaterAfter = Number(evidence.water_after);
     const retryWaterDelta =
@@ -294,12 +294,7 @@ export async function runWaterCropResourceRecoveryChainSmoke(
       after.location === snapshot.location &&
       sameTile(after.tile, snapshot.tile) &&
       freshTargetGone;
-    const passed =
-      refillRefilled &&
-      retryWaterDelta &&
-      evidenceBound &&
-      sameJournalLineage &&
-      freshPostcondition;
+    const passed = refillRefilled && retryWaterDelta && evidenceBound && sameJournalLineage && freshPostcondition;
     if (!passed) throw new Error("recovery_chain_postcondition_mismatch");
     return {
       state: "passed",
@@ -373,7 +368,8 @@ if (import.meta.main) {
 }
 
 function snapShotMustBeActionable(snapshot, phase) {
-  if (snapshot.actionable !== true || snapshot.activeExecution != null) throw new Error(`${phase}_player_not_actionable`);
+  if (snapshot.actionable !== true || snapshot.activeExecution != null)
+    throw new Error(`${phase}_player_not_actionable`);
 }
 
 async function execute(phase, action, args, snapshot, trace, client) {
@@ -442,8 +438,7 @@ async function moveToTile(client, receipts, snapshot, target, phase, trace, stab
     timeoutMs: stabilizeTimeoutMs,
     requireActionable: true,
     check: (latest) =>
-      latest.activeExecution == null &&
-      (sameTile(latest.tile, target) || cardinalAdjacent(latest.tile, target)),
+      latest.activeExecution == null && (sameTile(latest.tile, target) || cardinalAdjacent(latest.tile, target)),
   });
 }
 
@@ -583,7 +578,7 @@ function validateNativeLocalFixtureConfig(value) {
     value.HostAutomation?.Enable === true ||
     value.HostFarmhandProvisioning?.Enable === true ||
     value.FarmhandProvisioner?.Enable === true ||
-    (value.Portfolio?.Enable === true)
+    value.Portfolio?.Enable === true
   )
     throw new Error(
       `native_local_fixture_topology_not_isolated:${JSON.stringify({

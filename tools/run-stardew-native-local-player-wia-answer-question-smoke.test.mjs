@@ -58,7 +58,10 @@ function makeClient(overrides = {}) {
           state: "invalidated",
           reasonCode: "modal_interrupted",
           revision: 10,
-          evidence: { detail: "interrupted_by=DialogueBox;target_tile=35,35;interrupted_at=20,20;remaining_distance=15;revision=7" },
+          evidence: {
+            detail:
+              "interrupted_by=DialogueBox;target_tile=35,35;interrupted_at=20,20;remaining_distance=15;revision=7",
+          },
         });
         snapshot = baseSnapshot(10, { actionable: false, activeExecution: null });
         client.state.snapshot = snapshot;
@@ -77,7 +80,7 @@ function makeClient(overrides = {}) {
         assert.deepEqual(
           request.args,
           { responseKey: "yes" },
-          "answer_dialogue args must carry exactly { responseKey } (exact-shape contract)"
+          "answer_dialogue args must carry exactly { responseKey } (exact-shape contract)",
         );
         // The Mod answers synchronously: immediate bridge response IS the terminal.
         // The outro closes the dialogue on a later frame; the mock advances
@@ -92,7 +95,8 @@ function makeClient(overrides = {}) {
           reasonCode: "answer_dialogue_answered",
           revision: 12,
           evidence: {
-            detail: "modal_type=DialogueBox;question=true;response_key=yes;native_answered=true;outro_started=true;postcondition=dialogue_outro_started",
+            detail:
+              "modal_type=DialogueBox;question=true;response_key=yes;native_answered=true;outro_started=true;postcondition=dialogue_outro_started",
           },
         };
       }

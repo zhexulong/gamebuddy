@@ -198,7 +198,7 @@ test("minecart runner blocks when a required capability is missing", async () =>
 
 test("minecart runner accepts a larger advertised surface than the fixture needs", async () => {
   const client = createFake({
-    capabilities: [...CAPABILITIES, "craft_item", "advance_day"],
+    capabilities: [...CAPABILITIES, "craft_item", "sleep"],
   });
   const result = await runRideMinecartSmoke(client, withReceipts(client), fixtureConfig());
   assert.equal(result.state, "passed");

@@ -50,7 +50,9 @@ for (const dir of readdirSync(RUNS)) {
     const receipt = step.receipt && step.receipt.state === "succeeded" ? step.receipt : undefined;
     const evidence =
       trace.map((s) => s.evidence).find((e) => e && typeof e === "object" && !Array.isArray(e)) ??
-      (parsed.evidence && typeof parsed.evidence === "object" && !Array.isArray(parsed.evidence) ? parsed.evidence : undefined);
+      (parsed.evidence && typeof parsed.evidence === "object" && !Array.isArray(parsed.evidence)
+        ? parsed.evidence
+        : undefined);
     if (typeof action !== "string" || receipt === undefined || evidence === undefined) continue;
     entries.push({
       fromRun: lastDir,
@@ -64,6 +66,19 @@ for (const dir of readdirSync(RUNS)) {
 
 const unique = new Map(entries.map((e) => [e.actionId + "|" + e.reasonCode, e]));
 const corpus = [...unique.values()].sort((a, b) => a.actionId.localeCompare(b.actionId));
-writeFileSync(OUT, JSON.stringify({ note: "Terminal receipts recorded from real live runs. Regenerate with tools/record-stardew-live-receipts.mjs.", receipts: corpus }, null, 2) + "\n");
+writeFileSync(
+  OUT,
+  JSON.stringify(
+    {
+      note: "Terminal receipts recorded from real live runs. Regenerate with tools/record-stardew-live-receipts.mjs.",
+      receipts: corpus,
+    },
+    null,
+    2,
+  ) + "\n",
+);
 console.log("recorded " + corpus.length + " terminal receipt(s) to " + OUT.split("/").slice(-2).join("/"));
-for (const e of corpus) console.log("  " + e.actionId.padEnd(32) + e.reasonCode + "   (" + Object.keys(e.evidence).length + " evidence fields)");
+for (const e of corpus)
+  console.log(
+    "  " + e.actionId.padEnd(32) + e.reasonCode + "   (" + Object.keys(e.evidence).length + " evidence fields)",
+  );

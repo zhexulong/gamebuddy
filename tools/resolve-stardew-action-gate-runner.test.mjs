@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  GATE_EXEMPT_PUBLISHED_ACTIONS,
-} from "./lib/stardew-published-action-registry.mjs";
+import { GATE_EXEMPT_PUBLISHED_ACTIONS } from "./lib/stardew-published-action-registry.mjs";
 import { resolveStardewActionGateRunner } from "./resolve-stardew-action-gate-runner.mjs";
 import {
   STARDEW_EXPERIMENTAL_ACTION_RUNNERS,

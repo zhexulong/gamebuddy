@@ -74,17 +74,20 @@ export async function runMachineLoadSmoke(
       evidence.tile === `${target.x},${target.y}` &&
       evidence.machine === "(BC)12" &&
       evidence.slot === String(target.loadInputSlot) &&
-      evidence.input === "(O)433" &&
-      evidence.input_stack_before === "5" &&
-      evidence.input_stack_after === "removed" &&
-      evidence.last_input === "(O)433" &&
+      // The stack the load consumed is the count the machine's own row published, which is the fact the action and
+      // discovery share; the carried stack the fixture supplied is that same count, so nothing is left over.
+      evidence.input === target.loadInputQualifiedItemId &&
+      evidence.input_stack_before === String(target.loadInputStack) &&
+      evidence.input_consumed === String(target.loadInputStack) &&
+      evidence.input_stack_after === "0" &&
+      evidence.last_input === evidence.input &&
       evidence.held === "(O)395" &&
       evidence.ready_for_harvest === "false" &&
       // The duration is derived from live machine data, not a content constant: the
-    // receipt reports the observed value and the value the Mod derived, and those
-    // must agree. Asserting 120 here would re-introduce exactly the hardcoding the
-    // Mod-side change removed.
-    evidence.minutes_until_ready === evidence.expected_minutes_until_ready &&
+      // receipt reports the observed value and the value the Mod derived, and those
+      // must agree. Asserting 120 here would re-introduce exactly the hardcoding the
+      // Mod-side change removed.
+      evidence.minutes_until_ready === evidence.expected_minutes_until_ready &&
       evidence.native_check_action === "true";
     return {
       state: passed ? "passed" : "blocked",
@@ -125,11 +128,7 @@ if (import.meta.main) {
 
 function validateConfig(value) {
   const fixture = value?.NativeLocalPlayerFixture;
-  if (
-    fixture?.Enable !== true ||
-    fixture.Bootstrap?.Enable === true ||
-    fixture.FixtureScenario !== SCENARIO
-  )
+  if (fixture?.Enable !== true || fixture.Bootstrap?.Enable === true || fixture.FixtureScenario !== SCENARIO)
     throw new Error("native_local_machine_load_fixture_config_invalid");
   validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
   if (
@@ -159,8 +158,9 @@ function chooseOnlyLoadableKeg(snapshot) {
       entry.heldObjectQualifiedItemId == null &&
       entry.lastInputQualifiedItemId == null &&
       Number.isInteger(entry.loadInputSlot) &&
-      entry.loadInputQualifiedItemId === "(O)433" &&
-      entry.loadInputStack === 5,
+      typeof entry.loadInputQualifiedItemId === "string" &&
+      Number.isInteger(entry.loadInputStack) &&
+      entry.loadInputStack >= 1,
   );
   if (targets.length !== 1) throw new Error(targets.length ? "ambiguous_loadable_keg" : "no_loadable_keg");
   return targets[0];
@@ -182,6 +182,7 @@ function parseEvidence(receiptEvidence) {
     "slot",
     "input",
     "input_stack_before",
+    "input_consumed",
     "input_stack_after",
     "last_input",
     "held",

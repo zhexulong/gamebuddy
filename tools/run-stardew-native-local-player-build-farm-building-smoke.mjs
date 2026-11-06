@@ -77,7 +77,13 @@ export async function runBuildFarmBuildingSmoke(client, receipts, _config, { ter
   const builtAfter = builtBuildings(after);
 
   const checks = assertBuildFarmBuildingPostconditions({ target, evidence, sitesAfter, builtAfter });
-  trace.push({ step: "observed", sites: sitesAfter.length, built: builtAfter === null ? null : builtAfter.length, evidence, checks });
+  trace.push({
+    step: "observed",
+    sites: sitesAfter.length,
+    built: builtAfter === null ? null : builtAfter.length,
+    evidence,
+    checks,
+  });
 
   // 5. the negative case: the stale target is refused by name and the world does not move.
   const staleRequestId = `native_local_build_farm_building_stale_${Date.now()}`;
@@ -120,9 +126,7 @@ export function assertBuildFarmBuildingPostconditions({ target, evidence, sitesA
     // The published fact changed: a tile that now holds the building is not a build site.
     siteNoLongerAdvertised: !sitesAfter.some((entry) => entry?.targetId === target.targetId),
     // The structure exists on the named tile, re-read from the world.
-    buildingPresentAtTile: observable
-      ? built != null && built.buildingType === target.buildingType
-      : "not_checked",
+    buildingPresentAtTile: observable ? built != null && built.buildingType === target.buildingType : "not_checked",
     // And it is the very structure the receipt named.
     receiptNamesTheBuilding: observable
       ? built != null &&

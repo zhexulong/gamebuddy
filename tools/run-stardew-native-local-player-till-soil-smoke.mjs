@@ -49,7 +49,10 @@ export async function runTillSoilSmoke(
     );
     if (!hasHoe) throw new Error("hoe_not_found_in_live_tool_slots");
     const equipped = await execute("equip_hoe", "equip_tool", { tool: "hoe" }, snapshot, trace, client);
-    if (equipped.state !== "succeeded" || (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped"))
+    if (
+      equipped.state !== "succeeded" ||
+      (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped")
+    )
       throw new Error(`hoe_equip_failed:${equipped.reasonCode}`);
     snapshot = await observeFresh(client);
     if (!snapshot.currentTool?.toLowerCase().includes("hoe")) throw new Error("hoe_postcondition_missing");
@@ -276,7 +279,16 @@ function chooseReachableSoilTile(snapshot) {
 }
 function parseStrictEvidence(evidence) {
   const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  const expected = ["location", "target", "before", "after", "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost"];
+  const expected = [
+    "location",
+    "target",
+    "before",
+    "after",
+    "stamina_before",
+    "stamina_after",
+    "stamina_delta",
+    "expected_stamina_cost",
+  ];
   const result = {};
   for (const part of detail.split(";")) {
     const index = part.indexOf("=");

@@ -102,6 +102,8 @@ export function deriveCancellableActionIds() {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const rows = deriveCancellableHandlers();
   for (const r of rows) {
-    console.log(`${r.handler.padEnd(26)} ${r.cancellable ? "YES" : "no "}  ${r.slots.join(",")}${r.via ? `  (via ${r.via})` : ""}`);
+    console.log(
+      `${r.handler.padEnd(26)} ${r.cancellable ? "YES" : "no "}  ${r.slots.join(",")}${r.via ? `  (via ${r.via})` : ""}`,
+    );
   }
 }

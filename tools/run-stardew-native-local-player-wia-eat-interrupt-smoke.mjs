@@ -51,32 +51,22 @@ export async function runWiaEatInterruptSmoke(
 
     // Phase 1: native consumption starts before the accepted response, then the
     // fixture modal interrupts the still-running animation.
-    const firstAccepted = await executeUseItem(
-      "interrupt",
-      target,
-      before,
-      trace,
-      client,
-    );
-    if (firstAccepted.state !== "accepted")
-      throw new Error(`interrupt_not_accepted:${firstAccepted.reasonCode}`);
+    const firstAccepted = await executeUseItem("interrupt", target, before, trace, client);
+    if (firstAccepted.state !== "accepted") throw new Error(`interrupt_not_accepted:${firstAccepted.reasonCode}`);
     const firstAcceptedEvidence = parseStrictEvidence(firstAccepted.evidence);
     const firstAcceptedShape =
       firstAcceptedEvidence.slot === String(target.slot) &&
       firstAcceptedEvidence.item === target.qualifiedItemId &&
       firstAcceptedEvidence.stack_before === "2";
-    if (!firstAcceptedShape)
-      throw new Error("interrupt_native_consumption_boundary_missing");
+    if (!firstAcceptedShape) throw new Error("interrupt_native_consumption_boundary_missing");
 
     const interrupted = await waitForTerminal(receipts, firstAccepted, terminalTimeoutMs);
     if (interrupted.state !== "invalidated" || interrupted.reasonCode !== "modal_interrupted")
       throw new Error(`interrupt_missing:state=${interrupted.state};reason=${interrupted.reasonCode}`);
     const interruptEvidence = parseStrictEvidence(interrupted.evidence);
     const interruptEvidenceOk =
-      Object.keys(interruptEvidence).length === 1 &&
-      interruptEvidence.native_animation_pending === "true";
-    if (!interruptEvidenceOk)
-      throw new Error("interrupt_evidence_missing_native_animation_pending");
+      Object.keys(interruptEvidence).length === 1 && interruptEvidence.native_animation_pending === "true";
+    if (!interruptEvidenceOk) throw new Error("interrupt_evidence_missing_native_animation_pending");
 
     // Invalidation is not allowed to imply that the native consumption was
     // rolled back. The authoritative fresh snapshot must show stack 1 and no
@@ -84,8 +74,7 @@ export async function runWiaEatInterruptSmoke(
     const released = await waitForFreshSnapshot(client, {
       minRevision: interrupted.revision,
       timeoutMs: postconditionTimeoutMs,
-      check: (snapshot) =>
-        snapshot.activeExecution == null && foodStack(snapshot, target) === 1,
+      check: (snapshot) => snapshot.activeExecution == null && foodStack(snapshot, target) === 1,
     });
     const releaseOk = released.activeExecution == null && foodStack(released, target) === 1;
     if (!releaseOk) throw new Error("interrupt_owner_not_released");
@@ -93,15 +82,9 @@ export async function runWiaEatInterruptSmoke(
     // Phase 2: dismiss_modal is instantaneous in the Mod. Its immediate bridge
     // response is the terminal, although the accepted-then-terminal form is
     // tolerated for parity with the shared harness.
-    const dismissAccepted = await executeAction(
-      "dismiss",
-      "dismiss_modal",
-      {},
-      released,
-      trace,
-      client,
-      { requireActionable: false },
-    );
+    const dismissAccepted = await executeAction("dismiss", "dismiss_modal", {}, released, trace, client, {
+      requireActionable: false,
+    });
     const dismissed =
       dismissAccepted.state === "succeeded" && dismissAccepted.reasonCode === "modal_dismissed"
         ? dismissAccepted
@@ -124,15 +107,8 @@ export async function runWiaEatInterruptSmoke(
       throw new Error("retry_precondition_mismatch");
 
     // Phase 3: re-submit the same slot/item identity after the modal is gone.
-    const retryAccepted = await executeUseItem(
-      "retry",
-      target,
-      readyForRetry,
-      trace,
-      client,
-    );
-    if (retryAccepted.state !== "accepted")
-      throw new Error(`retry_not_accepted:${retryAccepted.reasonCode}`);
+    const retryAccepted = await executeUseItem("retry", target, readyForRetry, trace, client);
+    if (retryAccepted.state !== "accepted") throw new Error(`retry_not_accepted:${retryAccepted.reasonCode}`);
     const retryAcceptedEvidence = parseStrictEvidence(retryAccepted.evidence);
     if (
       retryAcceptedEvidence.slot !== String(target.slot) ||
@@ -281,9 +257,7 @@ function chooseOnlyTwoStackFoodTarget(snapshot) {
   );
   if (eligible.length !== 1)
     throw new Error(
-      eligible.length === 0
-        ? "no_two_stack_live_eligible_food_target"
-        : "ambiguous_live_two_stack_food_targets",
+      eligible.length === 0 ? "no_two_stack_live_eligible_food_target" : "ambiguous_live_two_stack_food_targets",
     );
   return eligible[0];
 }

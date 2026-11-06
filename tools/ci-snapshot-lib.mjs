@@ -4,8 +4,7 @@ import { dirname, isAbsolute, normalize, relative, resolve, sep } from "node:pat
 
 export const SNAPSHOT_SCHEMA = "gamebuddy-no-commit-clean-room-snapshot/v1";
 export const REQUIRED_INPUTS_SCHEMA = "gamebuddy-required-snapshot-inputs/v2";
-const REQUIRED_INPUT_REFERENCE_REQUIREMENT =
-  "must be proven by a tracked build or CI reference before admission";
+const REQUIRED_INPUT_REFERENCE_REQUIREMENT = "must be proven by a tracked build or CI reference before admission";
 const REQUIRED_INPUT_REFERENCE_MARKER_PREFIX = "gamebuddy-snapshot-input:";
 const SNAPSHOT_CONTROL_OWNER = "snapshot-tooling";
 const SNAPSHOT_CONTROL_PURPOSE = "required-input control";

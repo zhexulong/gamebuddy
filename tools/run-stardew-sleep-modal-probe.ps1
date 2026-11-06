@@ -29,7 +29,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $smapi = Join-Path $GamePath "StardewModdingAPI.exe"
-$clientConfig = Join-Path $ModsPath "GameBuddy.Stardew/config.json"
+. (Join-Path $PSScriptRoot "lib/stardew-mod-config.ps1")
+$clientConfig = Get-GameBuddyStardewModConfigPath $ModsPath
 $backupName = "native-local-sleep-modal-fixture-backup"
 $fixtureSaveHarness = Join-Path $PSScriptRoot "prepare-stardew-action-fixture.ps1"
 $stardewSaveRoot = Join-Path $env:APPDATA "StardewValley\Saves"

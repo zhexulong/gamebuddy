@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertUseObeliskPostconditions, validateNativeLocalFixtureConfig } from "./run-stardew-native-local-player-use-obelisk-smoke.mjs";
+import {
+  assertUseObeliskPostconditions,
+  validateNativeLocalFixtureConfig,
+} from "./run-stardew-native-local-player-use-obelisk-smoke.mjs";
 
 /**
  * A pass-shaped detail object. The runner's happy path is exercised live; what this file pins is the
@@ -20,7 +23,10 @@ function passingDetail() {
     terminalActual: "Desert:35,43",
     after: { hasLocation: true },
     afterLocation: "Desert",
-    trace: [{ phase: "use", action: "use_obelisk" }, { phase: "terminal", state: "succeeded" }],
+    trace: [
+      { phase: "use", action: "use_obelisk" },
+      { phase: "terminal", state: "succeeded" },
+    ],
   };
 }
 
@@ -33,8 +39,16 @@ const clauses = [
   ["a silently re-targeted obelisk", (d) => (d.dispatchedTarget = "obelisk_other"), /use_obelisk_target_mismatch/],
   ["a route the caller did not ask for", (d) => (d.dispatchedRoute = "island_farm_tile"), /use_obelisk_route_mismatch/],
   ["a tile that is not the advertised one", (d) => (d.dispatchedTargetTile = "1,1"), /use_obelisk_tile_mismatch/],
-  ["a destination the client supplied rather than the structure", (d) => (d.dispatchedDestination = "Beach"), /use_obelisk_destination_mismatch/],
-  ["an arrival at a location that is not the destination", (d) => (d.afterLocation = "Farm"), /use_obelisk_arrival_not_observed/],
+  [
+    "a destination the client supplied rather than the structure",
+    (d) => (d.dispatchedDestination = "Beach"),
+    /use_obelisk_destination_mismatch/,
+  ],
+  [
+    "an arrival at a location that is not the destination",
+    (d) => (d.afterLocation = "Farm"),
+    /use_obelisk_arrival_not_observed/,
+  ],
   // A warp whose destination IS the origin: every other clause agrees, so the only thing wrong is
   // that the actor never went anywhere. (Setting afterLocation to some third place would trip the
   // arrival clause first and prove nothing about this one.)
@@ -50,8 +64,16 @@ const clauses = [
     },
     /use_obelisk_did_not_move/,
   ],
-  ["a terminal whose expected pair names somewhere else", (d) => (d.terminalExpected = "Beach:20,4"), /use_obelisk_terminal_expected_mismatch/],
-  ["a terminal whose actual pair names somewhere else", (d) => (d.terminalActual = "Farm:1,1"), /use_obelisk_terminal_actual_mismatch/],
+  [
+    "a terminal whose expected pair names somewhere else",
+    (d) => (d.terminalExpected = "Beach:20,4"),
+    /use_obelisk_terminal_expected_mismatch/,
+  ],
+  [
+    "a terminal whose actual pair names somewhere else",
+    (d) => (d.terminalActual = "Farm:1,1"),
+    /use_obelisk_terminal_actual_mismatch/,
+  ],
   ["a run that never dispatched", (d) => (d.trace = [{ phase: "terminal", state: "succeeded" }]), /use_obelisk_trace/],
 ];
 

@@ -12,6 +12,10 @@ import {
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
 const ACTION = "navigate_to_destination";
+
+// prelive-l3-opt-out b: launched by its own fixture script
+// (`tools/run-stardew-native-local-player-navigation-mutation-fixture.ps1`); the navigation ladder's mutation half is
+// scenario-driven rather than one action, so the action->runner map has no entry for it.
 const SCENARIO = "navigation_mutation_v1";
 const EXPECTED_ACTIONS = ["inspect_world_map", "find_destination", ACTION];
 const REQUIRED_CAPABILITIES = [

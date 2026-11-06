@@ -15,9 +15,9 @@ const config = {
   CompanionId: "companion",
   PipeName: "pipe",
   BridgeToken: "token",
-    DeniedActions: [],
-    DeniedActionFamilies: [],
-    ExperimentalActions: [],
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
   NativeLocalPlayerFixture: {
     Enable: true,
     Bootstrap: { Enable: false },
@@ -27,7 +27,14 @@ const config = {
   },
 };
 
-const CAPABILITIES = ["cancel_active_execution", "equip_tool", "inspect_self", "move_to_tile", "travel", "water_pet_bowl"];
+const CAPABILITIES = [
+  "cancel_active_execution",
+  "equip_tool",
+  "inspect_self",
+  "move_to_tile",
+  "travel",
+  "water_pet_bowl",
+];
 
 function baseSnapshot(revision, tile, extra) {
   return {
@@ -196,8 +203,5 @@ test("water-pet-bowl runner refuses a mismatched fixture scenario or action set"
   // Narrowing the surface under deny-by-exception means denying an action the
   // run needs; the retired allowlist used to express this by listing only one.
   const wrongActions = { ...config, DeniedActions: ["water_pet_bowl"] };
-  await assert.rejects(
-    () => runWaterPetBowlSmoke(client, [], wrongActions),
-    /native_fixture_policy_denies_required/,
-  );
+  await assert.rejects(() => runWaterPetBowlSmoke(client, [], wrongActions), /native_fixture_policy_denies_required/);
 });

@@ -327,8 +327,7 @@ function chooseOnlyFreshForageTarget(snapshot) {
 async function chooseExactSceneForageTarget(client, snapshot, target) {
   if (typeof client?.observeScene !== "function") throw new Error("observe_scene_unavailable");
   const scene = await client.observeScene({});
-  const validPartial = scene?.partial === true
-    && PARTIAL_TRUNCATION_REASONS.has(scene.truncatedReason);
+  const validPartial = scene?.partial === true && PARTIAL_TRUNCATION_REASONS.has(scene.truncatedReason);
   if (
     !scene ||
     typeof scene.observationId !== "string" ||
@@ -381,7 +380,8 @@ function validateSceneGround(ground) {
   if (ground.dominantTileCount < 1) throw new Error("scene_ground_dominant_zero");
   if (ground.dominantTileCount > ground.scannedTileCount) throw new Error("scene_ground_dominant_exceeds_scanned");
   for (const entry of ground.exceptions) {
-    if (!Number.isInteger(entry?.tileX) || !Number.isInteger(entry?.tileY)) throw new Error("scene_ground_exception_tile_invalid");
+    if (!Number.isInteger(entry?.tileX) || !Number.isInteger(entry?.tileY))
+      throw new Error("scene_ground_exception_tile_invalid");
     if (!KINDS.has(entry?.kind)) throw new Error("scene_ground_exception_kind_unknown");
     // The producer builds exceptions from tiles whose kind is not the dominant
     // one, so a repeat would mean the summary contradicts itself.

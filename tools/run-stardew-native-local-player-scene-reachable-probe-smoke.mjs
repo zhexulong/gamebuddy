@@ -1,7 +1,4 @@
-import {
-  connectNativeLocalClient,
-  readNativeClientConfig,
-} from "./lib/stardew-native-smoke-harness-v1.mjs";
+import { connectNativeLocalClient, readNativeClientConfig } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 /**
@@ -22,20 +19,35 @@ export async function runSceneReachableProbe(client, _receipts, config) {
   }
   const scene = await client.observeScene({});
   const affordances = Array.isArray(scene?.affordances) ? scene.affordances : [];
-  const lines = affordances.map((affordance) =>
-    `${affordance.kind}:${affordance.name} reachable=${affordance.reachable === undefined ? "ABSENT" : JSON.stringify(affordance.reachable)}`,
+  const lines = affordances.map(
+    (affordance) =>
+      `${affordance.kind}:${affordance.name} reachable=${affordance.reachable === undefined ? "ABSENT" : JSON.stringify(affordance.reachable)}`,
   );
-  console.log("SCENE_RESULT observationId=" + (scene?.observationId ?? "?") + " currentLocation=" + (scene?.currentLocation ?? "?"));
+  console.log(
+    "SCENE_RESULT observationId=" +
+      (scene?.observationId ?? "?") +
+      " currentLocation=" +
+      (scene?.currentLocation ?? "?"),
+  );
   console.log("SCENE_AFFORDANCES " + (lines.length > 0 ? lines.join(" | ") : "(none)"));
   const withReachable = affordances.filter((affordance) => affordance.reachable !== undefined);
   const reachableCount = withReachable.filter((affordance) => affordance.reachable === true).length;
   const unreachableCount = withReachable.filter((affordance) => affordance.reachable === false).length;
   const absentCount = affordances.length - withReachable.length;
-  console.log(`SCENE_REACHABLE summary affordances=${affordances.length} reachable=${reachableCount} unreachable=${unreachableCount} absent=${absentCount}`);
+  console.log(
+    `SCENE_REACHABLE summary affordances=${affordances.length} reachable=${reachableCount} unreachable=${unreachableCount} absent=${absentCount}`,
+  );
   if (affordances.length > 0 && withReachable.length === 0) {
     throw new Error("reachable_field_absent_from_scene_observation");
   }
-  return { state: "passed", reason: "scene_observed", affordances: affordances.length, reachableCount, unreachableCount, absentCount };
+  return {
+    state: "passed",
+    reason: "scene_observed",
+    affordances: affordances.length,
+    reachableCount,
+    unreachableCount,
+    absentCount,
+  };
 }
 
 function validateNativeLocalFixtureConfig(value) {

@@ -70,7 +70,11 @@ async function runCase(options) {
 
 test("READY observes exactly one fresh snapshot, checks publication parity, and never executes", async () => {
   let executeCalls = 0;
-  const { result, counts } = await runCase({ execute: async () => { executeCalls += 1; } });
+  const { result, counts } = await runCase({
+    execute: async () => {
+      executeCalls += 1;
+    },
+  });
   assert.equal(result.state, "READY");
   assert.equal(result.freshSnapshotCount, 1);
   assert.equal(result.capabilityDeclared, true);
@@ -86,7 +90,10 @@ test("READY observes exactly one fresh snapshot, checks publication parity, and 
 test("each required blocked reason fails closed without execute", async () => {
   const cases = [
     [{ observed: snapshot({ actionable: false }) }, "snapshot_non_actionable"],
-    [{ observed: snapshot({ activeExecution: { executionId: "opaque", requestId: "opaque", state: "running" } }) }, "active_execution"],
+    [
+      { observed: snapshot({ activeExecution: { executionId: "opaque", requestId: "opaque", state: "running" } }) },
+      "active_execution",
+    ],
     [{ observed: snapshot({ capabilities: ["cancel_active_execution"] }) }, "capability_mismatch"],
     [{ published: ["move_to_tile"] }, "publication_mismatch"],
     [{ observed: snapshot({ toolSlots: [] }) }, "no_eligible_tool_slot"],
@@ -132,7 +139,12 @@ test("factory closes in blocked paths and no branch calls execute", async () => 
     { published: ["other_action"] },
     { observed: snapshot({ toolSlots: [] }) },
   ]) {
-    const fixture = factory({ ...options, execute: async () => { executeCalls += 1; } });
+    const fixture = factory({
+      ...options,
+      execute: async () => {
+        executeCalls += 1;
+      },
+    });
     try {
       assert.equal((await fixture.preflight.run()).state, "BLOCKED");
     } finally {

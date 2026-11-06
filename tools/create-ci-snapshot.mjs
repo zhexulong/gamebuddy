@@ -2,11 +2,7 @@ import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  cleanupAtomicDirectory,
-  commitAtomicDirectory,
-  prepareAtomicDirectory,
-} from "./lib/atomic-directory.mjs";
+import { cleanupAtomicDirectory, commitAtomicDirectory, prepareAtomicDirectory } from "./lib/atomic-directory.mjs";
 import {
   assertCanonicalDirectory,
   collectUntrackedCandidates,
@@ -75,7 +71,7 @@ export async function createCiSnapshot({ root = defaultRoot, outputRoot } = {}) 
     const baseCommit = (await git(sourceRoot, ["rev-parse", "HEAD"])).toString("utf8").trim();
     if (!/^[0-9a-f]{40}$/.test(baseCommit)) fail("base_commit_invalid");
     const patch = await git(sourceRoot, ["diff", "--binary", "HEAD"]);
-     const patchPath = resolve(transaction.stagingPath, "tracked.patch");
+    const patchPath = resolve(transaction.stagingPath, "tracked.patch");
     await writeFile(patchPath, patch, { mode: 0o600, flag: "wx" });
     const report = await untrackedReport(sourceRoot, inputs);
     const reportBytes = Buffer.from(`${JSON.stringify(report, null, 2)}\n`, "utf8");
@@ -88,13 +84,13 @@ export async function createCiSnapshot({ root = defaultRoot, outputRoot } = {}) 
       requiredInputs: inputs,
       source: Object.freeze({ digest: source.digest, entries: source.entries }),
     });
-     await writeSnapshotManifest(resolve(transaction.stagingPath, "snapshot-manifest.json"), manifest);
-     await writeFile(resolve(transaction.stagingPath, "untracked-input-report.json"), reportBytes, {
+    await writeSnapshotManifest(resolve(transaction.stagingPath, "snapshot-manifest.json"), manifest);
+    await writeFile(resolve(transaction.stagingPath, "untracked-input-report.json"), reportBytes, {
       encoding: "utf8",
       mode: 0o600,
       flag: "wx",
     });
-     await commitAtomicDirectory(transaction);
+    await commitAtomicDirectory(transaction);
     return Object.freeze({
       manifest,
       report,
@@ -102,7 +98,7 @@ export async function createCiSnapshot({ root = defaultRoot, outputRoot } = {}) 
       patchPath: resolve(destination, "tracked.patch"),
     });
   } catch (error) {
-     await cleanupAtomicDirectory(transaction, { recursive: true });
+    await cleanupAtomicDirectory(transaction, { recursive: true });
     throw error;
   }
 }

@@ -27,7 +27,11 @@ function capabilitySnapshot(revision) {
  * per execution so the monotonic-revision proof is real, and the receipts buffer
  * carries the Mod-owned terminal for each request exactly as production does.
  */
-function expressionClient({ nativeDispatched = "true", emoteReason = "emote_started", immediateTerminal = false } = {}) {
+function expressionClient({
+  nativeDispatched = "true",
+  emoteReason = "emote_started",
+  immediateTerminal = false,
+} = {}) {
   let revision = 10;
   const client = {
     state: { snapshot: capabilitySnapshot(revision), latestReceipt: undefined },

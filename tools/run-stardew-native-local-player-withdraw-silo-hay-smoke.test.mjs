@@ -4,7 +4,13 @@ import { runWithdrawSiloHaySmoke } from "./run-stardew-native-local-player-withd
 
 const HAY = "(O)178";
 
-const scope = { integrationId: "stardew", saveId: "save", worldId: "world", playerId: "player", companionId: "companion" };
+const scope = {
+  integrationId: "stardew",
+  saveId: "save",
+  worldId: "world",
+  playerId: "player",
+  companionId: "companion",
+};
 
 /** A snapshot the runner can act on: one adjacent stocked Silo, no Hay carried. */
 function snapshotWith({ revision, siloHay, carried }) {
@@ -90,7 +96,10 @@ test("withdraw_silo_hay: a silo that did not lose hay fails the run", async () =
   client.execute = async (request) => {
     const receipt = await original(request);
     if (receipt.state === "succeeded") {
-      client.state.snapshot = { ...client.state.snapshot, siloTargets: [{ targetId: "silo-target", x: 16, y: 8, hay: 1 }] };
+      client.state.snapshot = {
+        ...client.state.snapshot,
+        siloTargets: [{ targetId: "silo-target", x: 16, y: 8, hay: 1 }],
+      };
     }
     return receipt;
   };

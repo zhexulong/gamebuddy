@@ -51,7 +51,7 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   "run-stardew-native-local-player-craft-partial-recovery-chain-smoke.mjs": "craft_item",
   "run-stardew-native-local-player-place-owned-object-smoke.mjs": "place_owned_object",
   "run-stardew-native-local-player-remove-placed-item-smoke.mjs": "remove_placed_item",
-  "run-stardew-native-local-player-break-container-source-smoke.mjs": "break_container_source",
+  "run-stardew-native-local-player-break-container-source-smoke.mjs": "break_container",
   "run-stardew-native-local-player-harvest-inventory-full-recovery-chain-smoke.mjs": "harvest_crop",
   "run-stardew-native-local-player-machine-ab-smoke.mjs": "machine_inspect",
   "run-stardew-native-local-player-navigation-mutation-smoke.mjs": "navigation_mutation",
@@ -130,7 +130,7 @@ const CONFIG_DRIVER_ACTION = Object.freeze({
   // Pre-existing fixture-family drivers whose runner does not carry the action
   // id in the fixture derive path; they were already covered by STALE baselines
   // before the loop-closure wave and stay declared here.
-  "run-stardew-native-local-player-chop-tree-approach-smoke.mjs": "chop_tree_source",
+  "run-stardew-native-local-player-chop-tree-approach-smoke.mjs": "chop_tree",
   "run-stardew-native-local-player-cut-grass-smoke.mjs": "cut_grass",
   "run-stardew-native-local-player-move-stall-probe-smoke.mjs": "move_stall_probe_pet",
   // The ladder probe keys its scenario on its own harness label ("move_ladder"),

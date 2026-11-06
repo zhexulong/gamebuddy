@@ -17,9 +17,9 @@ const config = {
   CompanionId: "companion",
   PipeName: "pipe",
   BridgeToken: "token",
-    DeniedActions: [],
-    DeniedActionFamilies: [],
-    ExperimentalActions: [],
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
   NativeLocalPlayerFixture: {
     Enable: true,
     Bootstrap: { Enable: false },

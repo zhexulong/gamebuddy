@@ -116,9 +116,9 @@ function regularizedBeta(x, a, b) {
   if (x >= 1) return 1;
   const bt = Math.exp(lgamma(a + b) - lgamma(a) - lgamma(b) + a * Math.log(x) + b * Math.log(1 - x));
   if (x < (a + 1) / (a + b + 2)) {
-    return bt * betacf(x, a, b) / a;
+    return (bt * betacf(x, a, b)) / a;
   }
-  return 1 - bt * betacf(1 - x, b, a) / b;
+  return 1 - (bt * betacf(1 - x, b, a)) / b;
 }
 
 /** Lanczos approximation of ln(Gamma(z)) for z > 0 (g=7, n=9). */
@@ -126,15 +126,8 @@ function lgamma(z) {
   if (z <= 0) return NaN;
   const g = 7;
   const c = [
-    0.9999999999998099,
-    676.5203681218851,
-    -1259.1392167224028,
-    771.3234287776531,
-    -176.6150291621406,
-    12.507343278686905,
-    -0.13857109526572012,
-    9.984369578019572e-6,
-    1.5056327351493116e-7,
+    0.9999999999998099, 676.5203681218851, -1259.1392167224028, 771.3234287776531, -176.6150291621406,
+    12.507343278686905, -0.13857109526572012, 9.984369578019572e-6, 1.5056327351493116e-7,
   ];
   if (z < 0.5) {
     // Reflection formula: Gamma(z) = pi / (sin(pi z) Gamma(1 - z))
@@ -155,20 +148,20 @@ function betacf(x, a, b) {
   const qap = a + 1;
   const qam = a - 1;
   let c = 1;
-  let d = 1 - qab * x / qap;
+  let d = 1 - (qab * x) / qap;
   if (Math.abs(d) < FPMIN) d = FPMIN;
   d = 1 / d;
   let h = d;
   for (let m = 1; m <= MAXIT; m += 1) {
     const m2 = 2 * m;
-    let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+    let aa = (m * (b - m) * x) / ((qam + m2) * (a + m2));
     d = 1 + aa * d;
     if (Math.abs(d) < FPMIN) d = FPMIN;
     c = 1 + aa / c;
     if (Math.abs(c) < FPMIN) c = FPMIN;
     d = 1 / d;
     h *= d * c;
-    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+    aa = (-(a + m) * (qab + m) * x) / ((a + m2) * (qap + m2));
     d = 1 + aa * d;
     if (Math.abs(d) < FPMIN) d = FPMIN;
     c = 1 + aa / c;
@@ -216,10 +209,7 @@ function summarize(group) {
       continue;
     }
     const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
-    const variance =
-      samples.length > 1
-        ? samples.reduce((a, b) => a + (b - mean) ** 2, 0) / (samples.length - 1)
-        : 0;
+    const variance = samples.length > 1 ? samples.reduce((a, b) => a + (b - mean) ** 2, 0) / (samples.length - 1) : 0;
     // Float-accumulation noise: three equal 0.2 samples produce a mean 1e-16 off
     // 0.2 and a variance ~1e-32. Treat anything below 1e-9 as exact zero so the
     // degenerate-variance guard (se===0) actually fires on constant groups.
@@ -243,7 +233,7 @@ function compareGroups(base, changed) {
       });
       continue;
     }
-    const se = Math.sqrt((a.stddev ** 2) / a.n + (b.stddev ** 2) / b.n);
+    const se = Math.sqrt(a.stddev ** 2 / a.n + b.stddev ** 2 / b.n);
     const diff = b.mean - a.mean;
     // NOTE 7 (audit): zero within-group variance in BOTH groups (se===0) makes
     // the noise window collapse to zero and every non-zero diff "significant".
@@ -273,8 +263,7 @@ function compareGroups(base, changed) {
     // moves in the metric's good direction; a neutral metric reports the delta
     // without claiming a win.
     const outsideNoise = Math.abs(diff) > halfWidth;
-    const better =
-      metric.direction === "higher" ? diff > 0 : metric.direction === "lower" ? diff < 0 : false;
+    const better = metric.direction === "higher" ? diff > 0 : metric.direction === "lower" ? diff < 0 : false;
     const verdict = !outsideNoise
       ? "no_conclusion"
       : metric.direction === "neutral"
@@ -365,7 +354,8 @@ async function main(argv) {
       result.base = summarize(baseGroups[0]);
       result.changed = summarize(changedGroups[0]);
       result.verdicts = compareGroups(result.base, result.changed);
-    }  }
+    }
+  }
   console.log(JSON.stringify(result, null, 2));
   return 0;
 }

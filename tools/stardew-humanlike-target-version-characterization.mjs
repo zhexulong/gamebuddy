@@ -68,11 +68,7 @@ export function redactValue(value, gamePath) {
     let result = value;
     if (gamePath) {
       const normalizedPath = path.resolve(gamePath);
-      const variants = [
-        normalizedPath,
-        normalizedPath.replaceAll("\\", "/"),
-        normalizedPath.replaceAll("/", "\\"),
-      ];
+      const variants = [normalizedPath, normalizedPath.replaceAll("\\", "/"), normalizedPath.replaceAll("/", "\\")];
       for (const variant of variants) {
         result = result.split(variant).join("<redacted-game-path>");
       }
@@ -256,15 +252,11 @@ $output | ConvertTo-Json -Depth 6
 async function defaultPwshRunner(assemblyPath) {
   const pwshExe = process.platform === "win32" ? "pwsh.exe" : "pwsh";
   try {
-    const result = await execFileAsync(
-      pwshExe,
-      ["-NoProfile", "-NonInteractive", "-Command", PWSH_REFLECTION_SCRIPT],
-      {
-        encoding: "utf8",
-        maxBuffer: 4 * 1024 * 1024,
-        env: { ...process.env, GAMEBUDDY_TARGET_DLL: assemblyPath },
-      },
-    );
+    const result = await execFileAsync(pwshExe, ["-NoProfile", "-NonInteractive", "-Command", PWSH_REFLECTION_SCRIPT], {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+      env: { ...process.env, GAMEBUDDY_TARGET_DLL: assemblyPath },
+    });
     return JSON.parse(result.stdout || "{}");
   } catch (err) {
     fail("assembly_reflection_failed", `Failed to inspect assembly via pwsh: ${err.message}`, {
@@ -273,11 +265,7 @@ async function defaultPwshRunner(assemblyPath) {
   }
 }
 
-export async function characterizeStardewTargetVersion({
-  gamePath,
-  out,
-  runner = defaultPwshRunner,
-} = {}) {
+export async function characterizeStardewTargetVersion({ gamePath, out, runner = defaultPwshRunner } = {}) {
   if (!gamePath) {
     fail("game_path_required", "game_path_required: provide --game-path or GAMEBUDDY_STARDEW_GAME_PATH.");
   }
@@ -393,10 +381,10 @@ export async function characterizeStardewTargetVersion({
       state: "unavailable",
       reason: "no_live_evidence_recorded_at_this_path",
       description:
-        "Source and API characterization only. This generator emits the target-version contract surface, not a live run."
-        + " The emote/facing actions do have live history: SDW-LIVE-COOP-01 dispatched express_emote: happy against"
-        + " a live SMAPI process; its runner was deleted as an incidental part of an unrelated cleanup, so re-running"
-        + " that scenario against the current harness is what would establish live_verified.",
+        "Source and API characterization only. This generator emits the target-version contract surface, not a live run." +
+        " The emote/facing actions do have live history: SDW-LIVE-COOP-01 dispatched express_emote: happy against" +
+        " a live SMAPI process; its runner was deleted as an incidental part of an unrelated cleanup, so re-running" +
+        " that scenario against the current harness is what would establish live_verified.",
     },
   };
 

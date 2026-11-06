@@ -46,7 +46,7 @@ const runnerFile = dumpSpatial
       ship_item: "run-stardew-native-local-player-ship-item-smoke.mjs",
       chest_retrieve: "run-stardew-native-local-player-chest-retrieve-smoke.mjs",
       pet_animal: "run-stardew-native-local-player-pet-animal-smoke.mjs",
-      advance_day: "run-stardew-native-local-player-advance-day-smoke.mjs",
+      sleep: "run-stardew-native-local-player-advance-day-smoke.mjs",
     }[action];
 // Two distinct ways to drive one night, and they are not substitutes:
 //
@@ -54,7 +54,7 @@ const runnerFile = dumpSpatial
 //    execution request and no action receipt; each process drives its own farmer
 //    and writes its own evidence file. It is what produced the mechanism-level
 //    co-op evidence, and it still runs.
-//  - `advance_day` is the wire action. The Agent submits an execution request and
+//  - `sleep` is the wire action. The Agent submits an execution request and
 //    receives the receipt the one execution ledger mints, which is what makes the
 //    night reachable by the companion rather than only by the Mod itself.
 const isSleepLifecycle = !dumpSpatial && action === "sleep_lifecycle";
@@ -223,7 +223,7 @@ const ACTION_TARGETS = {
     // `stationary` fact is for.
     freshTargetTiles: (snapshot) => neighbourTilesOfFirst(chooseStationaryUnpettedPetTargets(snapshot)),
   },
-  // `advance_day` deliberately has no entry: a co-op night has no external
+  // `sleep` deliberately has no entry: a co-op night has no external
   // target. The action walks the Farmhand to its own cabin bed itself and the
   // native ready barrier owns the rest, so there is no standing tile for the
   // driver to plan and no precondition for the Host fixture to provision.
@@ -332,10 +332,14 @@ try {
       }
     }
     if (evidence === null) {
-      console.log(JSON.stringify({ state: "blocked", reasonCode: "lifecycle_evidence_absent", evidencePath: lifecycleEvidence }));
+      console.log(
+        JSON.stringify({ state: "blocked", reasonCode: "lifecycle_evidence_absent", evidencePath: lifecycleEvidence }),
+      );
       process.exitCode = 2;
     } else {
-      console.log(JSON.stringify({ ...evidence, topologyAssertion: "shared_world_farmhand", evidencePath: lifecycleEvidence }));
+      console.log(
+        JSON.stringify({ ...evidence, topologyAssertion: "shared_world_farmhand", evidencePath: lifecycleEvidence }),
+      );
       if (evidence.state !== "passed") process.exitCode = 2;
     }
   } else {
@@ -363,15 +367,26 @@ try {
       try {
         const positioned =
           plan.freshTargetTiles !== undefined
-            ? await ensureAdjacentToFreshTarget(session.client, session.receipts, plan.location, plan.freshTargetTiles, {
-                attempts: 3,
-              })
+            ? await ensureAdjacentToFreshTarget(
+                session.client,
+                session.receipts,
+                plan.location,
+                plan.freshTargetTiles,
+                {
+                  attempts: 3,
+                },
+              )
             : await ensureStandingTile(session.client, session.receipts, plan.location, plan.standingTiles, {});
         approachTrace.push(...positioned.trace.map((entry) => ({ ...entry, phase: "reach_standing_tile" })));
       } catch (error) {
         // The helper attaches its trace to the failure; surface it, because the
         // trace is the only place the per-move state and receipt evidence exist.
-        approachTrace.push(...(Array.isArray(error?.trace) ? error.trace : []).map((entry) => ({ ...entry, phase: "reach_standing_tile" })));
+        approachTrace.push(
+          ...(Array.isArray(error?.trace) ? error.trace : []).map((entry) => ({
+            ...entry,
+            phase: "reach_standing_tile",
+          })),
+        );
         approachDiagnostic = { phase: "reach_standing_tile", error: String(error?.message ?? error) };
       }
     }

@@ -222,7 +222,9 @@ test("claim_mail_attachment: evidence that omits the observed queue move fails t
     const accepted = await original(request);
     const terminal = session.receipts.at(-1);
     if (terminal.state === "succeeded")
-      terminal.evidence = { detail: `target=${mailboxTargetId(1)};tile=${MAILBOX_TILE.x},${MAILBOX_TILE.y};pending_before=1` };
+      terminal.evidence = {
+        detail: `target=${mailboxTargetId(1)};tile=${MAILBOX_TILE.x},${MAILBOX_TILE.y};pending_before=1`,
+      };
     return accepted;
   };
   const result = await session.result();

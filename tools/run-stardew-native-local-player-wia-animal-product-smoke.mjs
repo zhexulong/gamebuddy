@@ -57,15 +57,13 @@ export async function runWiaAnimalProductInterruptSmoke(
     // Phase 1: the async collection animation starts, then the fixture modal
     // interrupts it while the native tool animation is still running.
     const firstAccepted = await executeCollect("interrupt", target, before, trace, client);
-    if (firstAccepted.state !== "accepted")
-      throw new Error(`interrupt_not_accepted:${firstAccepted.reasonCode}`);
+    if (firstAccepted.state !== "accepted") throw new Error(`interrupt_not_accepted:${firstAccepted.reasonCode}`);
     const firstAcceptedEvidence = parseStrictEvidence(firstAccepted.evidence);
     const firstAcceptedShape =
       firstAcceptedEvidence.target === target.targetId &&
       firstAcceptedEvidence.produce === target.qualifiedProduceItemId &&
       firstAcceptedEvidence.tool === target.toolKind;
-    if (!firstAcceptedShape)
-      throw new Error("interrupt_native_target_boundary_missing");
+    if (!firstAcceptedShape) throw new Error("interrupt_native_target_boundary_missing");
 
     const interrupted = await waitForTerminal(receipts, firstAccepted, terminalTimeoutMs);
     if (interrupted.state !== "invalidated" || interrupted.reasonCode !== "modal_interrupted")
@@ -74,10 +72,8 @@ export async function runWiaAnimalProductInterruptSmoke(
     // The animal-product arbiter emits the NON-movement interruption shape: the
     // deferred native animation is the only fact (no movement intent breakpoint).
     const interruptEvidenceOk =
-      Object.keys(interruptEvidence).length === 1 &&
-      interruptEvidence.native_animation_pending === "true";
-    if (!interruptEvidenceOk)
-      throw new Error("interrupt_evidence_not_non_movement_shape");
+      Object.keys(interruptEvidence).length === 1 && interruptEvidence.native_animation_pending === "true";
+    if (!interruptEvidenceOk) throw new Error("interrupt_evidence_not_non_movement_shape");
 
     // The deferred completion path releases the slot when the animation finishes.
     // Read the world: by the time a fresh snapshot shows no manager-owned execution
@@ -98,15 +94,9 @@ export async function runWiaAnimalProductInterruptSmoke(
     // Phase 2: dismiss_modal is instantaneous in the Mod. Its immediate bridge
     // response is the terminal, although the accepted-then-terminal form is
     // tolerated for parity with the shared harness.
-    const dismissAccepted = await executeAction(
-      "dismiss",
-      "dismiss_modal",
-      {},
-      released,
-      trace,
-      client,
-      { requireActionable: false },
-    );
+    const dismissAccepted = await executeAction("dismiss", "dismiss_modal", {}, released, trace, client, {
+      requireActionable: false,
+    });
     const dismissed =
       dismissAccepted.state === "succeeded" && dismissAccepted.reasonCode === "modal_dismissed"
         ? dismissAccepted
@@ -130,8 +120,7 @@ export async function runWiaAnimalProductInterruptSmoke(
 
     // Phase 3: re-submit the same target identity after the modal is gone.
     const retryAccepted = await executeCollect("retry", target, readyForRetry, trace, client);
-    if (retryAccepted.state !== "accepted")
-      throw new Error(`retry_not_accepted:${retryAccepted.reasonCode}`);
+    if (retryAccepted.state !== "accepted") throw new Error(`retry_not_accepted:${retryAccepted.reasonCode}`);
     const retryAcceptedEvidence = parseStrictEvidence(retryAccepted.evidence);
     if (
       retryAcceptedEvidence.target !== target.targetId ||
@@ -145,8 +134,7 @@ export async function runWiaAnimalProductInterruptSmoke(
       throw new Error(`retry_failed:state=${retry.state};reason=${retry.reasonCode}`);
     const retryEvidence = parseStrictEvidence(retry.evidence);
     const retryTerminalCount = countTerminalsForExecution(receipts, retryAccepted.executionId);
-    if (retryTerminalCount !== 1)
-      throw new Error(`retry_double_terminal:count=${retryTerminalCount}`);
+    if (retryTerminalCount !== 1) throw new Error(`retry_double_terminal:count=${retryTerminalCount}`);
 
     const after = await waitForFreshSnapshot(client, {
       minRevision: retry.revision,
@@ -244,9 +232,8 @@ async function executeAction(phase, action, args, snapshot, trace, client, { req
 /** Count authoritative terminals for one execution across the receipt buffer. */
 function countTerminalsForExecution(receipts, executionId) {
   if (typeof executionId !== "string" || executionId.length === 0) throw new Error("invalid_execution_identity");
-  return receipts.filter(
-    (receipt) => receipt?.executionId === executionId && TERMINAL_STATES.has(receipt.state),
-  ).length;
+  return receipts.filter((receipt) => receipt?.executionId === executionId && TERMINAL_STATES.has(receipt.state))
+    .length;
 }
 
 function validateWiaAnimalProductConfig(value) {

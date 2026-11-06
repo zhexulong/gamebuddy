@@ -11,12 +11,12 @@ const session = await connectNativeLocalClient(config, { loadModule: loadDistTes
 try {
   await observeFresh(session.client, { actionable: true });
   const queries = [
-    "wood",                    // prefix of Backwoods (latin prefix token)
-    "back",                    // prefix of Backwoods
-    "mine",                    // partial latin
-    "罗宾",                     // CJK NPC display name (native metadata)
-    "种子",                     // CJK service term (shop stock)
-    "海滩",                     // CJK two-character intent
+    "wood", // prefix of Backwoods (latin prefix token)
+    "back", // prefix of Backwoods
+    "mine", // partial latin
+    "罗宾", // CJK NPC display name (native metadata)
+    "种子", // CJK service term (shop stock)
+    "海滩", // CJK two-character intent
   ];
   const report = [];
   for (const query of queries) {

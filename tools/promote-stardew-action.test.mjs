@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { validatePromotionSources } from "./check-stardew-action-promotion.mjs";
+import { LIVE_EVIDENCE, validatePromotionSources } from "./check-stardew-action-promotion.mjs";
 import {
   applyPromotionPlan,
   PROMOTION_RESPONSIBILITIES,
@@ -97,6 +97,8 @@ const RECEIPT_CORPUS = {
     { actionId: "gamma", state: "succeeded", reasonCode: "gamma_done" },
   ],
 };
+
+const LIVE_RUN_EVIDENCE_DIRECTORY = LIVE_EVIDENCE.liveRunEvidenceDirectory;
 
 const FIXTURES = Object.freeze({
   fixtureActions: (actionId) => {
@@ -467,6 +469,10 @@ async function makeFixtureRoot() {
   await mkdir(join(root, "tools"), { recursive: true });
   await mkdir(join(root, "integrations/stardew/src/Core/Policy"), { recursive: true });
   await mkdir(join(root, "host/src/test-fixtures"), { recursive: true });
+  // The fixture root stands in for the repository, so it must contain both durable
+  // evidence stores the promoter reads. The bundle directory is left empty on
+  // purpose: the receipt corpus below is what resolves these two terminals.
+  await mkdir(join(root, LIVE_RUN_EVIDENCE_DIRECTORY), { recursive: true });
   await writeFile(join(root, "tools/stardew-action-gate-descriptors.mjs"), GATE_DESCRIPTORS);
   await writeFile(join(root, "tools/stardew-action-gate-descriptors.test.mjs"), DESCRIPTOR_TEST);
   await writeFile(join(root, "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs"), MOD_CATALOG);

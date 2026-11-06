@@ -51,10 +51,9 @@ test("accepts only the literal Tool virtual method set, never a regex fragment",
     () => deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: "beginUsing)(.*(" }),
     { code: "virtual_member_invocation_register_method_invalid" },
   );
-  await assert.rejects(
-    () => deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: "\\E" + "x" }),
-    { code: "virtual_member_invocation_register_method_invalid" },
-  );
+  await assert.rejects(() => deriveNativeVirtualMemberInvocationRegister({ sourceFiles, methodName: "\\E" + "x" }), {
+    code: "virtual_member_invocation_register_method_invalid",
+  });
   // The fixture Tool.cs declared only `beginUsing`; a real supported method
   // passes the METHODS gate (any base-signature failure downstream would be a
   // fixture/source error, never the injection code).

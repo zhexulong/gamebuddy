@@ -54,7 +54,13 @@ export async function runTailorClothingSmoke(client, receipts, _config, { termin
     snapshot,
     timeoutMs: 30_000,
   });
-  trace.push({ step: "tailor", action: ACTION, target: target.targetId, output: target.outputQualifiedItemId, receipt: summarizeReceipt(accepted) });
+  trace.push({
+    step: "tailor",
+    action: ACTION,
+    target: target.targetId,
+    output: target.outputQualifiedItemId,
+    receipt: summarizeReceipt(accepted),
+  });
   const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
   if (terminal.requestId !== requestId || terminal.executionId !== accepted.executionId)
     throw new Error("tailor_clothing terminal does not belong to this request");
@@ -71,7 +77,14 @@ export async function runTailorClothingSmoke(client, receipts, _config, { termin
     before,
     after: inventoryItemCounts(after),
   });
-  trace.push({ step: "observed", target: target.targetId, evidence, countsBefore: before, countsAfter: inventoryItemCounts(after), checks });
+  trace.push({
+    step: "observed",
+    target: target.targetId,
+    evidence,
+    countsBefore: before,
+    countsAfter: inventoryItemCounts(after),
+    checks,
+  });
 
   // Negative A: the id of the OTHER kind for the very same pair. The pair is real, the intent is
   // real, and the id names a route this action does not serve.
@@ -80,7 +93,10 @@ export async function runTailorClothingSmoke(client, receipts, _config, { termin
   // Negative B: the same kind with a different digest — a stale id that still LOOKS publishable.
   const flipped = `${target.targetId.slice(0, -1)}${target.targetId.slice(-1) === "0" ? "1" : "0"}`;
   const stale = await executeNegative(client, receipts, args, flipped, terminalTimeoutMs);
-  trace.push({ step: "negative_wrong_kind", receipt: wrongKind.receipt }, { step: "negative_stale_id", receipt: stale.receipt });
+  trace.push(
+    { step: "negative_wrong_kind", receipt: wrongKind.receipt },
+    { step: "negative_stale_id", receipt: stale.receipt },
+  );
 
   checks.wrongKindRefused = wrongKind.refused && wrongKind.reasonCode === "tailoring_target_not_found";
   checks.staleIdRefused = stale.refused && stale.reasonCode === "tailoring_target_changed";
@@ -115,9 +131,16 @@ export function assertTailorClothingPostconditions({ target, evidence, before, a
   const rightSpent = evidence.right_spent === "true";
   // The receipt's own four counts must be integers and internally coherent before anything is
   // compared with the world: a receipt that cannot state what it consumed cannot be a success.
-  const countsAreIntegers = [leftBefore, leftAfter, rightBefore, rightAfter, outputBefore, outputAfter, delivered, dropped].every(
-    (value) => Number.isSafeInteger(value) && value >= 0,
-  );
+  const countsAreIntegers = [
+    leftBefore,
+    leftAfter,
+    rightBefore,
+    rightAfter,
+    outputBefore,
+    outputAfter,
+    delivered,
+    dropped,
+  ].every((value) => Number.isSafeInteger(value) && value >= 0);
   return {
     // The receipt names the very pair the published target named.
     receiptNamesTheTarget:
@@ -186,7 +209,8 @@ async function executeNegative(client, receipts, args, expectedTargetId, termina
 /** The recipe-kind target the fixture armed, as discovery publishes it. */
 function chooseRecipeTarget(snapshot) {
   const candidates = tailoringTargets(snapshot).filter(
-    (entry) => entry?.kind === "recipe" && Number.isSafeInteger(entry.leftSlot) && Number.isSafeInteger(entry.rightSlot),
+    (entry) =>
+      entry?.kind === "recipe" && Number.isSafeInteger(entry.leftSlot) && Number.isSafeInteger(entry.rightSlot),
   );
   if (candidates.length === 0)
     throw new Error(`no recipe tailoring target is advertised: ${JSON.stringify(tailoringTargets(snapshot))}`);

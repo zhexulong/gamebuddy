@@ -67,8 +67,9 @@ export async function runMachineCollectOutputSmoke(
     const after = await requireActionableMachineSnapshot(client);
     assertRequiredCapabilities(after, REQUIRED_CAPABILITIES);
     const reread = (after.machineTargets ?? []).find((entry) => entry?.targetId === loadTarget.targetId);
-    const inventoryBefore = parseNonNegativeSafeInteger(evidence.inventory_coffee_before);
-    const inventoryAfter = parseNonNegativeSafeInteger(evidence.inventory_coffee_after);
+    const inventoryBefore = parseNonNegativeSafeInteger(evidence.inventory_output_before);
+    const inventoryAfter = parseNonNegativeSafeInteger(evidence.inventory_output_after);
+    const outputStack = parseNonNegativeSafeInteger(evidence.output_stack);
     const passed =
       evidence.location === before.location &&
       evidence.target === loadTarget.targetId &&
@@ -78,8 +79,11 @@ export async function runMachineCollectOutputSmoke(
       evidence.input === "(O)433" &&
       evidence.ready_before === "true" &&
       evidence.minutes_until_ready_before === "0" &&
+      outputStack !== null &&
+      outputStack >= 1 &&
       inventoryBefore !== null &&
-      inventoryAfter === inventoryBefore + 1 &&
+      // The pack gained exactly the stack the machine held, which is the invariant rather than "one item".
+      inventoryAfter === inventoryBefore + outputStack &&
       evidence.held_after === "none" &&
       evidence.ready_after === "false" &&
       evidence.native_check_action === "true" &&
@@ -129,11 +133,7 @@ if (import.meta.main) {
 
 function validateNativeLocalFixtureConfig(value) {
   const fixture = value?.NativeLocalPlayerFixture;
-  if (
-    fixture?.Enable !== true ||
-    fixture.Bootstrap?.Enable === true ||
-    fixture.FixtureScenario !== SCENARIO
-  )
+  if (fixture?.Enable !== true || fixture.Bootstrap?.Enable === true || fixture.FixtureScenario !== SCENARIO)
     throw new Error("native_local_machine_collect_fixture_config_invalid");
   validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
   if (
@@ -222,11 +222,12 @@ function parseEvidence(receiptEvidence) {
     "tile",
     "machine",
     "output",
+    "output_stack",
     "input",
     "ready_before",
     "minutes_until_ready_before",
-    "inventory_coffee_before",
-    "inventory_coffee_after",
+    "inventory_output_before",
+    "inventory_output_after",
     "held_after",
     "ready_after",
     "native_check_action",

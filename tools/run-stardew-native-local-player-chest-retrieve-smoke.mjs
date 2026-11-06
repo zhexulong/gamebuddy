@@ -109,7 +109,12 @@ export function chooseOnlyChestRetrieveTarget(snapshot) {
   const targets = snapshot.chestRetrieveTargets ?? [];
   if (targets.length !== 1) throw new Error(`chest_retrieve_target_count_expected_1_got_${targets.length}`);
   const target = targets[0];
-  if (!target?.targetId || !Number.isInteger(target.x) || !Number.isInteger(target.y) || typeof target.qualifiedItemId !== "string")
+  if (
+    !target?.targetId ||
+    !Number.isInteger(target.x) ||
+    !Number.isInteger(target.y) ||
+    typeof target.qualifiedItemId !== "string"
+  )
     throw new Error("chest_retrieve_target_malformed");
   return target;
 }

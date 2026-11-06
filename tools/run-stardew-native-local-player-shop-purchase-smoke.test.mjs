@@ -40,7 +40,14 @@ const SHOP = {
  * a fake that reported a purchase without moving either would let the runner pass on a
  * contract the Mod does not have.
  */
-function purchaseEvidence({ moneyBefore = 5000, moneyAfter = 4980, purchased = 1, unitPrice = 20, ownedBefore = 0, ownedAfter = 1 } = {}) {
+function purchaseEvidence({
+  moneyBefore = 5000,
+  moneyAfter = 4980,
+  purchased = 1,
+  unitPrice = 20,
+  ownedBefore = 0,
+  ownedAfter = 1,
+} = {}) {
   return (
     `shop=SeedShop;owner=Pierre;item=(O)472;requested=1;purchased=${purchased};unit_price=${unitPrice};` +
     `money_before=${moneyBefore};money_after=${moneyAfter};` +
@@ -215,29 +222,11 @@ test("the pass contract rejects each clause it claims", () => {
   };
   assert.doesNotThrow(() => assertShopPurchasePostconditions({ ...detail }));
 
-  assert.throws(
-    () => assertShopPurchasePostconditions({ ...detail, moneyAfter: 5000 }),
-    /shop_purse_not_charged/,
-  );
-  assert.throws(
-    () => assertShopPurchasePostconditions({ ...detail, ownedAfter: 0 }),
-    /shop_goods_not_received/,
-  );
-  assert.throws(
-    () => assertShopPurchasePostconditions({ ...detail, gained: 1 }),
-    /shop_gained_mismatch/,
-  );
-  assert.throws(
-    () => assertShopPurchasePostconditions({ ...detail, menuClosed: false }),
-    /shop_menu_left_open/,
-  );
-  assert.throws(
-    () => assertShopPurchasePostconditions({ ...detail, purchased: 0 }),
-    /shop_purchased_invalid/,
-  );
-  assert.throws(
-    () => assertShopPurchasePostconditions({ ...detail, unitPrice: 0 }),
-    /shop_unit_price_invalid/,
-  );
+  assert.throws(() => assertShopPurchasePostconditions({ ...detail, moneyAfter: 5000 }), /shop_purse_not_charged/);
+  assert.throws(() => assertShopPurchasePostconditions({ ...detail, ownedAfter: 0 }), /shop_goods_not_received/);
+  assert.throws(() => assertShopPurchasePostconditions({ ...detail, gained: 1 }), /shop_gained_mismatch/);
+  assert.throws(() => assertShopPurchasePostconditions({ ...detail, menuClosed: false }), /shop_menu_left_open/);
+  assert.throws(() => assertShopPurchasePostconditions({ ...detail, purchased: 0 }), /shop_purchased_invalid/);
+  assert.throws(() => assertShopPurchasePostconditions({ ...detail, unitPrice: 0 }), /shop_unit_price_invalid/);
   assert.throws(() => assertShopPurchasePostconditions({ ...detail, trace: [] }), /shop_trace/);
 });

@@ -102,7 +102,12 @@ export async function runAcceptDailyQuestSmoke(client, receipts, _config, { term
       timeoutMs: 30_000,
     });
     const staleTerminal = await waitForTerminal(receipts, stale, terminalTimeoutMs);
-    trace.push({ step: "stale_target", action: ACTION, target: target.targetId, receipt: summarizeReceipt(staleTerminal) });
+    trace.push({
+      step: "stale_target",
+      action: ACTION,
+      target: target.targetId,
+      receipt: summarizeReceipt(staleTerminal),
+    });
     checks.staleTargetRefused = staleTerminal.state === "rejected" && STALE_REFUSALS.includes(staleTerminal.reasonCode);
     if (checks.staleTargetRefused !== true)
       throw new Error(`accept_daily_quest_stale_not_refused:${staleTerminal.state}/${staleTerminal.reasonCode}`);

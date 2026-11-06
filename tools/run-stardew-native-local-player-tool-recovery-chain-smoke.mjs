@@ -99,14 +99,7 @@ export async function runToolRecoveryChainSmoke(
 
     // 1. Breakpoint: till_soil before equipping the Hoe -> deterministic
     //    rejection before any native ingress.
-    const breakpointAccepted = await execute(
-      "breakpoint_till",
-      "till_soil",
-      target,
-      snapshot,
-      trace,
-      client,
-    );
+    const breakpointAccepted = await execute("breakpoint_till", "till_soil", target, snapshot, trace, client);
     const breakpoint = await waitForTerminal(receipts, breakpointAccepted, terminalTimeoutMs);
     if (breakpoint.state !== "rejected" || breakpoint.reasonCode !== BREAKPOINT_REASON)
       throw new Error(
@@ -119,19 +112,28 @@ export async function runToolRecoveryChainSmoke(
       minRevision: breakpoint.revision,
       timeoutMs: stabilizeTimeoutMs,
       requireActionable: true,
-      check: (latest) => String(latest.currentTool ?? "").toLowerCase().includes("hoe") === false,
+      check: (latest) =>
+        String(latest.currentTool ?? "")
+          .toLowerCase()
+          .includes("hoe") === false,
     });
 
     // 2. Recovery: equip the Hoe. Same journal, its own identity.
     const recoveryAccepted = await execute("recover_tool", RECOVERY_ACTION, { tool: "hoe" }, snapshot, trace, client);
     const recovery = await waitForTerminal(receipts, recoveryAccepted, terminalTimeoutMs);
-    if (recovery.state !== "succeeded" || (recovery.reasonCode !== "tool_equipped" && recovery.reasonCode !== "already_equipped"))
+    if (
+      recovery.state !== "succeeded" ||
+      (recovery.reasonCode !== "tool_equipped" && recovery.reasonCode !== "already_equipped")
+    )
       throw new Error(`recovery_equip_failed:${recovery.reasonCode}`);
     snapshot = await waitForFreshSnapshot(client, {
       minRevision: recovery.revision,
       timeoutMs: stabilizeTimeoutMs,
       requireActionable: true,
-      check: (latest) => String(latest.currentTool ?? "").toLowerCase().includes("hoe"),
+      check: (latest) =>
+        String(latest.currentTool ?? "")
+          .toLowerCase()
+          .includes("hoe"),
     });
 
     // 3. Retry the same target -> authoritative succeeded receipt.
@@ -316,7 +318,16 @@ export async function travelToFarm(client, receipts, snapshot, trace, stabilizeT
   });
 }
 
-export async function moveToTile(client, receipts, snapshot, target, phase, trace, stabilizeTimeoutMs, terminalTimeoutMs) {
+export async function moveToTile(
+  client,
+  receipts,
+  snapshot,
+  target,
+  phase,
+  trace,
+  stabilizeTimeoutMs,
+  terminalTimeoutMs,
+) {
   const fresh = await waitForActionable(client, snapshot, stabilizeTimeoutMs);
   const accepted = await execute(phase, "move_to_tile", target, fresh, trace, client);
   if (accepted.state !== "accepted") throw new Error(`${phase}_not_accepted:${accepted.reasonCode}`);
@@ -374,7 +385,16 @@ export function chooseReachableSoilTile(snapshot) {
 }
 export function parseStrictEvidence(evidence) {
   const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
-  const expected = ["location", "target", "before", "after", "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost"];
+  const expected = [
+    "location",
+    "target",
+    "before",
+    "after",
+    "stamina_before",
+    "stamina_after",
+    "stamina_delta",
+    "expected_stamina_cost",
+  ];
   const result = {};
   for (const part of detail.split(";")) {
     const index = part.indexOf("=");
@@ -413,7 +433,7 @@ export function validateNativeLocalFixtureConfig(value) {
     value.HostAutomation?.Enable === true ||
     value.HostFarmhandProvisioning?.Enable === true ||
     value.FarmhandProvisioner?.Enable === true ||
-    (value.Portfolio?.Enable === true)
+    value.Portfolio?.Enable === true
   )
     throw new Error(
       `native_local_fixture_topology_not_isolated:${JSON.stringify({

@@ -1,10 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
-import {
-  newEnvelope,
-  validateBridgeMessage,
-} from "../host/dist-test/protocol.js";
+import { newEnvelope, validateBridgeMessage } from "../host/dist-test/protocol.js";
 import { parseStrictBridgeJson } from "../host/dist-test/strict-bridge-json.js";
 
 const scope = {
@@ -25,18 +22,24 @@ const request = frame("navigation_read_request", {
   operation: "find_destination",
   args: { query: "mine" },
 });
-const resolved = frame("navigation_read_result", {
-  status: "resolved",
-  reason: "exact_current_locale",
-  destination: { kind: "ref", ref },
-}, request.correlationId);
-const candidates = frame("navigation_read_result", {
-  status: "candidates",
-  reason: "fuzzy_match",
-  candidates: [
-    { label: "Mines", selector: { kind: "label", label: "Mines" } },
-  ],
-}, request.correlationId);
+const resolved = frame(
+  "navigation_read_result",
+  {
+    status: "resolved",
+    reason: "exact_current_locale",
+    destination: { kind: "ref", ref },
+  },
+  request.correlationId,
+);
+const candidates = frame(
+  "navigation_read_result",
+  {
+    status: "candidates",
+    reason: "fuzzy_match",
+    candidates: [{ label: "Mines", selector: { kind: "label", label: "Mines" } }],
+  },
+  request.correlationId,
+);
 
 for (const value of [request, resolved, candidates]) {
   const parsed = parseStrictBridgeJson(JSON.stringify(value));
@@ -63,7 +66,11 @@ for (const payload of [
 }
 for (const payload of [
   { status: "resolved", reason: "exact_current_locale", destination: { kind: "label", label: "Mines" }, query: "mine" },
-  { status: "candidates", reason: "fuzzy_match", candidates: [{ label: "Mines", score: 99, selector: { kind: "label", label: "Mines" } }] },
+  {
+    status: "candidates",
+    reason: "fuzzy_match",
+    candidates: [{ label: "Mines", score: 99, selector: { kind: "label", label: "Mines" } }],
+  },
   { status: "candidates", reason: "fuzzy_match", candidates: [] },
 ]) {
   assert.equal(
@@ -72,4 +79,9 @@ for (const payload of [
   );
 }
 
-console.log(JSON.stringify({ state: "destination_search_replay_completed", validation: { valid: true, mutationCount: 0, executionReceiptCount: 0 } }));
+console.log(
+  JSON.stringify({
+    state: "destination_search_replay_completed",
+    validation: { valid: true, mutationCount: 0, executionReceiptCount: 0 },
+  }),
+);

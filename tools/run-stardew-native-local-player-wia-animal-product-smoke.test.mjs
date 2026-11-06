@@ -68,7 +68,11 @@ function successEvidence(target) {
  *     fail closed on: after the invalidated receipt, the deferred completion path
  *     mints a SECOND terminal for the SAME executionId on a later tick.
  */
-function makeClient({ interruptReason = "modal_interrupted", retryFailure = false, lateDuplicateTerminal = false } = {}) {
+function makeClient({
+  interruptReason = "modal_interrupted",
+  retryFailure = false,
+  lateDuplicateTerminal = false,
+} = {}) {
   let current = snapshot(5);
   let collectCalls = 0;
   let dismissCalls = 0;

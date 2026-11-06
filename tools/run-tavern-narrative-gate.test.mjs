@@ -72,20 +72,11 @@ test("narrative gate derives each kind's position from observations, never from 
   // "Some failure happened" is NOT the failing position. The same durable
   // `failed` terminal with a code this plan does not accept derives nothing...
   assert.deepEqual(NARRATIVE_RUN_FAILURE_CODES, ["runtime_unavailable"]);
-  assert.equal(
-    deriveAttemptPosition("failure", { ...realFailure, problemCode: "no_visible_presentation" }),
-    undefined,
-  );
-  assert.equal(
-    deriveAttemptPosition("failure", { ...realFailure, problemCode: "unavailable" }),
-    undefined,
-  );
+  assert.equal(deriveAttemptPosition("failure", { ...realFailure, problemCode: "no_visible_presentation" }), undefined);
+  assert.equal(deriveAttemptPosition("failure", { ...realFailure, problemCode: "unavailable" }), undefined);
   // ...and neither does a failure that never reached the provider, or one whose
   // evidence carries no bounded code at all.
-  assert.equal(
-    deriveAttemptPosition("failure", { ...realFailure, providerBoundaryCrossed: false }),
-    undefined,
-  );
+  assert.equal(deriveAttemptPosition("failure", { ...realFailure, providerBoundaryCrossed: false }), undefined);
   assert.equal(
     deriveAttemptPosition("failure", { turnTerminalState: "failed", providerBoundaryCrossed: true }),
     undefined,
@@ -103,14 +94,8 @@ test("narrative gate derives each kind's position from observations, never from 
     postResumeTranscriptLength: 4,
   };
   assert.equal(deriveAttemptPosition("recovery", recovery), NARRATIVE_RUN_POSITIONS.recovery);
-  assert.equal(
-    deriveAttemptPosition("recovery", { ...recovery, resumedTranscriptKeepsPredecessor: false }),
-    undefined,
-  );
-  assert.equal(
-    deriveAttemptPosition("recovery", { ...recovery, postResumeTranscriptLength: 2 }),
-    undefined,
-  );
+  assert.equal(deriveAttemptPosition("recovery", { ...recovery, resumedTranscriptKeepsPredecessor: false }), undefined);
+  assert.equal(deriveAttemptPosition("recovery", { ...recovery, postResumeTranscriptLength: 2 }), undefined);
   assert.equal(deriveAttemptPosition("recovery", { ...recovery, resumedTranscriptLength: 0 }), undefined);
 });
 
@@ -160,20 +145,11 @@ test("the failing attempt's evidence is derived from the product's own durable f
 });
 
 test("authenticatedReferenceChatApi reports the authenticated operations that were observed", () => {
-  assert.equal(
-    deriveAuthenticatedReferenceChatApi({ stateSnapshotObserved: true, submissionAccepted: true }),
-    true,
-  );
+  assert.equal(deriveAuthenticatedReferenceChatApi({ stateSnapshotObserved: true, submissionAccepted: true }), true);
   // Each observed half can independently make it false, so it is an observation
   // and not the literal it used to be.
-  assert.equal(
-    deriveAuthenticatedReferenceChatApi({ stateSnapshotObserved: false, submissionAccepted: true }),
-    false,
-  );
-  assert.equal(
-    deriveAuthenticatedReferenceChatApi({ stateSnapshotObserved: true, submissionAccepted: false }),
-    false,
-  );
+  assert.equal(deriveAuthenticatedReferenceChatApi({ stateSnapshotObserved: false, submissionAccepted: true }), false);
+  assert.equal(deriveAuthenticatedReferenceChatApi({ stateSnapshotObserved: true, submissionAccepted: false }), false);
   assert.equal(deriveAuthenticatedReferenceChatApi(undefined), false);
 });
 
@@ -234,15 +210,15 @@ test("narrative gate classifies bounded startup stderr for exit-before-ready fai
     "desktop_compose_bootstrap_ack_invalid",
   );
   assert.equal(classifyNarrativeStartupStderr("Error: private prompt text\n"), undefined);
-  assert.equal(classifyNarrativeStartupFailure(new Error("dialogue_exited_before_ready:1"), ""), "dialogue_exited_before_ready:1");
+  assert.equal(
+    classifyNarrativeStartupFailure(new Error("dialogue_exited_before_ready:1"), ""),
+    "dialogue_exited_before_ready:1",
+  );
 });
 
 test("narrative gate distinguishes a provider wait from a missing durable terminal signal", () => {
   assert.equal(classifyNarrativeTurnOutcome("timeout", []), "provider_request_pending");
-  assert.equal(
-    classifyNarrativeTurnOutcome("timeout", ["turn.state_changed"]),
-    "dialogue_terminal_signal_unobserved",
-  );
+  assert.equal(classifyNarrativeTurnOutcome("timeout", ["turn.state_changed"]), "dialogue_terminal_signal_unobserved");
   assert.equal(classifyNarrativeTurnOutcome("turn_failed", ["turn.state_changed"]), undefined);
 });
 
@@ -300,7 +276,10 @@ test("report writer is create-only and rejects content-bearing evidence", () =>
 
 test("report base note is neutral metadata that never trips the evidence content guard and reports write successfully", () =>
   withRoot(async (root) => {
-    const note = reportBase("r1", new Date().toISOString(), { generation: "g-1", inventoryDigest: "a".repeat(64) }).note;
+    const note = reportBase("r1", new Date().toISOString(), {
+      generation: "g-1",
+      inventoryDigest: "a".repeat(64),
+    }).note;
     assert.doesNotMatch(
       note,
       /The player prefers|private dialogue|private prompt|csrf|cookie|stateToken|bootstrap|raw provider output|prompt text/i,
@@ -317,7 +296,13 @@ test("report base note is neutral metadata that never trips the evidence content
         realTurnOutcomeObserved: true,
         providerAcceptedOrSemanticAnswer: false,
       },
-      statuses: { turn: "completed", lastState: "completed", lastProblemCode: undefined, p4Stages: ["prompt_begin", "commit_done"], runtimeCodes: [] },
+      statuses: {
+        turn: "completed",
+        lastState: "completed",
+        lastProblemCode: undefined,
+        p4Stages: ["prompt_begin", "commit_done"],
+        runtimeCodes: [],
+      },
     };
     const passedTarget = await prepareReportTarget(join(root, "passed.json"));
     await writeReport(passedTarget, passed);
@@ -333,7 +318,13 @@ test("report base note is neutral metadata that never trips the evidence content
         realTurnOutcomeObserved: false,
         providerAcceptedOrSemanticAnswer: false,
       },
-      statuses: { turn: "timeout", lastState: "running", lastProblemCode: undefined, p4Stages: [], runtimeCodes: ["unavailable"] },
+      statuses: {
+        turn: "timeout",
+        lastState: "running",
+        lastProblemCode: undefined,
+        p4Stages: [],
+        runtimeCodes: ["unavailable"],
+      },
       reasonCode: "provider_marker_unavailable",
     };
     const blockedTarget = await prepareReportTarget(join(root, "blocked.json"));
@@ -343,10 +334,14 @@ test("report base note is neutral metadata that never trips the evidence content
 
 test("blocked system failure codes are projected guard-safe so evidence can be written and stay content-free on disk", () =>
   withRoot(async (root) => {
-    const guard = /The player prefers|private dialogue|private prompt|csrf|cookie|stateToken|bootstrap|raw provider output|prompt text/i;
+    const guard =
+      /The player prefers|private dialogue|private prompt|csrf|cookie|stateToken|bootstrap|raw provider output|prompt text/i;
     for (const [raw, expected] of [
       ["desktop_runtime_bootstrap_unavailable", "desktop_runtime_host_launch_unavailable"],
-      ["dialogue_start_stderr:desktop_runtime_bootstrap_unavailable", "dialogue_start_stderr:desktop_runtime_host_launch_unavailable"],
+      [
+        "dialogue_start_stderr:desktop_runtime_bootstrap_unavailable",
+        "dialogue_start_stderr:desktop_runtime_host_launch_unavailable",
+      ],
       ["desktop_compose_bootstrap_ack_invalid", "desktop_compose_host_launch_ack_invalid"],
       ["bootstrap_failed:500", "host_launch_failed:500"],
     ]) {
@@ -357,10 +352,14 @@ test("blocked system failure codes are projected guard-safe so evidence can be w
     assert.equal(projectGuardSafeFailureCode("provider_marker_unavailable"), "provider_marker_unavailable");
     assert.equal(projectGuardSafeFailureCode("content with spaces"), "live_runner_internal_error");
 
-    const base = () => reportBase("r3", new Date().toISOString(), { generation: "g-1", inventoryDigest: "a".repeat(64) });
+    const base = () =>
+      reportBase("r3", new Date().toISOString(), { generation: "g-1", inventoryDigest: "a".repeat(64) });
     // Contrast: the raw system code is rejected by the guard before projection...
     const rawTarget = await prepareReportTarget(join(root, "raw.json"));
-    await assert.rejects(writeReport(rawTarget, { ...base(), state: "blocked", reasonCode: "bootstrap_failed:500" }), /evidence_report_content_guard_rejected/);
+    await assert.rejects(
+      writeReport(rawTarget, { ...base(), state: "blocked", reasonCode: "bootstrap_failed:500" }),
+      /evidence_report_content_guard_rejected/,
+    );
     // ...and the projected blocked report (reasonCode plus runtimeCodes) is written and lands guard-free.
     const projectedTarget = await prepareReportTarget(join(root, "projected.json"));
     await writeReport(projectedTarget, {
@@ -372,13 +371,18 @@ test("blocked system failure codes are projected guard-safe so evidence can be w
         lastState: "running",
         lastProblemCode: undefined,
         p4Stages: ["prompt_begin"],
-        runtimeCodes: ["desktop_runtime_bootstrap_unavailable", "unavailable"].map((code) => projectGuardSafeFailureCode(code)),
+        runtimeCodes: ["desktop_runtime_bootstrap_unavailable", "unavailable"].map((code) =>
+          projectGuardSafeFailureCode(code),
+        ),
       },
     });
     const onDisk = await readFile(projectedTarget, "utf8");
     assert.doesNotMatch(onDisk, guard);
     assert.equal(JSON.parse(onDisk).reasonCode, "host_launch_failed:500");
-    assert.deepEqual(JSON.parse(onDisk).statuses.runtimeCodes, ["desktop_runtime_host_launch_unavailable", "unavailable"]);
+    assert.deepEqual(JSON.parse(onDisk).statuses.runtimeCodes, [
+      "desktop_runtime_host_launch_unavailable",
+      "unavailable",
+    ]);
   }));
 
 test("Reference live runner stays on the composition bootstrap and authenticated Chat API and never opens SQLite or auto-promotes", async () => {

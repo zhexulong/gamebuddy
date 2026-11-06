@@ -84,7 +84,15 @@ export async function runClearFishPondSmoke(client, receipts, _config, { termina
     survivors,
     groundItems: ground,
   });
-  trace.push({ step: "observed", debrisObservable, ejected, fishType: target.fishType, survivors: survivors.length, evidence, checks });
+  trace.push({
+    step: "observed",
+    debrisObservable,
+    ejected,
+    fishType: target.fishType,
+    survivors: survivors.length,
+    evidence,
+    checks,
+  });
   // 4. the negative case: the stale id is refused by name and the world does not move.
   const staleId = `native_local_clear_fish_pond_stale_${Date.now()}`;
   const stale = await executeFresh(client, {
@@ -128,7 +136,8 @@ export function assertClearFishPondPostconditions({ target, evidence, survivors,
     // The receipt's postcondition agrees with what it claims about the world.
     receiptSaysEmpty: evidence.occupants_after === "0" && evidence.fish_type_after === "none",
     // And its counts name the pond this run actually cleared.
-    evidenceCountsMatch: evidence.occupants_before === String(target.occupants) && evidence.fish_ejected === String(target.occupants),
+    evidenceCountsMatch:
+      evidence.occupants_before === String(target.occupants) && evidence.fish_ejected === String(target.occupants),
     // The fish left the pond as debris, or the fact is reported unobservable.
     fishEjected: observable ? ejected >= target.occupants : "not_checked",
   };

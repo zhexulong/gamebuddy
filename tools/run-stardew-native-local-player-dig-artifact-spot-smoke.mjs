@@ -52,7 +52,10 @@ export async function runDigArtifactSpotSmoke(
     const target = chooseTarget(before);
     const hoe = chooseHoe(before);
     const equipped = await execute(client, trace, "equip_hoe", "equip_tool", { tool: "hoe" }, before);
-    if (equipped.state !== "succeeded" || (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped"))
+    if (
+      equipped.state !== "succeeded" ||
+      (equipped.reasonCode !== "tool_equipped" && equipped.reasonCode !== "already_equipped")
+    )
       throw new Error(`hoe_equip_failed:${equipped.reasonCode}`);
     const fresh = await observeFresh(client, { actionable: true });
     const preCount = fresh.artifactSpotFarmSourceCount;
@@ -173,11 +176,7 @@ async function execute(client, trace, phase, action, args, snapshot) {
 
 function validateConfig(value) {
   const fixture = value?.NativeLocalPlayerFixture;
-  if (
-    fixture?.Enable !== true ||
-    fixture?.Bootstrap?.Enable === true ||
-    fixture.FixtureScenario !== SCENARIO
-  )
+  if (fixture?.Enable !== true || fixture?.Bootstrap?.Enable === true || fixture.FixtureScenario !== SCENARIO)
     throw new Error("native_local_dig_artifact_spot_fixture_config_invalid");
   // The fixture writes a deny-by-exception policy (`DeniedActions` /
   // `ExperimentalActions`). The older `ActionPolicyVersion` + `EnabledActions`

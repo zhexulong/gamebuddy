@@ -436,6 +436,10 @@ test("every managed fixture target has a distinct backup identity", async () => 
     "each target must describe a distinct profile path",
   );
   for (const entry of plan) {
-    assert.match(entry.backupFile, /^[A-Za-z0-9_.-]+\.json$/, `backup file must be a safe .json name: ${entry.backupFile}`);
+    assert.match(
+      entry.backupFile,
+      /^[A-Za-z0-9_.-]+\.json$/,
+      `backup file must be a safe .json name: ${entry.backupFile}`,
+    );
   }
 });

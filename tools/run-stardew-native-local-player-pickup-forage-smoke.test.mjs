@@ -431,7 +431,10 @@ test("pickup-forage runner accepts a mixed ground summary with exceptions", asyn
       dominantKind: "dirt",
       dominantTileCount: 10,
       scannedTileCount: 13,
-      exceptions: [{ tileX: 8, tileY: 7, kind: "stone" }, { tileX: 9, tileY: 9, kind: "grass" }],
+      exceptions: [
+        { tileX: 8, tileY: 7, kind: "stone" },
+        { tileX: 9, tileY: 9, kind: "grass" },
+      ],
       omittedExceptionTileCount: 1,
     },
   });

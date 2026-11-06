@@ -109,12 +109,12 @@ $ACTION_SETUP = @{
     #  - `sleep_lifecycle` is the Mod-internal evidence-file lane: it owns its own
     #    route and answer, so it needs no Host fixture precondition and is NOT a
     #    policy action (the AI client must not list it under ExperimentalActions).
-    #  - `advance_day` is the wire action: the shared world dispatches it through
+    #  - `sleep` is the wire action: the shared world dispatches it through
     #    the bridge like the actions above, so it needs the policy opt-in. It still
     #    needs no Host fixture precondition beyond the Farmhand's own cabin and
     #    bed, so its scenario is the move-only empty one.
     sleep_lifecycle = @{ scenario = ""; experimental = $false }
-    advance_day     = @{ scenario = ""; experimental = $true }
+    sleep           = @{ scenario = ""; experimental = $true }
 }
 
 function Assert-PathExists([string]$Path, [string]$Label, [string]$Kind = "Leaf") {
@@ -294,7 +294,7 @@ try {
     # same file lane is exactly what the mechanism-level co-op evidence did. The
     # Host player is a real human whose sleep is their own decision in production;
     # in this gate the Host side is driven so the barrier can actually complete.
-    if ($Action -in @("sleep_lifecycle", "advance_day") -and -not [string]::IsNullOrWhiteSpace($HostSleepLifecycleEvidence)) {
+    if ($Action -in @("sleep_lifecycle", "sleep") -and -not [string]::IsNullOrWhiteSpace($HostSleepLifecycleEvidence)) {
         if (-not [System.IO.Path]::IsPathFullyQualified($HostSleepLifecycleEvidence)) {
             throw "HostSleepLifecycleEvidence must be absolute: $HostSleepLifecycleEvidence"
         }
@@ -314,11 +314,11 @@ try {
     if ($null -ne $setup -and $setup.experimental) {
         $aiConfig.ExperimentalActions = @($Action)
     }
-    # A dispatched advance_day must not quietly become a solo night: if the other
+    # A dispatched sleep must not quietly become a solo night: if the other
     # player is still connecting the world looks single-player and the native path
     # would advance the day alone. This governs the WIRE action and is deliberately
     # separate from SleepLifecycle below, which arms the evidence-file lifecycle.
-    if ($Action -eq "advance_day") {
+    if ($Action -eq "sleep") {
         $aiConfig | Add-Member -NotePropertyName AdvanceDayMinimumOnlineFarmers -NotePropertyValue $SleepMinimumOnlineFarmers -Force
     }
     # The cross-day lifecycle is opt-in Mod configuration, not a policy action.

@@ -43,8 +43,7 @@ const POST_SUBMIT_STATE_POLL_MS = 400;
 const STOP_TIMEOUT_MS = 5_000;
 const GRACEFUL_CLOSE_TIMEOUT_MS = 30_000;
 const STDERR_LIMIT = 65_536;
-const USAGE =
-  "usage: node tools/run-tavern-narrative-gate.mjs [--report <path>] [--kind main|failure|recovery]";
+const USAGE = "usage: node tools/run-tavern-narrative-gate.mjs [--report <path>] [--kind main|failure|recovery]";
 /**
  * Cooperative close request the composed child already accepts on the gate's own
  * IPC channel (`desktop-runtime-bootstrap` `waitForTermination`). A SIGTERM on
@@ -305,7 +304,33 @@ function debugP4Stages(stderr) {
   // over production stderr, not a reference to the retired chat-live machine or
   // its entry; the emitters are not E3 deletion targets, so this pattern stays.
   if (typeof stderr !== "string") return [];
-  const allowed = new Set(["claim_begin", "claim_done", "start_done", "continuation_error", "admission_ok", "arm_done", "preinvoke_begin", "plan_done", "context_begin", "context_done", "text_done", "prompt_begin", "native_final", "native_rejected_aborted", "native_rejected_error", "native_rejected_empty", "native_rejected_empty_text", "native_rejected_tool_only", "native_rejected_unsupported_content", "native_rejected_identity_mismatch", "commit_begin", "commit_reserved", "commit_rejected", "commit_done", "commit_error"]);
+  const allowed = new Set([
+    "claim_begin",
+    "claim_done",
+    "start_done",
+    "continuation_error",
+    "admission_ok",
+    "arm_done",
+    "preinvoke_begin",
+    "plan_done",
+    "context_begin",
+    "context_done",
+    "text_done",
+    "prompt_begin",
+    "native_final",
+    "native_rejected_aborted",
+    "native_rejected_error",
+    "native_rejected_empty",
+    "native_rejected_empty_text",
+    "native_rejected_tool_only",
+    "native_rejected_unsupported_content",
+    "native_rejected_identity_mismatch",
+    "commit_begin",
+    "commit_reserved",
+    "commit_rejected",
+    "commit_done",
+    "commit_error",
+  ]);
   return [...stderr.matchAll(/\[DEBUG-chat-live-p(?:4|4c)\] ([a-z_]+)/g)]
     .map((match) => match[1])
     .filter((stage) => allowed.has(stage));
@@ -342,9 +367,7 @@ export function classifyNarrativeTurnOutcome(outcome, lifecycle) {
   // The marker fires directly at Pi's provider boundary. Seeing it without a
   // terminal lifecycle event distinguishes a live provider wait from an SSE,
   // controller, or presentation terminal-signal loss.
-  return lifecycle.includes("turn.state_changed")
-    ? "dialogue_terminal_signal_unobserved"
-    : "provider_request_pending";
+  return lifecycle.includes("turn.state_changed") ? "dialogue_terminal_signal_unobserved" : "provider_request_pending";
 }
 
 /** The bounded terminal state one turn observation reached (a string for the
@@ -426,8 +449,7 @@ export async function readStateSnapshot(origin, client) {
   return Object.freeze({
     transcript: projectTranscriptShape(snapshot.chat?.transcript),
     turnState: typeof snapshot.chat?.turn?.state === "string" ? snapshot.chat.turn.state : undefined,
-    problemCode:
-      typeof snapshot.chat?.turn?.problemCode === "string" ? snapshot.chat.turn.problemCode : undefined,
+    problemCode: typeof snapshot.chat?.turn?.problemCode === "string" ? snapshot.chat.turn.problemCode : undefined,
     chatPresent: snapshot.chat !== null && snapshot.chat !== undefined,
   });
 }
@@ -443,7 +465,10 @@ export async function readStateSnapshot(origin, client) {
 export async function sendTurn(origin, client) {
   const events = [];
   const abort = new AbortController();
-  const response = await fetch(`${origin}/api/tavern/v1/events?apiVersion=1`, { headers: { Cookie: client.cookie, Origin: origin }, signal: abort.signal });
+  const response = await fetch(`${origin}/api/tavern/v1/events?apiVersion=1`, {
+    headers: { Cookie: client.cookie, Origin: origin },
+    signal: abort.signal,
+  });
   if (!response.ok || response.body === null) throw new Error(`events_failed:${response.status}`);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -552,22 +577,35 @@ export async function sendTurn(origin, client) {
     const terminalSnapshot = await terminal.json().catch(() => undefined);
     const state = terminalSnapshot?.chat?.turn?.state;
     lastState = typeof state === "string" ? state : undefined;
-    lastProblemCode = typeof terminalSnapshot?.chat?.turn?.problemCode === "string" ? terminalSnapshot.chat.turn.problemCode : undefined;
+    lastProblemCode =
+      typeof terminalSnapshot?.chat?.turn?.problemCode === "string"
+        ? terminalSnapshot.chat.turn.problemCode
+        : undefined;
     if (terminal.ok && state === "completed") {
       outcome = "completed";
       break;
     }
     if (terminal.ok && state === "failed") {
-      outcome = Object.freeze({ kind: "turn_failed", problemCode: sanitizeProblemCode(terminalSnapshot?.chat?.turn?.problemCode) });
+      outcome = Object.freeze({
+        kind: "turn_failed",
+        problemCode: sanitizeProblemCode(terminalSnapshot?.chat?.turn?.problemCode),
+      });
       break;
     }
     if (terminal.ok && state === "cancelled") {
       outcome = "cancelled";
       break;
     }
-    if (attempt + 1 < POST_SUBMIT_STATE_POLLS) await new Promise((resolvePoll) => setTimeout(resolvePoll, POST_SUBMIT_STATE_POLL_MS));
+    if (attempt + 1 < POST_SUBMIT_STATE_POLLS)
+      await new Promise((resolvePoll) => setTimeout(resolvePoll, POST_SUBMIT_STATE_POLL_MS));
   }
-  return Object.freeze({ outcome, lifecycle: events, lastState, lastProblemCode, observations: Object.freeze({ ...observations }) });
+  return Object.freeze({
+    outcome,
+    lifecycle: events,
+    lastState,
+    lastProblemCode,
+    observations: Object.freeze({ ...observations }),
+  });
 }
 
 async function productionArtifactIdentity() {
@@ -728,9 +766,9 @@ async function drainMarkers() {
  */
 function evaluateComposedAttemptPrompt(marker, nonceSha256, runtimeSession) {
   return evaluateNarrativeGateMarker(
-      marker,
-      nonceSha256,
-      runtimeSession.observed ? runtimeSession.piSessionId : undefined,
+    marker,
+    nonceSha256,
+    runtimeSession.observed ? runtimeSession.piSessionId : undefined,
   );
 }
 
@@ -852,17 +890,16 @@ function composeAttempt({
       realDialogueTurnAttempted: turn.outcome !== "events_error",
       providerRuntimeSessionBound: runtimeSession.observed === true,
       providerPreSendSerialized: prompt.preSendSerialized === true,
-      realTurnOutcomeObserved:
-        realTurnOutcomeObserved ?? turnTerminalState === requiredTerminalState,
+      realTurnOutcomeObserved: realTurnOutcomeObserved ?? turnTerminalState === requiredTerminalState,
       providerAcceptedOrSemanticAnswer: false,
     }),
     reasonCode: passed
       ? undefined
-      : runtimeSession.reasonCode ??
+      : (runtimeSession.reasonCode ??
         prompt.reasonCode ??
         classifyNarrativeTurnBlock(turn.outcome) ??
         classifyNarrativeTurnOutcome(turn.outcome, turn.lifecycle) ??
-        `narrative_gate_${kind}_position_not_reached`,
+        `narrative_gate_${kind}_position_not_reached`),
   });
 }
 
@@ -1022,15 +1059,16 @@ async function runRecoveryAttempt({ root, configPath, nonceSha256 }) {
   });
   const mergedPrompt = Object.freeze({
     observed: predecessor.prompt.observed === true && resumed.prompt.observed === true,
-    preSendSerialized:
-      predecessor.prompt.preSendSerialized === true && resumed.prompt.preSendSerialized === true,
+    preSendSerialized: predecessor.prompt.preSendSerialized === true && resumed.prompt.preSendSerialized === true,
     reasonCode: predecessor.prompt.reasonCode ?? resumed.prompt.reasonCode,
   });
-  const turn = resumed.turn ?? Object.freeze({
-    outcome: "unavailable",
-    lifecycle: Object.freeze([]),
-    observations: Object.freeze({ stateSnapshotObserved: false, submissionStatus: 0, submissionAccepted: false }),
-  });
+  const turn =
+    resumed.turn ??
+    Object.freeze({
+      outcome: "unavailable",
+      lifecycle: Object.freeze([]),
+      observations: Object.freeze({ stateSnapshotObserved: false, submissionStatus: 0, submissionAccepted: false }),
+    });
   return composeAttempt({
     kind: "recovery",
     turn,
@@ -1068,9 +1106,7 @@ function buildAttemptReport({ runId, startedAt, artifact, kind, attempt }) {
     ...(attempt.state === "passed"
       ? {}
       : {
-          reasonCode: projectGuardSafeFailureCode(
-            attempt.reasonCode ?? "narrative_gate_assertion_failed",
-          ),
+          reasonCode: projectGuardSafeFailureCode(attempt.reasonCode ?? "narrative_gate_assertion_failed"),
         }),
   };
 }

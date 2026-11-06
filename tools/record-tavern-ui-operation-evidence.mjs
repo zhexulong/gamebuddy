@@ -2,9 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import {
-  MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS,
-} from "./lib/tavern-mounted-operation-vocabulary.mjs";
+import { MOUNTED_TAVERN_MANAGEMENT_OPERATION_IDS } from "./lib/tavern-mounted-operation-vocabulary.mjs";
 
 const OPAQUE_ID = /^[a-f0-9]{16,128}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -16,20 +14,25 @@ function opaque() {
 
 function profileHash(profile) {
   return createHash("sha256")
-    .update(JSON.stringify({
-      profileId: profile.profileId,
-      releaseTier: profile.releaseTier,
-      routeIds: profile.routeIds,
-      operationIds: profile.operationIds,
-      navigationItemIds: profile.navigationItemIds,
-    }), "utf8")
+    .update(
+      JSON.stringify({
+        profileId: profile.profileId,
+        releaseTier: profile.releaseTier,
+        routeIds: profile.routeIds,
+        operationIds: profile.operationIds,
+        navigationItemIds: profile.navigationItemIds,
+      }),
+      "utf8",
+    )
     .digest("hex");
 }
 
 function assertProfile(profile) {
   if (!profile || typeof profile !== "object" || Array.isArray(profile)) throw new Error("mounted_profile_invalid");
-  if (typeof profile.profileId !== "string" || profile.releaseTier !== "tavern_management") throw new Error("mounted_profile_invalid");
-  if (!Array.isArray(profile.operationIds) || !profile.operationIds.every((id) => OPERATIONS.has(id))) throw new Error("mounted_profile_operations_invalid");
+  if (typeof profile.profileId !== "string" || profile.releaseTier !== "tavern_management")
+    throw new Error("mounted_profile_invalid");
+  if (!Array.isArray(profile.operationIds) || !profile.operationIds.every((id) => OPERATIONS.has(id)))
+    throw new Error("mounted_profile_operations_invalid");
 }
 
 /**
@@ -61,19 +64,21 @@ function assertProfile(profile) {
 export async function recordTavernUiOperationEvidence({ inputPath, outputPath }) {
   const input = JSON.parse(await readFile(inputPath, "utf8"));
   assertProfile(input.profile);
-  if (!Array.isArray(input.operations) || input.operations.length === 0) throw new Error("ui_operation_outcomes_missing");
+  if (!Array.isArray(input.operations) || input.operations.length === 0)
+    throw new Error("ui_operation_outcomes_missing");
   const mapped = {};
   const seen = new Set();
   const declared = new Set(input.profile.operationIds);
   for (const outcome of input.operations) {
-    if (!outcome || typeof outcome !== "object" || !OPERATIONS.has(outcome.operationId) || seen.has(outcome.operationId))
+    if (
+      !outcome ||
+      typeof outcome !== "object" ||
+      !OPERATIONS.has(outcome.operationId) ||
+      seen.has(outcome.operationId)
+    )
       throw new Error("ui_operation_outcome_invalid");
     seen.add(outcome.operationId);
-    if (
-      outcome.outcome !== "passed" &&
-      outcome.outcome !== "not_applicable" &&
-      outcome.outcome !== "blocked"
-    )
+    if (outcome.outcome !== "passed" && outcome.outcome !== "not_applicable" && outcome.outcome !== "blocked")
       throw new Error("ui_operation_outcome_invalid");
     if (!declared.has(outcome.operationId)) throw new Error("ui_operation_not_declared");
     if (outcome.outcome !== "passed") throw new Error("ui_operation_not_passed");
@@ -98,7 +103,10 @@ export async function recordTavernUiOperationEvidence({ inputPath, outputPath })
     release_tier: input.profile.releaseTier,
     operations: mapped,
   };
-  if (!HASH.test(result.profile_hash) || !Object.values(result.operations).every((ids) => ids.every((id) => OPAQUE_ID.test(id))))
+  if (
+    !HASH.test(result.profile_hash) ||
+    !Object.values(result.operations).every((ids) => ids.every((id) => OPAQUE_ID.test(id)))
+  )
     throw new Error("ui_operation_evidence_internal_invalid");
   await writeFile(outputPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
   // The measured profile travels with its evidence. Only the fields the gate's
@@ -124,6 +132,7 @@ export async function recordTavernUiOperationEvidence({ inputPath, outputPath })
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const [, , inputPath, outputPath] = process.argv;
-  if (!inputPath || !outputPath) throw new Error("usage: node tools/record-tavern-ui-operation-evidence.mjs <ui-outcomes.json> <mapping.json>");
+  if (!inputPath || !outputPath)
+    throw new Error("usage: node tools/record-tavern-ui-operation-evidence.mjs <ui-outcomes.json> <mapping.json>");
   await recordTavernUiOperationEvidence({ inputPath, outputPath });
 }

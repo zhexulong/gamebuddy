@@ -87,7 +87,12 @@ function chooseOnlyChestStoreTarget(snapshot) {
   const targets = snapshot.chestStoreTargets ?? [];
   if (targets.length !== 1) throw new Error(`chest_store_target_count_expected_1_got_${targets.length}`);
   const target = targets[0];
-  if (!target?.targetId || !Number.isInteger(target.x) || !Number.isInteger(target.y) || !Number.isInteger(target.slot) && target.slot !== 0)
+  if (
+    !target?.targetId ||
+    !Number.isInteger(target.x) ||
+    !Number.isInteger(target.y) ||
+    (!Number.isInteger(target.slot) && target.slot !== 0)
+  )
     throw new Error("chest_store_target_malformed");
   return target;
 }

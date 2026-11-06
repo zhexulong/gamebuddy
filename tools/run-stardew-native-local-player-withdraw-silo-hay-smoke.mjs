@@ -46,7 +46,14 @@ export async function runWithdrawSiloHaySmoke(client, receipts, _config, { termi
       snapshot,
       timeoutMs: 30_000,
     });
-    trace.push({ step: "withdraw", action: ACTION, target: target.targetId, siloHayBefore: target.hay, carriedBefore, receipt: summarizeReceipt(accepted) });
+    trace.push({
+      step: "withdraw",
+      action: ACTION,
+      target: target.targetId,
+      siloHayBefore: target.hay,
+      carriedBefore,
+      receipt: summarizeReceipt(accepted),
+    });
     const terminal = await waitForTerminal(receipts, accepted, terminalTimeoutMs);
     if (terminal.requestId !== requestId || terminal.executionId !== accepted.executionId)
       throw new Error("silo_withdraw_terminal_identity_mismatch");
@@ -83,7 +90,12 @@ export async function runWithdrawSiloHaySmoke(client, receipts, _config, { termi
       snapshot: after,
       timeoutMs: 30_000,
     });
-    trace.push({ step: "withdraw_empty", action: ACTION, target: target.targetId, receipt: summarizeReceipt(negativeAccepted) });
+    trace.push({
+      step: "withdraw_empty",
+      action: ACTION,
+      target: target.targetId,
+      receipt: summarizeReceipt(negativeAccepted),
+    });
     const negativeTerminal = await waitForTerminal(receipts, negativeAccepted, terminalTimeoutMs);
     if (negativeTerminal.state !== "rejected" || negativeTerminal.reasonCode !== "silo_empty")
       throw new Error(`silo_withdraw_empty_not_refused:${negativeTerminal.state}/${negativeTerminal.reasonCode}`);
@@ -122,9 +134,13 @@ export async function runWithdrawSiloHaySmoke(client, receipts, _config, { termi
 function chooseAdjacentSiloTarget(snapshot) {
   const targets = snapshot.siloTargets ?? [];
   if (!Array.isArray(targets) || targets.length === 0) throw new Error("silo_withdraw_no_advertised_target");
-  const adjacent = targets.filter((entry) => entry?.targetId
-    && Number.isInteger(entry.x) && Number.isInteger(entry.y)
-    && Math.max(Math.abs(entry.x - snapshot.tile.x), Math.abs(entry.y - snapshot.tile.y)) <= 1);
+  const adjacent = targets.filter(
+    (entry) =>
+      entry?.targetId &&
+      Number.isInteger(entry.x) &&
+      Number.isInteger(entry.y) &&
+      Math.max(Math.abs(entry.x - snapshot.tile.x), Math.abs(entry.y - snapshot.tile.y)) <= 1,
+  );
   if (adjacent.length === 0) throw new Error("silo_withdraw_no_adjacent_target");
   const stocked = adjacent.filter((entry) => Number.isInteger(entry.hay) && entry.hay >= 1);
   if (stocked.length === 0) throw new Error("silo_withdraw_declared_given_absent");
@@ -146,21 +162,32 @@ function siloHayFor(snapshot, targetId) {
 }
 
 function assertEvidence(evidence, key, expected) {
-  if (evidence[key] !== expected) throw new Error(`silo_withdraw_evidence_${key}:${evidence[key] ?? "missing"}:${expected}`);
+  if (evidence[key] !== expected)
+    throw new Error(`silo_withdraw_evidence_${key}:${evidence[key] ?? "missing"}:${expected}`);
 }
 
 function parseEvidence(evidence) {
   const detail = typeof evidence?.detail === "string" ? evidence.detail : "";
   if (detail.length === 0) throw new Error("native_local_evidence_empty");
-  return Object.fromEntries(detail.split(";").map((pair) => {
-    const index = pair.indexOf("=");
-    return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
-  }).filter(Boolean));
+  return Object.fromEntries(
+    detail
+      .split(";")
+      .map((pair) => {
+        const index = pair.indexOf("=");
+        return index > 0 ? [pair.slice(0, index), pair.slice(index + 1)] : null;
+      })
+      .filter(Boolean),
+  );
 }
 
 if (import.meta.main) {
   const config = await readNativeClientConfig();
   const session = await connectNativeLocalClient(config, { loadModule: loadHostTestModule });
-  try { const result = await runWithdrawSiloHaySmoke(session.client, session.receipts, config); console.log(JSON.stringify(result)); if (result.state !== "passed") process.exitCode = 2; }
-  finally { session.close(); }
+  try {
+    const result = await runWithdrawSiloHaySmoke(session.client, session.receipts, config);
+    console.log(JSON.stringify(result));
+    if (result.state !== "passed") process.exitCode = 2;
+  } finally {
+    session.close();
+  }
 }

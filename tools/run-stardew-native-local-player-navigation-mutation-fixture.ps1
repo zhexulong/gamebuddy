@@ -12,7 +12,8 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $smapi = Join-Path $GamePath "StardewModdingAPI.exe"
 $releaseDir = Join-Path $projectRoot "integrations/stardew/bin/Release/net6.0"
-$clientConfig = Join-Path $ModsPath "GameBuddy.Stardew/config.json"
+. (Join-Path $PSScriptRoot "lib/stardew-mod-config.ps1")
+$clientConfig = Get-GameBuddyStardewModConfigPath $ModsPath
 $backupName = "native-local-navigation-mutation-fixture-backup"
 $fixtureSaveHarness = Join-Path $PSScriptRoot "prepare-stardew-action-fixture.ps1"
 . (Join-Path $PSScriptRoot "lib/stardew-named-pipe-readiness.ps1")

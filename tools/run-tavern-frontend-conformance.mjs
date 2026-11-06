@@ -38,12 +38,7 @@ import { fileURLToPath } from "node:url";
 
 const toolsRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(toolsRoot, "..");
-const contractPath = join(
-  toolsRoot,
-  "fixtures",
-  "tavern-frontend-conformance",
-  "required-suites.json",
-);
+const contractPath = join(toolsRoot, "fixtures", "tavern-frontend-conformance", "required-suites.json");
 
 function usage() {
   return [
@@ -92,7 +87,11 @@ function run(command, args, options = {}) {
   });
 }
 
-const basenameOf = (path) => String(path ?? "").replaceAll("\\", "/").split("/").pop() ?? "";
+const basenameOf = (path) =>
+  String(path ?? "")
+    .replaceAll("\\", "/")
+    .split("/")
+    .pop() ?? "";
 
 /**
  * Flatten the Playwright JSON reporter into one row per test. The reporter names
@@ -184,9 +183,7 @@ for (const surface of derivedSurfaces) {
     continue;
   }
   if (entry.pane !== surface.pane)
-    failures.push(
-      `the contract says the ${surface.id} pane is ${entry.pane} but the shell renders ${surface.pane}`,
-    );
+    failures.push(`the contract says the ${surface.id} pane is ${entry.pane} but the shell renders ${surface.pane}`);
 }
 for (const id of declared.keys()) {
   if (!derivedSurfaces.some((surface) => surface.id === id))
@@ -229,11 +226,9 @@ if (failures.some((failure) => /^the (shell|contract|corpus) /u.test(failure))) 
 // of surfacing as a runner error, and the corpus is whatever the zone's playwright
 // invocation discovers - no file list, so nothing here can name a suite that was
 // deleted.
-const prerequisite = await run(
-  "node",
-  ["dialogue-web/tests/gate-zone-prerequisite.mjs", "mounted"],
-  { cwd: repositoryRoot },
-);
+const prerequisite = await run("node", ["dialogue-web/tests/gate-zone-prerequisite.mjs", "mounted"], {
+  cwd: repositoryRoot,
+});
 if (prerequisite.code !== 0) {
   const refusal = `${prerequisite.stdout}${prerequisite.stderr}`.trim();
   if (options.reportPath !== undefined)
@@ -261,16 +256,7 @@ process.stderr.write(
 );
 const runResult = await run(
   "pnpm",
-  [
-    "--dir",
-    "dialogue-web",
-    "exec",
-    "playwright",
-    "test",
-    "--project=chromium",
-    "--workers=1",
-    "--reporter=json",
-  ],
+  ["--dir", "dialogue-web", "exec", "playwright", "test", "--project=chromium", "--workers=1", "--reporter=json"],
   { cwd: repositoryRoot },
 );
 let document;
@@ -310,10 +296,10 @@ if (failedFiles.length > 0) {
       "playwright",
       "test",
       ...failedFiles,
-        "--project=chromium",
-        "--workers=1",
-        "--reporter=json",
-      ],
+      "--project=chromium",
+      "--workers=1",
+      "--reporter=json",
+    ],
     { cwd: repositoryRoot },
   );
   let retryDocument;
@@ -323,17 +309,17 @@ if (failedFiles.length > 0) {
     retryDocument = undefined;
   }
   if (retryDocument !== undefined) {
-  		const retried = new Map(collectTests(retryDocument).map((row) => [`${row.file}::${row.title}`, row]));
-		observed = observed.map((row) => {
-			const replacement = retried.get(`${row.file}::${row.title}`);
-			// Only a PASSING retry row may stand in for the original. A later re-run that failed again
-			// carries no better information than the row already held, and letting a failing row overwrite
-			// a passing one is how the verdict came to blame a journey that had already passed its retry.
-			if (replacement === undefined) return row;
-			if (!(replacement.status === "expected" && replacement.lastResultStatus === "passed")) return row;
-			passedOnRetry.push(`${row.file} :: ${row.title}`);
-			return replacement;
-		});
+    const retried = new Map(collectTests(retryDocument).map((row) => [`${row.file}::${row.title}`, row]));
+    observed = observed.map((row) => {
+      const replacement = retried.get(`${row.file}::${row.title}`);
+      // Only a PASSING retry row may stand in for the original. A later re-run that failed again
+      // carries no better information than the row already held, and letting a failing row overwrite
+      // a passing one is how the verdict came to blame a journey that had already passed its retry.
+      if (replacement === undefined) return row;
+      if (!(replacement.status === "expected" && replacement.lastResultStatus === "passed")) return row;
+      passedOnRetry.push(`${row.file} :: ${row.title}`);
+      return replacement;
+    });
   }
 }
 
@@ -379,14 +365,14 @@ if (stillFailing.length > 0) {
     soloDocument = undefined;
   }
   if (soloDocument !== undefined) {
-  		const soloRows = new Map(collectTests(soloDocument).map((row) => [`${row.file}::${row.title}`, row]));
-		observed = observed.map((row) => {
-			const replacement = soloRows.get(`${row.file}::${row.title}`);
-			if (replacement === undefined) return row;
-			if (!(replacement.status === "expected" && replacement.lastResultStatus === "passed")) return row;
-			passedOnRetry.push(`${row.file} :: ${row.title} (alone)`);
-			return replacement;
-		});
+    const soloRows = new Map(collectTests(soloDocument).map((row) => [`${row.file}::${row.title}`, row]));
+    observed = observed.map((row) => {
+      const replacement = soloRows.get(`${row.file}::${row.title}`);
+      if (replacement === undefined) return row;
+      if (!(replacement.status === "expected" && replacement.lastResultStatus === "passed")) return row;
+      passedOnRetry.push(`${row.file} :: ${row.title} (alone)`);
+      return replacement;
+    });
   }
 }
 
@@ -400,8 +386,7 @@ for (const file of corpusFiles) {
     failures.push(`${contract.corpus.directory}/${file} is a journey the run held no test from`);
 }
 for (const file of observedFiles) {
-  if (!corpusFiles.includes(file))
-    failures.push(`${file} ran but is not a journey in ${contract.corpus.directory}`);
+  if (!corpusFiles.includes(file)) failures.push(`${file} ran but is not a journey in ${contract.corpus.directory}`);
 }
 if (observed.length < contract.corpus.minimumTests) {
   failures.push(
@@ -409,13 +394,8 @@ if (observed.length < contract.corpus.minimumTests) {
   );
 }
 for (const surface of contract.surfaces) {
-  if (
-    surface.criteriaTitle !== undefined &&
-    !observed.some((row) => row.title.startsWith(surface.criteriaTitle))
-  ) {
-    failures.push(
-      `${surface.id}: the declared criteria test is missing: ${surface.criteriaTitle}`,
-    );
+  if (surface.criteriaTitle !== undefined && !observed.some((row) => row.title.startsWith(surface.criteriaTitle))) {
+    failures.push(`${surface.id}: the declared criteria test is missing: ${surface.criteriaTitle}`);
   }
 }
 for (const row of observed) {
@@ -440,9 +420,7 @@ for (const row of observed) {
     continue;
   }
   if (row.status !== "expected" || row.lastResultStatus !== "passed") {
-    failures.push(
-      `${row.file} :: ${row.title} -> ${row.lastResultStatus ?? row.status}: ${row.error ?? ""}`,
-    );
+    failures.push(`${row.file} :: ${row.title} -> ${row.lastResultStatus ?? row.status}: ${row.error ?? ""}`);
   }
 }
 
@@ -469,20 +447,14 @@ const report = Object.freeze({
       criteriaTitle: surface.criteriaTitle ?? null,
       obligations: Object.freeze(surface.obligations ?? []),
       criteriaObserved:
-        surface.criteriaTitle !== undefined &&
-        observed.some((row) => row.title.startsWith(surface.criteriaTitle)),
+        surface.criteriaTitle !== undefined && observed.some((row) => row.title.startsWith(surface.criteriaTitle)),
     })),
   ),
   requiredTitles: contract.requiredTitles.length,
   declaredSkips: Object.freeze(declaredSkips),
   passedOnRetry: Object.freeze(passedOnRetry),
   failures: Object.freeze(failures),
-  verdict:
-    failures.length > 0
-      ? "failed"
-      : passedOnRetry.length > 0
-        ? "passed-with-retry"
-        : "passed",
+  verdict: failures.length > 0 ? "failed" : passedOnRetry.length > 0 ? "passed-with-retry" : "passed",
 });
 if (options.reportPath !== undefined)
   await writeFile(options.reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");

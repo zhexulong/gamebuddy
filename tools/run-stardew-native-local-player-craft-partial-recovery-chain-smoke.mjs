@@ -180,8 +180,7 @@ export async function runCraftPartialRecoveryChainSmoke(
     // The Mod must reach this terminal only after its own postconditions held, so
     // assert them rather than trusting the state name.
     const breakpointHonest = craftHonest(breakpointEvidence);
-    if (!partialDisposition)
-      throw new Error(`recovery_chain_breakpoint_disposition:${breakpointDisposition}`);
+    if (!partialDisposition) throw new Error(`recovery_chain_breakpoint_disposition:${breakpointDisposition}`);
     if (!partialConservation) throw new Error("recovery_chain_breakpoint_conservation_mismatch");
     if (!breakpointHonest) throw new Error("recovery_chain_breakpoint_postcondition_mismatch");
 
@@ -192,8 +191,7 @@ export async function runCraftPartialRecoveryChainSmoke(
       timeoutMs: stabilizeTimeoutMs,
       requireActionable: true,
       check: (latest) =>
-        latest.activeExecution == null &&
-        advertisedProductStack(latest) === EXISTING_STACK + breakpointGained,
+        latest.activeExecution == null && advertisedProductStack(latest) === EXISTING_STACK + breakpointGained,
     });
 
     // 2. Recovery: store the retained stack into the container. This frees the
@@ -270,8 +268,7 @@ export async function runCraftPartialRecoveryChainSmoke(
     const fullDisposition = retryDisposition === FULL_DISPOSITION;
     const retryHonest = craftHonest(retryEvidence);
     const retryComplete = fullDisposition && retryGained === PRODUCED_STACK && retryDropped === 0;
-    if (!fullDisposition)
-      throw new Error(`retry_craft_disposition:${retryDisposition}`);
+    if (!fullDisposition) throw new Error(`retry_craft_disposition:${retryDisposition}`);
     if (!retryComplete) throw new Error("retry_craft_postcondition_mismatch");
     if (!retryHonest) throw new Error("retry_craft_honesty_mismatch");
 
@@ -525,9 +522,7 @@ function validWarp(entry) {
 function chooseBaitRecipe(snapshot) {
   const targets = (snapshot.craftingRecipeTargets ?? []).filter(
     (target) =>
-      typeof target?.targetId === "string" &&
-      target.targetId === RECIPE_ALIAS &&
-      target.ingredientsAvailable === true,
+      typeof target?.targetId === "string" && target.targetId === RECIPE_ALIAS && target.ingredientsAvailable === true,
   );
   if (targets.length === 0)
     throw new Error(

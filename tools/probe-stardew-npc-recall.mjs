@@ -10,12 +10,12 @@ const session = await connectNativeLocalClient(config, { loadModule: loadDistTes
 try {
   await observeFresh(session.client, { actionable: true });
   const queries = [
-    "Robin",      // NPC resident -> ScienceHouse (carpenter)
-    "Pierre",     // NPC resident -> SeedShop
-    "Seed Shop",  // location label variant -> SeedShop
-    "seeds",      // shop stock term -> SeedShop
-    "Carpenter",  // shop key term -> ScienceHouse
-    "saloon",     // shop key -> Saloon
+    "Robin", // NPC resident -> ScienceHouse (carpenter)
+    "Pierre", // NPC resident -> SeedShop
+    "Seed Shop", // location label variant -> SeedShop
+    "seeds", // shop stock term -> SeedShop
+    "Carpenter", // shop key term -> ScienceHouse
+    "saloon", // shop key -> Saloon
   ];
   const report = [];
   for (const query of queries) {

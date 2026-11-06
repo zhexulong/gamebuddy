@@ -316,7 +316,10 @@ test("a helper failure without a known code names its real reason, and cleanup c
   // The code allowlist also truncated `code:<owner>` at the colon, hiding which
   // transaction was blocking.
   assert.match(launcher, /function Get-BoundedFailureDetail\(\[string\]\$Raw\)/);
-  assert.match(launcher, /\$detail = if \(\$match\.Success\) \{ \$match\.Groups\[0\]\.Value \} else \{ Get-BoundedFailureDetail \$raw \}/);
+  assert.match(
+    launcher,
+    /\$detail = if \(\$match\.Success\) \{ \$match\.Groups\[0\]\.Value \} else \{ Get-BoundedFailureDetail \$raw \}/,
+  );
   assert.doesNotMatch(launcher, /else \{ "unavailable" \}/);
   // The bounded detail keeps the private-output rule: no path, no stack frame,
   // collapsed whitespace, at most 200 characters.
@@ -331,7 +334,10 @@ test("a helper failure without a known code names its real reason, and cleanup c
   // name the transaction holding it.
   assert.match(launcher, /\(:\[A-Za-z0-9_\.-\]\{1,96\}\)\?/);
   // Cleanup keeps the primary failure.
-  assert.match(launcher, /\} catch \{\n\s+# Keep the run's own failure[\s\S]{0,400}\$primaryFailure = \$_[\s\S]{0,1500}throw\n\} finally \{/);
+  assert.match(
+    launcher,
+    /\} catch \{\n\s+# Keep the run's own failure[\s\S]{0,400}\$primaryFailure = \$_[\s\S]{0,1500}throw\n\} finally \{/,
+  );
   assert.match(launcher, /if \(\$null -eq \$primaryFailure\) \{ throw \}/);
   assert.match(launcher, /\[launcher-failure\] run failed: /);
 });
@@ -350,9 +356,11 @@ test("the preview identity carries the companion continuity id, and its absence 
   assert.match(launcher, /\^\[A-Za-z0-9_-\]\{1,128\}\$/);
   // The refusal happens before any process is started.
   const continuityIndex = launcher.indexOf("farmhand_companion_continuity_id_required");
-  const hostLaunchIndex = launcher.indexOf('$hostProcess = Start-Process -FilePath $smapi');
-  assert.ok(continuityIndex > 0 && hostLaunchIndex > 0 && continuityIndex > hostLaunchIndex,
-    "the continuity guard must sit with the later preview-config construction, not before the host launch");
+  const hostLaunchIndex = launcher.indexOf("$hostProcess = Start-Process -FilePath $smapi");
+  assert.ok(
+    continuityIndex > 0 && hostLaunchIndex > 0 && continuityIndex > hostLaunchIndex,
+    "the continuity guard must sit with the later preview-config construction, not before the host launch",
+  );
 });
 
 test("the launcher waits for the AI client's bridge pipe instead of letting the preview fail terminally", () => {
@@ -371,8 +379,10 @@ test("the launcher waits for the AI client's bridge pipe instead of letting the 
   const waitIndex = launcher.indexOf("Test-NamedPipeExists $pipeName");
   const aiLaunchIndex = launcher.indexOf('Write-LauncherPhase "aiClientLaunched"');
   const previewLoopIndex = launcher.indexOf("while (-not $previewReady)");
-  assert.ok(aiLaunchIndex > 0 && waitIndex > aiLaunchIndex && previewLoopIndex > waitIndex,
-    "the pipe wait must run after the AI client launch and before the preview loop");
+  assert.ok(
+    aiLaunchIndex > 0 && waitIndex > aiLaunchIndex && previewLoopIndex > waitIndex,
+    "the pipe wait must run after the AI client launch and before the preview loop",
+  );
 });
 
 test("the preview failure classifier keeps the bounded reason suffix", () => {
@@ -393,10 +403,21 @@ test("a pre-readiness bridge disconnect is retried, a post-readiness one is term
   // `bridge_disconnected` is transient while readiness has never been observed
   // (measured 2026-10-05); a disconnect after readiness, or any other class, must
   // stay terminal, and the bounded deadline still closes the retry window.
-  assert.ok(launcher.includes("$transientPreviewFailure = $failureCode -eq \"preview_enoent_connect\" -or $failureCode -like \"bridge_disconnected*\""));
-  assert.ok(launcher.includes("if (-not $transientPreviewFailure -or [DateTimeOffset]::UtcNow -ge $previewDeadline -or $previewReady) {"));
+  assert.ok(
+    launcher.includes(
+      '$transientPreviewFailure = $failureCode -eq "preview_enoent_connect" -or $failureCode -like "bridge_disconnected*"',
+    ),
+  );
+  assert.ok(
+    launcher.includes(
+      "if (-not $transientPreviewFailure -or [DateTimeOffset]::UtcNow -ge $previewDeadline -or $previewReady) {",
+    ),
+  );
   // The retry window and the readiness guard must both survive in that condition.
-  const retryLine = launcher.slice(launcher.indexOf("$transientPreviewFailure ="), launcher.indexOf("$transientPreviewFailure =") + 900);
+  const retryLine = launcher.slice(
+    launcher.indexOf("$transientPreviewFailure ="),
+    launcher.indexOf("$transientPreviewFailure =") + 900,
+  );
   assert.ok(retryLine.includes("$previewDeadline"), "the deadline still bounds the retry");
   assert.ok(retryLine.includes("$previewReady"), "a post-readiness disconnect is still terminal");
 });
@@ -414,7 +435,10 @@ test("a headless preview never puts windows on the operator's desktop", () => {
   assert.ok(!launcher.includes("-WindowStyle"), "window shape stays owned by the shared window-mode contract");
   // The log reader must tolerate a writer holding the file open, or the reason a
   // preview failed is lost (measured 2026-10-06: every attempt unreadable).
-  assert.ok(launcher.includes("Get-Content -LiteralPath $Path -Raw -ErrorAction Stop"), "the preview log is read through the redirect-compatible reader");
+  assert.ok(
+    launcher.includes("Get-Content -LiteralPath $Path -Raw -ErrorAction Stop"),
+    "the preview log is read through the redirect-compatible reader",
+  );
   assert.ok(!launcher.includes("[IO.File]::ReadAllText($Path)"), "the exclusive reader is gone");
 });
 
@@ -424,13 +448,20 @@ test("cleanup races are reported alongside the run's failure, never instead of i
   // that native stderr aborted the launcher - destroying the only record of why the
   // run actually stopped. The run's failure is now reported immediately, cleanup
   // failures are collected, and a cleanup-only failure still throws.
-  assert.ok(launcher.includes("try { $null = & \"$env:SystemRoot\\System32\\taskkill.exe\" /PID $Process.Id /T /F 2>&1 } catch { }"),
-    "the taskkill race must not be terminating");
+  assert.ok(
+    launcher.includes(
+      'try { $null = & "$env:SystemRoot\\System32\\taskkill.exe" /PID $Process.Id /T /F 2>&1 } catch { }',
+    ),
+    "the taskkill race must not be terminating",
+  );
   assert.ok(!launcher.includes("$taskkillOutput ="), "the captured-stderr form is what made it terminating");
   assert.ok(launcher.includes("[launcher-failure] run failed: "), "the run's failure is reported immediately");
   assert.ok(launcher.includes("$cleanupFailure"), "cleanup failures are collected");
   assert.ok(launcher.includes("[launcher-failure] cleanup also failed: "), "both failures are reported");
-  assert.ok(launcher.includes("elseif ($null -ne $cleanupFailure) {\n        throw $cleanupFailure"), "a cleanup-only failure still fails the run");
+  assert.ok(
+    launcher.includes("elseif ($null -ne $cleanupFailure) {\n        throw $cleanupFailure"),
+    "a cleanup-only failure still fails the run",
+  );
 });
 
 test("each game instance's console log is captured, and its diagnostics survive a failed run", () => {
@@ -439,9 +470,9 @@ test("each game instance's console log is captured, and its diagnostics survive 
   // the disconnect carried an empty reason code and no second log existed).
   assert.ok(launcher.includes('$hostStdoutPath = Join-Path $runRoot "host.stdout.log"'));
   assert.ok(launcher.includes('$aiStdoutPath = Join-Path $runRoot "ai-client.stdout.log"'));
-  assert.ok(launcher.includes('-RedirectStandardOutput $hostStdoutPath'));
-  assert.ok(launcher.includes('-RedirectStandardOutput $aiStdoutPath'));
-  assert.ok(launcher.includes('[launcher-instance-diag] '));
+  assert.ok(launcher.includes("-RedirectStandardOutput $hostStdoutPath"));
+  assert.ok(launcher.includes("-RedirectStandardOutput $aiStdoutPath"));
+  assert.ok(launcher.includes("[launcher-instance-diag] "));
   assert.ok(launcher.includes("function Get-BoundedLogDiagnostics([string]$Path, [int]$MaxLines = 5)"));
   // Privacy: the extractor keeps the same no-path/no-stack/bounded rule, and the
   // diagnostics are printed BEFORE the rethrow so they survive the failure.
@@ -449,7 +480,10 @@ test("each game instance's console log is captured, and its diagnostics survive 
     launcher.indexOf("function Get-BoundedLogDiagnostics"),
     launcher.indexOf("function Stop-OwnedProcess"),
   );
-  assert.ok(extractor.split("\n").some((line) => line.includes("-match '") && line.includes("/]'")), "path-shaped lines are dropped");
+  assert.ok(
+    extractor.split("\n").some((line) => line.includes("-match '") && line.includes("/]'")),
+    "path-shaped lines are dropped",
+  );
   assert.ok(extractor.includes("-gt 200"), "lines are bounded");
   const catchStart = launcher.indexOf("$primaryFailure = $_");
   const catchBlock = launcher.slice(catchStart, launcher.indexOf("} finally {", catchStart));

@@ -27,10 +27,32 @@ function snapshotWith({ revision, kegPresent = true, twigPresent = true }) {
     capabilities: ["cancel_active_execution", "inspect_self", "equip_tool", ACTION],
     worldObjectTargets: [
       ...(kegPresent
-        ? [{ targetId: kegTargetId, kind: "removable_object", location: "Farm", x: KEG_TILE.x, y: KEG_TILE.y, slot: AXE_SLOT, qualifiedItemId: PLACED_ITEM, displayName: "Keg" }]
+        ? [
+            {
+              targetId: kegTargetId,
+              kind: "removable_object",
+              location: "Farm",
+              x: KEG_TILE.x,
+              y: KEG_TILE.y,
+              slot: AXE_SLOT,
+              qualifiedItemId: PLACED_ITEM,
+              displayName: "Keg",
+            },
+          ]
         : []),
       ...(twigPresent
-        ? [{ targetId: twigTargetId, kind: "removable_object", location: "Farm", x: TWIG_TILE.x, y: TWIG_TILE.y, slot: AXE_SLOT, qualifiedItemId: TWIG_ITEM, displayName: "Twig" }]
+        ? [
+            {
+              targetId: twigTargetId,
+              kind: "removable_object",
+              location: "Farm",
+              x: TWIG_TILE.x,
+              y: TWIG_TILE.y,
+              slot: AXE_SLOT,
+              qualifiedItemId: TWIG_ITEM,
+              displayName: "Twig",
+            },
+          ]
         : []),
     ],
     toolSlots: [
@@ -90,7 +112,9 @@ function makeClient() {
           state: "rejected",
           reasonCode: "remove_placed_item_tool_cannot_remove_target",
           revision: state.revision + 1,
-          evidence: { detail: `target=${request.args.x},${request.args.y};item=${TWIG_ITEM};type=Basic;fragility=0;tool_kind=pickaxe;slot=${request.args.slot}` },
+          evidence: {
+            detail: `target=${request.args.x},${request.args.y};item=${TWIG_ITEM};type=Basic;fragility=0;tool_kind=pickaxe;slot=${request.args.slot}`,
+          },
         };
       } else {
         receipt = {
@@ -159,7 +183,9 @@ test("remove_placed_item: a removal whose drop was not observed fails the run", 
   const session = run();
   mutate(session, (receipt) => {
     if (receipt.reasonCode === "placed_item_removed")
-      receipt.evidence = { detail: `${receipt.evidence.detail.replace(`drops=${PLACED_ITEM};drop_count=1`, "drops=;drop_count=0")}` };
+      receipt.evidence = {
+        detail: `${receipt.evidence.detail.replace(`drops=${PLACED_ITEM};drop_count=1`, "drops=;drop_count=0")}`,
+      };
     return receipt;
   });
   const result = await session.result();

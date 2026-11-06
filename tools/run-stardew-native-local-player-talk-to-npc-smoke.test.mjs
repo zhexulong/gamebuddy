@@ -24,7 +24,13 @@ const SHARED_WORLD_CONFIG = Object.freeze({
 });
 
 /** A snapshot the runner can act on: one adjacent villager and a free actor. */
-function snapshotWith({ revision, actionable = true, activeExecution = null, targets = [VILLAGER], location = "Town" }) {
+function snapshotWith({
+  revision,
+  actionable = true,
+  activeExecution = null,
+  targets = [VILLAGER],
+  location = "Town",
+}) {
   return {
     revision,
     location,
@@ -164,10 +170,14 @@ test("talk_to_npc: the dialogue is asserted from the world, and both negatives h
 test("talk_to_npc: an unknown target that is not refused fails the run", async () => {
   // A forged success on an id nobody published is the failure this negative exists for.
   const session = run();
-  withForcedReceipt(session, (receipt) => receipt.executionId === "talk-execution-unknown-target", (receipt) => {
-    receipt.state = "succeeded";
-    receipt.reasonCode = "talk_to_npc_talked";
-  });
+  withForcedReceipt(
+    session,
+    (receipt) => receipt.executionId === "talk-execution-unknown-target",
+    (receipt) => {
+      receipt.state = "succeeded";
+      receipt.reasonCode = "talk_to_npc_talked";
+    },
+  );
   const result = await session.result();
   assert.equal(result.state, "blocked");
   assert.match(result.reasonCode, /talk_to_npc_unknown_target_not_refused/);
@@ -177,9 +187,13 @@ test("talk_to_npc: a claimed talk that left the world actionable fails the run",
   // The receipt says the dialog is up, but the Mod's own snapshot still says the actor is
   // free. A green receipt is not evidence.
   const session = run();
-  withForcedReceipt(session, (receipt) => receipt.state === "succeeded", (receipt, current) => {
-    current.client.state.snapshot = snapshotWith({ revision: receipt.revision, actionable: true });
-  });
+  withForcedReceipt(
+    session,
+    (receipt) => receipt.state === "succeeded",
+    (receipt, current) => {
+      current.client.state.snapshot = snapshotWith({ revision: receipt.revision, actionable: true });
+    },
+  );
   const result = await session.result();
   assert.equal(result.state, "blocked");
   assert.match(result.reasonCode, /talk_to_npc_world_unchanged/);
@@ -233,9 +247,13 @@ test("talk_to_npc: a refusal that still released the dialog fails the run", asyn
 test("talk_to_npc: evidence that omits the observed dialogue fails the run", async () => {
   // The evidence is checked as evidence, separately from the world.
   const session = run();
-  withForcedReceipt(session, (receipt) => receipt.state === "succeeded", (receipt) => {
-    receipt.evidence = { detail: `location=Town;target=${VILLAGER.targetId};npc=Abigail;native_handled=true` };
-  });
+  withForcedReceipt(
+    session,
+    (receipt) => receipt.state === "succeeded",
+    (receipt) => {
+      receipt.evidence = { detail: `location=Town;target=${VILLAGER.targetId};npc=Abigail;native_handled=true` };
+    },
+  );
   const result = await session.result();
   assert.equal(result.state, "blocked");
   assert.match(result.reasonCode, /talk_to_npc_evidence_dialogue_up_after/);
@@ -256,7 +274,10 @@ test("talk_to_npc: no adjacent advertised villager means the run cannot start", 
   const session = run({ targets: [far] });
   const result = await session.result();
   assert.equal(result.state, "blocked");
-  assert.equal(result.reasonCode, "talk_to_npc_no_adjacent_villager:tile=30,21;location=Town;actionable=true;targets=Abigail@40,40");
+  assert.equal(
+    result.reasonCode,
+    "talk_to_npc_no_adjacent_villager:tile=30,21;location=Town;actionable=true;targets=Abigail@40,40",
+  );
 });
 
 /**
@@ -303,11 +324,17 @@ function transition(sourceX, sourceY, targetLocation, targetX = 0, targetY = 0) 
 }
 
 /** The ordinary route out of a Farmhand's Cabin: Cabin -> Farm -> Bus Stop -> Town -> Saloon. */
-function sharedWorldMaps({ cabinWarps = [transition(6, 5, "Farm")], townTransitions = { warps: [transition(31, 12, "Farm")], doorTargets: [transition(14, 20, "Saloon")] } } = {}) {
+function sharedWorldMaps({
+  cabinWarps = [transition(6, 5, "Farm")],
+  townTransitions = { warps: [transition(31, 12, "Farm")], doorTargets: [transition(14, 20, "Saloon")] },
+} = {}) {
   return {
     [FARMHOUSE]: { tile: { x: 5, y: 5 }, warps: cabinWarps },
     Farm: { tile: { x: 64, y: 15 }, warps: [transition(64, 16, "BusStop"), transition(32, 1, "Backwoods")] },
-    BusStop: { tile: { x: 20, y: 12 }, warps: [transition(21, 12, "Town"), transition(10, 12, "Farm"), transition(20, 10, "Mountain")] },
+    BusStop: {
+      tile: { x: 20, y: 12 },
+      warps: [transition(21, 12, "Town"), transition(10, 12, "Farm"), transition(20, 10, "Mountain")],
+    },
     Backwoods: { tile: { x: 5, y: 5 }, warps: [] },
     Town: { tile: { x: 30, y: 21 }, ...townTransitions },
     Saloon: { tile: { x: 12, y: 17 }, warps: [transition(13, 17, "Town")] },
@@ -359,11 +386,18 @@ function makeSharedWorldClient({
       warps: map.warps ?? [],
       doorTargets: map.doorTargets ?? [],
       npcRelationshipTargets:
-        location === "Saloon" && near
-          ? [{ ...VILLAGER, npcName: "Gus", x: villagerTile.x, y: villagerTile.y }]
-          : [],
+        location === "Saloon" && near ? [{ ...VILLAGER, npcName: "Gus", x: villagerTile.x, y: villagerTile.y }] : [],
       villagerWhereabouts: locateVillagerByWhereabouts
-        ? [{ npcName: "Gus", displayName: "Gus", location: "Saloon", x: villagerTile.x, y: villagerTile.y, inCurrentLocation: location === "Saloon" }]
+        ? [
+            {
+              npcName: "Gus",
+              displayName: "Gus",
+              location: "Saloon",
+              x: villagerTile.x,
+              y: villagerTile.y,
+              inCurrentLocation: location === "Saloon",
+            },
+          ]
         : [],
     };
   };
@@ -394,18 +428,26 @@ function makeSharedWorldClient({
     navigationRead: async (request) => {
       queries.push(request);
       if (request.operation !== "find_destination")
-        return { status: "succeeded", reason: "world_map_observed", entries: [], nextCursor: null, candidates: null, destination: null, unlockState: null };
+        return {
+          status: "succeeded",
+          reason: "world_map_observed",
+          entries: [],
+          nextCursor: null,
+          candidates: null,
+          destination: null,
+          unlockState: null,
+        };
       // The goal query answers with the fixture's declared answer; any OTHER query is a hop
       // probe, and the default is that the product can name that neighbour - overridable per
       // query so a test can make a neighbour unnameable.
       const answer =
         request.args.query === "Saloon"
           ? findAnswer
-          : destinationAnswers[request.args.query] ?? {
+          : (destinationAnswers[request.args.query] ?? {
               status: "resolved",
               reason: "exact_current_locale",
               destination: { kind: "ref", ref: `dr1_${request.args.query}` },
-            };
+            });
       return {
         status: answer.status,
         reason: answer.reason,
@@ -548,7 +590,11 @@ function makeSharedWorldClient({
           evidence: { detail: `target=${entry.targetLocation}` },
         };
         receipts.push(receipt);
-        settle({ location: entry.targetLocation, tile: { x: entry.targetX, y: entry.targetY }, revision: receipt.revision });
+        settle({
+          location: entry.targetLocation,
+          tile: { x: entry.targetX, y: entry.targetY },
+          revision: receipt.revision,
+        });
         if (fadeAfterWarp || fadeForever) {
           client.state.snapshot.actionable = false;
           fadePolls = fadeForever ? Number.POSITIVE_INFINITY : 4;
@@ -582,21 +628,27 @@ function makeSharedWorldClient({
             executionId: `walk-navigate-blocked-${navigations}`,
             state: "blocked",
             reasonCode: navigateBlockedReasonCode,
-            evidence: { detail: `destination=${selector.label ?? selector.ref ?? "none"};topology=${navigateBlockedReasonCode}` },
+            evidence: {
+              detail: `destination=${selector.label ?? selector.ref ?? "none"};topology=${navigateBlockedReasonCode}`,
+            },
           };
           receipts.push(receipt);
           return receipt;
         }
         const matched =
           (SALOON_DESTINATION.kind === "ref" && selector.kind === "ref" && selector.ref === SALOON_DESTINATION.ref) ||
-          (SALOON_DESTINATION.kind === "label" && selector.kind === "label" && selector.label === SALOON_DESTINATION.label);
+          (SALOON_DESTINATION.kind === "label" &&
+            selector.kind === "label" &&
+            selector.label === SALOON_DESTINATION.label);
         const succeeded = matched && navigateReasonCode === "navigation_completed";
         const receipt = {
           ...base,
           executionId: `walk-navigate-${receipts.length}`,
           state: succeeded ? "succeeded" : "failed",
           reasonCode: matched ? navigateReasonCode : "destination_selector_invalid",
-          evidence: { detail: `destination=${selector.label ?? selector.ref ?? "none"};arrived=true;postcondition=true` },
+          evidence: {
+            detail: `destination=${selector.label ?? selector.ref ?? "none"};arrived=true;postcondition=true`,
+          },
         };
         receipts.push(receipt);
         if (succeeded) settle({ location: navigateLandsIn, revision: receipt.revision });
@@ -644,7 +696,8 @@ function runShared(options = {}, smoke = {}) {
   const session = makeSharedWorldClient(options);
   return {
     ...session,
-    result: () => runTalkToNpcSmoke(session.client, session.receipts, SHARED_WORLD_CONFIG, { terminalTimeoutMs: 1_000, ...smoke }),
+    result: () =>
+      runTalkToNpcSmoke(session.client, session.receipts, SHARED_WORLD_CONFIG, { terminalTimeoutMs: 1_000, ...smoke }),
   };
 }
 
@@ -674,7 +727,11 @@ test("talk_to_npc: a shared-world actor in its Cabin walks to the Saloon with th
   // invented: the query is the declared location and the selector is what came back.
   assert.deepEqual(session.queries, [{ operation: "find_destination", args: { query: "Saloon" } }]);
   const steps = result.trace.map((entry) => entry.step);
-  assert.deepEqual(steps.slice(0, 3), ["route", "find_destination", "navigate_to_destination"], "route, one search, one multi-hop navigation");
+  assert.deepEqual(
+    steps.slice(0, 3),
+    ["route", "find_destination", "navigate_to_destination"],
+    "route, one search, one multi-hop navigation",
+  );
   assert.ok(steps.includes("stand_adjacent"), "the actor is walked beside the villager before talking");
   // The villager is still named through the Mod's own published target id, and the person
   // is the fixture's, so the walk did not change who gets talked to.
@@ -686,7 +743,9 @@ test("talk_to_npc: a declared location the product cannot name fails by name, be
   // `find_destination` is the only way a name becomes a navigation selector, so a goal the
   // search declines cannot be reached - and a hop INTO it would need the same name to resolve.
   // The run says so with the search's own status and reason rather than walking hopefully.
-  const session = runShared({ findAnswer: { status: "not_found", reason: "destination_not_found", destination: null } });
+  const session = runShared({
+    findAnswer: { status: "not_found", reason: "destination_not_found", destination: null },
+  });
   const result = await session.result();
   assert.equal(result.state, "blocked");
   assert.equal(
@@ -743,7 +802,10 @@ test("talk_to_npc: a warp published at the map's edge is driven from the tile be
   // coordinates.
   const maps = sharedWorldMaps({
     cabinWarps: [transition(3, 12, "Farm", 52, 16)],
-    townTransitions: { warps: [transition(31, 12, "Farm", 52, 16)], doorTargets: [transition(14, 20, "Saloon", 12, 17)] },
+    townTransitions: {
+      warps: [transition(31, 12, "Farm", 52, 16)],
+      doorTargets: [transition(14, 20, "Saloon", 12, 17)],
+    },
   });
   maps.Farm = {
     tile: { x: 52, y: 16 },
@@ -773,9 +835,7 @@ test("talk_to_npc: a warp published at the map's edge is driven from the tile be
   );
   // THE OFF-MAP DEFECT: a Chebyshev-1 ring around an edge warp reaches past the map, and a live run
   // asked the product to path to `81,16` - a column an 80-wide map cannot have.
-  const proposedColumns = result.trace
-    .filter((entry) => entry.step === "move_to_tile")
-    .map((entry) => entry.tile.x);
+  const proposedColumns = result.trace.filter((entry) => entry.step === "move_to_tile").map((entry) => entry.tile.x);
   assert.equal(proposedColumns.filter((column) => column > 80).length, 0, "no tile beyond the warp is proposed");
   // The crux: the transition is driven with the warp's OWN coordinates, from the tile beside it.
   const edgeDispatch = session.dispatches.find((entry) => entry.x === 80 && entry.y === 15);
@@ -788,7 +848,10 @@ test("talk_to_npc: a transition refused for range is retried after the actor ste
   // steps ONTO the tile and tries the SAME form again, rather than spending the candidate.
   const maps = sharedWorldMaps({
     cabinWarps: [transition(3, 12, "Farm", 79, 15)],
-    townTransitions: { warps: [transition(31, 12, "Farm", 52, 16)], doorTargets: [transition(14, 20, "Saloon", 12, 17)] },
+    townTransitions: {
+      warps: [transition(31, 12, "Farm", 52, 16)],
+      doorTargets: [transition(14, 20, "Saloon", 12, 17)],
+    },
   });
   maps.Farm = { tile: { x: 79, y: 15 }, warps: [transition(80, 15, "BusStop", 20, 12)] };
   const session = runShared({
@@ -821,7 +884,10 @@ test("talk_to_npc: a refused transition is retried with the next candidate this 
   // verdict about ONE tile, so the walk records it and takes the next candidate.
   const maps = sharedWorldMaps({
     cabinWarps: [transition(3, 12, "Farm", 52, 16)],
-    townTransitions: { warps: [transition(31, 12, "Farm", 52, 16)], doorTargets: [transition(14, 20, "Saloon", 12, 17)] },
+    townTransitions: {
+      warps: [transition(31, 12, "Farm", 52, 16)],
+      doorTargets: [transition(14, 20, "Saloon", 12, 17)],
+    },
   });
   maps.Farm = {
     tile: { x: 52, y: 16 },
@@ -863,7 +929,11 @@ test("talk_to_npc: a refused transition is retried with the next candidate this 
     ["Farm@3,12", "BusStop@80,18"],
     "the hop that worked is the second published gate tile",
   );
-  assert.deepEqual(result.trace.filter((entry) => entry.step === "hop_refused"), [], "no map-wide refusal was recorded");
+  assert.deepEqual(
+    result.trace.filter((entry) => entry.step === "hop_refused"),
+    [],
+    "no map-wide refusal was recorded",
+  );
 });
 
 test("talk_to_npc: only after every published candidate is refused does the walk fail, listing each", async () => {
@@ -895,7 +965,13 @@ test("talk_to_npc: only after every published candidate is refused does the walk
   assert.ok(result.reasonCode.length <= 256, "the named failure has to survive the runner's own bound");
   const recorded = result.trace.find((entry) => entry.step === "hop_refused");
   assert.equal(recorded.tried.length, 2, "the trace keeps every refused candidate of this location");
-  assert.deepEqual(recorded.tried.map((entry) => entry.source), [{ x: 80, y: 15 }, { x: 80, y: 16 }]);
+  assert.deepEqual(
+    recorded.tried.map((entry) => entry.source),
+    [
+      { x: 80, y: 15 },
+      { x: 80, y: 16 },
+    ],
+  );
   assert.equal(
     recorded.tried[0].refusals.length,
     4,
@@ -913,7 +989,8 @@ test("talk_to_npc: an error thrown inside a hop becomes a named walk failure, no
   const session = runShared({ navigateBlockedCount: 1, navigateBlockedReasonCode: "destination_unreachable" });
   const original = session.client.execute;
   session.client.execute = async (request) => {
-    if (request.action === "enter_exit" || request.action === "travel") throw new Error("bridge_disconnected:pipe_closed");
+    if (request.action === "enter_exit" || request.action === "travel")
+      throw new Error("bridge_disconnected:pipe_closed");
     return await original(request);
   };
   const result = await session.result();
@@ -937,7 +1014,10 @@ test("talk_to_npc: the walk considers every published transition group, not just
   // were never even proposed while the run spent thirteen rejected moves on the same four tiles.
   const maps = sharedWorldMaps({
     cabinWarps: [transition(3, 12, "Farm", 52, 16)],
-    townTransitions: { warps: [transition(31, 12, "Farm", 52, 16)], doorTargets: [transition(14, 20, "Saloon", 12, 17)] },
+    townTransitions: {
+      warps: [transition(31, 12, "Farm", 52, 16)],
+      doorTargets: [transition(14, 20, "Saloon", 12, 17)],
+    },
   });
   maps.Farm = {
     tile: { x: 52, y: 16 },
@@ -987,7 +1067,11 @@ test("talk_to_npc: the walk considers every published transition group, not just
   // being refused is terrain or connectivity, not an actor that cannot path on the Farm at all.
   assert.ok(
     result.trace.some(
-      (entry) => entry.step === "move_to_tile" && entry.tile.x === 40 && entry.tile.y === 65 && entry.receipt.state === "succeeded",
+      (entry) =>
+        entry.step === "move_to_tile" &&
+        entry.tile.x === 40 &&
+        entry.tile.y === 65 &&
+        entry.receipt.state === "succeeded",
     ),
     "a Farm-internal move reaches (40,65), so the blocker was the east strip",
   );
@@ -1054,7 +1138,10 @@ test("talk_to_npc: a target the search can name is preferred over one it cannot"
   // preference, not a gate - the unnamed target is still taken when it is all there is.
   const maps = sharedWorldMaps({
     cabinWarps: [transition(3, 12, "Farm", 52, 16)],
-    townTransitions: { warps: [transition(31, 12, "Farm", 52, 16)], doorTargets: [transition(14, 20, "Saloon", 12, 17)] },
+    townTransitions: {
+      warps: [transition(31, 12, "Farm", 52, 16)],
+      doorTargets: [transition(14, 20, "Saloon", 12, 17)],
+    },
   });
   maps.Farm = {
     tile: { x: 52, y: 16 },
@@ -1096,12 +1183,21 @@ test("talk_to_npc: a hold that survives the whole window is named, with where an
     FarmCave: { tile: { x: 8, y: 11 }, warps: [transition(8, 12, "Farm", 52, 16)] },
   };
   const session = runShared(
-    { maps, navigateBlockedCount: Number.POSITIVE_INFINITY, navigateBlockedReasonCode: "destination_access_indeterminate", fadeAfterWarp: true, fadeForever: true },
+    {
+      maps,
+      navigateBlockedCount: Number.POSITIVE_INFINITY,
+      navigateBlockedReasonCode: "destination_access_indeterminate",
+      fadeAfterWarp: true,
+      fadeForever: true,
+    },
     { stepTimeoutMs: 300 },
   );
   const result = await session.result();
   assert.equal(result.state, "blocked");
-  assert.match(result.reasonCode, /^talk_to_npc_shared_world_walk_actor_not_actionable:Farm:tile=52,16:attempt=2:polls=[1-9][0-9]*:window_ms=300$/u);
+  assert.match(
+    result.reasonCode,
+    /^talk_to_npc_shared_world_walk_actor_not_actionable:Farm:tile=52,16:attempt=2:polls=[1-9][0-9]*:window_ms=300$/u,
+  );
 });
 
 test("talk_to_npc: a refused move carries the product's own diagnosis of WHY", async () => {
@@ -1149,8 +1245,15 @@ test("talk_to_npc: the warp item is the route that takes the actor to the declar
   assert.equal(warp.receipt.reasonCode, "warp_item_arrived");
   // The arrival is the world's own fact, read fresh: the villager step then runs in the
   // destination the totem named.
-  assert.equal(result.trace.some((entry) => entry.step === "find_destination"), false, "no walk was needed");
-  assert.ok(result.trace.some((entry) => entry.step === "observed"), "the talk's own evidence was recorded");
+  assert.equal(
+    result.trace.some((entry) => entry.step === "find_destination"),
+    false,
+    "no walk was needed",
+  );
+  assert.ok(
+    result.trace.some((entry) => entry.step === "observed"),
+    "the talk's own evidence was recorded",
+  );
 });
 
 test("talk_to_npc: a warp item that does not arrive fails by name, not by a later talk", async () => {
@@ -1336,7 +1439,11 @@ test("talk_to_npc: an interior block is left by the interior's own warp and the 
   // The destination is re-searched on EVERY attempt, from the map the actor is on now.
   const searches = result.trace.filter((entry) => entry.step === "find_destination");
   assert.equal(searches.length, 2, "one search per attempt");
-  assert.deepEqual(searches.map((entry) => entry.from), [FARMHOUSE, "Farm"], "the second search runs from the map outside");
+  assert.deepEqual(
+    searches.map((entry) => entry.from),
+    [FARMHOUSE, "Farm"],
+    "the second search runs from the map outside",
+  );
   const navigations = result.trace.filter((entry) => entry.step === "navigate_to_destination");
   assert.deepEqual(
     navigations.map((entry) => `${entry.receipt.state}/${entry.receipt.reasonCode}`),

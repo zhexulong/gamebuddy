@@ -140,7 +140,9 @@ export async function runUnequipWearableSmoke(client, receipts, config, { termin
     const afterUnknown = await observeFresh(client, { actionable: true });
     const untouched = wearableTarget(afterUnknown, worn.bodySlot);
     if (untouched.targetId !== worn.targetId)
-      throw new Error(`unequip_wearable_unknown_target_moved_world:target=${untouched.targetId};expected=${worn.targetId}`);
+      throw new Error(
+        `unequip_wearable_unknown_target_moved_world:target=${untouched.targetId};expected=${worn.targetId}`,
+      );
 
     // Negative 2. A destination that is not free would displace an item the request never named.
     const occupiedSlot = firstOccupiedInventorySlot(afterUnknown, freeSlot);
@@ -302,7 +304,9 @@ function chooseWornTarget(snapshot) {
     (entry) => entry?.bodySlot && typeof entry.targetId === "string" && entry.occupantQualifiedItemId != null,
   );
   if (worn === undefined)
-    throw new Error(`unequip_wearable_declared_given_absent:not_wearing_any_wearable;published=${describeTargets(targets)}`);
+    throw new Error(
+      `unequip_wearable_declared_given_absent:not_wearing_any_wearable;published=${describeTargets(targets)}`,
+    );
   return worn;
 }
 
@@ -344,8 +348,7 @@ function wearableTarget(snapshot, bodySlot) {
   const entry = targets.find((candidate) => candidate?.bodySlot === bodySlot);
   if (entry === undefined)
     throw new Error(`unequip_wearable_body_slot_not_advertised:${bodySlot};published=${describeTargets(targets)}`);
-  if (typeof entry.targetId !== "string")
-    throw new Error(`unequip_wearable_target_projection_incomplete:${bodySlot}`);
+  if (typeof entry.targetId !== "string") throw new Error(`unequip_wearable_target_projection_incomplete:${bodySlot}`);
   return entry;
 }
 

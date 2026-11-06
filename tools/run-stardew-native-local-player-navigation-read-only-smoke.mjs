@@ -5,6 +5,10 @@ import {
   summarizeSnapshot,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
+
+// prelive-l3-opt-out b: launched by its own fixture script
+// (`tools/run-stardew-native-local-player-navigation-read-only-fixture.ps1`); it is a read-only probe that issues no
+// action at all, so the action->runner map has no entry for it.
 const REQUIRED_CAPABILITIES = ["cancel_active_execution", "find_destination", "inspect_self", "inspect_world_map"];
 
 /**

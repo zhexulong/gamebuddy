@@ -377,10 +377,7 @@ function evidenceMatchesTarget(evidence, target, location) {
 function validEvidenceTile(value) {
   if (typeof value !== "string") return false;
   const parts = value.split(",");
-  return (
-    parts.length === 2 &&
-    parts.every((part) => /^[0-9]{1,4}$/.test(part))
-  );
+  return parts.length === 2 && parts.every((part) => /^[0-9]{1,4}$/.test(part));
 }
 function sameRelationshipFacts(left, right) {
   return (

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertRideBusPostconditions, parseStrictEvidence, runRideBusSmoke } from "./run-stardew-native-local-player-ride-bus-smoke.mjs";
+import {
+  assertRideBusPostconditions,
+  parseStrictEvidence,
+  runRideBusSmoke,
+} from "./run-stardew-native-local-player-ride-bus-smoke.mjs";
 
 const SCENARIO = "native_ride_bus_v1";
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", "ride_bus"];
@@ -22,8 +26,7 @@ const config = {
   },
 };
 
-const ARRIVED_EVIDENCE =
-  "origin=BusStop;destination=Desert;fare=500;money_before=6000;money_after=5500";
+const ARRIVED_EVIDENCE = "origin=BusStop;destination=Desert;fare=500;money_before=6000;money_after=5500";
 // The wire carries evidence as an object; the Mod's string form arrives as
 // `{ detail: "..." }`. The fake mirrors that so the tests cannot pass on a shape
 // the real bridge never sends (this is exactly how the first live attempt failed).

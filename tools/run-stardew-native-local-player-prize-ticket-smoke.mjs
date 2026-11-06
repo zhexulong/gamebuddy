@@ -152,7 +152,13 @@ export function assertPrizeTicketRedemption({ before, after, evidence, stale }) 
       : "not_checked",
     // 3. The receipt names the choice the exchange made: the level it READ and the item the game derives
     // from that same fact, so a receipt cannot report a prize its own level does not produce.
-    choiceNamed: levelNamed !== null && claimedBefore !== null && levelNamed === claimedBefore && prizeItemId.length > 0 && prizeStack !== null && prizeStack >= 1,
+    choiceNamed:
+      levelNamed !== null &&
+      claimedBefore !== null &&
+      levelNamed === claimedBefore &&
+      prizeItemId.length > 0 &&
+      prizeStack !== null &&
+      prizeStack >= 1,
     // 4. The machine's own stat moved with the redemption, by exactly one.
     claimedStatAdvanced: claimedBefore !== null && integerValue(evidence?.prizes_claimed_after) === claimedBefore + 1,
     // 5. The stale replay is refused by name, and the world it left behind is the world the redemption

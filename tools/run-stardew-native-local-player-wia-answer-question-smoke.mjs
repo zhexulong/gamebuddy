@@ -15,7 +15,13 @@ import { loadHostTestModule } from "./lib/host-test-module.mjs";
 
 const SCENARIO = "native_wia_answer_question_v1";
 const EXPECTED_ACTIONS = ["answer_dialogue", "cancel_active_execution", "move_to_tile", "travel", "observe_scene"];
-const REQUIRED_CAPABILITIES = ["answer_dialogue", "cancel_active_execution", "move_to_tile", "observe_scene", "travel"].sort();
+const REQUIRED_CAPABILITIES = [
+  "answer_dialogue",
+  "cancel_active_execution",
+  "move_to_tile",
+  "observe_scene",
+  "travel",
+].sort();
 const RESPONSE_KEY = "yes";
 
 /**
@@ -75,15 +81,9 @@ export async function runWiaAnswerQuestionSmoke(
       minRevision: interrupted.revision,
       timeoutMs: postconditionTimeoutMs,
     });
-    const accepted2 = await execute(
-      "answer",
-      "answer_dialogue",
-      { responseKey: RESPONSE_KEY },
-      fresh2,
-      trace,
-      client,
-      { requireActionable: false },
-    );
+    const accepted2 = await execute("answer", "answer_dialogue", { responseKey: RESPONSE_KEY }, fresh2, trace, client, {
+      requireActionable: false,
+    });
     // answer_dialogue is a synchronous modal call: the bridge immediate response
     // IS the terminal, exactly like dismiss_modal; accept either shape.
     let answered =
@@ -269,7 +269,12 @@ function parseStrictEvidence(evidence) {
 }
 function validateNativeLocalFixtureConfig(value) {
   if (value?.NativeLocalPlayerFixture?.Enable !== true) throw new Error("native_local_fixture_not_enabled");
-  if (value.Portfolio?.Enable === true || value.HostAutomation?.Enable === true || value.HostFarmhandProvisioning?.Enable === true || value.FarmhandProvisioner?.Enable === true)
+  if (
+    value.Portfolio?.Enable === true ||
+    value.HostAutomation?.Enable === true ||
+    value.HostFarmhandProvisioning?.Enable === true ||
+    value.FarmhandProvisioner?.Enable === true
+  )
     throw new Error("native_local_fixture_topology_not_isolated");
   validateNativeLocalFixturePolicy(value, { requiredActions: EXPECTED_ACTIONS });
 }

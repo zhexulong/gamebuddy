@@ -26,9 +26,7 @@ const flag = (name) => {
 
 function bundlePath(generationRoot) {
   const generations = join(generationRoot, "generations");
-  const generation = readdirSync(generations).find((name) =>
-    statSync(join(generations, name)).isDirectory(),
-  );
+  const generation = readdirSync(generations).find((name) => statSync(join(generations, name)).isDirectory());
   return join(generations, generation, TARGET);
 }
 

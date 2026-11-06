@@ -6,9 +6,7 @@ const REAL_REMEDY = { action: "stardew_dismiss_modal", guidance: "Call 'stardew_
 /** A host-module loader whose gateway admits, so a guard test can move past phase 2a. */
 function hostLoader({ gateway = () => null, remedy = () => REAL_REMEDY } = {}) {
   return async (name) =>
-    name === "protocol.js"
-      ? { validateExecutionRequest: gateway }
-      : { describeBodyHoldRefusal: remedy };
+    name === "protocol.js" ? { validateExecutionRequest: gateway } : { describeBodyHoldRefusal: remedy };
 }
 
 const config = {
@@ -68,7 +66,10 @@ function makeClient(overrides = {}) {
             state: "invalidated",
             reasonCode: "modal_interrupted",
             revision: 10,
-            evidence: { detail: "interrupted_by=DialogueBox;target_tile=35,35;interrupted_at=20,20;remaining_distance=15;revision=7" },
+            evidence: {
+              detail:
+                "interrupted_by=DialogueBox;target_tile=35,35;interrupted_at=20,20;remaining_distance=15;revision=7",
+            },
           });
           snapshot = baseSnapshot(10, { actionable: false, activeExecution: null });
         } else if (moveCalls === 2) {
@@ -152,7 +153,11 @@ test("wia dismiss chain passes the full interrupt → dismiss → resume loop", 
   );
   assert.equal(result.reasonCode, "modal_dismiss_chain_complete");
   assert.equal(result.breakpointOk, true);
-  assert.equal(result.heldWhileModalOpen, true, "the actor really is held; this is the state the gateway used to refuse");
+  assert.equal(
+    result.heldWhileModalOpen,
+    true,
+    "the actor really is held; this is the state the gateway used to refuse",
+  );
   assert.equal(result.gatewayVerdict, null, "the gateway must ADMIT a held body and let the Mod name the hold");
   assert.equal(result.holdNamed, true);
   assert.equal(result.holdRemedyOk, true);

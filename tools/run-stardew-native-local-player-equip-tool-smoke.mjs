@@ -96,9 +96,10 @@ export async function runEquipToolSmoke(
 if (import.meta.main) {
   const args = process.argv.slice(2);
   const toolIndex = args.indexOf("--tool");
-  const tool = toolIndex >= 0 && args[toolIndex + 1] && /^[a-z][a-z0-9_]{0,63}$/.test(args[toolIndex + 1])
-    ? args[toolIndex + 1]
-    : "axe";
+  const tool =
+    toolIndex >= 0 && args[toolIndex + 1] && /^[a-z][a-z0-9_]{0,63}$/.test(args[toolIndex + 1])
+      ? args[toolIndex + 1]
+      : "axe";
   const config = await readNativeClientConfig();
   const session = await connectNativeLocalClient(config, { loadModule: loadDistTestClient });
   try {
@@ -116,7 +117,8 @@ if (import.meta.main) {
 }
 
 function parseEquipToolEvidence(evidence) {
-  if (evidence === null || typeof evidence !== "object" || Array.isArray(evidence)) throw new Error("invalid_equip_tool_evidence");
+  if (evidence === null || typeof evidence !== "object" || Array.isArray(evidence))
+    throw new Error("invalid_equip_tool_evidence");
   const detail = typeof evidence.detail === "string" ? evidence.detail : "";
   const entries = detail.split(";").map((part) => {
     const index = part.indexOf("=");
@@ -124,15 +126,36 @@ function parseEquipToolEvidence(evidence) {
     return [part.slice(0, index), part.slice(index + 1)];
   });
   const parsed = Object.fromEntries(entries);
-  if (entries.length !== 4 || Object.keys(parsed).length !== 4 || !Object.hasOwn(parsed, "tool") || !Object.hasOwn(parsed, "before") || !Object.hasOwn(parsed, "expected") || !Object.hasOwn(parsed, "after")) throw new Error("invalid_equip_tool_evidence");
-  if (typeof parsed.tool !== "string" || parsed.tool.length === 0 || [parsed.before, parsed.expected, parsed.after].some((value) => typeof value !== "string" || value.length === 0 || Buffer.byteLength(value, "utf8") > 256)) throw new Error("invalid_equip_tool_evidence");
+  if (
+    entries.length !== 4 ||
+    Object.keys(parsed).length !== 4 ||
+    !Object.hasOwn(parsed, "tool") ||
+    !Object.hasOwn(parsed, "before") ||
+    !Object.hasOwn(parsed, "expected") ||
+    !Object.hasOwn(parsed, "after")
+  )
+    throw new Error("invalid_equip_tool_evidence");
+  if (
+    typeof parsed.tool !== "string" ||
+    parsed.tool.length === 0 ||
+    [parsed.before, parsed.expected, parsed.after].some(
+      (value) => typeof value !== "string" || value.length === 0 || Buffer.byteLength(value, "utf8") > 256,
+    )
+  )
+    throw new Error("invalid_equip_tool_evidence");
   return { tool: parsed.tool, before: parsed.before, expected: parsed.expected, after: parsed.after };
 }
 
 function assertExactProof({ request, accepted, terminal, evidence, before, after }) {
-  if (accepted.requestId !== request.requestId || terminal.requestId !== request.requestId) throw new Error("equip_tool_request_id_mismatch");
+  if (accepted.requestId !== request.requestId || terminal.requestId !== request.requestId)
+    throw new Error("equip_tool_request_id_mismatch");
   if (terminal.executionId !== accepted.executionId) throw new Error("equip_tool_execution_id_mismatch");
-  if (!Number.isSafeInteger(terminal.revision) || terminal.revision <= request.expectedRevision || after.revision !== terminal.revision) throw new Error("equip_tool_revision_mismatch");
+  if (
+    !Number.isSafeInteger(terminal.revision) ||
+    terminal.revision <= request.expectedRevision ||
+    after.revision !== terminal.revision
+  )
+    throw new Error("equip_tool_revision_mismatch");
   if (evidence.tool !== request.args.tool) throw new Error("equip_tool_evidence_tool_mismatch");
   if (evidence.expected !== evidence.after) throw new Error("equip_tool_evidence_after_not_expected");
   if (after.currentTool !== evidence.after) throw new Error("equip_tool_postcondition_mismatch");

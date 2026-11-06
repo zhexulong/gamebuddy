@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseEvidence, runDismountTransportSmoke } from "./run-stardew-native-local-player-dismount-transport-smoke.mjs";
+import {
+  parseEvidence,
+  runDismountTransportSmoke,
+} from "./run-stardew-native-local-player-dismount-transport-smoke.mjs";
 
 const ACTION = "dismount_transport";
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION];
 const HORSE_ID = "6f1a0f4e-9d1e-4a5f-8a3f-42b25b0c4a11";
-const DISMOUNTED_EVIDENCE =
-  `horse_id=${HORSE_ID};location=Farm;tile=30,21;riding_before=true;mounting_before=false;riding_after=false;mount_after=false`;
+const DISMOUNTED_EVIDENCE = `horse_id=${HORSE_ID};location=Farm;tile=30,21;riding_before=true;mounting_before=false;riding_after=false;mount_after=false`;
 
 /**
  * The runner is the thing under test, so the fake client is a real one in shape: it answers the
@@ -119,8 +121,7 @@ test("dismount_transport: evidence that still reports a mount fails the run", as
   // says the actor is riding must not pass, however green the receipt state is.
   const session = run({
     hooks: {
-      successEvidence:
-        `horse_id=${HORSE_ID};location=Farm;tile=30,21;riding_before=true;mounting_before=false;riding_after=false;mount_after=true`,
+      successEvidence: `horse_id=${HORSE_ID};location=Farm;tile=30,21;riding_before=true;mounting_before=false;riding_after=false;mount_after=true`,
     },
   });
   const result = await session.result();

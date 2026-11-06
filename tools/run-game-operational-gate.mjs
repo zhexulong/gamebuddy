@@ -49,7 +49,8 @@ export function validateGateWindowMode(value) {
   return typeof value === "string" && WINDOW_MODES.includes(value);
 }
 const FIXTURE_KEYS = Object.freeze(["schema", "task", "targetVersion", "profile", "environment"]);
-const FORBIDDEN_FIXTURE_FIELD = /^(?:actions?|routes?|tools?|capability(?:Subset|Set|Allowlist)?|(?:turn|tool|action|wallClock|model|runtime|execution|gameplay)?Budget|quotas?|limits?)$/i;
+const FORBIDDEN_FIXTURE_FIELD =
+  /^(?:actions?|routes?|tools?|capability(?:Subset|Set|Allowlist)?|(?:turn|tool|action|wallClock|model|runtime|execution|gameplay)?Budget|quotas?|limits?)$/i;
 
 export function parseArguments(argv) {
   if (
@@ -227,7 +228,11 @@ export async function runOperationalGateIpc({
 
     const duplicateReady = parseTaskReady(message);
     if (duplicateReady !== null) {
-      fail(duplicateReady.nonceSha256 === nonceSha256 ? "game_task_ready_duplicate" : "game_task_ready_correlation_mismatch");
+      fail(
+        duplicateReady.nonceSha256 === nonceSha256
+          ? "game_task_ready_duplicate"
+          : "game_task_ready_correlation_mismatch",
+      );
       return;
     }
     const evidence = parseTerminalEvidence(message);
@@ -268,15 +273,27 @@ export async function runOperationalGateIpc({
     childExitCode = code;
     childExitSignal = signal;
     if (!terminationStarted) {
-      finish(blocked(phase === "awaiting_ready" ? "game_task_ready_unavailable" : "production_wrapper_exited_before_terminal"));
+      finish(
+        blocked(
+          phase === "awaiting_ready" ? "game_task_ready_unavailable" : "production_wrapper_exited_before_terminal",
+        ),
+      );
       return;
     }
-    if (outcome?.state === "PASSED" && !terminationStarted && (code !== 0 || signal !== null)) outcome = blocked("teardown_failure");
+    if (outcome?.state === "PASSED" && !terminationStarted && (code !== 0 || signal !== null))
+      outcome = blocked("teardown_failure");
     finish(outcome ?? blocked("teardown_failure"));
   };
 
   try {
-    if (typeof transport.onMessage !== "function" || typeof transport.onDisconnect !== "function" || typeof transport.onError !== "function" || typeof transport.onExit !== "function" || typeof transport.send !== "function" || typeof transport.terminate !== "function")
+    if (
+      typeof transport.onMessage !== "function" ||
+      typeof transport.onDisconnect !== "function" ||
+      typeof transport.onError !== "function" ||
+      typeof transport.onExit !== "function" ||
+      typeof transport.send !== "function" ||
+      typeof transport.terminate !== "function"
+    )
       return blocked("operational_gate_transport_unavailable");
     removers.push(transport.onMessage(onMessage));
     removers.push(transport.onDisconnect(onDisconnect));
@@ -333,26 +350,36 @@ export async function terminateOwnedProcessTree(
 }
 
 /** Starts exactly the reviewed production launcher and binds its IPC stream. */
-export async function runProductionOperationalGate({ config, task, nonceSha256, timeoutMs = OPERATIONAL_GATE_TIMEOUT_MS, spawnProcess = spawn }) {
+export async function runProductionOperationalGate({
+  config,
+  task,
+  nonceSha256,
+  timeoutMs = OPERATIONAL_GATE_TIMEOUT_MS,
+  spawnProcess = spawn,
+}) {
   if (!config || typeof config !== "object" || !isAbsolute(config.deploymentManifestRef))
     return blocked("deployment_manifest_ref_invalid");
   let child;
   try {
-    child = spawnProcess(process.execPath, [
-      PRODUCTION_LAUNCHER,
-      "main.js",
-      "--deployment-manifest-ref",
-      config.deploymentManifestRef,
-      "--operational-nonce",
-      nonceSha256,
-    ], {
-      stdio: ["ignore", "pipe", "pipe", "ipc"],
-      windowsHide: true,
-      detached: process.platform !== "win32",
-      env: Object.freeze({
-        ...process.env,
-      }),
-    });
+    child = spawnProcess(
+      process.execPath,
+      [
+        PRODUCTION_LAUNCHER,
+        "main.js",
+        "--deployment-manifest-ref",
+        config.deploymentManifestRef,
+        "--operational-nonce",
+        nonceSha256,
+      ],
+      {
+        stdio: ["ignore", "pipe", "pipe", "ipc"],
+        windowsHide: true,
+        detached: process.platform !== "win32",
+        env: Object.freeze({
+          ...process.env,
+        }),
+      },
+    );
   } catch {
     return blocked("production_wrapper_spawn_failed");
   }
@@ -407,7 +434,17 @@ function parseTaskReady(value) {
 
 function parseTerminalEvidence(value) {
   if (
-    !exactRecord(value, ["capabilityCount", "capabilityRevision", "nonceSha256", "piSessionId", "schema", "stopSettled", "surface", "terminalState", "transitions"]) ||
+    !exactRecord(value, [
+      "capabilityCount",
+      "capabilityRevision",
+      "nonceSha256",
+      "piSessionId",
+      "schema",
+      "stopSettled",
+      "surface",
+      "terminalState",
+      "transitions",
+    ]) ||
     value.schema !== TERMINAL_EVIDENCE_SCHEMA ||
     !SHA256.test(value.nonceSha256) ||
     !OPAQUE_ID.test(value.piSessionId) ||
@@ -416,7 +453,12 @@ function parseTerminalEvidence(value) {
     !safeCount(value.capabilityCount) ||
     value.terminalState !== "completed" ||
     value.stopSettled !== true ||
-    !exactRecord(value.transitions, ["allPostconditionsObserved", "count", "distinctActionCount", "freshObservationCount"]) ||
+    !exactRecord(value.transitions, [
+      "allPostconditionsObserved",
+      "count",
+      "distinctActionCount",
+      "freshObservationCount",
+    ]) ||
     value.transitions.count !== 2 ||
     value.transitions.distinctActionCount !== 2 ||
     value.transitions.freshObservationCount !== 2 ||
@@ -450,7 +492,14 @@ function safeCount(value) {
 
 function exactRecord(value, keys) {
   try {
-    if (value === null || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length !== 0) return false;
+    if (
+      value === null ||
+      typeof value !== "object" ||
+      Array.isArray(value) ||
+      Object.getPrototypeOf(value) !== Object.prototype ||
+      Object.getOwnPropertySymbols(value).length !== 0
+    )
+      return false;
     const names = Object.getOwnPropertyNames(value).sort();
     const expected = [...keys].sort();
     if (names.length !== expected.length || names.some((name, index) => name !== expected[index])) return false;
@@ -494,8 +543,7 @@ async function loadConfig(path, nonceSha256) {
   // The single-authority window-mode vocabulary comes from the live-run tool
   // contract (mirror of host/src/live-run/window-mode.ts); the gate accepts
   // only the frozen five modes and fails closed on anything else.
-  if (!validateGateWindowMode(parsed.windowMode))
-    throw new Error("operational_gate_config_window_mode_invalid");
+  if (!validateGateWindowMode(parsed.windowMode)) throw new Error("operational_gate_config_window_mode_invalid");
   // The preflight module remains pure. Its nonce field is supplied by this
   // attempt, never accepted from configuration, so every launch is unique.
   const preflight = validateGameOperationalGatePreflight({
@@ -560,14 +608,28 @@ function environmentFacts(value) {
 
 function exactRecordAtLeastOne(value) {
   try {
-    return value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype && Object.getOwnPropertySymbols(value).length === 0 && Object.keys(value).length >= 1 && Object.keys(value).length <= 16;
+    return (
+      value !== null &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.getPrototypeOf(value) === Object.prototype &&
+      Object.getOwnPropertySymbols(value).length === 0 &&
+      Object.keys(value).length >= 1 &&
+      Object.keys(value).length <= 16
+    );
   } catch {
     return false;
   }
 }
 
 function isAbsoluteString(value) {
-  return typeof value === "string" && value.length > 0 && value.length <= PATH_LIMIT && !value.includes("\0") && isAbsolute(value);
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= PATH_LIMIT &&
+    !value.includes("\0") &&
+    isAbsolute(value)
+  );
 }
 
 export async function prepareReleaseReportTarget(runId) {
@@ -576,7 +638,8 @@ export async function prepareReleaseReportTarget(runId) {
   const root = await realpath(RELEASE_EVIDENCE_ROOT);
   if (root !== RELEASE_EVIDENCE_ROOT) throw new Error("release_evidence_root_identity_mismatch");
   const rootState = await lstat(root);
-  if (!rootState.isDirectory() || rootState.isSymbolicLink()) throw new Error("release_evidence_root_not_real_directory");
+  if (!rootState.isDirectory() || rootState.isSymbolicLink())
+    throw new Error("release_evidence_root_not_real_directory");
   return prepareReportTarget(join(root, `${runId}.json`));
 }
 
@@ -617,9 +680,16 @@ async function productionArtifactIdentity() {
     // current.json may be v1 (generation+inventoryDigest) or v2 (adds schema+
     // runtimeAdmissionSha256); the gate consumes only the identity fields and
     // must not reject the v2 shape.
-    if (pointer === null || typeof pointer !== "object" || Array.isArray(pointer)
-      || typeof pointer.generation !== "string" || typeof pointer.inventoryDigest !== "string"
-      || !OPAQUE_ID.test(pointer.generation) || !SHA256.test(pointer.inventoryDigest)) throw new Error("invalid");
+    if (
+      pointer === null ||
+      typeof pointer !== "object" ||
+      Array.isArray(pointer) ||
+      typeof pointer.generation !== "string" ||
+      typeof pointer.inventoryDigest !== "string" ||
+      !OPAQUE_ID.test(pointer.generation) ||
+      !SHA256.test(pointer.inventoryDigest)
+    )
+      throw new Error("invalid");
     return Object.freeze({ generation: pointer.generation, inventoryDigest: pointer.inventoryDigest });
   } catch {
     throw new Error("production_artifact_identity_unavailable");

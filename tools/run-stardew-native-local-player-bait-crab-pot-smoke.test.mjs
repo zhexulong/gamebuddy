@@ -15,9 +15,9 @@ const target = {
 };
 
 const config = {
-    DeniedActions: [],
-    DeniedActionFamilies: [],
-    ExperimentalActions: [],
+  DeniedActions: [],
+  DeniedActionFamilies: [],
+  ExperimentalActions: [],
   SaveId: "save",
   WorldId: "world",
   PlayerId: "player",

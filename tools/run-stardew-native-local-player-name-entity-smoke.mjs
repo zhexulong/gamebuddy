@@ -42,7 +42,12 @@ const REQUIRED_CAPABILITIES = ["cancel_active_execution", "inspect_self", ACTION
  * LiveVerified and therefore on the surface, which is what makes the read-back possible. A policy
  * that denies `mount_transport` would make this runner report `not_checked` rather than pass.
  */
-export async function runNameEntitySmoke(client, receipts, _config, { terminalTimeoutMs = 5_000, requestedName = DEFAULT_REQUESTED_NAME } = {}) {
+export async function runNameEntitySmoke(
+  client,
+  receipts,
+  _config,
+  { terminalTimeoutMs = 5_000, requestedName = DEFAULT_REQUESTED_NAME } = {},
+) {
   const trace = [];
   const snapshot = await observeFresh(client, { actionable: true });
   assertRequiredCapabilities(snapshot, REQUIRED_CAPABILITIES);
@@ -92,7 +97,11 @@ export async function runNameEntitySmoke(client, receipts, _config, { terminalTi
   const repeatTargets = horseTargets(afterRepeat);
   checks.refusalMovedNothing =
     repeatTargets === null ? "not_checked" : repeatTargets.some((entry) => entry?.name === requestedName);
-  trace.push({ step: "observed_repeat", advertisedHorses: repeatTargets === null ? null : repeatTargets.length, checks });
+  trace.push({
+    step: "observed_repeat",
+    advertisedHorses: repeatTargets === null ? null : repeatTargets.length,
+    checks,
+  });
 
   const failures = Object.entries(checks)
     .filter(([, ok]) => ok === false || ok === "not_checked")
@@ -125,7 +134,9 @@ export function assertNameEntityPostconditions({ requestedName, evidence, horseT
     storedNameReadBackFromEntity: observable ? named.length === 1 : "not_checked",
     // And the receipt's after-value is the one the world reports, so the receipt cannot claim a name
     // the world does not hold.
-    advertisedNameAgreesWithReceipt: observable ? named.length === 1 && named[0].name === evidence.name_after : "not_checked",
+    advertisedNameAgreesWithReceipt: observable
+      ? named.length === 1 && named[0].name === evidence.name_after
+      : "not_checked",
     // The entity's own name field is what the action wrote - the receipt must not be reading a
     // different fact (e.g. the durable per-player horseName) and calling it the entity's.
     evidenceMatchesRequest: evidence.requested === requestedName && evidence.name_matches_requested === "true",

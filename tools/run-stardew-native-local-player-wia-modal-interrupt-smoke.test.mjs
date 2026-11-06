@@ -79,7 +79,9 @@ function makeClient(terminalState, terminalReason, evidence) {
   return { client, receipts };
 }
 
-const MODAL_EVIDENCE = { detail: "interrupted_by=DialogueBox;target_tile=34,34;interrupted_at=20,20;remaining_distance=14;revision=10" };
+const MODAL_EVIDENCE = {
+  detail: "interrupted_by=DialogueBox;target_tile=34,34;interrupted_at=20,20;remaining_distance=14;revision=10",
+};
 
 test("wia modal-interrupt runner passes on invalidated/modal_interrupted with the intent breakpoint", async () => {
   const { client, receipts } = makeClient("invalidated", "modal_interrupted", MODAL_EVIDENCE);

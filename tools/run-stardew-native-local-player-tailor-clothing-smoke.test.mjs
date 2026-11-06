@@ -95,11 +95,17 @@ test("a recipe that spends no right item is judged by the item it does not spend
   assert.equal(checks.receiptSaysReagentsSpent, true);
   assert.equal(checks.worldShowsReagentsSpent, true);
   // ...and claiming the right item was spent when the recipe says otherwise is a lie.
-  assert.equal(judge({ evidence: honestEvidence({ right_spent: "false", right_after: "2" }) }).receiptSaysReagentsSpent, false);
+  assert.equal(
+    judge({ evidence: honestEvidence({ right_spent: "false", right_after: "2" }) }).receiptSaysReagentsSpent,
+    false,
+  );
 });
 
 test("a receipt whose counts disagree with the world fails even when its own counts are coherent", () => {
-  const checks = judge({ evidence: honestEvidence({ delivered: "1", output_after: "1" }), after: { "(O)428": 2, "(O)684": 2 } });
+  const checks = judge({
+    evidence: honestEvidence({ delivered: "1", output_after: "1" }),
+    after: { "(O)428": 2, "(O)684": 2 },
+  });
   assert.equal(checks.receiptSaysGarmentExists, true);
   assert.equal(checks.worldShowsGarmentExists, false);
 });
@@ -110,7 +116,10 @@ test("a world that shows MORE consumption than the receipt claims fails too", ()
 });
 
 test("a disposition that does not match the reported split fails", () => {
-  assert.equal(judge({ evidence: honestEvidence({ disposition: "dropped_on_ground" }) }).dispositionMatchesSplit, false);
+  assert.equal(
+    judge({ evidence: honestEvidence({ disposition: "dropped_on_ground" }) }).dispositionMatchesSplit,
+    false,
+  );
   assert.equal(
     judge({
       evidence: honestEvidence({ delivered: "0", dropped: "1", output_after: "0", disposition: "inventory" }),
@@ -135,7 +144,10 @@ test("an absent inventory surface reports the world halves as not_checked, never
 
 test("a receipt that names another target fails", () => {
   assert.equal(judge({ evidence: honestEvidence({ output: "(S)1002" }) }).receiptNamesTheTarget, false);
-  assert.equal(judge({ evidence: honestEvidence({ target: "tailoring_recipe_ffffffffffffffff" }) }).receiptNamesTheTarget, false);
+  assert.equal(
+    judge({ evidence: honestEvidence({ target: "tailoring_recipe_ffffffffffffffff" }) }).receiptNamesTheTarget,
+    false,
+  );
 });
 
 test("non-integer counts fail before anything is compared", () => {

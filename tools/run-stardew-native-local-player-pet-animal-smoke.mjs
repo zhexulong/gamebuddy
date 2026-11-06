@@ -88,7 +88,9 @@ export async function runPetAnimalSmoke(
         location: client.state?.snapshot?.location ?? null,
         tile: client.state?.snapshot?.tile ?? null,
         actionable: client.state?.snapshot?.actionable ?? null,
-        petTargetCount: Array.isArray(client.state?.snapshot?.petTargets) ? client.state.snapshot.petTargets.length : null,
+        petTargetCount: Array.isArray(client.state?.snapshot?.petTargets)
+          ? client.state.snapshot.petTargets.length
+          : null,
         liveUnpettedCount: Array.isArray(client.state?.snapshot?.petTargets)
           ? liveUnpettedPetTargets(client.state.snapshot).length
           : null,
@@ -106,10 +108,10 @@ export async function runPetAnimalSmoke(
               petType: target?.petType ?? null,
               friendship: target?.friendship ?? null,
               pettedToday: target?.pettedToday ?? null,
-        // The native mobility fact this attempt was gated on. Without it a
-        // `no_stationary_unpetted_pet_target` failure cannot be told apart from
-        // a projection that never reports true at all.
-        stationary: target?.stationary ?? null,
+              // The native mobility fact this attempt was gated on. Without it a
+              // `no_stationary_unpetted_pet_target` failure cannot be told apart from
+              // a projection that never reports true at all.
+              stationary: target?.stationary ?? null,
               distance:
                 Number.isInteger(target?.x) && Number.isInteger(client.state?.snapshot?.tile?.x)
                   ? Math.max(

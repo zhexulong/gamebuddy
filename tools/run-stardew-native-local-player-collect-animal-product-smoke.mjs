@@ -68,11 +68,11 @@ export async function runCollectAnimalProductSmoke(
       state: passed ? "passed" : "blocked",
       topology: "native_local_player_fixture",
       reasonCode: passed ? "animal_product_collected" : "collect_animal_product_postcondition_mismatch",
-    target,
-    receipt: summarizeReceipt(receipt),
-    // The receipt summary carries no identity by design (4a52188), so the
-    // execution correlation is exposed here from the raw receipt.
-    executionId: receipt.executionId,
+      target,
+      receipt: summarizeReceipt(receipt),
+      // The receipt summary carries no identity by design (4a52188), so the
+      // execution correlation is exposed here from the raw receipt.
+      executionId: receipt.executionId,
       evidence,
       inventory: {
         qualifiedItemId: target.qualifiedProduceItemId,
@@ -110,11 +110,7 @@ if (import.meta.main) {
 
 function validateConfig(value) {
   const fixture = value?.NativeLocalPlayerFixture;
-  if (
-    fixture?.Enable !== true ||
-    fixture.Bootstrap?.Enable === true ||
-    fixture.FixtureScenario !== SCENARIO
-  )
+  if (fixture?.Enable !== true || fixture.Bootstrap?.Enable === true || fixture.FixtureScenario !== SCENARIO)
     throw new Error("native_local_collect_animal_product_fixture_config_invalid");
   if (
     value.Portfolio?.Enable === true ||

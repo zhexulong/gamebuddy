@@ -5,16 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import nodeTest from "node:test";
 import { promisify } from "node:util";
-import {
-  cleanupAtomicDirectory,
-  commitAtomicDirectory,
-  prepareAtomicDirectory,
-} from "./lib/atomic-directory.mjs";
-import {
-  REQUIRED_INPUTS_PATH,
-  REQUIRED_INPUTS_SCHEMA,
-  sha256,
-} from "./ci-snapshot-lib.mjs";
+import { cleanupAtomicDirectory, commitAtomicDirectory, prepareAtomicDirectory } from "./lib/atomic-directory.mjs";
+import { REQUIRED_INPUTS_PATH, REQUIRED_INPUTS_SCHEMA, sha256 } from "./ci-snapshot-lib.mjs";
 import { createCiSnapshot } from "./create-ci-snapshot.mjs";
 import { materializeCiSnapshot } from "./materialize-ci-snapshot.mjs";
 import { runCiSnapshot } from "./run-ci-snapshot.mjs";
@@ -218,7 +210,7 @@ test("fails closed when a competing destination appears before transactional com
     await mkdir(output);
     await writeFile(join(output, "competitor.txt"), "competitor\n");
     await assert.rejects(
-       commitAtomicDirectory(transaction),
+      commitAtomicDirectory(transaction),
       new RegExp(
         process.platform === "win32"
           ? "ci_snapshot_output_exists"
@@ -226,9 +218,9 @@ test("fails closed when a competing destination appears before transactional com
       ),
     );
     assert.equal(await readFile(join(output, "competitor.txt"), "utf8"), "competitor\n");
-     await lstat(transaction.stagingPath);
+    await lstat(transaction.stagingPath);
   } finally {
-     await cleanupAtomicDirectory(transaction, { recursive: true });
+    await cleanupAtomicDirectory(transaction, { recursive: true });
     await rm(parent, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 });

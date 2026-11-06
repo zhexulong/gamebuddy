@@ -16,9 +16,9 @@ function fixtureConfig(overrides = {}) {
     HostAutomation: { Enable: false },
     HostFarmhandProvisioning: { Enable: false },
     FarmhandProvisioner: { Enable: false },
-  DeniedActions: [],
-  DeniedActionFamilies: [],
-  ExperimentalActions: [],
+    DeniedActions: [],
+    DeniedActionFamilies: [],
+    ExperimentalActions: [],
     ...overrides,
   };
 }
@@ -37,7 +37,10 @@ function createFake() {
     actionable: true,
     activeExecution: null,
     capabilities: CAPABILITIES,
-    toolSlots: [{ label: "Hoe", slot: 0 }, { label: "Axe", slot: 1 }],
+    toolSlots: [
+      { label: "Hoe", slot: 0 },
+      { label: "Axe", slot: 1 },
+    ],
     currentTool: tool,
     soilTiles: tilled ? [] : [{ x: 2, y: 1 }],
   });
@@ -73,7 +76,9 @@ function createFake() {
           state: "succeeded",
           reasonCode: "soil_tilled",
           revision,
-          evidence: { detail: `location=Farm;target=${args.x},${args.y};before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2` },
+          evidence: {
+            detail: `location=Farm;target=${args.x},${args.y};before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2`,
+          },
         });
         return receipt;
       }

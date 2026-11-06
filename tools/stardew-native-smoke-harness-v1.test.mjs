@@ -166,8 +166,8 @@ test("required capabilities accept a larger shared-world surface and fail closed
       "place_wood_fence",
       "place_crab_pot",
       "bait_crab_pot",
-      "chop_tree_source",
-      "break_rock_source",
+      "chop_tree",
+      "break_rock",
       "clear_hoedirt",
       "dig_artifact_spot",
       "refill_watering_can",
@@ -319,7 +319,14 @@ test("readNativeClientConfig parses the bounded runner config and fails closed",
 });
 
 test("connectNativeLocalClient awaits async teardown and propagates close failure", async () => {
-  const config = { SaveId: "save", WorldId: "world", PlayerId: "player", CompanionId: "companion", PipeName: "pipe", BridgeToken: "token" };
+  const config = {
+    SaveId: "save",
+    WorldId: "world",
+    PlayerId: "player",
+    CompanionId: "companion",
+    PipeName: "pipe",
+    BridgeToken: "token",
+  };
   const order = [];
   const closeFailure = new Error("async close failed");
   const fakeClient = {
@@ -332,7 +339,9 @@ test("connectNativeLocalClient awaits async teardown and propagates close failur
       throw closeFailure;
     },
   };
-  const session = await connectNativeLocalClient(config, { loadModule: async () => ({ LocalStardewBridgeClient: fakeClient }) });
+  const session = await connectNativeLocalClient(config, {
+    loadModule: async () => ({ LocalStardewBridgeClient: fakeClient }),
+  });
   await assert.rejects(session.close(), closeFailure);
   assert.deepEqual(order, ["unsubscribe", "close-start", "close-end"]);
 });
@@ -387,7 +396,8 @@ test("connectNativeLocalClient builds a bounded session and tears down exactly o
   }
   assert.deepEqual(session.receipts, [{ executionId: "e1" }, { executionId: "e2" }]);
   for (let index = 0; index < 20; index += 1) {
-    for (const listener of diagnosticListeners) listener({ stage: "pipe_frame_dispatched", reasonCode: `fixed_${index}` });
+    for (const listener of diagnosticListeners)
+      listener({ stage: "pipe_frame_dispatched", reasonCode: `fixed_${index}` });
   }
   assert.deepEqual(
     session.diagnostics.map((diagnostic) => diagnostic.reasonCode),
@@ -484,10 +494,21 @@ function makeRetryClient({ revisions = [1], receipts = [] } = {}) {
   let i = 0;
   const client = {
     state: { snapshot: { revision: revisions[0], actionable: true, activeExecution: null, capabilities: [] } },
-    observe: async () => ({ revision: revisions[Math.min(i, revisions.length - 1)], actionable: true, activeExecution: null, capabilities: [] }),
+    observe: async () => ({
+      revision: revisions[Math.min(i, revisions.length - 1)],
+      actionable: true,
+      activeExecution: null,
+      capabilities: [],
+    }),
     execute: async (request) => {
       receipts.push({ requestId: request.requestId, executionId: "exec-1", state: "succeeded", reasonCode: "done" });
-      return { requestId: request.requestId, executionId: "exec-1", state: "accepted", reasonCode: "accepted", evidence: { detail: "a=1" } };
+      return {
+        requestId: request.requestId,
+        executionId: "exec-1",
+        state: "accepted",
+        reasonCode: "accepted",
+        evidence: { detail: "a=1" },
+      };
     },
   };
   return {
@@ -598,7 +619,14 @@ test("executeFreshAfterReobserve does not swallow a refusal that is not the tran
     throw new NativeSmokeHarnessError("invalid_native_action");
   };
   await assert.rejects(
-    () => executeFreshAfterReobserve(client, { action: "x", args: {}, requestId: "req-4", idempotencyKey: "idem-4", timeoutMs: 1_000 }),
+    () =>
+      executeFreshAfterReobserve(client, {
+        action: "x",
+        args: {},
+        requestId: "req-4",
+        idempotencyKey: "idem-4",
+        timeoutMs: 1_000,
+      }),
     /invalid_native_action/,
   );
   assert.equal(attempts, 1, "a non-transient refusal must not be retried");
@@ -618,7 +646,10 @@ test("assertImmediateReceipt requires the request/execution pair and returns the
   assert.equal(returned, receipt, "the receipt must not be rebuilt: dispatch evidence has to survive");
   assert.equal(returned.evidence.detail, "k=v");
   assert.throws(() => assertImmediateReceipt(receipt, { requestId: "other" }), /native_receipt_request_id_mismatch/);
-  assert.throws(() => assertImmediateReceipt({ requestId: "req-9" }, { requestId: "req-9" }), /invalid_native_receipt_execution_id/);
+  assert.throws(
+    () => assertImmediateReceipt({ requestId: "req-9" }, { requestId: "req-9" }),
+    /invalid_native_receipt_execution_id/,
+  );
 });
 test("waitForTerminal stops on a terminal state and ignores progress", async () => {
   const accepted = { requestId: "req-10", executionId: "exec-10" };
@@ -628,6 +659,9 @@ test("waitForTerminal stops on a terminal state and ignores progress", async () 
   ];
   const terminal = await waitForTerminal(receipts, accepted, 500);
   assert.equal(terminal.reasonCode, "done");
-  assert.ok(TERMINAL_STATES.has("succeeded") && TERMINAL_STATES.has("invalidated"), "terminal states are the closed set");
+  assert.ok(
+    TERMINAL_STATES.has("succeeded") && TERMINAL_STATES.has("invalidated"),
+    "terminal states are the closed set",
+  );
   assert.ok(!TERMINAL_STATES.has("running"), "running is progress, never a terminal");
 });
