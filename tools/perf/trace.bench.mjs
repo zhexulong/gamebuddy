@@ -40,13 +40,23 @@ const SIZES = Object.freeze([
  * on no defect, and a floor low enough to survive that (~1.1) could not tell a damped measurement from
  * an export that emitted no spans. So this case says what it can actually prove: the span cost must not
  * grow super-linearly. The export's content is the budget gate's and the run-evidence gates' subject.
+ *
+ * WHY THE CEILING IS 12 RATHER THAN 6: the readings below are all damped by that fixed write, and the
+ * damping is a property of the machine, not of the code. This machine reads 3.34-4.32; the CI runner
+ * (Linux) read 6.28 on the same commit, because its write is relatively cheaper, so less of the span cost
+ * is hidden. A ceiling of 6 was therefore calibrated against a measurement the machine had already
+ * softened, and it red-ed on a runner where the same linear export simply showed more of itself. The
+ * signal this band exists to catch is two orders of magnitude away: a serialisation that walked every span
+ * for every span reads ~220, so 12 still separates "linear" from "quadratic" with room for every damping
+ * factor observed so far (1.24 damped, 6.28 least-damped).
  */
 const SCALING_BAND = Object.freeze({
   min: 0,
-  max: 6,
+  max: 12,
   reason:
-    "80x the spans measured 3.34-3.74 (every span serialised once, behind a ~511 µs file write); " +
-    "a serialisation that walked every span for every span reads ~220, so the ceiling is what this band claims",
+    "80x the spans measured 3.34-4.32 here and 6.28 on the Linux CI runner (every span serialised once, " +
+    "behind a fixed file write whose cost - and so whose damping - differs per machine); a serialisation " +
+    "that walked every span for every span reads ~220, so the ceiling is what this band claims",
 });
 
 /** `count` closed action spans on a monotonic fake clock, so an export is a pure function of them. */
