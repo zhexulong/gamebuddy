@@ -60,6 +60,7 @@ export const SURFACE = "integrations/stardew/action-development/contracts/genera
 export const LOOKUP_SOURCE = "host/src/game-lookup.ts";
 export const HUD_SOURCE = "host/src/snapshot-hud.ts";
 export const MOD_ENTRY = "integrations/stardew/ModEntry.cs";
+export const PROTOCOL_SOURCE = "host/src/protocol.ts";
 export const BASELINE = "tools/stardew-observation-consumers-baseline.json";
 
 /** The shortest reason this gate will treat as a reason. A baseline entry that cannot name its case is a finding. */
@@ -101,7 +102,20 @@ export function lookupChannels(source) {
     }
     channels.set(subject, fields);
   }
-  return { vocabulary, channels, problems };
+  return { vocabulary, channels, problems, genericFamilyLookup: acceptsAnySnapshotFamily(source) };
+}
+
+/**
+ * Does the tool answer a family by name, without a hand-written subject for it?
+ *
+ * This is the difference between "the model can ask" and "the model can pay a full observe": the five shaped
+ * subjects are doors, and a generic path keyed on `SNAPSHOT_KEYS` means every family the snapshot declares has one.
+ * The audit reads the SOURCE for this rather than trusting a comment, so a tool that stops accepting family names
+ * puts the 70 pairs back in front of a human.
+ */
+function acceptsAnySnapshotFamily(source) {
+  const body = functionBody(source, "function lookUp(");
+  return /SNAPSHOT_KEYS/u.test(body) && /familyRows\(/u.test(body);
 }
 
 /** The State HUD lines and the families each declares in `fields`. */
@@ -179,13 +193,14 @@ export function targetBearingPairs(surface) {
 }
 
 /** One classification per pair, from the derived channels. Order of precedence is the order of the channels' cost. */
-export function classifyPairs({ pairs, lookup, hud, scene }) {
+export function classifyPairs({ pairs, lookup, hud, scene, snapshotKeys = [] }) {
   const subjectByFamily = new Map();
   for (const [subject, families] of lookup.channels)
     for (const family of families) if (!subjectByFamily.has(family)) subjectByFamily.set(family, subject);
   const hudLineByFamily = new Map();
   for (const line of hud.lines)
     for (const family of line.fields) if (!hudLineByFamily.has(family)) hudLineByFamily.set(family, line.name);
+  const declaredFamilies = new Set(snapshotKeys);
   return pairs.map((pair) => {
     const subject = subjectByFamily.get(pair.family);
     if (subject !== undefined) return { ...pair, classification: "queryable", channel: `look_up:${subject}` };
@@ -193,6 +208,14 @@ export function classifyPairs({ pairs, lookup, hud, scene }) {
     if (line !== undefined) return { ...pair, classification: "hud_line", channel: `hud:${line}` };
     if (scene.has(pair.actionId)) return { ...pair, classification: "scene", channel: "read_scene:affordance" };
     if (pair.requiresSceneBinding) return { ...pair, classification: "scene", channel: "read_scene:binding" };
+    // The generic family door: the tool answers any family the snapshot declares, so a declared family is askable
+    // by name. A family the snapshot does NOT declare is worse than no channel - nothing can ever answer it -
+    // so it keeps its own classification and its own refusal word below.
+    if (lookup.genericFamilyLookup === true) {
+      if (declaredFamilies.has(pair.family))
+        return { ...pair, classification: "queryable", channel: `look_up:${pair.family}` };
+      return { ...pair, classification: "family_not_in_snapshot", channel: null };
+    }
     return { ...pair, classification: "no_channel", channel: null };
   });
 }
@@ -212,7 +235,7 @@ function opaqueOf(pairs) {
  *
  * `files` carries the texts: `{ surface, lookup, hud, modEntry, baseline }`. A missing file is a blocked measurement.
  */
-export function auditConsumers({ surface, lookupSource, hudSource, modEntrySource, baseline }) {
+export function auditConsumers({ surface, lookupSource, hudSource, modEntrySource, baseline, protocolSource }) {
   const blocked = [];
   const pairs = targetBearingPairs(surface);
   if (pairs.length === 0) blocked.push("surface_declares_no_target_family");
@@ -231,7 +254,13 @@ export function auditConsumers({ surface, lookupSource, hudSource, modEntrySourc
   const scene = sceneActions(modEntrySource ?? "", knownActionIds);
   if (scene.size === 0) blocked.push("scene_affordances_unread");
 
-  const classified = classifyPairs({ pairs, lookup, hud, scene });
+  const classified = classifyPairs({
+    pairs,
+    lookup,
+    hud,
+    scene,
+    snapshotKeys: readStringArray(protocolSource ?? "", /export const SNAPSHOT_KEYS = \[([\s\S]*?)\n\]/u),
+  });
   const entries = Array.isArray(baseline?.entries) ? baseline.entries : [];
   const baselineById = new Map();
   const findings = [];
@@ -261,12 +290,23 @@ export function auditConsumers({ surface, lookupSource, hudSource, modEntrySourc
   }
 
   for (const pair of classified) {
+    // A family the snapshot never declares cannot be answered by anything, ever - that is not a missing door, it is
+    // a fact nothing publishes. It is reported under its own word so the fix is obvious (publish it, or stop the
+    // action naming it), and it cannot be baselined away as if a channel could be added later.
+    if (pair.classification === "family_not_in_snapshot") {
+      findings.push({
+        code: "family_not_in_snapshot",
+        pair: pairId(pair),
+        detail: `${pair.family} is not among SNAPSHOT_KEYS, so no channel can ever answer it`,
+      });
+      continue;
+    }
     if (pair.classification !== "no_channel") continue;
     if (baselineById.has(pairId(pair))) continue;
     findings.push({ code: "no_channel_undeclared", pair: pairId(pair), detail: pair });
   }
 
-  const counts = { queryable: 0, hud_line: 0, scene: 0, no_channel: 0 };
+  const counts = { queryable: 0, hud_line: 0, scene: 0, no_channel: 0, family_not_in_snapshot: 0 };
   for (const pair of classified) counts[pair.classification] += 1;
   const reds = classified.filter((pair) => pair.classification === "no_channel");
   return {
@@ -301,12 +341,16 @@ export function auditTree({ read = (file) => readFileSync(resolve(ROOT, file), "
   const hudSource = readOrNull(HUD_SOURCE);
   const modEntrySource = readOrNull(MOD_ENTRY);
   const baselineText = readOrNull(BASELINE);
+  const protocolSource = readOrNull(PROTOCOL_SOURCE);
   const missing = [
     [SURFACE, surfaceText],
     [LOOKUP_SOURCE, lookupSource],
     [HUD_SOURCE, hudSource],
     [MOD_ENTRY, modEntrySource],
     [BASELINE, baselineText],
+    // The snapshot's own key list is the population for the generic family door, so a tree without it cannot answer
+    // the question this gate asks - skip rather than guess.
+    [PROTOCOL_SOURCE, protocolSource],
   ]
     .filter(([, text]) => text === null)
     .map(([file]) => file);
@@ -317,6 +361,7 @@ export function auditTree({ read = (file) => readFileSync(resolve(ROOT, file), "
     hudSource,
     modEntrySource,
     baseline: JSON.parse(baselineText),
+    protocolSource,
   });
 }
 
@@ -376,6 +421,12 @@ export function report(result, { list = false, write = (text) => process.stdout.
         out(
           `observation_consumers_no_channel: ${finding.pair} - no look_up subject reads it, no HUD line declares it, ` +
             `and no read_scene affordance names the action; the only channel is a full stardew_observe`,
+        );
+        break;
+      case "family_not_in_snapshot":
+        out(
+          `observation_consumers_family_not_in_snapshot: ${finding.pair} - ${finding.detail}` +
+            `; nothing publishes it, so no channel can ever answer it`,
         );
         break;
       case "stale_baseline_entry":

@@ -1,3 +1,4 @@
+import { SNAPSHOT_KEYS } from "./protocol.js";
 import type { Snapshot } from "./protocol.js";
 
 /**
@@ -40,7 +41,8 @@ export type LookupSubject = (typeof LOOKUP_SUBJECTS)[number];
 export type LookupSource = Readonly<{ family: string | null; snapshotRevision: number | null }>;
 
 export type LookupAnswer = Readonly<{
-  subject: LookupSubject;
+  // A named family answers under its own name, so this is the subject asked for, not only the five shaped ones.
+  subject: string;
   source: LookupSource;
   answer: Readonly<Record<string, unknown>>;
 }>;
@@ -215,6 +217,52 @@ export function noSnapshot(reasonCode: string): LookupUnknown {
   return { source: NOT_LOOKED, unknown: `no authoritative snapshot: ${reasonCode}`, missingField: "snapshot" };
 }
 
+/** The largest single value a family answer will carry verbatim when it is not a row list. */
+export const MAX_LOOKUP_SCALAR_BYTES = 400;
+
+/**
+ * A named snapshot family, answered as rows when it is a row list.
+ *
+ * `matched` and `omitted` are both measurements: `omitted: 0` says the answer is complete, and a family the snapshot
+ * does not carry this frame is `unknown` with its own name, never an empty list - "I did not look" and "there is
+ * nothing" must stay distinguishable.
+ */
+function familyRows(snapshot: Snapshot, family: string, query: string): LookupAnswer | LookupRefusal | LookupUnknown {
+  const value = (snapshot as unknown as Record<string, unknown>)[family];
+  if (value === undefined)
+    return {
+      source: sourceOf(snapshot, family),
+      unknown: `this snapshot does not carry \`${family}\` this frame`,
+      missingField: family,
+    };
+  if (!Array.isArray(value)) {
+    const text = JSON.stringify(value);
+    if (text !== undefined && text.length <= MAX_LOOKUP_SCALAR_BYTES)
+      return { subject: family, source: sourceOf(snapshot, family), answer: { [family]: value } };
+    return {
+      source: sourceOf(snapshot, family),
+      refused: `subject_not_a_row_family:${family}`,
+      subjects: LOOKUP_SUBJECTS,
+    };
+  }
+  const rows = value.filter((row) =>
+    query.trim().length === 0
+      ? true
+      : matches(
+          query,
+          ...Object.values(row as Record<string, unknown>)
+            .filter((field) => typeof field === "string" || typeof field === "number")
+            .map((field) => String(field)),
+        ),
+  );
+  const bounded = bound(rows);
+  return {
+    subject: family,
+    source: sourceOf(snapshot, family),
+    answer: { [family]: bounded.rows, matched: rows.length, omitted: bounded.omitted },
+  };
+}
+
 export function lookUp(snapshot: Snapshot, subject: string, query = ""): LookupAnswer | LookupRefusal | LookupUnknown {
   switch (subject) {
     case "crops":
@@ -227,8 +275,14 @@ export function lookUp(snapshot: Snapshot, subject: string, query = ""): LookupA
       return npcs(snapshot, query);
     case "calendar":
       return calendar(snapshot);
-    default:
+    default: {
+      // Any family the snapshot declares is answerable by name. The five subjects above are shaped answers; this is
+      // the door to the other ~100 rooms, and its population comes from `SNAPSHOT_KEYS` so a family added later is
+      // queryable with no edit here. Without it the tool has five doors and the building has a hundred rooms: the
+      // consumer audit measured 70 of 88 action-target pairs with no way to ask (2026-11-06).
+      if ((SNAPSHOT_KEYS as readonly string[]).includes(subject)) return familyRows(snapshot, subject, query);
       // The valid list is derived from the table, so adding a subject cannot leave this message stale.
       return { source: sourceOf(snapshot, null), refused: `unknown_subject:${subject}`, subjects: LOOKUP_SUBJECTS };
+    }
   }
 }

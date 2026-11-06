@@ -30,6 +30,7 @@ import {
   LOOKUP_SOURCE,
   MOD_ENTRY,
   pairId,
+  PROTOCOL_SOURCE,
   report,
   SURFACE,
   sceneActions,
@@ -44,6 +45,9 @@ const TREE = {
   lookupSource: read(LOOKUP_SOURCE),
   hudSource: read(HUD_SOURCE),
   modEntrySource: read(MOD_ENTRY),
+  // The snapshot's declared keys are the population for the generic family door; without them every family looks
+  // undeclared, which would make the suite measure the fixture rather than the tool.
+  protocolSource: read(PROTOCOL_SOURCE),
   baseline: JSON.parse(read(BASELINE)),
 };
 
@@ -75,7 +79,8 @@ test("the State HUD declares at least one family, and every line it declares is 
 });
 
 // The falsifier for "the family -> channel map is derived": delete one subject from the switch and the pairs it used
-// to answer must fall through to `no_channel`. A hand-written map would keep them green.
+// to answer must fall through - first to the generic family door, and with THAT door removed to `no_channel`. A
+// hand-written map would keep them green in both cases, which is why both steps are asserted.
 test("removing a look_up subject's case makes its pairs unaskable, so the map comes from the source", () => {
   const before = pairOf(withSources({}), "water_crop -> cropTargets");
   assert.equal(before.classification, "queryable", "water_crop is answered by the crops subject at HEAD");
@@ -83,11 +88,20 @@ test("removing a look_up subject's case makes its pairs unaskable, so the map co
   const withoutCrops = TREE.lookupSource.replace('case "crops":\n      return crops(snapshot);', "");
   assert.notEqual(withoutCrops, TREE.lookupSource, "the planted edit must actually remove the case");
   const after = withSources({ lookupSource: withoutCrops });
-  assert.equal(pairOf(after, "water_crop -> cropTargets").classification, "no_channel");
   assert.ok(
     after.blocked.includes("lookup_subject_without_case:crops"),
     `an advertised subject with no case is blocked by name, got ${JSON.stringify(after.blocked)}`,
   );
+  // The shaped subject is gone, and the family is still askable by name - that is the generic door doing its job, and
+  // it must be the door, not a stale mapping, that answers: the channel names the family.
+  assert.equal(pairOf(after, "water_crop -> cropTargets").channel, "look_up:cropTargets");
+
+  // Close the generic door the honest way: rename the function the generic branch calls, so the source no longer
+  // accepts a family by name. Now nothing can answer the family, and the pair must become a finding.
+  const withoutDoor = withoutCrops.replaceAll("familyRows(", "familyRowsClosed(");
+  assert.notEqual(withoutDoor, withoutCrops, "the planted edit must actually close the generic door");
+  const closed = withSources({ lookupSource: withoutDoor });
+  assert.equal(pairOf(closed, "water_crop -> cropTargets").classification, "no_channel");
 });
 
 // The same falsifier for the HUD channel: give the HUD line one more family and the pairs that family answers stop
@@ -100,8 +114,28 @@ test("a HUD line that declares a family answers it, and its baseline entries bec
   // `enter_exit -> warps` is answered by the Mod's Door affordance and is not a baseline entry at all - a widening of
   // the HUD can only make the pairs that were findings stop being findings.
   const stale = result.findings.filter((finding) => finding.code === "stale_baseline_entry").map((f) => f.pair);
-  assert.deepEqual(stale.sort(), ["travel -> warps"]);
-  assert.equal(result.status, "failed");
+  // The real baseline no longer lists `travel -> warps` (the generic door answers it), so the ratchet is proven on a
+  // baseline that still names the pair: widening the HUD must make THAT entry stale by name.
+  const withEntry = withSources({
+    hudSource: widened,
+    baseline: {
+      ...TREE.baseline,
+      entries: [
+        {
+          kind: "no_channel",
+          id: "travel -> warps",
+          reason: "planted: the baseline names a pair the widened HUD line now answers, so the entry must go stale",
+        },
+      ],
+    },
+  });
+  assert.deepEqual(
+    withEntry.findings.filter((f) => f.code === "stale_baseline_entry").map((f) => f.pair),
+    ["travel -> warps"],
+  );
+  assert.equal(withEntry.status, "failed");
+  assert.deepEqual(stale, [], "nothing in the real baseline is stale while every pair has a channel");
+  assert.equal(result.status, "passed");
 });
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -123,16 +157,17 @@ test("a target-bearing action with no channel reds, naming the action, the famil
   };
   const result = withSources({ surface });
   assert.equal(result.status, "failed");
-  const finding = result.findings.find((f) => f.code === "no_channel_undeclared");
+  const finding = result.findings.find((f) => f.code === "family_not_in_snapshot");
   assert.ok(finding, "the planted pair must be the finding");
   assert.equal(finding.pair, "planted_probe -> plantedFamilyTargets");
-  assert.equal(pairOf(result, "planted_probe -> plantedFamilyTargets").classification, "no_channel");
+  // A family the snapshot never declares is WORSE than an unaskable one: no channel can ever answer it, so it keeps
+  // its own word instead of hiding inside `no_channel`.
+  assert.equal(pairOf(result, "planted_probe -> plantedFamilyTargets").classification, "family_not_in_snapshot");
 
   const lines = [];
   assert.equal(report(result, { write: (text) => lines.push(text) }), 1, "an undeclared no_channel exits non-zero");
   const text = lines.join("\n");
-  assert.match(text, /observation_consumers_no_channel: planted_probe -> plantedFamilyTargets/u);
-  assert.match(text, /no look_up subject reads it, no HUD line declares it/u);
+  assert.match(text, /observation_consumers_family_not_in_snapshot: planted_probe -> plantedFamilyTargets/u);
   assert.match(text, /observation_consumers: failed/u);
 });
 
