@@ -32,7 +32,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// selected, which tile is swung at, and what the receipt may claim.
 /// </para>
 /// </summary>
-[Trait("kind", "source-shape")]
+// MIXED SHAPE AND BEHAVIOUR: nine tests pin the catalogue row and the handler source by reading them, seven drive the handler and assert the clump truly disappears with the health it reported; the trait would claim the whole class pins text, so this comment carries the mix instead.
 public sealed class BreakResourceClumpActionTests
 {
     private const string ResourceToolActions = "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs";

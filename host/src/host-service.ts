@@ -6,6 +6,7 @@ import type { CompanionLoop, NativeGameCompanionContent, NativeGameContentPresen
 import type { CompanionTurnOutcome, WorldFact } from "./event-pump.js";
 import type { IntegrationEventSource, IntegrationLifecycleEvent } from "./integration-launcher.js";
 import { NativeNoticeLedger } from "./native-notice-fact.js";
+import { classifyProviderFailure, type ProviderFailureClass } from "./provider-failure-classification.js";
 import type {
   CompanionTextPort,
   GameCompanionTextExpression,
@@ -322,8 +323,20 @@ export class CompanionHostService {
    * </p>
    */
   #idleTurnsWithoutWork = 0;
+  /**
+   * The provider failure class of the last flush that could not reach a model, or `undefined` once a turn settles.
+   *
+   * <p>
+   * Recorded so a verdict can say WHICH environment fact stopped the run. A sustained 429 is not "she did nothing";
+   * it is `provider_rate_limited`, and the difference decides whether a run is product evidence or an infrastructure
+   * loss (round35, 2026-11-06: five minutes of bridge-connected silence with `rx` frozen at 3).
+   * </p>
+   */
+  #lastProviderFailure: ProviderFailureClass | undefined;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
-  #retryDelayMs = 50;
+  /** The retry ladder's first step, and the sentinel that says "the last attempt succeeded". */
+  readonly #baseRetryDelayMs = 50;
+  #retryDelayMs = this.#baseRetryDelayMs;
   #closed = false;
   #integrationAdmissionOpen = true;
   /** Set by the one call that completes attach: only an attached session may greet on arrival. */
@@ -407,6 +420,18 @@ export class CompanionHostService {
     if (detachPlayback !== undefined) void detachPlayback();
     if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
     this.#stopSettledListeners.clear();
+  }
+
+  /**
+   * The provider failure class that stopped the last flush, or `undefined` when the session is answering again.
+   *
+   * <p>
+   * A verdict reads this to tell an environment fact from a product one: `provider_rate_limited` means the run could
+   * not ask a model, which is not "she did nothing" (round35, 2026-11-06).
+   * </p>
+   */
+  public get lastProviderFailure(): ProviderFailureClass | undefined {
+    return this.#lastProviderFailure;
   }
 
   /** Observe the existing exact STOP settlement without admitting or issuing STOP. */
@@ -1078,12 +1103,26 @@ export class CompanionHostService {
           this.#idleTurnsWithoutWork = this.loop.pump.turnProducedWork ? 0 : this.#idleTurnsWithoutWork + 1;
         else if (outcome !== undefined) this.#idleTurnsWithoutWork = 0;
       }
-      this.#retryDelayMs = 50;
+      this.#retryDelayMs = this.#baseRetryDelayMs;
+      // The provider answered, so the last recorded environment failure no longer describes the session.
+      this.#lastProviderFailure = undefined;
     } catch (error) {
-      // EventPump restored the exact batch. Do not spin or create an unhandled
-      // rejection when a provider/session is unavailable; retry with bounded
-      // exponential backoff and retain backpressure in the pump.
-      this.scheduleRetry();
+      // EventPump restored the exact batch. Two kinds of failure arrive here and they do not deserve the same answer.
+      //
+      // A PROVIDER failure (rate limit, model not served, credential, endpoint down) has already been retried by pi's
+      // own policy - `SETTINGS_DEFAULTS.retry` is `{ enabled, maxRetries: 3, baseDelayMs: 2000, maxAgentDelayMs: 60000 }`
+      // and its provider arm honours `retry-after` with a 60 s ceiling. Retrying it again here, on a 50 ms -> 5 s
+      // ladder that never gives up, is what made a sustained 429 look like a live run: bridge connected, heartbeat
+      // printing, `rx` frozen, and not one turn completed for five minutes (round35, 2026-11-06). So this layer does
+      // not retry a provider failure at all. It records which class it was - by name, so a verdict can say
+      // `provider_rate_limited` instead of `she did nothing` - and leaves the batch in the pump for the next real
+      // trigger.
+      //
+      // Anything else is an internal transport hiccup that pi did not classify, and that is what the bounded ladder
+      // is for.
+      const providerFailure = classifyProviderFailure(error instanceof Error ? error.message : String(error));
+      if (providerFailure === undefined) this.scheduleRetry();
+      else this.#lastProviderFailure = providerFailure;
       // Callers that await explicit player input receive the failure, while
       // bridge callbacks catch it at their boundary.
       throw error;
@@ -1102,7 +1141,11 @@ export class CompanionHostService {
         // Only a successful flush should immediately drain work accepted while
         // it was running. On failure scheduleRetry owns the next attempt.
         // Otherwise a rejected provider turn would recurse in this finally.
-        if (this.#retryDelayMs === 50) void this.flushSoon().catch(() => undefined);
+        //
+        // A provider failure deliberately keeps `#retryDelayMs` untouched, so this branch cannot fire after one: the
+        // pump holds the facts and waits for a real trigger rather than us spinning at the provider.
+        if (this.#retryDelayMs === this.#baseRetryDelayMs && this.#lastProviderFailure === undefined)
+          void this.flushSoon().catch(() => undefined);
       }
       // The liveness arm: asked even when the pump has nothing pending, because that is the whole defect. Placed in the
       // same `finally` so a turn that spoke only re-arms exactly once; `#turnOwesAnother` carries the bound.

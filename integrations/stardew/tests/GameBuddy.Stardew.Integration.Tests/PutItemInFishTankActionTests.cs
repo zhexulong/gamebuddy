@@ -47,6 +47,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// the sibling placement, rotation and fence-removal mutations do.
 /// </para>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the shape pins below read the catalogue and handler source so a rename or a dropped declaration fails here, while the behaviour tests drive the handler and assert its postcondition; they are kept together because either half alone can be green while the action is wrong.
 public sealed class PutItemInFishTankActionTests
 {
     private const string ActionId = "put_item_in_fish_tank";

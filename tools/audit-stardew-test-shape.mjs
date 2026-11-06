@@ -26,6 +26,16 @@ const PROJECT_DIRECTORY = path.join(ROOT, "integrations", "stardew", "tests", "G
 
 const READS_REPOSITORY_FILE = /\bFile\.(?:ReadAllText|ReadAllLines|ReadAllBytes)\s*\(/;
 const ASSERTS_ON_TEXT = /\.Should\(\)\.(?:Contain|NotContain)\(/;
+/**
+ * Any FluentAssertions call at all.
+ *
+ * A test that reads repository source and then asserts on a SET it parsed out of that text (`engine.Should().BeEmpty()`
+ * after collecting the switch arms) is still pinning the source's shape - the assertion is about a derived value, not
+ * about behaviour of the product. Labelling it `behaviour` is wrong in the other direction: it would let a real shape
+ * pin wear a behaviour name. Such tests are `ambiguous`: reported, and the file is left alone, because the sentence
+ * cannot say from the text alone whether the derivation is the point.
+ */
+const ASSERTS_ANYTHING = /\.Should\(\)\./;
 
 /** Blank out comments, keeping every index, so a slice of the result is the same slice of the source. */
 export function stripComments(source) {
@@ -186,7 +196,10 @@ export function classifySource(source, fileName) {
     if (!reads) return { name: test.name, kind: "behaviour" };
     if (ASSERTS_ON_TEXT.test(test.body)) return { name: test.name, kind: "pin" };
     const assertsInHelper = calledNames(test.body).some((name) => ASSERTS_ON_TEXT.test(bodies.get(name) ?? ""));
-    return { name: test.name, kind: assertsInHelper ? "ambiguous" : "behaviour" };
+    if (assertsInHelper) return { name: test.name, kind: "ambiguous" };
+    // Reads the source and asserts on something derived from it, without pinning the text itself.
+    if (ASSERTS_ANYTHING.test(test.body)) return { name: test.name, kind: "ambiguous" };
+    return { name: test.name, kind: "behaviour" };
   });
 
   const pinCount = rows.filter((row) => row.kind === "pin").length;

@@ -316,7 +316,7 @@
     "check:live-run-preflight": "node tools/preflight-live-run.mjs",
     "check:live-run-silence": "node tools/check-live-run-silence.mjs",
     "audit:totality": "node tools/audit-totality.mjs",
-    "test:audit-totality": "node --test tools/audit-totality.test.mjs tools/audit-totality-duplication.test.mjs",
+    "test:audit-totality": "node --test tools/audit-totality.test.mjs tools/audit-totality-duplication.test.mjs tools/audit-totality-head.test.mjs",
     "run:post-history-live": "node tools/live-run/chat/run-post-history-live.mjs",
     "run:provider-failure-classification-live": "node tools/live-run/chat/run-provider-failure-classification-live.mjs",
     "run:wire-contract-live": "node tools/live-run/chat/run-wire-contract-live.mjs",

@@ -298,11 +298,16 @@ test("Host service forwards adapter-labelled facts as ordinary coalesced Agent t
   const service = new CompanionHostService(harness.loop as never, adapter.events);
   adapter.emit(snapshot(7));
   await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 0));
-  assert.equal(harness.facts.length, 1);
+  // The adapter's observation, then the same snapshot re-stated for the turn about to be composed: state is
+  // not a delta, so every turn is handed the world as it stands (`#restateWorldSnapshot`).
+  assert.deepEqual(
+    harness.facts.map((fact) => (fact as { kind?: string }).kind),
+    ["snapshot", "snapshot"],
+  );
   assert.equal(harness.flushes, 1);
   service.close();
   adapter.emit(snapshot(8));
-  assert.equal(harness.facts.length, 1);
+  assert.equal(harness.facts.length, 2);
 });
 
 test("Host service does not microtask-spin on a held snapshot after its initial coalescing flush", async () => {
@@ -385,6 +390,43 @@ test("Host service backs off failed adapter delivery instead of recursively retr
   adapter.emit(snapshot(7));
   await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 20));
   assert.equal(flushes, 1);
+  service.close();
+});
+
+test("a provider rate limit is recorded and NOT retried here, because pi already retried it three times", async () => {
+  const adapter = eventHarness();
+  let flushes = 0;
+  let pending = 0;
+  const loop = {
+    pump: {
+      get pendingCount() {
+        return pending;
+      },
+      enqueueFact() {
+        pending++;
+      },
+      enqueuePlayerInput() {},
+    },
+    async flush() {
+      flushes++;
+      // The provider's own words for a saturated cell, which is what round35 hit: the status decides the class, and
+      // the body is the operator's hint.
+      throw new Error(
+        '429: {"type":"server_error","message":"Upstream request failed: [prefill_cap_refused] the cell is at capacity; retry shortly (after 30 s)"}',
+      );
+    },
+  };
+  const service = new CompanionHostService(loop as never, adapter.events);
+  adapter.emit(snapshot(7));
+  // Longer than the whole 50 ms -> 5 s ladder would take for its first three steps: a retry here would show up.
+  await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 200));
+  assert.equal(flushes, 1, "pi owns provider retries; a second flush from this layer would be a retry we cannot bound");
+  assert.ok(pending > 0, "the fact stays in the pump for the next real trigger rather than being dropped");
+  assert.equal(
+    service.lastProviderFailure,
+    "rate_limited",
+    "the class is named so a verdict can say why the run stalled",
+  );
   service.close();
 });
 

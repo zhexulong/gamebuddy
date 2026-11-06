@@ -45,6 +45,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// success path belongs to the lane's native-local live gate, like the sibling placement, rotation, fence and tank mutations.
 /// </para>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the shape pins below read the catalogue and handler source so a rename or a dropped declaration fails here, while the behaviour tests drive the handler and assert its postcondition; they are kept together because either half alone can be green while the action is wrong.
 public sealed class PlaceItemOnPedestalActionTests
 {
     private const string ActionId = "place_item_on_pedestal";

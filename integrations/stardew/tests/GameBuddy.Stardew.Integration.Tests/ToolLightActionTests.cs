@@ -18,6 +18,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// action, in the handler that would drift.
 /// </para>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the shape pins below read the catalogue and handler source so a rename or a dropped declaration fails here, while the behaviour tests drive the handler and assert its postcondition; they are kept together because either half alone can be green while the action is wrong.
 public sealed class ToolLightActionTests
 {
     private const string Handler = "integrations/stardew/farmhandexecutioncontroller.facilityactions.cs";
