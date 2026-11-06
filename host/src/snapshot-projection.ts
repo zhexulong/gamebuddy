@@ -264,7 +264,11 @@ export function projectGameSnapshotContext(
   const text = boundedUtf8(
     [
       "[Game Snapshot Projection v1:",
-      `- Snapshot Revision: #${snapshot.revision} (Sampled: ${sampledAgeMs}ms ago)`,
+      // No age here. This text is composed once, when the snapshot is taken, so any age printed into it is frozen at
+      // that instant and reads as fresh forever - the HUD already says the live age (`observed N turns ago`), and two
+      // spellings of one fact let the stale one win (round35: `Sampled: 5ms ago` beside `observed 9 turns ago` for a
+      // 112 s old snapshot). One owner, no number here.
+      `- Snapshot Revision: #${snapshot.revision}`,
       `- Time: ${formatGameClock(clock.timeOfDay)}, Season: ${seasonName(clock.seasonIndex)}, Day: ${clock.dayOfMonth}, Year: ${clock.year}`,
       `- Location: ${location}, Tile: (${movement.tile.x}, ${movement.tile.y}), Actionable: ${movement.actionable}`,
       ...(movement.holdingModal === null

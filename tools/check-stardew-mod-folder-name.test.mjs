@@ -15,11 +15,6 @@ import test from "node:test";
  * it through the exported rule instead: a fixture writes the three files, and the
  * predicate below is the check's own body with the paths substituted. That keeps
  * one implementation of the rule - duplicating it here would let the two drift.
- *
- * red-proof: inject  emptying STARDEW_MOD_FOLDER_ALIASES in tools/lib/stardew-mod-folder.mjs (so a seam that
- *   spells `GameBuddy.Stardew` stops being recognised) reddens exactly the two cases that exist for it:
- *   "a JavaScript seam that spells the folder under Mods is named" and "a PowerShell harness that spells
- *   the folder is named, including one added later" - 5 pass / 2 fail, and 7 pass / 0 fail restored.
  */
 
 const REPO = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/u, "$1");

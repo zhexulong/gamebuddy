@@ -3898,7 +3898,7 @@ try {
   // mistake this change undoes.
   const promptForDayContinuation = (day) =>
     localeKey === "zh"
-      ? `（第 ${String(day)} 天还在继续。你还在地里。接着做。）`
+      ? `（第 ${String(day)} 天还在继续。接着做。）`
       : `(Day ${String(day)} is still going. Carry on.)`;
   // Offered when the world clock says this day's work hours are over but the night has NOT been crossed.
   // Measured 2026-10-26: a turn ended at 22:00 with the companion saying "Time to sleep ... let me observe first
