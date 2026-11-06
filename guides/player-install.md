@@ -111,5 +111,5 @@ Chat 与 Game 是两个可以同时存在的表面：你可以在 Chat 里设定
 ## 已知边界
 
 - 正式支持的游戏只有 Stardew Valley 1.6.x + SMAPI 4.x，平台只有 Windows x64。
-- 当前产品只有 Chat 与 Game 两个表面。
+- 语音（ASR / TTS）仍在开发中，当前版本不保证可用；它不作为独立产品表面。
 - 签名公开发行通道仍在收敛；从源码构建的安装包属于未签名预览产物，Windows SmartScreen 可能提示，不用于分发。

@@ -54,6 +54,7 @@ GameBuddy 围绕 **AIRP（AI Role-Play）长会话**来搭建：角色不是某�
 | 世界书：条目管理与绑定 | 🚧 管理能力存在；selective Lorebook 仍是独立 release-candidate |
 | 长期 Memory：章节折叠、语义记忆、跨会话召回 | ✅ |
 | 跨表面连续性（Chat ↔ Game 同一身份） | ✅ 绑定同一 continuity 时 |
+| 语音（PTT / ASR / TTS） | 🚧 开发中：ASR 与 TTS 仍在推进，不作为独立产品表面 |
 | Windows 安装包（per-user、免 Node/.NET 运行时） | 🚧 可构建并通过干净机沙箱验收；签名公开发行通道仍在收敛 |
 | 多游戏 / 社区 Connector | ⬜ 尚未支持（Host 已留 integration seam，但不是通用游戏协议） |
 | macOS / Linux | ⬜ 尚未支持 |
@@ -112,7 +113,7 @@ pnpm run:sandbox-level3 -- --setup desktop/dist/setup/GameBuddy.Setup.exe
 ```bash
 pnpm install
 
-# 构建 Host 与前端
+# 构建语音协议、Host 与前端
 pnpm build
 
 # 桌面外壳 / 安装包
@@ -135,12 +136,14 @@ flowchart TB
         Player["玩家"]
         ChatUI["Chat / Tavern 界面"]
         GameUI["Game 界面"]
+        Mic["麦克风 / 扬声器"]
     end
 
     subgraph HostLayer["Companion Host (Node.js / TypeScript)"]
         Identity["身份与连续性 (Identity / Continuity)"]
         Memory["长期 Memory (Magic Context)<br/>章节折叠 / 语义记忆 / 召回"]
         PiRuntime["受限 Pi Runtime<br/>显式工具 allowlist"]
+        VoiceGW["Voice Gateway<br/>PTT / ASR / TTS（开发中）"]
         ActionRouter["Game Action Router<br/>policy / 前置检查 / 回执"]
     end
 
@@ -153,8 +156,10 @@ flowchart TB
 
     Player <--> ChatUI
     Player <--> GameUI
+    Player <--> Mic
     ChatUI <--> Identity
     GameUI <--> ActionRouter
+    Mic <--> VoiceGW
     Identity <--> Memory
     Identity <--> PiRuntime
     PiRuntime <--> ActionRouter
@@ -182,7 +187,9 @@ ai-game-companion/
 ├── packages/              # 共享契约（如 Game Action Program 模型与校验器）
 ├── protocol/              # 跨语言 Bridge 协议与 schema
 ├── desktop/               # Windows 桌面外壳与安装器
+├── voice-gateway/         # 本地语音网关（PTT / ASR / TTS，开发中）
 ├── vendor/
+│   ├── pi-koe/            # 第一方语音中枢（submodule）
 │   └── magic-context/     # 长期 Memory 引擎（定制 fork）
 ├── assets/tavern/         # 角色卡与提示词预设
 ├── fixtures/              # 场景、角色卡与协议验证样本
@@ -205,6 +212,7 @@ ai-game-companion/
 - [ ] **发布收敛**
   - [ ] 签名公开发行通道与自动更新
   - [ ] 安装 → 识别游戏 → 部署 Mod → 首次真实行动 的完整玩家旅程验收
+  - [ ] 语音链路：ASR / TTS、设备路径与完整语音体验验收
 - [ ] **生态**
   - [ ] 社区游戏 Connector
   - [ ] 跨游戏的通用 Companion Protocol
