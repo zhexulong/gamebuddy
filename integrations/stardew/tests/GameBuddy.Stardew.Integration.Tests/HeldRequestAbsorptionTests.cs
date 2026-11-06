@@ -24,6 +24,14 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// re-issue the very same thing - while the Mod already knew the hold clears inside
 /// <see cref="WorldModel.TransientRetryWindowMs"/>. Each pin below drives the real path on a probe actor:
 /// authenticated bridge request, shared admission, parked wait, dispatch.
+///
+/// <para>
+/// The same absorption covers the OTHER hold the actor's own work creates: an in-flight execution that owns the
+/// body. Measured 19:31:39 - a request arrived while a background `pickup_item` held the body, was answered
+/// `body_owned_by_activity`, and the run went quiet. A collision with the actor's own in-flight work is a queue,
+/// not a failure; only a hold this bridge must not wait for (another lineage's journalled admission, or an owner that
+/// outlives the bounded window) keeps the named refusal.
+/// </para>
 /// </summary>
 public sealed class HeldRequestAbsorptionTests
 {
@@ -111,9 +119,82 @@ public sealed class HeldRequestAbsorptionTests
         absorption.Session.TryDequeueHeldExecutionResponse(out _, out _).Should().BeFalse("nothing was parked");
     }
 
+    [Fact]
+    public void AnActivityHoldParksTheRequest_AndTheFinishedPickupDispatchesItExactlyOnce()
+    {
+        Absorption absorption = Park("pickup", canMove: true, usingTool: false);
+        absorption.OwnTheBody("activeItemPickup", new LocalItemPickupSpec(
+            "exec_pickup", "req_pickup", "ProbeFarm", 3, 9, "ground_1", "(O)24", 1, 0, 1, DeadlineMs));
+
+        absorption.Session.TryExecute(1, absorption.Request, out BridgeEnvelope<BridgeReceipt>? parked, out string parkedReason)
+            .Should().BeTrue(parkedReason);
+        parked.Should().BeNull("the Mod holds the request while the actor finishes work it started itself");
+        parkedReason.Should().Be(ExecutionManager.HeldRequestMarker);
+        absorption.Handler.Invocations.Should().Be(0, "the pickup owns the body: nothing may start yet");
+
+        // A tick passes while the pickup is still running: the wait continues and answers nothing.
+        absorption.Executions.PumpHeldRequests();
+        absorption.Handler.Invocations.Should().Be(0);
+        absorption.Session.TryDequeueHeldExecutionResponse(out _, out _).Should().BeFalse();
+
+        absorption.ReleaseTheBody("activeItemPickup");
+        absorption.Executions.PumpHeldRequests();
+
+        absorption.Handler.Invocations.Should().Be(1, "the freed body dispatches the queued request exactly once");
+        BridgeEnvelope<BridgeReceipt> answer = absorption.TakeAnswer();
+        answer.CorrelationId.Should().Be(absorption.Request.CorrelationId);
+        answer.Payload.State.Should().Be("accepted");
+        answer.Payload.Evidence!["detail"].Should().MatchRegex(@"(^|;)held_ms=\d+$");
+    }
+
+    [Fact]
+    public void AnActivityHoldThatOutlivesTheWindow_AnswersTheNamedWaitCarryingItsOwner()
+    {
+        Absorption absorption = Park("pickup-expired", canMove: true, usingTool: false);
+        absorption.OwnTheBody("activeItemPickup", new LocalItemPickupSpec(
+            "exec_pickup", "req_pickup", "ProbeFarm", 3, 9, "ground_1", "(O)24", 1, 0, 1, DeadlineMs));
+        absorption.Session.TryExecute(1, absorption.Request, out _, out string parkedReason).Should().BeTrue(parkedReason);
+        parkedReason.Should().Be(ExecutionManager.HeldRequestMarker);
+
+        Thread.Sleep(WorldModel.TransientRetryWindowMs + 250);
+        absorption.Executions.PumpHeldRequests();
+
+        absorption.Handler.Invocations.Should().Be(0, "the owner never finished inside the window");
+        BridgeEnvelope<BridgeReceipt> answer = absorption.TakeAnswer();
+        answer.Payload.State.Should().Be("rejected");
+        // The wait NAMES what it waited for, so the Agent reads a hold rather than an unexplained failure.
+        answer.Payload.ReasonCode.Should().Be("waiting_for_body:body_owned_by_activity");
+        // ...and the owner's own action id travels on the receipt's existing evidence, not on a new wire field.
+        answer.Payload.Evidence!["detail"].Should()
+            .Contain("owner_execution_id=exec_pickup")
+            .And.Contain("owner_action=pickup_item");
+    }
+
+    [Fact]
+    public void AHoldThisBridgeMustNotWaitFor_StillRefusesImmediately()
+    {
+        // A map transition outlives the bounded window every time, so parking behind it would only delay the same
+        // named refusal. It keeps answering on arrival, and nothing is queued.
+        Absorption absorption = Park("travel", canMove: true, usingTool: false);
+        absorption.OwnTheBody("activeTravel", new LocalTravelSpec(
+            "exec_travel", "req_travel", "enter_exit", "ProbeFarm", 3, 9, "ProbeFarmHouse", 5, 5, 1, DeadlineMs));
+
+        absorption.Session.TryExecute(1, absorption.Request, out BridgeEnvelope<BridgeReceipt>? answer, out string reason)
+            .Should().BeTrue(reason);
+        answer.Should().NotBeNull("this owner is refused rather than waited for");
+        answer!.Payload.State.Should().Be("rejected");
+        answer.Payload.ReasonCode.Should().Be("body_owned_by_travel");
+        absorption.Handler.Invocations.Should().Be(0);
+
+        absorption.Executions.PumpHeldRequests();
+        absorption.Session.TryDequeueHeldExecutionResponse(out _, out _).Should().BeFalse("nothing was parked");
+    }
+
     // ---- harness -------------------------------------------------------------
 
     private const long ActorId = 1001;
+
+    private const long DeadlineMs = 1_700_000_000_000;
 
     private static Absorption Park(string suffix, bool canMove, bool usingTool)
     {
@@ -191,6 +272,25 @@ public sealed class HeldRequestAbsorptionTests
         {
             Farmer free = CreateActor(canMove: true, usingTool: false);
             this.Executions.SetTestActorResolver(() => free);
+        }
+
+        /// <summary>
+        /// Seats one in-flight execution on the manager's private slot, the technique <see cref="BodyOwnerNamingTests"/>
+        /// already uses: those slots are otherwise only populated by live gameplay.
+        /// </summary>
+        internal void OwnTheBody(string slot, object specification)
+        {
+            FieldInfo field = typeof(ExecutionManager).GetField(slot, BindingFlags.NonPublic | BindingFlags.Instance)
+                ?? throw new InvalidOperationException($"ExecutionManager.{slot} field unavailable.");
+            field.SetValue(this.Executions, specification);
+        }
+
+        /// <summary>That execution reaching its terminal receipt: the slot clears and the body is free.</summary>
+        internal void ReleaseTheBody(string slot)
+        {
+            FieldInfo field = typeof(ExecutionManager).GetField(slot, BindingFlags.NonPublic | BindingFlags.Instance)
+                ?? throw new InvalidOperationException($"ExecutionManager.{slot} field unavailable.");
+            field.SetValue(this.Executions, null);
         }
 
         internal BridgeEnvelope<BridgeReceipt> TakeAnswer()
