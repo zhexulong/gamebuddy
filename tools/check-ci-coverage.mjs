@@ -30,6 +30,19 @@
  * measurement is not a failure. A gate that prints the marker and then fails is a failure - the
  * marker excuses a comparison, never an exit status.
  *
+ * The second shape of the same reading is a gate that PRINTS ITS OWN REPORT and examined zero objects.
+ * `check:draft-declaration-coverage` printed `{"gate":"draft-declaration-coverage","status":"passed",
+ * "mode":"mounted","fields":0,"declared":0}` on 2026-11-05 - a green reading with an empty population - and
+ * `70d4dad8` found the same hole in a capture phase that printed `DONE-CAPTURE failed=0 of 20 (skipped=0)`
+ * above evidence from two days earlier. So the last report a gate prints is judged by
+ * `tools/lib/assert-non-vacuous.mjs`: a zero under `population`, `fields` or `cases`, beside the gate id that
+ * makes the line a report, is `measured_nothing` - named `gate_measured_nothing:<gate>:<field>` - and fails
+ * the run. A report that states `allowEmpty: "<why zero is healthy>"` is counted `not_measured` instead: an
+ * empty population is still not a comparison, whatever the reason for it.
+ *
+ * The order these are read in is the rule: exit status first, then the skip marker, then the population. A
+ * marker excuses a comparison and never an exit status, and a population never renames a failure.
+ *
  *   node tools/check-ci-coverage.mjs          # the verdict; exit 1 on a stale or unreasoned entry
  *   node tools/check-ci-coverage.mjs --list   # the derived set, one script name per line
  *   node tools/check-ci-coverage.mjs --run    # run that set, one named line per gate
@@ -38,6 +51,8 @@ import { spawn } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { assertNonVacuous } from "./lib/assert-non-vacuous.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKFLOW_DIR = ".github/workflows";
@@ -53,6 +68,13 @@ const SCRIPT_PATH = /[\w.-]+(?:\/[\w.-]+)+\.(?:mjs|cjs|js|ts|ps1)/gu;
  * name has to be kept in step with it.
  */
 const SKIP_MARKER = /^[a-z][a-z0-9_]*_skipped:/mu;
+
+/**
+ * What a terminal reporter uses to rewrite its own progress line: cursor up, erase line, colour. `trim()`
+ * strips whitespace, not control sequences, so a line that arrived as `ESC[1A ESC[2Kperf_budget_skipped:`
+ * would be read as neither a marker nor a report (2026-11-05, `3005803c`).
+ */
+const OUTPUT_ESCAPE = /\u001B\[[0-9;]*[A-Za-z]/gu;
 
 /** Why a gate that exists does not run on a fresh checkout. */
 const REASONS = new Map([
@@ -304,14 +326,50 @@ function report(coverage) {
   return coverage.problems.length === 0 ? 0 : 1;
 }
 
+/** A gate's output as lines, through the reporter's escapes and its carriage returns. */
+function gateLines(stdout) {
+  return String(stdout)
+    .replace(OUTPUT_ESCAPE, "")
+    .split(/\r\n|\r|\n/u);
+}
+
 /**
- * How one gate's run counts: `failed` for any non-zero exit or a timeout, `not_measured` for a clean
- * exit whose output says the measurement did not happen, `passed` otherwise. The skip marker is
- * read after the exit status, so a gate that names a skip and then fails is a failure.
+ * The last line a gate printed as a JSON object naming its own id: the gate's report, when it printed one.
+ * `gate` is what makes a line a report rather than a number some other JSON line happened to carry.
+ */
+function gateReport(stdout) {
+  let report = null;
+  for (const line of gateLines(stdout)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (typeof parsed?.gate === "string") report = parsed;
+  }
+  return report;
+}
+
+/**
+ * How one gate's run counts, with its evidence: `failed` for any non-zero exit or a timeout, `not_measured`
+ * for a clean exit whose output says the measurement did not happen - by the skip marker or by a report that
+ * allowed its own empty population - `measured_nothing` for a clean exit whose report measured zero objects,
+ * `passed` otherwise. The skip marker is read after the exit status, so a gate that names a skip and then
+ * fails is a failure; the population is read last, so it can neither excuse a failure nor rename one. A
+ * `passed` gate whose report was read says what it examined, which is the number the verdict rests on.
  */
 function gateOutcome({ status, timedOut, stdout }) {
-  if (timedOut || status !== 0) return "failed";
-  return SKIP_MARKER.test(stdout) ? "not_measured" : "passed";
+  if (timedOut || status !== 0) return { outcome: "failed", detail: `failed:${timedOut ? "timeout" : String(status)}` };
+  if (gateLines(stdout).some((line) => SKIP_MARKER.test(line)))
+    return { outcome: "not_measured", detail: "not_measured" };
+  const verdict = assertNonVacuous(gateReport(stdout));
+  if (verdict === null) return { outcome: "passed", detail: "passed" };
+  if (verdict.status === "blocked") return { outcome: "measured_nothing", detail: verdict.detail };
+  if (verdict.status === "not_measured") return { outcome: "not_measured", detail: verdict.detail };
+  return { outcome: "passed", detail: `passed ${verdict.detail}` };
 }
 
 /** One gate, with its stdout tee'd to `out`: the aggregate has to read what the gate printed. */
@@ -340,26 +398,29 @@ export async function runGates(names, scripts, out = process.stdout) {
   const passed = [];
   const failed = [];
   const notMeasured = [];
+  const measuredNothing = [];
   const started = Date.now();
   for (const name of names) {
     out.write(`ci_gate:${name}:start\n`);
     const began = Date.now();
     const result = await spawnGate(scripts[name], out);
     const seconds = Math.round((Date.now() - began) / 1000);
-    const outcome = gateOutcome(result);
+    const { outcome, detail } = gateOutcome(result);
     if (outcome === "passed") passed.push(name);
     if (outcome === "not_measured") notMeasured.push(name);
     if (outcome === "failed") failed.push(name);
-    const detail = outcome === "failed" ? `failed:${result.timedOut ? "timeout" : String(result.status)}` : outcome;
+    if (outcome === "measured_nothing") measuredNothing.push(name);
     out.write(`ci_gate:${name}:${detail}:${seconds}s\n`);
   }
   out.write(
     `ci_gates_run total=${names.length} passed=${passed.length} failed=${failed.length} ` +
-      `not_measured=${notMeasured.length} ${Math.round((Date.now() - started) / 1000)}s` +
+      `not_measured=${notMeasured.length} measured_nothing=${measuredNothing.length} ` +
+      `${Math.round((Date.now() - started) / 1000)}s` +
       `${failed.length === 0 ? "" : ` failing=${failed.join(",")}`}` +
-      `${notMeasured.length === 0 ? "" : ` not_measured_gates=${notMeasured.join(",")}`}\n`,
+      `${notMeasured.length === 0 ? "" : ` not_measured_gates=${notMeasured.join(",")}`}` +
+      `${measuredNothing.length === 0 ? "" : ` measured_nothing_gates=${measuredNothing.join(",")}`}\n`,
   );
-  return failed.length === 0 ? 0 : 1;
+  return failed.length === 0 && measuredNothing.length === 0 ? 0 : 1;
 }
 
 async function main(argv) {
