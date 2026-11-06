@@ -100,6 +100,28 @@ function failures(stdout) {
     .map((line) => line.replace(/^\+\s+"/u, "").replace(/",?$/u, ""));
 }
 
+/**
+ * What the runner actually said, for the case where `failures()` recognises nothing.
+ *
+ * `failures()` reads the `+ "…"` lines a `toEqual` diff prints. Every other shape a mounted journey
+ * can fail in — a locator timeout, an `expect(…).toBe(…)`, a thrown error in test setup — produces no
+ * such line, and on 2026-11-06 that is exactly what happened: CI reported
+ * `"violations":[],"detail":"the journey failed; see its output above"` and **nothing had been printed
+ * above**, so the reading named neither the assertion nor the file. A detail that points at output the
+ * gate did not print is worse than no detail: it reads as if the cause were already on screen.
+ *
+ * So when there is no named failure, the tail of the captured output is printed and carried in the
+ * reading. It is bounded, because a Playwright log can be megabytes and the useful part is the end.
+ */
+function failureTail(output, limit = 40) {
+  const lines = String(output ?? "")
+    .replace(ANSI_ESCAPE, "")
+    .split(/\r\n|\r|\n/u)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim() !== "");
+  return lines.slice(-limit);
+}
+
 function report({ status, rows, missed, violations, detail }) {
   return {
     gate: "draft-declaration-coverage",
@@ -138,7 +160,14 @@ if (prerequisite.status !== 0) {
 const executed = run(
   "pnpm",
   ["exec", "playwright", "test", JOURNEY, "--project=chromium", "--workers=1", "--reporter=line"],
-  { cwd: webRoot },
+  {
+    cwd: webRoot,
+    // This gate drives ONE journey. The coverage harness treats a partial run as fatal under CI, which
+    // is right for the step that runs the whole zone and wrong here: it never reached CIs at all, and
+    // the reading it did take (35 fields, 0 violations) was reported as a failed journey. Saying "this
+    // is a subset on purpose" is the caller's fact to state.
+    env: { ...process.env, FRONTEND_COVERAGE_SUBSET: "1" },
+  },
 );
 const output = `${executed.stdout ?? ""}${executed.stderr ?? ""}`;
 const rows = inventory(output);
@@ -158,12 +187,18 @@ if (rows.length === 0 && executed.status === 0) {
   process.exit(1);
 }
 const status = executed.status === 0 ? "passed" : "failed";
+const tail = status === "failed" && violated.length === 0 ? failureTail(output) : [];
 const reading = report({
   status,
   rows,
   missed,
   violations: violated,
-  detail: executed.status === 0 ? null : "the journey failed; see its output above",
+  detail:
+    executed.status === 0
+      ? null
+      : tail.length === 0
+        ? "the journey failed; see its output above"
+        : `the journey exited ${String(executed.status)} and printed no failure line this gate parses; last ${String(tail.length)} line(s) of its output are printed below and in the tail field`,
 });
 
 for (const row of rows)
@@ -171,6 +206,10 @@ for (const row of rows)
     `  ${row.surface} :: ${row.key} -> ${row.status}${row.note === undefined ? "" : ` (${row.note})`}\n`,
   );
 for (const line of missed) process.stdout.write(`  unassessed: ${line}\n`);
+if (tail.length > 0) {
+  for (const line of tail) process.stdout.write(`  journey output: ${line}\n`);
+  reading.tail = tail;
+}
 process.stdout.write(`${JSON.stringify(reading)}\n`);
 for (const violation of violated) process.stderr.write(`draft_declaration_coverage: ${violation}\n`);
 process.exit(executed.status === 0 ? 0 : 1);

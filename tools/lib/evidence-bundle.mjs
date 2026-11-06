@@ -28,8 +28,16 @@ export const EVIDENCE_BUNDLE_FILES = Object.freeze({
   keyFrames: "key-frames",
 });
 
-/** The loop's own verdict vocabulary (`deriveLoopVerdict`); the bundle reports, it does not invent. */
-export const EVIDENCE_BUNDLE_VERDICT_STATES = Object.freeze(["passed", "failed", "blocked", "degraded"]);
+/**
+ * The loop's own verdict vocabulary (`deriveLoopVerdict`) plus the one outcome the loop cannot produce; the bundle
+ * reports, it does not invent.
+ *
+ * `killed` is the run that was interrupted from OUTSIDE - a SIGTERM/SIGINT from a timeout or an operator - and it is
+ * deliberately not `blocked`: nothing about the product was measured, so it proves nothing and must never be counted as
+ * a failure in an aggregate. `deriveLoopVerdict` has no arm for it because the loop never decides to be killed; the
+ * signal trap in the live runner does.
+ */
+export const EVIDENCE_BUNDLE_VERDICT_STATES = Object.freeze(["passed", "failed", "blocked", "degraded", "killed"]);
 
 const EVIDENCE_BUNDLE_TIMELINE_SOURCES = Object.freeze(["player", "smapi", "body", "llm", "bubble"]);
 
@@ -268,6 +276,11 @@ export function validateEvidenceBundle(bundle, { actionTrace = null } = {}) {
   }
 
   const failed = isPlainObject(verdict) && verdict.state === "failed";
+  // A killed run is not a failed run. Its failure snapshot would be a claim about a moment nobody observed, and every
+  // aggregate that reads `failure` would count an external interrupt as a product defect.
+  if (isPlainObject(verdict) && verdict.state === "killed" && isPlainObject(bundle.failure)) {
+    violations.push(violation("killed_run_published_a_failure", "failure"));
+  }
   if (failed && !isPlainObject(bundle.failure)) {
     violations.push(violation("failure_snapshot_missing", "failure"));
   }
@@ -365,6 +378,7 @@ const CHECKED_OBLIGATIONS = Object.freeze([
   "multiday_day_records_missing",
   "multiday_day_records_disagree_with_crossings",
   "failure_snapshot_missing",
+  "killed_run_published_a_failure",
   "failure_field_missing",
   "failure_player_tile_invalid",
   "failure_tile_facts_not_array",

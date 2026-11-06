@@ -293,6 +293,14 @@ export async function evaluate() {
  * result means the corpus changed shape under a floor that was never re-derived - but
  * locally they print the reading and pass, because subtracting a regression from an
  * absent measurement is exactly the false red that gets a gate deleted.
+ *
+ * One caller runs a subset ON PURPOSE and says so: `check:draft-declaration-coverage` drives a single
+ * journey and sets `FRONTEND_COVERAGE_SUBSET=1`. Without that distinction the rule above decided from
+ * `CI` alone, which is not the same fact as "this invocation runs the whole zone": on 2026-11-06 the
+ * draft gate could therefore never pass on CI - its one journey read `partial`, `partial` was fatal
+ * under `CI`, and the gate reported a failed journey while printing 35 declared fields and zero
+ * violations. "I measured a subset deliberately" and "the corpus changed shape" are two different
+ * zeroes and get two different verdicts.
  */
 export function verdictOf({ report, breaches }) {
   if (report.run.journeys === 0) return "unmeasured";
@@ -313,8 +321,11 @@ export function reportOutcome({ report, floors, breaches }) {
       `summary=${relative(PACKAGE_ROOT, SUMMARY_FILE).split(sep).join("/")}\n`,
   );
   // A partial or absent measurement is never a clean run under CI; locally it is a
-  // filtered iteration and the reading above is the whole answer.
-  const fatal = verdict === "below" || (process.env.CI !== undefined && verdict !== "clear");
+  // filtered iteration and the reading above is the whole answer. A caller that asked for a subset
+  // (`FRONTEND_COVERAGE_SUBSET=1`) keeps the local reading under CI too, because its subset is the
+  // measurement it was written to take - `below` still fails there.
+  const subset = process.env.FRONTEND_COVERAGE_SUBSET === "1";
+  const fatal = verdict === "below" || (process.env.CI !== undefined && !subset && verdict !== "clear");
   if (verdict === "below") {
     process.stderr.write(
       `frontend_coverage_failed:${breaches.map((breach) => breach.group).join(",")}\n` +
