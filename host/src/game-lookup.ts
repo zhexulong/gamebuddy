@@ -29,7 +29,7 @@ export const MAX_LOOKUP_ROWS = 20;
 
 export const LOOKUP_SUBJECTS = Object.freeze(["crops", "chests", "inventory", "npcs", "calendar"] as const);
 
-export type LookupSubject = (typeof LOOKUP_SUBJECTS)[number];
+type LookupSubject = (typeof LOOKUP_SUBJECTS)[number];
 
 /**
  * Where an answer came from.
@@ -38,7 +38,7 @@ export type LookupSubject = (typeof LOOKUP_SUBJECTS)[number];
  * names the revision the answer describes, because this module reads the snapshot the session already holds and a
  * revision the model cannot see is a stale coordinate it will act on.
  */
-export type LookupSource = Readonly<{ family: string | null; snapshotRevision: number | null }>;
+type LookupSource = Readonly<{ family: string | null; snapshotRevision: number | null }>;
 
 export type LookupAnswer = Readonly<{
   // A named family answers under its own name, so this is the subject asked for, not only the five shaped ones.
@@ -218,7 +218,7 @@ export function noSnapshot(reasonCode: string): LookupUnknown {
 }
 
 /** The largest single value a family answer will carry verbatim when it is not a row list. */
-export const MAX_LOOKUP_SCALAR_BYTES = 400;
+const MAX_LOOKUP_SCALAR_BYTES = 400;
 
 /**
  * A named snapshot family, answered as rows when it is a row list.

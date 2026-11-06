@@ -479,9 +479,6 @@ export const MemoryMutationCommandV1Schema = Type.Union([
     handle: OpaqueHandle,
   }),
 ]);
-/** Every successful mutation returns the same safe fresh read model. */
-export const MemoryMutationResultV1Schema = MemoryReadV1Schema;
-
 /**
  * Reviewed ST-card import pipeline (design/28 Import/export row).
  *
@@ -836,7 +833,6 @@ export const TavernConnectionStateV1Schema = strictObject({
   connections: Type.Array(TavernConnectionV1Schema, { maxItems: 16 }),
   providers: Type.Array(TavernConnectionProviderV1Schema, { maxItems: 16 }),
 });
-export const TavernConnectionReadV1Schema = TavernConnectionStateV1Schema;
 export const TavernConnectionCreateCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
   providerId: Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9-]*$" }),
@@ -2729,7 +2725,7 @@ const RouteDescriptors = Object.freeze([
     pathParams: noPath,
     query: noQuery,
     request: MemoryMutationCommandV1Schema,
-    success: { status: 200, contentType: "application/json", schema: MemoryMutationResultV1Schema },
+    success: { status: 200, contentType: "application/json", schema: MemoryReadV1Schema },
   }),
   route({
     routeId: "world-info.read",
@@ -3524,7 +3520,6 @@ export const TavernBrowserContractV1 = Object.freeze({
     MemoryItemV1Schema,
     MemoryReadV1Schema,
     MemoryMutationCommandV1Schema,
-    MemoryMutationResultV1Schema,
     TavernConnectionSetupFieldV1Schema,
     TavernConnectionApiShapeV1Schema,
     TavernConnectionThinkingLevelV1Schema,
@@ -3532,7 +3527,6 @@ export const TavernBrowserContractV1 = Object.freeze({
     TavernConnectionProviderV1Schema,
     TavernConnectionV1Schema,
     TavernConnectionStateV1Schema,
-    TavernConnectionReadV1Schema,
     TavernConnectionCreateCommandV1Schema,
     TavernConnectionRevisionCommandV1Schema,
     TavernConnectionModelCommandV1Schema,
@@ -3679,7 +3673,6 @@ export type ChatTitleV1 = Static<typeof ChatTitleV1Schema>;
 export type MemoryItemV1 = Static<typeof MemoryItemV1Schema>;
 export type MemoryChapterV1 = Static<typeof MemoryChapterV1Schema>;
 export type MemoryMutationCommandV1 = Static<typeof MemoryMutationCommandV1Schema>;
-export type MemoryMutationResultV1 = Static<typeof MemoryMutationResultV1Schema>;
 export type WorldInfoStateV1 = Static<typeof WorldInfoStateV1Schema>;
 export type SetWorldInfoBindingCommandV1 = Static<typeof SetWorldInfoBindingCommandV1Schema>;
 export type WorldInfoEntryV1 = Static<typeof WorldInfoEntryV1Schema>;
@@ -3796,7 +3789,6 @@ export type TavernConnectionProviderV1 = Static<typeof TavernConnectionProviderV
 export type TavernConnectionV1 = Static<typeof TavernConnectionV1Schema>;
 export type TavernConnectionActiveV1 = Static<typeof TavernConnectionActiveV1Schema>;
 export type TavernConnectionStateV1 = Static<typeof TavernConnectionStateV1Schema>;
-export type TavernConnectionReadV1 = Static<typeof TavernConnectionReadV1Schema>;
 export type TavernConnectionCreateCommandV1 = Static<typeof TavernConnectionCreateCommandV1Schema>;
 export type TavernConnectionRevisionCommandV1 = Static<typeof TavernConnectionRevisionCommandV1Schema>;
 export type TavernConnectionModelCommandV1 = Static<typeof TavernConnectionModelCommandV1Schema>;

@@ -140,7 +140,7 @@ export function isRefillWateringCanTargetFact(value: unknown): boolean {
  * (`MineShaft.cs:3057-3096`); `action_tile` and `touch_action_tile` name the engine's two tile properties.
  * </p>
  */
-export const FIXED_INTERACTION_POINT_KINDS: ReadonlySet<string> = new Set([
+const FIXED_INTERACTION_POINT_KINDS: ReadonlySet<string> = new Set([
   "mine_elevator",
   "mine_ladder_up",
   "mine_ladder_down",
@@ -628,9 +628,9 @@ export function isRockSourceTargetFact(value: unknown): boolean {
  * `$defs.machineAcceptance.properties.inputs.maxItems`) and the Mod's `MachineInputAcceptance.InputLimit`; this validator
  * is bound to the same number, and `protocol.test.ts` reads it out of the schema rather than trusting this comment.
  */
-export const MACHINE_ACCEPTANCE_INPUT_LIMIT = 8;
+const MACHINE_ACCEPTANCE_INPUT_LIMIT = 8;
 
-export function isMachineAcceptanceFact(value: unknown): boolean {
+function isMachineAcceptanceFact(value: unknown): boolean {
   return (
     isRecord(value) &&
     hasExactKeys(value, ["inputs", "omitted"]) &&

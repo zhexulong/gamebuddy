@@ -1559,7 +1559,7 @@ export function createTavernManagementDialogueWebRequestHandler(
         const body = await readJsonBody(request, MAX_BODY_BYTES);
         if (!memoryMutationValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
         const memory = await memoryService.mutate(body as MemoryMutationCommandV1);
-        if (!TavernBrowserValidatorsV1.MemoryMutationResultV1Schema.Check(memory))
+        if (!TavernBrowserValidatorsV1.MemoryReadV1Schema.Check(memory))
           throw new Error("memory_read_service_unavailable");
         return sendJson(response, 200, memory);
       }

@@ -350,9 +350,9 @@ async function exerciseOperations(origin, client) {
       operation: "create",
       content: "the player keeps a tidy ledger",
     });
-    // MemoryMutationResultV1Schema === MemoryReadV1Schema: the reply is the new
-    // projection. A create that stored nothing would come back with the same
-    // revision and the same number of rows, so assert both.
+    // The mutation reply is the new projection (`MemoryReadV1Schema`). A create
+    // that stored nothing would come back with the same revision and the same
+    // number of rows, so assert both.
     if (result === null || typeof result !== "object") throw new Error("memory_result_unavailable");
     if (typeof result.projectionRevision !== "string" || result.projectionRevision.length === 0)
       throw new Error("projection_revision_missing_after_mutation");
