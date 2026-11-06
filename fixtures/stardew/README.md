@@ -122,7 +122,7 @@ profile and no existing save of that logical name, run:
 
 ```powershell
 # Run with pwsh (PowerShell 7): the harness uses [IO.Path]::IsPathFullyQualified, absent from 5.1.
-# Seed <ModsPath>\GameBuddy.Stardew\config.json first (config.example.json as the shape, EnableLocalBridge=true,
+# Seed <ModsPath>\GameBuddy\config.json first (config.example.json as the shape, EnableLocalBridge=true,
 # legal PipeName/BridgeToken/scope ids) - the Mod opens the pipe this run waits on only when it is enabled.
 pwsh -NoProfile -File tools/run-stardew-native-local-player-move-fixture.ps1 `
   -GamePath "D:\Steam\steamapps\common\Stardew Valley" `
