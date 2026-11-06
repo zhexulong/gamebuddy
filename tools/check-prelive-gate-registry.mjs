@@ -195,6 +195,13 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm smoke:chat-conversational-quality-gate",
   },
   {
+    path: "tools/check-ci-dead-conditions.mjs",
+    reason:
+      "elsewhere: reads every workflow's `if:` expressions against every writer of the variables they name, runs " +
+      "on every push in the CI gates job",
+    runsIn: "pnpm check:ci-dead-conditions",
+  },
+  {
     path: "tools/check-ci-coverage.mjs",
     reason:
       "elsewhere: it IS the CI gate that runs in ci.yml's gates job (`--run`), and it registers the gates a checkout " +

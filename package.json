@@ -344,7 +344,9 @@
     "check:head-self-contained": "node tools/check-head-self-contained.mjs",
     "test:head-self-contained": "node --test tools/check-head-self-contained.test.mjs",
     "test:child-output-parsing": "node --test tools/check-child-output-parsing.test.mjs",
-    "test:derived-population": "node --test tools/check-derived-population.test.mjs"
+    "test:derived-population": "node --test tools/check-derived-population.test.mjs",
+    "check:ci-dead-conditions": "node tools/check-ci-dead-conditions.mjs",
+    "test:ci-dead-conditions": "node --test tools/check-ci-dead-conditions.test.mjs"
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",

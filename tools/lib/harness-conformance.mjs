@@ -413,6 +413,13 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "and not in prose; its falsifier is tools/check-derived-population.test.mjs, eight injections including the " +
       "member-diff format that replaces a bare pair of counts",
   },
+  {
+    gate: "check-ci-dead-conditions.mjs",
+    reason:
+      "reads every workflow's `if:` expressions against every writer of the variables they name; its falsifier is " +
+      "tools/check-ci-dead-conditions.test.mjs, which plants a `if: env.NEVER_SET != ''` in a throwaway workflow and " +
+      "then proves the five sanctioned writer shapes silence it",
+  },
   { gate: "check-chat-conversational-quality-gate.mjs", reason: "requires --transcript/--db run input" },
   {
     gate: "check-class-name-declarations.mjs",
