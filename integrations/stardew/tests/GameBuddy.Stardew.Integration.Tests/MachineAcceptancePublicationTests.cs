@@ -102,6 +102,8 @@ public sealed class MachineAcceptancePublicationTests
             null,
             null,
             null,
+            // `MachineData` is the machine's own row being readable; the fixture reads one, so it says so.
+            true,
             Accepts: accepts),
         BridgeProtocol.JsonOptions);
 

@@ -56,6 +56,14 @@ public sealed class ModEntryFixtureBoundaryTests
     "NativeLocalMultiDayDoorStandingSpot", "AssertNativeLocalMultiDayHomeReachable", "AssertReachable",
         "InstallNativeLocalTailoringFixture",
         "InitializeNativeLocalColorPlacedObjectFixture",
+        // The furniture-and-decoration wave: a placed piece with at least two rotations, and a fence the declared tool
+        // can take down. Both are fixture initializers the scenarios dispatch to, so they belong here for the same
+        // reason every other one does.
+        "InitializeNativeLocalRotateFurnitureFixture",
+        "InitializeNativeLocalRemoveFenceFixture",
+        "InstallNativeLocalOpenGeodeFixture",
+        "InstallNativeLocalPetFarmAnimalFixture",
+        "RequireNativeLocalFixtureFurniture",
         "InstallNativeLocalTalkToNpcFixture",
         "TryFindNativeLocalTalkToNpcTiles",
         "PlaceNativeLocalToggleAnimalDoorFixtureBuilding",

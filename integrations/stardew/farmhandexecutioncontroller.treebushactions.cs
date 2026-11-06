@@ -282,6 +282,10 @@ internal sealed partial class ExecutionManager
         if (feature is not StardewValley.TerrainFeatures.Bush bush || !IsReadyBush(bush)) return;
         if ((int)tile.X < 0 || (int)tile.X > 1000 || (int)tile.Y < 0 || (int)tile.Y > 1000) return;
         if (!IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) return;
+        // ONE TILE, ONE BUSH. A save can hold the same bush in both collections (an old one in `terrainFeatures`, a
+        // new one in `largeTerrainFeatures`), and the id is a function of location and tile - so publishing twice
+        // would hand the model two ids for one target and let a plan act on a bush it already harvested.
+        if (published.Any(existing => existing.X == (int)tile.X && existing.Y == (int)tile.Y)) return;
         published.Add(new BridgeBushTarget(BuildBushTargetId(location, (int)tile.X, (int)tile.Y, bush),
             location.NameOrUniqueName, (int)tile.X, (int)tile.Y));
     }
