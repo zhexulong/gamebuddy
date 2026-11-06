@@ -120,6 +120,30 @@ export function unrenderedMacros(text: string): readonly string[] {
   return Object.freeze([...seen]);
 }
 
+/** How many macros one report line names. A field may carry more; the line stays bounded and says how many it did not. */
+const MAX_NAMED_MACROS = 8;
+/**
+ * The most characters of one macro token a report line carries.
+ *
+ * `unrenderedMacros` returns whatever the text wrote between its braces, so a card can author a token far longer than any
+ * real macro. One pathological field must not turn a diagnostic into a page.
+ */
+const MAX_NAMED_MACRO_CHARS = 64;
+
+/**
+ * The macros one report line names, bounded in count and in token length so a diagnostic stays one readable line.
+ *
+ * Naming them is what makes a drop actionable: "3 entries lost" leaves the player with nothing to edit, while the token
+ * itself tells them what their card wrote.
+ */
+export function namedMacros(tokens: readonly string[]): string {
+  const named = tokens
+    .slice(0, MAX_NAMED_MACROS)
+    .map((token) => (token.length <= MAX_NAMED_MACRO_CHARS ? token : `${token.slice(0, MAX_NAMED_MACRO_CHARS)}…`));
+  const rest = tokens.length - named.length;
+  return rest > 0 ? `${named.join(", ")} (+${rest} more)` : named.join(", ");
+}
+
 /**
  * Whether `token` is a macro SillyTavern itself defines - rendered here, or deliberately left literal.
  *
@@ -223,9 +247,17 @@ function playerReferenceWord(locale: string | undefined): string {
  */
 export function renderWorldBookText(
   text: string,
-  vars: Readonly<{ char: string | null; user?: string | null | undefined; locale?: string | undefined }>,
+  vars: Readonly<{
+    char: string | null;
+    user?: string | null | undefined;
+    locale?: string | undefined;
+    scenario?: string | undefined;
+  }>,
 ): string {
-  return renderMacros(text, macroTable({ char: vars.char ?? "{{char}}", user: vars.user, locale: vars.locale }));
+  return renderMacros(
+    text,
+    macroTable({ char: vars.char ?? "{{char}}", user: vars.user, locale: vars.locale, scenario: vars.scenario }),
+  );
 }
 
 /** Matches a `{{...}}` macro that survived rendering. */

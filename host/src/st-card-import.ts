@@ -468,7 +468,7 @@ function previewFromValue(value: Record<string, unknown>, fallbackProfileId: str
           ...(description === undefined ? {} : { core: description }),
           ...(personality === undefined ? {} : { interactionStyle: personality }),
         });
-  const worldBook = extractCharacterBook(data.character_book, format, name, losses);
+  const worldBook = extractCharacterBook(data.character_book, format, name, losses, scenario);
   const worldBookCandidates = worldBook.entries;
   // `system_prompt` is a standard v2/v3 card field: it carries the card's own
   // performance directive (the `characterVoice` the profile renders after the
@@ -730,6 +730,7 @@ function extractCharacterBook(
   format: "st-v2" | "st-v3",
   charName: string,
   losses: StCardImportLossLedger,
+  scenario: string | undefined,
 ): Readonly<{ entries: readonly WorldBookEntry[]; scanDepth?: number }> {
   if (!isRecord(value) || utf8Bytes(JSON.stringify(value)) > ST_CARD_DECODER_LIMITS_V1.characterBookBytes)
     return Object.freeze({ entries: Object.freeze([]) });
@@ -792,7 +793,12 @@ function extractCharacterBook(
     // The render is still performed, but ONLY as the probe: an entry whose macro set cannot fully
     // render is dropped rather than written into her world book, and the drop is named below,
     // never silent. The value STORED is the author's own text; the value TESTED is the rendering.
-    const probe = renderWorldBookText(content, { char: charName });
+    //
+    // The probe gets the card's own scenario, because the card wrote the entry that refers to it:
+    // `{{scenario}}` resolves in `macro-engine.ts` and an entry using it is readable, so probing
+    // without it dropped a legitimate entry as "renderable never" when the truth was "this probe
+    // did not look".
+    const probe = renderWorldBookText(content, { char: charName, scenario });
     if (hasUnrenderedMacro(probe)) {
       unrenderableContent += 1;
       if (omittedEntries.length < MAX_REPORTED_OMITTED_ENTRIES)
@@ -816,7 +822,7 @@ function extractCharacterBook(
         );
       return;
     }
-    const title = renderWorldBookText(authoredTitle, { char: charName });
+    const title = renderWorldBookText(authoredTitle, { char: charName, scenario });
     // The card's OWN trigger words. The title is the author-facing `comment` ("大肥鱼家族"), while a
     // player says "大肥鱼"; volatile selection matches `corpus.includes(key)`, so dropping `keys` made
     // every keyword-gated entry unreachable no matter how correct the rest of the chain was.

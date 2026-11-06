@@ -1970,3 +1970,38 @@ test("a block where she speaks twice in a row keeps both lines instead of losing
   assert.deepEqual(playerTwice.candidate?.profileCandidate.examples, []);
   assert.deepEqual(playerTwice.losses, [{ field: "mes_example", reason: "unparsed_example_blocks", count: 1 }]);
 });
+
+test("a world-book entry that refers to the card's own scenario is read, not dropped", () => {
+  // The probe used to render with `{ char }` only. `{{scenario}}` resolves in the macro engine, so the
+  // entry was readable; dropping it said the macro could never render, which was a statement about the
+  // probe rather than about the card.
+  const card = JSON.stringify({
+    spec: "chara_card_v3",
+    data: {
+      name: "琥珀",
+      description: "calm",
+      scenario: "雨夜，屋檐下",
+      character_book: {
+        entries: [
+          { comment: "天气", keys: ["雨"], content: "{{scenario}}——她把伞往你那边倾。" },
+          // A macro the engine genuinely cannot resolve is still dropped and still named.
+          { comment: "未知", keys: ["雾"], content: "{{no_such_macro}} 起雾了。" },
+        ],
+      },
+    },
+  });
+  const read = decodeStCard(card);
+  assert.deepEqual(
+    read.candidate?.worldBookCandidates.map((entry) => entry.content),
+    ["{{scenario}}——她把伞往你那边倾。"],
+    "the scenario entry survives; the authored text is stored unrendered",
+  );
+  assert.deepEqual(read.losses, [
+    {
+      field: "character_book.entries",
+      reason: "unrenderable_worldbook_entry",
+      count: 1,
+      omitted: [{ title: "未知", macros: [{ token: "{{no_such_macro}}", standard: false }] }],
+    },
+  ]);
+});
