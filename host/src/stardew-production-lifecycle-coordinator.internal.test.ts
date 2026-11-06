@@ -8508,8 +8508,15 @@ test("one click installs the shipped mod loader into the folder the player just 
       },
       reset: () => undefined,
     });
+    const companionModTargets: string[] = [];
     const fixture = await createFixture({
-      overrides: { installationDiscoveryOverlay: provider },
+      overrides: {
+        installationDiscoveryOverlay: provider,
+        companionModDeploy: async (target: string) => {
+          companionModTargets.push(target);
+          return "companion-mod-installed" as const;
+        },
+      },
       inspectorChains: [identityChainFor(installRoot)],
       hostArtifactRoot: generationRoot,
     });
@@ -8534,8 +8541,13 @@ test("one click installs the shipped mod loader into the folder the player just 
       assert.deepEqual(result, {
         apiVersion: 1,
         status: "installed",
+        companionMod: "companion-mod-installed",
         steamLaunchOption: `"${join(installRoot, "StardewModdingAPI.exe")}" %command%`,
       });
+      // The Mod was deployed into the exact folder the loader went into. That is the wiring this test
+      // owns: measured gap, the launcher used to deploy the Mod only at its own startup, so a player who
+      // clicked this install had SMAPI in their game folder and no `Mods/GameBuddy`.
+      assert.deepEqual(companionModTargets, [installRoot]);
       // The probe the launch path gates on now says the loader is there, the file the loader
       // needs beside it was derived from the game's own dependency list, and the folder is
       // now the bound installation - the install is what made it admissible.
@@ -8565,9 +8577,16 @@ test("a second click reports the loader as current and writes nothing", async ()
     await writeFile(join(installRoot, "StardewModdingAPI.exe"), "player-managed-loader", "utf8");
 
     const generationRoot = await smapiGenerationFixture();
+    const companionModTargets: string[] = [];
     const fixture = await createFixture({
       boundInstallation: { installRoot, smapi: true },
       hostArtifactRoot: generationRoot,
+      overrides: {
+        companionModDeploy: async (target: string) => {
+          companionModTargets.push(target);
+          return "companion-mod-installed" as const;
+        },
+      },
     });
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
@@ -8578,8 +8597,13 @@ test("a second click reports the loader as current and writes nothing", async ()
       assert.deepEqual(result, {
         apiVersion: 1,
         status: "current",
+        companionMod: "companion-mod-installed",
         steamLaunchOption: `"${join(installRoot, "StardewModdingAPI.exe")}" %command%`,
       });
+      // The Mod is deployed even though the loader was left alone: a player-managed loader still loads
+      // `Mods/GameBuddy`, so refusing to touch the loader is not a reason to leave the folder without the
+      // Mod the game is supposed to load.
+      assert.deepEqual(companionModTargets, [installRoot]);
       assert.equal(await readFile(join(installRoot, "StardewModdingAPI.exe"), "utf8"), "player-managed-loader");
     } finally {
       await fixture.coordinator.close();
@@ -8610,7 +8634,13 @@ test("a generation carrying no verifiable payload refuses instead of installing 
         fixture.broker.issue("mod_loader_install"),
         { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w" },
       );
-      assert.deepEqual(result, { apiVersion: 1, status: "mod_loader_payload_unavailable" });
+      assert.deepEqual(result, {
+        apiVersion: 1,
+        status: "mod_loader_payload_unavailable",
+        // No loader was written, so the Mod certainly is not in that folder. This is the fact, not a
+        // placeholder for "the Mod step was skipped".
+        companionMod: "companion-mod-smapi-not-installed",
+      });
       // Nothing was written into the player's folder.
       assert.equal((await probeStardewGameRoot(installRoot)).smapi, false);
       assert.equal(await readFile(join(installRoot, "Stardew Valley.exe"), "utf8"), "");

@@ -4,6 +4,11 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { messages } from "../src/i18n.ts";
+// The Host's own contract module: the same file `contract-mirror-keys-gate` reads. The companion-Mod
+// outcomes are derived from it here, so a new one cannot reach a player as a raw code.
+import {
+  STARDEW_COMPANION_MOD_OUTCOMES,
+} from "../../host/src/game-browser-contract/index.ts";
 import {
   authorityLabel,
   capabilitiesLabel,
@@ -15,6 +20,8 @@ import {
   installationSourceLabel,
   installationStateLabel,
   instanceLabel,
+  companionModIsReady,
+  companionModLabel,
   modLoaderInstallLabel,
   outcomeLabel,
 } from "../src/game-presentation.ts";
@@ -134,6 +141,49 @@ test("the Game settings section says when the world's name is chosen, in both la
     component.indexOf("data-settings-note=\"world-name\"") > component.indexOf("labels.gameSettingsSave"),
     "the note must sit after the settings form, not inside the branch that a failed read replaces",
   );
+});
+
+test("every companion-Mod outcome renders a localized player outcome, derived from the Host contract", () => {
+  // Derived from the contract's own list - the same array the schema's union is built from. A
+  // hand-written list here would agree today and drift the first time the Host adds an outcome.
+  const declared = [...STARDEW_COMPANION_MOD_OUTCOMES];
+  assert.ok(declared.length > 0, "the contract declares no companionMod outcomes");
+
+  const READY = ["companion-mod-installed", "companion-mod-current", "companion-mod-updated"];
+  assert.deepEqual(
+    declared.filter((outcome) => companionModIsReady(outcome)).sort(),
+    [...READY].sort(),
+    "the ready outcomes are not exactly the three that mean the Mod is in place",
+  );
+
+  for (const locale of locales) {
+    const labels = messages(locale);
+    const rendered = new Set();
+    const readySentences = new Set(READY.map((outcome) => companionModLabel(labels, outcome)));
+    for (const outcome of declared) {
+      const value = companionModLabel(labels, outcome);
+      assert.ok(typeof value === "string" && value.length > 0, `${locale} ${outcome} is empty`);
+      assert.notEqual(value, outcome, `${locale} ${outcome} is rendered raw`);
+      assert.ok(!value.includes("companion-mod-"), `${locale} ${outcome} still reads like an enum`);
+      const ready = READY.includes(outcome);
+      assert.equal(
+        companionModIsReady(outcome),
+        ready,
+        `${locale} ${outcome} disagrees with the ready split`,
+      );
+      // Outcomes that need the same player action may share a sentence: `game-not-found` and
+      // `game-installation-not-found` both mean "choose the folder again", so forcing two sentences would ask
+      // the player to tell apart two identical situations. What must never happen is a refusal reading like
+      // success - that is the failure this wording exists to prevent, and it is derivable here.
+      if (!ready) {
+        assert.ok(
+          !readySentences.has(value),
+          `${locale} ${outcome} reads as success: ${JSON.stringify(value)}`,
+        );
+      }
+      rendered.add(value);
+    }
+  }
 });
 
 test("the two shipped locales are both really translated", () => {

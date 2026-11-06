@@ -450,3 +450,76 @@ export function modLoaderInstallLabel(labels: Messages, status: StardewModLoader
       return exhaustive(status);
   }
 }
+
+/**
+ * Whether the companion Mod is actually in the player's `Mods/GameBuddy` after an install.
+ *
+ * Three of the launcher's outcomes mean it is there (`installed`, `current`, `updated`); every other
+ * one means the folder is loadable but the Mod is not, which is a different thing to tell a player
+ * than "ready". Exhaustive over the vocabulary so a new outcome cannot quietly read as success.
+ */
+export function companionModIsReady(outcome: StardewModLoaderInstallResultV1["companionMod"]): boolean {
+  switch (outcome) {
+    case "companion-mod-installed":
+    case "companion-mod-current":
+    case "companion-mod-updated":
+      return true;
+    case "companion-mod-game-not-found":
+    case "companion-mod-choice-required":
+    case "companion-mod-unavailable":
+    case "companion-mod-game-installation-not-found":
+    case "companion-mod-smapi-not-installed":
+    case "companion-mod-mods-directory-missing":
+    case "companion-mod-mods-directory-not-writable":
+    case "companion-mod-existing-mod-version-requires-consent":
+    case "companion-mod-foreign-mod-present":
+    case "companion-mod-installed-mod-manifest-unreadable":
+    case "companion-mod-package-invalid":
+    case "companion-mod-deployment-incomplete":
+      return false;
+    default:
+      // `exhaustive` is typed to return the message string, so it cannot serve a boolean answer; the
+      // never-argument is what makes a new outcome a compile error either way.
+      exhaustive(outcome);
+      return false;
+  }
+}
+
+/**
+ * The companion Mod's state as player text.
+ *
+ * The ready cases say the installation is complete; each refusal names what the player has to do
+ * about it, because "SMAPI installed" followed by silence is the failure this wording exists to
+ * prevent.
+ */
+export function companionModLabel(labels: Messages, outcome: StardewModLoaderInstallResultV1["companionMod"]): string {
+  switch (outcome) {
+    case "companion-mod-installed":
+    case "companion-mod-updated":
+    case "companion-mod-current":
+      return labels.gameCompanionModReady;
+    case "companion-mod-mods-directory-missing":
+      return labels.gameCompanionModModsDirectoryMissing;
+    case "companion-mod-mods-directory-not-writable":
+      return labels.gameCompanionModModsDirectoryNotWritable;
+    case "companion-mod-foreign-mod-present":
+      return labels.gameCompanionModForeignModPresent;
+    case "companion-mod-installed-mod-manifest-unreadable":
+      return labels.gameCompanionModManifestUnreadable;
+    case "companion-mod-package-invalid":
+    case "companion-mod-deployment-incomplete":
+    case "companion-mod-unavailable":
+      return labels.gameCompanionModUnavailable;
+    case "companion-mod-game-not-found":
+    case "companion-mod-game-installation-not-found":
+      return labels.gameCompanionModGameMissing;
+    case "companion-mod-choice-required":
+      return labels.gameCompanionModChoiceRequired;
+    case "companion-mod-smapi-not-installed":
+      return labels.gameCompanionModLoaderMissing;
+    case "companion-mod-existing-mod-version-requires-consent":
+      return labels.gameCompanionModConsentRequired;
+    default:
+      return exhaustive(outcome);
+  }
+}

@@ -32,6 +32,28 @@ const MOD_LOADER_INSTALL_STATUSES = Object.freeze([
   "mod_loader_payload_unavailable",
   "mod_loader_install_incomplete",
 ] as const);
+/**
+ * Whether the companion Mod itself is in the player's `Mods/GameBuddy`, using the launcher's own
+ * vocabulary (`CompanionGameModDeploymentOutcome`). One list, mirrored from the Host contract, so the
+ * player never sees two spellings of "the Mod is not there" depending on which step said it.
+ */
+const COMPANION_MOD_OUTCOMES = Object.freeze([
+  "companion-mod-installed",
+  "companion-mod-current",
+  "companion-mod-updated",
+  "companion-mod-game-not-found",
+  "companion-mod-choice-required",
+  "companion-mod-unavailable",
+  "companion-mod-game-installation-not-found",
+  "companion-mod-smapi-not-installed",
+  "companion-mod-mods-directory-missing",
+  "companion-mod-mods-directory-not-writable",
+  "companion-mod-existing-mod-version-requires-consent",
+  "companion-mod-foreign-mod-present",
+  "companion-mod-installed-mod-manifest-unreadable",
+  "companion-mod-package-invalid",
+  "companion-mod-deployment-incomplete",
+] as const);
 const OPAQUE_HANDLE_PATTERN = /^[A-Za-z0-9_-]{22,128}$/;
 const MAX_GAME_LABEL_LENGTH = 256;
 const MAX_CABIN_DISPLAY_LABEL_LENGTH = 128;
@@ -327,6 +349,15 @@ export type StardewModLoaderInstallResultV1 = Readonly<{
    * the string by hand - the round trip this flow exists to remove.
    */
   steamLaunchOption?: string;
+  /**
+   * Whether the companion Mod is now in `Mods/GameBuddy` in the folder this click made loadable.
+   *
+   * A loader without the Mod loads nothing and says nothing, so the two are reported side by side:
+   * `status` says what happened to the loader, this says what happened to the Mod. Present on every
+   * outcome, because it is always a true statement - a folder whose loader install failed reports
+   * `companion-mod-smapi-not-installed`, which is the fact, not a placeholder for "not checked".
+   */
+  companionMod: (typeof COMPANION_MOD_OUTCOMES)[number];
 }>;
 
 type StardewCabinChoicesV1 = Readonly<{
@@ -745,19 +776,27 @@ function validateStardewModLoaderInstallResult(value: unknown): StardewModLoader
   )
     throw new ComposedReferenceGameProtocolError("invalid_stardew_mod_loader_install_result");
   const status = value.status as StardewModLoaderInstallResultV1["status"];
+  if (!(COMPANION_MOD_OUTCOMES as readonly string[]).includes(value.companionMod as string))
+    throw new ComposedReferenceGameProtocolError("invalid_stardew_mod_loader_install_result");
+  const companionMod = value.companionMod as StardewModLoaderInstallResultV1["companionMod"];
   const succeeded = status === "installed" || status === "current";
   if (succeeded) {
     // The launch option is what makes the success usable; a success that omits it would render
     // as a card with an empty box, so it is required exactly where it exists.
-    if (!hasExactKeys(value, ["apiVersion", "status", "steamLaunchOption"]))
+    if (!hasExactKeys(value, ["apiVersion", "status", "steamLaunchOption", "companionMod"]))
       throw new ComposedReferenceGameProtocolError("invalid_stardew_mod_loader_install_result");
     if (!isBoundedString(value.steamLaunchOption, 1, 4096))
       throw new ComposedReferenceGameProtocolError("invalid_stardew_mod_loader_install_result");
-    return Object.freeze({ apiVersion: 1, status, steamLaunchOption: value.steamLaunchOption as string });
+    return Object.freeze({
+      apiVersion: 1,
+      status,
+      steamLaunchOption: value.steamLaunchOption as string,
+      companionMod,
+    });
   }
-  if (!hasExactKeys(value, ["apiVersion", "status"]))
+  if (!hasExactKeys(value, ["apiVersion", "status", "companionMod"]))
     throw new ComposedReferenceGameProtocolError("invalid_stardew_mod_loader_install_result");
-  return Object.freeze({ apiVersion: 1, status });
+  return Object.freeze({ apiVersion: 1, status, companionMod });
 }
 
 function validateStardewCabinConfirmation(value: unknown): StardewCabinConfirmationV1 {

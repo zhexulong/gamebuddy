@@ -58,6 +58,19 @@ export type CompanionGameModDeploymentSeams = Readonly<{
 }>;
 
 /**
+ * The one mapping from a deployment result to the token a caller publishes.
+ *
+ * Exported so the one-click mod-loader install can name the same outcome without a second
+ * vocabulary: it deploys into the folder the player just made ready, and a player reading the
+ * result must not see two different spellings of "the Mod is not there".
+ */
+export function companionModOutcomeFor(result: StardewCompanionModDeploymentResult): CompanionGameModDeploymentOutcome {
+  if (result.kind === "failed") return FAILURE_OUTCOMES[result.failure];
+  if (result.kind === "installed") return "companion-mod-installed";
+  return result.kind === "updated" ? "companion-mod-updated" : "companion-mod-current";
+}
+
+/**
  * The desktop entry's pre-launch step: the player's own game installation is
  * discovered and its `Mods/GameBuddy` directory is brought to the Mod package this
  * generation ships.
@@ -90,9 +103,7 @@ export async function ensureCompanionGameModDeployed(
       package: mod,
       allowReplaceDifferentVersion: true,
     });
-    if (result.kind === "failed") return FAILURE_OUTCOMES[result.failure];
-    if (result.kind === "installed") return "companion-mod-installed";
-    return result.kind === "updated" ? "companion-mod-updated" : "companion-mod-current";
+    return companionModOutcomeFor(result);
   } catch {
     // Discovery, the published package and the write path all report their own
     // failures as values; anything that still throws is this step's own unknown,

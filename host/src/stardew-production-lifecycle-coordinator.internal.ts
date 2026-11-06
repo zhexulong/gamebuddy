@@ -31,6 +31,11 @@ import {
 } from "./stardew-game-install/discovery.js";
 import { deploySmapiPayload } from "./stardew-game-install/smapi-deployment.js";
 import { readSmapiPayload } from "./stardew-game-install/smapi-payload.js";
+import {
+  companionModOutcomeFor,
+  type CompanionGameModDeploymentOutcome,
+} from "./stardew-game-install/desktop-entry-mod-deployment.js";
+import { deployStardewCompanionMod, readStardewCompanionModPackage } from "./stardew-game-install/deployment.js";
 import { createPublishedWindowsReparseInspector } from "./windows-reparse-inspector/index.js";
 import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspector/index.js";
 import {
@@ -1034,6 +1039,17 @@ function createCoordinator(
    * therefore refused as `mod_loader_payload_unavailable`.
    */
   hostArtifactRoot?: string,
+  /**
+   * Test-only seam for the companion-Mod deployment the one-click install performs.
+   *
+   * The file-level deployment is proven twice against real directories
+   * (`deployment.test.ts` and the custom-install-directory gate in `smapi-deployment.test.ts`). What only a
+   * seam can prove here is the wiring: that this route deploys into the SAME folder it just made loadable,
+   * and reports the outcome instead of claiming success. A test cannot drive the real deployment through
+   * this coordinator because the coordinator's reparse inspector is itself injected with chains sized for the
+   * installation folder, while the package verifier checks chains at the generation's own depth.
+   */
+  companionModDeploy?: (installRoot: string) => Promise<CompanionGameModDeploymentOutcome>,
 ): StardewProductionLifecycleCoordinator {
   const runtimeRoot = `${manifest.runtimeRoot}`;
   const playerId = `${manifest.principal.playerId}`;
@@ -2943,6 +2959,33 @@ function createCoordinator(
     `"${win32.join(locator, STARDEW_SMAPI_EXECUTABLE_FILE)}" %command%`;
 
   /**
+   * Bring `Mods/GameBuddy` in the folder the player just made loadable to the shipped package.
+   *
+   * Never throws: every cause this can hit is already a named deployment failure, and the
+   * caller's job is to report which one. The one case that is not the deployment's is a
+   * generation whose Mod package cannot be read at all, which is named as unavailable rather
+   * than silently reported as success.
+   */
+  const deployCompanionModInto = async (locator: string): Promise<CompanionGameModDeploymentOutcome> => {
+    if (companionModDeploy !== undefined) return await companionModDeploy(locator);
+    try {
+      if (hostArtifactRoot === undefined) return "companion-mod-unavailable";
+      const packageRoot = hostArtifactRoot;
+      const mod = await readStardewCompanionModPackage(packageRoot);
+      const deployed = await deployStardewCompanionMod({
+        installRoot: locator,
+        package: mod,
+        // The player clicked "install" on a folder this launcher just brought up to date; a
+        // stale copy of our own Mod from an older generation is exactly what must be replaced.
+        allowReplaceDifferentVersion: true,
+      });
+      return companionModOutcomeFor(deployed);
+    } catch {
+      return "companion-mod-unavailable";
+    }
+  };
+
+  /**
    * One-click mod-loader install into the bound game folder. See the activation owner's
    * declaration for why it exists and what each outcome means.
    *
@@ -2976,21 +3019,38 @@ function createCoordinator(
         } catch {
           // A generation without a verifiable payload cannot install one. It is its own
           // outcome rather than a generic fault: the player's action (reinstall the app)
-          // differs from every other failure here.
-          return { apiVersion: 1 as const, status: "mod_loader_payload_unavailable" as const };
+          // differs from every other failure here. The Mod cannot be in that folder either -
+          // deploying it needs the loader this step failed to write - so the Mod is reported
+          // with the token that already means exactly that.
+          return {
+            apiVersion: 1 as const,
+            status: "mod_loader_payload_unavailable" as const,
+            companionMod: "companion-mod-smapi-not-installed" as const,
+          };
         }
         const locator = await readModLoaderInstallLocator();
         const result = await deploySmapiPayload({ installRoot: locator, payload });
         if (result.kind === "failed") {
+          // No loader was written, so the Mod certainly is not there: `companion-mod-smapi-not-installed`
+          // is the true statement, not a placeholder for "we did not look".
           return {
             apiVersion: 1 as const,
             status:
               result.failure === "deployment_incomplete" ? ("mod_loader_install_incomplete" as const) : result.failure,
+            companionMod: "companion-mod-smapi-not-installed" as const,
           };
         }
         // The folder can now load the Mod, so it becomes the bound installation. A folder
         // that was already bound stays at its revision: registration is only touched when
         // the install is what made it ready.
+        //
+        // The Mod itself is deployed HERE rather than left to the launcher's next start.
+        // Measured gap: `ensureCompanionGameModDeployed` runs once at launch and returns
+        // `companion-mod-smapi-not-installed` on a folder without the loader - so a player who
+        // then clicked this install ended up with SMAPI in their game folder and no
+        // `Mods/GameBuddy`, which loads nothing in game and says nothing on screen. Installing
+        // the loader is only half of what the click promises; this is the other half.
+        const companionMod = await deployCompanionModInto(locator);
         if (modLoaderPendingLocator !== undefined) {
           await registerInstallationLocator(modLoaderPendingLocator);
           modLoaderPendingLocator = undefined;
@@ -2998,6 +3058,7 @@ function createCoordinator(
         return {
           apiVersion: 1 as const,
           status: result.kind,
+          companionMod,
           steamLaunchOption: steamLaunchOptionFor(locator),
         };
       })();
@@ -3495,6 +3556,8 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
   containedRuntimeTeardown?: StardewContainedRuntimeTeardown,
   installationDiscoveryProvider?: StardewInstallationDiscoveryProvider,
   hostArtifactRoot?: string,
+  /** Test-only companion-Mod deployment seam; production composition never supplies it. */
+  companionModDeploy?: (installRoot: string) => Promise<CompanionGameModDeploymentOutcome>,
 ): StardewProductionLifecycleCoordinator {
   return createCoordinator(
     manifest,
@@ -3513,6 +3576,7 @@ export function createStardewProductionLifecycleCoordinatorFromTestingCompositio
     containedRuntimeTeardown,
     installationDiscoveryProvider,
     hostArtifactRoot,
+    companionModDeploy,
   );
 }
 

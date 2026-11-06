@@ -1,4 +1,4 @@
-import { type Static, type TSchema, Type } from "typebox";
+import { type Static, type TLiteral, type TSchema, Type } from "typebox";
 import { Compile, type Validator } from "typebox/compile";
 import { Format } from "typebox/format";
 
@@ -608,6 +608,31 @@ export const StardewModLoaderInstallCommandV1Schema = strictObject({
  * `deploySmapiPayload` reports; each names a different player action, so folding them into
  * one `unavailable` would tell the player nothing about which one they are in.
  */
+/**
+ * Every outcome the one-click mod-loader install can report for the companion Mod, in one place.
+ *
+ * The schema is built from this array and the web mirror and the presentation vocabulary test both derive
+ * from it, so the list cannot exist in two spellings: a new outcome is a compile error until its label and
+ * its ready/not-ready classification are written.
+ */
+export const STARDEW_COMPANION_MOD_OUTCOMES = [
+  "companion-mod-installed",
+  "companion-mod-current",
+  "companion-mod-updated",
+  "companion-mod-game-not-found",
+  "companion-mod-choice-required",
+  "companion-mod-unavailable",
+  "companion-mod-game-installation-not-found",
+  "companion-mod-smapi-not-installed",
+  "companion-mod-mods-directory-missing",
+  "companion-mod-mods-directory-not-writable",
+  "companion-mod-existing-mod-version-requires-consent",
+  "companion-mod-foreign-mod-present",
+  "companion-mod-installed-mod-manifest-unreadable",
+  "companion-mod-package-invalid",
+  "companion-mod-deployment-incomplete",
+] as const;
+
 export const StardewModLoaderInstallResultV1Schema = strictObject({
   apiVersion: ApiVersion,
   status: Type.Union([
@@ -633,6 +658,20 @@ export const StardewModLoaderInstallResultV1Schema = strictObject({
    * which is the round trip the whole flow removes.
    */
   steamLaunchOption: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
+  /**
+   * Whether the companion Mod itself is now in the player's `Mods/GameBuddy`.
+   *
+   * A loader without the Mod loads nothing and says nothing: the click promised a playable
+   * folder, so the answer is reported beside the loader status rather than inferred from it.
+   * The vocabulary is the launcher's own (`CompanionGameModDeploymentOutcome`), because a
+   * player must not see two spellings of "the Mod is not there" depending on which step said it.
+   */
+  companionMod: Type.Union(
+    STARDEW_COMPANION_MOD_OUTCOMES.map((outcome) => Type.Literal(outcome)) as unknown as [
+      TLiteral<(typeof STARDEW_COMPANION_MOD_OUTCOMES)[number]>,
+      ...TLiteral<(typeof STARDEW_COMPANION_MOD_OUTCOMES)[number]>[],
+    ],
+  ),
 });
 
 // ─── Problem schema ─────────────────────────────────────────────────────────

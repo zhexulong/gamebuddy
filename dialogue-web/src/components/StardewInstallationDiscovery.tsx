@@ -7,6 +7,8 @@ import type {
 } from "../composed-reference-game-browser-api";
 import { observedProblemCode } from "../composed-problem-view";
 import {
+  companionModLabel,
+  companionModIsReady,
   installationCandidateLabel,
   installationDiscoveryFailureState,
   installationDiscoveryState,
@@ -115,6 +117,7 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
    * - which only exists once a folder has been named and refused for exactly that reason.
    */
   const [modLoaderInstall, setModLoaderInstall] = useState<StardewModLoaderInstallResultV1["status"] | null>(null);
+  const [companionMod, setCompanionMod] = useState<StardewModLoaderInstallResultV1["companionMod"] | null>(null);
   const [steamLaunchOption, setSteamLaunchOption] = useState<string | null>(null);
   const [steamCopy, setSteamCopy] = useState<"idle" | "copied" | "failed">("idle");
   const modLoaderInstallKey = useRef<string | undefined>(undefined);
@@ -312,11 +315,18 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
       modLoaderInstallKey.current = undefined;
       if (!mounted.current) return;
       setModLoaderInstall(outcome.status);
+      setCompanionMod(outcome.companionMod);
       setSteamLaunchOption(outcome.steamLaunchOption ?? null);
       setSteamCopy("idle");
       if (outcome.status !== "installed" && outcome.status !== "current") return;
       // The folder is admissible now, so the panel states that outcome and hands the surface
       // above it the admitted installation - the same contract every other admission uses.
+      //
+      // A loader without the Mod loads nothing, so the panel reports both facts rather than letting
+      // `confirmed` imply "playable": measured gap, the launcher deployed the Mod only at its own
+      // startup, so a player who clicked this install ended up with SMAPI in their game folder and no
+      // `Mods/GameBuddy`, which loads nothing in game and says nothing on screen. The admission still
+      // happens - the folder IS loadable now - and the Mod's own state is shown beside it.
       await read(true);
       if (mounted.current) setState("confirmed");
       onAdmitted?.();
@@ -399,6 +409,16 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
       {modLoaderInstall !== null && (
         <p className="installation-state" role="status" data-mod-loader-outcome={modLoaderInstall}>
           {modLoaderInstallLabel(labels, modLoaderInstall)}
+        </p>
+      )}
+      {/*
+        What happened to the Mod itself, beside the loader's outcome. A loader without the Mod loads
+        nothing and says nothing, so "SMAPI installed" alone would read as a finished installation while
+        the game shows no companion at all.
+      */}
+      {companionMod !== null && (
+        <p className="installation-state" role="status" data-companion-mod-outcome={companionMod}>
+          {companionModLabel(labels, companionMod)}
         </p>
       )}
       {/*

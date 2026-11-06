@@ -8,6 +8,8 @@ import type { SmapiPayload } from "./smapi-payload.js";
 const GAME_DEPENDENCIES_FILE = "Stardew Valley.deps.json";
 const LOADER_DEPENDENCIES_FILE = "StardewModdingAPI.deps.json";
 const MOD_LOADER_FILE = "StardewModdingAPI.exe";
+/** Where SMAPI loads every Mod from, relative to the game folder. */
+const MODS_DIRECTORY = "Mods";
 const DRIVE_ROOT = /^[A-Za-z]:\\$/;
 
 /**
@@ -146,6 +148,15 @@ export async function deploySmapiPayload(input: SmapiDeploymentInput): Promise<S
     if ((await lstatOrUndefined(loaderDependencies)) === undefined) {
       await copyFile(win32.join(installRoot, GAME_DEPENDENCIES_FILE), loaderDependencies);
       created.push(loaderDependencies);
+    }
+    // SMAPI loads Mods from `<game>/Mods`, and it creates that folder on its first run rather than at
+    // install time. A player who installs the loader and then deploys the companion Mod has never run
+    // the game yet, so the Mod deployment would refuse with `mods_directory_missing` on an otherwise
+    // correct install. Creating it here is SMAPI's own convention, not an invention: the folder is
+    // where every Mod lives, and a folder that holds no Mods loads exactly as before.
+    const modsDirectory = win32.join(installRoot, MODS_DIRECTORY);
+    if ((await lstatOrUndefined(modsDirectory)) === undefined) {
+      await mkdir(modsDirectory, { recursive: true });
     }
   } catch (error) {
     // A first install that did not land in full is removed rather than left as a folder the

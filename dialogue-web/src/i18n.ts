@@ -908,6 +908,23 @@ const en = {
   gameSteamLaunchOptionCopy: "Copy launch option",
   gameSteamLaunchOptionCopied: "Copied.",
   gameSteamLaunchOptionCopyFailed: "Copy failed. Select the text and copy it yourself.",
+  // Whether the companion Mod is in the player's game folder. A loader without it loads nothing,
+  // so these are shown beside the loader outcome rather than being folded into it.
+  gameCompanionModReady: "The companion Mod is in your game folder. Stardew Valley can load it now.",
+  gameCompanionModLoaderMissing: "The companion Mod needs SMAPI first. Install SMAPI, then try again.",
+  gameCompanionModModsDirectoryMissing:
+    "That game folder has no Mods directory. Start the game once through SMAPI so it creates one, then try again.",
+  gameCompanionModModsDirectoryNotWritable:
+    "The game's Mods directory cannot be written to. Close Stardew Valley and any mod manager, then try again.",
+  gameCompanionModForeignModPresent:
+    "The Mods/GameBuddy folder belongs to another Mod. GameBuddy will not replace someone else's folder.",
+  gameCompanionModManifestUnreadable: "The Mods/GameBuddy folder is there but unreadable. Delete it and install again.",
+  gameCompanionModConsentRequired:
+    "A newer GameBuddy Mod is already installed. GameBuddy will not replace it without being told to.",
+  gameCompanionModGameMissing: "The game folder is no longer where it was. Choose it again.",
+  gameCompanionModChoiceRequired: "Several Stardew Valley installations were found. Choose the one to use.",
+  gameCompanionModUnavailable:
+    "This build of GameBuddy does not carry the companion Mod. Reinstall GameBuddy and try again.",
   // The other selection refusal a player can fix. The file name is what they look for in
   // their folder; the sentence says what to do rather than only what is wrong.
   gameInstallationNotStardewInstallation:
@@ -1814,6 +1831,16 @@ const zh: Messages = {
   gameSteamLaunchOptionCopy: "复制启动选项",
   gameSteamLaunchOptionCopied: "已复制。",
   gameSteamLaunchOptionCopyFailed: "复制失败。请手动选中文本并复制。",
+  gameCompanionModReady: "伴侣 Mod 已在游戏目录中，星露谷现在可以加载它了。",
+  gameCompanionModLoaderMissing: "伴侣 Mod 需要先安装 SMAPI。安装 SMAPI 后再试。",
+  gameCompanionModModsDirectoryMissing: "该游戏目录没有 Mods 文件夹。先用 SMAPI 启动一次游戏，它会自动创建，然后重试。",
+  gameCompanionModModsDirectoryNotWritable: "游戏目录的 Mods 文件夹无法写入。请关闭星露谷和所有模组管理器后重试。",
+  gameCompanionModForeignModPresent: "Mods/GameBuddy 属于其他模组，伴侣不会覆盖别人的文件夹。",
+  gameCompanionModManifestUnreadable: "Mods/GameBuddy 存在但无法读取。删除它后重新安装。",
+  gameCompanionModConsentRequired: "已安装更新版本的伴侣 Mod，未经确认不会覆盖。",
+  gameCompanionModGameMissing: "游戏目录已不在原位置，请重新选择。",
+  gameCompanionModChoiceRequired: "检测到多个星露谷安装，请选择要使用的一个。",
+  gameCompanionModUnavailable: "此版本 GameBuddy 未携带伴侣 Mod。请重新安装 GameBuddy 后重试。",
   gameInstallationNotStardewInstallation:
     "这个文件夹不是《星露谷物语》的安装位置。请选择包含 Stardew Valley.exe 的那个游戏文件夹。",
   gameInstallationReparsePoint:

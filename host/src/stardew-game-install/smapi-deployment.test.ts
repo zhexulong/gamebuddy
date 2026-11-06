@@ -8,6 +8,7 @@ import test from "node:test";
 import { probeStardewGameRoot } from "./discovery.js";
 import { deploySmapiPayload, type SmapiDeploymentResult } from "./smapi-deployment.js";
 import { readSmapiPayload } from "./smapi-payload.js";
+import { deployStardewCompanionMod, type StardewCompanionModPackage } from "./deployment.js";
 
 const sha256 = (bytes: Buffer | string): string => createHash("sha256").update(bytes).digest("hex");
 
@@ -232,6 +233,89 @@ test("player-owned payload files are never overwritten", async () => {
     await rm(installRoot, { recursive: true, force: true });
   }
 });
+
+test("a custom install directory is brought to a playable state in one pass and stays correct", async () => {
+  // The player's real shape: a folder the installer did not create. A second Steam library, an
+  // unzipped GOG copy, a directory moved by hand - none of them is the default path, and all of them
+  // are the same shape: Stardew Valley.exe and its deps file, no loader, no Mods.
+  //
+  // This drives the two real product functions in sequence, with no seam and no fake: the same
+  // functions the one-click route calls. The acceptance run cannot cover this, because the sandbox has
+  // no Stardew Valley in it.
+  const artifactRoot = await writePayloadFixture();
+  const customRoot = await mkdtemp(join(tmpdir(), "gamebuddy-custom-library-"));
+  try {
+    await writeFile(join(customRoot, "Stardew Valley.exe"), "game");
+    await writeFile(join(customRoot, "Stardew Valley.deps.json"), '{"runtimeTarget":{}}\n');
+    // Deliberately no Mods directory: SMAPI creates it on first run, and the player has not run it yet.
+    assert.deepEqual(await probeStardewGameRoot(customRoot), { readable: true, gameExecutable: true, smapi: false });
+
+    const payload = await readSmapiPayload(artifactRoot);
+    assert.deepEqual(await deploySmapiPayload({ installRoot: customRoot, payload }), {
+      kind: "installed",
+      version: "4.5.2",
+    });
+    assert.deepEqual(await probeStardewGameRoot(customRoot), { readable: true, gameExecutable: true, smapi: true });
+    // The loader's own directory now exists, so the Mod step cannot refuse for its absence.
+    assert.equal((await lstat(join(customRoot, "Mods"))).isDirectory(), true);
+
+    const packageRoot = join(artifactRoot, "shipped-mod");
+    const mod = await writeModPackage(packageRoot, "0.1.0");
+    assert.deepEqual(await deployStardewCompanionMod({ installRoot: customRoot, package: mod }), {
+      kind: "installed",
+      version: "0.1.0",
+    });
+    // Both halves are in the same custom folder: the loader the game runs, and the Mod it loads.
+    assert.equal(await exists(join(customRoot, "Mods", "GameBuddy", "manifest.json")), true);
+    assert.deepEqual(await probeStardewGameRoot(customRoot), { readable: true, gameExecutable: true, smapi: true });
+
+    // A second click is idempotent for both steps: nothing is rewritten, and the report says so.
+    assert.deepEqual(await deploySmapiPayload({ installRoot: customRoot, payload }), {
+      kind: "current",
+      version: "4.5.2",
+    });
+    assert.deepEqual(await deployStardewCompanionMod({ installRoot: customRoot, package: mod }), {
+      kind: "current",
+      version: "0.1.0",
+    });
+  } finally {
+    await rm(artifactRoot, { recursive: true, force: true });
+    await rm(customRoot, { recursive: true, force: true });
+  }
+});
+
+/** A complete, digest-carrying Mod package, shaped like the one a generation publishes. */
+async function writeModPackage(directory: string, version: string): Promise<StardewCompanionModPackage> {
+  const entries = Object.freeze([
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "manifest.json",
+  ]);
+  await mkdir(directory, { recursive: true });
+  const digests: Record<string, string> = {};
+  for (const entry of entries.slice(0, 3)) {
+    const bytes = `${entry}:${version}`;
+    await writeFile(join(directory, entry), bytes);
+    digests[entry] = sha256(bytes);
+  }
+  const manifest = JSON.stringify({
+    Name: "GameBuddy",
+    Author: "GameBuddy contributors",
+    UniqueID: "zhexulong.GameBuddy",
+    Version: version,
+    EntryDll: "GameBuddy.Stardew.dll",
+  });
+  await writeFile(join(directory, "manifest.json"), manifest);
+  digests["manifest.json"] = sha256(manifest);
+  return Object.freeze({
+    root: directory,
+    entries,
+    digests: Object.freeze(digests),
+    uniqueId: "zhexulong.GameBuddy",
+    version,
+  });
+}
 
 test("a payload that does not match its own manifest is refused", async () => {
   const artifactRoot = await writePayloadFixture();

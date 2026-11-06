@@ -27,6 +27,7 @@ import type { WindowsReparseInspectorCapability } from "./windows-reparse-inspec
 import { createTestWindowsStardewFolderPicker } from "./windows-stardew-folder-picker/index.test-support.js";
 import type { StardewFolderPickerResult } from "./windows-stardew-folder-picker/index.js";
 import type { StardewInstallationDiscoveryProvider } from "./windows-stardew-installation-discovery/index.js";
+import type { CompanionGameModDeploymentOutcome } from "./stardew-game-install/desktop-entry-mod-deployment.js";
 import {
   createStardewWorldBindingResolver,
   type StardewWorldBindingResolver,
@@ -95,6 +96,14 @@ export type StardewLifecycleCoordinatorTestingOverrides = Readonly<{
    * `mod_loader_payload_unavailable`.
    */
   hostArtifactRoot?: string;
+  /**
+   * Test-only companion-Mod deployment seam for the one-click mod-loader install.
+   *
+   * The file-level deployment is proven against real directories elsewhere; this exists so a test can
+   * prove the wiring - that the route deploys into the same folder it just made loadable, and reports what
+   * happened instead of claiming success. Absent, the real deployment runs.
+   */
+  companionModDeploy?: (installRoot: string) => Promise<CompanionGameModDeploymentOutcome>;
 }>;
 
 /** Dedicated deterministic adapter; production factory accepts no dependencies. */
@@ -217,5 +226,6 @@ export function createStardewProductionLifecycleCoordinatorForTesting(
         : containedRuntimeTeardownFromCollaborator(overrides.runtimeLaunchContained)),
     overrides.installationDiscoveryOverlay,
     overrides.hostArtifactRoot,
+    overrides.companionModDeploy,
   );
 }
