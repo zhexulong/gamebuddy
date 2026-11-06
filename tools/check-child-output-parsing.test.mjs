@@ -154,6 +154,24 @@ test("routing the same value through cleanOutputLines empties the violations", a
   assert.deepEqual(reading.violations, []);
 });
 
+// The shape `check-csharp-compile` handed a build log through: the parameter destructures a record, so the name the
+// split reads is introduced by the pattern rather than by an identifier parameter.
+const DESTRUCTURED_HOP = `import { execFileSync } from "node:child_process";
+
+const build = execFileSync("dotnet", ["build"], { encoding: "utf8" });
+
+export function classify({ exitCode, output }) {
+  return { exitCode, first: output.split("\\n").find((line) => line.includes("error")) };
+}
+
+classify({ exitCode: 1, output: build });
+`;
+
+test("a destructured parameter carries the captured output it is handed", async () => {
+  const reading = await auditSource(DESTRUCTURED_HOP, "harness.mjs");
+  assert.deepEqual(reading.violations.map(lineOfFinding), [6], "the split inside the pattern's `output`");
+});
+
 // --- 3. an includes probe is the same defect --------------------------------------------------------
 
 test("an includes probe on captured output is named, while one on a parsed record is not", async () => {
