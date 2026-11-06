@@ -84,6 +84,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\MovingTargetApproachTests.cs" Link="MovingTargetApproachTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\MultiDayPlaySessionFixtureTests.cs" Link="MultiDayPlaySessionFixtureTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\NameEntityActionTests.cs" Link="NameEntityActionTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ApproachDeclarationCoverageTests.cs" Link="ApproachDeclarationCoverageTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\NightMilestoneCompanionSleepGateSourceShapeTests.cs" Link="NightMilestoneCompanionSleepGateSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\OpenGeodeActionSourceShapeTests.cs" Link="OpenGeodeActionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\PlantableTargetSlotBudgetSourceShapeTests.cs" Link="PlantableTargetSlotBudgetSourceShapeTests.cs" />
