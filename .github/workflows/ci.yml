@@ -349,6 +349,13 @@ jobs:
 
   stardew-scaffold:
     runs-on: windows-latest
+    env:
+      # The two suites below are gated on a licensed game folder.
+      # Nothing in this workflow ever WROTE this variable, so the guard read like a deliberate condition while
+      # making both steps un-runnable since 2026-09-29 - the shape `check:ci-dead-conditions` exists for. A
+      # repository variable is the writer: leave it unset on a hosted runner (the steps skip, as today), set it
+      # on a self-hosted, game-attached lane and they run.
+      GAMEBUDDY_STARDEW_GAME_PATH: ${{ vars.GAMEBUDDY_STARDEW_GAME_PATH }}
     steps:
       # The root `pnpm install --frozen-lockfile` below resolves host's
       # `file:../vendor/pi-koe/packages/voice-protocol` dependency, so this job
