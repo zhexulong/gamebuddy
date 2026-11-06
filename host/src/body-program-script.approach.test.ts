@@ -84,3 +84,27 @@ test("a relation that states no distance stays null rather than becoming a guess
   assert.ok(action);
   assert.deepEqual(action.approachRequirement, { declared: true, relation: "adjacent", withinTiles: null });
 });
+
+test("self_walked says the action closes the distance, and states no distance", () => {
+  // The measured defect (2026-11-06): `cut_weeds` walks the actor in, the catalog declared nothing, and `plan_shape`
+  // answered `approach_requirement_undeclared` thirteen times in one run. The model cannot tell that from "no
+  // constraint", so it either planned a redundant `move_to_tile` or dropped the action.
+  const actions = planActionsFromRegistrations([registrationWithApproach("cut_weeds", { relation: "self_walked" })]);
+  const action = actions.find((candidate) => candidate.actionId === "cut_weeds");
+  assert.ok(action);
+  assert.deepEqual(action.approachRequirement, {
+    declared: true,
+    relation: "self_walked",
+    withinTiles: null,
+  });
+
+  // And it survives `plan_shape`, which is where the model reads it.
+  const shape = planShape(actions, { actionId: "cut_weeds" });
+  assert.equal(shape.ok, true);
+  if (!shape.ok) return;
+  assert.deepEqual(shape.actions[0]?.approachRequirement, {
+    declared: true,
+    relation: "self_walked",
+    withinTiles: null,
+  });
+});

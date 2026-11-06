@@ -56,7 +56,14 @@ type PublishedPlanSceneBindingRequirement =
 type PublishedPlanApproachRequirement =
   | Readonly<{
       declared: true;
-      /** The surface's own word for the relationship the actor must have with the target. */
+      /**
+       * The surface's own word for the relationship the actor must have with the target, verbatim.
+       *
+       * The Mod publishes two: `adjacent` - you must already stand beside it, in a step of your own - and
+       * `self_walked` - the action closes the distance itself, so no separate move is needed and no distance is
+       * stated. `self_walked` is why this field exists in its present form: the handlers that walk in used to declare
+       * nothing, and `declared: false` then meant both "no constraint" and "nobody decided".
+       */
       relation: string;
       /** How many tiles away that relationship allows, or `null` when the surface states no distance. */
       withinTiles: number | null;

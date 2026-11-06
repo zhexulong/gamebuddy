@@ -425,6 +425,9 @@ test("an approach declaration admits exactly a relation and an optional distance
   // Both legal shapes: the distance the Mod states, and the distance it does not (its serializer omits a null).
   assert.equal(validateBridgeMessage(declaring({ relation: "adjacent", withinTiles: 1 }), scope, now), null);
   assert.equal(validateBridgeMessage(declaring({ relation: "adjacent" }), scope, now), null);
+  // `self_walked` is the Mod's second relation: the action closes the distance itself, so it states NO distance. The
+  // Host passes the word through verbatim - it is the surface's own vocabulary - and only the shape is enforced here.
+  assert.equal(validateBridgeMessage(declaring({ relation: "self_walked" }), scope, now), null);
   assert.equal(validateBridgeMessage(declaring(undefined), scope, now), null, "declaring nothing stays legal");
 
   for (const [reason, approach] of [
