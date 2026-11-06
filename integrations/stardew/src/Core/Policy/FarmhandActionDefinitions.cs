@@ -690,7 +690,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// action family in this catalog uses `x`/`y` for the tile being acted on, which makes the wrong reading the
     /// natural one.
     /// </summary>
-    private const string TransitionSourceTileMeaning = "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates.";
+    public const string TransitionSourceTileMeaning = "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates.";
     private static FarmhandActionDescriptor Target() => A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"));
 
     /// <summary>
@@ -714,6 +714,11 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         "write",
         "native_action_postcondition")
     {
+        // A transition's x/y is the warp SOURCE tile, and an edge exit's source lies one tile OUTSIDE the map, so this
+        // action's coordinate floor is the producer's own source floor rather than the walk-target one. Every other
+        // action using x/y keeps the default 0: an off-map tile is never a walk target.
+        Acceptance = new FarmhandExecutionAcceptanceFacts(
+            MinimumTileCoordinate: FarmhandWarpCoordinateRange.MinimumSourceCoordinate),
         Approach = entersDoor ? new FarmhandActionApproachRequirement("adjacent", 1) : null,
     };
 

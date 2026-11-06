@@ -972,9 +972,13 @@ function planArgumentOwners(actions: readonly PublishedPlanAction[]): ReadonlyMa
  */
 function planArgumentExpectation(declaration: PlanArgumentShape): string {
   if (declaration.type === "destination_selector") return "destination_selector[one_of:label,ref]";
-  // A tile coordinate and a backpack index are both `integer` on the wire and both refuse a negative or fractional
-  // value, which is the fact `travel({ x: 12.5 })` needed and `argument_not_canonical` did not state.
-  const kind = declaration.type === "integer" ? "integer[non_negative]" : declaration.type;
+  // A tile coordinate and a backpack index are both `integer` on the wire and both refuse a fractional value, which is
+  // the fact `travel({ x: 12.5 })` needed and `argument_not_canonical` did not state. WHICH integers are legal belongs to
+  // the action's own bounds, and those are checked where they are declared: the Mod's registry (`transitions declare the
+  // warp SOURCE floor of -1`) and this side's execution validator (`isWarpSourceCoordinate` for a transition,
+  // `isTileCoordinate` for a walk target). This compiler is not a second statement of them - it was, and it refused the
+  // edge exit `snapshot.warps[]` had just told the author to name.
+  const kind = declaration.type === "integer" ? "integer[whole]" : declaration.type;
   if (declaration.enum !== undefined) return `${kind}[one_of:${declaration.enum.join(",")}]`;
   return kind;
 }
@@ -1392,6 +1396,8 @@ function transitionApproachNode(
   const x = canonical.x;
   const y = canonical.y;
   if (x?.type !== "integer" || y?.type !== "integer") return null;
+  const walkX = approachTileFor(x);
+  const walkY = approachTileFor(y);
   const previous = state.nodes[state.nodes.length - 1];
   const previousX = previous?.arguments.x;
   const previousY = previous?.arguments.y;
@@ -1400,16 +1406,42 @@ function transitionApproachNode(
     previous.actionId === MOVE_TO_TILE_ACTION_ID &&
     previousX?.type === "integer" &&
     previousY?.type === "integer" &&
-    previousX.canonicalValue === x.canonicalValue &&
-    previousY.canonicalValue === y.canonicalValue
+    previousX.canonicalValue === walkX.canonicalValue &&
+    previousY.canonicalValue === walkY.canonicalValue
   )
     return null;
   return Object.freeze({
     nodeId: `${PLAN_INSERTED_NODE_PREFIX}${String(state.nodes.length + 1).padStart(2, "0")}`,
     actionId: MOVE_TO_TILE_ACTION_ID,
-    arguments: Object.freeze({ x, y }),
+    arguments: Object.freeze({ x: walkX, y: walkY }),
     dependsOn: Object.freeze(previous === undefined ? [] : [previous.nodeId]),
     bindings: Object.freeze({}),
+  });
+}
+
+/** An integer plan argument: the whole-number wire value, canonicalized to its exact decimal spelling. */
+type IntegerPlanArgument = Readonly<{ type: "integer"; canonicalValue: string }>;
+
+/** The first in-map tile index on either axis. Stardew tile space starts at (0,0); a negative index is outside the map. */
+const MAP_ORIGIN_TILE = 0;
+
+/**
+ * The tile a body can WALK to in order to reach a transition's source tile.
+ *
+ * <p>
+ * Usually the source itself. An edge exit is the exception: the map declares its source one tile outside the grid
+ * (`-1 53 BusStop` for the west edge, `79 -1 Mountain` for the north), and that coordinate is a boundary event, not a
+ * tile anyone occupies - the actor leaves through the map's own edge. Writing it into the prepended walk produced
+ * `move_to_tile({ x: -1 })`, which is a request no `move_to_tile` accepts (`isTileCoordinate`) and no path can reach.
+ * The transition's own gate is Chebyshev-1, so the edge tile on that axis is the cell that reaches the exit, and it is
+ * the coordinate the plan must carry.
+ * </p>
+ */
+function approachTileFor(source: Readonly<{ canonicalValue: string }>): IntegerPlanArgument {
+  const coordinate = Number(source.canonicalValue);
+  return Object.freeze({
+    type: "integer" as const,
+    canonicalValue: String(Math.max(coordinate, MAP_ORIGIN_TILE)),
   });
 }
 
@@ -1420,7 +1452,10 @@ function canonicalPlanArgument(
 ): PlanArgument | undefined {
   switch (declaration.type) {
     case "integer":
-      return typeof value === "number" && isNonNegativeSafeInteger(value)
+      // Integrality only. The RANGE is the action's own (a transition's x/y is a warp SOURCE tile, where `-1` is the
+      // engine's edge exit, and every other x/y is an in-map tile), so a floor here would be the wrong floor for half
+      // the surface and would refuse a request the Mod and this Host's own execution validator both accept.
+      return Number.isSafeInteger(value)
         ? Object.freeze({ type: "integer" as const, canonicalValue: String(value) })
         : undefined;
     case "string": {

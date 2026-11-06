@@ -1647,7 +1647,8 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       { ...snapshot, capabilities: [...snapshot.capabilities, "enter_exit"] },
       now,
     ),
-    "invalid_door_target",
+    null,
+    "an edge exit's door/warp source is `-1`; the snapshot publishes it, so asking for it is legal",
   );
   assert.equal(
     validateExecutionRequest(
@@ -1655,8 +1656,26 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
       { ...snapshot, capabilities: [...snapshot.capabilities, "travel"] },
       now,
     ),
-    "invalid_warp_source",
+    null,
+    "the same for a plain warp: `snapshot.warps[]` publishes the edge source and the Mod resolves it exactly",
   );
+  // The floor is the warp SOURCE floor, not "any negative": one tile further out is still refused by name, and a
+  // WALK target keeps the in-map floor - `move_to_tile(-1, ...)` is not a request the Mod can run.
+  for (const [action, args, code] of [
+    ["travel", { x: -2, y: 10 }, "invalid_warp_source"],
+    ["enter_exit", { x: -2, y: 11 }, "invalid_door_target"],
+    ["move_to_tile", { x: -1, y: 10 }, "invalid_target_tile"],
+  ] as const) {
+    assert.equal(
+      validateExecutionRequest(
+        { ...valid, action, args },
+        { ...snapshot, capabilities: [...snapshot.capabilities, action] },
+        now,
+      ),
+      code,
+      `${action} must still refuse an off-map tile it cannot use`,
+    );
+  }
   // `ride_minecart` is its own action: the station tile AND one advertised
   // objective are both mandatory, so a missing selector is malformed rather than
   // an ordinary warp. An unknown ID, a stale ID from another snapshot, or a
