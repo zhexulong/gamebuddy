@@ -547,6 +547,13 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   { gate: "check-stardew-native-router-exit-classifier.mjs", reason: "requires an inventory and classifier input" },
   { gate: "check-stardew-native-source-closure.mjs", reason: "requires a certificate and decompile root" },
   { gate: "check-stardew-native-transition-ledger.mjs", reason: "requires a ledger and source root" },
+  {
+    gate: "check-stardew-observation-consumers.mjs",
+    reason:
+      "static source gate; its falsifier is tools/check-stardew-observation-consumers.test.mjs, which plants a " +
+      "target-bearing action no channel answers, removes a look_up subject's case, widens a HUD line, and plants a stale, " +
+      "a duplicated and an unreasoned baseline entry",
+  },
   { gate: "check-stardew-receipt-attribution.mjs", reason: "static source gate; falsifier in its test" },
   { gate: "check-stardew-snapshot-family-bounds.mjs", reason: "static source gate; falsifier in its test" },
   { gate: "check-stardew-tool-family-stamina-evidence.mjs", reason: "static source gate; falsifier in its test" },

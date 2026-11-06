@@ -1,0 +1,356 @@
+{
+  "schema": "gamebuddy-stardew-observation-consumers-baseline/v1",
+  "note": "Every entry is a measured reading of one (action, family) pair whose family the model cannot ask about at HEAD - not an accepted gap. The list is checked in both directions: an entry whose pair gains a channel (a `stardew_look_up` subject, a State HUD line, a `read_scene` affordance) is `stale_baseline_entry` and must be deleted, and an entry the surface no longer declares is `baseline_entry_unknown_pair`. So the list can only shrink, and adding a look_up subject is the fix that deletes rows. `kind` is the shape of the dependency: `opaque_identity_unaskable` means the action cannot be dispatched at all without the family's published id, `tile_addressed_unaskable` means the action names a tile or slot and where those are is still only in an observe, and `published_only_at_an_event` means the family has no content outside the event that fills it.",
+  "entries": [
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "accept_daily_quest -> dailyQuestTargets",
+      "reason": "`accept_daily_quest` demands `expectedTargetId`, the `dailyQuestTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `dailyQuestTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "accept_special_order -> specialOrderTargets",
+      "reason": "`accept_special_order` demands `expectedTargetId`, the `specialOrderTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `specialOrderTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "bait_crab_pot -> baitCrabPotTargets",
+      "reason": "`bait_crab_pot` demands `expectedTargetId`, the `baitCrabPotTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `baitCrabPotTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "break_container -> worldObjectTargets",
+      "reason": "`break_container` demands `expectedTargetId`, the `worldObjectTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `worldObjectTargets` is a full `stardew_observe`; the surface states the dependency in the argument's own words - rotate_furniture's expectedTargetId is \"copied from the `worldObjectTargets` entry of the MOST RECENT observe result\""
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "break_resource_clump -> debrisTargets",
+      "reason": "`break_resource_clump` demands `expectedTargetId`, the `debrisTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `debrisTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "build_farm_building -> farmBuildingTargets",
+      "reason": "`build_farm_building` demands `expectedTargetId`, the `farmBuildingTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `farmBuildingTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "chop_stump -> treeStumpTargets",
+      "reason": "`chop_stump` demands `expectedTargetId`, the `treeStumpTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `treeStumpTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "claim_museum_reward -> museumRewardTargets",
+      "reason": "`claim_museum_reward` demands `expectedTargetId`, the `museumRewardTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `museumRewardTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "clear_cask -> caskTargets",
+      "reason": "`clear_cask` demands `expectedTargetId`, the `caskTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `caskTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "clear_fish_pond -> fishPondTargets",
+      "reason": "`clear_fish_pond` demands `expectedTargetId`, the `fishPondTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `fishPondTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "clear_hoedirt -> clearHoeDirtTargets",
+      "reason": "`clear_hoedirt` demands `expectedTargetId`, the `clearHoeDirtTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `clearHoeDirtTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "collect_animal_product -> animalProductTargets",
+      "reason": "`collect_animal_product` demands `expectedTargetId`, the `animalProductTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `animalProductTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "collect_building_chest_output -> buildingChestTargets",
+      "reason": "`collect_building_chest_output` demands `expectedTargetId`, the `buildingChestTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `buildingChestTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "collect_crab_pot_output -> crabPotCollectTargets",
+      "reason": "`collect_crab_pot_output` demands `expectedTargetId`, the `crabPotCollectTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `crabPotCollectTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "color_placed_object -> colorTargets",
+      "reason": "`color_placed_object` demands `expectedTargetId`, the `colorTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `colorTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "cook_recipe -> cookingRecipeTargets",
+      "reason": "`cook_recipe` demands `expectedTargetId`, the `cookingRecipeTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `cookingRecipeTargets` is a full `stardew_observe`; the family is the player's known cooking catalog (Data/CookingRecipes), the same shape as craftingRecipeTargets"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "craft_item -> craftingRecipeTargets",
+      "reason": "`craft_item` demands `expectedTargetId`, the `craftingRecipeTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `craftingRecipeTargets` is a full `stardew_observe`; the family is the player's known recipe catalog (Data/CraftingRecipes), not a place and not an event, so the question \"what can I craft\" has no channel short of an observe"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "cut_grass -> grassTargets",
+      "reason": "`cut_grass` demands `expectedTargetId`, the `grassTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `grassTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "deposit_silo_hay -> siloTargets",
+      "reason": "`deposit_silo_hay` demands `expectedTargetId`, the `siloTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `siloTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "dress_mannequin -> mannequinTargets",
+      "reason": "`dress_mannequin` demands `expectedTargetId`, the `mannequinTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `mannequinTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "dye_clothing_with_item -> tailoringTargets",
+      "reason": "`dye_clothing_with_item` demands `expectedTargetId`, the `tailoringTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `tailoringTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "tile_addressed_unaskable",
+      "id": "equip_tool -> toolSlots",
+      "reason": "`equip_tool` is addressed by tile, slot or name rather than by the family's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `toolSlots` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "equip_wearable -> wearableTargets",
+      "reason": "`equip_wearable` demands `expectedTargetId`, the `wearableTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `wearableTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "feed_animal -> feedTroughTargets",
+      "reason": "`feed_animal` demands `expectedTargetId`, the `feedTroughTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `feedTroughTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "fertilize_tile -> fertilizerTargets",
+      "reason": "`fertilize_tile` demands `expectedTargetId`, the `fertilizerTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `fertilizerTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "harvest_bush -> bushTargets",
+      "reason": "`harvest_bush` demands `expectedTargetId`, the `bushTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `bushTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "harvest_fruit_tree -> fruitTreeTargets",
+      "reason": "`harvest_fruit_tree` demands `expectedTargetId`, the `fruitTreeTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `fruitTreeTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "interact_npc_with_item -> npcRelationshipTargets",
+      "reason": "`interact_npc_with_item` demands `expectedTargetId`, the `npcRelationshipTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `npcRelationshipTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "load_building_chest -> buildingChestTargets",
+      "reason": "`load_building_chest` demands `expectedTargetId`, the `buildingChestTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `buildingChestTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "machine_collect_output -> machineTargets",
+      "reason": "`machine_collect_output` demands `expectedTargetId`, the `machineTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `machineTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "machine_inspect -> machineTargets",
+      "reason": "`machine_inspect` demands `expectedTargetId`, the `machineTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `machineTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "machine_load -> machineTargets",
+      "reason": "`machine_load` demands `expectedTargetId`, the `machineTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `machineTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "mount_transport -> horseTargets",
+      "reason": "`mount_transport` demands `expectedTargetId`, the `horseTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `horseTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "move_placed_furniture -> worldObjectTargets",
+      "reason": "`move_placed_furniture` demands `expectedTargetId`, the `worldObjectTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `worldObjectTargets` is a full `stardew_observe`; the surface states the dependency in the argument's own words - rotate_furniture's expectedTargetId is \"copied from the `worldObjectTargets` entry of the MOST RECENT observe result\""
+    },
+    {
+      "kind": "tile_addressed_unaskable",
+      "id": "pan_ore -> panSites",
+      "reason": "`pan_ore` is addressed by tile, slot or name rather than by the family's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `panSites` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "pet_animal -> petTargets",
+      "reason": "`pet_animal` demands `expectedTargetId`, the `petTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `petTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "pet_farm_animal -> farmAnimalPetTargets",
+      "reason": "`pet_farm_animal` demands `expectedTargetId`, the `farmAnimalPetTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `farmAnimalPetTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "pickup_item -> itemTargets",
+      "reason": "`pickup_item` demands `expectedTargetId`, the `itemTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `itemTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "place_crab_pot -> crabPotTargets",
+      "reason": "`place_crab_pot` demands `expectedTargetId`, the `crabPotTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `crabPotTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "place_item_on_pedestal -> worldObjectTargets",
+      "reason": "`place_item_on_pedestal` demands `expectedTargetId`, the `worldObjectTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `worldObjectTargets` is a full `stardew_observe`; the surface states the dependency in the argument's own words - rotate_furniture's expectedTargetId is \"copied from the `worldObjectTargets` entry of the MOST RECENT observe result\""
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "place_owned_object -> worldObjectTargets",
+      "reason": "`place_owned_object` demands `expectedTargetId`, the `worldObjectTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `worldObjectTargets` is a full `stardew_observe`; the surface states the dependency in the argument's own words - rotate_furniture's expectedTargetId is \"copied from the `worldObjectTargets` entry of the MOST RECENT observe result\""
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "place_wood_fence -> woodFenceTargets",
+      "reason": "`place_wood_fence` demands `expectedTargetId`, the `woodFenceTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `woodFenceTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "plant_sapling -> treeSaplingTargets",
+      "reason": "`plant_sapling` demands `expectedTargetId`, the `treeSaplingTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `treeSaplingTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "plant_seed -> seedTargets",
+      "reason": "`plant_seed` demands `expectedTargetId`, the `seedTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `seedTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "put_item_in_fish_tank -> worldObjectTargets",
+      "reason": "`put_item_in_fish_tank` demands `expectedTargetId`, the `worldObjectTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `worldObjectTargets` is a full `stardew_observe`; the surface states the dependency in the argument's own words - rotate_furniture's expectedTargetId is \"copied from the `worldObjectTargets` entry of the MOST RECENT observe result\""
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "remove_fence -> worldObjectTargets",
+      "reason": "`remove_fence` demands `expectedTargetId`, the `worldObjectTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `worldObjectTargets` is a full `stardew_observe`; the surface states the dependency in the argument's own words - rotate_furniture's expectedTargetId is \"copied from the `worldObjectTargets` entry of the MOST RECENT observe result\""
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "remove_placed_item -> worldObjectTargets",
+      "reason": "`remove_placed_item` demands `expectedTargetId`, the `worldObjectTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `worldObjectTargets` is a full `stardew_observe`; the surface states the dependency in the argument's own words - rotate_furniture's expectedTargetId is \"copied from the `worldObjectTargets` entry of the MOST RECENT observe result\""
+    },
+    {
+      "kind": "published_only_at_an_event",
+      "id": "respond_level_up -> pendingLevelUpChoices",
+      "reason": "`respond_level_up` is addressed by tile, slot or name rather than by the family's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `pendingLevelUpChoices` is a full `stardew_observe`; the family is populated only at the night boundary (Game1.showEndOfNightStuff fills Game1.player.newLevels), so outside that moment there is nothing to ask and inside it the observe is the only reading"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "ride_minecart -> minecartTargets",
+      "reason": "`ride_minecart` demands `expectedTargetId`, the `minecartTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `minecartTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "rotate_furniture -> worldObjectTargets",
+      "reason": "`rotate_furniture` demands `expectedTargetId`, the `worldObjectTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `worldObjectTargets` is a full `stardew_observe`; the surface states the dependency in the argument's own words - rotate_furniture's expectedTargetId is \"copied from the `worldObjectTargets` entry of the MOST RECENT observe result\""
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "scythe_crop -> scytheCropTargets",
+      "reason": "`scythe_crop` demands `expectedTargetId`, the `scytheCropTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `scytheCropTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "set_sign_display -> signTargets",
+      "reason": "`set_sign_display` demands `expectedTargetId`, the `signTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `signTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "shake_tree -> shakeTreeTargets",
+      "reason": "`shake_tree` demands `expectedTargetId`, the `shakeTreeTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `shakeTreeTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "ship_item -> shippingBinTargets",
+      "reason": "`ship_item` demands `expectedTargetId`, the `shippingBinTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `shippingBinTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "tailor_clothing -> tailoringTargets",
+      "reason": "`tailor_clothing` demands `expectedTargetId`, the `tailoringTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `tailoringTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "take_pedestal_item -> pedestalTargets",
+      "reason": "`take_pedestal_item` demands `expectedTargetId`, the `pedestalTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `pedestalTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "talk_to_npc -> npcRelationshipTargets",
+      "reason": "`talk_to_npc` demands `expectedTargetId`, the `npcRelationshipTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `npcRelationshipTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "tile_addressed_unaskable",
+      "id": "till_soil -> soilTiles",
+      "reason": "`till_soil` is addressed by tile, slot or name rather than by the family's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `soilTiles` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "toggle_animal_door -> animalDoorTargets",
+      "reason": "`toggle_animal_door` demands `expectedTargetId`, the `animalDoorTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `animalDoorTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "toggle_fence_gate -> fenceGateTargets",
+      "reason": "`toggle_fence_gate` demands `expectedTargetId`, the `fenceGateTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `fenceGateTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "tile_addressed_unaskable",
+      "id": "toggle_tool_light -> lanternSlots",
+      "reason": "`toggle_tool_light` is addressed by tile, slot or name rather than by the family's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `lanternSlots` is a full `stardew_observe`"
+    },
+    {
+      "kind": "tile_addressed_unaskable",
+      "id": "travel -> warps",
+      "reason": "`travel` is addressed by tile, slot or name rather than by the family's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `warps` is a full `stardew_observe`; the family is the map's own door and warp table, which is fixed per location and still only visible in a full observe"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "unequip_wearable -> wearableTargets",
+      "reason": "`unequip_wearable` demands `expectedTargetId`, the `wearableTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `wearableTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "tile_addressed_unaskable",
+      "id": "use_item -> foodTargets",
+      "reason": "`use_item` is addressed by tile, slot or name rather than by the family's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `foodTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "use_obelisk -> obeliskTargets",
+      "reason": "`use_obelisk` demands `expectedTargetId`, the `obeliskTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `obeliskTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "tile_addressed_unaskable",
+      "id": "use_raft -> raftTargets",
+      "reason": "`use_raft` is addressed by tile, slot or name rather than by the family's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `raftTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "tile_addressed_unaskable",
+      "id": "use_warp_item -> warpItemTargets",
+      "reason": "`use_warp_item` is addressed by tile, slot or name rather than by the family's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `warpItemTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "water_pet_bowl -> petBowlTargets",
+      "reason": "`water_pet_bowl` demands `expectedTargetId`, the `petBowlTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `petBowlTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "water_slime_hutch_trough -> slimeHutchTroughTargets",
+      "reason": "`water_slime_hutch_trough` demands `expectedTargetId`, the `slimeHutchTroughTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `slimeHutchTroughTargets` is a full `stardew_observe`"
+    },
+    {
+      "kind": "opaque_identity_unaskable",
+      "id": "withdraw_silo_hay -> siloTargets",
+      "reason": "`withdraw_silo_hay` demands `expectedTargetId`, the `siloTargets` row's opaque id, and no `stardew_look_up` subject reads it, no State HUD line declares it, and no `read_scene` affordance names the action, so the only way to read `siloTargets` is a full `stardew_observe`"
+    }
+  ]
+}
