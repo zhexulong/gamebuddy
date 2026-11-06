@@ -232,3 +232,7 @@ integrations/stardew/action-development/tests/.tmp-*
 /write
 /write-journal
 /.unipi/
+# A tool that splits a suite writes its working copy next to it (106 KB on 2026-11-06, referenced by nothing).
+/tools/.soft-suite.tmp.*
+# Release-owned scratch: the release pipeline re-creates it, so a checkout should not carry it.
+/host/.release-owned-scratch/
