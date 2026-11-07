@@ -38,6 +38,12 @@
  * non-vocabulary mechanism, which is a separate design.
  */
 
+/** The schema every population-level assessment is tagged with, so a reader knows which shape it holds. */
+export const SPOKEN_UTTERANCE_SCHEMA = "gamebuddy_spoken_utterance_assessment/v1";
+
+/** How many findings a result carries: the count below is unbounded, the list is not. */
+const PUBLISHED_FINDING_LIMIT = 20;
+
 export function assessCompanionInteraction(text, observedEvents = []) {
   const trimmed = String(text ?? "").trim();
   const metrics = { length: [...trimmed].length };
@@ -126,4 +132,84 @@ export function assessCompanionInteraction(text, observedEvents = []) {
       machineTokens: Object.freeze([...machineTokens, ...constants]),
     }),
   });
+}
+
+/**
+ * The companion's speech, judged UTTERANCE BY UTTERANCE, with the sample it was judged from.
+ *
+ * <p>
+ * `assessCompanionInteraction` answers a question about ONE piece of spoken text. Handing it an aggregate - every line
+ * of a turn joined into one string, or every line of a session - asks a different question and answers it wrongly in
+ * both directions: a run whose lines are each short fails its 120-code-point ceiling on the concatenation, and a run
+ * with 207 lines is judged on 14 of them with nothing in the answer saying so (measured 2026-11-06: `interactionValue`
+ * counted 207 spoken lines, `interactionAssessment` judged 14, and the run was blocked by `summary_too_long` on a
+ * per-turn join).
+ * </p>
+ *
+ * <p>
+ * So the population is derived and declared, never truncated silently. `judged` is how many utterances this assessment
+ * decided; `population` is how many the run can prove it said; `omitted` is the difference and carries the reason it
+ * exists. A verdict about a sample is `partial` - never `passed` - and a run whose population cannot be measured at all
+ * says so (`omitted: null`, never a zero it did not observe).
+ * </p>
+ */
+export function assessSpokenUtterances({
+  utterances,
+  population = null,
+  omittedReason = null,
+  observedEvents = [],
+} = {}) {
+  if (!Array.isArray(utterances)) throw new TypeError("assessSpokenUtterances requires an array of utterances");
+  if (population !== null && !(Number.isInteger(population) && population >= 0))
+    throw new TypeError("assessSpokenUtterances.population must be a non-negative integer or null");
+  const judged = utterances.length;
+  const measured = Number.isInteger(population);
+  const omitted = measured ? Math.max(0, population - judged) : null;
+  const findings = utterances
+    .map((text, index) => {
+      const assessed = assessCompanionInteraction(text, observedEvents);
+      return assessed.passed ? null : { index, text: String(text ?? "").trim(), reasons: assessed.reasons };
+    })
+    .filter((finding) => finding !== null);
+  const reasons = [...new Set(findings.flatMap((finding) => finding.reasons))];
+  const verdict = decideSpokenVerdict({ judged, omitted, measured, findings });
+  return Object.freeze({
+    schema: SPOKEN_UTTERANCE_SCHEMA,
+    verdict,
+    // The code that names the verdict when it is not `passed`. For a failure it is the first failing rule; for the
+    // three sample states it is the fact that stopped a verdict being reached, never a charge against the companion.
+    reason:
+      verdict === "passed"
+        ? null
+        : (reasons[0] ?? omittedReason ?? (measured ? "no_spoken_lines" : "population_unmeasured")),
+    reasons,
+    findings: Object.freeze(findings.slice(0, PUBLISHED_FINDING_LIMIT)),
+    findingsReported: Object.freeze({
+      published: Math.min(findings.length, PUBLISHED_FINDING_LIMIT),
+      total: findings.length,
+      reason: "bounded_representation",
+    }),
+    sample: Object.freeze({
+      representation: "utterances",
+      population: measured ? population : null,
+      judged,
+      omitted,
+      omittedReason:
+        omitted === 0 || (measured && omitted === null) ? null : (omittedReason ?? "population_unmeasured"),
+    }),
+  });
+}
+
+/**
+ * `failed` outranks everything: a real finding about her speech is reported as a finding.
+ *
+ * Then the sample states, in the order they stop a pass: a verdict about part of the evidence (`partial`), nothing to
+ * judge in a population that was measured (`unobserved`), and a population that could not be measured at all
+ * (`not_established` - it cannot even say there was nothing).
+ */
+function decideSpokenVerdict({ judged, omitted, measured, findings }) {
+  if (findings.length > 0) return "failed";
+  if (judged === 0) return measured ? "unobserved" : "not_established";
+  if (!measured || omitted > 0) return "partial";
+  return "passed";
 }
