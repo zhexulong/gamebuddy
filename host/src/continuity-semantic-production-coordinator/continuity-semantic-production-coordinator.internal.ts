@@ -11,6 +11,10 @@ import { createChatRuntimeBinding } from "../continuity-semantic-chat-runtime-bi
 import type { MaterializedChatRuntime } from "../continuity-semantic-chat-runtime-materializer/continuity-semantic-chat-runtime-materializer.internal.js";
 import { createHostChatRuntimeMaterializer } from "../continuity-semantic-chat-runtime-materializer/continuity-semantic-chat-runtime-materializer.js";
 import {
+  readWindowsOwnerDeathVerification,
+  type WindowsOwnerDeathOutcome,
+} from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.windows-owner-death.internal.js";
+import {
   createWindowsOwnerDeathVerifier,
   type WindowsOwnerDeathVerifier,
 } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.windows-owner-death.js";
@@ -2389,7 +2393,19 @@ export async function createSharedSemanticProductionAuthorityFromDeploymentManif
     // Shared projections intentionally do not close the provision/mutex: an
     // explicit shared-ownership close flag suppresses those in each helper.
     semantic = create(provision, mutex, undefined, true);
-    game = createKnownGameAuthority(provision, mutex, undefined, createWindowsOwnerDeathVerifier(), true);
+    const ownerDeathVerifier = createWindowsOwnerDeathVerifier();
+    game = createKnownGameAuthority(provision, mutex, undefined, ownerDeathVerifier, true);
+    // The durable Game recovery obligation a previous Host crashed out of is settled here, before any
+    // Game work is admitted: `prepareEnter` refuses a root that still carries a recovery-required
+    // lease, and the only thing that can clear it is a proven-dead owner's recovery. The shared owner
+    // is the earliest point in Host startup that holds both the provision and the root mutex, and the
+    // mutex plus the durable target's own operation id are what keep two Hosts from settling it twice.
+    const sharedProvision = provision;
+    await settleDurableGameRecoveryOnStartup(
+      async () => sharedProvision.store.readPendingGameRecoveryTarget(),
+      (operationId) => game!.recoverDeadOwner(Object.freeze({ request: "recover_dead_owner" as const, operationId })),
+      ownerDeathVerifier,
+    );
     if (mode === "fresh") {
       await seedDefaultCompanionForFreshRoot(manifest);
       await initializeInitialChatAndCloseContentPort(semantic, manifest);
@@ -4079,26 +4095,15 @@ function createKnownGameAuthority(
       }
     });
   };
-  const locked = async <T>(work: () => T): Promise<T> => {
-    const lease = await requireLease(mutex, provision.authorityRootIdentity, provision, () => {
-      closing = true;
-    });
-    let result: T | undefined;
-    let failure: unknown;
-    try {
-      result = work();
-      if (isThenable(result)) throw new SemanticProductionCoordinatorError("async_partition_mutex_section_rejected");
-    } catch (error) {
-      failure = error;
-    }
-    try {
-      await release(lease);
-    } catch (error) {
-      failure ??= error;
-    }
-    if (failure !== undefined) throw failure;
-    return result as T;
-  };
+  const locked = <T>(work: () => T): Promise<T> =>
+    lockedPartitionSection(
+      mutex,
+      provision,
+      () => {
+        closing = true;
+      },
+      work,
+    );
   const prepareEnter = (facts: GameEffectFacts): Promise<ProductionGamePermit> =>
     begin(() =>
       locked(() => {
@@ -4361,6 +4366,86 @@ export async function orchestrateExplicitGameRecovery(
   const proof = await ownerDeathVerifier.verify(target.owner);
   return forward(target, proof);
 }
+/**
+ * One startup settlement, carrying exactly the facts an operator needs to attribute a recovery nobody
+ * watched: which durable operation owed it, who owned the abandoned lease, why the lease owed it, what
+ * the OS said about that owner, and whether the recovery ran. No path, token, credential or player text.
+ */
+export type StartupGameRecoverySettlement = Readonly<{
+  settlement: "recovered" | "refused";
+  code: "game_recovery_recovered" | "game_recovery_blocked_owner_alive" | "game_recovery_blocked_owner_unknown";
+  operationId: string;
+  gameSessionId: string;
+  ownerPid: number;
+  recoveryReason: ProductionGameReadback["recoveryReason"];
+  ownerOutcome: WindowsOwnerDeathOutcome;
+  settledAtUnixMs: number;
+}>;
+/**
+ * Settles the one durable Game recovery obligation a previous Host may have left behind, before this
+ * Host admits any Game work, and reports what it settled.
+ *
+ * The operation id comes from the durable target rather than from this function: the store resolves a
+ * recovery target by that exact id, so an id minted here would name no operation, and two Hosts
+ * settling the same obligation would disagree about which operation they settled.
+ *
+ * The pre-check is not a courtesy: `recoverGame` itself refuses every verdict but `proven_dead`, and
+ * this function never reaches it with any other one. `alive` is a real single-instance conflict that
+ * must be reported as one; `mismatch`, `ambiguous` and `unavailable` are unknown, and unknown is not
+ * dead, so nothing is recovered from them.
+ */
+export async function settleDurableGameRecoveryOnStartup(
+  readTarget: () => Promise<ProductionGameRecoveryTarget | null>,
+  recoverDeadOwner: (operationId: string) => Promise<ProductionGameReadback>,
+  ownerDeathVerifier: WindowsOwnerDeathVerifier,
+): Promise<ProductionGameReadback | null> {
+  const target = await readTarget();
+  if (target === null) return null;
+  const ownerOutcome = await verifyOwnerDeathOrUnknown(ownerDeathVerifier, target.owner);
+  const settled = {
+    operationId: target.readback.operationId,
+    gameSessionId: target.readback.gameSessionId,
+    ownerPid: target.owner.ownerPid,
+    recoveryReason: target.readback.recoveryReason,
+    ownerOutcome,
+    settledAtUnixMs: Date.now(),
+  };
+  if (ownerOutcome !== "proven_dead") {
+    const code = ownerOutcome === "alive" ? "game_recovery_blocked_owner_alive" : "game_recovery_blocked_owner_unknown";
+    recordStartupGameRecovery(Object.freeze({ ...settled, settlement: "refused", code }));
+    throw new SemanticProductionCoordinatorError(code);
+  }
+  const readback = await recoverDeadOwner(settled.operationId);
+  recordStartupGameRecovery(Object.freeze({ ...settled, settlement: "recovered", code: "game_recovery_recovered" }));
+  return readback;
+}
+async function verifyOwnerDeathOrUnknown(
+  ownerDeathVerifier: WindowsOwnerDeathVerifier,
+  owner: ProductionGameOwner,
+): Promise<WindowsOwnerDeathOutcome> {
+  try {
+    return readWindowsOwnerDeathVerification(await ownerDeathVerifier.verify(owner)).outcome;
+  } catch {
+    // A verifier that could not answer is a failed reading, and a failed reading is not a death.
+    return "unavailable";
+  }
+}
+/**
+ * The one record a silent startup settlement leaves. A recovery nobody saw happen is a recovery nobody
+ * can attribute when the game later behaves unexpectedly, so it is written for a refusal that stops
+ * this Host as well as for a recovery that lets it continue.
+ */
+function recordStartupGameRecovery(settlement: StartupGameRecoverySettlement): void {
+  const what =
+    settlement.settlement === "recovered"
+      ? "recovered the Game state its dead owner left behind"
+      : settlement.code === "game_recovery_blocked_owner_alive"
+        ? "refused: another GameBuddy is already running. Close it, then start GameBuddy again."
+        : "refused: the previous Game owner's death could not be proven, so nothing was recovered";
+  process.stderr.write(
+    `[game-recovery] startup ${what} operation=${settlement.operationId} session=${settlement.gameSessionId} owner_pid=${String(settlement.ownerPid)} reason=${settlement.recoveryReason ?? "none"} owner=${settlement.ownerOutcome} at=${new Date(settlement.settledAtUnixMs).toISOString()}\n`,
+  );
+}
 function recoveryReceipt(target: ProductionGameRecoveryTarget) {
   const permit = target.permit;
   return Object.freeze({
@@ -4480,6 +4565,34 @@ async function requireLease(
 }
 async function release(lease: WindowsPartitionMutexLease): Promise<void> {
   await lease.release();
+}
+/**
+ * The one partition-section discipline: acquire the root mutex, run synchronous store work inside
+ * it, release, and surface the first failure. Every caller that touches the durable authority uses
+ * this, so the poison-before-verified-release rule for an abandoned mutex is stated once.
+ */
+async function lockedPartitionSection<T>(
+  mutex: WindowsAuthorityRootMutex,
+  provision: FreshContinuityProvision,
+  poisonBeforeVerifiedRelease: () => void,
+  work: () => T,
+): Promise<T> {
+  const lease = await requireLease(mutex, provision.authorityRootIdentity, provision, poisonBeforeVerifiedRelease);
+  let result: T | undefined;
+  let failure: unknown;
+  try {
+    result = work();
+    if (isThenable(result)) throw new SemanticProductionCoordinatorError("async_partition_mutex_section_rejected");
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    await release(lease);
+  } catch (error) {
+    failure ??= error;
+  }
+  if (failure !== undefined) throw failure;
+  return result as T;
 }
 function sameTavernExactContentReceipt(left: TavernExactContentReceipt, right: TavernExactContentReceipt): boolean {
   return (

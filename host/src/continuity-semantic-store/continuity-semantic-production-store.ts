@@ -609,6 +609,12 @@ export type ProductionSagaStore = Readonly<{
   readGameRecoveryTarget(
     input: Readonly<{ principal: ProductionPrincipal; operationId: string }>,
   ): ProductionGameRecoveryTarget | null;
+  /**
+   * Reads the one durable Game recovery obligation this continuity root carries right now. The
+   * operation id is the intent row's own identity, so only the store can name the operation that owes
+   * the recovery: a caller cannot derive it, and a caller-minted one names no operation at all.
+   */
+  readPendingGameRecoveryTarget(): ProductionGameRecoveryTarget | null;
   /** Current independent Game admission; it never consults Chat selection or lifecycle. */
   readGameAdmission(): Readonly<{ vector: GameRevisionVector; activeGameSessionId: string | null }>;
   readGameOperation(
@@ -1075,6 +1081,10 @@ export function openProductionContinuityStore(
         readGameRecoveryTarget(input) {
           requireOpen();
           return readGameRecoveryTarget(db, immutable, input);
+        },
+        readPendingGameRecoveryTarget() {
+          requireOpen();
+          return readPendingGameRecoveryTarget(db, immutable);
         },
         readGameAdmission() {
           requireOpen();
@@ -4549,6 +4559,16 @@ function recoverGame(
     );
   });
 }
+function owesDeadOwnerRecovery(row: any): boolean {
+  const request = parse(row.request_json);
+  return row.status === "recovery_required" || (row.status === "pending" && request?.kind === "close");
+}
+function deadOwnerRecoveryTarget(db: DatabaseSync, row: any): ProductionGameRecoveryTarget {
+  const request = parse(row.request_json),
+    permit = request && validGameRequest(request) ? permitFromGame(request, row) : null;
+  if (!permit || canonical(permit.owner) !== row.owner_json) throw new Error("recovery_target_invalid");
+  return Object.freeze({ owner: Object.freeze({ ...permit.owner }), permit, readback: gameReadback(db, row) });
+}
 function readGameRecoveryTarget(
   db: DatabaseSync,
   bootstrap: ProductionBootstrapContext,
@@ -4562,13 +4582,27 @@ function readGameRecoveryTarget(
     const row = db
       .prepare("SELECT * FROM production_game_intent WHERE continuity_id=? AND operation_id=?")
       .get(input.principal.continuityId, input.operationId) as any;
-    if (!row) return null;
-    const request = parse(row.request_json),
-      eligible = row.status === "recovery_required" || (row.status === "pending" && request?.kind === "close");
-    if (!eligible) return null;
-    const permit = request && validGameRequest(request) ? permitFromGame(request, row) : null;
-    if (!permit || canonical(permit.owner) !== row.owner_json) throw new Error("recovery_target_invalid");
-    return Object.freeze({ owner: Object.freeze({ ...permit.owner }), permit, readback: gameReadback(db, row) });
+    if (!row || !owesDeadOwnerRecovery(row)) return null;
+    return deadOwnerRecoveryTarget(db, row);
+  });
+}
+function readPendingGameRecoveryTarget(
+  db: DatabaseSync,
+  bootstrap: ProductionBootstrapContext,
+): ProductionGameRecoveryTarget | null {
+  return readTransaction(db, () => {
+    validateExpectedBootstrap(db, bootstrap);
+    rejectQuarantined(db);
+    const rows = (
+      db
+        .prepare("SELECT * FROM production_game_intent WHERE continuity_id=?")
+        .all(bootstrap.bootstrap.principal.continuityId) as any[]
+    ).filter(owesDeadOwnerRecovery);
+    // Two obligations cannot both be the one a dead owner left behind, and picking either would
+    // be this read inventing an order the durable state does not have.
+    if (rows.length > 1) throw new Error("game_recovery_ambiguous");
+    const row = rows[0];
+    return row === undefined ? null : deadOwnerRecoveryTarget(db, row);
   });
 }
 function readGameAdmission(

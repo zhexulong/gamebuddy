@@ -40,8 +40,9 @@ test("main is the operational-gate child and the CLI-only recovery tool, with no
   assert.match(source, /nextOperationalGateEvidence\(\)/);
   assert.match(source, /GAME_OPERATIONAL_GATE_EVIDENCE_SCHEMA/);
   assert.match(source, /process\.send\(evidence\)/);
-  // Recovery is CLI-only and consumes the deployment manifest reference, never
-  // an operator file or a facade path.
+  // Recovery keeps this explicit CLI form and consumes the deployment manifest reference, never
+  // an operator file or a facade path. Host startup also settles a durable recovery obligation on
+  // its own; the assertion is that this operator route survives that, not that it is the only cure.
   assert.match(source, /game\.recoverDeadOwner\(\{ request: "recover_dead_owner", operationId \}\)/);
   assert.match(source, /loadHostDeploymentManifest\(deploymentManifestRef\)/);
   assert.equal(source.includes("gamebuddy-game-operational-gate-runtime/v1"), false);

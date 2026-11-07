@@ -162,6 +162,7 @@ function argumentsFor(member: string, fixture: Fixture): readonly unknown[] {
     failGame: [{}],
     recoverGame: [{}],
     readGameRecoveryTarget: [absent],
+    readPendingGameRecoveryTarget: [],
     readGameAdmission: [],
     readGameOperation: [absent],
     createGameSessionMetadata: [
@@ -801,6 +802,7 @@ test("every pure read answers while another connection holds the writer's lock",
       ["readGameAdmission", () => subject.store.readGameAdmission()],
       ["readGameOperation", () => subject.store.readGameOperation({ principal, operationId: "gate-absent" })],
       ["readGameRecoveryTarget", () => subject.store.readGameRecoveryTarget({ principal, operationId: "gate-absent" })],
+      ["readPendingGameRecoveryTarget", () => subject.store.readPendingGameRecoveryTarget()],
       [
         "readGameSessionMetadata",
         () => subject.store.readGameSessionMetadata({ gameSessionId: subject.shape.gameSessionId }),

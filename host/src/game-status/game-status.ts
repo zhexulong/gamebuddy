@@ -4,9 +4,10 @@
  * it accepts neither browser/bridge payloads nor raw adapter state.
  *
  * `surface` has no recovery state: the durable Game recovery word belongs to the semantic
- * store, whose only cure is the CLI-only `recover-dead-owner` operation, so nothing in this
- * Host-owned adapter could ever produce one for a player to read. The word was declared and
- * never emitted, which is a name that promises a state the product does not have.
+ * store, which settles it at Host startup - a recovery-required lease whose owner is proven
+ * dead is recovered in the background before any Game work is admitted, so no player-facing
+ * projection can observe it. The word was declared and never emitted, which is a name that
+ * promises a state the product does not have.
  */
 export type HostGameLifecycleSnapshot = Readonly<{
   availability: "available" | "unavailable";

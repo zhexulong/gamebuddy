@@ -369,6 +369,10 @@ function provision(
       requireOpen();
       return rawStore.readGameRecoveryTarget(input);
     },
+    readPendingGameRecoveryTarget() {
+      requireOpen();
+      return rawStore.readPendingGameRecoveryTarget();
+    },
     readGameOperation(input) {
       requireOpen();
       return rawStore.readGameOperation(input);

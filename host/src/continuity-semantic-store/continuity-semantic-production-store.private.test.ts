@@ -1397,6 +1397,12 @@ test("Game recovery requires explicit OS-proven owner death and exact owner tupl
         }),
       /recovery_proof_invalid/,
     );
+    // The root-level read names the obligation without being told an operation id, and it names the very
+    // operation the durable row carries: that id is what a startup settlement has to forward.
+    const pending = store.readPendingGameRecoveryTarget();
+    assert.equal(pending?.readback.operationId, closing.permit!.operationId);
+    assert.equal(pending?.readback.leaseState, "recovery_required");
+    assert.equal(pending?.readback.recoveryReason, "effect_failed");
     const recovered = store.recoverGame({
       request: "recover_dead_owner",
       principal,
@@ -1406,6 +1412,8 @@ test("Game recovery requires explicit OS-proven owner death and exact owner tupl
     });
     assert.equal(recovered.gameState, "ended");
     assert.equal(recovered.leaseState, null);
+    // Settled is settled: the same read answers nothing, so a second Host settles nothing.
+    assert.equal(store.readPendingGameRecoveryTarget(), null);
   } finally {
     control.close();
     rmSync(root, { recursive: true, force: true });

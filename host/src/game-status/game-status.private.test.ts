@@ -124,8 +124,8 @@ test("rejects malformed snapshots and unexpected raw lifecycle fields rather tha
     { ...currentActive, requestId: "request_01" },
     { ...currentActive, snapshotRevision: 7 },
     // The removed recovery surface word. This adapter's only producer never emitted it - the
-    // durable Game recovery state lives in the semantic store and is healed by the CLI-only
-    // `recover-dead-owner` operation - so a snapshot that still carries the word is not a shape
+    // durable Game recovery state lives in the semantic store and is settled at Host startup,
+    // before any Game work is admitted - so a snapshot that still carries the word is not a shape
     // this projection accepts, and it fails closed instead of reporting a recovery state.
     { ...currentActive, surface: "recovery_required" },
   ]) {

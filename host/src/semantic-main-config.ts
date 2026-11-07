@@ -25,8 +25,11 @@ export type SemanticMainCommand = Readonly<
 /**
  * Parses the Host's deliberately small command surface. Normal entry accepts
  * only the explicit operational flags `--deployment-manifest-ref <path>` and
- * `--operational-nonce <sha256>`. Dead-owner recovery is CLI-only and has no
- * implicit or automatic route from normal entry.
+ * `--operational-nonce <sha256>`. Dead-owner recovery needs no command of its
+ * own to be cured: Host startup settles a durable Game recovery obligation
+ * whose owner is proven dead, in the background and before any Game work is
+ * admitted. This form stays as the operator's explicit route for a root whose
+ * owner no running Host can settle.
  */
 export function parseSemanticMainCommand(argv: readonly string[]): SemanticMainCommand {
   const manifestRef = argv[1];
