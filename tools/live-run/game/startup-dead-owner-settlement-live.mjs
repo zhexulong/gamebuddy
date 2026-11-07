@@ -29,6 +29,7 @@ import { execFile, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 
@@ -84,7 +85,13 @@ function writeRunRoot(root, name) {
     }),
     "utf8",
   );
-  return Object.freeze({ runtimeRoot, manifestPath, principal });
+  return Object.freeze({
+    runtimeRoot,
+    manifestPath,
+    principal,
+    bootstrapOperationId: `bootstrap_${name}`,
+    authorityGeneration: 1,
+  });
 }
 
 /* ---------------------------------------------------------------- the owner child */
@@ -244,22 +251,62 @@ async function settle(artifactRootPath, runRoot) {
   if (typeof settleFn !== "function") {
     for (const root of [artifactRootPath, join(process.cwd(), "host", "dist-test")]) {
       const internal = await import(
-        pathToFileURL(join(root, "continuity-semantic-production-coordinator", "continuity-semantic-production-coordinator.internal.js")).href,
+        pathToFileURL(
+          join(
+            root,
+            "continuity-semantic-production-coordinator",
+            "continuity-semantic-production-coordinator.internal.js",
+          ),
+        ).href
       );
       if (typeof internal.settleDurableGameRecoveryOnStartup === "function") {
         settleFn = internal.settleDurableGameRecoveryOnStartup;
         artifactUnderTest =
-          root === artifactRootPath ? "published-generation (internal module)" : "dist-test (the published generation predates the settlement)";
+          root === artifactRootPath
+            ? "published-generation (internal module)"
+            : "dist-test (the published generation predates the settlement)";
         break;
       }
     }
   }
-  if (typeof settleFn !== "function") throw new Error("settleDurableGameRecoveryOnStartup is absent from both artifacts");
+  if (typeof settleFn !== "function")
+    throw new Error("settleDurableGameRecoveryOnStartup is absent from both artifacts");
   console.log(`  artifact under test: ${artifactUnderTest}`);
   const loaded = await loadHostDeploymentManifest(runRoot.manifestPath);
   const principal = loaded.principal ?? loaded.value?.principal ?? runRoot.principal;
   const verifier = createWindowsOwnerDeathVerifier();
-  const continuity = openProductionContinuityStore({ runtimeRoot: runRoot.runtimeRoot });
+  /**
+   * The store is a TWO-stage open: `openProductionContinuityStore` only configures the database, and the saga
+   * readers arrive from `bindBootstrapContext({ bootstrap, metadata })`. Found by asking the returned object
+   * for its keys (`bootstrapFresh, validateBootstrap, bindBootstrapContext, configuration, close`) rather than
+   * by reading the 5,000-line file; recorded as project memory #5387.
+   */
+  const control = openProductionContinuityStore({ runtimeRoot: runRoot.runtimeRoot });
+  /**
+   * The bootstrap tuple is taken from the durable row the owner wrote, not reconstructed from the manifest.
+   * `validateBootstrap` refused a hand-built one twice (`invalid_production_bootstrap`, then
+   * `production_store_identity_mismatch`), because the identity is minted at fresh bootstrap and only the
+   * store itself can say what it is. Reading it back is the same move as reading the recovery target back:
+   * ask the durable state instead of re-deriving it.
+   */
+  const recorded = readRecordedBootstrap(runRoot.runtimeRoot);
+  const bootstrap = Object.freeze({
+    principal: Object.freeze({
+      continuityId: recorded.continuity_id,
+      companionId: recorded.companion_id,
+      playerId: recorded.player_id,
+    }),
+    bootstrapOperationId: recorded.bootstrap_operation_id,
+    authorityGeneration: Number(recorded.authority_generation),
+    authorityRootIdentity: recorded.authority_root_identity,
+  });
+  const metadata = Object.freeze({ storeId: recorded.store_id, schemaVersion: Number(recorded.schema_version) });
+  const continuity = control.bindBootstrapContext(
+    Object.freeze({
+      bootstrap,
+      metadata: Object.freeze({ storeId: metadata.storeId, schemaVersion: metadata.schemaVersion }),
+    }),
+  );
   const stderrLines = [];
   const originalWrite = process.stderr.write.bind(process.stderr);
   process.stderr.write = (chunk, ...rest) => {
@@ -301,7 +348,7 @@ async function settle(artifactRootPath, runRoot) {
   } finally {
     process.stderr.write = originalWrite;
     try {
-      continuity.close?.();
+      control.close();
     } catch {
       // A store that was never opened past a refusal has nothing to close.
     }
@@ -374,6 +421,22 @@ async function livingOwnerPhase(artifactRootPath) {
   );
   await owner.kill();
   return root;
+}
+
+function readRecordedBootstrap(runtimeRoot) {
+  const db = new DatabaseSync(
+    join(runtimeRoot, ".gamebuddy-semantic-continuity-v1", "gamebuddy-continuity-v1.sqlite"),
+    {
+      readOnly: true,
+    },
+  );
+  try {
+    const row = db.prepare("select * from production_bootstrap").get();
+    if (!row) throw new Error("production_bootstrap_absent");
+    return row;
+  } finally {
+    db.close();
+  }
 }
 
 function readDurableState(runtimeRoot) {
