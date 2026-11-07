@@ -118,6 +118,7 @@ import { assessIdentityProfile } from "../core/content-gate.mjs";
 import { explainAuthorityIdentityMismatch } from "../core/authority-identity.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
 import { buildFailureSnapshot, buildReproPlan, classifyFailure } from "../../lib/failure-dump.mjs";
+import { actionBreadthClause, measureActionBreadth } from "../../lib/action-breadth.mjs";
 import { writeEvidenceBundle } from "../../lib/evidence-bundle.mjs";
 import { installLiveRunInterrupt, killedReasonCode } from "../../lib/live-run-teardown.mjs";
 // Program executions are a second kind of execution, written beside the request frames and merged back at read time.
@@ -5168,16 +5169,52 @@ async function buildRunResult({
   const programRows = programExecutionRows(programOutcomes);
   const executionTrace =
     carriedExecutionTrace ?? executionTraceInvariant({ actionTrace, programOutcomes, programRows });
+  // What the run tried and what it achieved, read from BOTH channels once the program record is in hand. Derived
+  // HERE, above the verdict, because `action_breadth` is a clause: the breadth a run publishes and the breadth its
+  // verdict is decided on are then one object instead of two derivations that can disagree - and the crashed path,
+  // which has no rung clauses at all, still publishes the reading it has.
+  const dispatched = summarizeDispatchedActions(actionTrace, programOutcomes, programSubmissions);
+  // Coverage is not the same question as volume. Measured 2026-11-07 (`round39`): 124 executions, `ok: true` trace,
+  // and 15 of 95 published actions attempted with a quarter of them cutting weeds - a run whose execution count read
+  // as a working companion while four fifths of the surface was never touched. The population is the Mod's own
+  // registration table (`lib/action-breadth.mjs`), the ratchet is `tools/action-breadth-baseline.json`, and the
+  // verdict names what is missing rather than counting what was done.
+  const actionBreadth = await measureActionBreadth({
+    scenario: SCENARIO,
+    attempted: dispatched.attempted,
+    succeeded: dispatched.succeeded,
+    executions: executionTrace.rows,
+    // The flat half of the trace, in hand: without it the flat dispatches could not be attributed to any action and
+    // the concentration would be reported as unmeasurable rather than measured on the program half alone.
+    actionRows: actionTrace,
+    // The program half, from `programExecutionRows` - the module that owns what one execution IS - so a redelivered
+    // journal event cannot be counted twice here while the manifest counts it once.
+    programRows,
+    programSubmissions,
+  });
+  if (String(actionBreadth.verdict).startsWith("narrow:"))
+    console.error(
+      "ACTION_BREADTH_NARROW",
+      JSON.stringify({
+        verdict: actionBreadth.verdict,
+        attempted: actionBreadth.attempted,
+        published: actionBreadth.published,
+        families: actionBreadth.families,
+      }),
+    );
   // The LAST clause, because it qualifies everything above rather than competing with it: a run that would otherwise
   // pass is blocked when its own execution record is incomplete (`ok` is false when a program's journal could not be
   // read, or when the rows disagree with what the programs reported). Published as a bare flag until 2026-11-06, when
   // round38 published `executionTrace.ok: false` with nine unobserved programs and `state: "blocked"` for an unrelated
   // reason - a red flag nothing consumed is decoration, so it is a clause now and `state` cannot outrun it.
+  // `action_breadth` sits just before it: it is a claim about WHICH actions the executions were, so it belongs after
+  // every claim about whether the run worked at all and before the clause that says whether the record can be trusted.
   const rung =
     rungClauses === null
       ? null
       : deriveRungVerdict([
           ...rungClauses,
+          actionBreadthClause(actionBreadth),
           Object.freeze({
             id: "execution_trace",
             passed: executionTrace.ok === true,
@@ -5222,9 +5259,6 @@ async function buildRunResult({
   // committed to the result and the bundle together and neither can disagree with the other. Assigned to the module
   // binding `writeRunBundle` reads, so both result paths publish the same read without a second query. The read
   // itself happened above, because the verdict needs it.
-  // What the run tried and changed, read from BOTH channels once the program record is in hand: the builder is the
-  // single place every exit assembles its result, so the crashed path answers exactly what the passed one would.
-  const dispatched = summarizeDispatchedActions(actionTrace, programOutcomes, programSubmissions);
   // The disconnect record reads this, and it is only knowable here: a run whose work all went through programs has
   // `flat: 0` and a large program count, so a disconnect that reported the flat half alone said "nothing had
   // happened" beside its own dispatches.
@@ -5252,6 +5286,10 @@ async function buildRunResult({
     // The SAME code the failure record carries (see `publishReasonCode`): a reader that looks at the result's own
     // `reasonCode` and one that opens `failure.json` are told the same thing, because there is one derivation.
     ...(publishReasonCode === null ? {} : { reasonCode: publishReasonCode }),
+    // WHICH clause that code came from, by id. `deriveRungVerdict` has always known it and the result threw it away,
+    // so a blocked run named a code without naming the obligation it failed; `null` is a passed run (or one that never
+    // reached a rung), never a clause that quietly passed.
+    failedClause: rung?.failedClause ?? null,
     scenario: SCENARIO,
     legacyLadder: LEGACY_LADDER,
     // The multi-day crossing record, when the scenario crossed days: each night's own terminal and menus, the
@@ -5277,6 +5315,11 @@ async function buildRunResult({
     // trace, so "it did nothing" and "the artifact forgot" can never be the same answer.
     attemptedActionIds: dispatched.attempted,
     succeededActionIds: dispatched.succeeded,
+    // HOW MUCH OF THE SURFACE those executions covered: attempted/succeeded against the published population, the
+    // families they fell in, and the concentration the largest single action held. `round39` published 124 executions
+    // and a completed session while attempting 15 of 95 actions, and nothing in its artifact could say so; a narrow
+    // run is now visible in its own bundle rather than in a report nobody opened.
+    actionBreadth,
     // Per-tool-call wall clock attributed by OWNER: `delegate` (a nested agent), the planning tools, a program
     // submission, a program read, or a flat dispatch - one category per tool actually called. `invariant` is the
     // agreement between `flat_dispatch.calls` and `executionTrace.flat`, and it is the ONLY thing published when that
@@ -5477,6 +5520,10 @@ async function writeRunBundle({
     // measured; a `false` here means the trace is missing executions the Mod reported, which is the failure that made a
     // run doing real work read as if nothing happened.
     executionTrace: result.executionTrace,
+    // The same breadth reading the result carries, in the bundle: which actions those executions WERE, against the
+    // published population, so a run that repeated three safe actions cannot read as a varied day from its evidence
+    // package alone. Copied from `result.actionBreadth` rather than measured again here - one derivation per run.
+    actionBreadth: result.actionBreadth,
     // Two files, one record: a reader merges them (execution-trace.mjs) instead of reading the flat file alone and
     // concluding the run dispatched nothing.
     runTrace: runTraceRecordAtAssembly(),

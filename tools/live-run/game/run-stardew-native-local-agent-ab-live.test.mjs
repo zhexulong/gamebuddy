@@ -21,6 +21,7 @@ import { watchRollover } from "../../lib/multiday-loop.mjs";
 import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mjs";
 import { killedReasonCode } from "../../lib/live-run-teardown.mjs";
 import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
+import { actionBreadthClause, measureActionBreadth } from "../../lib/action-breadth.mjs";
 import { executionsFromJournalEvents } from "../../lib/stardew-body-program-journal.mjs";
 import {
   COMPANION_DID_NOT_SLEEP,
@@ -1562,6 +1563,10 @@ test("the assembly logs a tool-timing disagreement by name", async () => {
     ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
     {
       executedActionIds,
+      // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once
+      // and hands it to its own clause, so a test of the builder supplies the real implementations.
+      measureActionBreadth,
+      actionBreadthClause,
       NON_ACCOMPLISHMENT_ACTIONS: new Set(),
       phaseTimings: { runStartedAtMs: 1, marks: {} },
       lastObservedSnapshot: null,
@@ -2766,6 +2771,10 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
     ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
     {
       executedActionIds,
+      // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once
+      // and hands it to its own clause, so a test of the builder supplies the real implementations.
+      measureActionBreadth,
+      actionBreadthClause,
       NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
       phaseTimings: { runStartedAtMs: 1, marks: {} },
       lastObservedSnapshot: null,
@@ -2864,6 +2873,10 @@ test("a run whose work all went through programs publishes a non-empty attempted
     ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
     {
       executedActionIds,
+      // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once
+      // and hands it to its own clause, so a test of the builder supplies the real implementations.
+      measureActionBreadth,
+      actionBreadthClause,
       NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
       phaseTimings: { runStartedAtMs: 1, marks: {} },
       lastObservedSnapshot: null,
@@ -2958,6 +2971,10 @@ test("an error that escapes the run still publishes the work it had already reco
     ],
     {
       executedActionIds,
+      // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once
+      // and hands it to its own clause, so a test of the builder supplies the real implementations.
+      measureActionBreadth,
+      actionBreadthClause,
       NON_ACCOMPLISHMENT_ACTIONS: new Set(["equip_tool"]),
       phaseTimings: { runStartedAtMs: 1, marks: {} },
       lastObservedSnapshot: null,
@@ -3153,6 +3170,10 @@ test("a run interrupted from outside publishes its own verdict, with the evidenc
       {
         // The run's accumulated evidence: this is what a killed run must not lose.
         executedActionIds,
+        // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once
+        // and hands it to its own clause, so a test of the builder supplies the real implementations.
+        measureActionBreadth,
+        actionBreadthClause,
         NON_ACCOMPLISHMENT_ACTIONS: new Set(["equip_tool"]),
         phaseTimings: { runStartedAtMs: 1_700_000_000_000, marks: {} },
         lastObservedSnapshot: null,
@@ -3572,6 +3593,10 @@ test("a settled turn keeps the day going, and the single accessor is what says s
 function builderGlobals(overrides = {}) {
   return {
     executedActionIds,
+    // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once and
+    // hands it to its own clause, so a test of the builder supplies the real implementations.
+    measureActionBreadth,
+    actionBreadthClause,
     NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
     phaseTimings: { runStartedAtMs: 1, marks: {} },
     lastObservedSnapshot: null,
@@ -3652,6 +3677,81 @@ test("a blocked run names the clause that failed, never the scenario it ran in",
   assert.equal(passed.state, "passed");
   assert.equal(passed.failure, null);
   assert.equal(passed.reasonCode, undefined, "a passed run publishes no reason at all");
+});
+
+test("a run that used a handful of the published actions fails its own `action_breadth` clause", async () => {
+  // MEASURED 2026-11-07 (`round39`): `executionTrace: { ok: true, rows: 124 }`, 124 executions all `succeeded`-shaped,
+  // a `completed` session, and 15 of the 95 published actions attempted - four fifths of the surface never touched,
+  // and nothing in the artifact said so. The clause exists so that shape is in the run's OWN verdict. The reading is
+  // the real one (the real catalog and the real `tools/action-breadth-baseline.json`): three actions in three families
+  // over twelve executions cannot meet a ratchet recorded at 24 actions in 11 families.
+  const programId = "plan_breadth";
+  const nodeIds = ["n1", "n2", "n3"];
+  const programOutcomes = Object.freeze([
+    Object.freeze({
+      programId,
+      observed: true,
+      dispatched: 12,
+      executions: Object.freeze(
+        nodeIds.flatMap((nodeId, nodeIndex) =>
+          [1, 2, 3, 4].map((nodeAttempt) =>
+            Object.freeze({
+              nodeId,
+              nodeAttempt,
+              cursor: nodeIndex * 4 + nodeAttempt,
+              atMs: nodeIndex * 10 + nodeAttempt,
+              settledAtMs: nodeIndex * 10 + nodeAttempt + 1,
+            }),
+          ),
+        ),
+      ),
+      nodeOutcomes: Object.freeze(nodeIds.map((nodeId) => Object.freeze({ nodeId, state: "succeeded" }))),
+    }),
+  ]);
+  const [, buildRunResult] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
+    builderGlobals({
+      programSubmissions: [
+        {
+          programId,
+          code: "accepted",
+          accepted: true,
+          nodes: [
+            { nodeId: "n1", actionId: "cut_weeds" },
+            { nodeId: "n2", actionId: "harvest_crop" },
+            { nodeId: "n3", actionId: "move_to_tile" },
+          ],
+        },
+      ],
+    }),
+  );
+  // Every OTHER clause of round38's run satisfied: the breadth clause alone has to be what stops this run.
+  const satisfied = ROUND38_CLAUSES.map((clause) => ({ ...clause, passed: true }));
+  const blocked = await buildRunResult({
+    rungClauses: satisfied,
+    programOutcomesAtTeardown: programOutcomes,
+    settlement: null,
+  });
+  assert.equal(blocked.state, "blocked", "a run that barely used the surface is not a passed run");
+  assert.equal(blocked.failedClause, "action_breadth");
+  assert.match(blocked.reasonCode, /^narrow:below_baseline:/u, "the reason names the ratchet it fell below");
+  assert.equal(blocked.failure.reasonCode, blocked.reasonCode, "the failure dump and the result tell one story");
+  assert.equal(blocked.actionBreadth.attempted, 3);
+  assert.equal(blocked.actionBreadth.families, 3);
+  assert.ok(blocked.actionBreadth.published > blocked.actionBreadth.attempted, "measured against a real population");
+  assert.equal(
+    blocked.actionBreadth.verdict,
+    blocked.reasonCode,
+    "the published reading and the verdict are the same string, not two spellings",
+  );
+  // The passing side: a run nothing could be measured on is NOT narrow, and its clause does not object. The ratchet is
+  // recorded at 24 actions and no synthetic fixture reaches it, so the honest non-narrow case here is `not_measured` -
+  // what must not happen is that a gap in our own reading blocks the run.
+  const unmeasured = await buildRunResult({ rungClauses: satisfied, settlement: null });
+  assert.equal(unmeasured.state, "passed");
+  assert.equal(unmeasured.failedClause, null);
+  assert.match(unmeasured.actionBreadth.verdict, /^not_measured:/u);
 });
 
 test("a run whose execution record could not be read to the end cannot be `passed`", async () => {
