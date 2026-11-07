@@ -37,6 +37,7 @@ import {
   NIGHT_CAUSE_PASS_OUT,
   nightCause,
   parseReceiptEvidence,
+  worldDayStartsFromFacts,
 } from "../../lib/multiday-baseline.mjs";
 import { dayScopeFrom, nightCrossedInScope } from "../../lib/multiday-day-scope.mjs";
 import { judgeUncrossedNight, sleepReceiptOf, sleepVerdictCase, summarizeCrossings } from "./night-verdict.mjs";
@@ -4143,7 +4144,14 @@ try {
       reasonCode: crossing.reasonCode,
       crossingSummary,
       // Judged by the ONE baseline module, so the gate and the runner cannot disagree about what a crossing is.
-      assessment: assessMultiDayBaseline({ dayRecords: crossing.dayRecords, daysRequested: MULTIDAY_CROSSINGS }),
+      // The day COUNT is reconciled against the world's own `day_started` facts, not against the loop's own iterations:
+      // measured 2026-11-06 (`round38`), two watched nights sat beside five world day starts and the assessment read a
+      // clean `crossings: 2`.
+      assessment: assessMultiDayBaseline({
+        dayRecords: crossing.dayRecords,
+        daysRequested: MULTIDAY_CROSSINGS,
+        worldDayStarts: worldDayStartsFromFacts(factLog),
+      }),
       dayRecords: crossing.dayRecords,
     });
   } else {

@@ -16,6 +16,7 @@ import {
   NIGHT_CAUSE_SLEEP_UNSETTLED,
   nightCause,
   parseReceiptEvidence,
+  worldDayStartsFromFacts,
   WAIT_ROLLOVER_MENUS,
 } from "./multiday-baseline.mjs";
 
@@ -69,6 +70,57 @@ const codes = (result) => result.violations.map((entry) => entry.code);
 const ENGINE_TAKEN_NIGHT = (overrides = {}) => ({
   ...DAY({ day: overrides.day ?? 1, terminal: null, after: { dayBefore: 6, dayOfMonth: 7, timeOfDay: 600 } }),
   cause: overrides.cause ?? "pass_out",
+});
+
+// THE POPULATION COMES FROM THE AUTHORITY. Measured 2026-11-06 (`round38`): the assessor recorded TWO nights
+// (`MULTIDAY_NIGHT` x2, bedTime 1910 and 2010) while the world published FIVE `day_started` facts (days 5,6,7,8,9) -
+// three day changes nobody watched, and `night_mechanism_unobserved` stayed silent through all three because every
+// number it read was the assessor's own bookkeeping. A count reconciled against nothing is not a count.
+test("a world with five day_started facts cannot report two crossings", () => {
+  const result = assessMultiDayBaseline({
+    dayRecords: [DAY({ day: 1 }), DAY({ day: 2 })],
+    daysRequested: MINIMUM_BASELINE_DAYS,
+    // The shape the Mod publishes and the runner records: `worldFactKind` + `eventId` on one world_fact entry.
+    worldDayStarts: worldDayStartsFromFacts([
+      { type: "world_fact", worldFactKind: "day_started", eventId: "day_started_day_5" },
+      { type: "world_fact", worldFactKind: "day_started", eventId: "day_started_day_6" },
+      { type: "world_fact", worldFactKind: "day_started", eventId: "day_started_day_7" },
+      { type: "world_fact", worldFactKind: "day_started", eventId: "day_started_day_8" },
+      { type: "world_fact", worldFactKind: "day_started", eventId: "day_started_day_9" },
+    ]),
+  });
+
+  assert.ok(
+    codes(result).includes("day_count_disagrees_with_the_world:2 != 5"),
+    `the world's own count must be named against the assessor's: ${codes(result).join(",")}`,
+  );
+  assert.equal(result.worldDaysCrossed, 5);
+  assert.equal(result.dayCountWitness, "world");
+});
+
+test("a count nobody reconciled against the world says so instead of reading as measured", () => {
+  const result = assessMultiDayBaseline({
+    dayRecords: [DAY({ day: 1 }), DAY({ day: 2 })],
+    daysRequested: MINIMUM_BASELINE_DAYS,
+  });
+
+  assert.equal(result.dayCountWitness, "assessor", "an unreconciled count must name its witness");
+  assert.equal(result.worldDaysCrossed, null);
+});
+
+test("a world whose day starts agree with the records is green on the day count", () => {
+  const agreeing = assessMultiDayBaseline({
+    dayRecords: [DAY({ day: 1 }), DAY({ day: 2 })],
+    daysRequested: MINIMUM_BASELINE_DAYS,
+    worldDayStarts: [5, 6],
+  });
+
+  assert.ok(
+    !codes(agreeing).some((code) => code.startsWith("day_count_disagrees_with_the_world")),
+    codes(agreeing).join(","),
+  );
+  assert.equal(agreeing.daysCrossed, 2);
+  assert.equal(agreeing.worldDaysCrossed, 2);
 });
 
 test("a night witnessed only by the calendar does not demand lifecycle edges it never had", () => {
@@ -751,12 +803,16 @@ test("the rule catalogue lists every rule the gate can fire (round18)", () => {
     { dayRecords: [DAY(), DAY({ day: 2 }), DAY({ day: 3 }), DAY({ day: 4 })], daysRequested: 4 },
     // The minimum, with the window itself inside range.
     { dayRecords: [DAY(), DAY({ day: 2 })], daysRequested: 2, forceMinimum: true },
+    // The world's own day count disagreeing with the assessor's: the measured round38 shape, where two watched nights
+    // sat beside five `day_started` facts.
+    { dayRecords: [DAY(), DAY({ day: 2 })], daysRequested: 2, worldDayStarts: [5, 6, 7, 8, 9] },
   ];
   const fired = new Set();
   for (const entry of battery) {
     const result = assessMultiDayBaseline({
       dayRecords: entry.dayRecords,
       daysRequested: entry.daysRequested ?? 2,
+      worldDayStarts: entry.worldDayStarts ?? null,
     });
     for (const violation of result.violations) fired.add(violation.code.split(":")[0]);
   }

@@ -17,7 +17,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { assessMultiDayBaseline, BASELINE_SCOPE_NOTES, parseReceiptEvidence } from "./lib/multiday-baseline.mjs";
+import {
+  assessMultiDayBaseline,
+  BASELINE_SCOPE_NOTES,
+  parseReceiptEvidence,
+  worldDayStartsFromFacts,
+} from "./lib/multiday-baseline.mjs";
 import { readEvidenceBundle } from "./lib/evidence-bundle.mjs";
 
 const checks = [];
@@ -251,6 +256,38 @@ function fixtureChecks() {
     codes(oneNight).join(","),
   );
 
+  // 3b. THE DAY COUNT COMES FROM THE WORLD. Two watched nights beside five `day_started` facts is exactly the shape
+  // measured on 2026-11-06 (`round38`), where the assessment read `crossings: 2` and `violations: []` while the world had
+  // moved through days 5 to 9. The rule must be able to fire, or it is decoration.
+  const fiveDayStarts = worldDayStartsFromFacts([
+    { worldFactKind: "day_started", eventId: "day_started_day_5" },
+    { worldFactKind: "day_started", eventId: "day_started_day_6" },
+    { worldFactKind: "day_started", eventId: "day_started_day_7" },
+    { worldFactKind: "day_started", eventId: "day_started_day_8" },
+    { worldFactKind: "day_started", eventId: "day_started_day_9" },
+  ]);
+  const disagreeing = assessMultiDayBaseline({
+    dayRecords: [day(), day({ day: 2 })],
+    daysRequested: 2,
+    worldDayStarts: fiveDayStarts,
+  });
+  check(
+    "a_day_count_the_world_disagrees_with_is_named_red",
+    codes(disagreeing).includes("day_count_disagrees_with_the_world:2 != 5"),
+    codes(disagreeing).join(","),
+  );
+  const agreeing = assessMultiDayBaseline({
+    dayRecords: [day(), day({ day: 2 })],
+    daysRequested: 2,
+    worldDayStarts: fiveDayStarts.slice(0, 2),
+  });
+  check(
+    "an_agreeing_world_is_green_on_the_day_count",
+    agreeing.dayCountWitness === "world" &&
+      !codes(agreeing).some((code) => code.startsWith("day_count_disagrees_with_the_world")),
+    `witness=${String(agreeing.dayCountWitness)}:${codes(agreeing).join(",")}`,
+  );
+
   // 4. The Mod's evidence projection is read in both shapes the receipts carry.
   check(
     "evidence_projection_reads_both_shapes",
@@ -294,9 +331,23 @@ async function runDirChecks(runDir) {
     Array.isArray(multiday.dayRecords) && multiday.dayRecords.length === multiday.crossings,
   );
   // Judged again HERE from the raw record, so a run that reported its own verdict cannot override the gate.
+  // The world's own day count comes from the run's artifact, not from the runner's loop count.
+  const worldDayStarts = readWorldDayStarts(runDir);
   const requested = Number.isInteger(multiday.requestedCrossings) ? multiday.requestedCrossings : multiday.crossings;
-  const rejudged = assessMultiDayBaseline({ dayRecords: multiday.dayRecords, daysRequested: requested });
+  const rejudged = assessMultiDayBaseline({
+    dayRecords: multiday.dayRecords,
+    daysRequested: requested,
+    worldDayStarts,
+  });
   check("gate_rejudgement_agrees", rejudged.ok, rejudged.violations.map((entry) => entry.code).join(",") || undefined);
+  // AND THE DAY COUNT IS THE WORLD'S, not the loop's. A run whose `day_started` facts cannot be read has not measured
+  // its crossings, so it cannot pass on the assessor's own count either: `dayCountWitness` names which one answered.
+  check(
+    "the_day_count_is_the_worlds",
+    rejudged.dayCountWitness === "world" &&
+      !rejudged.violations.some((entry) => entry.code.startsWith("day_count_disagrees_with_the_world")),
+    `witness=${String(rejudged.dayCountWitness)};assessor=${String(rejudged.daysCrossed)};world=${String(rejudged.worldDaysCrossed)}`,
+  );
   // A run that was asked for three nights and crossed two is red, and by name: the window rule could not see this
   // while the requested and achieved counts were the same number.
   check(
@@ -304,6 +355,29 @@ async function runDirChecks(runDir) {
     multiday.crossings === requested,
     `crossed=${String(multiday.crossings)} requested=${String(requested)}`,
   );
+}
+
+/**
+ * The world's own `day_started` facts, read from the run's own timeline.
+ *
+ * The timeline is the bundle's declared record of every fact the run received (`timeline.records` is checked against it
+ * by `readEvidenceBundle`), and a `day_started` entry carries `worldFactKind` plus the Mod's minted
+ * `day_started_day_<n>` event id. `null` means the file is absent or unreadable - NOT zero day starts: a count nobody
+ * could read must not be judged as a count of none.
+ */
+function readWorldDayStarts(runDir) {
+  const timelinePath = join(runDir, "timeline.jsonl");
+  if (!existsSync(timelinePath)) return null;
+  const facts = [];
+  for (const line of readFileSync(timelinePath, "utf8").split(/\r?\n/u)) {
+    if (line.trim().length === 0) continue;
+    try {
+      facts.push(JSON.parse(line));
+    } catch {
+      return null;
+    }
+  }
+  return worldDayStartsFromFacts(facts);
 }
 
 function parseOption(name) {

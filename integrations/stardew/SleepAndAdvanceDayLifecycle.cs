@@ -193,6 +193,21 @@ internal sealed class SleepAndAdvanceDayLifecycle
         CommitFailed,
     }
 
+    /// <summary>
+    /// What the day boundary did with a question that was still on screen when the new day began.
+    /// </summary>
+    internal enum StandingQuestionOutcome
+    {
+        /// <summary>No question was standing.</summary>
+        NotAQuestion,
+
+        /// <summary>The question is the day's own: something asked it after this day began, and it is left alone.</summary>
+        AskedByThisDay,
+
+        /// <summary>The question was raised before this day began and was closed. Nothing was answered.</summary>
+        Dismissed,
+    }
+
     private enum Phase
     {
         AwaitingEligibility,
@@ -874,6 +889,42 @@ internal sealed class SleepAndAdvanceDayLifecycle
         if (owner is not null && owner.CanStillCommitSettlementMenu)
             return;
         SettleStandingSettlementMenuWithoutLifecycle(standing);
+    }
+
+    /// <summary>
+    /// A QUESTION STILL ON SCREEN WHEN A NEW DAY BEGINS BELONGS TO THE DAY THAT ENDED. Nothing about the new day has
+    /// asked it, and it cannot be answered without acting on the day nobody has played yet.
+    ///
+    /// Measured 2026-11-06 (`round38`, `.live-runs/.../18-41-39-799Z-multiday_routine`): the native sleep prompt
+    /// (`Strings\Locations:FarmHouse_Bed_GoToSleep`, raised at `GameLocation.cs:3765`) outlived the night it asked
+    /// about, was re-published at 06:00 as a fresh `npc_dialogue_presented` question, and each `Yes` ended the day that
+    /// had just begun - three `day_started` facts in 8.7 s. The prompt also refused the next `advance_day`
+    /// (`sleep` receipt: `actor_held_by_modal;modal_type=DialogueBox;is_question=true`), because a question nobody
+    /// can answer holds the actor exactly as a menu does.
+    ///
+    /// The close is `DialogueBox.closeDialogue()` (DialogueBox.cs:192), the box's own pure cancel: it exits the menu,
+    /// clears `questionChoices`, restores `CanMove` and calls no answer handler - the same seam `SleepModalProbe`
+    /// already falls back to, and the one this class uses for a standing settlement menu it cannot commit. Answering
+    /// is deliberately NOT what happens here: the game's `Sleep_Yes` handler is what starts a night, and nobody
+    /// chose it.
+    ///
+    /// `raisedOnDay` is the day the box APPEARED, read by the dialogue pager when it first saw it. The comparison is
+    /// strict (`<`), so a question something asked after this day began is never touched by the boundary.
+    /// </summary>
+    internal static bool IsQuestionLeftFromAnEndedDay(DialogueBox? standing, int raisedOnDay, int currentDay) =>
+        standing is { isQuestion: true } && raisedOnDay < currentDay;
+
+    internal static StandingQuestionOutcome DismissQuestionLeftFromAnEndedDay(
+        DialogueBox? standing,
+        int raisedOnDay,
+        int currentDay)
+    {
+        if (standing is not { isQuestion: true })
+            return StandingQuestionOutcome.NotAQuestion;
+        if (!IsQuestionLeftFromAnEndedDay(standing, raisedOnDay, currentDay))
+            return StandingQuestionOutcome.AskedByThisDay;
+        standing.closeDialogue();
+        return StandingQuestionOutcome.Dismissed;
     }
 
     /// <summary>

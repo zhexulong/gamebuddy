@@ -282,10 +282,35 @@ function nightOutsideBaselineScope(classified) {
 }
 
 /**
+ * THE WORLD'S OWN DAY STARTS, read off the Mod's `day_started` world facts.
+ *
+ * The one thing in a run that is the world's calendar rather than the runner's loop count. The Mod mints
+ * `day_started_day_<TotalDays>` (`Sensory/ISalientEventFilter.cs:74`), and the runner records the fact verbatim as
+ * `{ worldFactKind: "day_started", eventId: "day_started_day_N", ... }`.
+ *
+ * DISTINCT days, in arrival order: a redelivered fact is the same day beginning, not a second one. A fact whose id is
+ * not the minted shape is skipped rather than counted, because a day number it does not carry cannot be compared.
+ */
+export function worldDayStartsFromFacts(facts) {
+  const days = [];
+  for (const fact of Array.isArray(facts) ? facts : []) {
+    if (!isPlainObject(fact)) continue;
+    const kind = fact.worldFactKind ?? fact.kind ?? fact.payload?.kind;
+    if (kind !== "day_started") continue;
+    const eventId = fact.eventId ?? fact.worldFactPayload?.eventId ?? "";
+    const match = /^day_started_day_(\d+)$/u.exec(typeof eventId === "string" ? eventId : "");
+    if (match === null) continue;
+    const day = Number.parseInt(match[1], 10);
+    if (!days.includes(day)) days.push(day);
+  }
+  return days;
+}
+
+/**
  * Judge one run's day records against the baseline's rules. Every rule can fail on its own and names
  * itself, so a red result says which single-game fact was missing instead of "multi-day timed out".
  */
-export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}) {
+export function assessMultiDayBaseline({ dayRecords, daysRequested = null, worldDayStarts = null } = {}) {
   const violations = [];
   if (!Array.isArray(dayRecords)) {
     return Object.freeze({
@@ -498,6 +523,29 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
   if (daysCrossed < MINIMUM_BASELINE_DAYS) {
     violations.push(violation(`baseline_days_crossed_below_minimum:${String(daysCrossed)}`, "daysCrossed"));
   }
+  // THE POPULATION COMES FROM THE AUTHORITY, NOT FROM THE ASSESSOR'S OWN LOOP COUNT.
+  //
+  // `daysCrossed` counts the records THIS function was handed, and those records are the loop's own iterations. Measured
+  // 2026-11-06 (`round38`, `18-41-39-799Z-multiday_routine`): both records classified as advanced nights and the result
+  // read `crossings: 2`, while the world had published `day_started_day_5` ... `day_started_day_9` - five day changes,
+  // three of them in 8.7 s, none of them watched. Every rule above was green because every number it read came from the
+  // same bookkeeping. The world's own `day_started` facts are the population, and a disagreement is a NAMED finding
+  // carrying both numbers rather than a silent two.
+  //
+  // The witness is published either way: a caller that supplied no world facts gets `dayCountWitness: "assessor"`,
+  // which says the count nobody reconciled is exactly that, instead of letting it read as measured.
+  const worldDaysCrossed = Array.isArray(worldDayStarts)
+    ? [...new Set(worldDayStarts.filter(isFiniteNumber))].length
+    : null;
+  const dayCountWitness = worldDaysCrossed === null ? "assessor" : "world";
+  if (worldDaysCrossed !== null && worldDaysCrossed !== daysCrossed) {
+    violations.push(
+      violation(
+        `day_count_disagrees_with_the_world:${String(daysCrossed)} != ${String(worldDaysCrossed)}`,
+        "worldDayStarts",
+      ),
+    );
+  }
   // The first night is the one the fixture arms with a single shippable object, so it is the one that
   // MUST have raised the menu. Zero dismissals across the whole run means the settlement never
   // happened, which would make the "a rollover does not stall" claim vacuous.
@@ -512,6 +560,8 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null } = {}
     shoppingMenuDismissals,
     passOutNights,
     unobservedNights,
+    worldDaysCrossed,
+    dayCountWitness,
     violations: Object.freeze(violations),
     checkedRules: CHECKED_RULES,
   });
@@ -537,5 +587,6 @@ const CHECKED_RULES = Object.freeze([
   "shipping_menu_not_dismissed",
   "next_day_produced_no_farm_work",
   "baseline_days_crossed_below_minimum",
+  "day_count_disagrees_with_the_world",
   "first_night_shipping_menu_never_dismissed",
 ]);
