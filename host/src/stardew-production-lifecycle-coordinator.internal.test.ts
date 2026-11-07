@@ -5287,8 +5287,9 @@ test("resume names the generation it will establish, not the one on screen", asy
     // The retry a failed attempt earns. The player is looking at generation 2, and
     // the reconnect they are asking for would establish 3 - so naming 2 is the
     // stale-controller refusal. That is the direction the browser panel used to
-    // send, which is why no resume could ever be admitted.
-    await assert.rejects(
+    // send, which is why no resume could ever be admitted. The refusal is a
+    // synchronous one (the command tuple is checked before any attempt starts).
+    assert.throws(
       () =>
         fixture.coordinator.activationOwner.resume(fixture.broker.issue("game_resume"), {
           apiVersion: 1,

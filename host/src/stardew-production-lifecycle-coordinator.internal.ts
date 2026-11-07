@@ -1062,6 +1062,15 @@ function isResumeCancelledError(error: unknown): boolean {
   return error instanceof Error && error.message === "stardew_game_resume_cancelled";
 }
 
+/**
+ * The resume named a session the store holds no resumable world for. It is refused
+ * before any activation exists, so it is not a failed attachment either: the
+ * projection of the live world must stay exactly as it was.
+ */
+function isResumeSessionUnavailableError(error: unknown): boolean {
+  return error instanceof Error && error.message === "stardew_game_resume_session_unavailable";
+}
+
 async function waitForFarmhandBridgeRetry(deadlineMs: number): Promise<void> {
   const remainingMs = deadlineMs - Date.now();
   if (remainingMs <= 0) throw new Error("bridge_connect_deadline_exceeded");
@@ -2492,6 +2501,12 @@ function createCoordinator(
           if (isResumeCancelledError(error)) {
             // The cancel seam owns the reconnect teardown and the disconnected
             // projection; the failed-attachment projection must not overwrite it.
+            throw error;
+          }
+          if (isResumeSessionUnavailableError(error)) {
+            // Nothing was resolved, so nothing failed: reporting `failed` here
+            // would tell the player their world is broken when the only wrong
+            // thing was the session identity they chose.
             throw error;
           }
           attachmentConnectionStatus = "failed";
