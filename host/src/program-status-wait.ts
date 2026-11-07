@@ -156,6 +156,22 @@ export interface ProgramStatusProgress {
    * means the state is new to this process and does not mean the node has done nothing.
    */
   readonly current: Readonly<{ nodeId: string; state: string; observedInStateMs: number }> | null;
+  /**
+   * Every node's own clock, in the order the journal listed them - the same reading `current` publishes, for each node.
+   *
+   * `current` answers "what is the plan waiting on"; this answers "how long has EACH step been where it is", which is
+   * what a per-node answer needs and what one plan cannot have two of: `plan_work` and
+   * `stardew_action_program_status` read their clocks from this one ledger, so a node cannot have one elapsed time in
+   * one tool's answer and a different one in the other's.
+   */
+  readonly nodes: readonly ProgramNodeProgress[];
+}
+
+/** One node's state and how long this Host has watched it there. */
+export interface ProgramNodeProgress {
+  readonly nodeId: string;
+  readonly state: string;
+  readonly observedInStateMs: number;
 }
 
 /** How many plans the Host keeps a node clock for. A measured run submitted 66 programs in 24 minutes, so this is slack. */
@@ -194,6 +210,7 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
       let running = 0;
       let current: ProgramStatusProgress["current"] = null;
       let next: ProgramStatusProgress["current"] = null;
+      const views: ProgramNodeProgress[] = [];
       for (const node of plan.nodes) {
         const anchor = anchors.get(node.nodeId);
         if (anchor === undefined || anchor.state !== node.state)
@@ -203,6 +220,7 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
           state: node.state,
           observedInStateMs: Math.max(0, nowMs - anchors.get(node.nodeId)!.since),
         });
+        views.push(view);
         if (NODE_STATES_SETTLED.has(node.state)) settled += 1;
         else if (NODE_STATES_IN_FLIGHT.has(node.state)) {
           running += 1;
@@ -223,6 +241,7 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
         running,
         queued: remaining - running,
         current: current ?? next,
+        nodes: Object.freeze(views),
       });
     },
   });
@@ -235,6 +254,165 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
  * saw running has been running since then rather than since this one began.
  */
 export const programStatusProgress: ProgramProgressObserver = createProgramProgressObserver();
+
+/**
+ * One node of a plan, answered where the caller wrote it: at its index, with the Mod's own state and reason.
+ *
+ * `state` is the Mod's node-state token VERBATIM (`BodyProgramNodeState` -> `BridgeSession.ToWire`), not a Host
+ * translation. The four states a caller must be able to tell apart are `succeeded` (it did the thing, and its receipt
+ * proved it), `rejected` (refused before it ran, `reasonCode` says why), `failed`/`cancelled` (it ran or was stopped
+ * without succeeding, `reasonCode` is the action's own word), and the non-terminal `pending`,
+ * `awaiting_host_admission`, `host_admitted`, `running`. Folding those into one "did not work" word would erase the
+ * difference between a refusal and a cancellation, which is the difference between "fix the argument" and "you stopped
+ * me".
+ */
+export interface PlanNodeAnswer {
+  /** The 0-based position among the nodes THIS plan carries, so a script can be read back positionally. */
+  readonly index: number;
+  readonly actionId: string;
+  readonly state: string;
+  /** `rejectionCode`, else `failureCode`: the Mod's own reason for a node that did not succeed. */
+  readonly reasonCode?: string;
+  /** Where to go instead, when the reason was that the target had no route. */
+  readonly hint?: string;
+  /** The tile the node acts on, when its arguments name one - the coordinate a refusal is read against. */
+  readonly tile?: Readonly<{ x: number; y: number }>;
+  /**
+   * How long this Host has watched a node that has NOT stopped, in its current state.
+   *
+   * Absent on a terminal node: nothing is still being watched. Present on the rest, including a `pending` one, so
+   * "running for twelve seconds" is a fact the caller can size against "queued for twelve seconds".
+   */
+  readonly elapsedMs?: number;
+}
+
+/** A plan's per-node answer, and the batch statement that goes with it. */
+export interface PlanBatchAnswer {
+  readonly nodes: readonly PlanNodeAnswer[];
+  /** True only when every node reached a terminal state. Never true of a batch that is still running. */
+  readonly settled: boolean;
+  /** Nodes with nothing terminal to report yet. `0` exactly when `settled`. */
+  readonly remaining: number;
+}
+
+/**
+ * The node a plan answer has to name, as the Host compiled it: the id the Mod's journal will carry it under, the
+ * action, and the arguments the caller wrote.
+ */
+export interface PlanAnswerNode {
+  readonly nodeId: string;
+  readonly actionId: string;
+  readonly arguments: Readonly<Record<string, Readonly<{ type: string; canonicalValue?: string }>>>;
+}
+
+/**
+ * The state a plan answers for a node the Mod's journal said nothing about.
+ *
+ * Not `pending`: a node the journal does not list has not been shown to be waiting, and reporting it as queued would be
+ * the Host inventing progress. It is counted as remaining, so a batch with an unreadable node can never read as
+ * settled.
+ */
+const PLAN_NODE_STATE_UNREADABLE = "unknown";
+
+/**
+ * What became of each node the caller wrote, joined on the identity the frame carries.
+ *
+ * <p>
+ * THE JOIN IS THE NODE ID, and it has to be: `plan_work` compiles the ids itself (`n01`, `n02`, ... and
+ * `auto_walk_03` for a walk the compiler inserts before a door), and the Mod's journal accepts the candidate's own ids
+ * verbatim (`OpenBodyProgramJournalAuthority.Accept` -> `new VerifiedBodyProgramNode(node.NodeId, ...)`), so
+ * `nodes[].nodeId` on the status snapshot is the same string the Host compiled. Nothing here reads array position, so
+ * a snapshot that lists its nodes in another order - or a node the Mod re-attempts - cannot be reported against the
+ * wrong step.
+ * </p>
+ * <p>
+ * WHY THIS EXISTS AT ALL: measured in a companion's own session, `plan_work` answered `settled: false` for every batch,
+ * which is a statement about the CALL and was read as one about the WORK. It re-submitted an identical `sleep({})`
+ * three times in twenty seconds, its average batch fell 8.00 -> 5.04 -> 4.47 across one run, and one `sleep` refused
+ * with `actor_held_by_modal` was only discovered from a later fact batch. The states were always in the journal; what
+ * was missing was this projection.
+ * </p>
+ */
+export function planBatchAnswer(
+  compiled: readonly PlanAnswerNode[],
+  snapshot: unknown,
+  clocks: readonly ProgramNodeProgress[] = [],
+): PlanBatchAnswer {
+  const journal = new Map(readPlanJournalNodes(snapshot).map((node) => [node.nodeId, node] as const));
+  const elapsed = new Map(clocks.map((node) => [node.nodeId, node.observedInStateMs] as const));
+  const nodes = compiled.map((node, index) => {
+    const row = journal.get(node.nodeId);
+    const state = row?.state ?? PLAN_NODE_STATE_UNREADABLE;
+    const reasonCode = row?.rejectionCode ?? row?.failureCode ?? null;
+    const hint = row?.hint ?? null;
+    const tile = planNodeTile(node.arguments);
+    const clock = NODE_STATES_SETTLED.has(state) ? undefined : elapsed.get(node.nodeId);
+    return Object.freeze({
+      index,
+      actionId: node.actionId,
+      state,
+      ...(reasonCode === null ? {} : { reasonCode }),
+      ...(hint === null ? {} : { hint }),
+      ...(tile === undefined ? {} : { tile }),
+      ...(clock === undefined ? {} : { elapsedMs: clock }),
+    });
+  });
+  const remaining = nodes.filter((node) => !NODE_STATES_SETTLED.has(node.state)).length;
+  return Object.freeze({ nodes: Object.freeze(nodes), settled: remaining === 0, remaining });
+}
+
+/** One journal row as a plan answer reads it: the Mod's state, and the reasons that may ride with it. */
+type PlanJournalNode = Readonly<{
+  nodeId: string;
+  state: string;
+  rejectionCode?: string | null;
+  failureCode?: string | null;
+  hint?: string | null;
+}>;
+
+/**
+ * The node rows a status snapshot carries, read defensively for the same reason `readPlanProgressSource` is: this is
+ * the shape of a frame from another process, and a row it cannot read is a row a plan answer must not guess at.
+ */
+function readPlanJournalNodes(snapshot: unknown): readonly PlanJournalNode[] {
+  if (typeof snapshot !== "object" || snapshot === null) return [];
+  const rows = (snapshot as Record<string, unknown>).nodes;
+  if (!Array.isArray(rows)) return [];
+  const nodes: PlanJournalNode[] = [];
+  for (const row of rows) {
+    if (typeof row !== "object" || row === null) continue;
+    const entry = row as Record<string, unknown>;
+    if (typeof entry.nodeId !== "string" || typeof entry.state !== "string") continue;
+    nodes.push(
+      Object.freeze({
+        nodeId: entry.nodeId,
+        state: entry.state,
+        rejectionCode: typeof entry.rejectionCode === "string" ? entry.rejectionCode : null,
+        failureCode: typeof entry.failureCode === "string" ? entry.failureCode : null,
+        hint: typeof entry.hint === "string" ? entry.hint : null,
+      }),
+    );
+  }
+  return nodes;
+}
+
+/**
+ * The tile a node acts on, when its arguments name one as two integers.
+ *
+ * Read from the arguments the caller wrote rather than from the snapshot: the compile-time arguments are what the node
+ * was submitted with, and the tile is the one fact that makes "node 3 failed at 61,18" sayable without matching an
+ * execution id. Absent for the thirteen families whose rows carry no tile, and for an action that names none.
+ */
+function planNodeTile(arguments_: PlanAnswerNode["arguments"]): Readonly<{ x: number; y: number }> | undefined {
+  const x = arguments_.x;
+  const y = arguments_.y;
+  if (x?.type !== "integer" || y?.type !== "integer") return undefined;
+  if (x.canonicalValue === undefined || y.canonicalValue === undefined) return undefined;
+  const xValue = Number(x.canonicalValue);
+  const yValue = Number(y.canonicalValue);
+  if (!Number.isSafeInteger(xValue) || !Number.isSafeInteger(yValue)) return undefined;
+  return Object.freeze({ x: xValue, y: yValue });
+}
 
 /**
  * How many consecutive polls with an unchanged snapshot end a wait early.

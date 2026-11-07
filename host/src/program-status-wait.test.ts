@@ -5,6 +5,7 @@ import {
   MAX_PROGRAM_STATUS_WAIT_MS,
   createProgramProgressObserver,
   isTerminalProgramStatus,
+  planBatchAnswer,
   waitForTerminalProgramStatus,
 } from "./program-status-wait.js";
 
@@ -322,6 +323,14 @@ test("a plan with work left says how much is left, and which node it is on", () 
     running: 1,
     queued: 2,
     current: { nodeId: "n2", state: "running", observedInStateMs: 0 },
+    // Every node's own clock, in journal order: the same reading `current` publishes, for each node, so the per-node
+    // answer `plan_work` gives and the `current` this tool gives cannot disagree about one plan's node.
+    nodes: [
+      { nodeId: "n1", state: "succeeded", observedInStateMs: 0 },
+      { nodeId: "n2", state: "running", observedInStateMs: 0 },
+      { nodeId: "n3", state: "pending", observedInStateMs: 0 },
+      { nodeId: "n4", state: "awaiting_host_admission", observedInStateMs: 0 },
+    ],
   });
 });
 
@@ -435,3 +444,141 @@ function plan(nodes: readonly (readonly [string, string])[], state = "active", s
     },
   };
 }
+
+/**
+ * A PLAN'S PER-NODE ANSWER, read against the identity the frame carries.
+ *
+ * The join is the node id, and the Mod's journal accepts the candidate's own ids verbatim, so the journal order is
+ * irrelevant: `plan_work` compiles `n01`, `n02`, ... and an `auto_walk_NN` for a door's walk, and those are the strings
+ * the snapshot comes back with. Every case below hands the journal rows in an order that is NOT the script order, so a
+ * reader that numbers them by array position answers the wrong node.
+ */
+const answerNode = (nodeId: string, actionId = "move_to_tile", x?: number, y?: number) => ({
+  nodeId,
+  actionId,
+  arguments:
+    x === undefined || y === undefined
+      ? {}
+      : {
+          x: { type: "integer", canonicalValue: String(x) },
+          y: { type: "integer", canonicalValue: String(y) },
+        },
+});
+
+test("a plan answers every node it carries at its own index, never at the journal's array position", () => {
+  const answer = planBatchAnswer([answerNode("n01", "move_to_tile", 5, 8), answerNode("n02")], {
+    programId: "p1",
+    state: "failed",
+    nodes: [
+      { nodeId: "n02", state: "succeeded", nodeAttempt: 1, admissionAttempt: 1 },
+      { nodeId: "n01", state: "rejected", rejectionCode: "actor_held_by_modal" },
+    ],
+  });
+  assert.deepEqual(answer.nodes, [
+    {
+      index: 0,
+      actionId: "move_to_tile",
+      state: "rejected",
+      reasonCode: "actor_held_by_modal",
+      tile: { x: 5, y: 8 },
+    },
+    { index: 1, actionId: "move_to_tile", state: "succeeded" },
+  ]);
+});
+
+test("a batch is settled only when every node has stopped, and says how many have not", () => {
+  const compiled = [answerNode("n01"), answerNode("n02"), answerNode("n03")];
+  const running = planBatchAnswer(compiled, {
+    nodes: [
+      { nodeId: "n03", state: "pending" },
+      { nodeId: "n02", state: "host_admitted" },
+      { nodeId: "n01", state: "succeeded" },
+    ],
+  });
+  assert.equal(running.settled, false, "one node is dispatched and one is queued");
+  assert.equal(running.remaining, 2);
+  const stopped = planBatchAnswer(compiled, {
+    nodes: [
+      { nodeId: "n01", state: "succeeded" },
+      { nodeId: "n02", state: "cancelled" },
+      // The wire's own word for a node whose fate is unknown (`BodyProgramNodeState` maps `SkippedDependency` and
+      // `Abandoned` onto `recovery_required`), so a cancelled and an unknowable node both stop the batch.
+      { nodeId: "n03", state: "recovery_required" },
+    ],
+  });
+  assert.equal(stopped.settled, true, "a cancelled node and an unknowable one have both stopped");
+  assert.equal(stopped.remaining, 0, "nothing is left to wait for");
+});
+
+test("a node the journal does not describe is unknown, and never counts as settled", () => {
+  // A journal that does not list a node has not shown it to be waiting, so `pending` would be the Host inventing
+  // progress; counting it as settled would be worse - it would report a batch finished around work it never read.
+  const answer = planBatchAnswer([answerNode("n01"), answerNode("n02")], {
+    nodes: [{ nodeId: "n01", state: "succeeded" }],
+  });
+  assert.deepEqual(answer.nodes[1], { index: 1, actionId: "move_to_tile", state: "unknown" });
+  assert.equal(answer.settled, false);
+  assert.equal(answer.remaining, 1);
+  // No snapshot at all - `not_found`, or a submission the Mod refused - reads the same way, rather than as an empty plan.
+  const unread = planBatchAnswer([answerNode("n01")], null);
+  assert.equal(unread.remaining, 1);
+  assert.equal(unread.settled, false);
+});
+
+test("a node's reason is the receipt's own word, and its reachability hint travels beside it", () => {
+  const answer = planBatchAnswer([answerNode("n01", "move_to_tile", 49, 14)], {
+    nodes: [
+      {
+        nodeId: "n01",
+        state: "failed",
+        failureCode: "no_native_path",
+        hint: "closest=49,14;closest_distance=1",
+        rejectionCode: null,
+      },
+    ],
+  });
+  // `failureCode` is why a dispatched node settled without succeeding; `rejectionCode` is why one never ran. They are
+  // disjoint on the Mod's side, and reading either as the other would turn a refusal into a failure.
+  assert.equal(answer.nodes[0]?.reasonCode, "no_native_path");
+  assert.equal(answer.nodes[0]?.hint, "closest=49,14;closest_distance=1");
+});
+
+test("a tile rides only on a node whose own arguments name one", () => {
+  const answer = planBatchAnswer(
+    [
+      answerNode("n01", "move_to_tile", 61, 18),
+      { nodeId: "n02", actionId: "sleep", arguments: {} },
+      // A destination selector carries no `canonicalValue`: it is a typed object, not a scalar, and a tile read out of one
+      // would be a coordinate the caller never wrote.
+      { nodeId: "n03", actionId: "enter_exit", arguments: { x: { type: "integer", canonicalValue: "3" } } },
+    ],
+    { nodes: [] },
+  );
+  assert.deepEqual(answer.nodes[0]?.tile, { x: 61, y: 18 });
+  assert.equal("tile" in (answer.nodes[1] as object), false);
+  assert.equal("tile" in (answer.nodes[2] as object), false, "an unpaired coordinate is not a tile");
+});
+
+test("a clock rides only on a node that has not stopped", () => {
+  const clocks = [
+    { nodeId: "n01", state: "succeeded", observedInStateMs: 4_000 },
+    { nodeId: "n02", state: "running", observedInStateMs: 12_500 },
+    { nodeId: "n03", state: "pending", observedInStateMs: 300 },
+  ];
+  const answer = planBatchAnswer(
+    [answerNode("n01"), answerNode("n02"), answerNode("n03")],
+    {
+      nodes: [
+        { nodeId: "n01", state: "succeeded" },
+        { nodeId: "n02", state: "running" },
+        { nodeId: "n03", state: "pending" },
+      ],
+    },
+    clocks,
+  );
+  // A stopped node is not still being watched, so it carries no clock - and the two that are carry their own, which is
+  // what makes "running for twelve seconds" sayable instead of a bare "still running".
+  assert.equal("elapsedMs" in (answer.nodes[0] as object), false);
+  assert.equal(answer.nodes[1]?.elapsedMs, 12_500);
+  assert.equal(answer.nodes[2]?.elapsedMs, 300, "a queued node's wait is timed too");
+});
