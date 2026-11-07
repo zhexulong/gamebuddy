@@ -164,7 +164,7 @@ const declaredDynamicExternalImport = (value, packages) => value !== null && typ
 
 /** A fail-closed TypeScript lexical parser. Comments and strings are syntax,
  * never regex input; malformed emitted JavaScript is rejected. */
-function lexicalModuleIngress(content) {
+export function lexicalModuleIngress(content) {
   const source = ts.createSourceFile("artifact.js", content, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   if (source.parseDiagnostics.length > 0) throw new Error("production_module_lexical_parse_failed");
   const staticSpecifiers = []; const dynamicCalls = []; const processBuiltinModuleIngresses = [];

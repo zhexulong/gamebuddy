@@ -299,6 +299,17 @@ jobs:
       # which is what `assertLiveRunArtifactFresh` in the harness loader requires.
       - run: pnpm --dir host build:test
         timeout-minutes: 15
+      # Two gates that read the published generation, and neither ran anywhere before this step.
+      # `check-release-generation-self-contained` asks whether the generation on disk holds every module it
+      # names AND every module the current `production-artifact.config.json` declares - measured 2026-11-07 it
+      # did not hold `composition/companion-session-reflection.js`, whose import lives in a source file emitted
+      # a day after the artifact was frozen, so no specifier inside the artifact could point at it.
+      # `check-production-artifact` is the publisher's own complete re-verification; `grep` over `package.json`
+      # and `.github/workflows` found nothing naming it, so the generation on disk was verified only when a live
+      # run happened to need it. A gate nobody calls is indistinguishable from a passing one.
+      - run: node tools/check-release-generation-self-contained.mjs
+      - run: node --test tools/check-release-generation-self-contained.test.mjs
+      - run: node host/scripts/check-production-artifact.mjs
       - run: node tools/check-ci-coverage.mjs
       # `check:draft-declaration-coverage` drives a mounted zone, and the prerequisite it declares is a Chromium the
       # checkout does not create. Without this the gate refuses with `playwright_browser_missing`, which reads in the

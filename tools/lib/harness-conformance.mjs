@@ -478,6 +478,15 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
     reason: "this suite's CLI; falsifiers in tools/lib/harness-conformance.test.mjs",
   },
   { gate: "check-head-typecheck.mjs", reason: "runs tsc over the worktree; no offline rule set" },
+  {
+    gate: "check-release-generation-self-contained.mjs",
+    reason:
+      "reads the published generation's own inventory and the current production-artifact.config.json, so its " +
+      "default run needs `host/dist` - absent in CI, where it reports `not_measured` and exits 0 rather than " +
+      "passing; its falsifier is tools/check-release-generation-self-contained.test.mjs, which plants a module " +
+      "the source declares and the generation lacks, a module deleted from the generation, a computed dynamic " +
+      "argument and an anchored path composition, and the gate's own red-proof markers name them",
+  },
   { gate: "check-host-diagnostic-output.mjs", reason: "static source gate; falsifier in its test" },
   { gate: "check-host-game-physical-seam.mjs", reason: "static source gate; falsifier in its test" },
   { gate: "check-host-production-import-boundary.mjs", reason: "full source scan; falsifier in its test" },
