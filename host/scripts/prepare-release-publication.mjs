@@ -29,7 +29,14 @@ function fail(reason) {
  * `tag` is the workflow's `GITHUB_REF_NAME`; the version in the manifest has to be that same tag without its `v`, so a
  * manifest cannot be published under a release whose name disagrees with it.
  */
-export async function preparePublication({ manifestPath, tag, generationOutputRoot, verifySignature, platform }) {
+export async function preparePublication({
+  manifestPath,
+  tag,
+  generationOutputRoot,
+  verifySignature,
+  platform,
+  allowUnsigned = false,
+}) {
   if (typeof tag !== "string" || !/^v\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(tag)) {
     fail(`tag_invalid:${String(tag)}`);
   }
@@ -42,23 +49,38 @@ export async function preparePublication({ manifestPath, tag, generationOutputRo
   if (tag.slice(1) !== verdict.version) {
     fail(`tag_version_mismatch:${tag.slice(1)}!=${verdict.version}`);
   }
+  const manifest = JSON.parse(await readFile(resolve(manifestPath), "utf8"));
+
   if (verdict.signed !== true) {
-    fail("publication_requires_signature");
+    // An unsigned artifact may only be published when the lane says so AND the manifest agrees it is unsigned. The
+    // configuration check is what stops a signed build from being relabelled: Release cannot exist unsigned.
+    if (!allowUnsigned) fail("publication_requires_signature");
+    if (manifest.configuration !== "Debug") fail(`unsigned_but_configuration_is:${String(manifest.configuration)}`);
   }
 
-  const manifest = JSON.parse(await readFile(resolve(manifestPath), "utf8"));
   const directory = dirname(resolve(manifestPath));
   const assets = [join(directory, manifest.installer.file), resolve(manifestPath)];
   // The payload is uploaded alongside the installer so an upgrade path, or a player who wants to inspect what the
   // installer carries, can bind it to the manifest's digest without unpacking a 447 MB executable.
   const payload = join(directory, "payload.zip");
+  const unsigned = verdict.signed !== true;
   return Object.freeze({
     tag,
     version: verdict.version,
     generation: verdict.generation,
     installerSha256: verdict.installerSha256,
+    // Carried in the publication record, so "was this release signed?" is answerable from the record rather than by
+    // reading a workflow.
+    unsigned,
     assets: Object.freeze([...assets, payload]),
     body: [
+      ...(unsigned
+        ? [
+            "> **This build is not code-signed.** Windows SmartScreen may warn on first run, and the publisher's",
+            "> identity is not attested by this artifact. Verify the SHA-256 below before running it.",
+            "",
+          ]
+        : []),
       `GameBuddy ${verdict.version}`,
       "",
       `- Installer: \`${manifest.installer.file}\` (${manifest.installer.bytes} bytes)`,
@@ -78,8 +100,15 @@ export async function preparePublication({ manifestPath, tag, generationOutputRo
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const [manifestPath, tag, generationOutputRoot] = process.argv.slice(2);
-    const publication = await preparePublication({ manifestPath, tag, generationOutputRoot });
+    const [manifestPath, tag, generationOutputRoot] = process.argv
+      .slice(2)
+      .filter((value) => value !== "--allow-unsigned");
+    const publication = await preparePublication({
+      manifestPath,
+      tag,
+      generationOutputRoot,
+      allowUnsigned: process.argv.includes("--allow-unsigned"),
+    });
     process.stdout.write(`${JSON.stringify(publication, null, 2)}\n`);
   } catch (error) {
     process.stderr.write(`${error.message}\n`);

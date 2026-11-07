@@ -354,7 +354,9 @@
     "check:ci-dead-conditions": "node tools/check-ci-dead-conditions.mjs",
     "test:ci-dead-conditions": "node --test tools/check-ci-dead-conditions.test.mjs",
     "check:vendored-bundle-leaks": "node tools/check-vendored-bundle-leaks.mjs",
-    "test:vendored-bundle-leaks": "node --test tools/check-vendored-bundle-leaks.test.mjs"
+    "test:vendored-bundle-leaks": "node --test tools/check-vendored-bundle-leaks.test.mjs",
+    "build:magic-context": "bun run --cwd vendor/magic-context/packages/pi-plugin build && node tools/normalise-vendored-bundle-shims.mjs",
+    "test:vendored-bundle-shims": "node --test tools/normalise-vendored-bundle-shims.test.mjs"
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",

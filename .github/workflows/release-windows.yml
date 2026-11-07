@@ -43,7 +43,7 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
-      - run: bun run --cwd vendor/magic-context/packages/pi-plugin build
+      - run: pnpm build:magic-context
       # pi-koe is the Voice repository mounted as vendor/pi-koe (git submodule).
       # Its protocol package must be BUILT BEFORE the root install: the root
       # `pnpm install` snapshots the `file:` dependency into the pnpm store AT
@@ -122,7 +122,8 @@ jobs:
       # in Release - the configuration whose own MSBuild target refuses to produce an unsigned artifact. The signing
       # identity comes from the protected environment and is never defaulted; without it this step fails with
       # `signing_identity_required` rather than publishing something nobody signed.
-      - name: Assemble the player release
+      - name: Assemble the player release (signed)
+        if: ${{ secrets.GAMEBUDDY_SIGNING_CERTIFICATE_PFX_BASE64 != '' }}
         run: >-
           node host/scripts/build-release-installer.mjs
           --generation-output host/dist
@@ -130,9 +131,21 @@ jobs:
           --version "${{ github.ref_name }}"
           --repository "${{ github.repository }}"
         env:
-          GAMEBUDDY_SIGNING_THUMBPRINT: ${{ secrets.GAMEBUDDY_SIGNING_THUMBPRINT }}
+          GAMEBUDDY_SIGNING_THUMBPRINT: ${{ env.GAMEBUDDY_SIGNING_THUMBPRINT }}
           GAMEBUDDY_TIMESTAMP_URL: ${{ secrets.GAMEBUDDY_TIMESTAMP_URL }}
           GAMEBUDDY_SIGNTOOL: ${{ secrets.GAMEBUDDY_SIGNTOOL }}
+
+      # No certificate: the artifact is built in the configuration that is allowed to exist unsigned, and the manifest
+      # records that it is unsigned. Publication accepts it only because this lane says so - see `--allow-unsigned`.
+      - name: Assemble the player release (unsigned)
+        if: ${{ secrets.GAMEBUDDY_SIGNING_CERTIFICATE_PFX_BASE64 == '' }}
+        run: >-
+          node host/scripts/build-release-installer.mjs
+          --generation-output host/dist
+          --out desktop/dist/release
+          --version "${{ github.ref_name }}"
+          --repository "${{ github.repository }}"
+          --unsigned
 
       # The manifest is held to the bytes it describes, and to the generation the pointer names, so a release cannot
       # claim an artifact this job did not build.
@@ -151,7 +164,7 @@ jobs:
           node host/scripts/prepare-release-publication.mjs
           desktop/dist/release/release-manifest.json
           "${{ github.ref_name }}"
-          host/dist > desktop/dist/release/publication.json
+          host/dist --allow-unsigned > desktop/dist/release/publication.json
         env:
           GAMEBUDDY_SIGNTOOL: ${{ secrets.GAMEBUDDY_SIGNTOOL }}
 
@@ -303,7 +316,7 @@ jobs:
         run: >-
           node host/scripts/prepare-release-publication.mjs
           release/release-manifest.json
-          "${{ github.ref_name }}" > release/publication.json
+          "${{ github.ref_name }}" --allow-unsigned > release/publication.json
         env:
           GAMEBUDDY_SIGNTOOL: ${{ secrets.GAMEBUDDY_SIGNTOOL }}
       # `gh` with the runner's own token, not a third-party release action: the repository already treats this lane as

@@ -51,7 +51,7 @@ jobs:
       # Build the vendored source before pnpm packages the local dependency.
       # Host production build hashes the packaged artifact against this output.
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
-      - run: bun run --cwd vendor/magic-context/packages/pi-plugin build
+      - run: pnpm build:magic-context
       # pi-koe is the Voice repository mounted as vendor/pi-koe (git submodule)
       # and is a pnpm workspace of its own, so the root install does not install
       # it. Its protocol package must exist BEFORE the root install: the root
@@ -290,7 +290,7 @@ jobs:
       # the protocol package has to be BUILT before that install runs, or the snapshot has no `dist/` and the
       # compile fails with `Cannot find module '@gamebuddy/voice-protocol'`.
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
-      - run: bun run --cwd vendor/magic-context/packages/pi-plugin build
+      - run: pnpm build:magic-context
       - run: pnpm --dir vendor/pi-koe install --frozen-lockfile
       - run: pnpm run build
         working-directory: vendor/pi-koe/packages/voice-protocol
