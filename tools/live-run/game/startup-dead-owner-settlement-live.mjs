@@ -40,6 +40,15 @@ const TMP = tmpdir();
  * past that is a leak by definition; a hard cap makes it impossible rather than unlikely.
  */
 const OWNER_MAX_LIFETIME_MS = 180_000;
+/**
+ * `openProductionContinuityStore({ runtimeRoot })` opens `join(runtimeRoot, DB)` and the product hands it the
+ * AUTHORITY directory, not the deployment root: `openProductionStore(knownAuthorityRoot(runtimeCwd))` in
+ * `continuity-semantic-provisioning.internal.ts`. Pointing it at the deployment root opened a second, empty
+ * database beside the real one and every read of the owner's durable rows then answered an identity mismatch.
+ */
+const AUTHORITY_DIRECTORY_NAME = ".gamebuddy-semantic-continuity-v1";
+const DATABASE_NAME = "gamebuddy-continuity-v1.sqlite";
+const authorityRoot = (runtimeRoot) => join(runtimeRoot, AUTHORITY_DIRECTORY_NAME);
 
 async function artifactRoot() {
   const outputRoot = join(process.cwd(), "host", "dist");
@@ -229,49 +238,67 @@ function startOwner(artifactRootPath, manifestPath) {
   });
 }
 
-async function settle(artifactRootPath, runRoot) {
-  const { store, coordinator, ownerDeath, manifest } = modules(artifactRootPath);
+/**
+ * Where the settlement lives, and which artifact the owner runs as.
+ *
+ * The settlement is exported from the coordinator's `internal` module - what holds it is
+ * `continuity-semantic-production-coordinator.internal.ts`, and looking only at the barrel finds it in neither
+ * artifact. A published generation built before that file existed has no settlement at all, so the settlement
+ * must come from the tree's own build.
+ *
+ * The OWNER cannot, and stays on the published generation: the release it crashed as is exactly the scenario
+ * under test, and the default path-lock policy mints its native helper pair only from a published artifact root.
+ * A `dist-test` owner fails before its first write with `durable_path_lock_release_failed:windows_reclaimer_unavailable`.
+ *
+ * Both artifacts therefore share one authority, which is only sound while they agree about its schema; the store
+ * refuses a database whose physical signature it does not own (`unsupported_production_store_schema`) before any
+ * read, so a release that moved the schema would fail this harness loudly rather than settle the wrong rows.
+ */
+async function resolveSettlementArtifact(resolved) {
+  const internalAt = (root) =>
+    pathToFileURL(
+      join(
+        root,
+        "continuity-semantic-production-coordinator",
+        "continuity-semantic-production-coordinator.internal.js",
+      ),
+    ).href;
+  const load = async (root) => {
+    try {
+      const internal = await import(internalAt(root));
+      return typeof internal.settleDurableGameRecoveryOnStartup === "function"
+        ? internal.settleDurableGameRecoveryOnStartup
+        : null;
+    } catch {
+      return null;
+    }
+  };
+  const published = await load(resolved.artifactRoot);
+  if (published !== null)
+    return Object.freeze({
+      ownerRoot: resolved.artifactRoot,
+      settlementRoot: resolved.artifactRoot,
+      label: "published-generation (internal module)",
+      settle: published,
+    });
+  const build = join(process.cwd(), "host", "dist-test");
+  const settle = await load(build);
+  if (settle === null) throw new Error("settleDurableGameRecoveryOnStartup is absent from both artifacts");
+  return Object.freeze({
+    ownerRoot: resolved.artifactRoot,
+    settlementRoot: build,
+    label: "dist-test settlement over a published-generation owner (the published generation predates the settlement)",
+    settle,
+  });
+}
+
+async function settle(artifact, runRoot) {
+  const { store, ownerDeath, manifest } = modules(artifact.settlementRoot);
   const { openProductionContinuityStore } = await import(store);
   const { createWindowsOwnerDeathVerifier } = await import(ownerDeath);
   const { loadHostDeploymentManifest } = await import(manifest);
-  /**
-   * The published generation predates the settlement: it is an immutable artifact built before this code
-   * existed, so it has no `settleDurableGameRecoveryOnStartup` and driving it would prove nothing about HEAD.
-   * The harness falls back to the build of the tree it runs in and names the artifact in its own reading -
-   * an artifact under test must be stated, never assumed.
-   */
-  const candidate = await import(coordinator);
-  let settleFn = candidate.settleDurableGameRecoveryOnStartup;
-  let artifactUnderTest = "published-generation";
-  /**
-   * The settlement is exported from the coordinator's `internal` module, which is where the file that holds
-   * it lives - `continuity-semantic-production-coordinator.internal.ts`. Looking only at the barrel found it
-   * in neither artifact and the harness refused, which is the correct outcome for an unresolvable seam.
-   */
-  if (typeof settleFn !== "function") {
-    for (const root of [artifactRootPath, join(process.cwd(), "host", "dist-test")]) {
-      const internal = await import(
-        pathToFileURL(
-          join(
-            root,
-            "continuity-semantic-production-coordinator",
-            "continuity-semantic-production-coordinator.internal.js",
-          ),
-        ).href
-      );
-      if (typeof internal.settleDurableGameRecoveryOnStartup === "function") {
-        settleFn = internal.settleDurableGameRecoveryOnStartup;
-        artifactUnderTest =
-          root === artifactRootPath
-            ? "published-generation (internal module)"
-            : "dist-test (the published generation predates the settlement)";
-        break;
-      }
-    }
-  }
-  if (typeof settleFn !== "function")
-    throw new Error("settleDurableGameRecoveryOnStartup is absent from both artifacts");
-  console.log(`  artifact under test: ${artifactUnderTest}`);
+  const settleFn = artifact.settle;
+  console.log(`  artifact under test: ${artifact.label}`);
   const loaded = await loadHostDeploymentManifest(runRoot.manifestPath);
   const principal = loaded.principal ?? loaded.value?.principal ?? runRoot.principal;
   const verifier = createWindowsOwnerDeathVerifier();
@@ -281,10 +308,10 @@ async function settle(artifactRootPath, runRoot) {
    * for its keys (`bootstrapFresh, validateBootstrap, bindBootstrapContext, configuration, close`) rather than
    * by reading the 5,000-line file; recorded as project memory #5387.
    */
-  const control = openProductionContinuityStore({ runtimeRoot: runRoot.runtimeRoot });
+  const control = openProductionContinuityStore({ runtimeRoot: authorityRoot(runRoot.runtimeRoot) });
   /**
    * The bootstrap tuple is taken from the durable row the owner wrote, not reconstructed from the manifest.
-   * `validateBootstrap` refused a hand-built one twice (`invalid_production_bootstrap`, then
+   * `validateBootstrap` refused a hand-built one (`invalid_production_bootstrap`, then
    * `production_store_identity_mismatch`), because the identity is minted at fresh bootstrap and only the
    * store itself can say what it is. Reading it back is the same move as reading the recovery target back:
    * ask the durable state instead of re-deriving it.
@@ -300,13 +327,14 @@ async function settle(artifactRootPath, runRoot) {
     authorityGeneration: Number(recorded.authority_generation),
     authorityRootIdentity: recorded.authority_root_identity,
   });
-  const metadata = Object.freeze({ storeId: recorded.store_id, schemaVersion: Number(recorded.schema_version) });
-  const continuity = control.bindBootstrapContext(
-    Object.freeze({
-      bootstrap,
-      metadata: Object.freeze({ storeId: metadata.storeId, schemaVersion: metadata.schemaVersion }),
-    }),
-  );
+  /**
+   * `metadata` is the store's answer, not a row read: `production_bootstrap` carries no `schema_version` (its
+   * seven columns stop at `authority_root_identity`), so a metadata built from that row was `NaN` and
+   * `freezeBootstrapContext` refused it. This is the same call `provision` makes - `control.validateBootstrap`
+   * returns the live `{ storeId, schemaVersion }` - and `bindBootstrapContext` takes it verbatim.
+   */
+  const metadata = control.validateBootstrap(bootstrap);
+  const continuity = control.bindBootstrapContext(Object.freeze({ bootstrap, metadata }));
   const stderrLines = [];
   const originalWrite = process.stderr.write.bind(process.stderr);
   process.stderr.write = (chunk, ...rest) => {
@@ -358,10 +386,10 @@ async function settle(artifactRootPath, runRoot) {
 
 /* ---------------------------------------------------------------- the two phases */
 
-async function deadOwnerPhase(artifactRootPath) {
+async function deadOwnerPhase(artifact) {
   const root = mkdtempSync(join(TMP, "gamebuddy-dead-owner-"));
   const runRoot = writeRunRoot(root, "deadowner");
-  const owner = startOwner(artifactRootPath, runRoot.manifestPath);
+  const owner = startOwner(artifact.ownerRoot, runRoot.manifestPath);
   const ready = await owner.awaitLine("OWNER_READY", 120_000);
   record(
     "the owner Host completed a real Game enter and opened a close intent",
@@ -375,7 +403,7 @@ async function deadOwnerPhase(artifactRootPath) {
   const killed = await owner.kill();
   record("taskkill /F removed exactly that owner PID", killed, `pid=${String(owner.pid)} gone=${String(killed)}`);
 
-  const settled = await settle(artifactRootPath, runRoot);
+  const settled = await settle(artifact, runRoot);
   record(
     "the settlement recovered the abandoned lease",
     settled.error === null && settled.readback !== null,
@@ -393,10 +421,10 @@ async function deadOwnerPhase(artifactRootPath) {
   return root;
 }
 
-async function livingOwnerPhase(artifactRootPath) {
+async function livingOwnerPhase(artifact) {
   const root = mkdtempSync(join(TMP, "gamebuddy-living-owner-"));
   const runRoot = writeRunRoot(root, "livingowner");
-  const owner = startOwner(artifactRootPath, runRoot.manifestPath);
+  const owner = startOwner(artifact.ownerRoot, runRoot.manifestPath);
   const ready = await owner.awaitLine("OWNER_READY", 120_000);
   record(
     "the control owner Host reached the same durable state",
@@ -407,7 +435,7 @@ async function livingOwnerPhase(artifactRootPath) {
     await owner.kill();
     return root;
   }
-  const settled = await settle(artifactRootPath, runRoot);
+  const settled = await settle(artifact, runRoot);
   record(
     "the settlement refused a living owner by name",
     settled.error === "game_recovery_blocked_owner_alive",
@@ -424,12 +452,9 @@ async function livingOwnerPhase(artifactRootPath) {
 }
 
 function readRecordedBootstrap(runtimeRoot) {
-  const db = new DatabaseSync(
-    join(runtimeRoot, ".gamebuddy-semantic-continuity-v1", "gamebuddy-continuity-v1.sqlite"),
-    {
-      readOnly: true,
-    },
-  );
+  const db = new DatabaseSync(join(authorityRoot(runtimeRoot), DATABASE_NAME), {
+    readOnly: true,
+  });
   try {
     const row = db.prepare("select * from production_bootstrap").get();
     if (!row) throw new Error("production_bootstrap_absent");
@@ -440,7 +465,7 @@ function readRecordedBootstrap(runtimeRoot) {
 }
 
 function readDurableState(runtimeRoot) {
-  const path = join(runtimeRoot, ".gamebuddy-semantic-continuity-v1", "gamebuddy-continuity-v1.sqlite");
+  const path = join(authorityRoot(runtimeRoot), DATABASE_NAME);
   const db = new DatabaseSync(path, { readOnly: true });
   try {
     const session = db.prepare("select state from production_game_session limit 1").get();
@@ -487,11 +512,14 @@ async function main(argv) {
     return;
   }
 
-  console.log(`startup_dead_owner_settlement: generation=${resolved.generation} artifactRoot=${resolved.artifactRoot}`);
+  const artifact = await resolveSettlementArtifact(resolved);
+  console.log(
+    `startup_dead_owner_settlement: generation=${resolved.generation} owner=${artifact.ownerRoot} settlement=${artifact.settlementRoot} artifact=${artifact.label}`,
+  );
   const roots = [];
   try {
-    roots.push(await deadOwnerPhase(resolved.artifactRoot));
-    roots.push(await livingOwnerPhase(resolved.artifactRoot));
+    roots.push(await deadOwnerPhase(artifact));
+    roots.push(await livingOwnerPhase(artifact));
   } finally {
     for (const root of roots) rmSync(root, { recursive: true, force: true });
   }
