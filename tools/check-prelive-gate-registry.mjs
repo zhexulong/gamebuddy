@@ -95,6 +95,16 @@ export const REASON_CLASSES = Object.freeze({
  */
 export const EXEMPTIONS = Object.freeze([
   {
+    path: "tools/audit-action-breadth.mjs",
+    reason:
+      "arguments: requires `--result <bundle>/result.json` from one FINISHED live run and, for the concentration, the" +
+      " flat trace in that run's directory, so there is nothing to measure before a run exists; measured 2026-11-07 on" +
+      " round39 it reports `attempted 15 of 95` and `narrow:below_baseline:round38`. Its verdict is also published in" +
+      " every bundle by the runner's own `action_breadth` clause, which is what keeps a narrow run visible without" +
+      " anyone remembering to run this entry",
+    runsIn: "on-demand",
+  },
+  {
     path: "tools/audit-chat-live-run.mjs",
     reason:
       "arguments: requires `--audit <chat-run-dir>` pointing at an existing Chat live-run directory (same entry as " +
