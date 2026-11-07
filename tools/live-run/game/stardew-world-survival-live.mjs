@@ -36,21 +36,28 @@
  *   2. ordinary close (`contain_role ai_client`)                -> world alive, NEW observation
  *   3. AI crash (`taskkill /F` of the exact AI-side PID)        -> world alive, NEW observation
  *   4. controller EOF (the Guardian's control channel closed)   -> world alive, NEW observation
- *   5. guardian last-handle close (Guardian terminated)         -> world alive, NEW observation
- *   6. Player containment, the operation explicit endgame drives -> world gone, no observation
+ *   5. guardian last-handle close (Guardian ended by its EXACT PID)   -> world alive, NEW observation
+ *   6. Player containment, the operation explicit endgame drives       -> world alive and answering first,
+ *                                                                         gone only after it, no observation
  *
  * "New observation" is not "no error": every reading must read a world clock (`timeOfDay`) or revision that
  * advanced past the previous reading's. A paused or frozen world fails here rather than passing quietly.
  *
+ * Reading 5 kills the Guardian by its exact PID, never `taskkill /T`: `/T` ends the target's descendants, both
+ * role processes are its descendants, and the first run of this reading therefore killed the world with the
+ * harness's own hand (`alive=false`, then `ENOENT \\.\pipe\gamebuddy-stardew`). That is recorded because the
+ * reading is only worth its method.
+ *
  * Does NOT prove: the `gameended` projection itself. Reading 6 drives the containment half of explicit endgame
  * (`containPlayerHost`), which is the half that terminates the world; the authenticated `game_endgame`
  * operation that produces the projection needs a full desktop-composition activation (browser admission, Pi,
- * an AI provider credential) and cannot be minted by a harness. It also runs against the prepared native-local
- * fixture save and a Mod deployed in the fixture root, so it says nothing about mod deployment into a
- * store-managed install.
+ * an AI provider credential) and cannot be minted by a harness. The readings JSON carries that boundary in
+ * `notProven` so a green run cannot be read as covering the whole endgame. It also runs against the prepared
+ * native-local fixture save and a Mod deployed in the fixture root, so it says nothing about mod deployment
+ * into a store-managed install.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   cpSync,
@@ -73,7 +80,11 @@ import { resolveStardewFixtureRoots } from "../../lib/stardew-fixture-roots.mjs"
 import { connectNativeLocalClient, observeFresh } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { launchStardewLiveRun } from "../../lib/stardew-live-run.mjs";
 import { fixtureScenario } from "../../lib/stardew-native-local-player-fixture.mjs";
-import { killProcessTree, listStardewProcessIds } from "../../lib/windows-process-tree.mjs";
+import {
+  killProcessTree,
+  listStardewProcessIds,
+  TASKKILL_ALREADY_EXITED_STATUS,
+} from "../../lib/windows-process-tree.mjs";
 
 const SELF = fileURLToPath(import.meta.url);
 const REPO = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
@@ -96,6 +107,23 @@ const ATTACH_MS = 60_000;
 const OBSERVE_WINDOW_MS = 45_000;
 const TERMINATION_SETTLE_MS = 5_000;
 const ROLE_EXIT_SETTLE_MS = 15_000;
+/** How often the attached AI authority re-observes the world it holds the one attachment to. */
+const ATTACHED_SAMPLE_INTERVAL_MS = 2_000;
+/** How old that sample may be and still count as "what the world answers now". */
+const ATTACHED_OBSERVATION_MAX_AGE_MS = 10_000;
+
+/**
+ * What this gate cannot speak to, named where a reader of its JSON will see it.
+ *
+ * The `gameended` projection is the product's own authenticated `game_endgame` operation, and it needs a full
+ * desktop-composition activation - browser admission, a Pi runtime and an AI provider credential. A harness
+ * cannot mint one, so reading 6 proves the containment that terminates the world, not the projection that
+ * follows it. A gate that stayed silent about this would be read as covering the whole endgame.
+ */
+const NOT_PROVEN = Object.freeze([
+  "the `gameended` projection: explicit endgame's authenticated `game_endgame` operation needs a full desktop-composition activation (browser admission, a Pi runtime and an AI provider credential), which a harness cannot mint",
+  "mod deployment into a store-managed install: this gate loads the Mod from a copy of the shared fixture tree",
+]);
 
 /* ------------------------------------------------------------------ the readings */
 
@@ -158,6 +186,34 @@ function isProcessAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * End ONE process by its exact PID. Never a tree, never an image name.
+ *
+ * `killProcessTree` adds `/T`, which ends the target's descendants as well - and the two role processes are the
+ * Guardian's descendants, so a tree kill of the Guardian kills the world with this harness's own hand. That is
+ * precisely the defect reading 5 exists to have measured, and it is why this reader has its own kill.
+ */
+function killExactProcess(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return `invalid_pid:${String(pid)}`;
+  const outcome = spawnSync("taskkill", ["/PID", String(pid), "/F"], {
+    stdio: "ignore",
+    windowsHide: true,
+    timeout: 60_000,
+  });
+  if (outcome.status === 0) return "killed";
+  if (outcome.status === TASKKILL_ALREADY_EXITED_STATUS) return "already_exited";
+  return `taskkill_status_${String(outcome.status)}`;
+}
+
+/** Whether the Mod's bridge pipe is listening, as a fact to assert on rather than infer from a connect failure. */
+function bridgePipePresent(pipeName) {
+  try {
+    return readdirSync("\\\\.\\pipe\\").includes(pipeName);
   } catch {
     return false;
   }
@@ -234,23 +290,32 @@ async function runWorldHost(argv) {
 }
 
 /**
- * The AI authority role: one real authenticated bridge attachment plus one real observation, reported to the
- * harness through a file because a Guardian role has no std handles.
+ * The AI authority role: one real authenticated bridge attachment, re-observed while it stays attached.
+ *
+ * The re-observation exists because the Mod's bridge serves ONE attachment: while this role holds it, a second
+ * client cannot connect at all - measured twice on this machine as
+ * `ETIMEDOUT:connect ETIMEDOUT \\.\pipe\gamebuddy-stardew`, with the pipe still present. A reading that needs
+ * "what the world answers right now" during an attached session therefore has to come from the attached
+ * authority itself. Every sample is written to the state file, and a failed sample leaves the last good one in
+ * place: the last readable observation is a fact worth keeping, not an error worth overwriting it with.
  */
 async function runAiAttach(argv) {
   const option = argumentReader(argv);
   const clientConfig = JSON.parse(readFileSync(option.required("--client-config"), "utf8"));
   const stateFile = option.required("--state");
   let connection = null;
-  try {
-    connection = await connectNativeLocalClient(clientConfig, { loadModule: loadBridgeModule });
-    const snapshot = await observeFresh(connection.client);
+  const publish = (snapshot) => {
     writeStateFile(stateFile, {
       kind: "ai_attached",
       pid: process.pid,
       connected: connection.client.state?.connected === true,
+      observedAt: Date.now(),
       observation: project(snapshot),
     });
+  };
+  try {
+    connection = await connectNativeLocalClient(clientConfig, { loadModule: loadBridgeModule });
+    publish(await observeFresh(connection.client));
   } catch (error) {
     writeStateFile(stateFile, {
       kind: "ai_attach_failed",
@@ -260,6 +325,18 @@ async function runAiAttach(argv) {
     process.exitCode = 1;
     return;
   }
+  const sample = async () => {
+    for (;;) {
+      await delay(ATTACHED_SAMPLE_INTERVAL_MS);
+      try {
+        publish(await observeFresh(connection.client));
+      } catch {
+        // The world ended or the attachment dropped. The state file keeps the last observation the world gave,
+        // and its `observedAt` is what tells a reader how old that is.
+      }
+    }
+  };
+  void sample();
   setTimeout(() => process.exit(0), ROLE_MAX_LIFETIME_MS).unref();
   setInterval(() => undefined, 1_000);
 }
@@ -379,13 +456,18 @@ async function openGuardianSession({ label }) {
      *
      * Deliberately NOT `killProcessTree`: that runs `taskkill /T`, which ends the Guardian AND every descendant
      * - and the two role processes are its descendants. A tree kill would therefore kill the world itself and
-     * the survival reading would be an artifact of this harness. The exact-PID kill is what leaves the role Jobs
-     * to the containment policy under test.
+     * the survival reading would be an artifact of this harness.
+     *
+     * The kill is of the EXACT PID, and the world is expected to survive it because the Guardian creates the
+     * Player Job with `killOnJobClose: false` (`Program.cs:66`, "Player world ownership survives
+     * guardian/controller closure"). Losing the last handle to a non-kill-on-close Job does not end its
+     * processes, so this reading measures the product's Job limit, not a timeout.
      */
     async closeLastHandle() {
       socket.destroy();
-      if (isProcessAlive(child.pid)) execFileSync("taskkill", ["/PID", String(child.pid), "/F"], { stdio: "ignore" });
-      await session.exitedWithin(TERMINATION_SETTLE_MS);
+      const outcome = killExactProcess(child.pid);
+      const exited = await session.exitedWithin(TERMINATION_SETTLE_MS);
+      return Object.freeze({ outcome, exited });
     },
     async exitedWithin(milliseconds) {
       const deadline = Date.now() + milliseconds;
@@ -509,6 +591,36 @@ async function observeWorld(clientConfig, { windowMs }) {
     }
   }
   return Object.freeze({ ok: false, attempts, observation: null, error: lastError ?? "observe_window_elapsed" });
+}
+
+/**
+ * The newest observation the ATTACHED authority published, how old it is, and whether it advanced.
+ *
+ * Deliberately not a fresh connect: the Mod's bridge serves one attachment, so while the AI authority holds it
+ * a second client cannot connect at all (measured twice as `ETIMEDOUT ... \\.\pipe\gamebuddy-stardew`, with
+ * the pipe present). Reading the world's own answer to the authority that IS attached is both the possible
+ * reading and the truer one - it is the same answer the product's AI would act on.
+ *
+ * A sample older than `ATTACHED_OBSERVATION_MAX_AGE_MS` is not "what the world answers now", and a paused world
+ * produces a fresh sample that never advances; the two checks catch different failures.
+ */
+async function readAttachedAdvance(statePath, previous, { windowMs }) {
+  const deadline = Date.now() + windowMs;
+  let latest = null;
+  let ageMs = null;
+  let advance = null;
+  while (Date.now() < deadline) {
+    const state = readStateFile(statePath);
+    if (state?.kind === "ai_attached" && state.observation != null) {
+      latest = state.observation;
+      ageMs = Number.isSafeInteger(state.observedAt) ? Date.now() - state.observedAt : null;
+      advance = previous === null ? null : describeAdvance(previous, latest);
+      const fresh = ageMs !== null && ageMs <= ATTACHED_OBSERVATION_MAX_AGE_MS;
+      if (fresh && advance !== null) break;
+    }
+    await delay(250);
+  }
+  return Object.freeze({ latest, ageMs, advance });
 }
 
 /* ------------------------------------------------------------------ the three sessions */
@@ -770,13 +882,19 @@ async function guardianCloseSession(plan) {
     );
 
     // Reading 5: the Guardian's last session handle is closed - its exact PID, never its tree.
-    await session.closeLastHandle();
+    const closed = await session.closeLastHandle();
     record(
-      "[B] the Guardian was terminated (its last session handle closed)",
-      !isProcessAlive(session.child.pid),
-      `guardian_pid=${String(session.child.pid)} alive=${String(isProcessAlive(session.child.pid))} exit_code=${String(session.child.exitCode)}`,
+      "[B] the Guardian was terminated by its exact PID (no /T, so no descendant was touched by this harness)",
+      closed.exited && !isProcessAlive(session.child.pid),
+      `guardian_pid=${String(session.child.pid)} kill=${closed.outcome} exited=${String(closed.exited)} ` +
+        `alive=${String(isProcessAlive(session.child.pid))} exit_code=${String(session.child.exitCode)}`,
     );
     await delay(TERMINATION_SETTLE_MS);
+    record(
+      "[B] the world's bridge pipe was still listening the instant the Guardian was gone",
+      bridgePipePresent(plan.clientConfig.PipeName),
+      `pipe=${plan.clientConfig.PipeName} present=${String(bridgePipePresent(plan.clientConfig.PipeName))}`,
+    );
     await readSurvivalAfter(plan, "B", "guardian last-handle close", world, before.ok ? before.observation : null);
   } finally {
     await session.terminate();
@@ -790,6 +908,10 @@ async function guardianCloseSession(plan) {
  *
  * The contrast is the reading: sessions A and B ended the AI authority three different ways, and the world was
  * still answering. The same launch recipe here stops answering the moment the Player is contained.
+ *
+ * The "still answering" half is read from the ATTACHED authority's own samples, not from a fresh connection: the
+ * Mod's bridge serves one attachment, so while the AI authority holds it a second client cannot connect at all
+ * (measured: `ETIMEDOUT ... \\.\pipe\gamebuddy-stardew`, pipe present).
  */
 async function endgameContainmentSession(plan) {
   const run = await prepareRunRoot(plan, "endgame");
@@ -798,38 +920,84 @@ async function endgameContainmentSession(plan) {
   try {
     world = await launchWorldHost(run, { ...plan, session });
     const ai = await launchGuardianAiAuthority(run, { ...plan, session });
-    await readWorldUp(world, ai, "C");
+    const worldUp = await readWorldUp(world, ai, "C");
     if (world.gamePid === null) return;
 
+    // Reading 6, first half: the world is alive AND ANSWERING in the instant before the Player is contained.
+    // Both halves are one reading: without this, "the world was terminated" is also satisfied by a world that
+    // had already stopped answering a minute earlier, which would prove nothing about containment. The answer is
+    // taken from the attached AI authority, because a second client cannot attach at all while it holds the pipe.
+    const beforeEndgame = await readAttachedAdvance(run.aiState, worldUp.observation, { windowMs: OBSERVE_WINDOW_MS });
+    const attachedFresh =
+      beforeEndgame.latest !== null &&
+      beforeEndgame.ageMs !== null &&
+      beforeEndgame.ageMs <= ATTACHED_OBSERVATION_MAX_AGE_MS;
+    record(
+      "[C] the attached AI authority read the world moments before the Player was contained",
+      attachedFresh,
+      beforeEndgame.latest === null
+        ? `no attached observation was published in ${run.aiState}`
+        : `age_ms=${String(beforeEndgame.ageMs)} ${describeObservation(beforeEndgame.latest)}`,
+    );
+    record(
+      "[C] the world ADVANCED between the AI authority's attach and the Player's containment",
+      beforeEndgame.advance !== null,
+      beforeEndgame.advance ??
+        `no advance: ${beforeEndgame.latest === null ? "no observation" : describeObservation(beforeEndgame.latest)} ` +
+          `(attach reading revision=${String(worldUp.observation?.revision)} time=${String(worldUp.observation?.timeOfDay)})`,
+    );
+
+    // The two liveness facts are re-read immediately before the call, so "it was alive when it was ended" is not
+    // carried over from a reading taken seconds earlier.
+    const aliveAtContainment = isProcessAlive(world.pid) && listStardewProcessIds().includes(world.gamePid);
+    const pipeAtContainment = bridgePipePresent(plan.clientConfig.PipeName);
+    const containedAt = Date.now();
     const contained = await session.contain("player_host");
     record(
-      "[C] explicit endgame's Player containment was driven (containPlayerHost)",
-      contained === "role_contained",
-      `contain_role player_host => ${contained}`,
+      "[C] explicit endgame's Player containment was driven (containPlayerHost) against a world that was alive and answering",
+      contained === "role_contained" && aliveAtContainment && pipeAtContainment && attachedFresh,
+      `contain_role player_host => ${contained} world_host_pid=${String(world.pid)} alive_at_containment=${String(aliveAtContainment)} ` +
+        `game_pid=${String(world.gamePid)} pipe_present_at_containment=${String(pipeAtContainment)} ` +
+        `last_observation=${beforeEndgame.latest === null ? "none" : describeObservation(beforeEndgame.latest)} ` +
+        `observation_age_ms=${String(beforeEndgame.ageMs)}`,
     );
 
     let gameGone = false;
+    let goneAfterMs = null;
     const deadline = Date.now() + ROLE_EXIT_SETTLE_MS;
-    while (Date.now() < deadline && !gameGone) {
+    while (Date.now() < deadline) {
       gameGone = !listStardewProcessIds().includes(world.gamePid);
-      if (!gameGone) await delay(200);
+      if (gameGone) {
+        goneAfterMs = Date.now() - containedAt;
+        break;
+      }
+      await delay(100);
     }
     record(
-      "[C] the world was terminated by that containment",
+      "[C] the world was terminated by that containment, and only then",
       gameGone,
-      `game_pid=${String(world.gamePid)} still_listed=${String(!gameGone)} stardew_images=${listStardewProcessIds().join(",") || "none"}`,
+      `game_pid=${String(world.gamePid)} gone_after_ms=${String(goneAfterMs)} still_listed=${String(!gameGone)} ` +
+        `stardew_images=${listStardewProcessIds().join(",") || "none"}`,
     );
+    const hostGone = !isProcessAlive(world.pid);
+    const pipeGone = !bridgePipePresent(plan.clientConfig.PipeName);
     record(
-      "[C] the Player Host process went with the Player Job",
-      !isProcessAlive(world.pid),
-      `world_host_pid=${String(world.pid)} alive=${String(isProcessAlive(world.pid))}`,
+      "[C] the Player Host process went with the Player Job, and the bridge pipe stopped listening",
+      hostGone && pipeGone,
+      `world_host_pid=${String(world.pid)} alive=${String(!hostGone)} ` +
+        `pipe=${plan.clientConfig.PipeName} present=${String(!pipeGone)}`,
     );
 
     const after = await observeWorld(plan.clientConfig, { windowMs: 15_000 });
     record(
       "[C] no observation is possible from the ended world",
       !after.ok,
-      `attempts=${String(after.attempts)} error=${String(after.error)}`,
+      `attempts=${String(after.attempts)} pipe_present=${String(bridgePipePresent(plan.clientConfig.PipeName))} error=${String(after.error)}`,
+    );
+    note(
+      "[C] the `gameended` projection is NOT reached by this reading: it is minted by the authenticated " +
+        "`game_endgame` operation, which needs a full desktop-composition activation (browser admission, a Pi " +
+        "runtime and an AI provider credential). What is proven here is the containment that ends the world.",
     );
     await session.contain("ai_client");
   } finally {
@@ -998,6 +1166,7 @@ async function main(argv) {
   console.log(
     `stardew_world_survival: examined ${String(findings.length)} reading(s) on this machine, ${String(failed.length)} disagreement(s), ${String(Math.round((Date.now() - startedAt) / 1000))}s`,
   );
+  for (const limitation of NOT_PROVEN) console.log(`stardew_world_survival: NOT PROVEN: ${limitation}`);
   console.log(
     `stardew_world_survival_readings ${JSON.stringify({
       schema: "gamebuddy-stardew-world-survival/v1",
@@ -1005,6 +1174,7 @@ async function main(argv) {
       examined: findings.length,
       agreed: findings.length - failed.length,
       disagreements: failed.map((finding) => finding.question),
+      notProven: NOT_PROVEN,
       findings,
     })}`,
   );
