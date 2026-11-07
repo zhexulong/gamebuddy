@@ -2493,7 +2493,9 @@ test("Game launch rejects a different key while the first launch is pending", as
 
 test("installation discovery reports unavailable sources and no candidates without invoking registration", async () => {
   await withWindowsPlatform(async () => {
-    const provider = createStardewInstallationDiscoveryProvider({});
+    const provider = createStardewInstallationDiscoveryProvider({
+      probe: async () => ({ readable: true, smapi: false }),
+    });
     const fixture = await createFixture({ overrides: { installationDiscoveryOverlay: provider } });
     try {
       await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
@@ -2524,6 +2526,7 @@ test("installation discovery routes admit each coordinator operation without ope
               displayPath: "Detected installation (path hidden)",
               location: "C: · Steam",
               status: "admission_required" as const,
+              modLoader: "missing" as const,
             },
           ],
           diagnostics: [],
@@ -2631,6 +2634,7 @@ test("an installation holding the game but no mod loader is named, not reported 
             displayPath: "Detected installation (path hidden)",
             location: "C: · Steam",
             status: "admission_required" as const,
+            modLoader: "missing" as const,
           },
         ],
         diagnostics: [] as const,
@@ -2702,6 +2706,7 @@ test("a folder holding no game is refused by its own name, and every other refus
             displayPath: "Detected installation (path hidden)",
             location: "C: · Steam",
             status: "admission_required" as const,
+            modLoader: "missing" as const,
           },
         ],
         diagnostics: [] as const,
@@ -2821,6 +2826,7 @@ test("a candidate a non-Steam source produced reaches the same registration admi
     // The production composition, with only the two metadata readers replaced: the GOG source
     // names the folder above, and no Steam library holds the game at all.
     const provider = createStardewInstallationDiscoveryProvider({
+      probe: async () => ({ readable: true, smapi: false }),
       source: Object.freeze({
         read: async () => Object.freeze({ roots: Object.freeze([]), diagnostics: Object.freeze([]) }),
       }),
@@ -2880,6 +2886,7 @@ test("a non-Steam candidate without the mod loader is refused by the shared admi
     await mkdir(installRoot, { recursive: true });
     await writeFile(join(installRoot, "Stardew Valley.exe"), "", "utf8");
     const provider = createStardewInstallationDiscoveryProvider({
+      probe: async () => ({ readable: true, smapi: false }),
       gog: Object.freeze({
         read: async () => Object.freeze({ roots: Object.freeze([installRoot]), diagnostics: Object.freeze([]) }),
         probe: probeStardewGameRoot,

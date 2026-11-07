@@ -12,12 +12,45 @@ function source(
   return Object.freeze({ read: async () => Object.freeze({ roots, diagnostics: [] as const }) });
 }
 
+/**
+ * The loader fact is per folder, not per scan.
+ *
+ * A machine can hold several installations and the loader is the player's to install, so two rows can differ in
+ * exactly this: one is ready and the other is not. A single value for the whole scan would make the panel's "ready"
+ * label a lie on one of them, which is the failure this asserts against.
+ */
+test("each candidate reports the loader state of its own folder", async () => {
+  const ready = "C:\\Steam\\steamapps\\appmanifest_413150.acf";
+  const notReady = "D:\\SteamLibrary\\steamapps\\appmanifest_413150.acf";
+  const provider = createStardewInstallationDiscoveryProvider({
+    source: source([
+      ["steam-registry", "C:\\Steam"],
+      ["steam-vdf", "D:\\SteamLibrary"],
+    ]),
+    readFile: async (path) => {
+      if (path === ready || path === notReady) return manifest;
+      return Promise.reject(new Error("missing"));
+    },
+    // The probe answers per root, exactly as the real one does: it looks inside the folder it is given.
+    probe: async (installRoot) =>
+      installRoot.startsWith("C:") ? { readable: true, smapi: true } : { readable: true, smapi: false },
+  });
+
+  const result = await provider.discover();
+  const byRootLocation = new Map(result.candidates.map((candidate) => [candidate.location, candidate.modLoader]));
+  assert.deepEqual([...byRootLocation.entries()].sort(), [
+    ["C: · Steam", "present"],
+    ["D: · SteamLibrary", "missing"],
+  ]);
+});
+
 test("binds each source root to its own manifest and only publishes valid roots", async () => {
   const files = new Map([
     ["C:\\Good\\steamapps\\appmanifest_413150.acf", manifest],
     ["C:\\Bad\\steamapps\\appmanifest_413150.acf", '"appid" "1"'],
   ]);
   const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     source: source([
       ["steam-vdf", "C:\\Good"],
       ["steam-vdf", "C:\\Bad"],
@@ -33,6 +66,7 @@ test("binds each source root to its own manifest and only publishes valid roots"
 test("reads manifests from the canonical normalized source root", async () => {
   const paths: string[] = [];
   const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     source: source([["steam-vdf", "c:\\Steam"]]),
     readFile: async (path) => {
       paths.push(path);
@@ -47,6 +81,7 @@ test("reads manifests from the canonical normalized source root", async () => {
 test("does not read manifests for invalid source roots", async () => {
   const paths: string[] = [];
   const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     source: source([
       ["steam-vdf", "C:\\Steam\\..\\Other"],
       ["steam-vdf", "relative"],
@@ -66,6 +101,7 @@ test("does not read manifests for invalid source roots", async () => {
 test("empty source roots produce no candidates without reading manifests", async () => {
   let reads = 0;
   const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     source: source([]),
     readFile: async () => {
       reads += 1;
@@ -80,6 +116,7 @@ test("empty source roots produce no candidates without reading manifests", async
 
 test("fails closed on oversized app manifests", async () => {
   const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     source: source([["steam-registry", "C:\\Steam"]]),
     readFile: async () => "x".repeat(4 * 1024 * 1024 + 1),
   });
@@ -90,6 +127,7 @@ test("fails closed on oversized app manifests", async () => {
 
 test("reports source diagnostics and manifest failures without exposing locators", async () => {
   const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     source: source([["steam-registry", "C:\\Steam"]]),
     readFile: async () => {
       throw new Error("manifest missing");
@@ -104,6 +142,7 @@ test("reports source diagnostics and manifest failures without exposing locators
 test("binds a known-location source root to its own manifest like any other source", async () => {
   const paths: string[] = [];
   const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     source: source([["known-location", "D:\\Steam"]]),
     readFile: async (path) => {
       paths.push(path);
@@ -119,6 +158,7 @@ test("binds a known-location source root to its own manifest like any other sour
 test("maps a source failure to unavailable and no-candidates without reading manifests", async () => {
   let read = false;
   const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     source: {
       read: async () => {
         throw new Error("source failure");
@@ -169,6 +209,7 @@ test("queries both mounted sources and offers a GOG installation Steam does not 
   let steamRead = false;
   let gogRead = false;
   const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     source: {
       read: async () => {
         steamRead = true;
@@ -207,6 +248,7 @@ test("queries both mounted sources and offers a GOG installation Steam does not 
  */
 test("offers only the GOG roots the game is actually installed in", async () => {
   const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     gog: gogSource(
       ["C:\\Program Files (x86)\\GOG Galaxy\\Games\\Stardew Valley", "D:\\GOG Games\\Stardew Valley"],
       ["D:\\GOG Games\\Stardew Valley"],
@@ -217,7 +259,9 @@ test("offers only the GOG roots the game is actually installed in", async () => 
     result.candidates.map((candidate) => candidate.source),
     ["gog"],
   );
-  assert.equal(result.candidates[0]?.location, "D:");
+  // The label names the folder that holds the root, not the drive alone: two GOG copies on one drive both read
+  // `D:` otherwise, which is the "nothing to choose by" fault this label exists to fix.
+  assert.equal(result.candidates[0]?.location, "D: · GOG Games");
   assert.equal(provider.confirm(result.candidates[0]!.candidateId), "D:\\GOG Games\\Stardew Valley");
 });
 
@@ -229,6 +273,7 @@ test("offers only the GOG roots the game is actually installed in", async () => 
 test("a folder both sources name is one candidate, attributed to the proving source", async () => {
   const installRoot = "D:\\Steam\\steamapps\\common\\Stardew Valley";
   const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     source: source([["steam-vdf", "D:\\Steam"]]),
     readFile: async () => manifest,
     // GOG's registry names the very same folder, in different case: one installation, not two.
@@ -248,6 +293,7 @@ test("a folder both sources name is one candidate, attributed to the proving sou
 test("one source's failure never erases the other source's candidate", async () => {
   const steamOnly = createStardewInstallationDiscoveryProvider({
     source: source([["steam-vdf", "C:\\Steam"]]),
+    probe: async () => ({ readable: true, smapi: false }),
     readFile: async () => manifest,
     gog: Object.freeze({
       read: async () => {
@@ -264,6 +310,7 @@ test("one source's failure never erases the other source's candidate", async () 
   assert.deepEqual(steam.diagnostics, ["gog-unavailable"]);
 
   const gogOnly = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     source: {
       read: async () => {
         throw new Error("steam registry unreadable");
@@ -287,6 +334,7 @@ test("one source's failure never erases the other source's candidate", async () 
  */
 test("a GOG root the probe could not read is named, never treated as empty", async () => {
   const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     source: steamWithoutRoots(),
     gog: Object.freeze({
       read: async () =>
@@ -305,6 +353,7 @@ test("a GOG root the probe could not read is named, never treated as empty", asy
  */
 test("GOG's own metadata diagnostics are carried through by name", async () => {
   const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     source: steamWithoutRoots(),
     gog: gogSource([], [], ["gog-metadata-malformed"]),
   });

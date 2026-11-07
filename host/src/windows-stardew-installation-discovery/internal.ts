@@ -43,6 +43,16 @@ export function installationLocationLabel(installRoot: string): string | null {
   const label = `${drive} · ${holder}`;
   return label.length <= INSTALLATION_LOCATION_MAX_LENGTH ? label : drive;
 }
+/**
+ * Whether a mod loader is already in this folder.
+ *
+ * `present` means the folder holds the loader the companion Mod runs under, so choosing it can register
+ * immediately. `missing` means the game is there and the loader is not: the player has to install it before this
+ * folder can load anything of ours. Reported per candidate because a machine may hold several installations, and
+ * the player's choice depends on which one is ready.
+ */
+export type StardewCandidateModLoader = "present" | "missing";
+
 export type StardewInstallationCandidate = Readonly<{
   candidateId: string;
   source: "steam-registry" | "steam-vdf" | "known-location" | "gog";
@@ -50,6 +60,7 @@ export type StardewInstallationCandidate = Readonly<{
   displayPath: string;
   location: string | null;
   status: "candidate" | "invalid" | "admission_required";
+  modLoader: StardewCandidateModLoader;
 }>;
 export type DiscoveryDiagnostic =
   | "registry-unavailable"
@@ -109,7 +120,11 @@ export class StardewDiscoverySession {
     private readonly ttlMs = 5 * 60_000,
     private readonly now = () => Date.now(),
   ) {}
-  issue(source: StardewInstallationCandidate["source"], root: string): StardewInstallationCandidate {
+  issue(
+    source: StardewInstallationCandidate["source"],
+    root: string,
+    modLoader: StardewCandidateModLoader,
+  ): StardewInstallationCandidate {
     const normalizedRoot = normalizeWindowsPath(root);
     if (normalizedRoot === undefined || normalizedRoot.endsWith("\\")) throw new Error("candidate-invalid");
     const candidateId = opaque();
@@ -127,6 +142,7 @@ export class StardewDiscoverySession {
       displayPath: "Detected installation (path hidden)",
       location: installationLocationLabel(normalizedRoot),
       status: "admission_required",
+      modLoader,
     });
   }
   reset(): void {
@@ -282,12 +298,15 @@ export function parseAppManifest(text: string): string | null {
 /** The single normalization boundary for already verified, source-bound roots. */
 export function normalizeBoundCandidates(
   session: StardewDiscoverySession,
-  roots: readonly (readonly [StardewInstallationCandidate["source"], string])[],
+  roots: readonly (readonly [StardewInstallationCandidate["source"], string, StardewCandidateModLoader])[],
 ): readonly StardewInstallationCandidate[] {
   const seen = new Set<string>();
   const normalized = roots
-    .map(([source, root]) => [source, normalizeWindowsPath(root)] as const)
-    .filter((entry): entry is readonly [StardewInstallationCandidate["source"], string] => entry[1] !== undefined)
+    .map(([source, root, modLoader]) => [source, normalizeWindowsPath(root), modLoader] as const)
+    .filter(
+      (entry): entry is readonly [StardewInstallationCandidate["source"], string, StardewCandidateModLoader] =>
+        entry[1] !== undefined,
+    )
     .filter(([, root]) => {
       const key = root.toLowerCase();
       if (seen.has(key)) return false;
@@ -297,7 +316,7 @@ export function normalizeBoundCandidates(
     .sort(([sourceA, rootA], [sourceB, rootB]) =>
       `${sourceA}\u0000${rootA.toLowerCase()}`.localeCompare(`${sourceB}\u0000${rootB.toLowerCase()}`),
     );
-  return Object.freeze(normalized.map(([source, root]) => session.issue(source, root)));
+  return Object.freeze(normalized.map(([source, root, modLoader]) => session.issue(source, root, modLoader)));
 }
 
 export function issueBoundCandidate(
@@ -305,6 +324,7 @@ export function issueBoundCandidate(
   source: StardewInstallationCandidate["source"],
   installRoot: string,
   manifest: string,
+  modLoader: StardewCandidateModLoader,
 ): StardewInstallationCandidate | undefined {
-  return parseAppManifest(manifest) === null ? undefined : session.issue(source, installRoot);
+  return parseAppManifest(manifest) === null ? undefined : session.issue(source, installRoot, modLoader);
 }

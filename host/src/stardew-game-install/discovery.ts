@@ -264,7 +264,12 @@ export async function discoverStardewGameInstallation(
   const sourceDiagnostics: StardewGameDiscoveryDiagnostic[] = [];
   const steamInstallRoots: string[] = [];
   try {
-    const provider = createStardewInstallationDiscoveryProvider({ source: createWindowsSteamInstallationSource() });
+    const provider = createStardewInstallationDiscoveryProvider({
+      // The real probe, not a stand-in: this entry only needs the roots today, and a placeholder here would answer
+      // the loader question with a guess for whoever reads it next.
+      probe: probeStardewGameRoot,
+      source: createWindowsSteamInstallationSource(),
+    });
     const result = await provider.discover();
     for (const candidate of result.candidates) {
       try {

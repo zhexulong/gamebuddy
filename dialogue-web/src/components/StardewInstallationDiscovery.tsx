@@ -10,12 +10,14 @@ import {
   companionModLabel,
   companionModIsReady,
   installationCandidateLabel,
+  installationModLoaderLabel,
   installationDiscoveryFailureState,
   installationDiscoveryState,
   installationHintLabel,
   installationSourceLabel,
   installationStateLabel,
   type InstallationDiscoveryState,
+  orderCandidatesByReadiness,
 } from "../game-presentation";
 import type { Messages } from "../i18n";
 
@@ -304,36 +306,45 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
         // (axe: scrollable-region-focusable), and the panel's own box no longer
         // scrolls at all.
         <ul className="installation-candidates" tabIndex={0}>
-          {discovery.candidates.map(({ candidateId, label, source, hint, location, status }) => (
-            <li className="installation-candidate" key={candidateId} data-label={label} data-location={location}>
-              {/* The row's words are the product's: the game's own name from the
+          {orderCandidatesByReadiness(discovery.candidates).map(
+            ({ candidateId, label, source, hint, location, status, modLoader }) => (
+              <li className="installation-candidate" key={candidateId} data-label={label} data-location={location}>
+                {/* The row's words are the product's: the game's own name from the
                   catalogue (the Host's English `label` used to be the last English
                   text in a Chinese row) and, when the Host publishes one, where this
                   installation is (`D: · SteamLibrary`) - the fact that tells two
                   installations of the same game apart. Both wire facts stay as the
                   row's own attribution (`data-label`/`data-location`). */}
-              <span className="installation-candidate-label">{installationCandidateLabel(labels, location)}</span>
-              {/* The wire member stays as the row's own attribution (`data-source`),
+                <span className="installation-candidate-label">{installationCandidateLabel(labels, location)}</span>
+                {/* Whether this folder can load the companion Mod. A candidate whose Host did not say renders nothing
+                  rather than "missing", so the row never claims a check that did not happen. */}
+                {installationModLoaderLabel(labels, modLoader) !== null && (
+                  <span className="installation-mod-loader" data-mod-loader={modLoader ?? "unknown"}>
+                    {installationModLoaderLabel(labels, modLoader)}
+                  </span>
+                )}
+                {/* The wire member stays as the row's own attribution (`data-source`),
                   and the words beside the name are the player's language: a source
                   the panel has no sentence for reads as "found on this computer"
                   rather than as the member the Host minted. */}
-              <span className="installation-source" data-source={source}>
-                {installationSourceLabel(labels, source)}
-              </span>
-              {hint !== null && <small className="installation-hint">{installationHintLabel(labels, hint)}</small>}
-              <button
-                type="button"
-                className="game-action"
-                disabled={scannerDisabled || !isConfirmableCandidate(status)}
-                onClick={() => {
-                  setSelectedCandidateId(candidateId);
-                  void action("confirm", candidateId);
-                }}
-              >
-                {labels.gameInstallationConfirm}
-              </button>
-            </li>
-          ))}
+                <span className="installation-source" data-source={source}>
+                  {installationSourceLabel(labels, source)}
+                </span>
+                {hint !== null && <small className="installation-hint">{installationHintLabel(labels, hint)}</small>}
+                <button
+                  type="button"
+                  className="game-action"
+                  disabled={scannerDisabled || !isConfirmableCandidate(status)}
+                  onClick={() => {
+                    setSelectedCandidateId(candidateId);
+                    void action("confirm", candidateId);
+                  }}
+                >
+                  {labels.gameInstallationConfirm}
+                </button>
+              </li>
+            ),
+          )}
         </ul>
       )}
       {selectedCandidateId !== null && state === "confirming" && (

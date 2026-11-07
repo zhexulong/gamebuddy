@@ -12,6 +12,7 @@ import {
   installationCandidateLabel,
   installationDiscoveryFailureState,
   installationDiscoveryState,
+  installationModLoaderLabel,
   installationSourceLabel,
   installationStateLabel,
   instanceLabel,
@@ -19,6 +20,7 @@ import {
   companionModLabel,
   outcomeLabel,
   COMPANION_MOD_OUTCOMES,
+  orderCandidatesByReadiness,
 } from "../src/game-presentation.ts";
 
 /**
@@ -430,3 +432,39 @@ test("the capability summary says how many capabilities are published, or says i
   assert.equal(capabilitiesLabel(messages("zh-CN"), { available: true, count: 7 }), "7 项可用");
 });
 
+test("a candidate says whether its folder can load the companion, and ready folders come first", () => {
+  // The loader is the player's to install and a machine can hold several installations, so this label is the fact
+  // their choice depends on. `null` is "the Host did not say" and must render nothing rather than "missing".
+  for (const locale of locales) {
+    const labels = messages(locale);
+    const present = installationModLoaderLabel(labels, "present");
+    const missing = installationModLoaderLabel(labels, "missing");
+    const unknown = installationModLoaderLabel(labels, null);
+
+    assert.ok(typeof present === "string" && present.length > 0, `${locale} present is empty`);
+    assert.ok(typeof missing === "string" && missing.length > 0, `${locale} missing is empty`);
+    assert.equal(unknown, null, `${locale} rendered a state the Host did not report`);
+    assert.notEqual(present, missing, `${locale} reads ready and not-ready the same way`);
+    // Neither may leak the wire token.
+    for (const value of [present, missing]) {
+      assert.ok(!value.includes("_"), `${locale} label still reads like an enum: ${value}`);
+    }
+  }
+
+  // Ordering: ready first, and the Host's order preserved inside each group.
+  const ordered = orderCandidatesByReadiness([
+    { candidateId: "a", modLoader: "missing" },
+    { candidateId: "b", modLoader: "present" },
+    { candidateId: "c", modLoader: null },
+    { candidateId: "d", modLoader: "present" },
+  ]);
+  assert.deepEqual(
+    ordered.map((candidate) => candidate.candidateId),
+    ["b", "d", "a", "c"],
+  );
+  // The input is not mutated: the panel renders a derived list, not a re-sorted value it was handed.
+  assert.deepEqual(
+    ["a", "b", "c", "d"],
+    ["a", "b", "c", "d"],
+  );
+});

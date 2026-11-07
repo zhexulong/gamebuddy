@@ -25,6 +25,7 @@ import {
   STARDEW_MOD_LOADER_MISSING,
   STARDEW_NOT_A_STARDEW_INSTALL,
   createWindowsGogDiscoveryProposal,
+  probeStardewGameRoot,
   requireStardewGameInstalled,
   requireStardewModLoaderInstalled,
 } from "./stardew-game-install/discovery.js";
@@ -3512,10 +3513,13 @@ export function createStardewProductionLifecycleCoordinator(
     createStardewInstallationDiscoveryProvider({
       source: createWindowsSteamInstallationSource(),
       gog: createWindowsGogDiscoveryProposal(),
+      // Every candidate says whether its folder already holds a mod loader. The player installs the loader
+      // themselves, and a machine can hold several installations, so which folder is ready is the fact their
+      // choice depends on - the probe that answers it is this one, and it runs before the row is offered.
+      probe: probeStardewGameRoot,
     }),
-    // The admitted generation root this build runs from. The one-click mod-loader install
-    // reads its payload from here, so what a player's game folder receives is the payload
-    // that shipped with the app they launched.
+    // Where this build's own artifacts are read from: the companion Mod this product deploys, and the
+    // generation the Host runs out of.
     hostArtifactRoot,
   );
 }

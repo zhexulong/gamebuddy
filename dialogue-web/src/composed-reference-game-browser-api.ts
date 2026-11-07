@@ -293,6 +293,14 @@ export type StardewInstallationCandidateV1 = Readonly<{
   /** Where it is, in the Host's redaction-safe words (`D: · SteamLibrary`), or null. */
   location: string | null;
   status: "candidate" | "invalid" | "admission_required";
+  /**
+   * Whether this folder already holds a mod loader, or `null` when the Host did not say.
+   *
+   * `present` means the folder can load the companion Mod, so choosing it registers immediately. `missing` means
+   * the game is there and the loader is not: the player installs it, then finds again. `null` is not `missing` -
+   * it means nothing was checked, and it is never rendered as a result.
+   */
+  modLoader: "present" | "missing" | null;
 }>;
 export type StardewInstallationDiscoveryV1 = Readonly<{
   apiVersion: 1;
@@ -681,6 +689,7 @@ function validateStardewInstallationDiscovery(value: unknown): StardewInstallati
       !isBoundedString(candidate.label, 1, 256) ||
       !isNullableLabel(candidate.hint, 256) ||
       ("location" in candidate && !isNullableLabel(candidate.location, 64)) ||
+      ("modLoader" in candidate && candidate.modLoader !== "present" && candidate.modLoader !== "missing") ||
       !["candidate", "invalid", "admission_required"].includes(candidate.status as string)
     )
       throw new ComposedReferenceGameProtocolError("invalid_stardew_installation_candidate");
@@ -692,6 +701,7 @@ function validateStardewInstallationDiscovery(value: unknown): StardewInstallati
         hint: candidate.hint,
         location: (candidate.location as string | null | undefined) ?? null,
         status: candidate.status as StardewInstallationCandidateV1["status"],
+        modLoader: (candidate.modLoader as "present" | "missing" | undefined) ?? null,
       }),
     );
   }

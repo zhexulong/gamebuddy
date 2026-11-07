@@ -285,6 +285,14 @@ const GameCandidateV1Schema = strictObject({
   hint: Type.Union([Type.String({ minLength: 1, maxLength: 256 }), Type.Null()]),
   location: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 64 }), Type.Null()])),
   status: Type.Union([Type.Literal("candidate"), Type.Literal("invalid"), Type.Literal("admission_required")]),
+  /**
+   * Whether this folder already holds a mod loader.
+   *
+   * `present` means the folder can load the companion Mod, so choosing it registers immediately. `missing` means
+   * the game is there and the loader is not - the player installs it, then finds again. Optional so a read from a
+   * Host that predates the field stays legal.
+   */
+  modLoader: Type.Optional(Type.Union([Type.Literal("present"), Type.Literal("missing")])),
 });
 export const GameDiscoveryReadResultV1Schema = strictObject({
   apiVersion: ApiVersion,

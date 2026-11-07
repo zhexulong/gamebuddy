@@ -906,6 +906,7 @@ const en = {
   gameInstallationSourceUnavailable: "The installation search is unavailable right now.",
   gameInstallationNoCandidates: "No Stardew Valley installation was found.",
   gameInstallationResultUnavailable: "We couldn't read the installation search result.",
+  gameInstallationModLoaderPresent: "SMAPI is already installed here, so this folder can run the companion.",
   gameInstallationModLoaderMissing:
     "We found Stardew Valley, but there is no mod loader (SMAPI) in that folder. Install SMAPI, then find again — or choose a game folder that already has it.",
   // The one-click mod-loader install. Every string here is an outcome the Host actually
@@ -1833,6 +1834,7 @@ const zh: Messages = {
   gameInstallationResultUnavailable: "无法读取游戏安装搜索结果。",
   gameInstallationModLoaderMissing:
     "已找到《星露谷物语》，但这个目录里没有模组加载器（SMAPI）。请先安装 SMAPI，再重新查找；也可以选择已经装有 SMAPI 的游戏文件夹。",
+  gameInstallationModLoaderPresent: "这里已经装好了 SMAPI，这个文件夹可以直接加载伴侣。",
   gameCompanionModReady: "伴侣 Mod 已在游戏目录中，星露谷现在可以加载它了。",
   gameCompanionModLoaderMissing: "伴侣 Mod 需要先安装 SMAPI。安装 SMAPI 后再试。",
   gameCompanionModModsDirectoryMissing: "该游戏目录没有 Mods 文件夹。先用 SMAPI 启动一次游戏，它会自动创建，然后重试。",

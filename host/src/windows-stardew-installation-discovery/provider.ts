@@ -7,6 +7,7 @@ import {
   WINDOWS_PATH_MAX_LENGTH,
   STEAM_METADATA_MAX_BYTES,
   type DiscoveryDiagnostic,
+  type StardewCandidateModLoader,
   type StardewInstallationCandidate,
 } from "./internal.js";
 import type { StardewSteamSource } from "./source.js";
@@ -24,6 +25,16 @@ type StardewInstallationDiscoveryProviderInput = Readonly<{
   source?: StardewSteamSource;
   gog?: StardewGogInstallRootSource;
   readFile?: (path: string) => Promise<string>;
+  /**
+   * Reports whether a verified root holds a mod loader. Declared structurally for the same reason the GOG arm's
+   * probe is: this module is imported by the game's own discovery module, so importing it back would be a cycle in
+   * everything that reads the real module graph.
+   *
+   * Required. Measured: a call site that omitted it produced `missing` for a folder whose own probe said
+   * `smapi: true`, which reads as "the product checked and found no loader" - the one claim this field must never
+   * make on a guess. A required parameter makes that a compile error instead of a wrong sentence on screen.
+   */
+  probe: (installRoot: string) => Promise<Readonly<{ readable: boolean; smapi: boolean }>>;
 }>;
 
 /**
@@ -47,23 +58,39 @@ type StardewGogInstallRootSource = Readonly<{
 export type { StardewGogInstallRootSource };
 
 type StardewSourceRoots = Readonly<{
-  roots: readonly (readonly [StardewInstallationCandidate["source"], string])[];
+  roots: readonly (readonly [StardewInstallationCandidate["source"], string, StardewCandidateModLoader])[];
   diagnostics: readonly DiscoveryDiagnostic[];
 }>;
 
 /** Composition-private provider: only opaque candidates cross its boundary. */
 export function createStardewInstallationDiscoveryProvider(
-  input: StardewInstallationDiscoveryProviderInput = {},
+  input: StardewInstallationDiscoveryProviderInput,
 ): StardewInstallationDiscoveryProvider {
   const session = new StardewDiscoverySession();
   const read = input.readFile ?? ((path: string) => readFile(path, "utf8"));
+  /**
+   * Whether a verified root holds a mod loader, as the candidate reports it.
+   *
+   * A probe that throws, cannot look, or answers nothing is `missing`: the only defensible claim is what was
+   * actually observed, and an unread folder is not a folder known to be ready.
+   */
+  const modLoaderFor = async (installRoot: string): Promise<StardewCandidateModLoader> => {
+    try {
+      const probe = await input.probe(installRoot);
+      return probe.readable && probe.smapi ? "present" : "missing";
+    } catch {
+      return "missing";
+    }
+  };
   const source = input.source;
   const gog = input.gog;
 
   /** Steam's arm: a library root becomes an install root only through this game's app manifest. */
   const readSteamRoots = async (): Promise<StardewSourceRoots> => {
     const diagnostics: DiscoveryDiagnostic[] = [];
-    const roots: Array<readonly ["steam-registry" | "steam-vdf" | "known-location", string]> = [];
+    const roots: Array<
+      readonly ["steam-registry" | "steam-vdf" | "known-location", string, StardewCandidateModLoader]
+    > = [];
     if (source === undefined) {
       diagnostics.push("source-unavailable");
     } else {
@@ -99,7 +126,7 @@ export function createStardewInstallationDiscoveryProvider(
             diagnostics.push("invalid-app-manifest");
             return;
           }
-          roots.push([sourceKind, installRoot]);
+          roots.push([sourceKind, installRoot, await modLoaderFor(installRoot)]);
         } catch {
           diagnostics.push("invalid-app-manifest");
         }
@@ -118,7 +145,7 @@ export function createStardewInstallationDiscoveryProvider(
    */
   const readGogRoots = async (): Promise<StardewSourceRoots> => {
     const diagnostics: DiscoveryDiagnostic[] = [];
-    const roots: Array<readonly [StardewInstallationCandidate["source"], string]> = [];
+    const roots: Array<readonly [StardewInstallationCandidate["source"], string, StardewCandidateModLoader]> = [];
     if (gog === undefined)
       return Object.freeze({ roots: Object.freeze(roots), diagnostics: Object.freeze(diagnostics) });
     let facts: Awaited<ReturnType<StardewGogInstallRootSource["read"]>>;
@@ -146,7 +173,7 @@ export function createStardewInstallationDiscoveryProvider(
         continue;
       }
       if (!probe.gameExecutable) continue;
-      roots.push(["gog", normalized]);
+      roots.push(["gog", normalized, await modLoaderFor(normalized)]);
     }
     return Object.freeze({ roots: Object.freeze(roots), diagnostics: Object.freeze(diagnostics) });
   };

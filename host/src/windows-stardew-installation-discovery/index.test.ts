@@ -13,6 +13,7 @@ test("public index does not expose internal discovery helpers", async () => {
 
 test("provider returns opaque candidates without locators", async () => {
   const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     source: { read: async () => ({ roots: [["steam-vdf", "C:\\Steam"]], diagnostics: [] }) },
     readFile: async () => '"appid" "413150" "installdir" "Stardew Valley"',
   });
@@ -27,7 +28,9 @@ test("provider returns opaque candidates without locators", async () => {
 });
 
 test("provider reports unavailable when no source producer is composed", async () => {
-  const result = await createStardewInstallationDiscoveryProvider({}).discover();
+  const result = await createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
+  }).discover();
   assert.deepEqual(result.candidates, []);
   assert.ok(result.diagnostics.includes("source-unavailable"));
   assert.ok(result.diagnostics.includes("no-candidates"));
@@ -35,6 +38,7 @@ test("provider reports unavailable when no source producer is composed", async (
 
 test("provider rejects discovery without a valid Stardew manifest", async () => {
   const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
     source: { read: async () => ({ roots: [["steam-vdf", "C:\\Steam"]], diagnostics: [] }) },
     readFile: async () => '"appid" "1"',
   });

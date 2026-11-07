@@ -317,6 +317,40 @@ export function installationCandidateLabel(labels: Messages, location: string | 
 }
 
 /**
+ * Whether a candidate's folder can load the companion Mod, as player text.
+ *
+ * `null` renders nothing: it means the Host did not say, which is not `missing` and must not be shown as though the
+ * product had checked. `present` and `missing` are the two states the Host does report.
+ *
+ * This matters because the loader is the player's to install and a machine can hold several installations: without
+ * it, two rows look identical and the only way to learn which one works is to try each in turn.
+ */
+export function installationModLoaderLabel(labels: Messages, modLoader: "present" | "missing" | null): string | null {
+  switch (modLoader) {
+    case "present":
+      return labels.gameInstallationModLoaderPresent;
+    case "missing":
+      return labels.gameInstallationModLoaderMissing;
+    default:
+      return null;
+  }
+}
+
+/**
+ * The candidates with a ready folder first.
+ *
+ * The player is looking for the installation they can use. A stable sort keeps the Host's own order within each
+ * group, so the list does not reshuffle between reads, and a candidate whose state is unknown keeps its place
+ * rather than being promoted on a guess.
+ */
+export function orderCandidatesByReadiness<T extends { readonly modLoader: "present" | "missing" | null }>(
+  candidates: readonly T[],
+): readonly T[] {
+  const rank = (candidate: T): number => (candidate.modLoader === "present" ? 0 : 1);
+  return [...candidates].sort((left, right) => rank(left) - rank(right));
+}
+
+/**
  * The candidate's own note, as player text.
  *
  * The Host's projection publishes exactly one note or none - the redacted path
