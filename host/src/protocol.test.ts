@@ -3173,6 +3173,41 @@ test("body-program node status carries a failure code, and only as a code", () =
   assert.equal(verdict({ failureExplanation: "far from the door" }), "invalid_body_program_result");
 });
 
+test("body-program node states the journal settles nodes in are admitted, and an unmapped name is not", () => {
+  // The Mod settles 30 of the 154 nodes in one measured run as `skipped_dependency` (a dependency never became what the
+  // node needed) and one as `abandoned` (dispatched, outcome permanently unknown). Neither name was on the wire, so
+  // `BridgeSession.ToWire` folded both into `recovery_required` - the state that means something else - and the run's
+  // bundle recorded 31 recovery nodes against a journal that held none. These are the names that fix that; the
+  // `body_program_node_state_unmapped:<state>` spelling is the Mod's fail-closed answer for a value it cannot name, and
+  // it must never be admitted here or the name would travel as a condition.
+  const state = (wire: string) =>
+    validateBridgeMessage(
+      newEnvelope(
+        "program_status_result",
+        scope,
+        {
+          code: "found",
+          snapshot: {
+            programId: "program_01",
+            state: "failed",
+            catalogRevision: 1,
+            stopEpoch: 0,
+            eventHighWater: 0,
+            nodes: [{ nodeId: "node_02", state: wire, nodeAttempt: 0, admissionAttempt: 0 }],
+          },
+        },
+        "status_state",
+        now,
+      ),
+      scope,
+      now,
+    );
+  assert.equal(state("skipped_dependency"), null);
+  assert.equal(state("abandoned"), null);
+  assert.equal(state("body_program_node_state_unmapped:99"), "invalid_body_program_result");
+  assert.equal(state("recovered"), "invalid_body_program_result", "a state the Mod cannot settle stays refused");
+});
+
 test("body-program node attempt counters align to the C# Int32 wire fields", () => {
   const snapshot = (nodeAttempt: number, admissionAttempt: number) => ({
     programId: "program_01",

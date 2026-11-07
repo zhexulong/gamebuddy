@@ -226,6 +226,43 @@ test("the two channels are counted from their own sources, and neither counts th
   assert.deepEqual(noCandidate.attempted, [], "a node with no recorded action id is not guessed into one");
 });
 
+test("a node the journal never reached is not an attempt, while a dispatched one still is", () => {
+  // A bundle's `nodeOutcomes` now carries a row for every node the Host SUBMITTED, so the set of states this function
+  // sees is wider than the Mod's own vocabulary. `unknown` means "the journal said nothing about this node": with no
+  // dispatch beside it that is unanswered evidence, and counting it as an attempt would let a plan whose nodes never ran
+  // publish work it did not do. `pending` is the same kind of fact and was already excluded.
+  const programSubmissions = [
+    {
+      programId: "p1",
+      accepted: true,
+      nodes: [
+        { nodeId: "n01", actionId: "till_soil" },
+        { nodeId: "n02", actionId: "plant_seed" },
+        { nodeId: "n03", actionId: "water_crop" },
+      ],
+    },
+  ];
+  const programOutcomes = [
+    {
+      programId: "p1",
+      accepted: true,
+      observed: true,
+      dispatched: 1,
+      executions: [{ nodeId: "n02", nodeAttempt: 1, cursor: 2 }],
+      nodeOutcomes: [
+        { nodeId: "n01", actionId: "till_soil", state: "pending" },
+        // Dispatched, but the Mod's row said nothing: the dispatch itself is the attempt.
+        { nodeId: "n02", actionId: "plant_seed", state: "unknown" },
+        // Never dispatched and never recorded: nothing to attribute.
+        { nodeId: "n03", actionId: "water_crop", state: "unknown" },
+      ],
+    },
+  ];
+  const summary = executedActionIds({ actionTrace: [], programOutcomes, programSubmissions });
+  assert.deepEqual(summary.attempted, ["plant_seed"]);
+  assert.deepEqual(summary.succeeded, []);
+});
+
 test("a program whose journal could not be read contributes no rows and does not break the identity", async () => {
   // The unobserved program is the one fact the sum must exclude WITHOUT failing: a read failure is not a measured zero,
   // and it must not leave the run's rows unexplained either.

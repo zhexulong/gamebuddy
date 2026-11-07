@@ -1609,6 +1609,22 @@ string? bodyProgramUnavailableReason = null,
         BodyProgramState.Quarantined => "quarantined",
         _ => "recovery_required",
     };
+    /// <summary>
+    /// The wire name of one durable node state - EVERY state the journal can settle a node in.
+    ///
+    /// <para>
+    /// `BodyProgramNodeState` has eleven values and this switch used to name nine: `SkippedDependency` (10) and
+    /// `Abandoned` (11) fell through a `_ => "recovery_required"` arm, so both arrived at the Host wearing the name of a
+    /// state that means "the outcome could not be determined". Measured 2026-11-08: 30 skipped and 1 abandoned node in
+    /// the Mod's own journal, 31 `recovery_required` in the run's bundle, and no way to tell either fact from the other.
+    /// </para>
+    /// <para>
+    /// The default arm therefore FAILS CLOSED and names the state it could not name
+    /// (`body_program_node_state_unmapped:&lt;value&gt;`), which `BridgeProtocol.IsBodyProgramNodeState` refuses: a
+    /// projection that ever meets a new enum value publishes a frame rather than a lie. A default arm that relabels an
+    /// unknown state as a meaningful one is the defect this replaces, not the pattern to copy.
+    /// </para>
+    /// </summary>
     private static string ToWire(BodyProgramNodeState state) => state switch
     {
         BodyProgramNodeState.Pending => "pending",
@@ -1620,7 +1636,9 @@ string? bodyProgramUnavailableReason = null,
         BodyProgramNodeState.Cancelled => "cancelled",
         BodyProgramNodeState.RecoveryRequired => "recovery_required",
         BodyProgramNodeState.Rejected => "rejected",
-        _ => "recovery_required",
+        BodyProgramNodeState.SkippedDependency => "skipped_dependency",
+        BodyProgramNodeState.Abandoned => "abandoned",
+        _ => $"body_program_node_state_unmapped:{(int)state}",
     };
     private static BridgeBodyProgramSubmitVerification ToBridgeVerification(BodyProgramVerificationReport report) => new(
         report.Accepted,
@@ -1631,7 +1649,18 @@ string? bodyProgramUnavailableReason = null,
             diagnostic.NodeId is not null && BridgeProtocol.IsOpaqueId(diagnostic.NodeId) ? diagnostic.NodeId : null,
             diagnostic.Path,
             diagnostic.WireMessage)).ToArray());
-    private static BridgeBodyProgramStatusSnapshot? ToBridgeSnapshot(BodyProgramStatusSnapshot? snapshot) => snapshot is null
+    /// <summary>
+    /// The ONE projection of a program's node states onto the wire, used by submit, status and stop alike.
+    ///
+    /// <para>
+    /// `internal` rather than `private` so the projection can be driven directly by a test: the alternative is a fake
+    /// game-thread session behind a pipe, and a test that can only reach this through a whole session cannot say which
+    /// layer turned a state into a word. Every durable <see cref="BodyProgramNodeState"/> value that can be settled has
+    /// its own wire name here; a value with no arm is reported as `body_program_node_state_unmapped:<state>` rather than
+    /// borrowing a name that already means something else.
+    /// </para>
+    /// </summary>
+    internal static BridgeBodyProgramStatusSnapshot? ToBridgeSnapshot(BodyProgramStatusSnapshot? snapshot) => snapshot is null
         ? null
         : new BridgeBodyProgramStatusSnapshot(
             snapshot.ProgramId,

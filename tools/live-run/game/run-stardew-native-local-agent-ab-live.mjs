@@ -130,6 +130,8 @@ import {
   programExecutionRows,
   writeProgramExecutionTrace,
 } from "./execution-trace.mjs";
+// The one projection of a node's outcome: the Host's own `planBatchAnswer`, which the settlement digest answers with.
+import { programNodeOutcomes } from "./program-node-outcomes.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
 // The Mod's own durable Body Program journal: the fallback that answers when the game - and with it the bridge - dies
 // mid-run, which is exactly when a program's evidence matters most.
@@ -3447,7 +3449,10 @@ const PROGRAM_EVENTS_PAGE_SIZE = 32;
  * artifact could say whether a node ran. `dispatched` is the count of the Mod's own `native_dispatch` events - exactly
  * "the executions the program produced" - and `executions` is those same events as rows, so each execution has a place
  * in the run's trace (`programTrace.jsonl`, execution-trace.mjs) instead of existing only as a number. `nodeOutcomes`
- * are the per-node states the Mod reports. A journal query that fails is `observed: false` with `dispatched: null`,
+ * are the per-node outcomes: the state the Mod reports, the action the Host submitted for that node, the Mod's own
+ * reason when it recorded one, and the tile when the node names one (`program-node-outcomes.mjs`), so a program that
+ * lost thirty-one nodes to recovery is a set of researchable rows rather than a number. A journal query that fails is
+ * `observed: false` with `dispatched: null`,
  * NEVER `dispatched: 0`: an unobserved program and a program that dispatched nothing are different facts and collapsing
  * them would turn a read failure into a measured zero. A `programId` the Mod never minted (a rejected submit) reads
  * `not_found` and is likewise `observed: false`, with `accepted: false` saying why.
@@ -3514,11 +3519,7 @@ async function readProgramOutcomes({ submissions, statusQuery, eventsQuery, jour
           source: "bridge",
           dispatched: executions.length,
           executions: Object.freeze(executions),
-          nodeOutcomes: Object.freeze(
-            (status.snapshot.nodes ?? []).map((node) =>
-              Object.freeze({ nodeId: node?.nodeId ?? null, state: node?.state ?? null }),
-            ),
-          ),
+          nodeOutcomes: programNodeOutcomes(submission?.nodes ?? [], status.snapshot.nodes ?? []),
         }),
       );
     } catch (error) {
@@ -3541,7 +3542,7 @@ async function readProgramOutcomes({ submissions, statusQuery, eventsQuery, jour
           observation: reason,
           dispatched: fromJournal.dispatched,
           executions: fromJournal.executions,
-          nodeOutcomes: fromJournal.nodeOutcomes,
+          nodeOutcomes: programNodeOutcomes(submission?.nodes ?? [], fromJournal.journalNodes),
         }),
       );
     }
@@ -3580,13 +3581,20 @@ client.programSubmit = async (program) => {
       code: submit?.code ?? null,
       // `accepted` means the Mod took it; nothing here claims a node ran.
       accepted: submit?.code === "accepted",
-      // The nodes as they were SUBMITTED, with the action each one names. This is the only record of that join: the
-      // journal's `native_dispatch` event carries program/node/attempt/cursor and no action id, and the per-node outcome
-      // carries `{ nodeId, state }` only, so `(programId, nodeId)` against these entries is how a program execution is
-      // attributed to an action. Without it a run whose work all went through programs reports that it did nothing.
+      // The nodes as they were SUBMITTED, with the action and the arguments each one names. This is the only record of
+      // that join: the journal's `native_dispatch` event carries program/node/attempt/cursor and no action id, and the
+      // Mod's node rows carry the state and the reason but never the action, so `(programId, nodeId)` against these
+      // entries is how a program execution is attributed to an action. The `arguments` are here for the same reason: a
+      // tile (`x`/`y`) is what makes "node 3 failed at 61,18" sayable, and the Host's own compiled arguments are the
+      // only place it exists (`planNodeTile`). Without this a run whose work all went through programs reports that it
+      // did nothing, and a node that needed recovery cannot be found.
       nodes: Object.freeze(
         (program?.nodes ?? []).map((node) =>
-          Object.freeze({ nodeId: node?.nodeId ?? null, actionId: node?.actionId ?? null }),
+          Object.freeze({
+            nodeId: node?.nodeId ?? null,
+            actionId: node?.actionId ?? null,
+            arguments: node?.arguments ?? {},
+          }),
         ),
       ),
     }),

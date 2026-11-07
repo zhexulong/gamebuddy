@@ -75,12 +75,17 @@ export function programExecutionRows(programOutcomes) {
 }
 
 /**
- * Node states in which the Mod has not yet attempted anything: the node waits for its turn, for admission, or was
- * skipped/abandoned by a dependency. They are named as a NEGATIVE list on purpose - a state added later counts as an
- * attempt rather than disappearing from the summary, which is the direction that cannot hide work.
+ * Node states in which the Mod has not yet attempted anything: the node waits for its turn, for admission, was
+ * skipped/abandoned by a dependency, or the journal said nothing about it at all (`unknown`). They are named as a
+ * NEGATIVE list on purpose - a state added later counts as an attempt rather than disappearing from the summary, which
+ * is the direction that cannot hide work.
+ *
+ * `unknown` is here because a bundle's `nodeOutcomes` now carries a row for EVERY node the Host submitted, not only the
+ * nodes the journal listed (`program-node-outcomes.mjs`): a node with no dispatch and no journal row is unanswered
+ * evidence, while a node that WAS dispatched stays an attempt through `dispatchedNodes` below.
  */
 export const NODE_STATES_WITHOUT_ATTEMPT = Object.freeze(
-  new Set(["pending", "awaiting_host_admission", "host_admitted", "skipped_dependency", "abandoned"]),
+  new Set(["pending", "awaiting_host_admission", "host_admitted", "skipped_dependency", "abandoned", "unknown"]),
 );
 
 /**
@@ -89,9 +94,11 @@ export const NODE_STATES_WITHOUT_ATTEMPT = Object.freeze(
  * A flat dispatch is a request frame the runner sent; a program execution is a node the Mod ran natively. They are two
  * facts, so each is read from its own source - `via: "flat"` rows in the trace, and the journal's execution/state rows
  * in `programOutcomes`. What they share is the ACTION: a program execution carries the journal's own identity
- * (`programId`, `nodeId`, `nodeAttempt`, `cursor`) and never an action id, and `nodeOutcomes` carries `{ nodeId, state }`
- * only, so the action id can be joined from exactly one place - the candidate the Host submitted, whose nodes carry
- * `actionId`. The join key is therefore `(programId, nodeId)` against `programSubmissions[].nodes`.
+ * (`programId`, `nodeId`, `nodeAttempt`, `cursor`) and never an action id. A bundle's node outcome now carries the
+ * action id beside its state (`program-node-outcomes.mjs`), projected from the candidate for the same reason it is
+ * joined from it here: the candidate the Host submitted is the ONE authority for which action a node names, so both
+ * readings derive from it and neither can invent an attribution. The join key is `(programId, nodeId)` against
+ * `programSubmissions[].nodes`.
  *
  * The result is a set of action ids, so the same action dispatched through both channels - or retried twice - is one
  * entry: the two channels are counted from their own sources, and the action is counted once.

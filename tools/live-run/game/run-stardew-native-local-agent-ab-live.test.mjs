@@ -22,6 +22,7 @@ import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mj
 import { killedReasonCode } from "../../lib/live-run-teardown.mjs";
 import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
 import { executionsFromJournalEvents } from "../../lib/stardew-body-program-journal.mjs";
+import { programNodeOutcomes } from "./program-node-outcomes.mjs";
 import {
   COMPANION_DID_NOT_SLEEP,
   COMPANION_SLEEP_REFUSED,
@@ -3270,6 +3271,7 @@ test("an unobserved program is not a program that dispatched nothing", async () 
   // `dispatched: 0`, which would silently turn a read failure into a measured empty execution.
   const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes", {
     executionsFromJournalEvents,
+    programNodeOutcomes,
   });
   const failing = await readProgramOutcomes({
     submissions: [{ programId: "p_unreadable", accepted: true }],
@@ -3317,9 +3319,10 @@ test("an unobserved program is not a program that dispatched nothing", async () 
 
 test("a program that dispatched three nodes reports dispatched: 3, and its node outcomes", async () => {
   // The positive falsifier: `dispatched` is exactly the count of the Mod's own `native_dispatch` events - the executions
-  // the program produced - and the per-node states are what the Mod's status snapshot reports.
+  // the program produced - and the per-node outcomes are what the Mod's status snapshot reports.
   const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes", {
     executionsFromJournalEvents,
+    programNodeOutcomes,
   });
   const events = [
     { cursor: 1, programId: "p1", kind: "admitted", nodeId: "a" },
@@ -3329,15 +3332,37 @@ test("a program that dispatched three nodes reports dispatched: 3, and its node 
     { cursor: 5, programId: "p1", kind: "native_dispatch", nodeId: "b", atMs: 2100 },
   ];
   const records = await readProgramOutcomes({
-    submissions: [{ programId: "p1", accepted: true }],
+    // The candidate the Host submitted, which is the only place a node's action id and its arguments exist. `c` was
+    // never dispatched and the Mod's snapshot does not list it: it must read `unknown`, not be invented from either.
+    submissions: [
+      {
+        programId: "p1",
+        accepted: true,
+        nodes: [
+          {
+            nodeId: "a",
+            actionId: "till_soil",
+            arguments: {
+              x: { type: "integer", canonicalValue: "12" },
+              y: { type: "integer", canonicalValue: "8" },
+            },
+          },
+          { nodeId: "b", actionId: "plant_seed", arguments: {} },
+          { nodeId: "c", actionId: "water_crop", arguments: {} },
+        ],
+      },
+    ],
     statusQuery: async () => ({
       code: "found",
       snapshot: {
         programId: "p1",
-        state: "succeeded",
+        state: "failed",
         nodes: [
-          { nodeId: "a", state: "succeeded" },
-          { nodeId: "b", state: "failed" },
+          // A veto the Mod recorded in its own words, on a node that never ran.
+          { nodeId: "a", state: "rejected", nodeAttempt: 1, admissionAttempt: 1, rejectionCode: "actor_held_by_modal" },
+          // A node whose outcome is unknown. `BodyProgramJournalPersistence.cs:241` FORBIDS a reason code on this
+          // state, so the snapshot cannot carry one and none may be invented here.
+          { nodeId: "b", state: "recovery_required", nodeAttempt: 1, admissionAttempt: 1 },
         ],
       },
     }),
@@ -3357,14 +3382,18 @@ test("a program that dispatched three nodes reports dispatched: 3, and its node 
     ],
     "each execution keeps the journal's own identity, which is what makes it a trace row rather than a count",
   );
+  // THE DEFECT THIS PINS: a measured run's bundle held 154 node outcomes, 31 of them `recovery_required` and 9
+  // `failed`, and not one said why - no reason, no action, no tile. The same run's settlement digest carried all three
+  // for the same nodes, so the bundle's copy was the poorer spelling of one fact.
   assert.deepEqual(records[0].nodeOutcomes, [
-    { nodeId: "a", state: "succeeded" },
-    { nodeId: "b", state: "failed" },
+    { nodeId: "a", actionId: "till_soil", state: "rejected", reasonCode: "actor_held_by_modal", tile: { x: 12, y: 8 } },
+    { nodeId: "b", actionId: "plant_seed", state: "recovery_required" },
+    { nodeId: "c", actionId: "water_crop", state: "unknown" },
   ]);
 
   // A found program with NO native_dispatch events is a real measured zero: observed, dispatched: 0.
   const idle = await readProgramOutcomes({
-    submissions: [{ programId: "p2", accepted: true }],
+    submissions: [{ programId: "p2", accepted: true, nodes: [{ nodeId: "a", actionId: "till_soil", arguments: {} }] }],
     statusQuery: async () => ({ code: "found", snapshot: { programId: "p2", state: "succeeded", nodes: [] } }),
     eventsQuery: async () => ({ code: "found", events: [], nextCursor: 0, highWater: 0 }),
   });

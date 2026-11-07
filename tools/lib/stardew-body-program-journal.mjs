@@ -103,9 +103,20 @@ function programEvidence(program, events) {
   return Object.freeze({
     dispatched: executions.length,
     executions,
-    nodeOutcomes: Object.freeze(
+    // The per-node states as ROWS, in the wire's own vocabulary, and never as `nodeOutcomes` themselves: what a node's
+    // outcome reads (its action, its reason, its tile, and `unknown` for a node this file does not list) is one
+    // projection the caller owns (`program-node-outcomes.mjs`), not a second one that could drift from it.
+    journalNodes: Object.freeze(
       (Array.isArray(program?.nodes) ? program.nodes : []).map((node) =>
-        Object.freeze({ nodeId: node?.nodeId ?? null, state: nodeStateName(node?.state) }),
+        Object.freeze({
+          nodeId: typeof node?.nodeId === "string" ? node.nodeId : null,
+          // A durable numeric state this build cannot name stays unnameable: a row whose state is null is a row the
+          // projection reads as `unknown`, which is the truth, rather than a guessed name.
+          state: nodeStateName(node?.state),
+          rejectionCode: typeof node?.rejectionCode === "string" ? node.rejectionCode : null,
+          failureCode: typeof node?.failureCode === "string" ? node.failureCode : null,
+          hint: typeof node?.hint === "string" ? node.hint : null,
+        }),
       ),
     ),
     programState: programStateName(program?.state),

@@ -4557,7 +4557,13 @@ function isBodyProgramNodeState(value: unknown): boolean {
     value === "failed" ||
     value === "cancelled" ||
     value === "recovery_required" ||
-    value === "rejected"
+    value === "rejected" ||
+    // The two states the Mod's journal settles a node in when its dependency never came good (`skipped_dependency`) or
+    // when it was dispatched and its outcome can never be known (`abandoned`). Both are terminal, both are named in
+    // `NODE_STATES_SETTLED` above, and until they had wire names the Mod folded them into `recovery_required` - a
+    // measured run's bundle then read 31 recovery nodes against a journal that held none.
+    value === "skipped_dependency" ||
+    value === "abandoned"
   );
 }
 function hasUniqueKeys(value: Record<string, unknown>): boolean {
