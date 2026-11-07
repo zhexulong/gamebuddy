@@ -64,6 +64,14 @@ internal static class Program
             return Bounded(SubcommandFailed, () => CheckUpdate(args[1]));
         }
 
+        // `--apply-update <source>` is the half that changes the machine: download, verify the manifest's digest, stage atomically
+        // and hand the installer off after this process exits. Separate from the check because the two deserve different
+        // commands: one answers a question, the other replaces the running product.
+        if (args.Length == 2 && string.Equals(args[0], "--apply-update", StringComparison.Ordinal))
+        {
+            return Bounded(SubcommandFailed, () => ApplyUpdate(args[1]));
+        }
+
         try
         {
             var outcomeCode = OutcomeCode(await RunProductionAsync(CancellationToken.None).ConfigureAwait(false));
@@ -79,6 +87,45 @@ internal static class Program
             // the one channel the launcher reads, so it is replaced by one code.
             Console.Error.WriteLine(UnattributedLaunchFailureCode);
             return 1;
+        }
+    }
+
+    /// <summary>
+    /// Downloads the newer release, verifies it against the manifest, stages it and starts the installer after this process
+    /// exits. Every refusal is one bounded code, and nothing is executed that did not verify.
+    /// </summary>
+    private static int ApplyUpdate(string source)
+    {
+        var programRoot = InstalledProgramRoot();
+        var result = UpdateInstaller
+            .ApplyAsync(programRoot, source, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        switch (result.Outcome)
+        {
+            case UpdateInstaller.Outcome.Staged:
+                // The path is printed before the hand-off so a player, or a log, can see exactly which bytes will run.
+                Console.WriteLine($"update:staged:{result.StagedPath}");
+                Console.WriteLine($"update:version:{result.Version}");
+                UpdateInstaller.HandOff(result.StagedPath!);
+                Console.WriteLine("update:installing");
+                return 0;
+            case UpdateInstaller.Outcome.NotNewer:
+                Console.Error.WriteLine("update:not_newer");
+                return 1;
+            case UpdateInstaller.Outcome.DigestMismatch:
+                // The one refusal worth naming precisely: the bytes are not the ones the manifest promised.
+                Console.Error.WriteLine($"update:installer_digest_mismatch:{result.Reason}");
+                return 1;
+            case UpdateInstaller.Outcome.DownloadFailed:
+                Console.Error.WriteLine($"update:download_failed:{result.Reason}");
+                return 1;
+            case UpdateInstaller.Outcome.StagingFailed:
+                Console.Error.WriteLine($"update:staging_failed:{result.Reason}");
+                return 1;
+            default:
+                Console.Error.WriteLine($"update:manifest_unusable:{result.Reason}");
+                return 1;
         }
     }
 
