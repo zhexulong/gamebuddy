@@ -708,6 +708,8 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
         const [submittedByPlan] = submissions();
         assert.ok(submittedByPlan, "an accepted plan reaches the Mod");
         const payload = submittedByPlan.payload as { programId: string; nodes: readonly never[] };
+        // The compiled program is one the real Body Program validator accepts.
+        assert.equal(validateBodyProgramCandidateRequest(submittedByPlan.payload as Record<string, unknown>), null);
         // The Mod received the program the script compiled: one node, built from the snapshot the tool read.
         assert.deepEqual(payload.nodes, [
           {
@@ -719,14 +721,26 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
           },
         ]);
         assert.equal(payload.programId, planProgramId(1, payload.nodes));
-        // The compiled program is one the real Body Program validator accepts.
-        assert.equal(validateBodyProgramCandidateRequest(payload), null);
-        assert.deepEqual(planned, {
+        // The accepted answer, as a caller reads it: the batch is NOT settled (the Mod has just recorded it), and the
+        // one node the script wrote is answered at its own index with the state the Mod recorded. The clock is asserted
+        // separately - it is a reading, not a constant.
+        const { nodes: plannedNodes, ...plannedBatch } = planned as {
+          nodes: readonly Record<string, unknown>[];
+        } & Record<string, unknown>;
+        assert.deepEqual(plannedBatch, {
           accepted: true,
           nodeCount: 1,
           programId: payload.programId,
           submitted: "accepted",
+          settled: false,
+          remaining: 1,
         });
+        assert.deepEqual(
+          plannedNodes.map(({ elapsedMs: _clock, ...rest }) => rest),
+          [{ index: 0, actionId: "move_to_tile", state: "pending", tile: { x: 6, y: 8 } }],
+          "one row per node, at the index the caller wrote it, in the Mod's own state vocabulary",
+        );
+        assert.equal(typeof plannedNodes[0]?.elapsedMs, "number", "and how long this Host has watched it there");
         // A hand-written program with this same body reaches the Mod as the identical frame: the two tools share one
         // submission, so a plan cannot take a route the raw program tool cannot.
         await execute("stardew_submit_action_program", payload);
@@ -816,12 +830,235 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
               catalogRevision: 1,
               stopEpoch: 0,
               eventHighWater: 0,
-              nodes: [],
+              // The Mod records the candidate's own nodes as `pending`, which is what a just-accepted program looks
+              // like: the answer is read against real journal rows, not against an empty list.
+              nodes: (request.payload as { nodes: readonly { nodeId: string }[] }).nodes.map((node) => ({
+                nodeId: node.nodeId,
+                state: "pending",
+                nodeAttempt: 0,
+                admissionAttempt: 0,
+              })),
             },
           },
         }),
       );
       return true;
+    },
+    {
+      registrations: [
+        {
+          actionId: "move_to_tile",
+          familyId: "movement_navigation",
+          identityVersion: 1,
+          lifecycle: "published",
+          kind: "execution",
+          descriptor: { argumentSchema: { x: { type: "integer" }, y: { type: "integer" } } },
+        },
+      ],
+    },
+  );
+});
+
+/**
+ * ONE `plan_work` CALL ANSWERS THE BATCH'S PER-NODE STATE, IN THE ORDER THE CALLER WROTE THE NODES.
+ *
+ * <p>
+ * The gap this pins was reported in the companion's own words, from a forked session: `plan_work` answered
+ * `{"accepted":true,"settled":false,"nodeCount":4}`, which says the batch was taken and nothing about what became of
+ * each step. The outcome existed, scattered across later `execution_receipt` facts and paired by `executionId`, so a
+ * caller whose third step was refused could tell neither "still running" from "never ran" - it re-submitted an
+ * identical `sleep({})` three times in twenty seconds, and its average batch fell 8.00 -> 5.04 -> 4.47 over one run.
+ * </p>
+ *
+ * <p>
+ * WHAT THE JOIN IS MADE OF: the Mod's status snapshot carries `nodes[].nodeId`, and `OpenBodyProgramJournalAuthority`
+ * accepts the candidate's own ids verbatim (`Accept` -> `new VerifiedBodyProgramNode(node.NodeId, ...)`), so the id the
+ * Host compiled is the id the journal reports. This test therefore answers the snapshot in REVERSE order: an answer
+ * built from array position would number the rows backwards and fail below.
+ * </p>
+ */
+test("a plan answers each node's own state by index, so a refusal cannot be read as a success", async () => {
+  const requests: BridgeMessage[] = [];
+  /** What the Mod's journal holds at the current stage, stage by stage. */
+  let program: { outcome: string; states: readonly Readonly<{ state: string; code?: string }>[] } = {
+    outcome: "active",
+    states: [],
+  };
+  let scriptNodes: readonly Readonly<{ nodeId: string }>[] = [];
+  let submitCode = "accepted";
+  const modSnapshot = (programId: string) => ({
+    programId,
+    state: program.outcome,
+    catalogRevision: 1,
+    stopEpoch: 0,
+    eventHighWater: 0,
+    // REVERSED on purpose: a reader that numbers these rows by position reads `n04` as index 0.
+    nodes: [...scriptNodes]
+      .map((node, index) => {
+        const row = program.states[index] as Readonly<{ state: string; code?: string }>;
+        return {
+          nodeId: node.nodeId,
+          state: row.state,
+          nodeAttempt: 1,
+          admissionAttempt: 1,
+          ...(row.code === undefined ? {} : { rejectionCode: row.code }),
+        };
+      })
+      .reverse(),
+  });
+  await withHelloAck(
+    "farmhand_client",
+    generation,
+    async (pipeName) => {
+      const client = await LocalStardewBridgeClient.connectFarmhand(
+        scope,
+        pipeName,
+        token,
+        generation,
+        Date.now() + 5_000,
+        testAdapter,
+      );
+      const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+        client,
+        Object.freeze({
+          playerId: "player_attestation",
+          companionId: scope.companionId,
+          continuityId,
+          saveId: scope.saveId,
+          worldId: scope.worldId,
+        }),
+        { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+      );
+      const binding = await receiptBackedBinding(launch);
+      let materialized:
+        | Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>>
+        | undefined;
+      try {
+        materialized = await binding.executeWithBinding((bindingToken) =>
+          withConsumedBindingExecution(bindingToken, (execution) =>
+            createHostGameRuntimeMaterializer().materializeEnter(
+              reserveGameRuntimeMaterialization(execution),
+              enterPermit(execution),
+            ),
+          ),
+        );
+        const tools = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools;
+        const execute = async (name: string, params: Record<string, unknown>) => {
+          const tool = tools.find((current) => current.name === name);
+          assert.ok(tool, `missing ${name}`);
+          const result = await tool.execute("plan-work", params, new AbortController().signal, () => undefined);
+          return result.details as Record<string, unknown>;
+        };
+        // Four steps the caller wrote, and the batch it expects back.
+        const script = ["5", "6", "7", "8"].map((x) => `builder.move_to_tile({ x: ${x}, y: 8 });`).join("\n");
+
+        // (1) Accepted, and the THIRD step refused at admission: `actor_held_by_modal` is the code the companion in the
+        // measured session only learned from a later fact batch.
+        program.outcome = "failed";
+        program.states = [
+          { state: "succeeded" },
+          { state: "succeeded" },
+          { state: "rejected", code: "actor_held_by_modal" },
+          { state: "succeeded" },
+        ];
+        const answered = await execute("stardew_plan_work", { script, waitMs: 1_000 });
+        assert.deepEqual(
+          (answered.nodes as readonly Record<string, unknown>[]).map(({ elapsedMs: _clock, ...rest }) => rest),
+          [
+            { index: 0, actionId: "move_to_tile", state: "succeeded", tile: { x: 5, y: 8 } },
+            { index: 1, actionId: "move_to_tile", state: "succeeded", tile: { x: 6, y: 8 } },
+            {
+              index: 2,
+              actionId: "move_to_tile",
+              state: "rejected",
+              reasonCode: "actor_held_by_modal",
+              tile: { x: 7, y: 8 },
+            },
+            { index: 3, actionId: "move_to_tile", state: "succeeded", tile: { x: 8, y: 8 } },
+          ],
+          "every node's own terminal state, at the index the caller wrote it",
+        );
+        assert.equal(answered.settled, true, "four terminal nodes are a settled batch");
+        assert.equal(answered.remaining, 0);
+        // A terminal node carries no clock: nothing is still being watched.
+        assert.deepEqual(
+          (answered.nodes as readonly Record<string, unknown>[]).filter((node) => "elapsedMs" in node),
+          [],
+          "a node that has stopped is not timed",
+        );
+
+        // (2) The same four steps with the second one executing when the bound expires: the answer says HOW MANY are
+        // left and how long the running node has been running, and claims no terminal state for any of them.
+        program.outcome = "active";
+        program.states = [{ state: "succeeded" }, { state: "running" }, { state: "pending" }, { state: "pending" }];
+        const running = await execute("stardew_plan_work", { script, waitMs: 250 });
+        assert.equal(running.settled, false, "a batch still in the world has not settled");
+        assert.equal(running.remaining, 3, "and says how many steps are still to get through");
+        const runningNodes = running.nodes as readonly Record<string, unknown>[];
+        assert.deepEqual(
+          runningNodes.map((node) => node.state),
+          ["succeeded", "running", "pending", "pending"],
+          "each node keeps its own state: nothing is reported as done that is not",
+        );
+        const clock = runningNodes[1]?.elapsedMs;
+        assert.equal(
+          typeof clock,
+          "number",
+          'the node the plan is on is timed, so "still running" is distinguishable from "stopped moving"',
+        );
+        assert.ok((clock as number) >= 0);
+        assert.equal("elapsedMs" in (runningNodes[0] as object), false, "the finished node carries no clock");
+
+        // (3) An identical resubmission: the Mod answers `idempotent` with the journal it already has, so the refusal
+        // comes back as a refusal. A caller that read only `accepted` would submit the same work a fourth time.
+        program.outcome = "failed";
+        program.states = [
+          { state: "succeeded" },
+          { state: "succeeded" },
+          { state: "rejected", code: "actor_held_by_modal" },
+          { state: "succeeded" },
+        ];
+        submitCode = "idempotent";
+        const resubmitted = await execute("stardew_plan_work", { script, waitMs: 1_000 });
+        assert.equal(resubmitted.accepted, true, "the Mod did accept the program the first time");
+        assert.equal(resubmitted.submitted, "idempotent", "and says the second submission was the same program");
+        assert.equal((resubmitted.nodes as readonly Record<string, unknown>[])[2]?.state, "rejected");
+        assert.equal((resubmitted.nodes as readonly Record<string, unknown>[])[2]?.reasonCode, "actor_held_by_modal");
+        assert.equal(resubmitted.remaining, 0);
+      } finally {
+        await materialized?.close();
+        await binding.close();
+      }
+    },
+    (request, socket) => {
+      requests.push(request);
+      if (request.type === "program_submit") {
+        scriptNodes = (request.payload as { nodes: typeof scriptNodes }).nodes;
+        socket.write(
+          frame({
+            ...request,
+            messageId: "mod_plan_answer_submit",
+            type: "program_submit_result",
+            payload: {
+              code: submitCode,
+              verification: { accepted: true, catalogRevision: 1, diagnostics: [] },
+              snapshot: modSnapshot((request.payload as { programId: string }).programId),
+            },
+          }),
+        );
+        return true;
+      }
+      if (request.type === "program_status") {
+        socket.write(
+          frame({
+            ...request,
+            messageId: "mod_plan_answer_status",
+            type: "program_status_result",
+            payload: { code: "found", snapshot: modSnapshot(request.payload.programId) },
+          }),
+        );
+        return true;
+      }
     },
     {
       registrations: [

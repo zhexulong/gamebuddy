@@ -55,6 +55,7 @@ import {
   validateBodyProgramEventsResult,
   validateBodyProgramStatusResult,
   validateBodyProgramSubmitResult,
+  type BodyProgramStatusResult,
   type BodyNodeAdmissionChallenge,
   type BodyNodeAdmissionResult,
   type BodyProgramCandidateRequest,
@@ -72,8 +73,10 @@ import { assembleGameRuntimeContext } from "./game-runtime-context-assembly.js";
 import {
   isTerminalProgramStatus,
   MAX_PROGRAM_STATUS_WAIT_MS,
+  planBatchAnswer,
   programStatusProgress,
   waitForTerminalProgramStatus,
+  type PlanBatchAnswer,
   type ProgramStatusProgress,
 } from "../program-status-wait.js";
 import { createGameRuntimeAttachment } from "./game-runtime-attachment.js";
@@ -294,6 +297,27 @@ function createBodyProgramTools(
             // Recorded the moment the Mod accepts it: this is the identity a STOP has to name, and nothing else in the
             // Host knows which program is currently in the world.
             lastAcceptedProgramId = programId;
+            /**
+             * One answer shape for both branches: the batch's own settlement, its remaining count, and one row per node
+             * the caller wrote, at the index it wrote it. A caller never has to match an `executionId` to know what
+             * became of step 3.
+             */
+            const answerOf = (answer: PlanBatchAnswer, beside: Readonly<Record<string, unknown>> = {}) =>
+              planDetails({
+                accepted,
+                nodeCount: nodes.length,
+                programId,
+                submitted: code,
+                settled: answer.settled,
+                remaining: answer.remaining,
+                nodes: answer.nodes,
+                ...beside,
+              });
+            /**
+             * The clock for the read that produced this answer. `observe` is the ledger `stardew_action_program_status`
+             * reports from, so a node cannot have one elapsed time in this answer and another in that one; a second
+             * observation of the same payload returns the same anchor.
+             */
             const readStatus = async () => {
               const result = await withPort(
                 { programId },
@@ -315,8 +339,18 @@ function createBodyProgramTools(
             // So the call returns as soon as the Mod accepts. A caller that genuinely wants to block passes `waitMs`, and
             // the capability survives without being imposed on everyone.
             const { waitMs } = params as { waitMs?: number };
-            if (typeof waitMs !== "number" || !Number.isFinite(waitMs) || waitMs <= 0)
-              return planDetails({ accepted, nodeCount: nodes.length, programId, submitted: code, settled: false });
+            if (typeof waitMs !== "number" || !Number.isFinite(waitMs) || waitMs <= 0) {
+              // The submit already carries the Mod's journal as the Mod recorded it, so the non-waiting answer needs no
+              // second call and no invented state: a program accepted as `idempotent` reports the state its nodes are in
+              // NOW, which is how an identical resubmission comes back saying "step 3 was refused" instead of
+              // "accepted" - the answer that made a measured companion submit the same `sleep({})` three times.
+              const recorded = submitted.details.snapshot;
+              const reading: BodyProgramStatusResult = Object.freeze({
+                code: recorded === null ? "not_found" : "found",
+                snapshot: recorded,
+              });
+              return answerOf(planBatchAnswer(nodes, recorded, programStatusProgress.observe(reading)?.nodes ?? []));
+            }
             const bounded = Math.min(waitMs, MAX_PROGRAM_STATUS_WAIT_MS);
             const first = await readStatus();
             const settled = isTerminalProgramStatus(first)
@@ -325,17 +359,19 @@ function createBodyProgramTools(
                   waited: Object.freeze({ reachedTerminal: true, snapshotChanged: false }),
                 })
               : await waitForTerminalProgramStatus(readStatus, first, bounded);
-            return planDetails({
-              accepted,
-              nodeCount: nodes.length,
-              programId,
-              submitted: code,
-              settled: settled.waited.reachedTerminal,
-              // The same fields a status call carries, so a plan that outlived the bound needs no second call to learn
-              // what is left and whether anything moved while this one held the turn.
-              status: settled.result,
-              ...(settled.waited.snapshotChanged ? {} : { unchangedWhileWaiting: true }),
-            });
+            return answerOf(
+              planBatchAnswer(
+                nodes,
+                settled.result.snapshot,
+                programStatusProgress.observe(settled.result)?.nodes ?? [],
+              ),
+              {
+                // The same fields a status call carries, so a plan that outlived the bound needs no second call to learn
+                // what is left and whether anything moved while this one held the turn.
+                status: settled.result,
+                ...(settled.waited.snapshotChanged ? {} : { unchangedWhileWaiting: true }),
+              },
+            );
           } catch (error) {
             span.end({ reasonCode: "plan_submission_failed" });
             throw error;
@@ -554,6 +590,20 @@ function planToolParameters() {
         maxLength: 8192,
         description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares, or builder.equipFor(<actionId>, <target>) to write an equip step. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\` except these, which carry only their own fields: ${PLAN_UNIDENTIFIED_FAMILIES.join(", ")}; and every entry carries \`x\` and \`y\` except ${PLAN_TILELESS_FAMILIES.join(", ")}. doorTargets names its source tile as \`sourceX\`/\`sourceY\` and its arrival map as \`targetLocation\`; chests carries \`chestId\`, \`displayName\`, \`isFridge\` and its own \`items\` array of \`{ slot, qualifiedItemId, displayName, stack }\` - every item the container holds, which is never truncated. \`snapshot.currentTool\` is the qualified id of the tool the farmer holds, \`snapshot.currentToolSlot\` is the slot it is in, and \`snapshot.toolSlots\` lists \`{ slot, label, upgradeLevel }\` for every tool in the pack. Before writing a tool action, ask \`stardew_plan_shape\` for that action: it names the tool category, any minimum upgrade level and what a \`slot\` argument holds, so no slot has to be guessed from tool order. Write the equip step with \`builder.equipFor(<actionId>, <target>)\`: it writes \`equip_tool\` before the action unless that tool is already the held one, and returns the slot to pass to the action. builder.nodeCount and builder.isFull() are live and 16 nodes is the whole plan; await, require, import, fetch and timers do not exist here and are refused by name.`,
       }),
+      /**
+       * Declared here because the tool already reads it: a parameter the implementation honours but the schema hides is
+       * a capability nothing can reach - and a caller who wants the SETTLED per-node answer has no other one call to
+       * make. The default is still not to wait (`a plan does not hold the turn unless the caller asks it to`), the cap
+       * is the same `MAX_PROGRAM_STATUS_WAIT_MS` the status tool obeys, and the text says what the wait costs.
+       */
+      waitMs: Type.Optional(
+        Type.Integer({
+          minimum: 0,
+          maximum: MAX_PROGRAM_STATUS_WAIT_MS,
+          description:
+            "A rare opt-in: hold this turn until every node of the plan has stopped, or this many milliseconds pass, so `nodes` comes back terminal. While it holds the turn you cannot stop, append or steer - the plan runs either way and each step's receipt still arrives on its own, so leave it out unless this turn genuinely needs the settled answer.",
+        }),
+      ),
     },
     { additionalProperties: false },
   );

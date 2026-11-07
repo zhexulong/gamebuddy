@@ -1107,10 +1107,21 @@ test("a plan does not hold the turn unless the caller asks it to", async () => {
   const wait = plan.indexOf("waitForTerminalProgramStatus(");
   assert.ok(guard > 0, "the plan tool guards on the caller's own waitMs");
   assert.ok(wait > guard, "and reaches the shared waiter only past that guard, so the default cannot block");
+  // Re-anchored when the answer stopped saying `settled: false` unconditionally: that field now reports the BATCH, so a
+  // source assertion about its spelling was a proxy for this property rather than the property itself. What makes the
+  // default non-blocking is that the immediate branch awaits nothing - it answers from the snapshot the submit already
+  // carried - so the assertion is that the region between the guard and the first awaited read contains no await.
+  const waiterAt = plan.indexOf("const bounded =");
+  assert.ok(waiterAt > guard, "the guarded branch ends where the bounded wait begins");
+  assert.doesNotMatch(
+    plan.slice(guard, waiterAt),
+    /await |readStatus\(|port\.status\(/u,
+    "the immediate answer awaits nothing: it answers from the journal the submit already carried, so it cannot hold the turn",
+  );
   assert.match(
     plan.slice(guard, wait),
-    /settled: false/u,
-    "the immediate answer still says the program has not settled, rather than implying it has",
+    /planBatchAnswer\(nodes, recorded,/u,
+    "and the immediate answer still names every node the caller wrote",
   );
 });
 
@@ -1288,7 +1299,13 @@ test("the plan tool hands its compiled program to the one submission path a mode
   );
   assert.match(source, /^\s+accepted,$/mu, "and every branch reports that same fact");
   assert.match(source, /^\s+nodeCount: nodes\.length,$/mu, "the plan reports how many steps it carries");
-  assert.match(source, /^\s+settled: settled\.waited\.reachedTerminal,$/mu, "the plan reports whether it settled");
+  assert.match(
+    source,
+    /^\s+settled: answer\.settled,$/mu,
+    "the plan reports whether the BATCH settled, not whether this call waited",
+  );
+  assert.match(source, /^\s+remaining: answer\.remaining,$/mu, "and how many nodes have not stopped yet");
+  assert.match(source, /^\s+nodes: answer\.nodes,$/mu, "with one row per node, at the index the caller wrote it");
   assert.match(source, /^\s+status: settled\.result,$/mu, "and carries the status a second call would have fetched");
   assert.match(
     source,
