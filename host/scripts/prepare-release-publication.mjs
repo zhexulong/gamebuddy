@@ -87,7 +87,9 @@ export async function preparePublication({
       `- SHA-256: \`${manifest.installer.sha256}\``,
       `- Generation: \`${verdict.generation}\``,
       `- Payload SHA-256: \`${manifest.payload.sha256}\``,
-      `- Signature: \`${manifest.signature.scheme}\`, thumbprint \`${manifest.signature.thumbprint}\``,
+      ...(unsigned
+        ? ["- Signature: none"]
+        : [`- Signature: \`${manifest.signature.scheme}\`, thumbprint \`${manifest.signature.thumbprint}\``]),
       "",
       "Verify before running:",
       "",

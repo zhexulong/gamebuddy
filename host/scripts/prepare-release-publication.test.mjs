@@ -133,6 +133,10 @@ test("an unsigned artifact is published when the lane allows it and the manifest
   assert.equal(publication.unsigned, true);
   // The first line a player reads has to say it, or the download implies a signature it does not have.
   assert.match(publication.body, /This build is not code-signed/u);
+  // And the notes must not name a signature scheme for an artifact that has no signature: that line contradicted the
+  // warning above it.
+  assert.match(publication.body, /- Signature: none/u);
+  assert.doesNotMatch(publication.body, /authenticode\+timestamp/u);
 });
 
 test("a manifest claiming a signature it does not carry is refused by the manifest gate, not by policy", async () => {
