@@ -38,6 +38,14 @@ test("desktop product composition builds the Stardew game owner only through the
   // Main assertion: the generic composition never directly constructs a game
   // assembly; the Stardew lifecycle owner is built exclusively through the
   // provider registered in PRODUCT_INTEGRATION_CATALOG.
+  //
+  // SCOPE, so nobody reads this as "one coordinator in the product": the guard
+  // covers the INTERACTIVE path. `host/src/main.ts` is the authorized headless
+  // runner and does construct the coordinator itself; its authority is the same
+  // Authority Root Identity, and the exclusion between the two entries is the
+  // Windows named mutex plus the durable Game lease - not this assertion. The
+  // product therefore has two legitimate entries (desktop shell, headless gate)
+  // and one authority, which is why a second entry is not a second owner.
   assert.match(source, /PRODUCT_INTEGRATION_CATALOG\.getProvider\("stardew"\)/);
   assert.match(
     source,

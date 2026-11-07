@@ -52,14 +52,24 @@ async function recoverDeadOwner(deploymentManifestRef: string, operationId: stri
 }
 
 /**
- * Main operational-gate entry. This is the only production entry besides the
- * CLI-only recovery form: it loads a verified deployment-manifest reference,
- * constructs the existing production Game composition, invokes the
- * coordinator-private headless admission, arms durable enter/ingress, and then
- * accepts one nonce-bound dispatch over Node IPC. It deliberately does not
- * import a bridge client, the Design 99 materializer, Preview, Portfolio,
- * browser composition, or operator selection; lifecycle authority stays inside
- * the coordinator.
+ * Headless operational-gate entry. The product has exactly two legitimate entries and they are different
+ * doors into the same authority, not rivals:
+ *
+ *   - `desktop-host-entry` is the interactive shell a player's window is opened by;
+ *   - this file is the headless runner an automated gate drives, and it accepts one nonce-bound dispatch
+ *     over Node IPC rather than serving a browser.
+ *
+ * Both construct the same production Game composition over the same Authority Root Identity, and the
+ * exclusion between them is physical, not a convention: the Windows named mutex the coordinator takes
+ * (`createWindowsAuthorityRootMutex`, coordinator.internal.ts:2376-2397) refuses the second process at the
+ * OS layer, and even past that the durable `production_game_lease` holds - a second start that finds a live
+ * owner is refused by name (`game_recovery_blocked_owner_alive`, "another GameBuddy is already running")
+ * and nothing is touched. An earlier version of this comment said "the only production entry besides the
+ * CLI-only recovery form", which stopped being true when the desktop shell landed; a reader who believed it
+ * would have concluded this gate was the sole owner of lifecycle authority.
+ *
+ * It deliberately does not import a bridge client, the Design 99 materializer, Preview, Portfolio, browser
+ * composition, or operator selection; lifecycle authority stays inside the coordinator.
  */
 async function runOperationalGate(deploymentManifestRef: string, operationalNonceSha256: string): Promise<void> {
   const manifest = await loadHostDeploymentManifest(deploymentManifestRef);
