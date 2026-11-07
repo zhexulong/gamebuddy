@@ -549,6 +549,15 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "       unresolvable route name and a probe-mounted spec, and asserts the report exits 0 with a collision on it",
   },
   { gate: "check-stardew-action-promotion.mjs", reason: "static table gate; falsifier in its test" },
+  {
+    gate: "check-stardew-promotion-parity.mjs",
+    reason:
+      "compares the catalog, the published gate table, the experimental runner map and the fixture scenario; its " +
+      "falsifier (tools/check-stardew-promotion-parity.test.mjs) injects each half-write into the real sources - a " +
+      "deleted gate row, a runner left in the experimental map, a scenario the Mod does not declare, an unstated " +
+      "catalog default - and reads the exact promotion_places_disagree line, so the default run prints population " +
+      "counts rather than a self-verification report",
+  },
   { gate: "check-stardew-actor-admissibility.mjs", reason: "requires a live-run artifact" },
   { gate: "check-stardew-companion-production-admission.mjs", reason: "requires a production-admission artifact" },
   { gate: "check-stardew-dialogue-autonomy.mjs", reason: "requires a ladder-result json" },

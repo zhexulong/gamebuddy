@@ -83,6 +83,14 @@ export const L0_GATES = Object.freeze([
   "tools/check-game-context-pressure.mjs",
   "tools/check-live-run-verdict-guards.mjs",
   "tools/check-failure-reason-codes.mjs",
+  // The promotion pair. `check-stardew-action-promotion` already ran on every push in CI; the ladder runs it too
+  // because it is the gate a lane reads as "may this action be visible to the Agent", and reading it 100 ms before a
+  // live run is cheaper than discovering its verdict after one. Its sibling asks the other half of the question the
+  // promotion tool's own header states ("a hand-written promotion row is not a row"): the catalog rung, the gate
+  // row, the runner entry and the fixture scenario must already agree, so a hand edit that moves two of the four
+  // names the half-write here instead of surfacing as a symptom three gates away.
+  "tools/check-stardew-action-promotion.mjs",
+  "tools/check-stardew-promotion-parity.mjs",
   "integrations/stardew/action-development/tests/action-source-projection-drift.test.mjs",
   "integrations/stardew/action-development/tests/action-projection-parity-drift.test.mjs",
   "tools/check-prelive-gate-registry.mjs",

@@ -4,6 +4,11 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
 import { TARGET_FIELD as STARDEW_SNAPSHOT_TARGET_FIELD } from "./audit-stardew-discovery-channels.mjs";
+import {
+  handlerDispatch,
+  handlerFieldReads,
+} from "../integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs";
+import { readModSources } from "../integrations/stardew/action-development/src/analysis/stardew-mod-csharp-source.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 
@@ -114,6 +119,131 @@ function parseOrNull(text) {
 }
 
 /**
+ * WHAT A WRITE ACTION'S POSTCONDITION HAS TO NAME
+ *
+ * red-proof: inject  deleting move_to_tile's recorded debt entry while its postcondition is still the generic
+ *   `native_action_postcondition` -> `write_postcondition_placeholder:move_to_tile:handler_reads=none`, exit 1
+ *   (tools/check-stardew-action-promotion.test.mjs)
+ *
+ * `native_action_postcondition` says "the native call did something". It does not say WHICH engine fact the
+ * action re-reads to prove the effect happened, so a promotion could ship a write action whose verification
+ * reads nothing in particular and no gate could tell.
+ *
+ * The engine fact is not guessed here. The observation-gap report's section H already extracts, for every action
+ * handler, the engine members its body reads to decide (`handlerFieldReads`, over the shared C# reader), and this
+ * gate imports that reader instead of writing a second parser: a finding names the members the handler reads, so
+ * the author sees what to write.
+ *
+ * THE RATCHET. Measured at this commit, 49 of the 99 write actions carry the generic name; a hard rule would be red
+ * at HEAD, and a gate red at HEAD runs nowhere. The 49 are recorded in `writePostconditionBaseline` with the
+ * measurement that justifies recording them, the gate prints the count on every run, and each entry expires in both
+ * directions: an unrecorded placeholder is refused by name, and a recorded action that names a member (or stops
+ * being a write action, or leaves the surface) is a stale entry until someone deletes it.
+ */
+export const WRITE_POSTCONDITION = Object.freeze({
+  surface: "integrations/stardew/action-development/contracts/generated/action-surface.v1.json",
+  baseline: "tools/stardew-write-postcondition-baseline.json",
+  baselineSchema: "gamebuddy-stardew-write-postcondition-baseline/v1",
+  genericName: "native_action_postcondition",
+});
+
+/**
+ * The recorded debt, as a list of action ids plus the measurement that justifies it. A baseline that cannot be read,
+ * carries another schema, states no reason, or lists an id twice is a `problem`: an empty entry list would silently
+ * turn the ratchet off while the gate still reported a pass.
+ */
+export function readWritePostconditionBaseline(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { entries: [], reason: null, problem: "write_postcondition_baseline_malformed" };
+  }
+  if (parsed?.schema !== WRITE_POSTCONDITION.baselineSchema)
+    return { entries: [], reason: null, problem: "write_postcondition_baseline_schema_mismatch" };
+  const listed = Array.isArray(parsed.entries) ? parsed.entries.filter((entry) => typeof entry === "string") : null;
+  if (listed === null) return { entries: [], reason: null, problem: "write_postcondition_baseline_malformed" };
+  const entries = [...new Set(listed)];
+  if (entries.length !== listed.length)
+    return { entries, reason: null, problem: "write_postcondition_baseline_duplicates" };
+  const reason = typeof parsed.reason === "string" ? parsed.reason : "";
+  if (reason.trim().length < 40) return { entries, reason, problem: "write_postcondition_baseline_unreasoned" };
+  return { entries, reason };
+}
+
+/**
+ * Every write action's postcondition, checked for the one thing a code name can be wrong about here: whether it names
+ * the engine fact the action re-reads. Pure over `surface`, `baseline` and `engineFacts`, so the falsifier suite
+ * injects a placeholder into the real surface instead of editing the Mod.
+ *
+ * `checked` is the population (every write action), `specific` + `placeholders` partition it, and `debt` is how many of
+ * the placeholders the baseline records - the three numbers a reader needs to see the ratchet's size.
+ */
+export function findPlaceholderWritePostconditions({ surface, baseline, engineFacts = () => [] }) {
+  const findings = [];
+  const actions = Array.isArray(surface?.actions) ? surface.actions : null;
+  if (actions === null)
+    return { findings: ["action_surface_unreadable"], checked: 0, total: 0, specific: 0, placeholders: 0, debt: 0 };
+  if (baseline?.problem !== undefined) findings.push(baseline.problem);
+  const recorded = new Set(baseline?.entries ?? []);
+  const total = actions.filter((action) => action?.effect === "write").length;
+  let checked = 0;
+  let specific = 0;
+  let placeholders = 0;
+  let debt = 0;
+  for (const action of actions) {
+    if (action?.effect !== "write" || typeof action.actionId !== "string") continue;
+    checked += 1;
+    const name = action.postcondition?.name;
+    if (typeof name === "string" && name.length > 0 && name !== WRITE_POSTCONDITION.genericName) {
+      specific += 1;
+      continue;
+    }
+    placeholders += 1;
+    if (recorded.has(action.actionId)) {
+      debt += 1;
+      continue;
+    }
+    const reads = engineFacts(action.actionId);
+    findings.push(
+      `write_postcondition_placeholder:${action.actionId}:handler_reads=${reads.length > 0 ? reads.join("+") : "none"}`,
+    );
+  }
+  const byId = new Map(
+    actions.filter((action) => typeof action?.actionId === "string").map((action) => [action.actionId, action]),
+  );
+  for (const actionId of recorded) {
+    const action = byId.get(actionId);
+    if (action === undefined) findings.push(`write_postcondition_debt_unknown_action:${actionId}`);
+    else if (action.effect !== "write") findings.push(`write_postcondition_debt_not_a_write_action:${actionId}`);
+    else if (
+      typeof action.postcondition?.name === "string" &&
+      action.postcondition.name.length > 0 &&
+      action.postcondition.name !== WRITE_POSTCONDITION.genericName
+    )
+      findings.push(`stale_write_postcondition_debt:${actionId}`);
+  }
+  // The population invariant, said out loud: an examined count that stops matching the write surface
+  // means the loop skipped an action, and that is a finding rather than a smaller denominator.
+  if (total === 0) findings.push("write_postcondition_population_empty");
+  else if (checked !== total) findings.push(`write_postcondition_population_incomplete:${checked}/${total}`);
+  return { findings, checked, total, specific, placeholders, debt };
+}
+
+/**
+ * The engine members each write action's handler reads to decide, from the observation-gap report's section H reader.
+ * One reading of the Mod source, shared with that report: `handlerDispatch` says which request method owns an action,
+ * `handlerFieldReads` says what that body reads.
+ */
+export function writePostconditionEngineFacts({ sources = readModSources() } = {}) {
+  const dispatch = handlerDispatch(sources);
+  return (actionId) => {
+    const request = dispatch.get(actionId);
+    return request === undefined ? [] : handlerFieldReads(sources, request).members;
+  };
+}
+
+/**
  * The lag this whole ladder keeps producing: a live run passes, its receipt is
  * recorded, and the catalog keeps saying `experimental` - so the Agent cannot see
  * the action at all. Measured 2026-11-04: `use_mine_ladder` had its
@@ -154,6 +284,9 @@ export function validatePromotionSources({
   descriptors = STARDEW_PUBLISHED_ACTION_GATES,
   snapshotTargetField = STARDEW_SNAPSHOT_TARGET_FIELD,
   promotionEvidence,
+  surface,
+  writePostconditionBaseline,
+  writePostconditionEngineFacts = () => [],
 }) {
   const failures = [];
   // The Host's admission vocabulary is the boundary of everything downstream: a lifecycle it does not recognise is
@@ -180,6 +313,19 @@ export function validatePromotionSources({
   // still reports success.
   if (promotionEvidence === undefined) failures.push("live_evidence_sources_not_supplied");
   else failures.push(...findExperimentalActionsWithLiveEvidence({ definitions, promotionEvidence }));
+  // The same fail-closed shape for the postcondition rule: a caller that forgets the surface or
+  // the recorded debt would turn the check into a no-op that still reports success.
+  if (surface === undefined) failures.push("action_surface_not_supplied");
+  if (writePostconditionBaseline === undefined) failures.push("write_postcondition_baseline_not_supplied");
+  const writePostconditions =
+    surface === undefined || writePostconditionBaseline === undefined
+      ? { findings: [], checked: 0, total: 0, specific: 0, placeholders: 0, debt: 0 }
+      : findPlaceholderWritePostconditions({
+          surface,
+          baseline: writePostconditionBaseline,
+          engineFacts: writePostconditionEngineFacts,
+        });
+  failures.push(...writePostconditions.findings);
   const hostEntries = parseHostEntries(registry);
   const routes = parseExplicitRoutes(gameTools);
   failures.push(...validateHostWrapperFactory(gameTools, routes));
@@ -288,7 +434,13 @@ export function validatePromotionSources({
   for (const id of descriptorIds)
     if (!definitions.some((entry) => entry.actionId === id && descriptorEligibleLifecycles.has(entry.lifecycle)))
       failures.push(`gate_descriptor_not_published:${id}`);
-  return { failures, definitions, hostEntries, evidenceReceiptCount: promotionEvidence?.length ?? 0 };
+  return {
+    failures,
+    definitions,
+    hostEntries,
+    evidenceReceiptCount: promotionEvidence?.length ?? 0,
+    writePostconditions,
+  };
 }
 
 function assertUnique(values, label, failures) {
@@ -575,35 +727,63 @@ async function main() {
     source.resourceHandler,
   ];
   const evidence = await readDurableLiveEvidence({ root: ROOT });
-  const result = validatePromotionSources({ ...source, handlerSources, promotionEvidence: evidence.receipts });
+  const surface = JSON.parse(await readFile(resolve(ROOT, WRITE_POSTCONDITION.surface), "utf8"));
+  const writePostconditionBaseline = readWritePostconditionBaseline(
+    await readFile(resolve(ROOT, WRITE_POSTCONDITION.baseline), "utf8"),
+  );
+  const result = validatePromotionSources({
+    ...source,
+    handlerSources,
+    promotionEvidence: evidence.receipts,
+    surface,
+    writePostconditionBaseline,
+    writePostconditionEngineFacts: writePostconditionEngineFacts(),
+  });
   result.failures.push(...evidence.problems);
   for (const gate of STARDEW_PUBLISHED_ACTION_GATES)
     await access(resolve(ROOT, "tools", gate.runner), constants.R_OK).catch(() =>
       result.failures.push(`gate_runner_missing:${gate.actionId}:${gate.runner}`),
     );
+  const counts = result.writePostconditions;
+  process.stdout.write(
+    `write postconditions: checked ${counts.checked} of ${counts.total} write actions` +
+      ` (${counts.specific} name an engine fact, ${counts.placeholders} placeholders, ${counts.debt} of those recorded as debt)\n`,
+  );
   if (result.failures.length) {
     console.error(JSON.stringify({ state: "failed", ...result }, null, 2));
     process.exitCode = 1;
-  } else
-    console.log(
-      JSON.stringify(
-        {
-          state: "passed",
-          publishedCount: result.definitions.filter((entry) => entry.lifecycle === "published").length,
-          liveVerifiedCount: result.definitions.filter((entry) => entry.lifecycle === "live_verified").length,
-          experimentalCount: result.definitions.filter((entry) => entry.lifecycle === "experimental").length,
-          // Said out loud so a green run cannot be mistaken for "every live run is
-          // accounted for". A lag whose only artifact is a discarded dump is
-          // invisible to this gate, and that is a limit of the evidence, not a pass.
-          evidence: {
-            sources: [LIVE_EVIDENCE.receiptCorpus, `${LIVE_EVIDENCE.liveRunEvidenceDirectory}/`],
-            receipts: result.evidenceReceiptCount,
-            notRead: LIVE_EVIDENCE.notEvidence,
-          },
+    return;
+  }
+  console.log(
+    JSON.stringify(
+      {
+        state: "passed",
+        publishedCount: result.definitions.filter((entry) => entry.lifecycle === "published").length,
+        liveVerifiedCount: result.definitions.filter((entry) => entry.lifecycle === "live_verified").length,
+        experimentalCount: result.definitions.filter((entry) => entry.lifecycle === "experimental").length,
+        // Said out loud so a green run cannot be mistaken for "every live run is
+        // accounted for". A lag whose only artifact is a discarded dump is
+        // invisible to this gate, and that is a limit of the evidence, not a pass.
+        evidence: {
+          sources: [LIVE_EVIDENCE.receiptCorpus, `${LIVE_EVIDENCE.liveRunEvidenceDirectory}/`],
+          receipts: result.evidenceReceiptCount,
+          notRead: LIVE_EVIDENCE.notEvidence,
         },
-        null,
-        2,
-      ),
-    );
+        // The postcondition ratchet: `specific` names an engine fact, `placeholders` carry the
+        // generic name and `debt` of those are the recorded ones. A number that stops adding up
+        // is a finding.
+        writePostconditions: {
+          checked: counts.checked,
+          total: counts.total,
+          specific: counts.specific,
+          placeholders: counts.placeholders,
+          debt: counts.debt,
+          baseline: WRITE_POSTCONDITION.baseline,
+        },
+      },
+      null,
+      2,
+    ),
+  );
 }
 if (import.meta.url === pathToFileURL(process.argv[1]).href) await main();
