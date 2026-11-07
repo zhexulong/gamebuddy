@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import { type CompanionArrivalHistory, companionArrivalFact } from "./companion-arrival-fact.js";
 import type { CompanionInterruption, StopAdmission } from "./companion-interruption.js";
 import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-attestation.js";
-import type { CompanionLoop, NativeGameCompanionContent, NativeGameContentPresenter } from "./companion-loop.js";
+import {
+  type CompanionLoop,
+  isProviderEmptyCompletion,
+  type NativeGameCompanionContent,
+  type NativeGameContentPresenter,
+  PROVIDER_EMPTY_COMPLETION,
+} from "./companion-loop.js";
 import type { CompanionTurnOutcome, WorldFact } from "./event-pump.js";
 import type { IntegrationEventSource, IntegrationLifecycleEvent } from "./integration-launcher.js";
 import { NativeNoticeLedger } from "./native-notice-fact.js";
@@ -23,6 +29,7 @@ export type FinalVoiceSource = Readonly<{ onFinalTranscript(listener: (input: Fi
 const REFUSED_PLAYER_INPUT = Object.freeze({
   session_closed: Object.freeze({ accepted: false, reasonCode: "player_input_session_closed" }),
   integration_unavailable: Object.freeze({ accepted: false, reasonCode: "player_input_integration_unavailable" }),
+  run_terminated: Object.freeze({ accepted: false, reasonCode: "player_input_run_terminated" }),
   empty: Object.freeze({ accepted: false, reasonCode: "player_input_empty" }),
 } as const);
 
@@ -59,6 +66,7 @@ export type StopOutcome = "active_turn_cancelled" | "queued_turn_cancelled" | "n
 export type PlayerInputRefusalCode =
   | "player_input_session_closed"
   | "player_input_integration_unavailable"
+  | "player_input_run_terminated"
   | "player_input_empty";
 
 /**
@@ -111,6 +119,44 @@ export type StopSettledPayload = Readonly<{
  * `expressionId` idempotency, and an uncertain commit closes the turn.
  */
 export const MAX_NATIVE_PRESENTATION_TURN_BYTES = 16_384;
+
+/**
+ * How many empty completions one delivered prompt may end with before the run is over.
+ *
+ * <p>
+ * Three, because an empty answer is worth asking for once more - a provider that hiccuped answers the same prompt on the
+ * next attempt - while a provider that answers with nothing three times in a row is not going to produce a turn, and a
+ * fourth attempt would only make the stall look longer. The retry is the SAME prompt: `EventPump` restores the exact
+ * batch a rejected delivery owned, so the retry carries the facts the first attempt carried, not a fresh composition.
+ * </p>
+ */
+const PROVIDER_EMPTY_COMPLETION_ATTEMPTS = 3;
+
+/**
+ * The pause before re-asking a prompt that came back empty.
+ *
+ * <p>
+ * Short on purpose: nothing an empty completion says asks the operator to wait. It exists only so the retry is not a
+ * tight loop against a provider in the first milliseconds after it answered nothing.
+ * </p>
+ */
+const PROVIDER_EMPTY_COMPLETION_RETRY_DELAY_MS = 250;
+
+/**
+ * The fact that ended a run of turns: a provider kept answering with nothing, so no further turn can be expected.
+ *
+ * <p>
+ * It is published rather than acted on destructively. The Game world, the bridge and the run's own state stay exactly
+ * where they are - only this session's turns stop - so a verdict can say `provider_empty_completion` instead of nothing
+ * at all. Before this existed the same run idled for 148 minutes with the game alive and the bridge connected, which
+ * from outside is indistinguishable from a companion still thinking (2026-11-07).
+ * </p>
+ */
+export type HostRunTermination = Readonly<{
+  code: typeof PROVIDER_EMPTY_COMPLETION;
+  /** How many empty completions this session received, retried ones included. */
+  emptyCompletions: number;
+}>;
 
 /**
  * Private production turn authority; no model/tool identity can mint lineage.
@@ -333,6 +379,26 @@ export class CompanionHostService {
    * </p>
    */
   #lastProviderFailure: ProviderFailureClass | undefined;
+  /**
+   * How many delivered turns ended as an empty completion, for the whole session - the ones a retry recovered included.
+   *
+   * <p>
+   * Cumulative rather than consecutive, and never reset by a later answer: an engine that only counts the empty
+   * completion it FAILED on hides every provider hiccup that a retry happened to cover, which is the provider trouble
+   * an operator needs to see. The bound that ends a run is counted separately, per prompt, by `#flushTurn`.
+   * </p>
+   */
+  #providerEmptyCompletions = 0;
+  /**
+   * The run-ending fact, or `undefined` while this session can still make a turn.
+   *
+   * <p>
+   * Read by a verdict, the way `lastProviderFailure` is, so a stalled run can name itself. It stops the turn loop - no
+   * retry, no automatic re-arm, and no new player turn - and stops nothing else: the world, the bridge and STOP keep
+   * working, because a provider that answered nothing is an AI-authority failure, not a reason to tear a game down.
+   * </p>
+   */
+  #runTermination: HostRunTermination | undefined;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
   /** The retry ladder's first step, and the sentinel that says "the last attempt succeeded". */
   readonly #baseRetryDelayMs = 50;
@@ -434,6 +500,32 @@ export class CompanionHostService {
     return this.#lastProviderFailure;
   }
 
+  /**
+   * How many delivered turns ended as an empty completion: Pi settled a turn whose assistant message carried neither
+   * text nor a tool call.
+   *
+   * <p>
+   * Published even when the retry answered, because a run that swallowed the empty completion would report a healthy
+   * session over a provider that is intermittently returning nothing at all.
+   * </p>
+   */
+  public get providerEmptyCompletions(): number {
+    return this.#providerEmptyCompletions;
+  }
+
+  /**
+   * The fact that ended the run, or `undefined` while this session can still make a turn.
+   *
+   * <p>
+   * `code` is the terminal code a run's own artifact carries, so a verdict can say `provider_empty_completion` instead
+   * of reporting silence; `emptyCompletions` is how many empty completions this session saw before the run ended, so the
+   * artifact says how close the run came before it stopped.
+   * </p>
+   */
+  public get runTermination(): HostRunTermination | undefined {
+    return this.#runTermination;
+  }
+
   /** Observe the existing exact STOP settlement without admitting or issuing STOP. */
   public onStopSettled(listener: (payload: StopSettledPayload) => void): () => void {
     if (this.#closed) return () => undefined;
@@ -470,6 +562,10 @@ export class CompanionHostService {
     // all, a closed admission would deliver against a revoked world view, and a
     // blank message has nothing to deliver.
     if (this.#closed) return REFUSED_PLAYER_INPUT.session_closed;
+    // A run that has named its ending takes no new turns. Refusing is the only honest answer: the alternative is a
+    // message enqueued into a loop that will never deliver it, which is the silent loss this refusal vocabulary exists
+    // to prevent.
+    if (this.#runTermination !== undefined) return REFUSED_PLAYER_INPUT.run_terminated;
     if (!this.#integrationAdmissionOpen) return REFUSED_PLAYER_INPUT.integration_unavailable;
     if (input.text.trim().length === 0) return REFUSED_PLAYER_INPUT.empty;
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(input.sourceEventId)) throw new Error("invalid_player_source_event_id");
@@ -1072,7 +1168,7 @@ export class CompanionHostService {
   }
 
   private async flushSoon(): Promise<void> {
-    if (this.#closed || !this.#integrationAdmissionOpen) return;
+    if (this.#closed || !this.#integrationAdmissionOpen || this.#runTermination !== undefined) return;
     // A steer runs exactly when a flush cannot: it injects into the turn that is ALREADY running, so
     // `#flushScheduled` being true is the condition it wants, not the condition it must wait out.
     //
@@ -1095,7 +1191,7 @@ export class CompanionHostService {
         this.#restateWorldSnapshot();
         // The loop reports how the delivered turn ended (or nothing when there was nothing to deliver).
         // Retained so a caller that awaits player input can report it instead of guessing from silence.
-        const outcome = await this.loop.flush();
+        const outcome = await this.#flushTurn();
         this.#lastTurnOutcome = outcome ?? "unobserved";
         // What the turn DID, which `outcome` cannot say: `completed` covers both "acted" and "only spoke". A flush that
         // delivered nothing leaves the counter alone - it is not evidence either way.
@@ -1121,8 +1217,10 @@ export class CompanionHostService {
       // Anything else is an internal transport hiccup that pi did not classify, and that is what the bounded ladder
       // is for.
       const providerFailure = classifyProviderFailure(error instanceof Error ? error.message : String(error));
-      if (providerFailure === undefined) this.scheduleRetry();
-      else this.#lastProviderFailure = providerFailure;
+      // An empty completion is neither of those two: `#flushTurn` owns its own bound and its own ending, so this layer
+      // must not start the unbounded ladder under it. Everything else keeps the answers above.
+      if (providerFailure !== undefined) this.#lastProviderFailure = providerFailure;
+      else if (this.#runTermination === undefined) this.scheduleRetry();
       // Callers that await explicit player input receive the failure, while
       // bridge callbacks catch it at their boundary.
       throw error;
@@ -1156,6 +1254,44 @@ export class CompanionHostService {
   }
 
   /**
+   * Drive one turn, re-asking the SAME prompt when the provider answers with nothing.
+   *
+   * <p>
+   * An assistant turn that carries neither text nor a tool call is not a turn, and the loop reports that ending by name
+   * (`provider_empty_completion`) rather than as an ordinary settled turn. Because it is reported as a rejection, the
+   * pump has already restored the exact batch the attempt owned, so asking again re-sends the prompt the provider
+   * answered with nothing - not a fresh composition of whatever facts happen to be waiting now.
+   * </p>
+   * <p>
+   * The count is published before the decision (`providerEmptyCompletions`), because a retry that answers still leaves
+   * the fact that the provider returned nothing once. Three empty answers in a row are a provider that will not produce
+   * a turn, and that is named instead of being waited out: before this existed the run idled for 148 minutes with the
+   * game alive and the bridge connected, which from outside looks exactly like a companion still thinking.
+   * </p>
+   */
+  async #flushTurn(): Promise<CompanionTurnOutcome | undefined> {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await this.loop.flush();
+      } catch (error) {
+        if (!isProviderEmptyCompletion(error)) throw error;
+        this.#providerEmptyCompletions += 1;
+        if (attempt >= PROVIDER_EMPTY_COMPLETION_ATTEMPTS) {
+          this.#runTermination = Object.freeze({
+            code: PROVIDER_EMPTY_COMPLETION,
+            emptyCompletions: this.#providerEmptyCompletions,
+          });
+          throw error;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, PROVIDER_EMPTY_COMPLETION_RETRY_DELAY_MS));
+        // STOP, teardown or an overflow can seal admission while the pause runs. A sealed session does not get another
+        // provider turn from a retry that outlived it.
+        if (this.#closed || !this.#integrationAdmissionOpen) throw error;
+      }
+    }
+  }
+
+  /**
    * Whether another turn is owed even though the pump has nothing to deliver.
    *
    * <p>
@@ -1170,7 +1306,7 @@ export class CompanionHostService {
    * </p>
    */
   #turnOwesAnother(): boolean {
-    if (this.#closed || !this.#integrationAdmissionOpen) return false;
+    if (this.#closed || !this.#integrationAdmissionOpen || this.#runTermination !== undefined) return false;
     // A pending delivery is the ordinary reason, unchanged.
     if (this.loop.pump.hasPendingDelivery) return true;
     // The second reason, and the defect: the last turn settled without producing work, so the world is exactly where it

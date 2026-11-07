@@ -685,6 +685,33 @@ function readSafeAssistantText(
   return value;
 }
 
+/**
+ * Three facts about one Pi assistant message, for the layer that owns the TURN rather than its presentation.
+ *
+ * <p>
+ * The projection below decides what a surface may read; this only reports what Pi's own record says, so the turn loop
+ * can tell a turn from a message that carried nothing at all. Every reading comes from the predicates the projection
+ * itself uses - `isTextContent`, the `toolCall` content type, and Pi's declared `stopReason` - so a message cannot be
+ * "empty" here and "spoken" there.
+ * </p>
+ *
+ * @returns `undefined` for anything that is not an assistant lifecycle message (a user or tool-result message is not
+ * this turn's answer).
+ */
+export function readAssistantMessageFacts(
+  message: unknown,
+): Readonly<{ hasText: boolean; hasToolCall: boolean; failed: boolean }> | undefined {
+  if (!isAssistantLifecycleMessage(message)) return undefined;
+  const hasText = message.content.some((entry) => isTextContent(entry) && entry.text.trim().length > 0);
+  const hasToolCall = message.content.some(
+    (entry) => typeof entry === "object" && entry !== null && (entry as { type?: unknown }).type === "toolCall",
+  );
+  // Pi's own classification of the message it ended on. `error` is a provider refusal (which has its own retry policy
+  // and its own recorded class); `aborted` is a cancellation, which is the player's or Magic Context's decision.
+  const failed = message.stopReason === "error" || message.stopReason === "aborted";
+  return Object.freeze({ hasText, hasToolCall, failed });
+}
+
 function readStopReason(value: unknown): NativeAssistantStopReason {
   switch (value) {
     case "pending":

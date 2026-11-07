@@ -5,6 +5,7 @@ import {
   NATIVE_BUBBLE_SCAFFOLDING,
   NATIVE_BUBBLE_STAGE_DIRECTION,
   type NativeCompanionContentObserver,
+  readAssistantMessageFacts,
 } from "./native-companion-content.js";
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { CompanionEventPump, type CompanionTurnOutcome, type DeliveryDisposition } from "./event-pump.js";
@@ -14,6 +15,21 @@ export type NativeGameCompanionContent = Readonly<{
   sourceEventId: string;
   text: string;
 }>;
+
+/**
+ * The ending of a turn whose assistant message carried neither text nor a tool call.
+ *
+ * <p>
+ * It is a terminal code, not an error class: `HostService` bounds how many of them one prompt may end with and then ends
+ * the run by this name, so a stalled run cannot be reported as a companion that is still thinking.
+ * </p>
+ */
+export const PROVIDER_EMPTY_COMPLETION = "provider_empty_completion" as const;
+
+/** Whether one rejected turn ended because the provider answered with nothing. */
+export function isProviderEmptyCompletion(error: unknown): boolean {
+  return error instanceof Error && error.message === PROVIDER_EMPTY_COMPLETION;
+}
 
 export type NativeGameContentPresenter = (content: NativeGameCompanionContent) => Promise<void>;
 
@@ -244,6 +260,22 @@ export class CompanionLoop {
     // that separates them - whether Pi emitted a tool call for this batch - and `HostService` uses it to decide whether
     // another turn is owed.
     let producedWork = false;
+    /**
+     * Did this turn's assistant message carry any ordinary text?
+     *
+     * <p>
+     * `producedWork` cannot answer it (a turn that only speaks produced none), and neither can `turnOutcome` - so the
+     * two raw facts together are what tells a turn from a message that carried nothing at all. The tail of this method
+     * carries the measurement that made that distinction necessary.
+     * </p>
+     */
+    let producedText = false;
+    /** Did any of this turn's assistant messages ask to run a tool? A tool call is a turn even when it says nothing. */
+    let producedToolCall = false;
+    /** Did Pi report at least one assistant message for this turn? */
+    let sawAssistantMessage = false;
+    /** Did Pi classify the message it ended on as a provider failure or a cancellation? Read from the raw stream. */
+    let assistantFailed = false;
     try {
       if (tracksPlayerDelivery) this.#queuedPlayerDelivery = true;
       this.#cancelQueuedDelivery = resolveCancelled;
@@ -286,6 +318,18 @@ export class CompanionLoop {
         // "acted" and "spoke" into `completed`. `tool_execution_start` is the one event type that fires for every tool a
         // turn runs, including a `stardew_plan_work` batch, and it is the SDK's own name for it.
         if (event.type === "tool_execution_start") producedWork = true;
+        // The turn's own ending facts, read from Pi's raw stream: a surface that projects native content classifies
+        // them too, but that observer exists only where a presenter is installed, and "was this a turn at all" is not
+        // a presentation question.
+        if (event.type === "message_end") {
+          const assistantFacts = readAssistantMessageFacts(event.message);
+          if (assistantFacts !== undefined) {
+            sawAssistantMessage = true;
+            if (assistantFacts.hasText) producedText = true;
+            if (assistantFacts.hasToolCall) producedToolCall = true;
+            if (assistantFacts.failed) assistantFailed = true;
+          }
+        }
         if (event.type === "message_start" && !accepted && isExactBatchMessage(event.message, batch)) {
           // Pi has now put this exact batch into its active context. Open the
           // presentation lineage *at this boundary*, not after
@@ -493,6 +537,30 @@ export class CompanionLoop {
         // presentation errors still surface through the observer chain.
         if (!isSettledTailPresentationFailure(error)) throw error;
       }
+      // An assistant turn that carries neither text nor a tool call is not a turn.
+      //
+      // MEASURED 2026-11-07: a live Game run's own session record ended with
+      //
+      //   {"type":"message","message":{"role":"assistant","content":[],"usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0}}}
+      //   {"type":"context_edit","targetId":"f48af6ae","replacement":null}
+      //
+      // and then made no further record for 148 minutes while the game process stayed alive and the bridge stayed
+      // connected. The turn HAD settled and Pi had reported no failure, so every layer above read it as the end of a
+      // turn: `turnOutcome` stayed undefined, the Host's no-work counter did not move (a `completed` turn that spoke no
+      // line is not `nothing happened`), the pump had nothing pending, and nothing named the stall.
+      //
+      // Reporting it as a REJECTED turn is what makes the ending recoverable rather than final: the pump restores the
+      // exact batch this attempt owned, so the Host's retry asks the same question again instead of composing a new one
+      // (`HostService#flushTurn` bounds that retry and names the terminal code).
+      //
+      // The exclusions are the endings Pi already classified - a refusal or a cancellation is the provider's or the
+      // player's own decision - and the turns whose assistant message Pi never reported at all: that is not a message
+      // that carried nothing, it is a session shape this loop has no fact about, and calling it an empty completion
+      // would invent an ending from a missing event. `producedToolCall` is read from the message's own content, not from
+      // `tool_execution_start`: the rule is about what the assistant asked for, and a turn that asked for a tool is not
+      // a turn that said nothing.
+      if (turnOutcome === undefined && sawAssistantMessage && !producedText && !producedToolCall && !assistantFailed)
+        throw new Error(PROVIDER_EMPTY_COMPLETION);
       // The turn settled. If Pi classified its final message as abort/error the outcome says so; otherwise
       // the turn completed. `unobserved` is impossible here — reaching this point means the turn ran.
       return turnOutcome ?? "completed";

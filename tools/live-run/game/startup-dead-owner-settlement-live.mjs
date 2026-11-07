@@ -244,26 +244,17 @@ async function settle(artifactRootPath, runRoot) {
   if (typeof settleFn !== "function") {
     for (const root of [artifactRootPath, join(process.cwd(), "host", "dist-test")]) {
       const internal = await import(
-        pathToFileURL(
-          join(
-            root,
-            "continuity-semantic-production-coordinator",
-            "continuity-semantic-production-coordinator.internal.js",
-          ),
-        ).href
+        pathToFileURL(join(root, "continuity-semantic-production-coordinator", "continuity-semantic-production-coordinator.internal.js")).href,
       );
       if (typeof internal.settleDurableGameRecoveryOnStartup === "function") {
         settleFn = internal.settleDurableGameRecoveryOnStartup;
         artifactUnderTest =
-          root === artifactRootPath
-            ? "published-generation (internal module)"
-            : "dist-test (the published generation predates the settlement)";
+          root === artifactRootPath ? "published-generation (internal module)" : "dist-test (the published generation predates the settlement)";
         break;
       }
     }
   }
-  if (typeof settleFn !== "function")
-    throw new Error("settleDurableGameRecoveryOnStartup is absent from both artifacts");
+  if (typeof settleFn !== "function") throw new Error("settleDurableGameRecoveryOnStartup is absent from both artifacts");
   console.log(`  artifact under test: ${artifactUnderTest}`);
   const loaded = await loadHostDeploymentManifest(runRoot.manifestPath);
   const principal = loaded.principal ?? loaded.value?.principal ?? runRoot.principal;
