@@ -386,8 +386,16 @@ function judgePatch(entry, admitted, refused, observations) {
     });
   }
   // A refused receipt means the evidence that would have decided this purpose exists and proved nothing about the
-  // action it named. That is not "the patch is not there"; it is "this run cannot tell", and it is treated as such.
-  if (refused.length > 0) {
+  // action it named. That is not "the patch is not there"; it is "this run cannot tell", and it is treated as such -
+  // but only for the actions this criterion reads a TILE from. Measured 2026-11-06 (`round38`): the patch day refused
+  // nine receipts of `move_to_tile`, `shop_purchase`, `harvest_crop` and `dismiss_modal`, none of which publishes a
+  // coordinate this criterion counts, and the criterion answered `unproven` - telling a reader that the plot could not
+  // be read while every tile that decides it was admitted and in hand. Twenty tiles tilled, thirteen planted, and the
+  // artifact could say neither "achieved" nor "3/60".
+  const tileProvingActionIds = new Set(
+    [...entry.tilledBy, ...entry.croppedBy].map((tileProofEntry) => tileProofEntry.actionId),
+  );
+  if (refused.some((receipt) => tileProvingActionIds.has(receipt.actionId))) {
     return Object.freeze({
       state: "unproven",
       reasonCode: "task_purpose_evidence_without_postcondition",
@@ -428,7 +436,7 @@ function judgePatch(entry, admitted, refused, observations) {
       location: best.location,
       patchTiles: best.tileCount,
       patchWindow: strip,
-      detail: `${String(strip.count)}/${String(area)} tiles inside the best ${String(strip.width)}x${String(strip.height)} window`,
+      detail: `${String(strip.count)}/${String(area)} tiles inside the best ${String(strip.width)}x${String(strip.height)} window at ${String(strip.x)},${String(strip.y)}`,
     });
   }
   const largest = best.largestRectangle;

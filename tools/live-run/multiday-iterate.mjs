@@ -249,7 +249,11 @@ const multiday = parsed.multiday ?? {};
 const outcomes = parsed.programOutcomes ?? [];
 console.log("\n==== result ====");
 console.log(`state        ${String(parsed.state)}`);
-console.log(`reason       ${String(multiday.reasonCode ?? "(none)")}`);
+// ONE SPELLING. The reason printed is the reason the artifact carries - `failure.reasonCode` - and it is read, never
+// re-derived: this line used to read `multiday.reasonCode`, which is the multi-day assessment's own code, so a run
+// blocked by any other clause printed `reason       (none)` beside a bundle that named a fault (measured 2026-11-06 on
+// round38: `state blocked`, the assessment `passed`, and a 124-character companion line the interaction gate refused).
+console.log(`reason       ${String(parsed.failure?.reasonCode ?? "(none)")}`);
 console.log(`crossings    ${String(multiday.crossings ?? "(none)")} of 2`);
 console.log(`submissions  ${String((parsed.programSubmissions ?? []).length)}`);
 console.log(

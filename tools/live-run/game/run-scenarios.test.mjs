@@ -218,14 +218,26 @@ test("every scenario owns an acceptance clause, and the verdict ANDs all three",
       `${scenario} must own its clause`,
     );
   }
-  const verdict = RUNNER.slice(RUNNER.indexOf("    state:\n"), RUNNER.indexOf('        ? "passed"'));
+  // The verdict is the rung's clause list, and the AND is `deriveRungVerdict`'s: every clause must be `passed` for the
+  // run to be. Reading the list is the point - a scenario clause that is declared but never reaches the verdict is a
+  // clause that cannot fail.
+  const verdict = RUNNER.slice(
+    RUNNER.indexOf("const rungClauses = Object.freeze(["),
+    RUNNER.indexOf("const result = await buildRunResult({\n    rungClauses,"),
+  );
+  assert.ok(verdict.length > 0, "the rung's clauses must be declared in one list");
   for (const clause of Object.values(clauses))
-    assert.ok(verdict.includes(`${clause} &&`), `the verdict must read ${clause}`);
+    assert.ok(verdict.includes(`passed: ${clause}`), `the verdict must read ${clause}`);
   // The shared gates stay in the verdict: a scenario clause must not be able to make an unassembled persona or a
   // recital-shaped reply pass.
-  for (const shared of ["contextPassed &&", "contentPassed &&", "worldBookPassed &&", "interactionPassed"]) {
-    assert.ok(verdict.includes(shared), `the verdict must still read ${shared}`);
+  for (const shared of ["contextPassed", "contentPassed", "worldBookPassed", "interactionPassed"]) {
+    assert.ok(verdict.includes(`passed: ${shared},`), `the verdict must still read ${shared}`);
   }
+  assert.match(
+    RUNNER,
+    /const rung =\n\s*rungClauses === null\n\s*\? null\n\s*: deriveRungVerdict\(\[/u,
+    "the clauses are ANDed by one derivation, and the verdict is its answer",
+  );
 });
 
 test("the scenario, not the digit, is what a run reports and names its artifacts", () => {
