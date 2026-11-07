@@ -13,9 +13,11 @@ import {
   assessMultiDayBaseline,
   classifyNight,
   NIGHT_CAUSE_ENGINE,
+  NIGHT_CAUSE_PASS_OUT,
   NIGHT_CAUSE_SLEEP_UNSETTLED,
   nightCause,
   parseReceiptEvidence,
+  worldNightEndingsFromFacts,
 } from "../../lib/multiday-baseline.mjs";
 import { watchRollover } from "../../lib/multiday-loop.mjs";
 import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mjs";
@@ -38,6 +40,9 @@ import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descri
 import { DAILY_TASK_ROTATION, sweepTaskPrompts } from "../../lib/multiday-daily-tasks.mjs";
 
 const RUNNER_SOURCE = await readFile(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
+// The baseline module's own text: the night-fact reader lives there (one authority for the minted `night_ended_*` shape),
+// so the assertion about how that shape is read belongs to the module rather than to the runner that calls it.
+const NIGHT_FACTS_SOURCE = await readFile(new URL("../../lib/multiday-baseline.mjs", import.meta.url), "utf8");
 // The program tool's description is presented material, but the runner mounts the Host's tool definitions rather
 // than authoring them, so the one copy lives in the materializer. Read (never write) it here to falsify its content.
 const HOST_MATERIALIZER_SOURCE = await readFile(
@@ -202,6 +207,7 @@ test("the runner enforces a companion-interaction gate on every speaking scenari
     "memory_covenant",
     "npc_social_and_presence",
     "multiday_routine",
+    "task_purpose",
     "context",
     "content",
     "world_book",
@@ -611,7 +617,7 @@ test("a run whose multi-day assessment is blocked cannot report a completed sess
   // `sessionVerdict: "completed"` while `multiday.completed` was false and the assessment said `blocked`.
   // One run cannot both have completed and have been blocked, so the verdict is DERIVED from the
   // assessment (one control flow, `completed` as the residual) rather than computed beside it.
-  const deriveSessionVerdict = extractRunnerFunction(RUNNER_SOURCE, "deriveSessionVerdict");
+  const [, deriveSessionVerdict] = extractRunnerFunction(RUNNER_SOURCE, ["taskPurposeVerdict", "deriveSessionVerdict"]);
   const healthy = {
     worldStallReason: null,
     sessionTurns: [{}],
@@ -681,7 +687,7 @@ test("a session that did work cannot report `completed` for a task whose purpose
   // The measured false positive: a `go_mining` day declared `[travel, enter_mine, break_rock]`, broke rocks on the
   // surface, and the run was counted as having done the task because the work list was non-empty. The task's own
   // criterion (`task-purpose.mjs`) now decides it, and the verdict is where that decision becomes the run's outcome.
-  const deriveSessionVerdict = extractRunnerFunction(RUNNER_SOURCE, "deriveSessionVerdict");
+  const [, deriveSessionVerdict] = extractRunnerFunction(RUNNER_SOURCE, ["taskPurposeVerdict", "deriveSessionVerdict"]);
   const worked = {
     worldStallReason: null,
     sessionTurns: [{}],
@@ -711,17 +717,30 @@ test("a session that did work cannot report `completed` for a task whose purpose
     "task_not_achieved",
     "break_rock succeeded and the rock was on the surface: real work, unmet purpose",
   );
-  // UNPROVEN IS NOT A FAILED DAY, and this is the assertion that keeps our own gap from being charged to the companion:
-  // a task whose criterion is missing because a FACT we publish is missing reports the fact by name, and the session is
-  // still judged on what it did. The verdict that decides is `not_achieved`, where the receipts are complete evidence
-  // that the purpose did not hold.
+  // UNPROVEN IS NOT A FAILED DAY, AND IT IS NOT A PASS EITHER.
+  //
+  // A task whose criterion is missing because a FACT we publish is missing is not a failure of the companion, so it is
+  // not charged as `task_not_achieved` - but it is also not "exercised": nothing in this run established that the task
+  // happened. Measured 2026-11-07 (`round39`): all three days of `clear_and_plant_long_patch` came out `unproven`, and
+  // this arm answered `completed` for all three, so the artifact claimed a completed session on a task whose plot could
+  // not be located. The code names the criterion and its own reason, which is what keeps our gap visible instead of
+  // silent.
   assert.equal(
     deriveSessionVerdict({
       ...worked,
-      taskPurposes: [{ day: 1, task: "clear_east_patch", state: "unproven", missingFact: "no farm-region fact" }],
+      taskPurposes: [
+        {
+          day: 1,
+          task: "clear_east_patch",
+          taskId: "clear_east_patch",
+          state: "unproven",
+          reasonCode: "task_purpose_needs_an_unpublished_fact",
+          missingFact: "no farm-region fact",
+        },
+      ],
     }),
-    "completed",
-    "a task with no decidable criterion is NOT EXERCISED, named in the artifact, never charged to the run",
+    "task_unproven:clear_east_patch:task_purpose_needs_an_unpublished_fact",
+    "an undecidable criterion is a verdict that names the criterion and the missing fact's own code, never `completed`",
   );
   assert.equal(
     deriveSessionVerdict({
@@ -1056,9 +1075,15 @@ function extractRunnerFunction(source, name, bindings = {}) {
   if (Array.isArray(name)) {
     const parts = name.map((one) => extractRunnerFunction(source, one).source);
     const names = Object.keys(bindings);
-    return new Function(...names, `${parts.join("\n")}\nreturn [${name.join(", ")}];`)(
+    const functions = new Function(...names, `${parts.join("\n")}\nreturn [${name.join(", ")}];`)(
       ...names.map((key) => bindings[key]),
     );
+    // Carry each declaration's own text, so a test that reads `.source` of one of several composed functions gets THAT
+    // function's declaration instead of `undefined`.
+    name.forEach((one, index) =>
+      Object.defineProperty(functions[index], "source", { value: parts[index], enumerable: false }),
+    );
+    return functions;
   }
   const marker = `function ${name}`;
   const declarationAt = source.indexOf(marker);
@@ -1895,7 +1920,18 @@ test("a pass-out mid-night is not the night's outcome: the watch runs on to the 
     /passOutObserved: outcome\.passOutObserved === true \|\| passOutFactThisNight,/u,
     "the record must count the Mod's pass-out event, not only its own poll",
   );
-  assert.match(RUNNER_SOURCE, /"night_ended_pass_out"/u, "and it must read that event by name");
+  // AND IT READS THAT EVENT THROUGH THE ONE READER, not through a second hand-written key test. Measured 2026-11-07
+  // (`round39`): the predicate used here matched `entry.kind`/`entry.semanticKind`, while the fact the runner stores is
+  // `{ type: "world_fact", worldFactKind: "night_ended_pass_out", worldFactPayload: { eventId: ... } }` - neither key
+  // exists, so a night the Mod had published as a pass-out stayed `engine` and the assessment counted `passOutNights: 0`
+  // beside the fact that said otherwise. The reader names the minted event id, so the runner and the assessor cannot
+  // disagree about the shape.
+  assert.match(
+    RUNNER_SOURCE,
+    /const passOutFactThisNight = worldNightEndingsFromFacts\(factLog\.slice\(factStart\)\)/u,
+    "the record must read the Mod's night facts through the shared reader",
+  );
+  assert.match(NIGHT_FACTS_SOURCE, /\^night_ended_\(\[a-z_\]\+\)_day_\(\\d\+\)\$/u, "and the reader names that event");
   // The two-valued default must not come back: absence of a pass-out is a fact about the poll, not about the night.
   assert.doesNotMatch(RUNNER_SOURCE, /\? "pass_out"\s*:\s*"sleep"/u);
   assert.match(
@@ -2136,6 +2172,8 @@ test("a night the Mod crossed through Body Program reaches the record with its o
         watchRollover,
         nightCause,
         parseReceiptEvidence,
+        worldNightEndingsFromFacts,
+        NIGHT_CAUSE_PASS_OUT,
         sleepReceiptOf,
         TERMINAL_STATES,
         judgeUncrossedNight,
@@ -2345,6 +2383,8 @@ test("a night her own sleep ended, crossed by the calendar, carries her sleep on
         watchRollover,
         nightCause,
         parseReceiptEvidence,
+        worldNightEndingsFromFacts,
+        NIGHT_CAUSE_PASS_OUT,
         sleepReceiptOf,
         TERMINAL_STATES,
         judgeUncrossedNight,
@@ -2518,6 +2558,8 @@ test("a night she slept through and the host player did not is not reported as h
         watchRollover,
         nightCause,
         parseReceiptEvidence,
+        worldNightEndingsFromFacts,
+        NIGHT_CAUSE_PASS_OUT,
         sleepReceiptOf,
         TERMINAL_STATES,
         judgeUncrossedNight,
@@ -3622,7 +3664,7 @@ test("a blocked run names the clause that failed, never the scenario it ran in",
   const deriveRungVerdict = extractRunnerFunction(RUNNER_SOURCE, "deriveRungVerdict");
   assert.deepEqual(
     deriveRungVerdict([{ id: "a", passed: true, reasonCode: "x" }]),
-    { state: "passed", reasonCode: null, failedClause: null },
+    { state: "passed", reasonCode: null, failedClause: null, failedClauses: [] },
     "`passed` is the residual: no clause objected",
   );
   assert.deepEqual(
@@ -3630,8 +3672,27 @@ test("a blocked run names the clause that failed, never the scenario it ran in",
       { id: "multiday_routine", passed: true, reasonCode: "multiday_routine_blocked" },
       { id: "companion_interaction", passed: false, reasonCode: "summary_too_long" },
     ]),
-    { state: "blocked", reasonCode: "summary_too_long", failedClause: "companion_interaction" },
+    {
+      state: "blocked",
+      reasonCode: "summary_too_long",
+      failedClause: "companion_interaction",
+      failedClauses: [{ id: "companion_interaction", reasonCode: "summary_too_long" }],
+    },
     "a code that names something which passed must not be able to stand in for the clause that failed",
+  );
+  // A SECOND failing clause is published, not swallowed: round39's rung reason was the multi-day block while its own
+  // task purposes were all `unproven`. One reason is honest; a verdict that cannot see the second finding is not.
+  assert.deepEqual(
+    deriveRungVerdict([
+      { id: "multiday_routine", passed: false, reasonCode: "multiday_routine_blocked" },
+      { id: "task_purpose", passed: false, reasonCode: "task_unproven:clear_and_plant_long_patch:no_tiles" },
+      { id: "context", passed: true, reasonCode: "no_expectation_configured" },
+    ]).failedClauses,
+    [
+      { id: "multiday_routine", reasonCode: "multiday_routine_blocked" },
+      { id: "task_purpose", reasonCode: "task_unproven:clear_and_plant_long_patch:no_tiles" },
+    ],
+    "every failing clause is named, in the order the rung reads them",
   );
 
   const [, buildRunResult] = extractRunnerFunction(
@@ -3652,6 +3713,134 @@ test("a blocked run names the clause that failed, never the scenario it ran in",
   assert.equal(passed.state, "passed");
   assert.equal(passed.failure, null);
   assert.equal(passed.reasonCode, undefined, "a passed run publishes no reason at all");
+});
+
+test("an unproven task is not a pass: the arm names the criterion it could not decide", async () => {
+  // ROUND39'S OWN PURPOSES, verbatim from `_multiday_routine-round39.result.json` (measured 2026-11-07). All three
+  // days came back `unproven`, and the run's verdict named none of them: the arm read only `not_achieved`, so the
+  // residual `completed` stood for "the task may have happened" on a day whose receipts could not say where any plot was.
+  const ROUND39_TASK_PURPOSES = Object.freeze([
+    Object.freeze({
+      day: 1,
+      task: "clear_and_plant_long_patch",
+      taskId: "clear_and_plant_long_patch",
+      state: "unproven",
+      reasonCode: "task_purpose_has_no_tile_coordinates",
+      purpose: "one long strip, three tiles wide and twenty long, was tilled and sown the whole way",
+      missingFact:
+        "no receipt of this run carried a tile for the patch: `till_soil` names the tile it turned and `plant_seed`/`water_crop` name the tile their crop is on, so with none of those admitted nothing says where the plot was. This is the run's observation gap, not a failure of the companion's.",
+    }),
+    Object.freeze({
+      day: 2,
+      task: "craft_and_place_machine",
+      taskId: "craft_and_place_machine",
+      state: "unproven",
+      reasonCode: "task_purpose_evidence_without_postcondition",
+      purpose: "a machine was crafted, then put down, then put to work",
+      missingFact: null,
+    }),
+    Object.freeze({
+      day: 3,
+      task: "town_market",
+      taskId: "town_market",
+      state: "unproven",
+      reasonCode: "task_purpose_needs_an_unpublished_fact",
+      purpose: "something was bought in town and the post was brought in",
+      missingFact:
+        "no published fact places the actor in Town: `shop_purchase` publishes the shop and `claim_mail_attachment` the farm mailbox, neither publishes a map, and `travel` publishes endpoints only when travel is the route that was used.",
+    }),
+  ]);
+  const [taskPurposeVerdict, deriveSessionVerdict] = extractRunnerFunction(RUNNER_SOURCE, [
+    "taskPurposeVerdict",
+    "deriveSessionVerdict",
+  ]);
+  // Everything a playable session must also have, so the only thing left to decide is the task. round39's own
+  // `multidayAssessment` is the PASSING shape here on purpose: this test is about the arm the multi-day block hid.
+  const playable = {
+    worldStallReason: null,
+    sessionTurns: [{ turn: { settled: true } }],
+    unsettledTurns: [],
+    turnFailureReason: undefined,
+    bridgeDisconnections: [],
+    hostMemory: null,
+    sessionSpoken: true,
+    accomplishedActionIds: ["till_soil", "plant_seed", "water_crop"],
+    multidayAssessment: { state: "passed", ok: true, violations: [] },
+    agentTurnOutcome: { stopReason: "stop" },
+    morningLiveness: { violations: [] },
+    dialogueGates: [],
+  };
+  const verdict = deriveSessionVerdict({ ...playable, taskPurposes: ROUND39_TASK_PURPOSES });
+  assert.match(verdict, /^task_unproven:/u, "an undecidable task is a verdict, not a pass");
+  // EVERY criterion and its OWN reason: a reader learns which purposes were unprovable and why, without opening the
+  // artifact's `taskPurposes` - and no reason is paraphrased here.
+  for (const purpose of ROUND39_TASK_PURPOSES)
+    assert.ok(
+      verdict.includes(`${purpose.taskId}:${purpose.reasonCode}`),
+      `${purpose.taskId} must be named with its own reason: ${verdict}`,
+    );
+  assert.equal(
+    taskPurposeVerdict(ROUND39_TASK_PURPOSES),
+    verdict,
+    "the clause and the session verdict report the task from one derivation",
+  );
+
+  // THE FALSIFIERS. A gate that reds every run would be as useless as one that passes every run.
+  assert.equal(
+    deriveSessionVerdict({
+      ...playable,
+      taskPurposes: ROUND39_TASK_PURPOSES.map((purpose) => ({
+        ...purpose,
+        state: "achieved",
+        reasonCode: "task_purpose_achieved",
+      })),
+    }),
+    "completed",
+    "an achieved task is not named as a failure",
+  );
+  assert.equal(
+    deriveSessionVerdict({
+      ...playable,
+      taskPurposes: [
+        { taskId: "mine_delve", state: "not_achieved", reasonCode: "task_purpose_not_achieved" },
+        ...ROUND39_TASK_PURPOSES,
+      ],
+    }),
+    "task_not_achieved",
+    "complete evidence that a purpose did not hold outranks an undecidable one",
+  );
+  assert.equal(
+    deriveSessionVerdict({ ...playable, taskPurposes: [] }),
+    "completed",
+    "a scenario that names no task is judged on its session alone",
+  );
+
+  // AND THE RUN'S OWN VERDICT CARRIES IT. round39's rung reason was `multiday_routine_blocked`, and the task finding
+  // existed in no verdict field at all; a second failing clause is now published beside the first.
+  const [, buildRunResult] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
+    builderGlobals(),
+  );
+  const taskCode = taskPurposeVerdict(ROUND39_TASK_PURPOSES);
+  const runResult = await buildRunResult({
+    rungClauses: [
+      { id: "morning_routine", passed: true, reasonCode: verdict },
+      { id: "multiday_routine", passed: false, reasonCode: "multiday_routine_blocked" },
+      { id: "task_purpose", passed: false, reasonCode: taskCode },
+      { id: "context", passed: true, reasonCode: "no_expectation_configured" },
+    ],
+    settlement: null,
+  });
+  assert.equal(runResult.reasonCode, "multiday_routine_blocked", "the first failing clause still names the reason");
+  assert.deepEqual(
+    runResult.failedClauses,
+    [
+      { id: "multiday_routine", reasonCode: "multiday_routine_blocked" },
+      { id: "task_purpose", reasonCode: taskCode },
+    ],
+    "and the task the run could not be proved to have done is named beside it",
+  );
 });
 
 test("a run whose execution record could not be read to the end cannot be `passed`", async () => {

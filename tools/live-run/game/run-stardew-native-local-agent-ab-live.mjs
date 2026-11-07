@@ -38,6 +38,7 @@ import {
   nightCause,
   parseReceiptEvidence,
   worldDayStartsFromFacts,
+  worldNightEndingsFromFacts,
 } from "../../lib/multiday-baseline.mjs";
 import { dayScopeFrom, nightCrossedInScope } from "../../lib/multiday-day-scope.mjs";
 import { judgeUncrossedNight, sleepReceiptOf, sleepVerdictCase, summarizeCrossings } from "./night-verdict.mjs";
@@ -1462,6 +1463,32 @@ function summarizeDispatchedActions(actionTrace, programOutcomes, programSubmiss
 }
 
 /**
+ * The task's own verdict, from the purposes the day loop judged (`task-purpose.mjs`). One spelling, because the session
+ * verdict and the rung clause both report it.
+ *
+ * THREE ANSWERS, and `null` is the only pass:
+ *   - `task_not_achieved` when a purpose's receipts are COMPLETE evidence that it did not hold;
+ *   - `task_unproven:<taskId>:<reasonCode>,...` when a purpose could not be decided at all - the criterion needs a fact
+ *     nothing publishes, or the receipts that would decide it carried no postcondition of their own. It names the
+ *     criterion AND the reason, so "we could not prove it" is a finding a reader can act on rather than silence;
+ *   - `null` when every purpose was achieved.
+ *
+ * UNPROVEN IS NOT A PASS. Measured 2026-11-07 (`round39`): three days of `clear_and_plant_long_patch` came out
+ * `unproven` - no admitted receipt carried a tile, so the 3x20 strip could be neither confirmed nor denied - and the
+ * verdict named none of it, because the arm read only `not_achieved`. An unprovable criterion is a fact about our own
+ * reporting, and a run that cannot say whether the task happened has not been verified as one that did.
+ */
+function taskPurposeVerdict(taskPurposes) {
+  const purposes = Array.isArray(taskPurposes) ? taskPurposes : [];
+  if (purposes.some((purpose) => purpose.state === "not_achieved")) return "task_not_achieved";
+  const unproven = purposes.filter((purpose) => purpose.state === "unproven");
+  if (unproven.length === 0) return null;
+  return `task_unproven:${unproven
+    .map((purpose) => `${String(purpose.taskId ?? purpose.task)}:${String(purpose.reasonCode)}`)
+    .join(",")}`;
+}
+
+/**
  * The session's one verdict, decided by a single control flow whose residual IS `completed`.
  *
  * `completed` cannot be computed beside the evidence and then published next to it: measured 2026-10-21 on three
@@ -1520,16 +1547,17 @@ function deriveSessionVerdict({
   // did nothing is already its own verdict - and BEFORE `completed`, so a day whose purpose is unproven or unmet can
   // never be reported as a completed one. A scenario that names no task passes an empty list and is judged on the
   // session alone, which is the truth about that scenario rather than a default about a task.
-  // UNPROVEN IS NOT A FAILED DAY.
+  // THE TASK'S OWN VERDICT, and it does not stop at `not_achieved`.
   //
   // A criterion can be missing because a FACT we publish is missing - seven rotation tasks are in exactly that state,
-  // each naming the fact (see `task-purpose.mjs`). Judging the run on it turns our own reporting gap into a product
-  // failure, which is the same mistake as a gate that cannot judge and fails anyway, only pointed the other way: a
-  // check must say "not exercised" rather than decide. The purposes travel in the artifact by name with the missing
-  // fact, so the gap stays visible without being charged to the companion.
+  // each naming the fact (see `task-purpose.mjs`). Judging the run as a FAILURE on one turns our own reporting gap into
+  // a product failure. But `completed` is the other lie: a purpose nobody could decide was not verified, and a session
+  // that says `completed` beside it claims the task happened. The arms above are about whether the session ran at all;
+  // this one is about whether it did the thing it was asked to do, and `unproven` answers "nobody can say".
   //
-  // `not_achieved` still decides, because there the receipts are complete evidence that the purpose did NOT hold.
-  if (taskPurposes.some((purpose) => purpose.state === "not_achieved")) return "task_not_achieved";
+  // `not_achieved` decides first, because there the receipts are complete evidence that the purpose did NOT hold.
+  const taskVerdict = taskPurposeVerdict(taskPurposes);
+  if (taskVerdict !== null) return taskVerdict;
   return "completed";
 }
 
@@ -1548,15 +1576,25 @@ function deriveSessionVerdict({
  * blocked run can never publish an empty or borrowed reason.
  */
 function deriveRungVerdict(clauses) {
-  for (const clause of clauses ?? []) {
+  const all = Array.isArray(clauses) ? clauses : [];
+  // EVERY clause that failed, not only the first: the reason a run is not passed is the first failing clause, but a
+  // reader must not have to infer that a second, independent clause also failed. Measured 2026-11-07 (`round39`): the
+  // rung's reason was `multiday_routine_blocked`, and the run's own task purposes were ALL `unproven` - a second finding
+  // that existed in the evidence and in no verdict field, so the bundle read as if the task had never been asked.
+  const failed = all.filter((clause) => clause?.passed !== true);
+  const failedClauses = Object.freeze(
+    failed.map((clause) => Object.freeze({ id: clause?.id ?? null, reasonCode: clause?.reasonCode ?? null })),
+  );
+  for (const clause of all) {
     if (clause?.passed !== true)
       return Object.freeze({
         state: "blocked",
         reasonCode: clause?.reasonCode ?? null,
         failedClause: clause?.id ?? null,
+        failedClauses,
       });
   }
-  return Object.freeze({ state: "passed", reasonCode: null, failedClause: null });
+  return Object.freeze({ state: "passed", reasonCode: null, failedClause: null, failedClauses });
 }
 
 /**
@@ -3082,9 +3120,9 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
   // Mod PUBLISHED `night_ended_pass_out` for it (`StardewSalientEventHooks.cs:88`), yet the record said
   // `cause: "engine"` with `passOutNights: 0` - the verdict could not count the very thing it was being blamed for.
   // The night's mechanism was observed; the runner never read the observation.
-  const passOutFactThisNight = factLog
-    .slice(factStart)
-    .some((entry) => entry?.kind === "night_ended_pass_out" || entry?.semanticKind === "night_ended_pass_out");
+  const passOutFactThisNight = worldNightEndingsFromFacts(factLog.slice(factStart)).some(
+    (ending) => ending.cause === NIGHT_CAUSE_PASS_OUT,
+  );
   /**
    * HER OWN LIFECYCLE RECEIPT, whether or not it is the crossing.
    *
@@ -4176,6 +4214,9 @@ try {
         dayRecords: crossing.dayRecords,
         daysRequested: MULTIDAY_CROSSINGS,
         worldDayStarts: worldDayStartsFromFacts(factLog),
+        // The world's own night endings, from the same fact log: `night_ended_pass_out` is the only witness that can
+        // say the ENGINE took a night, and a night it took is attributed from here rather than from the loop's records.
+        worldNightEndings: worldNightEndingsFromFacts(factLog),
       }),
       dayRecords: crossing.dayRecords,
     });
@@ -4715,6 +4756,14 @@ try {
     }),
     // The multi-day clause IS the session verdict (see `multidayRoutinePassed`), so its code is the verdict's own.
     Object.freeze({ id: "multiday_routine", passed: multidayRoutinePassed, reasonCode: sessionVerdict }),
+    // THE TASK'S OWN QUESTION, beside the session's shape rather than inside it. A run whose day purpose was
+    // `unproven` has not been shown to have done what it was asked, and the clause states it in its own right so the
+    // artifact names it even when a more structural clause fails first (see `deriveRungVerdict`'s `failedClauses`).
+    Object.freeze({
+      id: "task_purpose",
+      passed: taskPurposeVerdict(taskPurposes) === null,
+      reasonCode: taskPurposeVerdict(taskPurposes) ?? "task_purposes_achieved",
+    }),
     Object.freeze({
       id: "context",
       passed: contextPassed,
@@ -5252,6 +5301,10 @@ async function buildRunResult({
     // The SAME code the failure record carries (see `publishReasonCode`): a reader that looks at the result's own
     // `reasonCode` and one that opens `failure.json` are told the same thing, because there is one derivation.
     ...(publishReasonCode === null ? {} : { reasonCode: publishReasonCode }),
+    // EVERY clause that failed, beside the one code that names the run's reason. The reason is the FIRST failing
+    // clause by design; this list says whether anything else also failed, so a second, independent finding cannot
+    // live only in the evidence while the verdict reads as if it had never been asked (see `deriveRungVerdict`).
+    failedClauses: rung?.failedClauses ?? null,
     scenario: SCENARIO,
     legacyLadder: LEGACY_LADDER,
     // The multi-day crossing record, when the scenario crossed days: each night's own terminal and menus, the

@@ -6,8 +6,8 @@ import test from "node:test";
 import {
   assessMultiDayBaseline,
   classifyNight,
-  dayOfMonthForTotalDays,
   DISMISSIBLE_ROLLOVER_MENUS,
+  dayOfMonthForTotalDays,
   MAXIMUM_BASELINE_DAYS,
   MINIMUM_BASELINE_DAYS,
   NIGHT_CAUSE_ENGINE,
@@ -16,8 +16,9 @@ import {
   NIGHT_CAUSE_SLEEP_UNSETTLED,
   nightCause,
   parseReceiptEvidence,
-  worldDayStartsFromFacts,
   WAIT_ROLLOVER_MENUS,
+  worldDayStartsFromFacts,
+  worldNightEndingsFromFacts,
 } from "./multiday-baseline.mjs";
 
 const EVIDENCE = (overrides = {}) =>
@@ -806,6 +807,13 @@ test("the rule catalogue lists every rule the gate can fire (round18)", () => {
     // The world's own day count disagreeing with the assessor's: the measured round38 shape, where two watched nights
     // sat beside five `day_started` facts.
     { dayRecords: [DAY(), DAY({ day: 2 })], daysRequested: 2, worldDayStarts: [5, 6, 7, 8, 9] },
+    // The world's own NIGHT endings: one that decides the night a record holds, one that contradicts what the record
+    // claims, and one that belongs to a night in no record at all (the round39 shape).
+    {
+      dayRecords: [ENGINE_TAKEN_NIGHT({ cause: "sleep" }), DAY({ day: 2 })],
+      worldNightEndings: [{ day: 5, cause: "pass_out" }],
+    },
+    { dayRecords: [DAY(), DAY({ day: 2 })], worldNightEndings: [{ day: 20, cause: "pass_out" }] },
   ];
   const fired = new Set();
   for (const entry of battery) {
@@ -813,6 +821,7 @@ test("the rule catalogue lists every rule the gate can fire (round18)", () => {
       dayRecords: entry.dayRecords,
       daysRequested: entry.daysRequested ?? 2,
       worldDayStarts: entry.worldDayStarts ?? null,
+      worldNightEndings: entry.worldNightEndings ?? null,
     });
     for (const violation of result.violations) fired.add(violation.code.split(":")[0]);
   }
@@ -1013,4 +1022,169 @@ test("a night with no receipt still crosses when the calendar moved, and says wh
 
   const unknown = classifyNight({ terminal: null, after: { dayOfMonth: 6 } });
   assert.equal(unknown.advanced, false, "a calendar with no before-value proves nothing");
+});
+
+// THE WORLD'S OWN NIGHT ENDINGS ARE AN AUTHORITY. Measured 2026-11-07 (`round39`,
+// `.live-runs/game-ladder/2026-11-07T13-14-23-120Z-multiday_routine`): the assessment answered `passOutNights: 0` and
+// `night_mechanism_unobserved` twice, while the run's own fact log held
+// `{ worldFactKind: "night_ended_pass_out", worldFactPayload: { eventId: "night_ended_pass_out_day_6", gameTime: "2600" } }`.
+// The facts below are that bundle's, verbatim; the records are its two day records, trimmed to the fields the judgement
+// reads (each one's `after` is what the runner wrote).
+const ROUND39_FACTS = Object.freeze([
+  Object.freeze({ worldFactKind: "day_started", eventId: "day_started_day_5" }),
+  Object.freeze({ worldFactKind: "day_started", eventId: "day_started_day_6" }),
+  Object.freeze({ worldFactKind: "night_ended_pass_out", eventId: "night_ended_pass_out_day_6" }),
+]);
+const ROUND39_RECORDS = Object.freeze([
+  Object.freeze({
+    day: 1,
+    terminal: null,
+    after: Object.freeze({ dayOfMonth: 6, dayBefore: 5, seasonIndex: 0, year: 1, timeOfDay: 600 }),
+    menus: Object.freeze([]),
+    cause: "engine",
+    nextDayAccomplishedActionIds: Object.freeze(["till_soil", "plant_seed", "water_crop"]),
+  }),
+  Object.freeze({
+    day: 2,
+    terminal: null,
+    after: Object.freeze({ dayOfMonth: 7, dayBefore: 6, seasonIndex: 0, year: 1, timeOfDay: 600 }),
+    menus: Object.freeze([]),
+    cause: "engine",
+    nextDayAccomplishedActionIds: Object.freeze(["till_soil", "plant_seed", "water_crop"]),
+  }),
+]);
+
+test("a pass-out the world published is counted and named, and is not given to the night beside it", () => {
+  const endings = worldNightEndingsFromFacts(ROUND39_FACTS);
+  // The Mod mints the cause as the fact kind's own suffix, and the module spells the same cause as a constant: one
+  // fact, one spelling, asserted rather than assumed.
+  assert.deepEqual(
+    endings.map((entry) => ({ day: entry.day, cause: entry.cause })),
+    [{ day: 6, cause: NIGHT_CAUSE_PASS_OUT }],
+    "the fact's own day and cause, with no inference about which night it belongs to",
+  );
+  const result = assessMultiDayBaseline({
+    dayRecords: ROUND39_RECORDS,
+    daysRequested: 2,
+    worldDayStarts: worldDayStartsFromFacts(ROUND39_FACTS),
+    worldNightEndings: endings,
+  });
+  assert.equal(result.nightWitness, "world", "the attribution came from the world's facts, and says so");
+  assert.equal(result.passOutNights, 1, "the engine took one night, and the world said so");
+  assert.deepEqual(result.worldNightEndings, endings, "the night's own cause travels with the verdict");
+  // The night the pass-out ended (day 6, opened by `day_started_day_6`) came AFTER both recorded nights: record 2's
+  // night ended on day 6 of the month and crossed into `day_started_day_6`. A mapping that gave the pass-out to record
+  // 2 would state that a night which ended 880 s earlier was a pass-out.
+  assert.ok(
+    codes(result).includes("world_night_not_recorded:6:pass_out"),
+    `a night in no record must be named; got ${JSON.stringify(codes(result))}`,
+  );
+  assert.equal(result.unobservedNights, 2, "and neither recorded night is attributed to the engine by it");
+  // The world moved a third time, and the count says so: two `day_started` facts plus the pass-out's own new day.
+  assert.equal(result.worldDaysCrossed, 3);
+  assert.ok(
+    codes(result).includes("day_count_disagrees_with_the_world:2 != 3"),
+    `the world's crossings must be reconciled; got ${JSON.stringify(codes(result))}`,
+  );
+  // And a run whose `day_started` fact for that morning DID arrive counts the morning once, not twice: the pass-out
+  // names the day it opened, which is the same day the fact names.
+  const bothWitnesses = assessMultiDayBaseline({
+    dayRecords: ROUND39_RECORDS,
+    daysRequested: 2,
+    worldDayStarts: worldDayStartsFromFacts([
+      ...ROUND39_FACTS,
+      { worldFactKind: "day_started", eventId: "day_started_day_7" },
+    ]),
+    worldNightEndings: endings,
+  });
+  assert.equal(bothWitnesses.worldDaysCrossed, 3, "the same morning witnessed twice is one morning");
+});
+
+test("a world ending decides the recorded night it names, and contradicts a claim rather than obeying it", () => {
+  // The recorded night ends on TotalDays 5 (the receipt's own `day_before`), so a pass-out for day 5 is ITS ending.
+  const named = assessMultiDayBaseline({
+    daysRequested: 2,
+    dayRecords: [
+      DAY({
+        day: 1,
+        cause: "engine",
+        // The receipt's own `day_after` is the calendar the world was observed on, so this record's `after` is day 7.
+        after: { dayOfMonth: 7, timeOfDay: 610, seasonIndex: 0 },
+        terminal: { evidence: EVIDENCE({ dayBefore: 5, dayAfter: 6 }) },
+      }),
+      DAY({ day: 2 }),
+    ],
+    worldNightEndings: [{ day: 5, cause: NIGHT_CAUSE_PASS_OUT }],
+  });
+  assert.equal(named.passOutNights, 1);
+  assert.ok(
+    !codes(named).includes("night_mechanism_unobserved"),
+    `the world said how the night ended; got ${JSON.stringify(codes(named))}`,
+  );
+  assert.ok(!codes(named).some((code) => code.startsWith("world_night_not_recorded")), "the night IS recorded");
+
+  // A record claiming her own sleep for a night the world says the engine took is a DISAGREEMENT between two
+  // witnesses, and it is named with both sides instead of one of them silently winning.
+  const contradiction = assessMultiDayBaseline({
+    daysRequested: 2,
+    dayRecords: [
+      DAY({
+        day: 1,
+        cause: "sleep",
+        after: { dayOfMonth: 7, timeOfDay: 610, seasonIndex: 0 },
+        terminal: { evidence: EVIDENCE({ dayBefore: 5, dayAfter: 6 }) },
+      }),
+      DAY({ day: 2 }),
+    ],
+    worldNightEndings: [{ day: 5, cause: NIGHT_CAUSE_PASS_OUT }],
+  });
+  assert.ok(
+    codes(contradiction).includes("night_cause_disagrees_with_the_world:sleep:pass_out"),
+    `both sides must survive the comparison; got ${JSON.stringify(codes(contradiction))}`,
+  );
+});
+
+test("a night neither the world nor a receipt explains is still unobserved", () => {
+  // The fixture the real bundle does not contain: the world names NO ending for the night, and no receipt exists, so
+  // the crossing is a fact and its attribution is not. This is the only case `night_mechanism_unobserved` is for.
+  const result = assessMultiDayBaseline({
+    daysRequested: 2,
+    dayRecords: [
+      DAY({ day: 1, cause: "engine", terminal: null, after: { dayBefore: 5, dayOfMonth: 6, seasonIndex: 0 } }),
+      DAY({ day: 2 }),
+    ],
+    worldNightEndings: [],
+  });
+  assert.equal(result.nightWitness, "world", "an empty list is the world saying nothing, not nobody looking");
+  assert.equal(result.passOutNights, 0);
+  assert.ok(codes(result).includes("night_mechanism_unobserved"), JSON.stringify(codes(result)));
+});
+
+test("a caller with no world facts is told whose attribution it is reading", () => {
+  // Nothing about the change makes the facts mandatory: the record's own witnesses still answer, and the verdict says
+  // that is what happened instead of letting the answer read as measured.
+  const withoutFacts = assessMultiDayBaseline({
+    daysRequested: 2,
+    dayRecords: [DAY({ day: 1 }), DAY({ day: 2 })],
+  });
+  assert.equal(withoutFacts.nightWitness, "assessor");
+  assert.equal(withoutFacts.worldNightEndings, null);
+  assert.equal(withoutFacts.passOutNights, 0, "a sleep receipt is not a pass-out");
+  assert.equal(withoutFacts.ok, true, `violations=${JSON.stringify(codes(withoutFacts))}`);
+});
+
+test("the world night reader refuses a fact whose id carries no day", () => {
+  // Same rule as `worldDayStartsFromFacts`: a day number a fact does not carry cannot be compared, so it is skipped
+  // rather than guessed into whatever day happens to be current.
+  assert.deepEqual(worldNightEndingsFromFacts([{ worldFactKind: "night_ended_pass_out" }]), []);
+  assert.deepEqual(worldNightEndingsFromFacts([{ worldFactKind: "day_started", eventId: "day_started_day_5" }]), []);
+  assert.deepEqual(worldNightEndingsFromFacts(null), []);
+  // A redelivered fact is the same night, not a second one.
+  assert.equal(
+    worldNightEndingsFromFacts([
+      { worldFactKind: "night_ended_pass_out", eventId: "night_ended_pass_out_day_6" },
+      { worldFactKind: "night_ended_pass_out", worldFactPayload: { eventId: "night_ended_pass_out_day_6" } },
+    ]).length,
+    1,
+  );
 });

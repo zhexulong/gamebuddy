@@ -307,10 +307,67 @@ export function worldDayStartsFromFacts(facts) {
 }
 
 /**
+ * THE WORLD'S OWN NIGHT ENDINGS, read off the Mod's `night_ended_*` world facts.
+ *
+ * The Mod mints the fact that says HOW a night ended, because nothing else can: the engine's 2:00 pass-out is not an
+ * event (`Farmer.cs:3408` checks `timeOfDay >= 2600` and calls `Game1.PassOutNewDay()`, which resets `passedOut`
+ * BEFORE `DayStarted` runs), so a reader of the morning cannot tell a night the engine took from one the companion
+ * slept. `StardewSalientEventHooks.TryEmitNightEndedPassOut` publishes `night_ended_pass_out_day_<N>` while the clock
+ * is still at 26:00, and the runner records the fact verbatim as
+ * `{ worldFactKind: "night_ended_pass_out", worldFactPayload: { eventId: "night_ended_pass_out_day_6", ... } }`.
+ *
+ * WHAT `N` IS. The day the night ENDED (`StardewSalientEventHooks.cs:89`: "the actor collapsed on `totalDays` and wakes
+ * on `totalDays + 1`"), in the same `Game1.Date.TotalDays` the `day_started_day_<n>` facts use. So this night ended
+ * day `N` and opened day `N + 1` - which is how a pass-out is also a CROSSING, and why a run whose `day_started` fact
+ * for `N + 1` was never delivered (measured 2026-11-07, `round39`: no `day_started_day_7` exists, only the pass-out)
+ * still has a witness that the world moved on.
+ *
+ * Deduplicated by (day, cause): a redelivered fact is the same night. A fact whose minted id does not carry the day is
+ * skipped rather than guessed, exactly as `worldDayStartsFromFacts` refuses one whose id is not the minted shape.
+ */
+export function worldNightEndingsFromFacts(facts) {
+  const endings = [];
+  for (const fact of Array.isArray(facts) ? facts : []) {
+    if (!isPlainObject(fact)) continue;
+    const kind = fact.worldFactKind ?? fact.kind ?? fact.payload?.kind;
+    if (typeof kind !== "string" || !kind.startsWith("night_ended_")) continue;
+    const eventId = fact.eventId ?? fact.worldFactPayload?.eventId ?? "";
+    const match = /^night_ended_([a-z_]+)_day_(\d+)$/u.exec(typeof eventId === "string" ? eventId : "");
+    if (match === null) continue;
+    const cause = match[1];
+    const day = Number.parseInt(match[2], 10);
+    if (!Number.isInteger(day)) continue;
+    if (endings.some((entry) => entry.day === day && entry.cause === cause)) continue;
+    endings.push(Object.freeze({ day, cause }));
+  }
+  return endings;
+}
+
+/**
+ * The calendar day (1..28) the night ENDED on, from whichever witness carried the crossing.
+ *
+ * Two shapes, one question. A receipt-witnessed night carries the engine's own totals, so its `dayBefore` is a
+ * `TotalDays`; a calendar-witnessed night carries the runner's `after.dayBefore`, which is a `dayOfMonth`. Both are
+ * "the day the night started on", which is the day it ended. `null` when neither was published: a night whose ending
+ * day nobody recorded cannot be matched against the world's facts, and guessing would attribute a pass-out to the
+ * wrong night - which is worse than saying nothing.
+ */
+function nightEndedDayOfMonth(night, record) {
+  if (isFiniteNumber(night?.dayBefore)) return dayOfMonthForTotalDays(night.dayBefore);
+  const dayBefore = record?.after?.dayBefore;
+  return isFiniteNumber(dayBefore) ? dayBefore : null;
+}
+
+/**
  * Judge one run's day records against the baseline's rules. Every rule can fail on its own and names
  * itself, so a red result says which single-game fact was missing instead of "multi-day timed out".
  */
-export function assessMultiDayBaseline({ dayRecords, daysRequested = null, worldDayStarts = null } = {}) {
+export function assessMultiDayBaseline({
+  dayRecords,
+  daysRequested = null,
+  worldDayStarts = null,
+  worldNightEndings = null,
+} = {}) {
   const violations = [];
   if (!Array.isArray(dayRecords)) {
     return Object.freeze({
@@ -326,6 +383,18 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null, world
   if (requested < MINIMUM_BASELINE_DAYS || requested > MAXIMUM_BASELINE_DAYS) {
     violations.push(violation(`baseline_window_out_of_range:${String(requested)}`, "daysRequested"));
   }
+
+  // THE WORLD'S OWN NIGHT ENDINGS, when the caller could read them. `null` means nobody supplied the facts - NOT "the
+  // world said nothing", which is an empty list and is judged as such - and the record's own witnesses answer instead.
+  const worldEndings =
+    worldNightEndings === null || worldNightEndings === undefined
+      ? null
+      : (Array.isArray(worldNightEndings) ? worldNightEndings : []).filter(
+          (entry) => isPlainObject(entry) && Number.isInteger(entry.day) && typeof entry.cause === "string",
+        );
+  // The days (in `dayOfMonth` terms) a record's own night ended on, so a world fact is matched to the night it names
+  // and never to the night beside it.
+  const recordedEndedDays = new Set();
 
   let daysCrossed = 0;
   let shoppingMenuDismissals = 0;
@@ -369,11 +438,35 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null, world
     const enteredVia = typeof night.facts.entered_via === "string" ? night.facts.entered_via : null;
     const sleepReceipt = isPlainObject(record.sleepReceipt) ? record.sleepReceipt : null;
     const sleepEnteredVia = sleepReceipt === null ? null : parseReceiptEvidence(sleepReceipt.evidence).entered_via;
-    const cause = nightCause({
+    // WHAT THE RECORD'S OWN WITNESSES SAY, from the crossing receipt and the night's own sleep receipt.
+    const claimed = nightCause({
       enteredVia,
       sleepEnteredVia: typeof sleepEnteredVia === "string" ? sleepEnteredVia : null,
       recorded: record.cause ?? null,
     });
+    // WHAT THE WORLD SAYS, from the Mod's own `night_ended_*` fact for THIS night - matched by the calendar day the
+    // night ended on, because the fact names the day the actor collapsed on and the record names the day it started.
+    //
+    // This is the authority, and it is the same one `dayCountWitness` already reads: measured 2026-11-07 (`round39`),
+    // the world published `night_ended_pass_out_day_6` at 26:00 with `gameTime=2600`, and the assessment answered
+    // `passOutNights: 0` with `night_mechanism_unobserved` - it counted its own bookkeeping and never opened the fact
+    // that said how the night ended. `engine` stays the answer only when NOBODY says: no receipt and no world fact.
+    const endedDayOfMonth = nightEndedDayOfMonth(night, record);
+    const worldEnding =
+      worldEndings === null || endedDayOfMonth === null
+        ? undefined
+        : worldEndings.find((entry) => dayOfMonthForTotalDays(entry.day) === endedDayOfMonth);
+    if (worldEnding !== undefined) recordedEndedDays.add(dayOfMonthForTotalDays(worldEnding.day));
+    const cause = worldEnding === undefined ? claimed : worldEnding.cause;
+    // A DISAGREEMENT IS NAMED, NEVER SILENCED. A record whose receipt says her sleep crossed the night, beside a world
+    // fact saying the engine passed her out on it, is one of the two being wrong - and a verdict that silently prefers
+    // either one hides it. `engine` is not a disagreement: it is the record saying it does not know, which is exactly
+    // what the world fact answers.
+    if (worldEnding !== undefined && claimed !== NIGHT_CAUSE_ENGINE && claimed !== worldEnding.cause) {
+      violations.push(
+        violation(`night_cause_disagrees_with_the_world:${claimed}:${worldEnding.cause}`, `${where}.cause`),
+      );
+    }
     if (cause === NIGHT_CAUSE_PASS_OUT) passOutNights += 1;
     // `sleep` is a claim that the COMPANION's own `advance_day` crossed the night, and only the lifecycle receipt that
     // `advance_day` starts can show it. A record claiming one while the ONLY witness is the calendar (no receipt at all,
@@ -523,6 +616,18 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null, world
   if (daysCrossed < MINIMUM_BASELINE_DAYS) {
     violations.push(violation(`baseline_days_crossed_below_minimum:${String(daysCrossed)}`, "daysCrossed"));
   }
+  // A NIGHT THE WORLD ATTRIBUTED THAT NO RECORD COVERS IS A FINDING, NOT SILENCE.
+  //
+  // The records are the loop's own iterations, so a night the run lived through after its last iteration is invisible
+  // to every rule above. Measured 2026-11-07 (`round39`): the world published `night_ended_pass_out_day_6` at 26:00 and
+  // opened the next day, while the two day records covered the nights that had already crossed - so the pass-out night
+  // belonged to no record, `passOutNights` read 0, and nothing in the assessment mentioned it. Its cause still counts
+  // toward `passOutNights` here, because the count is a statement about the WORLD and not about the records.
+  for (const ending of worldEndings ?? []) {
+    if (recordedEndedDays.has(dayOfMonthForTotalDays(ending.day))) continue;
+    if (ending.cause === NIGHT_CAUSE_PASS_OUT) passOutNights += 1;
+    violations.push(violation(`world_night_not_recorded:${String(ending.day)}:${ending.cause}`, "worldNightEndings"));
+  }
   // THE POPULATION COMES FROM THE AUTHORITY, NOT FROM THE ASSESSOR'S OWN LOOP COUNT.
   //
   // `daysCrossed` counts the records THIS function was handed, and those records are the loop's own iterations. Measured
@@ -532,10 +637,16 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null, world
   // same bookkeeping. The world's own `day_started` facts are the population, and a disagreement is a NAMED finding
   // carrying both numbers rather than a silent two.
   //
+  // A PASS-OUT IS A CROSSING TOO. `Game1.PassOutNewDay()` calls `NewDay` itself, so the day after a pass-out REALLY
+  // starts; measured 2026-11-07 (`round39`), its `day_started_day_7` was never delivered and the pass-out fact was the
+  // only witness that the world had moved on. Reading only `day_started` made the population agree with the records
+  // (2 == 2) while the world had in fact opened a third day.
+  //
   // The witness is published either way: a caller that supplied no world facts gets `dayCountWitness: "assessor"`,
   // which says the count nobody reconciled is exactly that, instead of letting it read as measured.
   const worldDaysCrossed = Array.isArray(worldDayStarts)
-    ? [...new Set(worldDayStarts.filter(isFiniteNumber))].length
+    ? [...new Set([...worldDayStarts.filter(isFiniteNumber), ...(worldEndings ?? []).map((ending) => ending.day + 1)])]
+        .length
     : null;
   const dayCountWitness = worldDaysCrossed === null ? "assessor" : "world";
   if (worldDaysCrossed !== null && worldDaysCrossed !== daysCrossed) {
@@ -562,6 +673,11 @@ export function assessMultiDayBaseline({ dayRecords, daysRequested = null, world
     unobservedNights,
     worldDaysCrossed,
     dayCountWitness,
+    // The attribution the judgement actually used, per night: the world's own endings when the caller could read them,
+    // `null` when nobody supplied the facts (which is not "the world said nothing"). A reader must be able to see WHICH
+    // night was called a pass-out, and `nightWitness` says whose answer that was.
+    worldNightEndings: worldEndings === null ? null : Object.freeze([...worldEndings]),
+    nightWitness: worldEndings === null ? "assessor" : "world",
     violations: Object.freeze(violations),
     checkedRules: CHECKED_RULES,
   });
@@ -588,5 +704,7 @@ const CHECKED_RULES = Object.freeze([
   "next_day_produced_no_farm_work",
   "baseline_days_crossed_below_minimum",
   "day_count_disagrees_with_the_world",
+  "night_cause_disagrees_with_the_world",
+  "world_night_not_recorded",
   "first_night_shipping_menu_never_dismissed",
 ]);

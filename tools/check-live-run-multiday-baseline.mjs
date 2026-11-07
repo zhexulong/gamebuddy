@@ -16,14 +16,14 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-
+import { readEvidenceBundle } from "./lib/evidence-bundle.mjs";
 import {
   assessMultiDayBaseline,
   BASELINE_SCOPE_NOTES,
   parseReceiptEvidence,
   worldDayStartsFromFacts,
+  worldNightEndingsFromFacts,
 } from "./lib/multiday-baseline.mjs";
-import { readEvidenceBundle } from "./lib/evidence-bundle.mjs";
 
 const checks = [];
 const check = (id, ok, detail) =>
@@ -288,6 +288,80 @@ function fixtureChecks() {
     `witness=${String(agreeing.dayCountWitness)}:${codes(agreeing).join(",")}`,
   );
 
+  // 3c. THE WORLD'S NIGHT ENDINGS ARE AN AUTHORITY, and the assessor reads them without the records' help.
+  //
+  // round39's own facts, verbatim: two days opened (`day_started_day_5`/`_6`) and the world published
+  // `night_ended_pass_out_day_6` at 26:00. The pass-out ended day 6, so it names the night that came AFTER the two the
+  // records cover - the loop had already stopped - and until this rule existed the assessment answered
+  // `passOutNights: 0` beside it while calling both recorded nights `night_mechanism_unobserved`.
+  const round39Facts = [
+    { worldFactKind: "day_started", eventId: "day_started_day_5" },
+    { worldFactKind: "day_started", eventId: "day_started_day_6" },
+    { worldFactKind: "night_ended_pass_out", eventId: "night_ended_pass_out_day_6" },
+  ];
+  const endings = worldNightEndingsFromFacts(round39Facts);
+  check(
+    "world_night_endings_read_the_mods_minted_shape",
+    endings.length === 1 && endings[0].day === 6 && endings[0].cause === "pass_out",
+    JSON.stringify(endings),
+  );
+  const round39 = assessMultiDayBaseline({
+    dayRecords: [
+      day({ day: 1, terminal: null, after: { dayOfMonth: 6, dayBefore: 5, seasonIndex: 0, year: 1 }, menus: [] }),
+      day({ day: 2, terminal: null, after: { dayOfMonth: 7, dayBefore: 6, seasonIndex: 0, year: 1 }, menus: [] }),
+    ],
+    daysRequested: 2,
+    worldDayStarts: worldDayStartsFromFacts(round39Facts),
+    worldNightEndings: endings,
+  });
+  check(
+    "a_world_pass_out_is_counted_and_the_night_it_names_is_named",
+    round39.passOutNights === 1 &&
+      round39.nightWitness === "world" &&
+      codes(round39).includes("world_night_not_recorded:6:pass_out"),
+    `passOut=${String(round39.passOutNights)}:${codes(round39).join(",")}`,
+  );
+  check(
+    "a_pass_out_the_day_starts_missed_still_counts_as_a_crossing",
+    // Two `day_started` facts and one pass-out that opened a third day: the records say two crossings and the world
+    // says three, and the disagreement names both numbers.
+    codes(round39).some((code) => code === "day_count_disagrees_with_the_world:2 != 3"),
+    codes(round39).join(","),
+  );
+  check(
+    "the_recorded_nights_the_world_says_nothing_about_stay_unobserved",
+    // The pass-out is NOT transferred onto the night beside it: both recorded nights ended before it, and a verdict
+    // that attributed them to the engine would be stating an event nothing witnessed.
+    codes(round39).filter((code) => code === "night_mechanism_unobserved").length === 2,
+    codes(round39).join(","),
+  );
+  // A record that CLAIMS her own sleep for a night the world says the engine took is a disagreement, and it is named
+  // with both sides rather than resolved silently in either direction.
+  const disagreeingCause = assessMultiDayBaseline({
+    dayRecords: [day({ day: 1, after: { dayOfMonth: 7, dayBefore: 6, seasonIndex: 0, year: 1 } }), day({ day: 2 })],
+    daysRequested: 2,
+    worldNightEndings: [{ day: 5, cause: "pass_out" }],
+  });
+  check(
+    "a_record_that_contradicts_the_world_is_named_red",
+    codes(disagreeingCause).includes("night_cause_disagrees_with_the_world:sleep:pass_out"),
+    codes(disagreeingCause).join(","),
+  );
+  // And the case the real bundle does not contain: a night whose ending NOBODY named - no receipt, no world fact - is
+  // still red. `night_mechanism_unobserved` is for exactly this, and for nothing else.
+  const nobodySaid = assessMultiDayBaseline({
+    dayRecords: [day({ day: 1, terminal: null, after: { dayOfMonth: 6, dayBefore: 5, seasonIndex: 0, year: 1 } })],
+    daysRequested: 2,
+    worldNightEndings: [],
+  });
+  check(
+    "a_night_nobody_attributed_is_still_unobserved",
+    nobodySaid.nightWitness === "world" &&
+      nobodySaid.passOutNights === 0 &&
+      codes(nobodySaid).includes("night_mechanism_unobserved"),
+    codes(nobodySaid).join(","),
+  );
+
   // 4. The Mod's evidence projection is read in both shapes the receipts carry.
   check(
     "evidence_projection_reads_both_shapes",
@@ -333,11 +407,13 @@ async function runDirChecks(runDir) {
   // Judged again HERE from the raw record, so a run that reported its own verdict cannot override the gate.
   // The world's own day count comes from the run's artifact, not from the runner's loop count.
   const worldDayStarts = readWorldDayStarts(runDir);
+  const worldNightEndings = readWorldNightEndings(runDir);
   const requested = Number.isInteger(multiday.requestedCrossings) ? multiday.requestedCrossings : multiday.crossings;
   const rejudged = assessMultiDayBaseline({
     dayRecords: multiday.dayRecords,
     daysRequested: requested,
     worldDayStarts,
+    worldNightEndings,
   });
   check("gate_rejudgement_agrees", rejudged.ok, rejudged.violations.map((entry) => entry.code).join(",") || undefined);
   // AND THE DAY COUNT IS THE WORLD'S, not the loop's. A run whose `day_started` facts cannot be read has not measured
@@ -347,6 +423,13 @@ async function runDirChecks(runDir) {
     rejudged.dayCountWitness === "world" &&
       !rejudged.violations.some((entry) => entry.code.startsWith("day_count_disagrees_with_the_world")),
     `witness=${String(rejudged.dayCountWitness)};assessor=${String(rejudged.daysCrossed)};world=${String(rejudged.worldDaysCrossed)}`,
+  );
+  // And every night's ATTRIBUTION comes from the world's own facts, not from the loop's records: `passOutNights` beside
+  // a run whose timeline held a `night_ended_pass_out` is the measured shape this rule exists for (round39).
+  check(
+    "the_night_attribution_is_the_worlds",
+    rejudged.nightWitness === "world",
+    `nightWitness=${String(rejudged.nightWitness)};passOut=${String(rejudged.passOutNights)}`,
   );
   // A run that was asked for three nights and crossed two is red, and by name: the window rule could not see this
   // while the requested and achieved counts were the same number.
@@ -366,6 +449,23 @@ async function runDirChecks(runDir) {
  * could read must not be judged as a count of none.
  */
 function readWorldDayStarts(runDir) {
+  const facts = readTimeline(runDir);
+  return facts === null ? null : worldDayStartsFromFacts(facts);
+}
+
+/**
+ * The world's own `night_ended_*` facts, read from the same timeline.
+ *
+ * `null` is "could not read the timeline", an empty list is "the world named no ending" - and the gate must be able to
+ * tell those apart, because only the second one is a fact about the run.
+ */
+function readWorldNightEndings(runDir) {
+  const facts = readTimeline(runDir);
+  return facts === null ? null : worldNightEndingsFromFacts(facts);
+}
+
+/** Every fact the run's own timeline holds, or `null` when the file is absent or unreadable. */
+function readTimeline(runDir) {
   const timelinePath = join(runDir, "timeline.jsonl");
   if (!existsSync(timelinePath)) return null;
   const facts = [];
@@ -377,7 +477,7 @@ function readWorldDayStarts(runDir) {
       return null;
     }
   }
-  return worldDayStartsFromFacts(facts);
+  return facts;
 }
 
 function parseOption(name) {
