@@ -1,0 +1,270 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { CompanionEventPump } from "./event-pump.js";
+import {
+  createProgramSettlementReporter,
+  MAX_SETTLED_DIGEST_NODES,
+  programSettledDigest,
+  watchProgramSettlement,
+} from "./program-settlement-digest.js";
+import type { PlanAnswerNode } from "./program-status-wait.js";
+
+type JournalNode = Readonly<{ nodeId: string; state: string; rejectionCode?: string; failureCode?: string }>;
+
+function planNode(nodeId: string, actionId = "move_to_tile", x = 5, y = 8): PlanAnswerNode {
+  return {
+    nodeId,
+    actionId,
+    arguments: {
+      x: { type: "integer", canonicalValue: String(x) },
+      y: { type: "integer", canonicalValue: String(y) },
+    },
+  };
+}
+
+function status(programId: string, state: string, nodes: readonly JournalNode[]): unknown {
+  return {
+    code: "found",
+    snapshot: { programId, state, catalogRevision: 3, stopEpoch: 0, eventHighWater: 90, nodes },
+  };
+}
+
+test("a settled program reaches the pump as one ledger entry, and does not mint a turn", async () => {
+  // THE DEFECT THIS CLOSES. Measured 2026-11-07 over 29 plan batches: every node entry was `pending`, because
+  // `planBatchAnswer` reads the journal at submission and nothing ever carried the terminal states back. The assertion
+  // is the property the companion asked for: after the Mod's journal stops, the pump holds a fact carrying the terminal
+  // rows - and it does not spend a turn of its own on them.
+  const compiled = [planNode("n01"), planNode("n02")];
+  const pump = new CompanionEventPump();
+  const reporter = createProgramSettlementReporter((fact) => pump.enqueueFact(fact));
+  const reads: unknown[] = [
+    status("plan_1", "active", [
+      { nodeId: "n01", state: "succeeded" },
+      { nodeId: "n02", state: "running" },
+    ]),
+    status("plan_1", "succeeded", [
+      { nodeId: "n01", state: "succeeded" },
+      { nodeId: "n02", state: "succeeded" },
+    ]),
+  ];
+  let clock = 0;
+  const outcome = await watchProgramSettlement({
+    read: async () => reads.shift() ?? status("plan_1", "succeeded", []),
+    onSettled: async (settled) => {
+      reporter.report({ programId: "plan_1", settledAtMs: 4_242, compiled, status: settled, nowMs: 9 });
+    },
+    now: () => (clock += 25),
+    sleep: async () => undefined,
+    intervalMs: 1,
+    maxMs: 60_000,
+  });
+  assert.equal(outcome, "settled");
+  // No turn of its own: a settlement is news for the next batch, not a reason to interrupt.
+  assert.equal(pump.hasPendingDelivery, false, "a settled digest never opens a turn by itself");
+  // It rides the next batch, and that batch's triggers do not name it (a held fact is not a trigger).
+  pump.enqueueFact({
+    source: "stardew_mod",
+    kind: "semantic_event",
+    correlationId: "day_started_1",
+    revision: 1,
+    payload: { kind: "day_started" },
+  });
+  assert.equal(pump.hasPendingDelivery, true);
+  const batches: string[] = [];
+  await pump.flush({
+    deliver: async (text) => {
+      batches.push(text);
+    },
+  });
+  assert.equal(batches.length, 1);
+  const batch = JSON.parse(batches[0] ?? "{}") as Readonly<{
+    worldFacts: readonly Readonly<{ eventId?: string; payload: Readonly<Record<string, unknown>> }>[];
+    triggerEventIds: readonly string[];
+  }>;
+  const digest = batch.worldFacts.find((fact) => fact.eventId === "program_settled:plan_1");
+  assert.ok(digest !== undefined, "the batch carries the settled digest");
+  assert.equal(digest.payload.programId, "plan_1");
+  assert.equal(digest.payload.settledAtMs, 4_242);
+  assert.equal(digest.payload.summary, "2 of 2 done");
+  assert.deepEqual(
+    (digest.payload.nodes as readonly Readonly<Record<string, unknown>>[]).map((row) => row.state),
+    ["succeeded", "succeeded"],
+    "the rows are the terminal states, never the submission-time `pending`",
+  );
+  assert.deepEqual(
+    (digest.payload.nodes as readonly Readonly<Record<string, unknown>>[]).map((row) => row.index),
+    [0, 1],
+  );
+  assert.equal(batch.triggerEventIds.includes("program_settled:plan_1"), false);
+});
+
+test("the digest is minted exactly once per program, and never for a program that has not stopped", async () => {
+  const compiled = [planNode("n01")];
+  const announced: string[] = [];
+  const reporter = createProgramSettlementReporter((fact) => announced.push(String(fact.eventId)));
+  const running = status("plan_2", "active", [{ nodeId: "n01", state: "running" }]);
+  // A still-running plan produces nothing, and - the part that matters - does not spend its one claim.
+  assert.equal(programSettledDigest({ programId: "plan_2", settledAtMs: 1, compiled, status: running }), undefined);
+  assert.equal(reporter.report({ programId: "plan_2", settledAtMs: 1, compiled, status: running }), undefined);
+  const settled = status("plan_2", "failed", [{ nodeId: "n01", state: "failed", failureCode: "no_native_path" }]);
+  assert.ok(reporter.report({ programId: "plan_2", settledAtMs: 7, compiled, status: settled }) !== undefined);
+  // Every later observation of the same settled program is silence.
+  assert.equal(reporter.report({ programId: "plan_2", settledAtMs: 7, compiled, status: settled }), undefined);
+  assert.equal(reporter.report({ programId: "plan_2", settledAtMs: 9, compiled, status: settled }), undefined);
+  assert.deepEqual(announced, ["program_settled:plan_2"]);
+  // A different program still gets its own.
+  assert.ok(
+    reporter.report({
+      programId: "plan_3",
+      settledAtMs: 11,
+      compiled,
+      status: status("plan_3", "succeeded", [{ nodeId: "n01", state: "succeeded" }]),
+    }) !== undefined,
+  );
+  // A program the journal no longer knows has no rows to carry, so there is no ledger to claim.
+  assert.equal(
+    reporter.report({
+      programId: "plan_4",
+      settledAtMs: null,
+      compiled,
+      status: { code: "not_found", snapshot: null },
+    }),
+    undefined,
+  );
+});
+
+test("a plan larger than the digest bound answers its first rows and counts the rest", () => {
+  const compiled = Array.from({ length: 26 }, (_, index) => planNode(`n${String(index + 1).padStart(2, "0")}`));
+  const journal = compiled.map((node) => ({ nodeId: node.nodeId, state: "succeeded" }));
+  const fact = programSettledDigest({
+    programId: "plan_26",
+    settledAtMs: 5,
+    compiled,
+    status: status("plan_26", "succeeded", journal),
+  });
+  assert.ok(fact !== undefined);
+  const payload = fact.payload as Readonly<{
+    nodes: readonly Readonly<Record<string, unknown>>[];
+    omitted?: number;
+    summary: string;
+  }>;
+  assert.equal(MAX_SETTLED_DIGEST_NODES, 20);
+  assert.equal(payload.nodes.length, 20, "at most the bound, not the whole plan");
+  assert.equal(payload.omitted, 6, "what did not fit is COUNTED, never dropped silently");
+  assert.equal(payload.nodes[19]?.index, 19, "the rows keep the caller's own indices, so a tail is addressable");
+  assert.equal(payload.summary, "26 of 26 done");
+});
+
+test("a plan that settled with one rejection names that node, its code, and the rest as succeeded", () => {
+  const compiled = [planNode("n01", "till_soil", 61, 18), planNode("n02", "water_crop", 62, 18), planNode("n03")];
+  const fact = programSettledDigest({
+    programId: "plan_r",
+    settledAtMs: 12,
+    compiled,
+    status: status("plan_r", "succeeded", [
+      { nodeId: "n01", state: "succeeded" },
+      { nodeId: "n02", state: "rejected", rejectionCode: "resource_unavailable" },
+      { nodeId: "n03", state: "succeeded" },
+    ]),
+  });
+  assert.ok(fact !== undefined);
+  const payload = fact.payload as Readonly<{
+    nodes: readonly Readonly<Record<string, unknown>>[];
+    summary: string;
+    omitted?: number;
+  }>;
+  assert.equal(payload.summary, "2 of 3 done, 1 rejected");
+  assert.equal(payload.omitted, undefined, "a plan inside the bound says nothing about omission");
+  assert.deepEqual(
+    payload.nodes.map((row) => [row.index, row.actionId, row.state, row.reasonCode]),
+    [
+      [0, "till_soil", "succeeded", undefined],
+      [1, "water_crop", "rejected", "resource_unavailable"],
+      [2, "move_to_tile", "succeeded", undefined],
+    ],
+  );
+  assert.deepEqual(payload.nodes[0]?.tile, { x: 61, y: 18 }, "the tile a refusal is read against still rides the row");
+});
+
+test("a node the journal said nothing about stays unreadable, and is never reported as a success", () => {
+  const compiled = [planNode("n01"), planNode("n02")];
+  const fact = programSettledDigest({
+    programId: "plan_u",
+    settledAtMs: 3,
+    compiled,
+    status: status("plan_u", "succeeded", [{ nodeId: "n01", state: "succeeded" }]),
+  });
+  assert.ok(fact !== undefined, "one unreadable row must not cost the other rows");
+  const payload = fact.payload as Readonly<{ nodes: readonly Readonly<Record<string, unknown>>[]; summary: string }>;
+  assert.equal(payload.nodes[1]?.state, "unknown", "PLAN_NODE_STATE_UNREADABLE, not `pending` and not `succeeded`");
+  assert.equal(payload.summary, "1 of 2 done, 1 unknown");
+});
+
+test("the watch follows a queued plan past the point a turn-holding wait would have given up", async () => {
+  // `waitForTerminalProgramStatus` returns early after a few unchanged polls, which is right for a caller holding a
+  // turn and wrong for the ledger: a plan still waiting on its first admission must still be followed.
+  const stillQueued = status("plan_q", "active", [{ nodeId: "n01", state: "pending" }]);
+  const reads = Array.from({ length: 20 }, () => stillQueued);
+  let clock = 0;
+  const outcome = await watchProgramSettlement({
+    read: async () => reads.shift() ?? status("plan_q", "succeeded", [{ nodeId: "n01", state: "succeeded" }]),
+    onSettled: async () => undefined,
+    now: () => (clock += 1_000),
+    sleep: async () => undefined,
+    intervalMs: 1_000,
+    maxMs: 600_000,
+  });
+  assert.equal(outcome, "settled", "twenty unchanged reads are not a settlement, and not a reason to stop following");
+});
+
+test("a watch whose journal read fails ends as `stopped`, and one that outlives its bound as `expired`", async () => {
+  let clock = 0;
+  assert.equal(
+    await watchProgramSettlement({
+      read: async () => {
+        throw new Error("bridge_gone");
+      },
+      onSettled: async () => undefined,
+      now: () => clock,
+      sleep: async () => undefined,
+      intervalMs: 1_000,
+      maxMs: 60_000,
+    }),
+    "stopped",
+  );
+  clock = 0;
+  const outcome = await watchProgramSettlement({
+    read: async () => status("plan_x", "active", [{ nodeId: "n01", state: "pending" }]),
+    onSettled: async () => undefined,
+    now: () => (clock += 30_000),
+    sleep: async () => undefined,
+    intervalMs: 1_000,
+    maxMs: 60_000,
+  });
+  assert.equal(outcome, "expired");
+});
+
+test("the digest is wired to the pump on the one path every program takes", async () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../src");
+  const materializer = await readFile(
+    join(root, "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts"),
+    "utf8",
+  );
+  // A digest that is composed and never enqueued is the defect this whole module exists to end, so the wiring is
+  // asserted where it lives: the reporter is fed by the submission path, and the sink it announces to is the pump.
+  assert.match(materializer, /const settlement = createProgramSettlementReporter\(announceSettledFact\);/u);
+  assert.match(
+    materializer,
+    /if \(code === "accepted" \|\| code === "idempotent"\) \{\n\s+revealReaders\(\);\n\s+startSettlementWatch\(request\.programId, request\.nodes\);/u,
+  );
+  assert.match(materializer, /announceHostFact = \(fact\) => host\.acceptHostMintedFact\(fact\);/u);
+  const hostService = await readFile(join(root, "host-service.ts"), "utf8");
+  assert.match(
+    hostService,
+    /public acceptHostMintedFact\(fact: WorldFact\): void \{\n\s+if \(this\.#closed\) return;\n\s+this\.loop\.pump\.enqueueFact\(fact\);/u,
+  );
+});
