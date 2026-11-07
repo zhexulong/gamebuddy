@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
 import { createContext, runInContext } from "node:vm";
+import {
+  forEachRules,
+  MAX_FOR_EACH_ROWS,
+  type PlanForEachLoop,
+  planFormExecutionUnavailableReason,
+  readForEachLoop,
+  sameForEachSource,
+  withForEachRule,
+} from "./body-program-for-each.js";
 import type { ActionRegistration, BodyProgramCandidateRequest, Snapshot } from "./protocol.js";
 import { isNonNegativeSafeInteger, isOpaqueId, isRecord, isTileCoordinate } from "./protocol-target-facts.js";
 
@@ -243,6 +252,27 @@ export const TARGETS_NAMED_PER_PLAN = 16;
  * </p>
  */
 export const MAX_PLAN_NODES = 256;
+
+/**
+ * The node action id of the `for_each` plan form.
+ *
+ * It is NOT one of the Mod's published actions and nothing registers it as one: the Mod cannot execute the form yet, and
+ * a capability advertised without an executor is a capability a caller can believe in. The node still exists, because
+ * both alternatives are lies - a plan that silently dropped the loop would read as a patch that was covered, and a plan
+ * that refused the whole script would lose the steps the caller wrote around it. So the form compiles into a node the
+ * submission path already carries, and `plan_work` names by code exactly the nodes whose action id the attached Mod does
+ * not publish (`for_each_execution_unavailable`) rather than sending work that cannot run.
+ */
+export const FOR_EACH_PLAN_ACTION_ID = "for_each";
+
+/**
+ * Every node action id this compiler can produce that is a HOST plan FORM rather than a published Mod action.
+ *
+ * The distinction is answered at submission time from the Mod's own catalogue, never from a list kept here: a form whose
+ * id the attached Mod does publish is executable by definition, and stops being named unavailable the moment the Mod
+ * ships it. `plan_work` therefore derives the answer instead of restating it.
+ */
+export const PLAN_FORM_ACTION_IDS: readonly string[] = Object.freeze([FOR_EACH_PLAN_ACTION_ID]);
 
 /** The published action whose one job is putting a tool in hand; the `equipFor` helper writes it. */
 const EQUIP_TOOL_ACTION_ID = "equip_tool";
@@ -695,10 +725,21 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     "// Sequential steps - one call per step, in order:\n" +
     "builder.move_to_tile({ x: 10, y: 20 });\n" +
     "builder.enter_exit({ x: 10, y: 20 });\n" +
+    "// Or ONE LOOP over a collection of live world rows, expanded by the Mod on the game thread:\n" +
+    "builder.for_each({\n" +
+    "  source: { area: { x: 60, y: 18, w: 20, h: 3 } },\n" +
+    "  where: [{ col: { every: 3, offset: 0 } }],\n" +
+    '  do: { action: "plant_seed", slot: 0, expectedQualifiedItemId: "(O)472" }\n' +
+    "});\n" +
     "// Or a batch over a snapshot family:\n" +
     "for (const crop of snapshot.cropTargets) {\n" +
     "  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId });\n" +
-    "}"
+    "}\n" +
+    'builder.for_each({ source, where, do }) is ONE loop over a collection of live world rows, expanded by the Mod on the game thread: `source` is exactly one of { area: { x, y, w, h } }, { family: "cropTargets" } or { query: { subject } }; `where` is a list of field tests ({ field: "kind", in: ["weed"] }, { field: "health", gt: 0 }) and/or position guards ({ col: { every: 3, offset: 0 } }, { row: { every: 2, offset: 1 } }); `do` is an action from the list above with its own arguments, or null for a row left deliberately alone (a path). Several for_each calls over the SAME source are the rules of that one pass, decided per row by the first rule that claims it - which is how an intercropped patch is one intent. The caller needs no observation first - no target id, no per-tile coordinate - because the rows are read live. A row no predicate claims is reported as no_rule_matched:<kind>@<x>,<y> rather than skipped, one loop addresses at most ' +
+    String(MAX_FOR_EACH_ROWS) +
+    " rows, and a loop inside a loop is refused by name. The attached Mod does not execute the loop yet, so the call answers " +
+    planFormExecutionUnavailableReason(FOR_EACH_PLAN_ACTION_ID) +
+    " instead of pretending the patch was worked."
   );
 }
 
@@ -928,6 +969,13 @@ function createPlanBuilder(
         if (property === "nodeCount") return state.nodes.length;
         if (property === "isFull") return () => state.nodes.length >= MAX_PLAN_NODES;
         if (property === "equipFor") return equipFor;
+        // THE FORM OWNS ITS NAME. A published action that took the same id would shadow the loop for every script that
+        // writes `for_each`, and the loop is the Host's own plan vocabulary, so the form is answered first.
+        if (property === FOR_EACH_PLAN_ACTION_ID)
+          return (arguments_: unknown) => {
+            state.builderCalls += 1;
+            atPlanCall(state, FOR_EACH_PLAN_ACTION_ID, () => emitForEachNode(arguments_, actions, state));
+          };
         const method = methods.get(property);
         if (method !== undefined) return method;
         return refusePlan(`plan_script_unknown_action:${property}`, state);
@@ -1477,6 +1525,58 @@ function transitionApproachNode(
     dependsOn: Object.freeze(previous === undefined ? [] : [previous.nodeId]),
     bindings: Object.freeze({}),
   });
+}
+
+/**
+ * Compiles one `builder.for_each({ source, where, do })` call into the single node the loop form is.
+ *
+ * ONE CALL, ONE NODE. The Mod expands it on the game thread against live state; a plan carrying 60 pre-resolved nodes
+ * would be 60 tiles the caller had to see first, which is exactly the 13x13-bounded behaviour the form exists to remove.
+ *
+ * A loop this product could never run is refused BY NAME with the part of the declaration that broke it - a source the
+ * caller did not write, a rectangle past the row bound with its own count, a stride that claims no index, an action the
+ * surface does not publish - so one bad loop costs one call and not the batch around it.
+ */
+function emitForEachNode(value: unknown, actions: readonly PublishedPlanAction[], state: PlanScriptState): void {
+  state.calls += 1;
+  if (state.calls > MAX_PLAN_BUILDER_CALLS) refusePlan(`plan_script_call_cap:${String(state.calls)}`, state);
+  if (state.nodes.length >= MAX_PLAN_NODES) refusePlan(`plan_cap_exceeded:${String(state.nodes.length + 1)}`, state);
+  const reading = readForEachLoop(
+    value,
+    actions.map((action) => action.actionId),
+  );
+  if (!reading.ok)
+    rejectPlanCall(
+      reading.detail.length === 0 ? `plan_script_${reading.code}` : `plan_script_${reading.code}:${reading.detail}`,
+      state,
+    );
+  const loop: PlanForEachLoop = reading.loop;
+  const previous = state.nodes[state.nodes.length - 1];
+  if (previous !== undefined && previous.actionId === FOR_EACH_PLAN_ACTION_ID) {
+    const previousLoop = previous.arguments.loop as PlanForEachLoop | undefined;
+    if (previousLoop !== undefined && sameForEachSource(previousLoop, loop)) {
+      // ONE PASS PER SOURCE. Two `for_each` calls over the same rectangle are two RULES of one intent and not two intents:
+      // separate passes would each report the tile the other one owns as `no_rule_matched`, and a tile both claim would
+      // be worked twice. The first rule stays where the caller wrote it; the rest join it in order.
+      state.nodes[state.nodes.length - 1] = Object.freeze({
+        ...previous,
+        arguments: Object.freeze({
+          loop: Object.freeze({ type: "loop" as const, ...withForEachRule(previousLoop, forEachRules(loop)[0]!) }),
+        }),
+      });
+      return;
+    }
+  }
+  state.nodes.push(
+    Object.freeze({
+      nodeId: `n${String(state.nodes.length + 1).padStart(2, "0")}`,
+      actionId: FOR_EACH_PLAN_ACTION_ID,
+      // The wire tag is added HERE and nowhere else: the caller writes a loop, the node carries a runtime value.
+      arguments: Object.freeze({ loop: Object.freeze({ type: "loop" as const, ...loop }) }),
+      dependsOn: Object.freeze(previous === undefined ? [] : [previous.nodeId]),
+      bindings: Object.freeze({}),
+    }),
+  );
 }
 
 /** An integer plan argument: the whole-number wire value, canonicalized to its exact decimal spelling. */

@@ -4,6 +4,7 @@ import { resolveCompanionLocale, type CompanionLocale } from "../settings/player
 import {
   compilePlanScript,
   legalPlanActionIds,
+  PLAN_FORM_ACTION_IDS,
   PLAN_TOOL_SLOT_MEANING,
   planActionsFromRegistrations,
   planProgramId,
@@ -12,6 +13,7 @@ import {
   type PlanScriptRequest,
   type PublishedPlanAction,
 } from "../body-program-script.js";
+import { planFormExecutionUnavailableReason } from "../body-program-for-each.js";
 import { Type } from "typebox";
 import {
   createStableGameRuntimeBindingIdentity,
@@ -271,6 +273,22 @@ function createBodyProgramTools(
           }
           const nodes = compiled.program.nodes;
           const programId = planProgramId(compiled.snapshotRevision, nodes);
+          // A HOST PLAN FORM THE ATTACHED MOD DOES NOT PUBLISH CANNOT BE EXECUTED, and naming that is the difference between
+          // an answer and a silent success. Submitted anyway, the program is refused whole by the preflight, so every step
+          // the caller wrote beside the loop is lost and the reason names a policy refusal instead of the one thing that has
+          // to change. Answered HERE, the caller is told which nodes cannot run, in which order, and that nothing was sent.
+          const unavailable = planFormNodesOutsideCatalogue(nodes, actions);
+          if (unavailable.length > 0) {
+            span.end({ reasonCode: unavailable[0]!.reasonCode, programId });
+            return planDetails({
+              accepted: false,
+              nodeCount: nodes.length,
+              reasonCode: unavailable[0]!.reasonCode,
+              programId,
+              submitted: NOT_SUBMITTED,
+              unavailable,
+            });
+          }
           try {
             const submitted = await submitProgram({ programId, nodes });
             const code = submitted.details.code;
@@ -477,6 +495,39 @@ function createBodyProgramTools(
 function readPlanActions(connection: GameConnection): readonly PublishedPlanAction[] {
   const state = (connection as { state?: { catalogRegistrations?: readonly ActionRegistration[] } }).state;
   return planActionsFromRegistrations(state?.catalogRegistrations ?? []);
+}
+
+/**
+ * The word the plan answer uses when a compiled program was never sent to the Mod.
+ *
+ * `accepted: false` alone cannot tell "the Mod refused it" from "the Host did not send it", and those two need different
+ * corrections - one is about the world, the other about a form this Host can compile but the attached Mod cannot run.
+ */
+const NOT_SUBMITTED = "not_submitted";
+
+/**
+ * The nodes of a compiled plan whose action id is a Host plan FORM the attached Mod does not publish, in node order.
+ *
+ * Derived from `PLAN_FORM_ACTION_IDS` and the Mod's OWN catalogue, never from a list of "things that do not work yet":
+ * the day the Mod publishes `for_each`, this answers empty and the loop is submitted like any other node. The reason code
+ * is derived from the action id too (`for_each` -> `for_each_execution_unavailable`), so a second form needs no edit here.
+ */
+function planFormNodesOutsideCatalogue(
+  nodes: readonly Readonly<{ actionId: string }>[],
+  actions: readonly PublishedPlanAction[],
+): readonly Readonly<{ index: number; actionId: string; reasonCode: string }>[] {
+  const published = new Set(actions.map((action) => action.actionId));
+  const unavailable: Readonly<{ index: number; actionId: string; reasonCode: string }>[] = [];
+  for (const [index, node] of nodes.entries())
+    if (PLAN_FORM_ACTION_IDS.includes(node.actionId) && !published.has(node.actionId))
+      unavailable.push(
+        Object.freeze({
+          index,
+          actionId: node.actionId,
+          reasonCode: planFormExecutionUnavailableReason(node.actionId),
+        }),
+      );
+  return Object.freeze(unavailable);
 }
 
 /** The current Mod snapshot: a plan script reads the world as the Mod last published it. */

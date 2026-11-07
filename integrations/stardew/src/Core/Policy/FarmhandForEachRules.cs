@@ -1,0 +1,358 @@
+namespace GameBuddy.Stardew.Core.Policy;
+
+/// <summary>
+/// One scalar a live world row can be tested on.
+///
+/// A row is what the `for_each` plan form loops over: a rectangle's tile, a published target family's entry, or a query
+/// result. Their fields disagree about type - `health` is a number, `readyForHarvest` a flag, `kind` a word - so the
+/// predicate has to compare typed values rather than strings, and this is that type.
+/// </summary>
+public sealed record FarmhandForEachValue(string? Text = null, double? Number = null, bool? Flag = null)
+{
+    public static FarmhandForEachValue Of(string text) => new(Text: text);
+
+    public static FarmhandForEachValue Of(double number) => new(Number: number);
+
+    public static FarmhandForEachValue Of(bool flag) => new(Flag: flag);
+}
+
+/// <summary>
+/// The two operators a repeating position guard offers: `every: n, offset: k` claims local index k, k+n, k+2n...
+///
+/// This is the operator the whole form exists for. Trellis crops (green bean, hops, grape) grow into impassable tiles, so
+/// a real farm leaves a walkable column between trellis columns and plants a filler crop between trellis rows - hops
+/// with coffee is a standard summer layout. Every one of those decisions depends on POSITION, not on what the tile
+/// currently contains, so a dispatch keyed on the row's kind cannot represent them.
+/// </summary>
+public sealed record FarmhandForEachStride(int Every, int Offset)
+{
+    public const string EveryOperator = "every";
+
+    public const string OffsetOperator = "offset";
+
+    /// <summary>
+    /// An offset at or past the stride claims no index at all, and a rule that can never match is indistinguishable from
+    /// a tile nobody thought about - so it is refused rather than silently dead.
+    /// </summary>
+    public bool IsValid => this.Every >= 1 && this.Offset >= 0 && this.Offset < this.Every;
+
+    public bool Claims(int localIndex) => localIndex >= 0 && localIndex % this.Every == this.Offset;
+}
+
+public enum FarmhandForEachComparison
+{
+    Eq = 1,
+    Ne = 2,
+    Lt = 3,
+    Lte = 4,
+    Gt = 5,
+    Gte = 6,
+    In = 7,
+}
+
+/// <summary>
+/// One `where` predicate over a row's field: `{ field: "health", gt: 0 }`, `{ field: "kind", in: ["rock","stump"] }`.
+///
+/// ONE SPELLING per test. A kind is `field: "kind"` like any other field, and position is `col`/`row` on the loop row
+/// itself; there is no second shorthand for either, because a form with two ways to say "weed" is a form whose two ways
+/// will eventually disagree.
+/// </summary>
+public sealed record FarmhandForEachPredicate(
+    string? Field,
+    FarmhandForEachComparison Comparison,
+    IReadOnlyList<FarmhandForEachValue> Values)
+{
+    public const string ColOperator = "col";
+
+    public const string RowOperator = "row";
+
+    /// <summary>The axis a position predicate claims (`col` / `row`), or null for a field predicate.</summary>
+    public string? Axis { get; init; }
+
+    /// <summary>The repeating guard a position predicate carries, or null when it is a field predicate.</summary>
+    public FarmhandForEachStride? Stride { get; init; }
+
+    /// <summary>A predicate with no field is a position guard, carried by <see cref="Stride"/> instead.</summary>
+    public bool IsPositionGuard => this.Axis is not null;
+
+    public bool IsValid => this.Field is null
+        ? this.Axis is ColOperator or RowOperator && this.Stride is not null && this.Stride.IsValid
+        : this.Field.Length is >= 1 and <= 64 && this.Values.Count > 0;
+}
+
+/// <summary>
+/// Where a `for_each` loop reads its rows from.
+///
+/// Three sources, ONE loop semantic. An area is a rectangle of live map tiles, a family is one of the snapshot arrays the
+/// Mod already publishes, and a query is a subject the Mod classifies for itself. The area is a SOURCE and not a
+/// privileged form: "every dry crop on the farm" is a family source, "every tree with health left" is a family source
+/// with a field predicate, and neither of them is a rectangle.
+/// </summary>
+public sealed record FarmhandForEachSource(
+    string Kind,
+    int X = 0,
+    int Y = 0,
+    int Width = 0,
+    int Height = 0,
+    string? Family = null,
+    string? Subject = null,
+    string? Only = null)
+{
+    public const string AreaKind = "area";
+
+    public const string FamilyKind = "family";
+
+    public const string QueryKind = "query";
+
+    /// <summary>
+    /// How many rows one loop may address.
+    ///
+    /// A per-INTENT budget, not a view radius: the point of the form is that a 3x20 row is bigger than the 13x13 an
+    /// observation carries. Over the bound the answer says `omitted: n` with the rectangle it covered - never a
+    /// truncated table that looks complete, because a truncated table reads as a finished pass.
+    /// </summary>
+    public const int MaximumRows = 64;
+
+    public int AreaRowCount => this.Width > 0 && this.Height > 0 ? checked(this.Width * this.Height) : 0;
+
+    public bool IsValid => this.Kind switch
+    {
+        AreaKind => this.X >= 0 && this.Y >= 0 && this.Width >= 1 && this.Height >= 1
+            && this.AreaRowCount is >= 1 and <= MaximumRows,
+        FamilyKind => this.Family is { Length: >= 1 and <= 64 },
+        QueryKind => this.Subject is { Length: >= 1 and <= 64 },
+        _ => false,
+    };
+}
+
+/// <summary>What a matching row gets: a published action with its arguments, or null for "leave this row alone".</summary>
+public sealed record FarmhandForEachEffect(string Action, IReadOnlyDictionary<string, string>? Arguments = null)
+{
+    /// <summary>
+    /// The token that means "whatever action the Mod's own classifier names for this row's kind".
+    ///
+    /// It is a REFERENCE, not a mapping the caller supplies: the classifier that names a kind is the only thing that can
+    /// say which action clears it, so the table lives beside the classifier and the caller may not restate it.
+    /// </summary>
+    public const string ByKindAction = "by_kind";
+
+    public bool IsValid => this.Action.Length is >= 1 and <= 128;
+}
+
+/// <summary>
+/// One more rule of the same pass: an optional conjunction of predicates and what a matching row gets.
+///
+/// WHY A PASS HAS MORE THAN ONE RULE. A 3x20 intercropped patch is ONE intent and not three: hops on columns 0, 3, 6...,
+/// coffee on 1, 4, 7..., and column 2, 5, 8... deliberately a path. Three separate passes would report every tile a pass
+/// did not claim as `no_rule_matched` twice over, and a tile two rules claim would be worked twice; one pass with ordered
+/// rules decides each row exactly once, by the FIRST rule that claims it.
+/// </summary>
+public sealed record FarmhandForEachRule(
+    IReadOnlyList<FarmhandForEachPredicate>? Where,
+    FarmhandForEachEffect? Do)
+{
+    public bool IsValid =>
+        (this.Where is null || this.Where.All(predicate => predicate is not null && predicate.IsValid))
+        && (this.Do is null || this.Do.IsValid);
+}
+
+/// <summary>
+/// One loop intent: a source, an optional conjunction of predicates, what to do with a matching row, and the further
+/// rules of the same pass.
+///
+/// `Do: null` is a STATEMENT - "this column is a path" - and the pass counts it separately so a reader can tell a
+/// deliberate path from a tile the predicates forgot.
+/// </summary>
+public sealed record FarmhandForEachLoop(
+    FarmhandForEachSource Source,
+    IReadOnlyList<FarmhandForEachPredicate>? Where,
+    FarmhandForEachEffect? Do,
+    IReadOnlyList<FarmhandForEachRule>? Then = null)
+{
+    /// <summary>How many rules one pass may carry, this loop's own included.</summary>
+    public const int MaximumRules = 8;
+
+    /// <summary>
+    /// The ordered rules of one pass: this loop's own predicate and effect first, then <see cref="Then"/> in order.
+    ///
+    /// FIRST MATCH WINS, and this is the ONE spelling of "what a pass tries": the compiler that composes several
+    /// `for_each` calls over one source and the expansion that runs them enumerate the rules through it, so the two
+    /// cannot disagree about the order or about how many there are.
+    /// </summary>
+    public IReadOnlyList<FarmhandForEachRule> Rules
+    {
+        get
+        {
+            var rules = new List<FarmhandForEachRule>(1 + (this.Then?.Count ?? 0))
+            {
+                new FarmhandForEachRule(this.Where, this.Do),
+            };
+            if (this.Then is not null) rules.AddRange(this.Then);
+            return rules.AsReadOnly();
+        }
+    }
+
+    public bool IsValid =>
+        this.Source is not null
+        && this.Source.IsValid
+        && (this.Where is null || this.Where.All(predicate => predicate is not null && predicate.IsValid))
+        && (this.Do is null || this.Do.IsValid)
+        && (this.Then is null
+            || (this.Then.Count + 1 <= MaximumRules && this.Then.All(rule => rule is not null && rule.IsValid)));
+}
+
+/// <summary>One row the loop considered, and what it decided.</summary>
+public enum FarmhandForEachRowOutcome
+{
+    /// <summary>The predicates matched and named an effect; the effect was dispatched.</summary>
+    Dispatched = 1,
+
+    /// <summary>The predicates matched and said `do: null`: a deliberate path, not a forgotten row.</summary>
+    LeftAlone = 2,
+
+    /// <summary>NO predicate matched. Reported, never skipped: a skipped row reads as a cleared patch.</summary>
+    NotMatched = 3,
+}
+
+public sealed record FarmhandForEachRowDecision(
+    int? X,
+    int? Y,
+    int LocalColumn,
+    int LocalRow,
+    FarmhandForEachRowOutcome Outcome,
+    FarmhandForEachEffect? Effect);
+
+/// <summary>
+/// The one authority for "does this live world row belong to this loop, and what happens to it".
+///
+/// It is pure on purpose: the caller supplies the row as the world reports it NOW, and this answers yes/no. Expansion
+/// therefore happens against live state on the game thread, never against the snapshot the plan was written from, and
+/// the decision order is testable without a game.
+/// </summary>
+public static class FarmhandForEachRules
+{
+    /// <summary>
+    /// Whether every predicate holds for this row.
+    ///
+    /// `Where` absent means every row, which is why an absent predicate list is not an error: the caller may genuinely
+    /// mean "every row of this source".
+    /// </summary>
+    public static bool Matches(
+        FarmhandForEachLoop loop,
+        IReadOnlyDictionary<string, FarmhandForEachValue> fields,
+        int localColumn,
+        int localRow)
+    {
+        ArgumentNullException.ThrowIfNull(loop);
+        return MatchesRule(loop.Where, fields, localColumn, localRow);
+    }
+
+    /// <summary>
+    /// Whether every predicate of ONE rule holds for this row.
+    ///
+    /// A pass with several rules asks this once per rule and takes the first that answers yes, so the rule grammar and
+    /// the loop grammar cannot drift: <see cref="Matches(FarmhandForEachLoop, IReadOnlyDictionary{string, FarmhandForEachValue}, int, int)"/>
+    /// is this method with the loop's own predicate list.
+    /// </summary>
+    public static bool MatchesRule(
+        IReadOnlyList<FarmhandForEachPredicate>? where,
+        IReadOnlyDictionary<string, FarmhandForEachValue> fields,
+        int localColumn,
+        int localRow)
+    {
+        ArgumentNullException.ThrowIfNull(fields);
+        // An absent predicate list means every row, which is why it is not an error: the caller may genuinely mean
+        // "every row of this source".
+        if (where is null) return true;
+        foreach (FarmhandForEachPredicate predicate in where)
+        {
+            if (predicate.IsPositionGuard)
+            {
+                FarmhandForEachStride stride = predicate.Stride!;
+                int localIndex = predicate.Axis == FarmhandForEachPredicate.ColOperator ? localColumn : localRow;
+                if (!stride.Claims(localIndex)) return false;
+                continue;
+            }
+            if (!fields.TryGetValue(predicate.Field!, out FarmhandForEachValue? value) || value is null) return false;
+            if (!Holds(predicate, value)) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// What a pass decides for one row: the FIRST rule that claims it, and whether any rule did.
+    ///
+    /// The two are returned together because "no rule claimed this row" is an outcome the caller must report and not an
+    /// absence it can skip - a skipped row reads as a cleared patch.
+    /// </summary>
+    public static (bool Matched, FarmhandForEachEffect? Effect) DecideByRules(
+        FarmhandForEachLoop loop,
+        IReadOnlyDictionary<string, FarmhandForEachValue> fields,
+        int localColumn,
+        int localRow)
+    {
+        ArgumentNullException.ThrowIfNull(loop);
+        foreach (FarmhandForEachRule rule in loop.Rules)
+            if (MatchesRule(rule.Where, fields, localColumn, localRow)) return (true, rule.Do);
+        return (false, null);
+    }
+
+    /// <summary>The decision for one row, given the fields the live world reports for it.</summary>
+    public static FarmhandForEachRowDecision Decide(
+        FarmhandForEachLoop loop,
+        int? x,
+        int? y,
+        int localColumn,
+        int localRow,
+        IReadOnlyDictionary<string, FarmhandForEachValue> fields)
+    {
+        ArgumentNullException.ThrowIfNull(loop);
+        if (!Matches(loop, fields, localColumn, localRow))
+            return new FarmhandForEachRowDecision(x, y, localColumn, localRow, FarmhandForEachRowOutcome.NotMatched, null);
+        return loop.Do is null
+            ? new FarmhandForEachRowDecision(x, y, localColumn, localRow, FarmhandForEachRowOutcome.LeftAlone, null)
+            : new FarmhandForEachRowDecision(x, y, localColumn, localRow, FarmhandForEachRowOutcome.Dispatched, loop.Do);
+    }
+
+    /// <summary>The row's position, in the order every answer uses: row by row, then column by column.</summary>
+    public static IEnumerable<(int X, int Y, int LocalColumn, int LocalRow)> AreaRows(FarmhandForEachSource source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (source.Kind != FarmhandForEachSource.AreaKind) yield break;
+        for (int localRow = 0; localRow < source.Height; localRow++)
+        for (int localColumn = 0; localColumn < source.Width; localColumn++)
+            yield return (source.X + localColumn, source.Y + localRow, localColumn, localRow);
+    }
+
+    /// <summary>
+    /// A row no predicate claimed, in the reason-code form the pass reports.
+    ///
+    /// `no_rule_matched:&lt;kind&gt;@&lt;x&gt;,&lt;y&gt;` names WHICH row and WHICH kind was forgotten: "three rows unmatched" cannot be
+    /// acted on, and the row is what the next rule needs.
+    /// </summary>
+    public static string NoRuleMatchedReasonCode(string kind, int x, int y) => $"no_rule_matched:{kind}@{x},{y}";
+
+    private static bool Holds(FarmhandForEachPredicate predicate, FarmhandForEachValue value)
+    {
+        switch (predicate.Comparison)
+        {
+            case FarmhandForEachComparison.In:
+                return predicate.Values.Any(candidate => Equals(candidate, value));
+            case FarmhandForEachComparison.Eq:
+                return Equals(predicate.Values[0], value);
+            case FarmhandForEachComparison.Ne:
+                return !Equals(predicate.Values[0], value);
+        }
+        // The ordered comparisons are about numbers; a text or flag field under `gt` is a caller mistake the loop
+        // refuses rather than ordering behind their back.
+        if (value.Number is not { } number || predicate.Values[0].Number is not { } bound) return false;
+        return predicate.Comparison switch
+        {
+            FarmhandForEachComparison.Lt => number < bound,
+            FarmhandForEachComparison.Lte => number <= bound,
+            FarmhandForEachComparison.Gt => number > bound,
+            FarmhandForEachComparison.Gte => number >= bound,
+            _ => false,
+        };
+    }
+}
