@@ -315,6 +315,12 @@ jobs:
       # nothing on a player's machine. This job runs the same build, so it can say so on the push instead.
       - run: node tools/check-vendored-bundle-leaks.mjs
       - run: node --test tools/check-vendored-bundle-leaks.test.mjs
+      # A workflow expression may only use the contexts GitHub allows in that position. Measured: `if: ${{ secrets.X }}`
+      # makes GitHub reject the whole file with "Unrecognized named-value: 'secrets'", and
+      # `KEY: ${{ env.KEY }}` re-exporting a value an earlier step wrote to GITHUB_ENV is always empty. Neither is
+      # visible in review and both are fatal at runtime, so the workflow file itself is now checked.
+      - run: node tools/check-workflow-expressions.mjs
+      - run: node --test tools/check-workflow-expressions.test.mjs
       - run: node host/scripts/check-production-artifact.mjs
       - run: node tools/check-ci-coverage.mjs
       # `check:draft-declaration-coverage` drives a mounted zone, and the prerequisite it declares is a Chromium the

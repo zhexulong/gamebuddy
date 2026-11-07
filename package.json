@@ -356,7 +356,9 @@
     "check:vendored-bundle-leaks": "node tools/check-vendored-bundle-leaks.mjs",
     "test:vendored-bundle-leaks": "node --test tools/check-vendored-bundle-leaks.test.mjs",
     "build:magic-context": "bun run --cwd vendor/magic-context/packages/pi-plugin build && node tools/normalise-vendored-bundle-shims.mjs",
-    "test:vendored-bundle-shims": "node --test tools/normalise-vendored-bundle-shims.test.mjs"
+    "test:vendored-bundle-shims": "node --test tools/normalise-vendored-bundle-shims.test.mjs",
+    "check:workflow-expressions": "node tools/check-workflow-expressions.mjs",
+    "test:workflow-expressions": "node --test tools/check-workflow-expressions.test.mjs"
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",

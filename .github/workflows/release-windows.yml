@@ -24,6 +24,10 @@ jobs:
       # digests, and scratch location and rejects any caller override.
       GAMEBUDDY_RELEASE_ENVIRONMENT: gamebuddy-production-release
       GAMEBUDDY_RELEASE_REF: ${{ github.ref }}
+      # A boolean, not the secret. `secrets` may not be read in a step-level `if:` - GitHub rejects the file with
+      # "Unrecognized named-value: 'secrets'" - so the emptiness test happens here, where the context is allowed, and the
+      # conditions below read this instead.
+      HAS_SIGNING_CERTIFICATE: ${{ secrets.GAMEBUDDY_SIGNING_CERTIFICATE_PFX_BASE64 != '' }}
     steps:
       # vendor/magic-context and vendor/pi-koe are git submodules, and the job
       # below builds and consumes both. Without `submodules: recursive` a fresh
@@ -100,7 +104,7 @@ jobs:
       # The PFX is written to a temporary file, imported into the current user's store, and the file removed in the same
       # step. It is never echoed, never exported, and never left on disk for a later step to read.
       - name: Import the release signing certificate
-        if: ${{ secrets.GAMEBUDDY_SIGNING_CERTIFICATE_PFX_BASE64 != '' }}
+        if: env.HAS_SIGNING_CERTIFICATE == 'true'
         shell: pwsh
         env:
           PFX_BASE64: ${{ secrets.GAMEBUDDY_SIGNING_CERTIFICATE_PFX_BASE64 }}
@@ -123,7 +127,7 @@ jobs:
       # identity comes from the protected environment and is never defaulted; without it this step fails with
       # `signing_identity_required` rather than publishing something nobody signed.
       - name: Assemble the player release (signed)
-        if: ${{ secrets.GAMEBUDDY_SIGNING_CERTIFICATE_PFX_BASE64 != '' }}
+        if: env.HAS_SIGNING_CERTIFICATE == 'true'
         run: >-
           node host/scripts/build-release-installer.mjs
           --generation-output host/dist
@@ -131,14 +135,13 @@ jobs:
           --version "${{ github.ref_name }}"
           --repository "${{ github.repository }}"
         env:
-          GAMEBUDDY_SIGNING_THUMBPRINT: ${{ env.GAMEBUDDY_SIGNING_THUMBPRINT }}
           GAMEBUDDY_TIMESTAMP_URL: ${{ secrets.GAMEBUDDY_TIMESTAMP_URL }}
           GAMEBUDDY_SIGNTOOL: ${{ secrets.GAMEBUDDY_SIGNTOOL }}
 
       # No certificate: the artifact is built in the configuration that is allowed to exist unsigned, and the manifest
       # records that it is unsigned. Publication accepts it only because this lane says so - see `--allow-unsigned`.
       - name: Assemble the player release (unsigned)
-        if: ${{ secrets.GAMEBUDDY_SIGNING_CERTIFICATE_PFX_BASE64 == '' }}
+        if: env.HAS_SIGNING_CERTIFICATE == 'false'
         run: >-
           node host/scripts/build-release-installer.mjs
           --generation-output host/dist
