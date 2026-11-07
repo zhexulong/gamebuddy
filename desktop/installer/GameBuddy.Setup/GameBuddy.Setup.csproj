@@ -42,6 +42,7 @@
        assembly, so the copy of itself it installs into the program root can run
        with its own files only. -->
   <ItemGroup>
+    <ProjectReference Include="..\..\shared\GameBuddy.Release.Contract.csproj" />
     <InternalsVisibleTo Include="GameBuddy.Desktop.Tests" />
   </ItemGroup>
 

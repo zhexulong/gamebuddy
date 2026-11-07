@@ -43,14 +43,25 @@ internal enum DesktopLaunchResult
 internal static class Program
 {
     private const string UnattributedLaunchFailureCode = "desktop_launch_failed";
+    private const string SubcommandFailed = "desktop_subcommand_failed";
+    private const string RootUnavailable = "desktop_root_unavailable";
 
     private static async Task<int> Main(string[] args)
     {
-        // `--rollback` steps back one generation and exits: it is a recovery action, not a second launch mode. Arguments
-        // are matched exactly, so an unknown one still reaches the normal path rather than being silently accepted.
+        // `--rollback` steps back one generation and exits: it is a recovery action, not a second launch mode. Arguments are
+        // matched exactly, so an unknown one still reaches the normal path rather than being silently accepted. Both
+        // subcommands are outside the launch path, so they are outside its failure handling too - and a refusal there must
+        // still be one bounded code rather than a stack trace on the channel a caller reads.
         if (args.Length == 1 && string.Equals(args[0], "--rollback", StringComparison.Ordinal))
         {
-            return RollBack();
+            return Bounded(SubcommandFailed, () => RollBack());
+        }
+
+        // `--check-update <source>` reports whether a newer release exists and exits. It fetches and validates a manifest and
+        // stops: downloading and running an installer is a separate decision about what vouches for the bytes.
+        if (args.Length == 2 && string.Equals(args[0], "--check-update", StringComparison.Ordinal))
+        {
+            return Bounded(SubcommandFailed, () => CheckUpdate(args[1]));
         }
 
         try
@@ -72,6 +83,72 @@ internal static class Program
     }
 
     /// <summary>
+    /// Runs a subcommand and turns any unclassified failure into one code.
+    ///
+    /// The launch path already does this for the same reason: a stack trace can carry installed paths onto the channel a
+    /// caller reads, and a caller parsing a refusal needs one token, not a transcript.
+    /// </summary>
+    private static int Bounded(string code, Func<int> action)
+    {
+        try
+        {
+            return action();
+        }
+        catch (RootRegistrationUnavailableException)
+        {
+            // The machine has no installation registered. That is a fact the caller can act on, not an unexplained failure.
+            Console.Error.WriteLine(RootUnavailable);
+            return 1;
+        }
+        catch (Exception)
+        {
+            Console.Error.WriteLine(code);
+            return 1;
+        }
+    }
+
+    /// <summary>
+    /// The installed program root, read from the registration - the one fact a read-only subcommand needs.
+    ///
+    /// Deliberately not `CurrentUserRootLayout.DeriveForCurrentUser()`: that also requires the three mutable roots, which the
+    /// production entry provisions before deriving. Asking for them here would refuse an update check for a reason that has
+    /// nothing to do with whether a release is newer. The path is still validated where it is used.
+    /// </summary>
+    private static string InstalledProgramRoot() =>
+        CurrentUserRootRegistration.ReadForCurrentUser().ProgramRoot;
+
+    /// <summary>
+    /// Reports whether a newer release exists, without downloading or running anything.
+    ///
+    /// One machine-readable line on stdout for a positive answer, one bounded code on stderr for a refusal - the same contract
+    /// as `--rollback`, so a caller does not need two parsers.
+    /// </summary>
+    private static int CheckUpdate(string source)
+    {
+        var programRoot = InstalledProgramRoot();
+        var result = UpdateCheck.CheckAsync(programRoot, source, CancellationToken.None).GetAwaiter().GetResult();
+        switch (result.Verdict)
+        {
+            case UpdateCheck.Verdict.Available:
+                Console.WriteLine($"update:available:{result.AvailableVersion}");
+                Console.WriteLine($"update:download:{result.DownloadUrl}");
+                return 0;
+            case UpdateCheck.Verdict.UpToDate:
+                Console.WriteLine($"update:up_to_date:{result.InstalledVersion}");
+                return 0;
+            case UpdateCheck.Verdict.InstalledVersionUnknown:
+                Console.Error.WriteLine("update:installed_version_unknown");
+                return 1;
+            case UpdateCheck.Verdict.ManifestUnusable:
+                Console.Error.WriteLine($"update:manifest_unusable:{result.Reason}");
+                return 1;
+            default:
+                Console.Error.WriteLine($"update:source_unavailable:{result.Reason}");
+                return 1;
+        }
+    }
+
+    /// <summary>
     /// Steps back one installed generation and reports what happened, without starting anything.
     ///
     /// Recovery has to be available on a machine where the current release does not start - which is exactly when the
@@ -79,7 +156,7 @@ internal static class Program
     /// </summary>
     private static int RollBack()
     {
-        var result = InstalledGenerationRollback.Restore(CurrentUserRootLayout.DeriveForCurrentUser().ProgramRoot);
+        var result = InstalledGenerationRollback.Restore(InstalledProgramRoot());
         if (result == InstalledGenerationRollback.Result.Restored)
         {
             Console.WriteLine("rollback:restored");

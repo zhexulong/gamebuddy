@@ -38,6 +38,7 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\shared\GameBuddy.Release.Contract.csproj" />
     <InternalsVisibleTo Include="GameBuddy.Desktop.Tests" />
   </ItemGroup>
   <!-- Enabling Windows Forms adds its two namespaces to every implicit-using set, which made the

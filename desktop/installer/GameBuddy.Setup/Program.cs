@@ -132,6 +132,9 @@ internal static class Program
         Directory.CreateDirectory(layout.ProgramRoot);
         ExtractPayload(payload, layout.ProgramRoot);
         VerifyInstalledProgramRoot(layout.ProgramRoot);
+        // Last, and only after verification: the record names the release whose files are actually there, and an update
+        // check has nothing to compare without it.
+        InstalledReleaseRecord.Write(layout.ProgramRoot);
     }
 
     private static void Uninstall(SetupLayout layout, SetupRequest request)
