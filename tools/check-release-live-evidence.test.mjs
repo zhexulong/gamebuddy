@@ -79,13 +79,23 @@ function writeEvidence(root, file, document) {
 }
 
 /** One surface's evidence, complete by default so each case can change exactly the field it is about. */
-function evidence({ surface, pinnedSha, capturedAt = HEAD_DATE, verdict = "passed", reason, result }) {
+function evidence({
+  surface,
+  pinnedSha,
+  capturedAt = HEAD_DATE,
+  verdict = "passed",
+  reason,
+  result,
+  scope = ["tools"],
+}) {
   return {
     schema: EVIDENCE_SCHEMA,
     surface,
     capturedAt,
     pinnedSha,
     verdict,
+    // A surface declares what it covers, so a pin behind HEAD can be told apart from a pin whose subject moved.
+    scope,
     ...(reason === undefined ? {} : { reason }),
     readings: [{ id: `${surface}.journey`, result: result ?? verdict }],
   };
@@ -104,6 +114,9 @@ const BOTH = Object.freeze([
 function seed({ root, head, tavern }) {
   writeEvidence(root, "memory.json", evidence({ surface: "memory", pinnedSha: head }));
   writeEvidence(root, "tavern.json", tavern);
+  // The third surface the release claim carries. A tree without it would read as `unreadable` rather than as a
+  // clean pass, which is the correct answer to a missing file but not the tree these cases are about.
+  writeEvidence(root, "player-survival.json", evidence({ surface: "player-survival", pinnedSha: head }));
 }
 
 /** The gate as the release lane runs it: its own CLI, over the scratch repository. */
@@ -145,12 +158,12 @@ test("an unmeasured surface exits 0 and the summary names only it", (t) => {
   });
   const run = runGate(root);
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stderr, /release_live_evidence examined 2 surface\(s\)/u);
+  assert.match(run.stderr, /release_live_evidence examined 3 surface\(s\)/u);
   assert.match(
     run.stderr,
-    /release_live_evidence not_measured: 1 of 2 surface\(s\)[^\n]*tavern \(provider_credential_absent\)/u,
+    /release_live_evidence not_measured: 1 of 3 surface\(s\)[^\n]*tavern \(provider_credential_absent\)/u,
   );
-  assert.doesNotMatch(run.stderr, /not_measured: 1 of 2 surface\(s\)[^\n]*memory/u);
+  assert.doesNotMatch(run.stderr, /not_measured: 1 of 3 surface\(s\)[^\n]*memory/u);
   assert.equal(JSON.parse(run.stdout).status, "not_measured");
 });
 

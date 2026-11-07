@@ -4,7 +4,7 @@
   "capturedAt": "2026-11-07T17:30:18Z",
   "pinnedSha": "7bf67202b5ef1c8f45b92acaa157e67bfb819ef2",
   "verdict": "not_measured",
-  "reason": "provider_credential_absent: none of tavern-ui-outcomes.json, tavern-operation-evidence.json, tavern-release-live-gate.json or tavern-frontend-conformance.json exists in this checkout; the first three compose real embedded provider turns, and the fourth fails a skipped credential journey unless --allow-credentialless, which its own usage line reserves for local runs",
+  "reason": "provider_credential_absent: no report of the four Tavern gates exists anywhere on this machine, and each needs a real embedded-provider turn",
   "readings": [
     {
       "id": "tavern.management_operation_evidence",
@@ -26,5 +26,11 @@
       "result": "not_measured",
       "detail": "tools/run-tavern-frontend-conformance.mjs judges the mounted journey corpus and fails a skipped credential journey unless --allow-credentialless is passed; no tavern-frontend-conformance.json exists here"
     }
+  ],
+  "scope": [
+    "dialogue-web/src",
+    "dialogue-web/tests",
+    "host/src/tavern",
+    "tools/run-tavern-"
   ]
 }

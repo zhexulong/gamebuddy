@@ -80,11 +80,11 @@ export const MAX_EVIDENCE_DRIFT_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const COMMIT_SHA = /^[0-9a-f]{40}$/u;
 const REASON = /^([a-z][a-z0-9_]*): \S/u;
-
 /** The release surfaces and the file that carries each one's evidence. The population, declared once. */
 export const EVIDENCE_SURFACES = Object.freeze([
   { surface: "memory", file: "memory.json" },
   { surface: "tavern", file: "tavern.json" },
+  { surface: "player-survival", file: "player-survival.json" },
 ]);
 
 function git(cwd, args) {
@@ -142,6 +142,72 @@ function judgeReadings({ document, surface, verdict }) {
   return findings;
 }
 
+/**
+ * A surface may carry its content from a second file instead of copying it. The copy is the defect this checks
+ * for: the readings and the release claim are the same fact, and a hand-maintained second spelling of a count
+ * is a disagreement scheduled for later. So `source` names the file and declares the counts, and the gate reads
+ * that file and requires the two to agree.
+ */
+function judgeSource({ document, surface, root }) {
+  const source = document?.source;
+  if (source === undefined) return { findings: [], source: null };
+  const file = typeof source?.file === "string" ? source.file : "";
+  if (file === "" || !existsSync(join(root, file)))
+    return { findings: [`evidence_source_missing:${surface}:${file}`], source: null };
+  let carried;
+  try {
+    carried = JSON.parse(readFileSync(join(root, file), "utf8"));
+  } catch {
+    return { findings: [`evidence_source_unparseable:${surface}:${file}`], source: null };
+  }
+  const findings = [];
+  for (const field of ["examined", "agreed", "disagreements"])
+    if (field in source && source[field] !== carried?.[field])
+      findings.push(
+        `evidence_source_mismatch:${surface}:${field}:${String(source[field])} declared, ${String(carried?.[field])} in ${file}`,
+      );
+  // The source's own unproven list is not optional reading: it is what the verdict does NOT cover.
+  const notProven = Array.isArray(carried?.notProven) ? carried.notProven : [];
+  return {
+    findings,
+    source: { file, examined: carried?.examined ?? null, disagreements: carried?.disagreements ?? null, notProven },
+  };
+}
+
+/**
+ * Is the pin still describing this tree? A pin behind HEAD is fine when nothing it covers moved since: that is a
+ * difference analysis rather than a re-run, and it says so instead of asserting freshness it did not measure.
+ */
+function judgeScope({ document, surface, pin, root }) {
+  const scope = Array.isArray(document?.scope) ? document.scope.filter((p) => typeof p === "string" && p !== "") : [];
+  if (scope.length === 0) return { findings: [`evidence_scope_unstated:${surface}`], moved: null };
+  if (pin === null) return { findings: [], moved: null };
+  const head = String(git(root, ["rev-parse", "HEAD"]).stdout ?? "").trim();
+  if (head === pin.sha) return { findings: [], moved: { commits: 0, paths: [] } };
+  const behind = git(root, ["rev-list", "--count", `${pin.sha}..HEAD`]);
+  const commits = Number.parseInt(String(behind.stdout ?? "").trim(), 10);
+  const changed = git(root, ["rev-list", "--count", `${pin.sha}..HEAD`, "--", ...scope]);
+  const inScope = Number.parseInt(String(changed.stdout ?? "").trim(), 10);
+  if (!Number.isFinite(inScope)) return { findings: [`evidence_scope_unreadable:${surface}`], moved: null };
+  if (inScope > 0) {
+    const paths = String(git(root, ["diff", "--name-only", `${pin.sha}..HEAD`, "--", ...scope]).stdout ?? "")
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+    return {
+      findings: [
+        `evidence_scope_changed_since_pin:${surface}:${String(inScope)} commit(s) touched ${String(paths.length)} file(s), ` +
+          `first being ${paths[0] ?? "(unreadable)"}`,
+      ],
+      moved: { commits: Number.isFinite(commits) ? commits : null, paths },
+    };
+  }
+  return {
+    findings: [],
+    moved: { commits: Number.isFinite(commits) ? commits : null, paths: [], inScope },
+  };
+}
+
 /** An unmeasured surface must name its cause; the code before the colon is what the summary line carries. */
 function judgeReason({ document, surface, verdict }) {
   if (verdict !== "not_measured") return [];
@@ -192,12 +258,16 @@ function judgeSurface({ entry, evidenceRoot, root, report }) {
   }
   const verdict = RESULTS.includes(document?.verdict) ? document.verdict : null;
   const committed = judgePin({ document, surface: entry.surface, root });
+  const carried = judgeSource({ document, surface: entry.surface, root });
+  const scoped = judgeScope({ document, surface: entry.surface, pin: committed.pin, root });
   const findings = [
     ...judgeIdentity({ document, surface: entry.surface }),
     ...judgeReadings({ document, surface: entry.surface, verdict }),
     ...judgeReason({ document, surface: entry.surface, verdict }),
     ...committed.findings,
     ...judgeCapturedAt({ document, surface: entry.surface, pin: committed.pin }),
+    ...carried.findings,
+    ...scoped.findings,
   ];
   return {
     ...report,
@@ -206,6 +276,8 @@ function judgeSurface({ entry, evidenceRoot, root, report }) {
     pinnedSha: committed.sha,
     capturedAt: typeof document?.capturedAt === "string" ? document.capturedAt : null,
     readings: Array.isArray(document?.readings) ? document.readings.length : 0,
+    source: carried.source,
+    moved: scoped.moved,
     findings,
   };
 }
@@ -273,6 +345,27 @@ export function reportReading(reading, out = process.stderr) {
       `release_live_evidence not_measured: ${unmeasured.length} of ${reading.population} surface(s) carry no measured ` +
         `verdict - ${unmeasured.map((surface) => `${surface.surface} (${surface.reason ?? "no reason given"})`).join(", ")}\n`,
     );
+  // What the evidence itself did not cover. A green release reading must not be readable as full coverage: the
+  // surfaces name their own gaps, and this line repeats them where the release reader is looking.
+  const gaps = reading.surfaces.flatMap((surface) =>
+    (surface.source?.notProven ?? []).map((item) => `${surface.surface}: ${item}`),
+  );
+  if (gaps.length > 0)
+    out.write(
+      `release_live_evidence not_proven: ${gaps.length} declared gap(s)\n${gaps.map((gap) => `  ${gap}\n`).join("")}`,
+    );
+  // A pin behind HEAD is a difference analysis, not a fresh measurement, and it is reported as one.
+  for (const surface of reading.surfaces)
+    if (
+      surface.verdict !== null &&
+      surface.moved !== null &&
+      surface.moved.commits !== null &&
+      surface.moved.commits > 0
+    )
+      out.write(
+        `release_live_evidence behind: ${surface.surface} was measured at ${String(surface.pinnedSha).slice(0, 8)}, ` +
+          `${surface.moved.commits} commit(s) before HEAD, and nothing it covers changed since\n`,
+      );
   if (reading.violations.length > 0) {
     out.write(`release_live_evidence failed: ${reading.violations.length} finding(s)\n`);
     for (const violation of reading.violations) out.write(`  ${violation}\n`);

@@ -4,7 +4,7 @@
   "capturedAt": "2026-11-07T17:30:18Z",
   "pinnedSha": "7bf67202b5ef1c8f45b92acaa157e67bfb819ef2",
   "verdict": "not_measured",
-  "reason": "provider_credential_absent: tools/run-memory-fold-live-gate.mjs exits 3 printing {\"schema\":\"gamebuddy_memory_fold_gate/v1\",\"verdict\":\"blocked\",\"reason\":\"credential_absent\"} and writes no --report file, and a compartment is model output, so no cheaper check stands in for the fold",
+  "reason": "provider_credential_absent: CPA_OAI_API_KEY is not set, so the historian fold never ran and blocked() wrote no report",
   "readings": [
     {
       "id": "memory.fold_seals_chapter",
@@ -16,5 +16,9 @@
       "result": "not_measured",
       "detail": "the rubric is judged on the compartments the fold wrote, so it has no subject until the fold above is measured"
     }
+  ],
+  "scope": [
+    "vendor/magic-context",
+    "host/src/continuity-semantic-"
   ]
 }
