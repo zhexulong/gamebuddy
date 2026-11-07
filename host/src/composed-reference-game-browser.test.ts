@@ -2574,6 +2574,12 @@ test("game.reopen maps only frozen typed outcomes without leaking internal error
   const cases = [
     ["stardew_game_action_authority_not_paused", "game_operation_in_progress"],
     ["stardew_game_reopen_idempotency_conflict", "idempotency_conflict"],
+    // A reopen carrying the attachment generation a reconnect has already moved
+    // past is a STALE controller, and that is the one thing the browser must be
+    // able to read from the refusal: which attachment identity was refused. It is
+    // the same identity every other attachment-epoch command reports, so the four
+    // verbs cannot disagree about what a stale epoch is.
+    ["stardew_game_attachment_generation_conflict", "game_attachment_conflict"],
     ["private-reopen-sensitive-detail", "state_unavailable"],
   ] as const;
   for (const [internalMessage, expectedCode] of cases) {

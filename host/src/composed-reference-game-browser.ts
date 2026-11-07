@@ -559,6 +559,13 @@ function gameReopenProblemCode(error: unknown): string {
       return "game_operation_in_progress";
     case "stardew_game_reopen_idempotency_conflict":
       return "idempotency_conflict";
+    // A reopen names the attachment generation it was issued against, so a
+    // reconnect that moved past it is a stale controller - the same identity
+    // `game.stop`, `game.disconnect` and `game.endgame` report. Dropping this
+    // arm answered the one stale-epoch verb that re-enables the Agent's ability
+    // to act with the generic `state_unavailable`, which reads as "try again".
+    case "stardew_game_attachment_generation_conflict":
+      return "game_attachment_conflict";
     default:
       return "state_unavailable";
   }
