@@ -85,9 +85,9 @@ import type {
   GameResumeCancelCommandV1,
   GameResumeCancelResultV1,
   GameResumeResultV1,
+  GameResumeCommandV1,
   GameReopenActionAuthorityCommandV1,
   GameReopenActionAuthorityResultV1,
-  GameSessionResumeCommandV1,
   GameStopCommandV1,
   StardewCabinChoicesV1,
   StardewCabinConfirmCommandV1,
@@ -447,13 +447,17 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
    * explicit Game instruction reopens it (no old task is resumed). Typed
    * outcomes: `attached` only after the real attach completed, `accepted` when
    * the attempt is admitted but the attach is not yet complete inside this
-   * instance, unavailable for a missing/terminal binding (no activation
-   * created). Fail-closed on stale tuples and in-progress overlap; the browser
-   * contract schema stays unmodified.
+   * instance, unavailable when the command names no session at all (nothing to
+   * resolve, no activation created). A command that DOES name a session the
+   * store holds no resumable world for is refused by name
+   * (`stardew_game_resume_session_unavailable`), because "the session you chose
+   * cannot be resumed" is a fact the player can act on and "unavailable" is not.
+   * Fail-closed on stale tuples and in-progress overlap; the browser contract
+   * schema stays unmodified.
    */
   resume(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-    command: GameSessionResumeCommandV1,
+    command: GameResumeCommandV1,
   ): Promise<GameResumeResultV1>;
   /**
    * Coordinator-owned `game.create` seam (boundary card D1/D2). A new Game
@@ -1144,7 +1148,8 @@ function createCoordinator(
     string,
     Readonly<{
       browserSessionId: string;
-      gameSessionId: string;
+      /** The session the attempt named, or `undefined` when it named none. */
+      gameSessionId: string | undefined;
       expectedAttachmentGeneration: number;
       promise: Promise<GameResumeResultV1>;
     }>
@@ -2405,7 +2410,7 @@ function createCoordinator(
 
   const resume: StardewProductionLifecycleActivationOwner["resume"] = (
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-    command: GameSessionResumeCommandV1,
+    command: GameResumeCommandV1,
   ): Promise<GameResumeResultV1> =>
     consumeBrowserAdmission(admission, "game_resume", (browserSessionId, sessionExpiryMs) => {
       const prior = gameResumes.get(command.idempotencyKey);
@@ -2443,11 +2448,24 @@ function createCoordinator(
       let attempt!: Promise<GameResumeResultV1>;
       attempt = (async (): Promise<GameResumeResultV1> => {
         try {
-          const outcome = await worldBindingResolver.resolveWorldBinding(command.gameSessionId);
+          const gameSessionId = command.gameSessionId;
+          if (gameSessionId === undefined) {
+            // Nothing was named, so there is nothing to resolve and no world was
+            // touched. This is the typed answer the command has always had, and
+            // it stays a 200 outcome rather than a refusal: the player asked for
+            // a reconnect without saying which session, and no session was
+            // rejected.
+            return Object.freeze({ apiVersion: 1, status: "unavailable" });
+          }
+          const outcome = await worldBindingResolver.resolveWorldBinding(gameSessionId);
           if (isClosing()) throw new Error("stardew_lifecycle_closing");
           if (!outcome.ok) {
-            // No activation is created for a missing/foreign/terminal binding.
-            return Object.freeze({ apiVersion: 1, status: "unavailable" });
+            // The player NAMED a session and the store holds no resumable world
+            // for it (absent, another integration's, or terminal). Refusing by
+            // name is the difference between "that game cannot be resumed, pick
+            // another" and the generic retry that never succeeds; no activation
+            // is created for any of the three.
+            throw new Error("stardew_game_resume_session_unavailable");
           }
           // Close any stale failed attachment so no old-activation facade/lease
           // outlives the fresh activation.
@@ -2456,7 +2474,7 @@ function createCoordinator(
           // Fresh activation: the world binding is registered and resumable.
           // Actions pause until a new explicit Game instruction reopens the
           // authority; no old task or prompt state is resumed.
-          resumedGameSessionId = command.gameSessionId;
+          resumedGameSessionId = gameSessionId;
           attachmentGeneration = nextGeneration;
           attachmentConnectionStatus = "reconnecting";
           actionAuthorityStatus = "paused";

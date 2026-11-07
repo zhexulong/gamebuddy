@@ -23,7 +23,7 @@ import {
   type GameResumeCancelCommandV1,
   type GameResumeCancelResultV1,
   type GameResumeResultV1,
-  type GameSessionResumeCommandV1,
+  type GameResumeCommandV1,
   type GameStopCommandV1,
   type StardewCabinConfirmCommandV1,
 } from "../game-browser-contract/index.js";
@@ -982,7 +982,7 @@ test("composed shell wires game.resume, game.create, and game.resume.cancel thro
     },
     async resume(
       admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-      command: GameSessionResumeCommandV1,
+      command: GameResumeCommandV1,
     ): Promise<GameResumeResultV1> {
       calls.push("resume");
       const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
@@ -990,9 +990,16 @@ test("composed shell wires game.resume, game.create, and game.resume.cancel thro
         admission,
         "game_resume",
         () => {
-          // The composed wire is strictly session-less: the coordinator-side
-          // seam receives no session handle and must fail closed on it.
-          assert.deepEqual(command, { apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 2 });
+          // The wire carries the durable session the player named, and the seam
+          // receives it unaltered - this is the identity the coordinator resolves
+          // against the store. A session-less resume still validates; it is the
+          // `unavailable` case, not a rewritten command.
+          assert.deepEqual(command, {
+            apiVersion: 1,
+            idempotencyKey,
+            expectedAttachmentGeneration: 2,
+            gameSessionId: sessionHandle,
+          });
           return Object.freeze({ apiVersion: 1 as const, status: "accepted" as const });
         },
       );
@@ -1101,7 +1108,14 @@ test("composed shell wires game.resume, game.create, and game.resume.cancel thro
     const resumed = await fetch(`${server.origin}/api/composed-reference-game/v1/game/resume`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 2 }),
+      body: JSON.stringify({
+        apiVersion: 1,
+        idempotencyKey,
+        expectedAttachmentGeneration: 2,
+        // The handle `game.create` just returned, named back by the player's
+        // resume: the session identity crosses the wire instead of being assumed.
+        gameSessionId: sessionHandle,
+      }),
     });
     assert.equal(resumed.status, 200);
     assert.deepEqual(await resumed.json(), { apiVersion: 1, status: "accepted" });

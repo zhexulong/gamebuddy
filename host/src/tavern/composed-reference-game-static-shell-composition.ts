@@ -32,7 +32,6 @@ import type {
   GameLaunchCommandV1,
   GameResumeCommandV1,
   GameResumeResultV1,
-  GameSessionResumeCommandV1,
 } from "../game-browser-contract/index.js";
 import type { TavernStateSnapshotV1 } from "./browser-contract/index.js";
 import {
@@ -165,24 +164,19 @@ export async function startComposedReferenceGameStaticShellComposition(
             options.lifecycleActivationBindingSink,
           ),
         }),
-    // The composed wire command is strictly session-less; the coordinator resume
-    // seam is session-keyed (GameSessionResumeCommandV1). Without a session
-    // handle on the wire the coordinator resolves no registered world binding
-    // and fails closed as unavailable; the session-selected resume wiring is
-    // the Slice 3 B-path work. Wiring the adapter is still mandatory so the
-    // profile declaration and the handler options stay consistent (mismount
-    // guard), and it bridges the current declared-but-unwired gap.
+    // The composed wire command carries the durable Game session the player named
+    // (`gameSessionId`), so the coordinator resume seam resolves that session's
+    // registered world binding instead of failing closed on a session-less command.
+    // The adapter passes the command through unaltered: the browser has already
+    // validated it against the contract, and the owner re-verifies the handle
+    // against the store.
     ...(options.lifecycleActivationBindingSink?.resume === undefined
       ? {}
       : {
           gameResume: async (
             admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
             command: GameResumeCommandV1,
-          ): Promise<GameResumeResultV1> =>
-            options.lifecycleActivationBindingSink!.resume!(
-              admission,
-              command as unknown as GameSessionResumeCommandV1,
-            ),
+          ): Promise<GameResumeResultV1> => options.lifecycleActivationBindingSink!.resume!(admission, command),
         }),
     ...(options.lifecycleActivationBindingSink?.createGameSession === undefined
       ? {}

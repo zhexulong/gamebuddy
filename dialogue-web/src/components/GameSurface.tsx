@@ -602,7 +602,14 @@ export function GameSurface({
       outcome = await composedApi.resumeGame({
         apiVersion: 1,
         idempotencyKey,
-        expectedAttachmentGeneration: generation,
+        // The reconnect ESTABLISHES the next attachment generation, so the
+        // command names the one it will establish, not the one it is leaving.
+        // Measured: this call used to send the generation on screen (1) while the
+        // lifecycle arms `max(generation + 1, 2)`, so every resume was refused as
+        // a stale controller, the panel silently re-read, and the player saw
+        // nothing happen. The floor of 2 is unreachable here: the guard above
+        // requires an observed generation of at least 1.
+        expectedAttachmentGeneration: generation + 1,
       });
     } catch (error) {
       let rereadSucceeded = false;

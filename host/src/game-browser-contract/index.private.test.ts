@@ -560,6 +560,24 @@ test("game.resume carries idempotency key and expected attachment generation", (
   assert.equal(validator.Check({ apiVersion: 1, expectedAttachmentGeneration: 1 }), false);
 });
 
+test("game.resume names the durable session it reconnects, and no other shape of handle is a session", () => {
+  const validator = Compile(GameResumeCommandV1Schema);
+  const sessionHandle = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
+  assert.equal(
+    validator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 1, gameSessionId: sessionHandle }),
+    true,
+  );
+  // The handle is an opaque store identity. A path, a pid, a pipe or a token is not
+  // one, and the schema is where that is decided - not each caller.
+  for (const forbidden of ["C:\\saves\\world", "../../etc", "", "has space", "a".repeat(129)]) {
+    assert.equal(
+      validator.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 1, gameSessionId: forbidden }),
+      false,
+      forbidden,
+    );
+  }
+});
+
 test("game.resume result is strict, redacted, and covers the exact frozen status vocabulary", () => {
   const validator = Compile(GameResumeResultV1Schema);
   const statuses = ["accepted", "attached", "unavailable"] as const;

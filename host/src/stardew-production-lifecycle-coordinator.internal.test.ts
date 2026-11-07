@@ -5152,16 +5152,178 @@ test("resume admits a registered binding, bumps attachment generation to >= 2, p
   }
 });
 
-test("resume returns unavailable without creating an activation for a missing or terminal binding", async () => {
+test("resume of a named session with no resumable world is refused by name and creates no activation", async () => {
   const fixture = await createFixture({
     overrides: {
       worldBindingResolver: async () => null,
     },
   });
   try {
+    await assert.rejects(
+      () =>
+        fixture.coordinator.activationOwner.resume(fixture.broker.issue("game_resume"), {
+          apiVersion: 1,
+          gameSessionId: "session-absent",
+          idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+          expectedAttachmentGeneration: 2,
+        }),
+      /stardew_game_resume_session_unavailable/,
+    );
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none",
+      generation: 0,
+      connectionStatus: "none",
+    });
+    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "unavailable" });
+    assert.deepEqual(fixture.spawnCalls, []);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("resume resolves the exact session the command names, and another session's id is refused", async () => {
+  // The resolver here is the REAL one over a store view the test owns, so the
+  // binding is found by the id the command carries rather than by the fixture
+  // returning whatever it is asked for. That is what makes the second half
+  // meaningful: the same coordinator, the same world, a different id.
+  const registered = new Map([
+    [
+      "session-mine",
+      {
+        gameSessionId: "session-mine",
+        integrationId: "stardew",
+        bindingRef: "opaque-world-ref",
+        status: "registered" as const,
+        revision: 1,
+      },
+    ],
+  ]);
+  const resolvedIds: string[] = [];
+  const fixture = await createFixture({
+    overrides: {
+      worldBindingResolver: async (input: Readonly<{ gameSessionId: string; integrationId: string }>) => {
+        resolvedIds.push(input.gameSessionId);
+        return registered.get(input.gameSessionId) ?? null;
+      },
+    },
+  });
+  try {
     const result = await fixture.coordinator.activationOwner.resume(fixture.broker.issue("game_resume"), {
       apiVersion: 1,
-      gameSessionId: "session-absent",
+      gameSessionId: "session-mine",
+      idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+      expectedAttachmentGeneration: 2,
+    });
+    assert.deepEqual(result, { apiVersion: 1, status: "accepted" });
+    assert.deepEqual(resolvedIds, ["session-mine"]);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached",
+      generation: 2,
+      connectionStatus: "reconnecting",
+    });
+
+    // The same lifecycle, a session it holds no world for. The refusal names the
+    // session identity, so the browser can say which game cannot be resumed
+    // instead of "try again later", and nothing about the live world changes.
+    await fixture.coordinator.close();
+    const second = await createFixture({
+      overrides: {
+        worldBindingResolver: async (input: Readonly<{ gameSessionId: string; integrationId: string }>) => {
+          resolvedIds.push(input.gameSessionId);
+          return registered.get(input.gameSessionId) ?? null;
+        },
+      },
+    });
+    try {
+      await assert.rejects(
+        () =>
+          second.coordinator.activationOwner.resume(second.broker.issue("game_resume"), {
+            apiVersion: 1,
+            gameSessionId: "session-someone-else",
+            idempotencyKey: "BCEiM0RVZneImaq7zN3u_w",
+            expectedAttachmentGeneration: 2,
+          }),
+        /stardew_game_resume_session_unavailable/,
+      );
+      assert.ok(resolvedIds.includes("session-someone-else"), "the refusal came from resolving THAT id");
+      assert.deepEqual(second.coordinator.attachmentReader.readAttachmentView(), {
+        status: "none",
+        generation: 0,
+        connectionStatus: "none",
+      });
+      assert.deepEqual(second.spawnCalls, []);
+      assert.deepEqual(second.bridgeConnectCalls, []);
+    } finally {
+      await second.coordinator.close();
+      await second.broker.close();
+    }
+  } finally {
+    await fixture.coordinator.close().catch(() => undefined);
+  }
+});
+
+test("resume names the generation it will establish, not the one on screen", async () => {
+  const fixture = await createFixture({
+    overrides: {
+      worldBindingResolver: async (input: Readonly<{ gameSessionId: string; integrationId: string }>) => ({
+        gameSessionId: input.gameSessionId,
+        integrationId: "stardew",
+        bindingRef: "opaque-world-ref",
+        status: "registered" as const,
+        revision: 1,
+      }),
+    },
+  });
+  try {
+    const first = await fixture.coordinator.activationOwner.resume(fixture.broker.issue("game_resume"), {
+      apiVersion: 1,
+      gameSessionId: "session-mine",
+      idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+      expectedAttachmentGeneration: 2,
+    });
+    assert.deepEqual(first, { apiVersion: 1, status: "accepted" });
+    assert.equal(fixture.coordinator.attachmentReader.readAttachmentView().generation, 2);
+    // The retry a failed attempt earns. The player is looking at generation 2, and
+    // the reconnect they are asking for would establish 3 - so naming 2 is the
+    // stale-controller refusal. That is the direction the browser panel used to
+    // send, which is why no resume could ever be admitted.
+    await assert.rejects(
+      () =>
+        fixture.coordinator.activationOwner.resume(fixture.broker.issue("game_resume"), {
+          apiVersion: 1,
+          gameSessionId: "session-mine",
+          idempotencyKey: "BCEiM0RVZneImaq7zN3u_w",
+          expectedAttachmentGeneration: 2,
+        }),
+      /stardew_game_attachment_generation_conflict/,
+    );
+    assert.deepEqual(
+      await fixture.coordinator.activationOwner.resume(fixture.broker.issue("game_resume"), {
+        apiVersion: 1,
+        gameSessionId: "session-mine",
+        idempotencyKey: "CBEiM0RVZneImaq7zN3u_w",
+        expectedAttachmentGeneration: 3,
+      }),
+      { apiVersion: 1, status: "accepted" },
+    );
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+test("a session-less resume stays the typed unavailable outcome with no refusal and no side effect", async () => {
+  const fixture = await createFixture({
+    overrides: {
+      worldBindingResolver: async () => {
+        throw new Error("resume_without_a_session_must_not_resolve_a_binding");
+      },
+    },
+  });
+  try {
+    const result = await fixture.coordinator.activationOwner.resume(fixture.broker.issue("game_resume"), {
+      apiVersion: 1,
       idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
       expectedAttachmentGeneration: 2,
     });
@@ -5172,7 +5334,6 @@ test("resume returns unavailable without creating an activation for a missing or
       generation: 0,
       connectionStatus: "none",
     });
-    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "unavailable" });
     assert.deepEqual(fixture.spawnCalls, []);
   } finally {
     await fixture.coordinator.close();
@@ -5564,6 +5725,199 @@ test("slice 2: resume after a clean disconnect truly re-attaches the fresh gener
     });
     assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "paused" });
     assert.equal(fixture.gameRuntimeTaskCancelCalls(), 1);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+/**
+ * The attachment epoch is the controller's identity: every mutating command names
+ * the generation it was issued against, and the coordinator answers it against the
+ * generation that is live now. This returns the refusal's own name, so a test can
+ * assert WHICH identity a stale controller was refused by instead of only that
+ * "something" rejected it.
+ */
+async function staleEpochRefusal(run: () => unknown): Promise<string> {
+  try {
+    await run();
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  return "accepted";
+}
+
+test("a stale attachment epoch cannot mutate the live world, and every stale verb is refused by name with no side effect", async () => {
+  // The epoch advance here is the product's own reconnect, not a fabricated
+  // number: the clean disconnect at generation 1 tears the first attachment down
+  // and the resume mints generation 2 over the same registered world binding. A
+  // controller that was driving generation 1 is then stale, and this drives every
+  // mutation it can still send against the live world.
+  //
+  // Faces, stated so neither is mistaken for the other:
+  // - BEHAVIOUR face: the attachment view, the action-authority view, and every
+  //   spy the composed runtime already exposes (STOP calls, kills, spawns, Bridge
+  //   connects, facade enter/ingress/cancel, facade closes, lifecycle order).
+  // - NOT OBSERVABLE here: a raw action request is not a browser command - it is
+  //   dispatched on the attachment's lease, which the disconnect closed and the
+  //   resume replaced (facade enter #2 below). This harness's lease stand-in does
+  //   not model revocation of a closed lease, so "the old lease can no longer act"
+  //   is NOT observable in this fixture and is not claimed by these assertions.
+  //   What is claimed is the browser-visible half: the stale controller cannot
+  //   re-open action authority, stop, close, endgame, resume or cancel.
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+    overrides: {
+      worldBindingResolver: async () => ({
+        gameSessionId: "session-abc",
+        integrationId: "stardew",
+        bindingRef: "opaque-world-ref",
+        status: "registered" as const,
+        revision: 1,
+      }),
+    },
+  });
+  try {
+    await confirmFirstCabin(fixture);
+    await fixture.coordinator.activationOwner.disconnectGame(fixture.broker.issue("game_disconnect"), {
+      apiVersion: 1,
+      idempotencyKey: "stale-epoch-clean-disconnect",
+      expectedAttachmentGeneration: 1,
+    });
+    assert.deepEqual(
+      await fixture.coordinator.activationOwner.resume(fixture.broker.issue("game_resume"), {
+        apiVersion: 1,
+        gameSessionId: "session-abc",
+        idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+        expectedAttachmentGeneration: 2,
+      }),
+      { apiVersion: 1, status: "attached" },
+    );
+    const liveAttachment = fixture.coordinator.attachmentReader.readAttachmentView();
+    assert.deepEqual(liveAttachment, { status: "attached", generation: 2, connectionStatus: "connected_idle" });
+    assert.deepEqual(fixture.coordinator.actionAuthorityReader.readActionAuthorityView(), { status: "paused" });
+
+    const before = Object.freeze({
+      stops: fixture.gameStopCalls.length,
+      aiKills: [...fixture.aiKillCalls],
+      playerKills: [...fixture.playerKillCalls],
+      bridgeCloses: [...fixture.bridgeCloseCalls],
+      bridgeConnects: fixture.bridgeConnectCalls.length,
+      aiSpawns: fixture.spawnCalls.length,
+      playerSpawns: fixture.playerSpawnCalls.length,
+      enters: fixture.gameRuntimeFacadeEnterCalls(),
+      ingresses: fixture.gameRuntimeIngressActivationCalls(),
+      voiceStoppers: fixture.gameRuntimeVoiceStopperAttachCalls(),
+      taskCancels: fixture.gameRuntimeTaskCancelCalls(),
+      lifecycleOrder: [...fixture.lifecycleOrder],
+    });
+    // The reconnect really did re-attach: without this the matrix below would be
+    // asserting against an epoch that was never minted.
+    assert.equal(before.enters, 2);
+    assert.equal(before.bridgeConnects, 2);
+
+    const stale = { expectedAttachmentGeneration: 1 } as const;
+    const mutations: readonly Readonly<{ name: string; expectedRefusal: string; run(): unknown }>[] = Object.freeze([
+      {
+        name: "stop",
+        expectedRefusal: "stardew_game_attachment_generation_conflict",
+        run: () =>
+          fixture.coordinator.activationOwner.stopGame(fixture.broker.issue("game_stop"), {
+            apiVersion: 1,
+            idempotencyKey: "stale-epoch-stop",
+            ...stale,
+          }),
+      },
+      {
+        name: "close (disconnect)",
+        expectedRefusal: "stardew_game_attachment_generation_conflict",
+        run: () =>
+          fixture.coordinator.activationOwner.disconnectGame(fixture.broker.issue("game_disconnect"), {
+            apiVersion: 1,
+            idempotencyKey: "stale-epoch-close",
+            ...stale,
+          }),
+      },
+      {
+        // A live attachment is refused before the generation is even read, so the
+        // name says the useful thing - there IS a live attachment, so no fresh
+        // generation can be minted on top of it - rather than "stale".
+        name: "reconnect (resume)",
+        expectedRefusal: "stardew_game_runtime_unavailable",
+        run: () =>
+          fixture.coordinator.activationOwner.resume(fixture.broker.issue("game_resume"), {
+            apiVersion: 1,
+            gameSessionId: "session-abc",
+            idempotencyKey: "stale-epoch-resume",
+            ...stale,
+          }),
+      },
+      {
+        name: "retry/cancel (resume.cancel)",
+        expectedRefusal: "stardew_game_resume_cancel_unavailable",
+        run: () =>
+          fixture.coordinator.activationOwner.cancelResume(fixture.broker.issue("game_resume_cancel"), {
+            apiVersion: 1,
+            idempotencyKey: "stale-epoch-cancel",
+            ...stale,
+          }),
+      },
+      {
+        name: "action authority reopen",
+        expectedRefusal: "stardew_game_attachment_generation_conflict",
+        run: () =>
+          fixture.coordinator.activationOwner.reopenActionAuthority(fixture.broker.issue("game_reopen"), {
+            apiVersion: 1,
+            idempotencyKey: "stale-epoch-action",
+            ...stale,
+          }),
+      },
+      {
+        name: "explicit endgame",
+        expectedRefusal: "stardew_game_attachment_generation_conflict",
+        run: () =>
+          fixture.coordinator.activationOwner.endgameGame(fixture.broker.issue("game_endgame"), {
+            apiVersion: 1,
+            idempotencyKey: "stale-epoch-endgame",
+            confirm: true,
+            ...stale,
+          }),
+      },
+    ]);
+
+    // Every row is refused FIRST and asserted together, so a guard that stops
+    // answering names the row that drifted instead of hiding the rest behind the
+    // first failure.
+    const refusals: string[] = [];
+    for (const mutation of mutations) refusals.push(`${mutation.name}: ${await staleEpochRefusal(mutation.run)}`);
+    assert.deepEqual(
+      refusals,
+      mutations.map((mutation) => `${mutation.name}: ${mutation.expectedRefusal}`),
+      "every stale-epoch verb is refused by the identity it was issued against",
+    );
+
+    for (const mutation of mutations) {
+      // Re-read after EVERY verb: a refusal that also mutated the live attachment
+      // would otherwise pass on the refusal alone.
+      const detail = `${mutation.name} had a side effect on the live epoch`;
+      assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), liveAttachment, detail);
+      assert.deepEqual(
+        fixture.coordinator.actionAuthorityReader.readActionAuthorityView(),
+        { status: "paused" },
+        detail,
+      );
+      assert.equal(fixture.gameStopCalls.length, before.stops, detail);
+      assert.deepEqual(fixture.aiKillCalls, before.aiKills, detail);
+      assert.deepEqual(fixture.playerKillCalls, before.playerKills, detail);
+      assert.deepEqual(fixture.bridgeCloseCalls, before.bridgeCloses, detail);
+      assert.equal(fixture.bridgeConnectCalls.length, before.bridgeConnects, detail);
+      assert.equal(fixture.spawnCalls.length, before.aiSpawns, detail);
+      assert.equal(fixture.playerSpawnCalls.length, before.playerSpawns, detail);
+      assert.equal(fixture.gameRuntimeFacadeEnterCalls(), before.enters, detail);
+      assert.equal(fixture.gameRuntimeIngressActivationCalls(), before.ingresses, detail);
+      assert.equal(fixture.gameRuntimeVoiceStopperAttachCalls(), before.voiceStoppers, detail);
+      assert.equal(fixture.gameRuntimeTaskCancelCalls(), before.taskCancels, detail);
+      assert.deepEqual(fixture.lifecycleOrder, before.lifecycleOrder, detail);
+    }
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();

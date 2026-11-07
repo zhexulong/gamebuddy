@@ -368,10 +368,25 @@ export const GameStopCommandV1Schema = strictObject({
   expectedAttachmentGeneration: PositiveGeneration,
 });
 
+/**
+ * `game.resume` names the durable Game session it reconnects. Resume is the one
+ * command whose subject is a previously ended activation rather than the live
+ * one, so it is the one command that must carry the session's opaque handle: the
+ * coordinator resolves it through the store's registered world binding and fails
+ * closed on any handle it cannot read. It is an interpretive identity, never a
+ * proof and never a launch fact (no path, process, pipe, token or native frame).
+ *
+ * The key is optional because a resume that names nothing has a real typed
+ * answer - `unavailable`, with no activation created - and that is what a
+ * session-less command keeps getting. A named handle that resolves to no
+ * resumable world is a refusal the coordinator reports by name, so a player is
+ * told which session could not be resumed instead of "try again later".
+ */
 export const GameResumeCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
   idempotencyKey: IdempotencyKey,
   expectedAttachmentGeneration: PositiveGeneration,
+  gameSessionId: Type.Optional(SAFE_ID),
 });
 
 /**
@@ -847,16 +862,6 @@ export type GameCreateResultV1 = Static<typeof GameCreateResultV1Schema>;
 export type GameResumeCancelCommandV1 = Static<typeof GameResumeCancelCommandV1Schema>;
 export type GameResumeCancelResultV1 = Static<typeof GameResumeCancelResultV1Schema>;
 
-/**
- * Coordinator-owned resume seam command. The browser transport schema stays
- * frozen to `GameResumeCommandV1Schema` (strict, session-less); this narrow
- * type-only extension carries the gameSessionId the coordinator needs to
- * resolve the session's registered world binding. It is not a wire schema.
- */
-export type GameSessionResumeCommandV1 = GameResumeCommandV1 &
-  Readonly<{
-    gameSessionId: string;
-  }>;
 export type GameResumeResultV1 = Static<typeof GameResumeResultV1Schema>;
 export type GameReopenActionAuthorityCommandV1 = Static<typeof GameReopenActionAuthorityCommandV1Schema>;
 export type GameReopenActionAuthorityResultV1 = Static<typeof GameReopenActionAuthorityResultV1Schema>;

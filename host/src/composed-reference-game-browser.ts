@@ -22,7 +22,6 @@ import {
   type GameResumeCancelResultV1,
   type GameResumeCommandV1,
   type GameResumeResultV1,
-  type GameSessionResumeCommandV1,
   type GameReopenActionAuthorityCommandV1,
   type GameReopenActionAuthorityResultV1,
   type GameStopCommandV1,
@@ -164,13 +163,13 @@ export type ComposedReferenceGameBrowserLifecycleActivationBindingSink = Readonl
   endgameGame?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameEndgame"]>;
   reopenActionAuthority?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameReopen"]>;
   /**
-   * Lifecycle-owner resume seam (session-keyed; the composed browser wire stays
-   * session-less, so the wired adapter passes the strict command and the owner
-   * fails closed on a missing session handle).
+   * Lifecycle-owner resume seam. The command is the wire command verbatim, so
+   * the session handle the player named is the one the owner resolves; a
+   * command that names no session is the owner's `unavailable` case.
    */
   resume?: (
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
-    command: GameSessionResumeCommandV1,
+    command: GameResumeCommandV1,
   ) => Promise<GameResumeResultV1>;
   createGameSession?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameCreate"]>;
   cancelResume?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameResumeCancel"]>;
@@ -503,6 +502,14 @@ function gameResumeProblemCode(error: unknown): string {
       return "game_operation_in_progress";
     case "stardew_game_resume_cancelled":
       return "game_operation_in_progress";
+    // A resume that named a durable session the store holds no resumable world
+    // for is not a fault and not a retry: the identity the player named does not
+    // resolve. `game_instance_not_found` is the contract's word for exactly that
+    // (refused, nothing ran, the world you asked for is not there), and it points
+    // the player at the step that can work - choose a session or start a new game
+    // - instead of the generic `state_unavailable`, which reads as "try again".
+    case "stardew_game_resume_session_unavailable":
+      return "game_instance_not_found";
     default:
       return "state_unavailable";
   }
