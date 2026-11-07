@@ -352,9 +352,13 @@ test("the panel knows every discovery diagnostic the Host can send, by derivatio
   assert.notEqual(union, null, "DiscoveryDiagnostic must be declared as a union literal");
   const members = [...union[1].matchAll(/"([a-z0-9-]+)"/gu)].map((match) => match[1]);
   assert.ok(members.length >= 8, `derived ${members.length} members; the union parse is wrong`);
-  // The two members that describe a candidate rather than a failed read. They are named here
-  // rather than inferred, so a third one has to be a decision somebody makes.
-  const NAMES_ABSENCE_NOT_FAILURE = ["no-candidates", "candidate-invalid"];
+  // The members that describe an absence rather than a failed read. They are named here rather than
+  // inferred, so a new one has to be a decision somebody makes.
+  //
+  // `library-without-game` belongs here: a Steam library that simply does not hold this game is the ordinary
+  // state of most libraries, and telling the player their search could not run would be a statement the Host
+  // never made.
+  const NAMES_ABSENCE_NOT_FAILURE = ["no-candidates", "candidate-invalid", "library-without-game"];
   const failures = [];
   for (const member of members) {
     if (NAMES_ABSENCE_NOT_FAILURE.includes(member)) continue;
