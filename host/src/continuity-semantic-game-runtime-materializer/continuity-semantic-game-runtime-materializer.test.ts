@@ -1077,7 +1077,8 @@ const FAMILIES_NOT_IN_PLAN_PARAMETERS: Readonly<Record<string, string>> = Object
   professions: "profession ids, not targets",
   activeSpecialOrderKeys: "quest keys, not targets",
   warps: "traversal facts a script reads but no action addresses by index",
-  soilTiles: "the tilled-tile roster; till_soil names a tile, not a row",
+  soilTiles:
+    "the soil roster - every hoed or tillable tile within reach, each stating its `hoeDirt` state; till_soil names a tile, not a row",
   toolSlots: "named separately in the parameters beside `currentTool`, because a slot argument reads it",
   wateringCanFacts: "named beside `toolSlots` as the held can's own water facts",
   lanternSlots: "the pack's lantern slots; light_lantern names a tile",

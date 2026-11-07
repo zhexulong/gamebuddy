@@ -1988,6 +1988,36 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     ),
     "accepted",
   );
+  // The soil family's own omission count: a bounded slice of the actor's neighbourhood, and the one number that
+  // says the family was truncated. A negative count is nonsense, null is "the family was not measured", and a
+  // tilled row is a row - `hoeDirt: true` is the state the actor has to be able to read back.
+  const soilSnapshot = newEnvelope(
+    "snapshot",
+    scope,
+    {
+      ...snapshot,
+      soilTiles: [
+        { x: 10, y: 12, hoeDirt: true },
+        { x: 11, y: 12, hoeDirt: false },
+      ],
+      soilTilesOmitted: 0,
+    },
+    "snapshot_soil_01",
+    now,
+  );
+  assert.equal(diagnoseBridgeMessage(soilSnapshot, scope, now), "accepted");
+  assert.equal(
+    diagnoseBridgeMessage({ ...soilSnapshot, payload: { ...soilSnapshot.payload, soilTilesOmitted: -1 } }, scope, now),
+    "invalid_snapshot:soilTilesOmitted",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(
+      { ...soilSnapshot, payload: { ...soilSnapshot.payload, soilTilesOmitted: null } },
+      scope,
+      now,
+    ),
+    "accepted",
+  );
   assert.equal(
     diagnoseBridgeMessage(
       {

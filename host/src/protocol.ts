@@ -358,8 +358,18 @@ export type Snapshot = Readonly<{
    * family itself was not measured.
    */
   fixedInteractionPointsOmitted?: number | null;
-  /** Current live tiles that the target-version Hoe can potentially till. `hoeDirt` is `GameLocation.GetHoeDirtAtTile` for the tile, the fact `till_soil` refuses on. */
+  /**
+   * The actor's own neighbourhood soil, in both states a soil action acts on: `hoeDirt` true for a tile that
+   * already carries a HoeDirt (the `plant_seed`/`fertilize_tile`/`water_crop` target, and the record of work the
+   * actor has already done), false for ground the Hoe would still admit. Radius-bounded and nearest-first.
+   */
   soilTiles?: readonly Readonly<{ x: number; y: number; hoeDirt?: boolean }>[];
+  /**
+   * The soil tiles the Mod's cap left out of `soilTiles`, so a neighbourhood larger than the bound says so
+   * instead of reading as a complete patch. Absent on a Mod older than the field; null when the family itself
+   * was not measured (`till_soil` not advertised).
+   */
+  soilTilesOmitted?: number | null;
   /**
    * Current Farmhand inventory Tool slots: the slot, its bounded label, the tool's upgrade level and the category word
    * a `tool:<category>` claim uses. `category` is absent on a Mod older than that projection.
@@ -1842,6 +1852,7 @@ export const SNAPSHOT_KEYS = [
   "fixedInteractionPoints",
   "fixedInteractionPointsOmitted",
   "soilTiles",
+  "soilTilesOmitted",
   "toolSlots",
   "wateringCanFacts",
   "refillWateringCanTargets",
@@ -3840,6 +3851,14 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     !isNonNegativeSafeInteger(value.fixedInteractionPointsOmitted)
   )
     return "invalid_snapshot:fixedInteractionPointsOmitted";
+  // The same count for the soil family: a bounded slice of the actor's own neighbourhood, and without it a
+  // patch larger than the bound is indistinguishable from a complete one.
+  if (
+    value.soilTilesOmitted !== undefined &&
+    value.soilTilesOmitted !== null &&
+    !isNonNegativeSafeInteger(value.soilTilesOmitted)
+  )
+    return "invalid_snapshot:soilTilesOmitted";
   // A scalar record, not a family, so it is checked here rather than by `SNAPSHOT_FAMILY_RULES`. Absent means the Mod did
   // not measure it (the container actions were not advertised); a present one must be the whole shape.
   if (value.chestsSummary !== undefined && !isChestsSummaryFact(value.chestsSummary))
@@ -3907,6 +3926,9 @@ function snapshotDecisionScalarsAccepted(value: Record<string, unknown>): boolea
     (value.fixedInteractionPointsOmitted === undefined ||
       value.fixedInteractionPointsOmitted === null ||
       isNonNegativeSafeInteger(value.fixedInteractionPointsOmitted)) &&
+    (value.soilTilesOmitted === undefined ||
+      value.soilTilesOmitted === null ||
+      isNonNegativeSafeInteger(value.soilTilesOmitted)) &&
     (value.chestsSummary === undefined || isChestsSummaryFact(value.chestsSummary)) &&
     isStringArray(value.capabilities) &&
     isNonNegativeSafeInteger(value.catalogRevision) &&

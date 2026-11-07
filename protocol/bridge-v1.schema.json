@@ -1452,7 +1452,7 @@
         },
         "hoeDirt": {
           "type": "boolean",
-          "description": "`GameLocation.GetHoeDirtAtTile(tile) is not null` read when the row was published: whether a HoeDirt already occupies this tile. `till_soil` refuses a tilled tile with `soil_already_tilled`, so `false` is the state it admits on; discovery publishes no tilled tile. Optional at the wire so a Mod older than this field still validates; current Mods always publish it."
+          "description": "`GameLocation.GetHoeDirtAtTile(tile) is not null` read when the row was published: whether a HoeDirt already occupies this tile, which is the state the row reports. `true` is a tile the actor has already hoed - the `plant_seed`/`fertilize_tile`/`water_crop` target and the record of work already done - and `till_soil` refuses it with `soil_already_tilled`; `false` is ground the Hoe still admits. Optional at the wire so a Mod older than this field still validates; current Mods always publish it."
         }
       }
     },
@@ -2601,6 +2601,13 @@
             "$ref": "#/$defs/soilTile"
           },
           "maxItems": 64
+        },
+        "soilTilesOmitted": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
         },
         "toolSlots": {
           "type": "array",

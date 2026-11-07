@@ -2289,6 +2289,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // The one-row summary beside it, under the same gate: it describes the same containers, so a snapshot that
         // publishes one and not the other would answer "what is in my chests" in one field and not the other.
         BridgeChestsSummary? chestsSummary = containerActionsAdvertised ? SummarizeChests(player) : null;
+        // The soil family, with the count its cap left out: a list that stops at the bound without saying so reads as
+        // a complete patch, and the actor plans the rest of its tilling from what it believes is the whole set.
+        int soilTilesOmitted = 0;
+        IReadOnlyList<BridgeSoilTile>? soilTiles = advertisedCapabilities.Contains("till_soil", StringComparer.Ordinal)
+            ? DiscoverSoilTiles(player, out soilTilesOmitted)
+            : null;
         return new BridgeSnapshot(
             this.revision,
             player.currentLocation?.NameOrUniqueName ?? "unknown",
@@ -2321,7 +2327,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     Game1NavigationWorldSource.IsLocationAccessible(warp.TargetName)))
                 .ToArray(),
             advertisedCapabilities.Contains("enter_exit", StringComparer.Ordinal) ? DiscoverDoorTargets(player) : null,
-            advertisedCapabilities.Contains("till_soil", StringComparer.Ordinal) ? DiscoverSoilTiles(player) : null,
+            soilTiles,
             DiscoverToolSlots(player.Items),
             advertisedCapabilities.Contains("refill_watering_can", StringComparer.Ordinal) ? DiscoverWateringCanFacts(player) : null,
             advertisedCapabilities.Contains("refill_watering_can", StringComparer.Ordinal) ? DiscoverRefillWateringCanTargets(player) : null,
@@ -2459,7 +2465,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // action, and a companion without `enter_mine` still has to name the way out of a mine. The
             // count of what the cap left out rides beside the list, so truncation is stated.
             FixedInteractionPoints: DiscoverFixedInteractionPoints(player, out int fixedInteractionPointsOmitted),
-            FixedInteractionPointsOmitted: fixedInteractionPointsOmitted
+            FixedInteractionPointsOmitted: fixedInteractionPointsOmitted,
+            SoilTilesOmitted: soilTiles is null ? null : soilTilesOmitted
         );
     }
 
@@ -4808,7 +4815,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
-    /// Planning-visible diggable tiles around the player.
+    /// Planning-visible soil tiles around the player, in both states a soil action acts on.
     ///
     /// <para>
     /// The ACTING precondition stays Chebyshev-adjacent (till_soil still requires
@@ -4817,14 +4824,29 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// result is distance-ordered and bounded, so the snapshot stays small and
     /// the nearest work is always visible.
     /// </para>
+    ///
+    /// <para>
+    /// A tile carrying a HoeDirt is PUBLISHED, with <c>hoeDirt</c> true. It used to be skipped: only the tile the
+    /// Hoe would ADMIT appeared, so tilling a tile deleted it from the next observation and the only way to tell
+    /// 'I hoed this' from 'this was never here' was an empty list. Measured 2026-11-06 on the clear-and-plant run:
+    /// the published array had min 0, median 2, max 32 rows over 64 observations, and the companion explained
+    /// that she re-observed every three or four tiles and "inferred the tiles I had already tilled from this list
+    /// no longer having it". A hoed tile is the target of `plant_seed`, `fertilize_tile` and `water_crop`, and it is
+    /// the record of work already done, so it is a row like any other.
+    /// </para>
     /// </summary>
     private const int SoilTileDiscoveryRadius = TargetDiscoveryRadius;
 
-    /// <summary>Bounded like the other snapshot target lists; Host accepts up to 64.</summary>
-    private const int MaximumDiscoveredSoilTiles = 32;
+    /// <summary>
+    /// Bounded by what the wire admits (<c>protocol/bridge-v1.schema.json</c> <c>soilTiles.maxItems</c>, asserted
+    /// against this constant by <c>SoilTilePublicationTests</c>). It was 32 - half the admitted number - and it
+    /// truncated in silence, so a patch larger than the cap read as complete.
+    /// </summary>
+    internal const int MaximumDiscoveredSoilTiles = 64;
 
-    private static IReadOnlyList<BridgeSoilTile> DiscoverSoilTiles(Farmer player)
+    internal static IReadOnlyList<BridgeSoilTile> DiscoverSoilTiles(Farmer player, out int omitted)
     {
+        omitted = 0;
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeSoilTile>();
         List<(int Distance, BridgeSoilTile Tile)> candidates = new();
@@ -4837,24 +4859,34 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 if (y < 0) continue;
                 Vector2 tile = new(x, y);
-                if (location.GetHoeDirtAtTile(tile) is not null
-                    || location.doesTileHaveProperty(x, y, "Diggable", "Back") is null
-                    || location.isWaterTile(x, y)
-                    || location.objects.ContainsKey(tile)
-                    || !location.isTileLocationOpen(tile))
+                // The engine's own occupancy read: `terrainFeatures[tile] as HoeDirt`, which is what `till_soil`
+                // refuses on and what `plant_seed` requires. Read once, so the row's state and the branch below
+                // cannot disagree.
+                bool hoeDirt = location.GetHoeDirtAtTile(tile) is not null;
+                // A hoed tile is published whatever else occupies it. A TILLABLE one must also be free and
+                // reachable, which is the set `till_soil` admits once the actor walks up to it.
+                if (!hoeDirt
+                    && (location.doesTileHaveProperty(x, y, "Diggable", "Back") is null
+                        || location.isWaterTile(x, y)
+                        || location.objects.ContainsKey(tile)
+                        || !location.isTileLocationOpen(tile)))
                     continue;
-                candidates.Add((Math.Max(Math.Abs(x - originX), Math.Abs(y - originY)), new BridgeSoilTile(x, y, location.GetHoeDirtAtTile(tile) is not null)));
+                candidates.Add((Math.Max(Math.Abs(x - originX), Math.Abs(y - originY)), new BridgeSoilTile(x, y, hoeDirt)));
             }
         }
         // Nearest first, then a stable coordinate order so repeated observations
         // of an unchanged world produce the same bounded list.
-        return candidates
+        BridgeSoilTile[] ordered = candidates
             .OrderBy(candidate => candidate.Distance)
             .ThenBy(candidate => candidate.Tile.Y)
             .ThenBy(candidate => candidate.Tile.X)
-            .Take(MaximumDiscoveredSoilTiles)
             .Select(candidate => candidate.Tile)
             .ToArray();
+        // Nearest-first truncation, STATED: every dropped tile is farther than every kept one, and the count is
+        // the one number that separates a bounded slice from a complete patch.
+        int published = Math.Min(ordered.Length, MaximumDiscoveredSoilTiles);
+        omitted = ordered.Length - published;
+        return ordered[..published];
     }
 
     private void RecordControllerTransition(ExecutionState state, string reasonCode, string? evidence)
