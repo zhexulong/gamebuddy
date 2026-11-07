@@ -107,6 +107,28 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm audit:gate-red-proofs",
   },
   {
+    path: "tools/check-release-generation-self-contained.mjs",
+    reason:
+      "elsewhere: reads the generation `host/dist/current.json` points at and the modules `production-artifact.config.json` " +
+      "declares; runs in the CI `gates` job, where it reports `not_measured` when no generation is on disk, and in " +
+      "`release-windows.yml` immediately after the generation is assembled, which is the only place one exists",
+    runsIn: "pnpm check:release-generation-self-contained",
+  },
+  {
+    path: "tools/check-vendored-bundle-leaks.mjs",
+    reason:
+      "elsewhere: reads every `dist` under `vendor/`, i.e. bundles a submodule builds; runs in the CI `gates` job " +
+      "after `pnpm build:magic-context`, so it needs an install and a vendor build the rungs before launch do not have",
+    runsIn: "pnpm check:vendored-bundle-leaks",
+  },
+  {
+    path: "tools/check-workflow-expressions.mjs",
+    reason:
+      "elsewhere: reads `.github/workflows/*.yml`; runs in the CI `gates` job, and a prelive rung that examined them " +
+      "would be checking the same files twice on a machine that has no workflows of its own",
+    runsIn: "pnpm check:workflow-expressions",
+  },
+  {
     path: "tools/audit-long-session-metrics.mjs",
     reason:
       "arguments: needs one finished run's result.json (--result) and reads its session transcript, so no rung before a " +
