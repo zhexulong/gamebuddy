@@ -93,6 +93,30 @@ jobs:
       - run: pnpm --dir host build:release
       - run: pnpm --dir host check:production-artifact
 
+      # The certificate the signing target names. A hosted runner has none, so without this step the release lane fails at
+      # `GBSIGN002` for a reason that says nothing about the artifact. The thumbprint is read from the certificate that
+      # was imported, never from a second secret that could disagree with it.
+      #
+      # The PFX is written to a temporary file, imported into the current user's store, and the file removed in the same
+      # step. It is never echoed, never exported, and never left on disk for a later step to read.
+      - name: Import the release signing certificate
+        if: ${{ secrets.GAMEBUDDY_SIGNING_CERTIFICATE_PFX_BASE64 != '' }}
+        shell: pwsh
+        env:
+          PFX_BASE64: ${{ secrets.GAMEBUDDY_SIGNING_CERTIFICATE_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.GAMEBUDDY_SIGNING_CERTIFICATE_PFX_PASSWORD }}
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'gamebuddy-signing.pfx'
+          try {
+            [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:PFX_BASE64))
+            $secure = ConvertTo-SecureString -String $env:PFX_PASSWORD -AsSecureString -Force
+            $imported = Import-PfxCertificate -FilePath $path -CertStoreLocation Cert:\CurrentUser\My -Password $secure
+            # The target reads this from the environment; an empty value is the fail-closed case.
+            "GAMEBUDDY_SIGNING_THUMBPRINT=$($imported.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          } finally {
+            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+          }
+
       # The artifact a player actually downloads, assembled from the generation this job just verified: the launcher
       # published self-contained, the payload sealed by the existing completeness/leak authority, and Setup.exe built
       # in Release - the configuration whose own MSBuild target refuses to produce an unsigned artifact. The signing
