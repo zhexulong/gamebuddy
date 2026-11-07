@@ -22,12 +22,34 @@ import type { Snapshot } from "./protocol.js";
  * <item>Every answer is bounded, and truncation is reported as `omitted`, present even when it is 0 so that "nothing was
  * dropped" is a measurement rather than an absent key. An unbounded lookup is `stardew_observe` again.</item>
  * </list>
+ * <p>
+ * One subject is DERIVED rather than read: `affordances` answers "what can be done here, now" by grouping the target families
+ * the live surface declares into kinds, so its `source.family` names the derivation rather than a single wire field, and each
+ * group carries the family it counted. Its population comes from the Mod's own `targetFamily` declarations (the same ones
+ * the discovery audit's `TARGET_FIELD` verifies), never from a table here.
+ * </p>
  */
 
 /** Rows per answer before `omitted` starts counting. Small on purpose: this is a question, not a dump. */
 export const MAX_LOOKUP_ROWS = 20;
 
-export const LOOKUP_SUBJECTS = Object.freeze(["crops", "chests", "inventory", "npcs", "calendar"] as const);
+/**
+ * Kinds per affordance answer before `omitted` starts counting.
+ *
+ * Ten rows cost about 1.5 KB - a fifth of one observation - and a farm puts roughly that many kinds of target inside the
+ * 13x13 view at once. The cap is not about saving bytes: an answer listing every family the Mod can ever publish is
+ * `stardew_observe` with different field names.
+ */
+export const MAX_AFFORDANCE_GROUPS = 10;
+
+export const LOOKUP_SUBJECTS = Object.freeze([
+  "affordances",
+  "crops",
+  "chests",
+  "inventory",
+  "npcs",
+  "calendar",
+] as const);
 
 type LookupSubject = (typeof LOOKUP_SUBJECTS)[number];
 
@@ -73,9 +95,9 @@ function matches(needle: string, ...haystack: readonly (string | undefined)[]): 
 }
 
 /** Bounded rows plus the count that did not fit. `omitted` is always a number: 0 is a measurement, not a missing key. */
-function bound<T>(rows: readonly T[]): Readonly<{ rows: readonly T[]; omitted: number }> {
-  if (rows.length <= MAX_LOOKUP_ROWS) return { rows, omitted: 0 };
-  return { rows: rows.slice(0, MAX_LOOKUP_ROWS), omitted: rows.length - MAX_LOOKUP_ROWS };
+function bound<T>(rows: readonly T[], limit = MAX_LOOKUP_ROWS): Readonly<{ rows: readonly T[]; omitted: number }> {
+  if (rows.length <= limit) return { rows, omitted: 0 };
+  return { rows: rows.slice(0, limit), omitted: rows.length - limit };
 }
 
 /**
@@ -221,6 +243,180 @@ export function noSnapshot(reasonCode: string): LookupUnknown {
 const MAX_LOOKUP_SCALAR_BYTES = 400;
 
 /**
+ * One action the surface publishes, with the snapshot family its targets come from.
+ *
+ * `targetFamily` is the Mod's OWN declaration on the action's descriptor (`FarmhandActionDescriptor.TargetFamily`, published
+ * as `targetFamily` and admitted by `protocol.ts`). It is the same declaration the discovery audit's `TARGET_FIELD` table
+ * verifies against the wire, so the grouping below is derived from the producer rather than from a second copy of it.
+ */
+export type AffordanceAction = Readonly<{ actionId: string; targetFamily: string }>;
+
+/**
+ * The noun a family's rows are reported under: `weedTargets` -> `weed`, `lanternSlots` -> `lantern`, `chests` -> `chests`.
+ *
+ * Derived from the family name so a family the Mod adds later arrives with a name and no edit here. The suffix list is a
+ * SHAPE of the wire's naming (`*Targets`, `*Slots`, `*Sites`, `*Facts`), not a list of kinds.
+ */
+const FAMILY_NAME_SUFFIXES = ["Targets", "Slots", "Sites", "Facts"] as const;
+
+function kindOf(family: string): string {
+  const suffix = FAMILY_NAME_SUFFIXES.find(
+    (candidate) => family.length > candidate.length && family.endsWith(candidate),
+  );
+  if (suffix === undefined) return family;
+  const stem = family.slice(0, -suffix.length);
+  return stem[0]!.toLowerCase() + stem.slice(1);
+}
+
+/**
+ * A row's address, in the order every published row declares one.
+ *
+ * `targetId` is the wire's name for the opaque address, `chestId` is the container family's, and both are declared before
+ * any other `*Id` property, so this reads the row's own first identifier rather than guessing from the value's shape.
+ */
+function targetIdOf(row: Readonly<Record<string, unknown>>): string | null {
+  for (const key of ["targetId", "chestId"]) {
+    const value = row[key];
+    if (typeof value === "string" && value.length > 0) return value;
+  }
+  for (const [key, value] of Object.entries(row))
+    if (key.endsWith("Id") && typeof value === "string" && value.length > 0) return value;
+  return null;
+}
+
+function tileOf(row: Readonly<Record<string, unknown>>): Readonly<{ x: number; y: number }> | null {
+  const { x, y } = row;
+  return typeof x === "number" && Number.isFinite(x) && typeof y === "number" && Number.isFinite(y) ? { x, y } : null;
+}
+
+/**
+ * The one row of a family a caller should act on first: nearest by Chebyshev distance, because the walk to a diagonal
+ * neighbour is one step and its Euclidean length is not.
+ *
+ * A family whose rows publish no tile (a recipe, a tool slot) has no distance; those rows sort after the locatable ones
+ * rather than pretending a distance of 0, and the answer says `tiles: null` instead of omitting the field.
+ */
+type AffordanceNearest = Readonly<{
+  targetId: string | null;
+  x: number | null;
+  y: number | null;
+  tiles: number | null;
+}>;
+
+type AffordanceGroup = Readonly<{
+  kind: string;
+  family: string;
+  count: number;
+  /** The action the caller would use first when a family has several consumers. */
+  action: string;
+  /** Every action that consumes this family, in surface order: `machineTargets` has three. */
+  actions: readonly string[];
+  nearest: AffordanceNearest;
+}>;
+
+function nearestOf(
+  rows: readonly Readonly<Record<string, unknown>>[],
+  actor: Readonly<{ x: number; y: number }>,
+): AffordanceNearest {
+  let best: AffordanceNearest | null = null;
+  for (const row of rows) {
+    const at = tileOf(row);
+    const targetId = targetIdOf(row);
+    const candidate: AffordanceNearest =
+      at === null
+        ? { targetId, x: null, y: null, tiles: null }
+        : { targetId, x: at.x, y: at.y, tiles: Math.max(Math.abs(at.x - actor.x), Math.abs(at.y - actor.y)) };
+    if (best === null || closer(candidate, best)) best = candidate;
+  }
+  if (best === null) throw new Error("nearestOf requires at least one row");
+  return best;
+}
+
+/** Whether `candidate` is the row to act on before `incumbent`: locatable first, then nearer, then the smaller id. */
+function closer(candidate: AffordanceNearest, incumbent: AffordanceNearest): boolean {
+  const candTiles = candidate.tiles === null ? Number.POSITIVE_INFINITY : candidate.tiles;
+  const incumbentTiles = incumbent.tiles === null ? Number.POSITIVE_INFINITY : incumbent.tiles;
+  if (candTiles !== incumbentTiles) return candTiles < incumbentTiles;
+  return (candidate.targetId ?? "") < (incumbent.targetId ?? "");
+}
+
+/**
+ * What can be done HERE, NOW: one group per family that already has a target in the snapshot, with the action that consumes
+ * it.
+ *
+ * <p>
+ * This subject exists because actionability was never stated anywhere: a live run attempted 15 of 104 published actions,
+ * and the only route to the other 89 was to read the descriptors one at a time and compare each exchange rate of
+ * `*Targets` against the snapshot by hand. `stardew_plan_shape` was called 17 times in that session and the snapshot was
+ * re-read beside it; nothing joined the two.
+ * </p>
+ * <p>
+ * The population is derived twice over and neither half is a list in this file: the KINDS are the `targetFamily` values the
+ * live surface publishes, and the ACTION beside each is the one whose descriptor declares it (a family with several
+ * consumers, like `machineTargets`, names all of them). A family with no target in the snapshot is absent rather than
+ * reported with 0 - the answer is about this moment, and `stardew_observe` is the answer about what the world holds.
+ * </p>
+ * <p>
+ * A caller must still read the row before it acts: `count` is the number of targets of that family IN VIEW, not the
+ * subset the action's own preconditions admit (`harvest_crop` refuses an unready crop, `machine_collect_output` refuses a
+ * machine with nothing to collect). Preconditions stay with the receipt that proves them.
+ * </p>
+ */
+function affordances(snapshot: Snapshot, surface: readonly AffordanceAction[]): LookupAnswer {
+  /** family -> the actions whose descriptor names it, in the order the surface publishes them. */
+  const consumers = new Map<string, string[]>();
+  for (const entry of surface) {
+    const actions = consumers.get(entry.targetFamily);
+    if (actions === undefined) consumers.set(entry.targetFamily, [entry.actionId]);
+    else if (!actions.includes(entry.actionId)) actions.push(entry.actionId);
+  }
+  const fields = snapshot as unknown as Record<string, unknown>;
+  const groups: AffordanceGroup[] = [];
+  for (const [family, actions] of consumers) {
+    const value = fields[family];
+    // Not carried this frame, or nothing of that kind in view: both absent. "We did not look" and "there is nothing"
+    // are the same statement about THIS moment, and neither is a group with a count of zero.
+    if (!Array.isArray(value) || value.length === 0) continue;
+    const rows = value.filter(
+      (row): row is Readonly<Record<string, unknown>> => typeof row === "object" && row !== null && !Array.isArray(row),
+    );
+    if (rows.length === 0) continue;
+    groups.push({
+      kind: kindOf(family),
+      family,
+      count: value.length,
+      action: actions[0]!,
+      actions: [...actions],
+      nearest: nearestOf(rows, snapshot.tile),
+    });
+  }
+  // Count first, then name: the deterministic ordering that makes two runs on one farm answer the same bytes.
+  groups.sort((left, right) =>
+    right.count !== left.count ? right.count - left.count : left.kind.localeCompare(right.kind),
+  );
+  const bounded = bound(groups, MAX_AFFORDANCE_GROUPS);
+  return {
+    subject: "affordances",
+    source: sourceOf(snapshot, "affordances"),
+    answer: {
+      location: snapshot.location,
+      // A fact, not a filter: the kinds are what exists here, and this says whether the body can act on any of them.
+      actionable: snapshot.actionable,
+      groups: bounded.rows,
+      omitted: bounded.omitted,
+      ...(groups.length === 0
+        ? {
+            nothing_actionable_here:
+              surface.length === 0
+                ? "no published action declares a target family on this surface"
+                : "no target of any published action is in this snapshot",
+          }
+        : {}),
+    },
+  };
+}
+
+/**
  * A named snapshot family, answered as rows when it is a row list.
  *
  * `matched` and `omitted` are both measurements: `omitted: 0` says the answer is complete, and a family the snapshot
@@ -263,8 +459,15 @@ function familyRows(snapshot: Snapshot, family: string, query: string): LookupAn
   };
 }
 
-export function lookUp(snapshot: Snapshot, subject: string, query = ""): LookupAnswer | LookupRefusal | LookupUnknown {
+export function lookUp(
+  snapshot: Snapshot,
+  subject: string,
+  query = "",
+  surface: readonly AffordanceAction[] = [],
+): LookupAnswer | LookupRefusal | LookupUnknown {
   switch (subject) {
+    case "affordances":
+      return affordances(snapshot, surface);
     case "crops":
       return crops(snapshot);
     case "chests":
@@ -276,10 +479,11 @@ export function lookUp(snapshot: Snapshot, subject: string, query = ""): LookupA
     case "calendar":
       return calendar(snapshot);
     default: {
-      // Any family the snapshot declares is answerable by name. The five subjects above are shaped answers; this is
-      // the door to the other ~100 rooms, and its population comes from `SNAPSHOT_KEYS` so a family added later is
-      // queryable with no edit here. Without it the tool has five doors and the building has a hundred rooms: the
-      // consumer audit measured 70 of 88 action-target pairs with no way to ask (2026-11-06).
+      // Any family the snapshot declares is answerable by name. The subjects above are shaped answers (five read a
+      // family, `affordances` derives one from the whole surface); this is the door to the other ~100 rooms, and its
+      // population comes from `SNAPSHOT_KEYS` so a family added later is queryable with no edit here. Without it the
+      // tool has five doors and the building has a hundred rooms: the consumer audit measured 70 of 88 action-target
+      // pairs with no way to ask (2026-11-06).
       if ((SNAPSHOT_KEYS as readonly string[]).includes(subject)) return familyRows(snapshot, subject, query);
       // The valid list is derived from the table, so adding a subject cannot leave this message stale.
       return { source: sourceOf(snapshot, null), refused: `unknown_subject:${subject}`, subjects: LOOKUP_SUBJECTS };
