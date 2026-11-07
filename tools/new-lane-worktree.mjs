@@ -31,6 +31,15 @@
  * `build-manifest.json` matches this worktree's inputs, and refuses - naming the drifting files - the moment one
  * differs. It then asks the freshness check itself for the verdict, so the copy is not trusted on this script's word.
  *
+ * Two inputs a checkout simply does not carry are mounted from the main tree before anything runs (`design/`, `ref/`,
+ * both gitignored, both read-only here), and the native helper pair is published with the project's own publisher and
+ * then placed where the live-run launcher checks for it. Those three repairs were done by hand in five lanes on
+ * 2026-11-07, and each cost its own discovery: with `design/` absent, prelive's l0b goes red - six of the inventory
+ * reconciliation gate's fourteen tests fail, and the observation-gap gate prints `observation_gap_skipped` instead of a
+ * verdict - and with the pair absent from `native/`, the live-run launcher reports
+ * `windows_stale_lock_reclaimer_unavailable:builder_did_not_produce_the_pair` even though the build it just ran
+ * succeeded.
+ *
  * USAGE:
  *   node tools/new-lane-worktree.mjs <name>      # creates ../<name> on branch lane/<name>
  *
@@ -38,9 +47,9 @@
  */
 import { spawnSync } from "node:child_process";
 import { cpSync, existsSync } from "node:fs";
-import { cp, readdir, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { copyFile, cp, mkdir, readdir, realpath, symlink } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   collectTestArtifactInputs,
@@ -70,6 +79,24 @@ const INSTALL_RESOLUTION_ENTRIES = Object.freeze([
 
 const PNPM_INSTALL = "pnpm install --frozen-lockfile --offline";
 const MAX_LISTED_DRIFT = 5;
+
+/**
+ * Directories the main tree has and a `git worktree add` cannot: both are gitignored, so they are absent from every
+ * checkout, and each one is a rung's input. `neededBy` is what a lane creator is told when the main tree lacks it,
+ * because the failure it replaces never names the path.
+ */
+export const LANE_MOUNTS = Object.freeze([
+  { path: "design", neededBy: "prelive l0b reads design/gameplay-capability-catalog.json" },
+  { path: "ref", neededBy: "prelive l0b recomputes the action inventory from ref/external/StardewValleyDecompiled" },
+]);
+
+/**
+ * Where the live-run launcher looks for the stale-lock pair. The publisher does not write here - it publishes
+ * `host/native/windows-stale-lock-reclaimer/.dist/win-x64` - so a lane that has published and not propagated reports
+ * `windows_stale_lock_reclaimer_unavailable:builder_did_not_produce_the_pair`.
+ */
+export const LANE_NATIVE_PAIR_ROOT = "native/windows-stale-lock-reclaimer/.dist/win-x64";
+const NATIVE_PAIR_PUBLISHER = "host/scripts/build-windows-stale-lock-reclaimer.mjs";
 
 function print(line) {
   process.stdout.write(`${line}\n`);
@@ -113,6 +140,65 @@ function initSubmodules({ target }) {
     print(`submodules: ${submodule} copied from the main tree at the same pinned commit (no fetch)`);
   }
   return true;
+}
+
+/**
+ * Which declared mounts this main tree can supply. A lane must not be created without one: the rung that needed it goes
+ * red later, inside a child process, and the ladder's summary names the gate but not the input it lacked.
+ */
+export function planLaneMounts({ mounts = LANE_MOUNTS, exists }) {
+  const links = [];
+  const missing = [];
+  for (const mount of mounts) (exists(mount.path) ? links : missing).push(mount);
+  return { links, missing };
+}
+
+/** One refusal line per mount the main tree cannot supply, each naming the path and the rung that reads it. */
+export function describeMissingMounts(missing) {
+  return missing.map((mount) => `the main tree has no ${mount.path}/ to link - ${mount.neededBy}`);
+}
+
+/**
+ * Link a read-only mount into the lane. A link, not a copy: `ref/` is 637 MB and the gates that read either directory
+ * only read it.
+ */
+async function linkLaneMounts({ target, links }) {
+  for (const mount of links) {
+    const source = join(REPOSITORY_ROOT, mount.path);
+    try {
+      await symlink(source, join(target, mount.path), "junction");
+    } catch (error) {
+      refuse(`mount: ${mount.path} could not be linked from ${source} (${error?.code ?? error?.message ?? error})`);
+      return false;
+    }
+    print(`mount: ${mount.path} -> ${source} (a link: the lane only reads it, so a copy would only drift)`);
+  }
+  return true;
+}
+
+/**
+ * Publish the native helper pair with the project's own publisher, then place it where the live-run launcher checks.
+ * The publisher is imported from THIS lane, so the binary is built from the lane's sources and written under the
+ * lane's `host/`; it is the only thing that mints the pair.
+ */
+async function publishNativeHelperPair({ target }) {
+  let pair;
+  try {
+    const publisher = await import(pathToFileURL(join(target, NATIVE_PAIR_PUBLISHER)).href);
+    pair = await publisher.buildWindowsStaleLockReclaimer();
+  } catch (error) {
+    refuse(
+      `native: ${NATIVE_PAIR_PUBLISHER} refused (${error?.message ?? error}) - pnpm test and the live-run launcher both read that pair`,
+    );
+    return;
+  }
+  print(`native: ${relative(target, pair.helperPath)} published from this lane's sources`);
+  const destination = join(target, LANE_NATIVE_PAIR_ROOT);
+  await mkdir(destination, { recursive: true });
+  for (const source of [pair.helperPath, pair.manifestPath]) {
+    await copyFile(source, join(destination, basename(source)));
+  }
+  print(`native: the same pair placed under ${LANE_NATIVE_PAIR_ROOT}, where the live-run launcher checks for it`);
 }
 
 /** Repo-relative package directories under the vendored submodules that carry a built `dist` in this tree. */
@@ -286,7 +372,14 @@ async function main(argv) {
     process.stderr.write(`refused: ${target} already exists\n`);
     return 1;
   }
+  // Before the worktree exists, so a refusal leaves nothing half-created and names the path the main tree lacks.
+  const mounts = planLaneMounts({ exists: (path) => existsSync(join(REPOSITORY_ROOT, path)) });
+  if (mounts.missing.length > 0) {
+    for (const line of describeMissingMounts(mounts.missing)) refuse(`mount: ${line}`);
+    return 1;
+  }
   if (!createWorktree({ target, branch: `lane/${name}` })) return 1;
+  if (!(await linkLaneMounts({ target, links: mounts.links }))) return 1;
   if (!initSubmodules({ target })) return 1;
   const copies = planVendoredDistCopies({
     packages: await discoverVendoredDistPackages({ root: REPOSITORY_ROOT }),
@@ -294,6 +387,7 @@ async function main(argv) {
   });
   if (!(await installLane({ target, copies }))) return 1;
   if (!(await assertInstallIsLocal({ target }))) return 1;
+  await publishNativeHelperPair({ target });
   await shareArtifact({ target });
   // The freshness check, not this script, has the last word on whether the lane can run.
   const verdict = await assessLiveRunArtifactFreshness({ repositoryRoot: target });

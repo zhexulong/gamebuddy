@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import test from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { decideArtifactCopy, modulesOutsideLane, planVendoredDistCopies } from "./new-lane-worktree.mjs";
+import {
+  decideArtifactCopy,
+  describeMissingMounts,
+  LANE_MOUNTS,
+  LANE_NATIVE_PAIR_ROOT,
+  modulesOutsideLane,
+  planLaneMounts,
+  planVendoredDistCopies,
+} from "./new-lane-worktree.mjs";
 
 /**
  * A lane is created once per piece of work and its first build is where every missing piece is discovered, one lane at
@@ -79,12 +88,52 @@ test("every dependency entry resolving inside the lane passes the containment ch
   assert.deepEqual(modulesOutsideLane({ laneRoot: LANE_ROOT, entries }), []);
 });
 
+test("every mount the main tree has is linked, because a copy would be 637 MB of read-only input and would drift", () => {
+  const plan = planLaneMounts({ exists: () => true });
+  assert.deepEqual(
+    plan.links.map((mount) => mount.path),
+    LANE_MOUNTS.map((mount) => mount.path),
+    "the population is the declaration, so a mount added to LANE_MOUNTS cannot be silently skipped",
+  );
+  assert.deepEqual(plan.missing, []);
+  for (const mount of plan.links) assert.match(mount.neededBy, /prelive l0b/u);
+});
+
+test("a mount the main tree lacks is refused by name, because the gate that needed it fails naming no path", () => {
+  const plan = planLaneMounts({ mounts: LANE_MOUNTS, exists: (path) => path !== "design" });
+  assert.deepEqual(
+    plan.missing.map((mount) => mount.path),
+    ["design"],
+  );
+  const [line] = describeMissingMounts(plan.missing);
+  assert.match(line, /design\//u, "the refusal names the directory");
+  assert.match(line, /design\/gameplay-capability-catalog\.json/u, "and the input inside it that the rung reads");
+});
+
+/**
+ * The pair is placed where the live-run launcher checks, and the launcher is the authority for that path: its own URL
+ * says where it looks. If the launcher's path changes - or leaves `native/` and the copy becomes unnecessary - this
+ * fails rather than letting the scaffold publish to a directory nobody reads.
+ */
+test("the native pair is placed where the live-run launcher checks for it", async () => {
+  const launcher = fileURLToPath(
+    new URL("../tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs", import.meta.url),
+  );
+  const source = await readFile(launcher, "utf8");
+  const declared = /new URL\(\s*"([^"]*windows-stale-lock-reclaimer[^"]*)"\s*,\s*import\.meta\.url\s*\)/u.exec(source);
+  assert.notEqual(declared, null, "the launcher's pair root must be a URL the scaffold can resolve");
+  const checked = relative(resolve("."), fileURLToPath(new URL(declared[1], pathToFileURL(launcher))))
+    .split(sep)
+    .join("/");
+  assert.equal(checked, LANE_NATIVE_PAIR_ROOT);
+});
+
 test("the lane creator installs its own dependencies instead of linking another tree's", async () => {
   const source = await readFile(new URL("./new-lane-worktree.mjs", import.meta.url), "utf8");
   assert.doesNotMatch(
     source,
-    /\bsymlink(?:Sync)?\s*\(/u,
-    "a junctioned node_modules makes realpath(tsc) escape the repository, which the build and the verification manifest both refuse",
+    /symlink\([\s\S]{0,80}node_modules/u,
+    "a junctioned node_modules makes realpath(tsc) escape the repository, which the build and the verification manifest both refuse; `assertInstallIsLocal` is the check that must stay able to refuse",
   );
 });
 
