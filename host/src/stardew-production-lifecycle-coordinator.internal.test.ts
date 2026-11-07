@@ -23,12 +23,7 @@ import {
   type ComposedReferenceGameBrowserLifecycleActivationAdmission,
   type ComposedReferenceGameBrowserReadContext,
 } from "./composed-reference-game-browser.js";
-import {
-  composeGameProfile,
-  GameBrowserContractV1,
-  GameBrowserFixtureV1,
-  GameBrowserValidatorsV1,
-} from "./game-browser-contract/index.js";
+import { composeGameProfile, GameBrowserFixtureV1, GameBrowserValidatorsV1 } from "./game-browser-contract/index.js";
 import { createGameBrowserStateProvider } from "./game-browser/game-browser-state-provider.js";
 import { composeReferenceGameBrowserProfile } from "./composed-browser-contract/index.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
@@ -474,8 +469,7 @@ async function createAdmissionBroker(
       | "game_reopen"
       | "game_disconnect"
       | "game_endgame"
-      | "game_create"
-      | "mod_loader_install",
+      | "game_create",
   ): IncomingMessage => {
     const originUrl = new URL(origin);
     const method = operation === "cabin_read" || operation === "discovery_read" ? "GET" : "POST";
@@ -512,9 +506,7 @@ async function createAdmissionBroker(
                                     ? "/api/composed-reference-game/v1/game/disconnect"
                                     : operation === "game_endgame"
                                       ? "/api/composed-reference-game/v1/game/endgame"
-                                      : operation === "mod_loader_install"
-                                        ? "/api/composed-reference-game/v1/game/prerequisites/smapi"
-                                        : "/api/composed-reference-game/v1/game/create";
+                                      : "/api/composed-reference-game/v1/game/create";
     return {
       method,
       url,
@@ -545,8 +537,7 @@ async function createAdmissionBroker(
       | "game_reopen"
       | "game_disconnect"
       | "game_endgame"
-      | "game_create"
-      | "mod_loader_install" = "lifecycle_activation",
+      | "game_create" = "lifecycle_activation",
   ): ComposedReferenceGameBrowserLifecycleActivationAdmission => {
     const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
       handler.lifecycleActivationIssuer,
@@ -2564,7 +2555,9 @@ test("installation discovery routes admit each coordinator operation without ope
           fixture.broker.issue("discovery_confirm"),
           "candidate-01",
         ),
-        { status: "registered" },
+        // The folder is registered AND the Mod outcome is reported. These fixtures mount no generation root, so
+        // the Mod deployment has nothing to deploy and says so - which is the fact, not a placeholder.
+        { status: "registered", companionMod: "companion-mod-unavailable" },
       );
       const retried = await fixture.coordinator.activationOwner.retryInstallationDiscovery(
         fixture.broker.issue("discovery_retry"),
@@ -2857,7 +2850,9 @@ test("a candidate a non-Steam source produced reaches the same registration admi
           fixture.broker.issue("discovery_confirm"),
           scan.candidates[0]!.candidateId,
         ),
-        { status: "registered" },
+        // The folder is registered AND the Mod outcome is reported. These fixtures mount no generation root, so
+        // the Mod deployment has nothing to deploy and says so - which is the fact, not a placeholder.
+        { status: "registered", companionMod: "companion-mod-unavailable" },
       );
       // The candidate was admitted, not trusted: one fresh admission ran, and the durable
       // record now names the very folder the GOG source proposed. The pointer stays bound to
@@ -2993,7 +2988,9 @@ test("a fresh Host registers the folder the player picked as revision one, and a
       assert.equal(await readStardewInstallationRegistration(fixture.runtimeRoot), null);
       assert.deepEqual(
         await fixture.coordinator.activationOwner.openInstallationPicker(fixture.broker.issue("discovery_picker")),
-        { status: "registered" },
+        // The folder is registered AND the Mod outcome is reported. These fixtures mount no generation root, so
+        // the Mod deployment has nothing to deploy and says so - which is the fact, not a placeholder.
+        { status: "registered", companionMod: "companion-mod-unavailable" },
       );
       assert.deepEqual(await readStardewInstallationRegistration(fixture.runtimeRoot), {
         schema: "gamebuddy-stardew-installation-registration/v1",
@@ -3009,7 +3006,9 @@ test("a fresh Host registers the folder the player picked as revision one, and a
 
       assert.deepEqual(
         await fixture.coordinator.activationOwner.openInstallationPicker(fixture.broker.issue("discovery_picker")),
-        { status: "registered" },
+        // The folder is registered AND the Mod outcome is reported. These fixtures mount no generation root, so
+        // the Mod deployment has nothing to deploy and says so - which is the fact, not a placeholder.
+        { status: "registered", companionMod: "companion-mod-unavailable" },
       );
       assert.deepEqual(await readStardewInstallationRegistration(fixture.runtimeRoot), {
         schema: "gamebuddy-stardew-installation-registration/v1",
@@ -8488,236 +8487,3 @@ test("game.create after a failed FIRST AI launch re-arms a fresh activation inst
  * `current` rather than claiming a write it did not make, and a generation that carries no
  * verifiable payload refuses instead of installing half a loader.
  */
-test("one click installs the shipped mod loader into the folder the player just named", async () => {
-  await withWindowsPlatform(async () => {
-    const installParent = await canonicalTemporaryRoot("gamebuddy-one-click-install-");
-    temporaryRoots.push(installParent);
-    const installRoot = join(installParent, "Stardew Valley");
-    await mkdir(installRoot, { recursive: true });
-    await writeFile(join(installRoot, "Stardew Valley.exe"), "", "utf8");
-    await writeFile(join(installRoot, "Stardew Valley.deps.json"), '{"runtimeTarget":{}}\n', "utf8");
-    // The state the button exists for, read through the same probe the launch gate uses.
-    assert.deepEqual(await probeStardewGameRoot(installRoot), { readable: true, gameExecutable: true, smapi: false });
-
-    const generationRoot = await smapiGenerationFixture();
-    const provider: StardewInstallationDiscoveryProvider = Object.freeze({
-      discover: async () => ({ candidates: [], diagnostics: [] as const }),
-      confirm: (candidateId: string) => {
-        assert.equal(candidateId, "candidate-01");
-        return installRoot;
-      },
-      reset: () => undefined,
-    });
-    const companionModTargets: string[] = [];
-    const fixture = await createFixture({
-      overrides: {
-        installationDiscoveryOverlay: provider,
-        companionModDeploy: async (target: string) => {
-          companionModTargets.push(target);
-          return "companion-mod-installed" as const;
-        },
-      },
-      inspectorChains: [identityChainFor(installRoot)],
-      hostArtifactRoot: generationRoot,
-    });
-    try {
-      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
-      // The real refusal: the folder holds the game and no loader, so nothing is bound to it.
-      // The player has named their folder, and that is exactly what the install needs - asking
-      // them to pick it again is the round trip this flow removes.
-      assert.deepEqual(
-        await fixture.coordinator.activationOwner.confirmInstallation(
-          fixture.broker.issue("discovery_confirm"),
-          "candidate-01",
-        ),
-        { status: "mod_loader_missing" },
-      );
-      assert.notEqual((await readStardewInstallationRegistration(fixture.runtimeRoot))?.locator, installRoot);
-
-      const result = await fixture.coordinator.activationOwner.installModLoader(
-        fixture.broker.issue("mod_loader_install"),
-        { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w" },
-      );
-      assert.deepEqual(result, {
-        apiVersion: 1,
-        status: "installed",
-        companionMod: "companion-mod-installed",
-        steamLaunchOption: `"${join(installRoot, "StardewModdingAPI.exe")}" %command%`,
-      });
-      // The Mod was deployed into the exact folder the loader went into. That is the wiring this test
-      // owns: measured gap, the launcher used to deploy the Mod only at its own startup, so a player who
-      // clicked this install had SMAPI in their game folder and no `Mods/GameBuddy`.
-      assert.deepEqual(companionModTargets, [installRoot]);
-      // The probe the launch path gates on now says the loader is there, the file the loader
-      // needs beside it was derived from the game's own dependency list, and the folder is
-      // now the bound installation - the install is what made it admissible.
-      assert.deepEqual(await probeStardewGameRoot(installRoot), { readable: true, gameExecutable: true, smapi: true });
-      assert.deepEqual(
-        await readFile(join(installRoot, "StardewModdingAPI.deps.json"), "utf8"),
-        await readFile(join(installRoot, "Stardew Valley.deps.json"), "utf8"),
-      );
-      assert.deepEqual(await fixture.coordinator.installationReader.readInstallationView(), "registered");
-    } finally {
-      await fixture.coordinator.close();
-      await fixture.broker.close();
-    }
-  });
-});
-
-test("a second click reports the loader as current and writes nothing", async () => {
-  await withWindowsPlatform(async () => {
-    const installParent = await canonicalTemporaryRoot("gamebuddy-one-click-current-");
-    temporaryRoots.push(installParent);
-    const installRoot = join(installParent, "Stardew Valley");
-    await mkdir(installRoot, { recursive: true });
-    await writeFile(join(installRoot, "Stardew Valley.exe"), "", "utf8");
-    await writeFile(join(installRoot, "Stardew Valley.deps.json"), '{"runtimeTarget":{}}\n', "utf8");
-    // A mod loader the player manages themselves: a one-click install must not replace it,
-    // because the loader in their folder is the one their game will run.
-    await writeFile(join(installRoot, "StardewModdingAPI.exe"), "player-managed-loader", "utf8");
-
-    const generationRoot = await smapiGenerationFixture();
-    const companionModTargets: string[] = [];
-    const fixture = await createFixture({
-      boundInstallation: { installRoot, smapi: true },
-      hostArtifactRoot: generationRoot,
-      overrides: {
-        companionModDeploy: async (target: string) => {
-          companionModTargets.push(target);
-          return "companion-mod-installed" as const;
-        },
-      },
-    });
-    try {
-      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
-      const result = await fixture.coordinator.activationOwner.installModLoader(
-        fixture.broker.issue("mod_loader_install"),
-        { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w" },
-      );
-      assert.deepEqual(result, {
-        apiVersion: 1,
-        status: "current",
-        companionMod: "companion-mod-installed",
-        steamLaunchOption: `"${join(installRoot, "StardewModdingAPI.exe")}" %command%`,
-      });
-      // The Mod is deployed even though the loader was left alone: a player-managed loader still loads
-      // `Mods/GameBuddy`, so refusing to touch the loader is not a reason to leave the folder without the
-      // Mod the game is supposed to load.
-      assert.deepEqual(companionModTargets, [installRoot]);
-      assert.equal(await readFile(join(installRoot, "StardewModdingAPI.exe"), "utf8"), "player-managed-loader");
-    } finally {
-      await fixture.coordinator.close();
-      await fixture.broker.close();
-    }
-  });
-});
-
-test("a generation carrying no verifiable payload refuses instead of installing part of one", async () => {
-  await withWindowsPlatform(async () => {
-    const installParent = await canonicalTemporaryRoot("gamebuddy-one-click-payload-");
-    temporaryRoots.push(installParent);
-    const installRoot = join(installParent, "Stardew Valley");
-    await mkdir(installRoot, { recursive: true });
-    await writeFile(join(installRoot, "Stardew Valley.exe"), "", "utf8");
-    await writeFile(join(installRoot, "Stardew Valley.deps.json"), '{"runtimeTarget":{}}\n', "utf8");
-
-    // A generation that carries no `native/smapi/` at all.
-    const emptyGenerationRoot = await mkdtemp(join(tmpdir(), "gamebuddy-empty-generation-"));
-    temporaryRoots.push(emptyGenerationRoot);
-    const fixture = await createFixture({
-      boundInstallation: { installRoot, smapi: false },
-      hostArtifactRoot: emptyGenerationRoot,
-    });
-    try {
-      await fixture.coordinator.activationOwner.activate(fixture.broker.issue());
-      const result = await fixture.coordinator.activationOwner.installModLoader(
-        fixture.broker.issue("mod_loader_install"),
-        { apiVersion: 1, idempotencyKey: "BCEiM0RVZneImaq7zN3u_w" },
-      );
-      assert.deepEqual(result, {
-        apiVersion: 1,
-        status: "mod_loader_payload_unavailable",
-        // No loader was written, so the Mod certainly is not in that folder. This is the fact, not a
-        // placeholder for "the Mod step was skipped".
-        companionMod: "companion-mod-smapi-not-installed",
-      });
-      // Nothing was written into the player's folder.
-      assert.equal((await probeStardewGameRoot(installRoot)).smapi, false);
-      assert.equal(await readFile(join(installRoot, "Stardew Valley.exe"), "utf8"), "");
-    } finally {
-      await fixture.coordinator.close();
-      await fixture.broker.close();
-    }
-  });
-});
-
-test("the mod-loader install acts only on the bound folder, never on one a caller names", async () => {
-  await withWindowsPlatform(async () => {
-    // The command schema is the boundary: it carries an idempotency key and nothing else,
-    // so there is no field through which a second, unauthenticated write target could
-    // arrive. A payload that named one is malformed, not a request to install elsewhere.
-    assert.deepEqual(
-      Object.keys(
-        (
-          GameBrowserContractV1.schemas.StardewModLoaderInstallCommandV1Schema as {
-            properties: Record<string, unknown>;
-          }
-        ).properties,
-      ).sort(),
-      ["apiVersion", "idempotencyKey"],
-    );
-    assert.equal(
-      GameBrowserValidatorsV1.StardewModLoaderInstallCommandV1Schema.Check({
-        apiVersion: 1,
-        idempotencyKey: "BCEiM0RVZneImaq7zN3u_w",
-        installRoot: "C:\\Games\\Stardew Valley",
-      }),
-      false,
-    );
-  });
-});
-
-/**
- * A generation root shaped like a published one: `native/smapi/` with a manifest, the
- * licence and a payload tree. The bytes are stand-ins - what a player's folder receives is
- * proven by the payload's own reader and by `check-smapi-payload.test.mjs` against the real
- * vendored archive - while this fixture proves the coordinator's use of it.
- */
-async function smapiGenerationFixture(): Promise<string> {
-  const { createHash } = await import("node:crypto");
-  const sha256 = (bytes: Buffer | string) => createHash("sha256").update(bytes).digest("hex");
-  const root = await mkdtemp(join(tmpdir(), "gamebuddy-smapi-generation-"));
-  temporaryRoots.push(root);
-  const payloadRoot = join(root, "native", "smapi");
-  const files: Array<{ path: string; size: number; sha256: string }> = [];
-  for (const path of ["StardewModdingAPI.exe", "StardewModdingAPI.dll", "smapi-internal/config.json"]) {
-    const bytes = Buffer.from(`payload:${path}\n`);
-    const destination = join(payloadRoot, "win-x64", ...path.split("/"));
-    await mkdir(dirname(destination), { recursive: true });
-    await writeFile(destination, bytes);
-    files.push({ path, size: bytes.length, sha256: sha256(bytes) });
-  }
-  const licenseText =
-    "GNU LESSER GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007\nhttps://github.com/Pathoschild/SMAPI\n";
-  await mkdir(payloadRoot, { recursive: true });
-  await writeFile(join(payloadRoot, "SMAPI-LICENSE.txt"), licenseText);
-  await writeFile(
-    join(payloadRoot, "payload-manifest.json"),
-    `${JSON.stringify(
-      {
-        schema: "gamebuddy-smapi-payload-manifest/v1",
-        version: "4.5.2",
-        sourceUrl: "https://github.com/Pathoschild/SMAPI/releases/download/4.5.2/SMAPI-4.5.2-installer.zip",
-        sourceArchiveSha256: "0".repeat(64),
-        sourceArchiveEntry: "internal/windows/install.dat",
-        license: { file: "SMAPI-LICENSE.txt", sha256: sha256(Buffer.from(licenseText)) },
-        root: "win-x64",
-        files,
-        playerOwnedFiles: ["smapi-internal/config.json"],
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  return root;
-}

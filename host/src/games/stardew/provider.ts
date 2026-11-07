@@ -129,7 +129,6 @@ export function createStardewGamePresentationProjection(
   const lifecycleActivationBindingSink = Object.freeze({
     ...coordinator.activationOwner,
     gameDiscovery: createStardewGameDiscoveryBinding(coordinator.activationOwner),
-    modLoaderInstall: coordinator.activationOwner.installModLoader.bind(coordinator.activationOwner),
   });
   return Object.freeze({
     gameProfile,

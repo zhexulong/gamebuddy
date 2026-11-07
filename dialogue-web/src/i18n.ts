@@ -910,28 +910,7 @@ const en = {
     "We found Stardew Valley, but there is no mod loader (SMAPI) in that folder. Install SMAPI, then find again — or choose a game folder that already has it.",
   // The one-click mod-loader install. Every string here is an outcome the Host actually
   // reports, and each names the player's own next step rather than a code.
-  gameModLoaderInstallAction: "Install SMAPI for me",
-  gameModLoaderInstallHint:
-    "GameBuddy copies the mod loader it ships into your game folder. Nothing else in that folder is touched.",
-  gameModLoaderInstallInstalled: "SMAPI is installed. Your game folder is ready.",
-  gameModLoaderInstallCurrent: "SMAPI was already in your game folder. Nothing was changed.",
-  gameModLoaderInstallGameMissing: "That folder no longer holds Stardew Valley. Choose your game folder again.",
-  gameModLoaderInstallConflict:
-    "That folder has files in the way that GameBuddy did not put there. Remove the old SMAPI files, or choose a clean game folder.",
-  gameModLoaderInstallDependenciesMissing:
-    "That game folder is incomplete: Stardew Valley's own dependency file is missing. Verify the game files in Steam or GOG, then try again.",
-  gameModLoaderInstallNotWritable:
-    "The game folder could not be written to. Close the game and try again, or check the folder's permissions.",
-  gameModLoaderInstallPayloadUnavailable:
-    "This build of GameBuddy does not carry the mod loader. Reinstall GameBuddy and try again.",
-  gameModLoaderInstallIncomplete: "The install did not finish. Nothing was left half-written; try again.",
   // The Steam launch option, with the one step a player has to do by hand in Steam itself.
-  gameSteamLaunchOptionTitle: "Make Steam launch the mod loader",
-  gameSteamLaunchOptionDetail:
-    "Steam has to start Stardew Valley through SMAPI, or the companion never joins. In Steam: right-click the game, Properties, Launch Options, and paste this. Game time is still tracked.",
-  gameSteamLaunchOptionCopy: "Copy launch option",
-  gameSteamLaunchOptionCopied: "Copied.",
-  gameSteamLaunchOptionCopyFailed: "Copy failed. Select the text and copy it yourself.",
   // Whether the companion Mod is in the player's game folder. A loader without it loads nothing,
   // so these are shown beside the loader outcome rather than being folded into it.
   gameCompanionModReady: "The companion Mod is in your game folder. Stardew Valley can load it now.",
@@ -971,6 +950,10 @@ const en = {
   gameInstallationError: "The installation search failed.",
   gameInstallationConfirm: "Confirm",
   gameInstallationChooseFolder: "Choose game folder",
+  gameModLoaderInstallRequired:
+    "This folder has Stardew Valley but no mod loader. Install SMAPI from smapi.io first: it is the loader the companion Mod runs under, and it belongs to its own project, so this app does not ship it.",
+  gameModLoaderInstallThenRetry:
+    "Once SMAPI is installed in that folder, choose Find again below and the companion Mod is set up automatically.",
   gameInstallationFindAgain: "Find again",
   // Where the scan found an installation, one sentence per source the discovery
   // session declares (`steam-registry | steam-vdf | known-location`,
@@ -1850,24 +1833,6 @@ const zh: Messages = {
   gameInstallationResultUnavailable: "无法读取游戏安装搜索结果。",
   gameInstallationModLoaderMissing:
     "已找到《星露谷物语》，但这个目录里没有模组加载器（SMAPI）。请先安装 SMAPI，再重新查找；也可以选择已经装有 SMAPI 的游戏文件夹。",
-  gameModLoaderInstallAction: "帮我安装 SMAPI",
-  gameModLoaderInstallHint: "GameBuddy 会把自带的模组加载器复制到你的游戏目录，不会改动该目录里的其他文件。",
-  gameModLoaderInstallInstalled: "SMAPI 已安装，你的游戏目录已经就绪。",
-  gameModLoaderInstallCurrent: "你的游戏目录里已经有 SMAPI，没有做任何改动。",
-  gameModLoaderInstallGameMissing: "这个目录里已经找不到《星露谷物语》了。请重新选择游戏文件夹。",
-  gameModLoaderInstallConflict:
-    "这个目录里有 GameBuddy 没有写过的文件挡着。请先删除旧的 SMAPI 文件，或者换一个干净的游戏目录。",
-  gameModLoaderInstallDependenciesMissing:
-    "这个游戏目录不完整：缺少《星露谷物语》自己的依赖清单文件。请在 Steam 或 GOG 里验证游戏文件后重试。",
-  gameModLoaderInstallNotWritable: "无法写入游戏目录。请先关闭游戏再重试，或检查该目录的权限。",
-  gameModLoaderInstallPayloadUnavailable: "当前这个 GameBuddy 版本里没有模组加载器。请重新安装 GameBuddy 后再试。",
-  gameModLoaderInstallIncomplete: "安装没有完成。没有留下写了一半的文件，请再试一次。",
-  gameSteamLaunchOptionTitle: "让 Steam 通过模组加载器启动",
-  gameSteamLaunchOptionDetail:
-    "Steam 必须通过 SMAPI 启动《星露谷物语》，否则伴侣无法加入。在 Steam 里右键游戏 → 属性 → 启动选项，把下面的内容粘贴进去。游戏时长仍会照常记录。",
-  gameSteamLaunchOptionCopy: "复制启动选项",
-  gameSteamLaunchOptionCopied: "已复制。",
-  gameSteamLaunchOptionCopyFailed: "复制失败。请手动选中文本并复制。",
   gameCompanionModReady: "伴侣 Mod 已在游戏目录中，星露谷现在可以加载它了。",
   gameCompanionModLoaderMissing: "伴侣 Mod 需要先安装 SMAPI。安装 SMAPI 后再试。",
   gameCompanionModModsDirectoryMissing: "该游戏目录没有 Mods 文件夹。先用 SMAPI 启动一次游戏，它会自动创建，然后重试。",
@@ -1888,6 +1853,9 @@ const zh: Messages = {
   gameInstallationError: "搜索游戏安装位置失败。",
   gameInstallationConfirm: "确认",
   gameInstallationChooseFolder: "选择游戏文件夹",
+  gameModLoaderInstallRequired:
+    "这个文件夹里有《星露谷物语》，但没有装模组加载器。请先到 smapi.io 安装 SMAPI：伴侣 Mod 运行在它之上，而它属于它自己的项目，本应用不附带分发。",
+  gameModLoaderInstallThenRetry: "SMAPI 装进该文件夹后，点下面的“重新查找”，伴侣 Mod 会自动配置好。",
   gameInstallationFindAgain: "重新查找",
   gameInstallationSourceSteamRegistry: "通过 Steam 找到",
   gameInstallationSourceSteamVdf: "在 Steam 库文件夹中找到",

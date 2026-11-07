@@ -30,9 +30,6 @@ async function publishFixture({ generationLeak = false } = {}) {
     // The mod-loader payload a player's game folder is brought to by one click, and the licence
     // its LGPL terms require beside it. The publisher refuses a generation without them, so the
     // fixture has to carry what a real one carries.
-    [join(generationRoot, "native", "smapi", "win-x64", "StardewModdingAPI.exe"), "loader"],
-    [join(generationRoot, "native", "smapi", "payload-manifest.json"), "{}\n"],
-    [join(generationRoot, "native", "smapi", "SMAPI-LICENSE.txt"), "GNU LESSER GENERAL PUBLIC LICENSE\n"],
     [join(generationRoot, "node_modules", "typebox", "package.json"), JSON.stringify({ name: "typebox" })],
   ]);
   if (generationLeak) files.set(join(generationRoot, "leak.js"), `const at = ${JSON.stringify(repositoryRoot)};\n`);
@@ -82,9 +79,6 @@ test("a published generation plus the launcher bundle seals the payload GameBudd
       desktopBundle: "GameBuddy.Desktop.exe",
       // The one-click mod-loader install reads these three by name, so the package that ships
       // them is what makes the button work at all.
-      smapiLoader: `generations/${GENERATION}/native/smapi/win-x64/StardewModdingAPI.exe`,
-      smapiManifest: `generations/${GENERATION}/native/smapi/payload-manifest.json`,
-      smapiLicense: `generations/${GENERATION}/native/smapi/SMAPI-LICENSE.txt`,
     });
     assert.equal(result.static.generation.verdict.ok, true);
     assert.equal(result.static.launcher.verdict.ok, true);

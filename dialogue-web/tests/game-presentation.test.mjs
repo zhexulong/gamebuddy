@@ -4,11 +4,6 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { messages } from "../src/i18n.ts";
-// The Host's own contract module: the same file `contract-mirror-keys-gate` reads. The companion-Mod
-// outcomes are derived from it here, so a new one cannot reach a player as a raw code.
-import {
-  STARDEW_COMPANION_MOD_OUTCOMES,
-} from "../../host/src/game-browser-contract/index.ts";
 import {
   authorityLabel,
   capabilitiesLabel,
@@ -22,8 +17,8 @@ import {
   instanceLabel,
   companionModIsReady,
   companionModLabel,
-  modLoaderInstallLabel,
   outcomeLabel,
+  COMPANION_MOD_OUTCOMES,
 } from "../src/game-presentation.ts";
 
 /**
@@ -146,7 +141,7 @@ test("the Game settings section says when the world's name is chosen, in both la
 test("every companion-Mod outcome renders a localized player outcome, derived from the Host contract", () => {
   // Derived from the contract's own list - the same array the schema's union is built from. A
   // hand-written list here would agree today and drift the first time the Host adds an outcome.
-  const declared = [...STARDEW_COMPANION_MOD_OUTCOMES];
+  const declared = [...COMPANION_MOD_OUTCOMES];
   assert.ok(declared.length > 0, "the contract declares no companionMod outcomes");
 
   const READY = ["companion-mod-installed", "companion-mod-current", "companion-mod-updated"];
@@ -435,36 +430,3 @@ test("the capability summary says how many capabilities are published, or says i
   assert.equal(capabilitiesLabel(messages("zh-CN"), { available: true, count: 7 }), "7 项可用");
 });
 
-test("every mod-loader install outcome renders a localized player outcome, never the raw code", () => {
-  // The set is restated here so a new Host outcome cannot reach a player as a code.
-  const MOD_LOADER_INSTALL_STATUSES = [
-    "installed",
-    "current",
-    "game_installation_not_found",
-    "installation_conflict",
-    "game_dependencies_missing",
-    "mods_directory_not_writable",
-    "mod_loader_payload_unavailable",
-    "mod_loader_install_incomplete",
-  ];
-  for (const locale of locales) {
-    const labels = messages(locale);
-    const rendered = new Set();
-    for (const status of MOD_LOADER_INSTALL_STATUSES) {
-      const value = modLoaderInstallLabel(labels, status);
-      assert.ok(typeof value === "string" && value.length > 0, `${locale} ${status} is empty`);
-      assert.notEqual(value, status, `${locale} ${status} is rendered raw`);
-      assert.ok(!value.includes("_"), `${locale} ${status} still reads like an enum`);
-      // Every outcome must say something distinguishable: a player reading two different
-      // failures as one sentence learns nothing about which one they are in.
-      assert.ok(!rendered.has(value), `${locale} ${status} duplicates another outcome's sentence`);
-      rendered.add(value);
-    }
-    // A write and a no-op are different facts and must not read as the same success.
-    assert.notEqual(
-      modLoaderInstallLabel(labels, "installed"),
-      modLoaderInstallLabel(labels, "current"),
-      `${locale} claims a write it may not have made`,
-    );
-  }
-});

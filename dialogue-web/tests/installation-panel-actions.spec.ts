@@ -276,7 +276,7 @@ const SCENARIOS: readonly Scenario[] = [
     confirm: body({ apiVersion: 1, status: "mod_loader_missing" }),
     smapi: body({ apiVersion: 1, status: "installed", steamLaunchOption: '"D:\\Games\\Stardew Valley\\StardewModdingAPI.exe" %command%' }),
     afterRegistration: { apiVersion: 1, candidates: [], diagnostics: ["no-candidates"] },
-    clicks: [labels.gameInstallationConfirm, labels.gameModLoaderInstallAction],
+    clicks: [labels.gameInstallationConfirm],
   },
 ];
 
@@ -407,8 +407,8 @@ const MEASURE = () => {
   return {
     state: node.getAttribute("data-state"),
     rows: node.querySelectorAll(".installation-candidate").length,
-    hasSteamCard: node.querySelector('[data-testid="game-steam-launch-option"]') !== null,
-    hasModLoaderCard: node.querySelector('[data-testid="game-mod-loader-install"]') !== null,
+    hasGuidance: node.querySelector('[data-testid="game-mod-loader-guidance"]') !== null,
+    hasInstallCard: node.querySelector('[data-testid="game-mod-loader-install"]') !== null,
     panel: { top: round(rect.top), height: round(rect.height), width: round(rect.width) },
     client: { top: round(client.top), bottom: round(client.bottom), height: node.clientHeight },
     scrollHeight: node.scrollHeight,
@@ -427,8 +427,8 @@ async function measurePanel(page: Page) {
   const reading = (await page.evaluate(MEASURE)) as unknown as {
     state: string | null;
     rows: number;
-    hasSteamCard: boolean;
-    hasModLoaderCard: boolean;
+    hasGuidance: boolean;
+    hasInstallCard: boolean;
     panel: { top: number; height: number; width: number };
     client: { top: number; bottom: number; height: number };
     scrollHeight: number;
@@ -461,11 +461,9 @@ async function measurePanel(page: Page) {
  * Written as a multiset rather than a count so a control that disappears and one
  * that appears both fail, and the message names which.
  */
-function expectedControlNames(reading: { rows: number; hasSteamCard: boolean; hasModLoaderCard: boolean }): string[] {
+function expectedControlNames(reading: { rows: number; hasGuidance: boolean; hasInstallCard: boolean }): string[] {
   return [
     ...Array.from({ length: reading.rows }, () => labels.gameInstallationConfirm),
-    ...(reading.hasModLoaderCard ? [labels.gameModLoaderInstallAction] : []),
-    ...(reading.hasSteamCard ? [labels.gameSteamLaunchOptionCopy] : []),
     labels.gameInstallationChooseFolder,
     labels.gameInstallationFindAgain,
     labels.gameResumeCancel,
@@ -525,8 +523,6 @@ function judgeReading(
   const expectedPanelActions = [
     labels.gameInstallationChooseFolder,
     labels.gameInstallationFindAgain,
-    ...(reading.hasModLoaderCard ? [labels.gameModLoaderInstallAction] : []),
-    ...(reading.hasSteamCard ? [labels.gameSteamLaunchOptionCopy] : []),
     labels.gameResumeCancel,
   ].sort();
   if (JSON.stringify(namedPanelActions) !== JSON.stringify(expectedPanelActions))
@@ -820,6 +816,9 @@ test.describe("installation panel: its actions are never behind its own scroll",
 
     // The step before any other: the panel that registers the installation is on the surface.
     expect(reading.installation, "the installation panel is laid out").not.toBeNull();
+// The install card is gone from the product and must not come back: SMAPI belongs to its own project, so this
+// panel guides the player to install it rather than offering to write it into their game folder.
+expect(reading.hasInstallCard, "the install card is not offered").toBe(false);
     expect(reading.guideTop, "the guide is laid out").not.toBeNull();
 
     // 1. The first viewport holds at least one control that can act, and it is the

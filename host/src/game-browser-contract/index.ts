@@ -1,4 +1,4 @@
-import { type Static, type TLiteral, type TSchema, Type } from "typebox";
+import { type Static, type TSchema, Type } from "typebox";
 import { Compile, type Validator } from "typebox/compile";
 import { Format } from "typebox/format";
 
@@ -595,95 +595,6 @@ export const StardewPlayerSettingsReadCommandV1Schema = strictObject({
   apiVersion: ApiVersion,
 });
 
-// ─── One-click mod-loader install ───────────────────────────────────────────
-
-/**
- * The mod loader this product can install into the player's own game folder.
- *
- * It is a command with no fields, exactly like the other lifecycle commands: which folder
- * it writes to is the one the Host has bound, and a body here would be a second,
- * unauthenticated way to name a directory to write into.
- */
-export const StardewModLoaderInstallCommandV1Schema = strictObject({
-  apiVersion: ApiVersion,
-  idempotencyKey: IdempotencyKey,
-});
-
-/**
- * What one click did, in the vocabulary the player can act on.
- *
- * `installed` and `current` are the two success shapes and they are kept apart because a
- * re-click must not claim to have written anything: `current` means a mod loader was
- * already in the folder and nothing was touched. The four failures are the bounded causes
- * `deploySmapiPayload` reports; each names a different player action, so folding them into
- * one `unavailable` would tell the player nothing about which one they are in.
- */
-/**
- * Every outcome the one-click mod-loader install can report for the companion Mod, in one place.
- *
- * The schema is built from this array and the web mirror and the presentation vocabulary test both derive
- * from it, so the list cannot exist in two spellings: a new outcome is a compile error until its label and
- * its ready/not-ready classification are written.
- */
-export const STARDEW_COMPANION_MOD_OUTCOMES = [
-  "companion-mod-installed",
-  "companion-mod-current",
-  "companion-mod-updated",
-  "companion-mod-game-not-found",
-  "companion-mod-choice-required",
-  "companion-mod-unavailable",
-  "companion-mod-game-installation-not-found",
-  "companion-mod-smapi-not-installed",
-  "companion-mod-mods-directory-missing",
-  "companion-mod-mods-directory-not-writable",
-  "companion-mod-existing-mod-version-requires-consent",
-  "companion-mod-foreign-mod-present",
-  "companion-mod-installed-mod-manifest-unreadable",
-  "companion-mod-package-invalid",
-  "companion-mod-deployment-incomplete",
-] as const;
-
-export const StardewModLoaderInstallResultV1Schema = strictObject({
-  apiVersion: ApiVersion,
-  status: Type.Union([
-    Type.Literal("installed"),
-    Type.Literal("current"),
-    Type.Literal("game_installation_not_found"),
-    Type.Literal("installation_conflict"),
-    Type.Literal("game_dependencies_missing"),
-    Type.Literal("mods_directory_not_writable"),
-    Type.Literal("mod_loader_payload_unavailable"),
-    Type.Literal("mod_loader_install_incomplete"),
-  ]),
-  /**
-   * The Steam launch option that makes Steam start the game through the loader, present
-   * exactly on the two success outcomes.
-   *
-   * It carries the loader's absolute path, which is a deliberate exception to the rule that
-   * paths never cross this boundary - and the exception is bounded by who already knows the
-   * facts. Discovery redacts paths because a player who has not chosen a folder must not
-   * receive a map of their disk; this value exists only after the player picked that exact
-   * folder themselves and this session installed a file into it. Without the real path the
-   * "copy this into Steam" card would be a sentence the player still has to assemble by hand,
-   * which is the round trip the whole flow removes.
-   */
-  steamLaunchOption: Type.Optional(Type.String({ minLength: 1, maxLength: 4096 })),
-  /**
-   * Whether the companion Mod itself is now in the player's `Mods/GameBuddy`.
-   *
-   * A loader without the Mod loads nothing and says nothing: the click promised a playable
-   * folder, so the answer is reported beside the loader status rather than inferred from it.
-   * The vocabulary is the launcher's own (`CompanionGameModDeploymentOutcome`), because a
-   * player must not see two spellings of "the Mod is not there" depending on which step said it.
-   */
-  companionMod: Type.Union(
-    STARDEW_COMPANION_MOD_OUTCOMES.map((outcome) => Type.Literal(outcome)) as unknown as [
-      TLiteral<(typeof STARDEW_COMPANION_MOD_OUTCOMES)[number]>,
-      ...TLiteral<(typeof STARDEW_COMPANION_MOD_OUTCOMES)[number]>[],
-    ],
-  ),
-});
-
 // ─── Problem schema ─────────────────────────────────────────────────────────
 
 const GameProblemV1Schema = strictObject({
@@ -709,12 +620,6 @@ export const GAME_BROWSER_OPERATION_IDS_V1 = Object.freeze([
   /** Reserved: no route serves it; the composed state read publishes the prerequisites projection. */
   "game.prerequisites.read",
   "game.prerequisites.setup",
-  /**
-   * The one-click mod-loader install. It is a prerequisite operation because it writes a
-   * prerequisite: without a loader in the game folder the Companion Mod cannot load, and
-   * `game.prerequisites.setup` cannot make it appear.
-   */
-  "game.prerequisites.smapi.install",
   "game.state.read",
   "game.launch",
   /** Reserved: no route serves it; the Stardew profile does not list it in its operationIds. */
@@ -908,8 +813,6 @@ export const GameBrowserContractV1 = Object.freeze({
     StardewPlayerSettingsV1Schema,
     StardewPlayerSettingsReadCommandV1Schema,
     StardewPlayerSettingsCommandV1Schema,
-    StardewModLoaderInstallCommandV1Schema,
-    StardewModLoaderInstallResultV1Schema,
     GameProblemV1Schema,
   }),
 });
@@ -958,8 +861,6 @@ export type StardewCabinConfirmResultV1 = Static<typeof StardewCabinConfirmResul
 export type StardewPlayerSettingsV1 = Static<typeof StardewPlayerSettingsV1Schema>;
 export type StardewPlayerSettingsReadCommandV1 = Static<typeof StardewPlayerSettingsReadCommandV1Schema>;
 export type StardewPlayerSettingsCommandV1 = Static<typeof StardewPlayerSettingsCommandV1Schema>;
-export type StardewModLoaderInstallCommandV1 = Static<typeof StardewModLoaderInstallCommandV1Schema>;
-export type StardewModLoaderInstallResultV1 = Static<typeof StardewModLoaderInstallResultV1Schema>;
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 

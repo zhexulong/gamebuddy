@@ -117,35 +117,6 @@ const STARDEW_MOD_PACKAGE = Object.freeze({
   ],
   manifest: "manifest.json",
 });
-/**
- * The SMAPI payload every generation ships, taken verbatim from `assets/smapi/`.
- *
- * The manifest beside those bytes is the authority: it names the complete file set and
- * each file's digest, so the packager copies exactly what it describes and the generation's
- * reader re-verifies the same facts on the player's machine. `destination` is where the
- * generation carries it; nothing here decides where it is installed.
- */
-const SMAPI_PAYLOAD = Object.freeze({
-  kind: "verified_smapi_payload",
-  destination: "native/smapi",
-  manifest: "payload-manifest.json",
-  license: "SMAPI-LICENSE.txt",
-  /**
-   * The notices for the MIT and BSD-2-Clause libraries the SMAPI payload bundles.
-   *
-   * SMAPI's own licence covers SMAPI; it does not cover the eleven libraries shipped inside it, and those
-   * licences require their notice to travel with the binary. So the payload carries both documents, and the
-   * descriptor cannot name one without the other.
-   */
-  notices: "THIRD-PARTY-NOTICES.txt",
-});
-
-/**
- * The payload descriptor, exported so the gate compares the artifact config against this constant rather
- * than a second hand-written copy of it. A copy agrees today and drifts the first time a document is
- * added - which is exactly what happened when the third-party notices were introduced.
- */
-export const smapiPayloadDescriptorForTesting = SMAPI_PAYLOAD;
 /** The fixed Voice Gateway artifact the release publisher stages from the
  * `voice-gateway/.dist` build output into every voice-enabled generation. The
  * shared fixture publisher copies one entry file and one protocol file into
@@ -459,12 +430,6 @@ function validateStardewModPackage(value) {
     throw new Error("invalid_stardew_mod_package_descriptor");
   return Object.freeze({ ...STARDEW_MOD_PACKAGE, entries: Object.freeze([...STARDEW_MOD_PACKAGE.entries]) });
 }
-function validateSmapiPayload(value) {
-  if (!exactKeys(value, ["kind", "destination", "manifest", "license", "notices"])
-    || Object.keys(SMAPI_PAYLOAD).some((key) => value[key] !== SMAPI_PAYLOAD[key]))
-    throw new Error("invalid_smapi_payload_descriptor");
-  return Object.freeze({ ...SMAPI_PAYLOAD });
-}
 function validateVoiceGatewayDescriptor(value) {
   if (!exactKeys(value, ["kind", "entry", "protocol"])
     || value.kind !== VOICE_GATEWAY.kind
@@ -607,7 +572,7 @@ export async function readArtifactConfigFromText(text) {
 }
 
 function validateArtifactConfig(config) {
-  const allowedKeys = ["schema", "entryRoots", "verificationRoots", "resources", "bundledRuntime", "browserArtifact", "windowsReparseInspector", "windowsStaleLockReclaimer", "windowsStardewFolderPicker", "windowsBootstrapGuardian", "stardewModPackage", "smapiPayload", "voiceGateway", "externalRuntimeClosure"];
+  const allowedKeys = ["schema", "entryRoots", "verificationRoots", "resources", "bundledRuntime", "browserArtifact", "windowsReparseInspector", "windowsStaleLockReclaimer", "windowsStardewFolderPicker", "windowsBootstrapGuardian", "stardewModPackage", "voiceGateway", "externalRuntimeClosure"];
   if (config === null || typeof config !== "object" || Array.isArray(config)
     || config.schema !== "gamebuddy-host-production-artifact-config/v3"
     || Object.keys(config).some((key) => !allowedKeys.includes(key))
@@ -630,7 +595,6 @@ function validateArtifactConfig(config) {
   if (config.windowsStardewFolderPicker !== undefined) config.windowsStardewFolderPicker = validateWindowsStardewFolderPicker(config.windowsStardewFolderPicker);
   if (config.windowsBootstrapGuardian !== undefined) config.windowsBootstrapGuardian = validateWindowsBootstrapGuardian(config.windowsBootstrapGuardian);
   if (config.stardewModPackage !== undefined) config.stardewModPackage = validateStardewModPackage(config.stardewModPackage);
-  if (config.smapiPayload !== undefined) config.smapiPayload = validateSmapiPayload(config.smapiPayload);
   if (config.voiceGateway !== undefined) config.voiceGateway = validateVoiceGatewayDescriptor(config.voiceGateway);
   config.externalRuntimeClosure = validateExternalClosure(config.externalRuntimeClosure);
   return config;
@@ -838,106 +802,6 @@ async function verifiedWindowsStardewFolderPickerOrigins({ stagingRoot, descript
   const verified = await verifyWindowsStardewFolderPickerPair({ root: stagingRoot, descriptor });
   const origin = windowsStardewFolderPickerOrigin(descriptor, verified.helperSha256);
   return new Map([...[descriptor.helper, descriptor.manifest].map((name) => [`${descriptor.destination}/${name}`, origin])]);
-}
-/**
- * Stages the vendored SMAPI payload into the generation and returns its origin facts.
- *
- * `assets/smapi/` is the payload's authority: its manifest names the complete file set
- * and every digest, and this step copies exactly that set into `native/smapi/` - the
- * destination the generation's own reader verifies. A byte outside the manifest, or a
- * payload whose manifest no longer matches its files, fails the publish here instead of
- * on a player's machine.
- */
-export async function ensureSmapiPayload({ stagingRoot, descriptor, repositoryRoot: overrideRepositoryRoot }) {
-  const repositoryRoot = overrideRepositoryRoot ?? resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-  const sourceRoot = resolve(repositoryRoot, "assets", "smapi");
-  const manifestPath = resolve(sourceRoot, descriptor.manifest);
-  await regular(manifestPath, "smapi_payload_manifest");
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  if (manifest?.schema !== "gamebuddy-smapi-payload-manifest/v1" || typeof manifest.root !== "string" || !Array.isArray(manifest.files))
-    throw new Error("smapi_payload_manifest_invalid");
-  const destinationRoot = resolve(stagingRoot, descriptor.destination.replaceAll("/", sep));
-  const origins = new Map();
-  const licenseSource = resolve(sourceRoot, descriptor.license);
-  await regular(licenseSource, "smapi_payload_license");
-  const licenseDestination = resolve(destinationRoot, descriptor.license);
-  await mkdir(dirname(licenseDestination), { recursive: true });
-  await copyFile(licenseSource, licenseDestination);
-  const licenseBytes = await readFile(licenseDestination);
-  if (!licenseBytes.includes(Buffer.from("GNU LESSER GENERAL PUBLIC LICENSE")))
-    throw new Error("smapi_payload_license_missing");
-  // The liabilities the payload carries are not only SMAPI's: it bundles MIT and BSD-2-Clause libraries, and
-  // both of those require the copyright notice to travel with the binary. A generation without them is a
-  // generation that redistributes those libraries without permission, so their absence refuses the publish.
-  if (typeof descriptor.notices === "string") {
-    const noticesSource = resolve(sourceRoot, descriptor.notices);
-    await regular(noticesSource, "smapi_payload_notices");
-    const noticesDestination = resolve(destinationRoot, descriptor.notices);
-    await mkdir(dirname(noticesDestination), { recursive: true });
-    await copyFile(noticesSource, noticesDestination);
-    const noticesBytes = await readFile(noticesDestination);
-    for (const required of ["MIT License", "BSD 2-Clause License"]) {
-      if (!noticesBytes.includes(Buffer.from(required))) throw new Error("smapi_payload_notices_incomplete");
-    }
-    origins.set(
-      `${descriptor.destination}/${descriptor.notices}`,
-      Object.freeze({ kind: descriptor.kind, file: descriptor.notices, sha256: digest(noticesBytes) }),
-    );
-  }
-  origins.set(`${descriptor.destination}/${descriptor.license}`, Object.freeze({ kind: descriptor.kind, file: descriptor.license, sha256: digest(licenseBytes) }));
-  // The generation's manifest is the same document the source carries, so the payload a
-  // player's machine reads describes the bytes a publisher copied.
-  const manifestDestination = resolve(destinationRoot, descriptor.manifest);
-  await copyFile(manifestPath, manifestDestination);
-  origins.set(`${descriptor.destination}/${descriptor.manifest}`, Object.freeze({ kind: descriptor.kind, file: descriptor.manifest, sha256: digest(await readFile(manifestDestination)) }));
-  const payloadSourceRoot = resolve(sourceRoot, manifest.root);
-  for (const file of manifest.files) {
-    if (typeof file?.path !== "string" || typeof file.sha256 !== "string") throw new Error("smapi_payload_manifest_invalid");
-    const source = resolve(payloadSourceRoot, file.path);
-    const destination = resolve(destinationRoot, manifest.root, file.path);
-    if (!inside(payloadSourceRoot, source) || !inside(destinationRoot, destination)) throw new Error("smapi_payload_path_forbidden");
-    await mkdir(dirname(destination), { recursive: true });
-    await copyFile(source, destination);
-    const bytes = await readFile(destination);
-    if (bytes.length !== file.size || digest(bytes) !== file.sha256) throw new Error("smapi_payload_digest_mismatch");
-    origins.set(`${descriptor.destination}/${manifest.root}/${file.path}`, Object.freeze({ kind: descriptor.kind, file: `${manifest.root}/${file.path}`, sha256: file.sha256 }));
-  }
-  return origins;
-}
-/**
- * Re-verifies the SMAPI payload already staged into a generation and returns its origin
- * facts. This is the recheck side of `ensureSmapiPayload`: it reads the staged manifest,
- * not the repository's copy, so what is verified is the generation a player will install
- * from rather than the tree that produced it.
- */
-async function verifiedSmapiPayloadOrigins({ stagingRoot, descriptor }) {
-  const destinationRoot = resolve(stagingRoot, descriptor.destination.replaceAll("/", sep));
-  await safeAncestors(stagingRoot, destinationRoot, "smapi_payload_destination");
-  await directory(destinationRoot, "smapi_payload_destination");
-  const manifestPath = resolve(destinationRoot, descriptor.manifest);
-  await regular(manifestPath, "smapi_payload_manifest");
-  const manifestBytes = await readFile(manifestPath);
-  const manifest = JSON.parse(manifestBytes.toString("utf8"));
-  if (manifest?.schema !== "gamebuddy-smapi-payload-manifest/v1" || typeof manifest.root !== "string" || !Array.isArray(manifest.files))
-    throw new Error("smapi_payload_manifest_invalid");
-  const origins = new Map();
-  origins.set(`${descriptor.destination}/${descriptor.manifest}`, Object.freeze({ kind: descriptor.kind, file: descriptor.manifest, sha256: digest(manifestBytes) }));
-  const licensePath = resolve(destinationRoot, descriptor.license);
-  await regular(licensePath, "smapi_payload_license");
-  const licenseBytes = await readFile(licensePath);
-  if (!licenseBytes.includes(Buffer.from("GNU LESSER GENERAL PUBLIC LICENSE"))) throw new Error("smapi_payload_license_missing");
-  origins.set(`${descriptor.destination}/${descriptor.license}`, Object.freeze({ kind: descriptor.kind, file: descriptor.license, sha256: digest(licenseBytes) }));
-  for (const file of manifest.files) {
-    if (typeof file?.path !== "string" || typeof file.sha256 !== "string") throw new Error("smapi_payload_manifest_invalid");
-    const relativePath = `${manifest.root}/${file.path}`;
-    const path = resolve(destinationRoot, relativePath.replaceAll("/", sep));
-    if (!inside(destinationRoot, path)) throw new Error("smapi_payload_path_forbidden");
-    await safeAncestors(destinationRoot, path, "smapi_payload_file");
-    await regular(path, "smapi_payload_file");
-    if (digest(await readFile(path)) !== file.sha256) throw new Error(`smapi_payload_digest_mismatch:${relativePath}`);
-    origins.set(`${descriptor.destination}/${relativePath}`, Object.freeze({ kind: descriptor.kind, file: relativePath, sha256: file.sha256 }));
-  }
-  return origins;
 }
 async function verifiedStardewModPackageOrigins({ stagingRoot, descriptor }) {
   const destinationRoot = resolve(stagingRoot, descriptor.destination.replaceAll("/", sep));
@@ -1564,9 +1428,6 @@ async function publishProductionArtifactWithRuntimeCopier({ hostRoot, emittedRoo
       await ensureStardewModPackage({ stagingRoot, descriptor: config.stardewModPackage });
       for (const [path, origin] of await verifiedStardewModPackageOrigins({ stagingRoot, descriptor: config.stardewModPackage })) origins.set(path, origin);
     }
-    if (config.smapiPayload !== undefined) {
-      for (const [path, origin] of await ensureSmapiPayload({ stagingRoot, descriptor: config.smapiPayload })) origins.set(path, origin);
-    }
     if (config.voiceGateway !== undefined) {
       for (const [path, origin] of await ensureVoiceGateway({
         stagingRoot,
@@ -1701,9 +1562,6 @@ export async function assertCompleteProductionArtifact({ hostRoot, outputRoot })
   if (config.stardewModPackage !== undefined) {
     for (const [path, origin] of await verifiedStardewModPackageOrigins({ stagingRoot: artifactRoot, descriptor: config.stardewModPackage })) origins.set(path, origin);
   }
-  if (config.smapiPayload !== undefined) {
-    for (const [path, origin] of await verifiedSmapiPayloadOrigins({ stagingRoot: artifactRoot, descriptor: config.smapiPayload })) origins.set(path, origin);
-  }
   if (config.voiceGateway !== undefined) {
     for (const [path, origin] of await verifiedVoiceGatewayOrigins({ stagingRoot: artifactRoot, descriptor: config.voiceGateway, expectedInventoryDigest: manifest.digest })) origins.set(path, origin);
   }
@@ -1806,9 +1664,6 @@ export async function recheckProductionEntry({ hostRoot, selected }) {
   }
   if (config.stardewModPackage !== undefined) {
     for (const [path, origin] of await verifiedStardewModPackageOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.stardewModPackage })) origins.set(path, origin);
-  }
-  if (config.smapiPayload !== undefined) {
-    for (const [path, origin] of await verifiedSmapiPayloadOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.smapiPayload })) origins.set(path, origin);
   }
   if (config.voiceGateway !== undefined) {
     for (const [path, origin] of await verifiedVoiceGatewayOrigins({ stagingRoot: selected.artifactRoot, descriptor: config.voiceGateway, expectedInventoryDigest: manifest.digest })) origins.set(path, origin);

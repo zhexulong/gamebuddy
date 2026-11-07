@@ -1,5 +1,5 @@
 import type { GameBrowserStateV1 } from "./composed-reference-game-browser-api";
-import type { StardewModLoaderInstallResultV1 } from "./composed-reference-game-browser-api";
+import type { StardewInstallationMutationV1 } from "./composed-reference-game-browser-api";
 import type { Messages } from "./i18n";
 
 /**
@@ -423,35 +423,29 @@ export function deriveCapabilityBoard(labels: Messages, projection: GameProjecti
 }
 
 /**
- * The one-click mod-loader install outcome, as player text.
+ * Every outcome the companion-Mod deployment can report, in one place.
  *
- * Exhaustive over the Host's frozen set so a new outcome cannot silently render as nothing:
- * `installed` and `current` are kept apart because claiming a write that did not happen is
- * the defect this wording exists to avoid, and each failure names the player's own next step
- * rather than the code the Host minted.
+ * This is the launcher's own vocabulary (`CompanionGameModDeploymentOutcome`). It is a runtime array because a
+ * test cannot enumerate a type, and it is declared once so the label function, the ready/not-ready split and the
+ * exhaustiveness test all derive from the same list instead of three copies of it.
  */
-export function modLoaderInstallLabel(labels: Messages, status: StardewModLoaderInstallResultV1["status"]): string {
-  switch (status) {
-    case "installed":
-      return labels.gameModLoaderInstallInstalled;
-    case "current":
-      return labels.gameModLoaderInstallCurrent;
-    case "game_installation_not_found":
-      return labels.gameModLoaderInstallGameMissing;
-    case "installation_conflict":
-      return labels.gameModLoaderInstallConflict;
-    case "game_dependencies_missing":
-      return labels.gameModLoaderInstallDependenciesMissing;
-    case "mods_directory_not_writable":
-      return labels.gameModLoaderInstallNotWritable;
-    case "mod_loader_payload_unavailable":
-      return labels.gameModLoaderInstallPayloadUnavailable;
-    case "mod_loader_install_incomplete":
-      return labels.gameModLoaderInstallIncomplete;
-    default:
-      return exhaustive(status);
-  }
-}
+export const COMPANION_MOD_OUTCOMES = [
+  "companion-mod-installed",
+  "companion-mod-current",
+  "companion-mod-updated",
+  "companion-mod-game-not-found",
+  "companion-mod-choice-required",
+  "companion-mod-unavailable",
+  "companion-mod-game-installation-not-found",
+  "companion-mod-smapi-not-installed",
+  "companion-mod-mods-directory-missing",
+  "companion-mod-mods-directory-not-writable",
+  "companion-mod-existing-mod-version-requires-consent",
+  "companion-mod-foreign-mod-present",
+  "companion-mod-installed-mod-manifest-unreadable",
+  "companion-mod-package-invalid",
+  "companion-mod-deployment-incomplete",
+] as const;
 
 /**
  * Whether the companion Mod is actually in the player's `Mods/GameBuddy` after an install.
@@ -460,7 +454,7 @@ export function modLoaderInstallLabel(labels: Messages, status: StardewModLoader
  * one means the folder is loadable but the Mod is not, which is a different thing to tell a player
  * than "ready". Exhaustive over the vocabulary so a new outcome cannot quietly read as success.
  */
-export function companionModIsReady(outcome: StardewModLoaderInstallResultV1["companionMod"]): boolean {
+export function companionModIsReady(outcome: NonNullable<StardewInstallationMutationV1["companionMod"]>): boolean {
   switch (outcome) {
     case "companion-mod-installed":
     case "companion-mod-current":
@@ -494,7 +488,10 @@ export function companionModIsReady(outcome: StardewModLoaderInstallResultV1["co
  * about it, because "SMAPI installed" followed by silence is the failure this wording exists to
  * prevent.
  */
-export function companionModLabel(labels: Messages, outcome: StardewModLoaderInstallResultV1["companionMod"]): string {
+export function companionModLabel(
+  labels: Messages,
+  outcome: NonNullable<StardewInstallationMutationV1["companionMod"]>,
+): string {
   switch (outcome) {
     case "companion-mod-installed":
     case "companion-mod-updated":
