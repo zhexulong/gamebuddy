@@ -578,6 +578,41 @@ test("game.resume names the durable session it reconnects, and no other shape of
   }
 });
 
+test("game.resume carries no launch fact, in its command or in its result", () => {
+  // Recursive read of what the two schemas DECLARE: every property name and every
+  // declared string value, at any depth. A launch fact is a path, a process, a
+  // pipe, a token or a native frame, and none of them may appear as a key here.
+  const declared = (node: unknown, out: string[] = []): string[] => {
+    if (node === null || typeof node !== "object") return out;
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (key === "properties" && value !== null && typeof value === "object")
+        out.push(...Object.keys(value as Record<string, unknown>));
+      if (typeof value === "string") out.push(value);
+      declared(value, out);
+    }
+    return out;
+  };
+  const forbidden = /(dataroot|process|pid|pipe|token|native|frame|path|endpoint|launch)/iu;
+  for (const [name, schema] of [
+    ["command", GameResumeCommandV1Schema],
+    ["result", GameResumeResultV1Schema],
+  ]) {
+    const names = declared(schema);
+    assert.ok(names.includes("gameSessionId") || name === "result", `${name}: the declared keys were read`);
+    const leaked = names.filter((entry) => forbidden.test(entry));
+    assert.deepEqual(leaked, [], `${name}: a launch fact ${leaked.join(", ")} has no business on the resume wire`);
+  }
+  // And a payload carrying one is refused, on both halves.
+  const command = Compile(GameResumeCommandV1Schema);
+  for (const extra of ["dataRoot", "pid", "pipeEndpoint", "controlToken", "nativeFrame"]) {
+    assert.equal(
+      command.Check({ apiVersion: 1, idempotencyKey, expectedAttachmentGeneration: 1, [extra]: "x" }),
+      false,
+      extra,
+    );
+  }
+});
+
 test("game.resume result is strict, redacted, and covers the exact frozen status vocabulary", () => {
   const validator = Compile(GameResumeResultV1Schema);
   const statuses = ["accepted", "attached", "unavailable"] as const;
