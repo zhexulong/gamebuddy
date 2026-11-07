@@ -14,6 +14,7 @@ Run: python tools/refresh-smapi-third-party-notices.py
 """
 
 import pathlib
+import subprocess
 import sys
 
 ROOT = pathlib.Path("assets/smapi")
@@ -23,74 +24,41 @@ OUTPUT = ROOT / "THIRD-PARTY-NOTICES.txt"
 # Resolved from nuget.org's registration API (licenseExpression, or the licence page it points at) and from
 # repository licence metadata. `audit-bundled-licences.py` performs that resolution; this table is its result.
 ENTRIES = {
-    "0Harmony.dll": (
-        "Lib.Harmony 2.4.3",
-        "Andreas Pardeike",
-        "MIT",
-        "https://www.nuget.org/packages/Lib.Harmony",
-    ),
-    "Markdig.dll": (
-        "Markdig 1.6.0",
-        "Alexandre Mutel",
-        "BSD-2-Clause",
-        "https://www.nuget.org/packages/Markdig",
-    ),
-    "Mono.Cecil.dll": (
-        "Mono.Cecil 0.11.6",
-        "Jb Evain",
-        "MIT",
-        "https://www.nuget.org/packages/Mono.Cecil",
-    ),
-    "Mono.Cecil.Mdb.dll": (
-        "Mono.Cecil 0.11.6",
-        "Jb Evain",
-        "MIT",
-        "https://www.nuget.org/packages/Mono.Cecil",
-    ),
-    "Mono.Cecil.Pdb.dll": (
-        "Mono.Cecil 0.11.6",
-        "Jb Evain",
-        "MIT",
-        "https://www.nuget.org/packages/Mono.Cecil",
-    ),
+    # name -> (package, copyright holder, licence, source). No version: it is read from the assembly, because
+    # the version whose licence applies is the one that shipped, not the newest one on the package feed.
+    "0Harmony.dll": ("Lib.Harmony", "Andreas Pardeike", "MIT", "https://www.nuget.org/packages/Lib.Harmony"),
+    "Markdig.dll": ("Markdig", "Alexandre Mutel", "BSD-2-Clause", "https://www.nuget.org/packages/Markdig"),
+    "Mono.Cecil.dll": ("Mono.Cecil", "Jb Evain", "MIT", "https://www.nuget.org/packages/Mono.Cecil"),
+    "Mono.Cecil.Mdb.dll": ("Mono.Cecil", "Jb Evain", "MIT", "https://www.nuget.org/packages/Mono.Cecil"),
+    "Mono.Cecil.Pdb.dll": ("Mono.Cecil", "Jb Evain", "MIT", "https://www.nuget.org/packages/Mono.Cecil"),
     "MonoMod.Common.dll": (
-        "MonoMod.RuntimeDetour 25.3.6",
+        "MonoMod",
         "0x0ade and contributors",
         "MIT",
-        "https://www.nuget.org/packages/MonoMod.RuntimeDetour",
+        "https://www.nuget.org/packages/MonoMod",
     ),
     "Newtonsoft.Json.dll": (
-        "Newtonsoft.Json 14",
+        "Newtonsoft.Json",
         "James Newton-King",
         "MIT",
         "https://www.nuget.org/packages/Newtonsoft.Json",
     ),
     "Pathoschild.Http.Client.dll": (
-        "Pathoschild.Http.FluentClient 4.4.2",
+        "Pathoschild.Http.FluentClient",
         "Jesse Plamondon-Willard",
         "MIT",
         "https://www.nuget.org/packages/Pathoschild.Http.FluentClient",
     ),
-    "Pintail.dll": (
-        "Pintail 2.9.2",
-        "Nanoray",
-        "MIT",
-        "https://www.nuget.org/packages/Pintail",
-    ),
+    "Pintail.dll": ("Pintail", "Nanoray", "MIT", "https://www.nuget.org/packages/Pintail"),
     "System.Net.Http.Formatting.dll": (
-        "Microsoft.AspNet.WebApi.Client 6.0.0",
+        "Microsoft.AspNet.WebApi.Client",
         "Microsoft Corporation",
         "MIT",
         "https://www.nuget.org/packages/Microsoft.AspNet.WebApi.Client",
     ),
-    "TMXTile.dll": (
-        "TMXTile",
-        "Jesse Plamondon-Willard",
-        "MIT",
-        "https://github.com/Pathoschild/TMXTile",
-    ),
+    "TMXTile.dll": ("TMXTile", "Jesse Plamondon-Willard", "MIT", "https://github.com/Pathoschild/TMXTile"),
     "VdfConverter.dll": (
-        "VdfConverter 1.0.3",
+        "VdfConverter",
         "Gerhard van Zyl",
         "MIT",
         "https://www.nuget.org/packages/VdfConverter",
@@ -148,6 +116,27 @@ TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF TH
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."""
 
 
+
+def assembly_version(path: pathlib.Path) -> str:
+    """The file version the assembly itself carries.
+
+    Windows version resources append a revision field (13.0.4.30916); the notice states the package version a
+    reader can match against the feed, so the trailing build field is dropped when there are four parts.
+    """
+    script = (
+        "$v = [System.Diagnostics.FileVersionInfo]::GetVersionInfo('{0}'); "
+        "Write-Output ($v.FileVersion)"
+    ).format(str(path).replace("'", "''"))
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", script], capture_output=True, text=True
+    )
+    raw = (result.stdout or "").strip()
+    parts = raw.split(".")
+    if len(parts) == 4:
+        parts = parts[:3]
+    return ".".join(parts)
+
+
 def main() -> int:
     libraries = sorted(
         path.relative_to(PAYLOAD).as_posix() for path in PAYLOAD.rglob("*.dll")
@@ -182,23 +171,25 @@ def main() -> int:
         "Every other assembly is a separate library with its own licence, listed here with the copyright",
         "holder its own metadata names. GameBuddy ships them unmodified, as part of that payload.",
         "",
-        "  assembly                                   project / version                 licence        copyright",
+        "  assembly                                   project / assembly version       licence        copyright",
         "  " + "-" * 112,
     ]
     for library in libraries:
         if library in SMAPI_OWN:
             # Named here so the document covers the whole payload: a reader (and the gate) can ask "is every
             # bundled assembly accounted for?" without knowing which ones belong to SMAPI.
+            version = assembly_version(PAYLOAD / library.replace("/", "/"))
+            label = "SMAPI {}".format(version) if version else "SMAPI"
             lines.append(
-                "  {:<42} {:<33} {:<14} {}".format(
-                    library, "SMAPI (Pathoschild)", "LGPL-3.0", "see SMAPI-LICENSE.txt"
-                )
+                "  {:<42} {:<33} {:<14} {}".format(library, label, "LGPL-3.0", "see SMAPI-LICENSE.txt")
             )
             continue
         name = library.split("/")[-1]
         project, holder, licence, _ = ENTRIES[name]
+        version = assembly_version(PAYLOAD / library.replace("/", "/"))
+        label = "{} {}".format(project, version) if version else project
         lines.append(
-            "  {:<42} {:<33} {:<14} {}".format(library, project, licence, holder)
+            "  {:<42} {:<33} {:<14} {}".format(library, label, licence, holder)
         )
 
     lines += [
@@ -207,7 +198,7 @@ def main() -> int:
     ]
     for name in sorted(ENTRIES):
         project, _, licence, url = ENTRIES[name]
-        lines.append("  {:<34} {:<14} {}".format(project, licence, url))
+        lines.append("  {:<40} {:<14} {}".format(project, licence, url))
 
     lines += [
         "",

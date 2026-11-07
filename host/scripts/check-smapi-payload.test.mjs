@@ -31,6 +31,20 @@ const payloadRoot = resolve(repositoryRoot, "assets", "smapi");
 const manifestPath = resolve(payloadRoot, "payload-manifest.json");
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
+/** The version resource an assembly carries, in the form the notices document prints. */
+async function fileVersion(path) {
+  const { execFile } = await import("node:child_process");
+  const script = `$v = [System.Diagnostics.FileVersionInfo]::GetVersionInfo('${path.replaceAll("'", "''")}'); Write-Output ($v.FileVersion)`;
+  const output = await new Promise((resolvePromise) => {
+    execFile("powershell", ["-NoProfile", "-Command", script], (error, stdout) => {
+      resolvePromise(error ? "" : stdout);
+    });
+  });
+  const raw = String(output).trim();
+  const parts = raw.split(".");
+  return parts.length === 4 ? parts.slice(0, 3).join(".") : raw;
+}
+
 async function readManifest() {
   return JSON.parse(await readFile(manifestPath, "utf8"));
 }
@@ -96,6 +110,22 @@ test("every bundled assembly is named in the third-party notices", async () => {
   assert.match(notices, /MIT License/);
   assert.match(notices, /BSD 2-Clause License/);
   assert.match(notices, /SMAPI-LICENSE\.txt/, "the notices must point at SMAPI's own licence");
+
+  // The version in the document is the one the bytes carry. A notice that misdates a licence is worse than
+  // one that omits it, because it looks authoritative - the first version of this document named the newest
+  // package on the feed for every library and was wrong for five of them.
+  for (const assembly of bundled) {
+    if (!assembly.includes("\\")) continue;
+    const relative = assembly.split("\\").join("/");
+    const line = notices.split("\n").find((entry) => entry.includes(relative));
+    assert.ok(line, `no notice row for ${relative}`);
+    const version = await fileVersion(resolve(payloadRoot, "win-x64", assembly));
+    if (version === "") continue;
+    assert.ok(
+      line.includes(version),
+      `${relative} notice does not name the assembly's own version ${version}`,
+    );
+  }
 });
 
 test("the production artifact config mounts exactly the payload the repository carries", async () => {
