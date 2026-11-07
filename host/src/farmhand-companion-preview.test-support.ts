@@ -160,7 +160,7 @@ async function composePreview(
   const host = dependencies.createHost(loop, launch, runtime, turnTracker, evidence);
   loop.attachTurnObserver(host);
   host.attachVoiceStopper(async () => undefined);
-  host.attachStopSystemNoticePresenter(createFarmhandSystemNoticePresenter(presentation));
+  host.attachSystemNoticePresenter(createFarmhandSystemNoticePresenter(presentation), locale);
   host.acceptInitialFacts(launch.initialFacts);
   let closePromise: Promise<void> | undefined;
   const preview = Object.freeze({

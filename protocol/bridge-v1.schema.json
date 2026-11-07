@@ -6949,7 +6949,10 @@
         "key": {
           "enum": [
             "system.stop.active_turn_cancelled",
-            "system.stop.no_active_turn"
+            "system.stop.queued_turn_cancelled",
+            "system.stop.no_active_turn",
+            "system.provider.waiting",
+            "system.provider.unavailable"
           ]
         },
         "text": {

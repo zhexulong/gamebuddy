@@ -259,7 +259,7 @@ async function composePreview(
   // become a Pi turn. The no-op stopper is intentionally only a closed
   // preview presentation port; it cannot mint a voice/control channel.
   host.attachVoiceStopper(async () => undefined);
-  host.attachStopSystemNoticePresenter(createFarmhandSystemNoticePresenter(presentation));
+  host.attachSystemNoticePresenter(createFarmhandSystemNoticePresenter(presentation), presentationLocale);
   host.acceptInitialFacts(launch.initialFacts);
   const state = { closed: false, identity: config.identity };
   let closePromise: Promise<void> | undefined;

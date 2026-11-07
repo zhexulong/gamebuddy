@@ -204,6 +204,36 @@ internal static class CompanionPresentationPolicyTests
             && chineseNoticeReason == "accepted",
             "the released zh-CN locale must accept the approved Chinese STOP copy.");
 
+        // The provider lane: a run that is waiting for the model, and the provider's own words when it refuses.
+        // Every one of these is drawn by native chat, so the Mod is the last place that can refuse a line that is
+        // not the registered sentence, is empty, or is not a single line.
+        BridgeEnvelope<BridgeSystemNoticeRequest> waitingNotice = SystemNoticeEnvelope(
+            scope, "notice_message_waiting", "notice_waiting", "system.provider.waiting", "Connected. Waiting for the provider…", "en-US");
+        Assert(session.TryPresentSystemNotice(generation, waitingNotice, _ => true, out _, out string waitingReason)
+            && waitingReason == "accepted", "the provider-wait line is registered copy and must be accepted.");
+        BridgeEnvelope<BridgeSystemNoticeRequest> failureNotice = SystemNoticeEnvelope(
+            scope, "notice_message_failure", "notice_failure", "system.provider.unavailable",
+            "The provider can't answer: 429: {\"message\":\"the cell is at capacity; retry shortly (after 30 s)\"}", "en-US");
+        Assert(session.TryPresentSystemNotice(generation, failureNotice, _ => true, out _, out string failureReason)
+            && failureReason == "accepted", "the provider's own words behind the registered sentence must be accepted.");
+        foreach ((string id, string key, string text) in new[]
+        {
+            ("notice_unregistered_sentence", "system.provider.unavailable", "something the Host wrote instead: 429"),
+            ("notice_unregistered_tail", "system.provider.unavailable", "The provider can't answer: "),
+            ("notice_two_lines", "system.provider.unavailable", "The provider can't answer: 429\nsecond line"),
+            ("notice_control", "system.provider.unavailable", "The provider can't answer: 429\u001b[2J"),
+            ("notice_unknown_key", "system.provider.retrying", "Retrying."),
+            ("notice_waiting_wrong_copy", "system.provider.waiting", "Waiting."),
+        })
+            Assert(!session.TryPresentSystemNotice(generation, SystemNoticeEnvelope(scope, $"message_{id}", id, key, text, "en-US"),
+                    _ => true, out _, out string refusedReason)
+                && refusedReason == "invalid_system_notice",
+                $"{id} must be refused as invalid_system_notice, not drawn: {refusedReason}");
+        BridgeEnvelope<BridgeSystemNoticeRequest> zhWaitingNotice = SystemNoticeEnvelope(
+            scope, "notice_message_waiting_zh", "notice_waiting_zh", "system.provider.waiting", "已连上游戏，正在等待模型服务…", "zh-CN");
+        Assert(chineseNoticeSession.TryPresentSystemNotice(generation, zhWaitingNotice, _ => true, out _, out string zhWaitingReason)
+            && zhWaitingReason == "accepted", "the zh-CN provider-wait line must be accepted in the released locale.");
+
         const long reauthenticatedGeneration = generation + 1;
         Authenticate(session, reauthenticatedGeneration, scope);
         Assert(session.TryPresentCompanionText(reauthenticatedGeneration, valid with { CorrelationId = "message_10", MessageId = "message_10" }, _ => { sends++; return true; }, out _, out string acceptedReauthReplayReason)
