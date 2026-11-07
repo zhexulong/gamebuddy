@@ -232,8 +232,19 @@ public sealed record BodyProgramJournalNode(string NodeId, BodyProgramNodeState 
     string? Hint = null);
 public sealed record RuntimeFact(string ProgramId, string NodeId, int NodeAttempt, string FactName, IReadOnlyDictionary<string, BodyProgramCanonicalValue> Values);
 public sealed record BodyProgramJournalProgram(VerifiedBodyProgram Program, BodyProgramState State, long StopEpoch, IReadOnlyList<BodyProgramJournalNode> Nodes, IReadOnlyList<RuntimeFact> Facts);
-/// <summary>Addressed event projection. CatalogRevision is persisted at the event, never guessed by an adapter.</summary>
-public sealed record BodyProgramJournalEvent(long Cursor, string ProgramId, string Kind, long CatalogRevision, string? NodeId, int? NodeAttempt);
+/// <summary>
+/// Addressed event projection. CatalogRevision is persisted at the event, never guessed by an adapter.
+///
+/// <para>
+/// <see cref="AtMs"/> is the moment the Mod appended this event, on the process's monotonic clock
+/// (<see cref="BodyProgramJournalClock"/>) and NOT on the wall clock and NOT at the moment a Host read the frame: a
+/// receipt that carried the reader's clock would measure the bridge instead of the game. It is therefore the moment the
+/// native effect was DISPATCHED on a <c>native_dispatch</c> event and the moment it SETTLED on <c>node_completed</c> /
+/// <c>node_settled</c>, which is what makes a node's execution time computable at all. Persisted with the event, so an
+/// execution read back from the journal after a restart keeps its original stamp.
+/// </para>
+/// </summary>
+public sealed record BodyProgramJournalEvent(long Cursor, string ProgramId, string Kind, long CatalogRevision, string? NodeId, int? NodeAttempt, long AtMs);
 public sealed record BodyProgramJournalState(int SchemaVersion, BridgeScope Scope, BodyProgramPolicyIdentity PolicyIdentity, long EventHighWater,
     IReadOnlyList<BodyProgramJournalProgram> Programs, IReadOnlyList<BodyProgramJournalEvent> Events);
 public sealed record BodyProgramStatusSnapshot(string ProgramId, BodyProgramState State, long CatalogRevision, long StopEpoch, long EventHighWater, IReadOnlyList<BodyProgramJournalNode> Nodes);

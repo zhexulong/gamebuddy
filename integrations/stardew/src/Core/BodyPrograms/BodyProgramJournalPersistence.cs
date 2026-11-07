@@ -10,7 +10,7 @@ namespace GameBuddy.Stardew.Core.BodyPrograms;
 ///
 /// <para>
 /// The class name and ADR-006 still call the authority `BodyProgramJournal/v1`; <see cref="SchemaVersion"/> is the
-/// PAYLOAD SHAPE number and moves independently of that name. It is 2 as of the `failureCode` node key.
+/// PAYLOAD SHAPE number and moves independently of that name. It is 3 as of the event `atMs` key.
 /// </para>
 /// </summary>
 public static class BodyProgramJournalPersistence
@@ -19,13 +19,14 @@ public static class BodyProgramJournalPersistence
     /// The durable journal's shape version.
     ///
     /// <para>
-    /// RAISED 2026-10-31 from 1, which does not cover a node's `failureCode` key. ADR-006 requires a codec change to be
-    /// an explicit schema-version decision rather than a silent reinterpretation of the old shape: a v1 payload has no
-    /// `failureCode` key and must not be read as if it did, exactly as a v2 payload read by a v1 reader must not be.
-    /// There is no migration/dual-read path here by design - an unreadable journal is fail-closed (`Corrupt`).
+    /// RAISED 2026-10-31 from 1, which does not cover a node's `failureCode` key, and again to 3 for the event `atMs`
+    /// key. ADR-006 requires a codec change to be an explicit schema-version decision rather than a silent
+    /// reinterpretation of the old shape: a v1 payload has no `failureCode` key and must not be read as if it did, and a
+    /// v2 payload has no `atMs` on its events and must not be read as if its executions were timed. There is no
+    /// migration/dual-read path here by design - an unreadable journal is fail-closed (`Corrupt`).
     /// </para>
     /// </summary>
-    public const int SchemaVersion = 2;
+    public const int SchemaVersion = 3;
     private static readonly JsonSerializerOptions WriteOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public static string Encode(BodyProgramJournalState state, BodyProgramActionCatalog? catalog = null, BridgeScope? expectedScope = null)
@@ -77,7 +78,8 @@ public static class BodyProgramJournalPersistence
             foreach (BodyProgramJournalEvent @event in state.Events)
             {
                  if (@event is null || @event.Cursor != expectedCursor || @event.Cursor > state.EventHighWater || !ids.Contains(@event.ProgramId) || !IsValidEventKind(@event.Kind)
-                    || @event.CatalogRevision < 0 || (@event.NodeId is not null && !BodyProgramValidation.IsIdentifier(@event.NodeId))
+                    || @event.CatalogRevision < 0 || @event.AtMs < 0 || @event.AtMs > BodyProgramValidation.MaximumJavaScriptSafeInteger
+                    || (@event.NodeId is not null && !BodyProgramValidation.IsIdentifier(@event.NodeId))
                      || (@event.NodeId is null) != (@event.NodeAttempt is null))
                  { reason = "invalid_event"; return false; }
 
@@ -568,11 +570,11 @@ public static class BodyProgramJournalPersistence
     private static bool ReadEvent(JsonElement value, out BodyProgramJournalEvent? @event)
     {
         @event = null;
-        if (!Exact(value, "cursor", "programId", "kind", "catalogRevision", "nodeId", "nodeAttempt") || !value.GetProperty("cursor").TryGetInt64(out long cursor)
+        if (!Exact(value, "cursor", "programId", "kind", "catalogRevision", "nodeId", "nodeAttempt", "atMs") || !value.GetProperty("cursor").TryGetInt64(out long cursor)
             || !ReadString(value.GetProperty("programId"), out string? program) || !ReadString(value.GetProperty("kind"), out string? kind)
             || !value.GetProperty("catalogRevision").TryGetInt64(out long revision) || !ReadNullableString(value.GetProperty("nodeId"), out string? node)
-            || !ReadNullableInt(value.GetProperty("nodeAttempt"), out int? attempt)) return false;
-        @event = new(cursor, program!, kind!, revision, node, attempt); return true;
+            || !ReadNullableInt(value.GetProperty("nodeAttempt"), out int? attempt) || !value.GetProperty("atMs").TryGetInt64(out long atMs)) return false;
+        @event = new(cursor, program!, kind!, revision, node, attempt, atMs); return true;
     }
 
     private static bool ReadScope(JsonElement value, out BridgeScope? scope)

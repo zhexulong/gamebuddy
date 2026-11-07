@@ -65,9 +65,10 @@ function observedProgram(programId, dispatches) {
 test("two flat dispatches and one three-node program are five rows, each saying how it was dispatched", async () => {
   const programOutcomes = [
     observedProgram("p1", [
-      { nodeId: "a", nodeAttempt: 1, cursor: 2 },
-      { nodeId: "b", nodeAttempt: 1, cursor: 3 },
-      { nodeId: "c", nodeAttempt: 1, cursor: 4 },
+      // The Mod's own monotonic stamps: dispatched at 1000/2000/3000, settled at 1200/2400 and never for "c".
+      { nodeId: "a", nodeAttempt: 1, cursor: 2, atMs: 1000, settledAtMs: 1200 },
+      { nodeId: "b", nodeAttempt: 1, cursor: 3, atMs: 2000, settledAtMs: 2400 },
+      { nodeId: "c", nodeAttempt: 1, cursor: 4, atMs: 3000 },
     ]),
   ];
   const programRows = programExecutionRows(programOutcomes);
@@ -86,9 +87,9 @@ test("two flat dispatches and one three-node program are five rows, each saying 
   });
   // The program rows name the program and the node, so a measurement can attribute the execution and never guess.
   assert.deepEqual(programRows, [
-    { via: "program", programId: "p1", nodeId: "a", nodeAttempt: 1, cursor: 2 },
-    { via: "program", programId: "p1", nodeId: "b", nodeAttempt: 1, cursor: 3 },
-    { via: "program", programId: "p1", nodeId: "c", nodeAttempt: 1, cursor: 4 },
+    { via: "program", programId: "p1", nodeId: "a", nodeAttempt: 1, cursor: 2, atMs: 1000, settledAtMs: 1200 },
+    { via: "program", programId: "p1", nodeId: "b", nodeAttempt: 1, cursor: 3, atMs: 2000, settledAtMs: 2400 },
+    { via: "program", programId: "p1", nodeId: "c", nodeAttempt: 1, cursor: 4, atMs: 3000, settledAtMs: null },
   ]);
   // Read back from disk, the same two files are one list of five with the two `via` values kept apart.
   await withRunDir(async (dir) => {

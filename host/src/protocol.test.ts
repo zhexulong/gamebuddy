@@ -2844,6 +2844,7 @@ test("body-program wire messages require exact bounded payloads", () => {
               catalogRevision: 1,
               nodeId: null,
               nodeAttempt: null,
+              atMs: 1200,
             },
           ],
         },
@@ -2873,6 +2874,7 @@ test("body-program wire messages require exact bounded payloads", () => {
               catalogRevision: 1,
               nodeId: null,
               nodeAttempt: null,
+              atMs: 1200,
             },
           ],
         },
@@ -3186,7 +3188,15 @@ test("body-program node attempt counters align to the C# Int32 wire fields", () 
     nextCursor: 1,
     highWater: 1,
     events: [
-      { cursor: 1, programId: "program_01", kind: "native_dispatch", catalogRevision: 1, nodeId: null, nodeAttempt },
+      {
+        cursor: 1,
+        programId: "program_01",
+        kind: "native_dispatch",
+        catalogRevision: 1,
+        nodeId: null,
+        nodeAttempt,
+        atMs: 1200,
+      },
     ],
   });
   assert.equal(

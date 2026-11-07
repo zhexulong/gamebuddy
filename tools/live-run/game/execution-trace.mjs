@@ -40,6 +40,10 @@ export const PROGRAM_EXECUTION_VIA = "program";
  * `nodeAttempt` and `cursor` are the journal's own identity for the execution: a retried node is a NEW attempt (and its
  * own execution), and the cursor is the page position the event was read at, so an identical event read twice collapses
  * to one row instead of counting as a second execution.
+ *
+ * `atMs` / `settledAtMs` are the Mod's own monotonic stamps for the dispatch and for the action's terminal, carried so
+ * that the row IS the execution's duration. They are not this file's clock: a trace that stamped here would measure the
+ * evaluator, and `settledAtMs` is null (never zero) for an execution that has not settled.
  */
 export function programExecutionRows(programOutcomes) {
   const rows = [];
@@ -55,7 +59,15 @@ export function programExecutionRows(programOutcomes) {
       if (seen.has(identity)) continue;
       seen.add(identity);
       rows.push(
-        Object.freeze({ via: PROGRAM_EXECUTION_VIA, programId: outcome.programId, nodeId, nodeAttempt, cursor }),
+        Object.freeze({
+          via: PROGRAM_EXECUTION_VIA,
+          programId: outcome.programId,
+          nodeId,
+          nodeAttempt,
+          cursor,
+          atMs: Number.isFinite(execution?.atMs) ? execution.atMs : null,
+          settledAtMs: Number.isFinite(execution?.settledAtMs) ? execution.settledAtMs : null,
+        }),
       );
     }
   }

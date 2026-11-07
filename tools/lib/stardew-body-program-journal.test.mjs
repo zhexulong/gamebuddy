@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   bodyProgramJournalPath,
   createBodyProgramJournalFallback,
+  executionsFromJournalEvents,
   stardewDataPath,
 } from "./stardew-body-program-journal.mjs";
 
@@ -52,14 +53,26 @@ function harvestedProgram(programId = "plan_16_a93f3dbf3576006d") {
   };
 }
 
+/**
+ * The same program's events, each carrying the Mod's monotonic `atMs` - the moment the journal appended it, which is
+ * the dispatch on a `native_dispatch` and the settlement on `node_completed` (`BodyProgramJournalClock`).
+ */
 function eventsFor(programId) {
   return [
-    { cursor: 1, programId, kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null },
-    { cursor: 2, programId, kind: "admission_challenge", catalogRevision: 1, nodeId: "n01", nodeAttempt: 1 },
-    { cursor: 3, programId, kind: "native_dispatch", catalogRevision: 1, nodeId: "n01", nodeAttempt: 1 },
-    { cursor: 4, programId, kind: "node_completed", catalogRevision: 1, nodeId: "n01", nodeAttempt: 1 },
-    { cursor: 5, programId, kind: "native_dispatch", catalogRevision: 1, nodeId: "n02", nodeAttempt: 1 },
-    { cursor: 6, programId, kind: "node_completed", catalogRevision: 1, nodeId: "n02", nodeAttempt: 1 },
+    { cursor: 1, programId, kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null, atMs: 1000 },
+    {
+      cursor: 2,
+      programId,
+      kind: "admission_challenge",
+      catalogRevision: 1,
+      nodeId: "n01",
+      nodeAttempt: 1,
+      atMs: 1100,
+    },
+    { cursor: 3, programId, kind: "native_dispatch", catalogRevision: 1, nodeId: "n01", nodeAttempt: 1, atMs: 1200 },
+    { cursor: 4, programId, kind: "node_completed", catalogRevision: 1, nodeId: "n01", nodeAttempt: 1, atMs: 1450 },
+    { cursor: 5, programId, kind: "native_dispatch", catalogRevision: 1, nodeId: "n02", nodeAttempt: 1, atMs: 1500 },
+    { cursor: 6, programId, kind: "node_completed", catalogRevision: 1, nodeId: "n02", nodeAttempt: 1, atMs: 1700 },
   ];
 }
 
@@ -124,8 +137,8 @@ test("a journal on disk proves the executions a dead bridge could not report", (
   const outcome = fallback.outcomeFor(programId);
   assert.equal(outcome.dispatched, 2, "two native_dispatch events are two executions");
   assert.deepEqual(outcome.executions, [
-    { nodeId: "n01", nodeAttempt: 1, cursor: 3 },
-    { nodeId: "n02", nodeAttempt: 1, cursor: 5 },
+    { nodeId: "n01", nodeAttempt: 1, cursor: 3, atMs: 1200, settledAtMs: 1450 },
+    { nodeId: "n02", nodeAttempt: 1, cursor: 5, atMs: 1500, settledAtMs: 1700 },
   ]);
   assert.deepEqual(
     outcome.nodeOutcomes,
@@ -137,6 +150,56 @@ test("a journal on disk proves the executions a dead bridge could not report", (
   );
   assert.equal(outcome.programState, "succeeded");
   assert.equal(fallback.state().ok, true);
+});
+
+test("an execution carries the moment the Mod dispatched and settled it, and a later read changes neither", async () => {
+  // The two moments the metric needs are the GAME's, so they are the journal's own values: 1200/1450 and 1500/1700 were
+  // appended by the Mod when it dispatched and when each action's terminal landed. A reader that stamped the row on the
+  // way out - the read moment - would answer with a number no journal contains, and the durations below would be the
+  // evaluator's own latency instead of the game's work.
+  const programId = "plan_16_a93f3dbf3576006d";
+  const written = writeJournal(
+    journalDocument({ programs: [harvestedProgram(programId)], events: eventsFor(programId) }),
+  );
+  const first = createBodyProgramJournalFallback(written).outcomeFor(programId);
+  assert.deepEqual(
+    first.executions.map((execution) => [execution.atMs, execution.settledAtMs]),
+    [
+      [1200, 1450],
+      [1500, 1700],
+    ],
+  );
+  assert.deepEqual(
+    first.executions.map((execution) => execution.settledAtMs - execution.atMs),
+    [250, 200],
+    "each execution is a duration on one monotonic clock, which is what the cadence measures",
+  );
+
+  // A restart, later: the same file read again must return the stamps it stored. A build that re-stamped at read time
+  // would answer with a later number on the second read (this delay is what makes the two distinguishable).
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const replayed = createBodyProgramJournalFallback(written).outcomeFor(programId);
+  assert.deepEqual(replayed.executions, first.executions);
+});
+
+test("an execution that has not settled is null, and node_completed wins over the program's own settlement", () => {
+  const programId = "plan_16_a93f3dbf3576006d";
+  const events = [
+    { cursor: 1, programId, kind: "native_dispatch", catalogRevision: 1, nodeId: "n01", nodeAttempt: 1, atMs: 100 },
+    { cursor: 2, programId, kind: "native_dispatch", catalogRevision: 1, nodeId: "n02", nodeAttempt: 1, atMs: 200 },
+    { cursor: 3, programId, kind: "node_completed", catalogRevision: 1, nodeId: "n01", nodeAttempt: 1, atMs: 450 },
+    { cursor: 4, programId, kind: "node_settled", catalogRevision: 1, nodeId: "n01", nodeAttempt: 1, atMs: 500 },
+  ];
+  const rows = executionsFromJournalEvents(events);
+  assert.deepEqual(
+    rows.map((row) => [row.nodeId, row.atMs, row.settledAtMs]),
+    [
+      ["n01", 100, 450],
+      // Dispatched and never settled: null (unmeasured), never 0 - a zero would read as an impossibly fast execution.
+      ["n02", 200, null],
+    ],
+    "the action's own terminal is the settlement; the program's later settlement is only the fallback",
+  );
 });
 
 test("a journal that does not hold the program proves nothing about it", () => {

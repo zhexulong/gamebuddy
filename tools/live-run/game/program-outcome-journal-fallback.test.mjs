@@ -13,7 +13,11 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { bodyProgramJournalPath, createBodyProgramJournalFallback } from "../../lib/stardew-body-program-journal.mjs";
+import {
+  bodyProgramJournalPath,
+  createBodyProgramJournalFallback,
+  executionsFromJournalEvents,
+} from "../../lib/stardew-body-program-journal.mjs";
 
 const RUNNER_SOURCE = readFileSync(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
 
@@ -89,11 +93,11 @@ function journalWith(programId) {
       },
     ],
     events: [
-      { cursor: 1, programId, kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null },
-      { cursor: 3, programId, kind: "native_dispatch", catalogRevision: 1, nodeId: "n01", nodeAttempt: 1 },
-      { cursor: 4, programId, kind: "node_completed", catalogRevision: 1, nodeId: "n01", nodeAttempt: 1 },
-      { cursor: 5, programId, kind: "native_dispatch", catalogRevision: 1, nodeId: "n02", nodeAttempt: 1 },
-      { cursor: 6, programId, kind: "node_completed", catalogRevision: 1, nodeId: "n02", nodeAttempt: 1 },
+      { cursor: 1, programId, kind: "accepted", catalogRevision: 1, nodeId: null, nodeAttempt: null, atMs: 1000 },
+      { cursor: 3, programId, kind: "native_dispatch", catalogRevision: 1, nodeId: "n01", nodeAttempt: 1, atMs: 1200 },
+      { cursor: 4, programId, kind: "node_completed", catalogRevision: 1, nodeId: "n01", nodeAttempt: 1, atMs: 1450 },
+      { cursor: 5, programId, kind: "native_dispatch", catalogRevision: 1, nodeId: "n02", nodeAttempt: 1, atMs: 1500 },
+      { cursor: 6, programId, kind: "node_completed", catalogRevision: 1, nodeId: "n02", nodeAttempt: 1, atMs: 1700 },
     ],
   };
 }
@@ -118,7 +122,9 @@ test("a dead bridge is answered from the journal, and the run is not scored as h
   // evaluator published `observed: false` for all six accepted programs while the journal held their dispatches.
   const programId = "plan_16_a93f3dbf3576006d";
   const written = writeJournalOnDisk(programId);
-  const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes");
+  const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes", {
+    executionsFromJournalEvents,
+  });
   const records = await readProgramOutcomes({
     submissions: [{ programId, accepted: true }],
     statusQuery: async () => {
@@ -134,8 +140,8 @@ test("a dead bridge is answered from the journal, and the run is not scored as h
   assert.equal(records[0].source, "journal", "and it says the evidence came from the file, not the live Mod");
   assert.equal(records[0].dispatched, 2, "two native_dispatch events are two executions");
   assert.deepEqual(records[0].executions, [
-    { nodeId: "n01", nodeAttempt: 1, cursor: 3 },
-    { nodeId: "n02", nodeAttempt: 1, cursor: 5 },
+    { nodeId: "n01", nodeAttempt: 1, cursor: 3, atMs: 1200, settledAtMs: 1450 },
+    { nodeId: "n02", nodeAttempt: 1, cursor: 5, atMs: 1500, settledAtMs: 1700 },
   ]);
   assert.deepEqual(records[0].nodeOutcomes, [
     { nodeId: "n01", state: "succeeded" },
@@ -185,7 +191,9 @@ test("a working bridge answers, and the journal is never opened", async () => {
       return readFileSync(path, encoding);
     },
   });
-  const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes");
+  const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes", {
+    executionsFromJournalEvents,
+  });
   const records = await readProgramOutcomes({
     submissions: [{ programId, accepted: true }],
     statusQuery: async () => ({
@@ -196,7 +204,7 @@ test("a working bridge answers, and the journal is never opened", async () => {
       cursor === 0
         ? {
             code: "found",
-            events: [{ cursor: 2, programId, kind: "native_dispatch", nodeId: "n01", nodeAttempt: 1 }],
+            events: [{ cursor: 2, programId, kind: "native_dispatch", nodeId: "n01", nodeAttempt: 1, atMs: 900 }],
             nextCursor: 2,
             highWater: 2,
           }
@@ -214,7 +222,9 @@ test("a failed bridge read the journal cannot answer stays unobserved, with its 
   // failed read into a measured empty execution. `dispatched: null` stays null and the reason stays named.
   const programId = "plan_16_a93f3dbf3576006d";
   const written = writeJournalOnDisk("plan_different_program");
-  const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes");
+  const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes", {
+    executionsFromJournalEvents,
+  });
   const records = await readProgramOutcomes({
     submissions: [{ programId, accepted: true }],
     statusQuery: async () => {

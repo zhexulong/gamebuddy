@@ -1351,14 +1351,23 @@ public sealed record BridgeBodyProgramStatusResult(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BridgeBodyProgramStatusSnapshot? Snapshot
 );
 
-/// <summary>One addressed event. Page continuation belongs to the surrounding result, not an event.</summary>
+/// <summary>
+/// One addressed event. Page continuation belongs to the surrounding result, not an event.
+///
+/// <para>
+/// <c>AtMs</c> is the journal's own monotonic stamp for the moment it appended this event - the dispatch moment on
+/// <c>native_dispatch</c>, the settlement moment on <c>node_completed</c>/<c>node_settled</c> - carried verbatim so a
+/// reader never has to substitute the moment it received the frame for the moment the game acted.
+/// </para>
+/// </summary>
 public sealed record BridgeBodyProgramEvent(
     long Cursor,
     string ProgramId,
     string Kind,
     long CatalogRevision,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? NodeId,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? NodeAttempt
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int? NodeAttempt,
+    long AtMs
 );
 
 public sealed record BridgeBodyProgramEventsResult(

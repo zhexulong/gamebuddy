@@ -1706,6 +1706,13 @@ export type BodyProgramStopResult = Readonly<{
     | "deadline_expired";
   snapshot: BodyProgramStatusSnapshot | null;
 }>;
+/**
+ * One addressed journal event.
+ *
+ * `atMs` is the Mod's own monotonic stamp of the moment it appended this event - the native dispatch on
+ * `native_dispatch`, the action's settlement on `node_completed`/`node_settled` - carried verbatim so no reader has to
+ * substitute the moment it received the frame for the moment the game acted.
+ */
 type BodyProgramEvent = Readonly<{
   cursor: number;
   programId: string;
@@ -1713,6 +1720,7 @@ type BodyProgramEvent = Readonly<{
   catalogRevision: number;
   nodeId: string | null;
   nodeAttempt: number | null;
+  atMs: number;
 }>;
 export type BodyProgramEventsResult = Readonly<{
   programId: string;
@@ -4460,13 +4468,14 @@ function hasExactPageContinuation(events: readonly unknown[], nextCursor: number
 function isBodyProgramEvent(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["cursor", "programId", "kind", "catalogRevision", "nodeId", "nodeAttempt"]) &&
+    hasExactKeys(value, ["cursor", "programId", "kind", "catalogRevision", "nodeId", "nodeAttempt", "atMs"]) &&
     isNonNegativeSafeInteger(value.cursor) &&
     isOpaqueId(value.programId) &&
     isReasonCode(value.kind) &&
     isNonNegativeSafeInteger(value.catalogRevision) &&
     (value.nodeId === null || isOpaqueId(value.nodeId)) &&
-    (value.nodeAttempt === null || isNonNegativeInt32(value.nodeAttempt))
+    (value.nodeAttempt === null || isNonNegativeInt32(value.nodeAttempt)) &&
+    isNonNegativeSafeInteger(value.atMs)
   );
 }
 function isBodyProgramSubmitCode(value: unknown): boolean {
