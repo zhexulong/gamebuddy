@@ -130,7 +130,22 @@ const SMAPI_PAYLOAD = Object.freeze({
   destination: "native/smapi",
   manifest: "payload-manifest.json",
   license: "SMAPI-LICENSE.txt",
+  /**
+   * The notices for the MIT and BSD-2-Clause libraries the SMAPI payload bundles.
+   *
+   * SMAPI's own licence covers SMAPI; it does not cover the eleven libraries shipped inside it, and those
+   * licences require their notice to travel with the binary. So the payload carries both documents, and the
+   * descriptor cannot name one without the other.
+   */
+  notices: "THIRD-PARTY-NOTICES.txt",
 });
+
+/**
+ * The payload descriptor, exported so the gate compares the artifact config against this constant rather
+ * than a second hand-written copy of it. A copy agrees today and drifts the first time a document is
+ * added - which is exactly what happened when the third-party notices were introduced.
+ */
+export const smapiPayloadDescriptorForTesting = SMAPI_PAYLOAD;
 /** The fixed Voice Gateway artifact the release publisher stages from the
  * `voice-gateway/.dist` build output into every voice-enabled generation. The
  * shared fixture publisher copies one entry file and one protocol file into
@@ -445,7 +460,7 @@ function validateStardewModPackage(value) {
   return Object.freeze({ ...STARDEW_MOD_PACKAGE, entries: Object.freeze([...STARDEW_MOD_PACKAGE.entries]) });
 }
 function validateSmapiPayload(value) {
-  if (!exactKeys(value, ["kind", "destination", "manifest", "license"])
+  if (!exactKeys(value, ["kind", "destination", "manifest", "license", "notices"])
     || Object.keys(SMAPI_PAYLOAD).some((key) => value[key] !== SMAPI_PAYLOAD[key]))
     throw new Error("invalid_smapi_payload_descriptor");
   return Object.freeze({ ...SMAPI_PAYLOAD });
@@ -851,6 +866,24 @@ export async function ensureSmapiPayload({ stagingRoot, descriptor, repositoryRo
   const licenseBytes = await readFile(licenseDestination);
   if (!licenseBytes.includes(Buffer.from("GNU LESSER GENERAL PUBLIC LICENSE")))
     throw new Error("smapi_payload_license_missing");
+  // The liabilities the payload carries are not only SMAPI's: it bundles MIT and BSD-2-Clause libraries, and
+  // both of those require the copyright notice to travel with the binary. A generation without them is a
+  // generation that redistributes those libraries without permission, so their absence refuses the publish.
+  if (typeof descriptor.notices === "string") {
+    const noticesSource = resolve(sourceRoot, descriptor.notices);
+    await regular(noticesSource, "smapi_payload_notices");
+    const noticesDestination = resolve(destinationRoot, descriptor.notices);
+    await mkdir(dirname(noticesDestination), { recursive: true });
+    await copyFile(noticesSource, noticesDestination);
+    const noticesBytes = await readFile(noticesDestination);
+    for (const required of ["MIT License", "BSD 2-Clause License"]) {
+      if (!noticesBytes.includes(Buffer.from(required))) throw new Error("smapi_payload_notices_incomplete");
+    }
+    origins.set(
+      `${descriptor.destination}/${descriptor.notices}`,
+      Object.freeze({ kind: descriptor.kind, file: descriptor.notices, sha256: digest(noticesBytes) }),
+    );
+  }
   origins.set(`${descriptor.destination}/${descriptor.license}`, Object.freeze({ kind: descriptor.kind, file: descriptor.license, sha256: digest(licenseBytes) }));
   // The generation's manifest is the same document the source carries, so the payload a
   // player's machine reads describes the bytes a publisher copied.

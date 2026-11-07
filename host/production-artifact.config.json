@@ -142,7 +142,8 @@
     "kind": "verified_smapi_payload",
     "destination": "native/smapi",
     "manifest": "payload-manifest.json",
-    "license": "SMAPI-LICENSE.txt"
+    "license": "SMAPI-LICENSE.txt",
+    "notices": "THIRD-PARTY-NOTICES.txt"
   },
   "voiceGateway": {
     "kind": "verified_voice_gateway",

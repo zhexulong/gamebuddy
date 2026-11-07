@@ -107,6 +107,14 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm audit:gate-red-proofs",
   },
   {
+    path: "tools/audit-long-session-metrics.mjs",
+    reason:
+      "arguments: needs one finished run's result.json (--result) and reads its session transcript, so no rung before a " +
+      "launch can run it; measured 2026-11-06 on round38: `executions 379, of which timed 0`, i.e. it answers " +
+      "NOT_EXERCISED where the bundle has no receipt timestamps rather than reporting a number it cannot support",
+    runsIn: "on-demand",
+  },
+  {
     path: "tools/audit-stardew-action-admission-ledger.mjs",
     reason:
       "report: re-derives the ledger of design/architecture/stardew-action-execution-kernel.md and prints the drift " +

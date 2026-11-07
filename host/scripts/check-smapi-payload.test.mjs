@@ -20,7 +20,10 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { readArtifactConfig } from "./production-artifact.mjs";
-import { ensureSmapiPayload } from "./production-artifact.mjs";
+import {
+  ensureSmapiPayload,
+  smapiPayloadDescriptorForTesting,
+} from "./production-artifact.mjs";
 
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repositoryRoot = resolve(hostRoot, "..");
@@ -67,14 +70,39 @@ test("the payload carries the LGPL text its licence requires", async () => {
   assert.match(text, /github\.com\/Pathoschild\/SMAPI/);
 });
 
+test("every bundled assembly is named in the third-party notices", async () => {
+  // The defect this pins: SMAPI's payload bundles eleven MIT and BSD-2-Clause libraries, and those licences
+  // require the copyright notice to travel with the binary. The payload shipped with SMAPI's LGPL text only,
+  // so nothing told a player who wrote those libraries or under what terms.
+  //
+  // The population comes from the payload itself, so a SMAPI upgrade that adds a library fails here instead of
+  // shipping it silently unnoted.
+  const notices = await readFile(resolve(payloadRoot, "THIRD-PARTY-NOTICES.txt"), "utf8");
+  const assemblies = await readdir(resolve(payloadRoot, "win-x64"), { recursive: true });
+  const bundled = assemblies.filter((entry) => entry.endsWith(".dll")).sort();
+  assert.ok(bundled.length > 0, "the payload declares no assemblies, so this gate would pass vacuously");
+
+  for (const assembly of bundled) {
+    // One rule: every bundled assembly is named. The document says which ones are SMAPI's own and which are
+    // separate libraries, so this gate needs no knowledge of that split - and a library added by a SMAPI
+    // upgrade fails here until its notice is written.
+    assert.ok(
+      notices.includes(assembly.split("\\").join("/")) || notices.includes(assembly),
+      `no third-party notice names ${assembly}`,
+    );
+  }
+
+  // And the notices must actually carry the licence texts the payload's libraries use, not just a list.
+  assert.match(notices, /MIT License/);
+  assert.match(notices, /BSD 2-Clause License/);
+  assert.match(notices, /SMAPI-LICENSE\.txt/, "the notices must point at SMAPI's own licence");
+});
+
 test("the production artifact config mounts exactly the payload the repository carries", async () => {
   const config = await readArtifactConfig(hostRoot);
-  assert.deepEqual(config.smapiPayload, {
-    kind: "verified_smapi_payload",
-    destination: "native/smapi",
-    manifest: "payload-manifest.json",
-    license: "SMAPI-LICENSE.txt",
-  });
+  // Compared against the packager's own constant, not a copy of it: the config must mount the payload shape
+  // the packager knows how to satisfy, and a hand-written expectation here only restates one side of that.
+  assert.deepEqual(config.smapiPayload, smapiPayloadDescriptorForTesting);
 });
 
 test("the packager stages the payload into a generation and re-verifies the staged copy", async () => {
@@ -83,10 +111,13 @@ test("the packager stages the payload into a generation and re-verifies the stag
   const stagingRoot = await mkdtemp(join(tmpdir(), "gamebuddy-smapi-staging-"));
   try {
     const origins = await ensureSmapiPayload({ stagingRoot, descriptor: config.smapiPayload });
-    // Every payload file plus the manifest and the licence is staged inside the generation
-    // at the declared destination, and each carries its origin fact.
-    const expected = manifest.files.length + 2;
-    assert.equal(origins.size, expected);
+    // Every payload file plus every document the descriptor declares is staged inside the generation at the
+    // declared destination, and each carries its origin fact. The document count is read from the descriptor
+    // so adding one cannot leave a magic number behind.
+    const documents = Object.keys(config.smapiPayload).filter(
+      (key) => key !== "kind" && key !== "destination",
+    );
+    assert.equal(origins.size, manifest.files.length + documents.length);
     for (const file of manifest.files) {
       const staged = resolve(stagingRoot, "native", "smapi", manifest.root, ...file.path.split("/"));
       assert.equal(digest(await readFile(staged)), file.sha256, file.path);

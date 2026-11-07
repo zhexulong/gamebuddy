@@ -1,0 +1,94 @@
+Third-party libraries included with the GameBuddy SMAPI payload
+
+The files under `win-x64/` are the unmodified SMAPI release payload, extracted from the official
+`SMAPI-4.5.2-installer.zip`. SMAPI itself is distributed under the GNU Lesser General Public
+License, version 3; its full text and source location are in `SMAPI-LICENSE.txt` in this folder.
+
+The directories below `Mods/` and the SMAPI assemblies themselves are part of SMAPI.
+
+Every other assembly is a separate library with its own licence, listed here with the copyright
+holder its own metadata names. GameBuddy ships them unmodified, as part of that payload.
+
+  assembly                                   project / version                 licence        copyright
+  ----------------------------------------------------------------------------------------------------------------
+  Mods/ConsoleCommands/ConsoleCommands.dll   SMAPI (Pathoschild)               LGPL-3.0       see SMAPI-LICENSE.txt
+  Mods/SaveBackup/SaveBackup.dll             SMAPI (Pathoschild)               LGPL-3.0       see SMAPI-LICENSE.txt
+  StardewModdingAPI.dll                      SMAPI (Pathoschild)               LGPL-3.0       see SMAPI-LICENSE.txt
+  smapi-internal/0Harmony.dll                Lib.Harmony 2.4.3                 MIT            Andreas Pardeike
+  smapi-internal/Markdig.dll                 Markdig 1.6.0                     BSD-2-Clause   Alexandre Mutel
+  smapi-internal/Mono.Cecil.Mdb.dll          Mono.Cecil 0.11.6                 MIT            Jb Evain
+  smapi-internal/Mono.Cecil.Pdb.dll          Mono.Cecil 0.11.6                 MIT            Jb Evain
+  smapi-internal/Mono.Cecil.dll              Mono.Cecil 0.11.6                 MIT            Jb Evain
+  smapi-internal/MonoMod.Common.dll          MonoMod.RuntimeDetour 25.3.6      MIT            0x0ade and contributors
+  smapi-internal/Newtonsoft.Json.dll         Newtonsoft.Json 14                MIT            James Newton-King
+  smapi-internal/Pathoschild.Http.Client.dll Pathoschild.Http.FluentClient 4.4.2 MIT            Jesse Plamondon-Willard
+  smapi-internal/Pintail.dll                 Pintail 2.9.2                     MIT            Nanoray
+  smapi-internal/SMAPI.Toolkit.CoreInterfaces.dll SMAPI (Pathoschild)               LGPL-3.0       see SMAPI-LICENSE.txt
+  smapi-internal/SMAPI.Toolkit.dll           SMAPI (Pathoschild)               LGPL-3.0       see SMAPI-LICENSE.txt
+  smapi-internal/System.Net.Http.Formatting.dll Microsoft.AspNet.WebApi.Client 6.0.0 MIT            Microsoft Corporation
+  smapi-internal/TMXTile.dll                 TMXTile                           MIT            Jesse Plamondon-Willard
+  smapi-internal/VdfConverter.dll            VdfConverter 1.0.3                MIT            Gerhard van Zyl
+
+Source locations, one per project:
+  Lib.Harmony 2.4.3                  MIT            https://www.nuget.org/packages/Lib.Harmony
+  Markdig 1.6.0                      BSD-2-Clause   https://www.nuget.org/packages/Markdig
+  Mono.Cecil 0.11.6                  MIT            https://www.nuget.org/packages/Mono.Cecil
+  Mono.Cecil 0.11.6                  MIT            https://www.nuget.org/packages/Mono.Cecil
+  Mono.Cecil 0.11.6                  MIT            https://www.nuget.org/packages/Mono.Cecil
+  MonoMod.RuntimeDetour 25.3.6       MIT            https://www.nuget.org/packages/MonoMod.RuntimeDetour
+  Newtonsoft.Json 14                 MIT            https://www.nuget.org/packages/Newtonsoft.Json
+  Pathoschild.Http.FluentClient 4.4.2 MIT            https://www.nuget.org/packages/Pathoschild.Http.FluentClient
+  Pintail 2.9.2                      MIT            https://www.nuget.org/packages/Pintail
+  Microsoft.AspNet.WebApi.Client 6.0.0 MIT            https://www.nuget.org/packages/Microsoft.AspNet.WebApi.Client
+  TMXTile                            MIT            https://github.com/Pathoschild/TMXTile
+  VdfConverter 1.0.3                 MIT            https://www.nuget.org/packages/VdfConverter
+
+====================================================================================================================
+MIT License (applies to every library listed above as MIT)
+
+Copyright notices are per library, as named in the table above.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this
+software and associated documentation files (the "Software"), to deal in the Software
+without restriction, including without limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+====================================================================================================================
+BSD 2-Clause License (Markdig)
+
+Copyright (c) Alexandre Mutel. All rights reserved.
+
+BSD 2-Clause License
+
+Redistribution and use in source and binary forms, with or without modification, are
+permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this list of
+   conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice, this list of
+   conditions and the following disclaimer in the documentation and/or other materials
+   provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS
+OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
+TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
