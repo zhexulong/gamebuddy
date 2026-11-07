@@ -89,10 +89,59 @@ jobs:
           GAMEBUDDY_BUN_EXECUTABLE: ${{ steps.bun.outputs.bun-path }}
       # This is the sole network-acquisition entry. It fails closed unless the
       # protected workflow identity, tag grammar, Windows x64 runner and release
-      # environment marker all match. Installer assembly, certificate work, and
-      # distribution upload are blocked pending their separately approved contract.
+      # environment marker all match.
       - run: pnpm --dir host build:release
       - run: pnpm --dir host check:production-artifact
+
+      # The artifact a player actually downloads, assembled from the generation this job just verified: the launcher
+      # published self-contained, the payload sealed by the existing completeness/leak authority, and Setup.exe built
+      # in Release - the configuration whose own MSBuild target refuses to produce an unsigned artifact. The signing
+      # identity comes from the protected environment and is never defaulted; without it this step fails with
+      # `signing_identity_required` rather than publishing something nobody signed.
+      - name: Assemble the player release
+        run: >-
+          node host/scripts/build-release-installer.mjs
+          --generation-output host/dist
+          --out desktop/dist/release
+          --version "${{ github.ref_name }}"
+          --repository "${{ github.repository }}"
+        env:
+          GAMEBUDDY_SIGNING_THUMBPRINT: ${{ secrets.GAMEBUDDY_SIGNING_THUMBPRINT }}
+          GAMEBUDDY_TIMESTAMP_URL: ${{ secrets.GAMEBUDDY_TIMESTAMP_URL }}
+          GAMEBUDDY_SIGNTOOL: ${{ secrets.GAMEBUDDY_SIGNTOOL }}
+
+      # The manifest is held to the bytes it describes, and to the generation the pointer names, so a release cannot
+      # claim an artifact this job did not build.
+      - name: Verify the release manifest
+        run: >-
+          node host/scripts/check-release-manifest.mjs
+          desktop/dist/release/release-manifest.json
+          host/dist
+        env:
+          GAMEBUDDY_SIGNTOOL: ${{ secrets.GAMEBUDDY_SIGNTOOL }}
+
+      # Publication refuses an unsigned artifact, and a tag that disagrees with the manifest's version, so a release
+      # cannot be published under a name it does not have.
+      - name: Prepare the publication
+        run: >-
+          node host/scripts/prepare-release-publication.mjs
+          desktop/dist/release/release-manifest.json
+          "${{ github.ref_name }}"
+          host/dist > desktop/dist/release/publication.json
+        env:
+          GAMEBUDDY_SIGNTOOL: ${{ secrets.GAMEBUDDY_SIGNTOOL }}
+
+      # Handed to the publishing job instead of being pushed from here: this job is read-only on the repository.
+      - name: Upload the assembled release
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamebuddy-player-release
+          if-no-files-found: error
+          path: |
+            desktop/dist/release/GameBuddy.Setup.exe
+            desktop/dist/release/payload.zip
+            desktop/dist/release/release-manifest.json
+            desktop/dist/release/publication.json
       # Tavern management P9 live evidence, run against the generation this job
       # just built and verified. The evidence runner mounts the real management
       # composition on a fresh gate-owned root and performs every operation the
@@ -193,3 +242,63 @@ jobs:
       - name: Remove this release run's acquisition scratch
         if: always()
         run: node host/scripts/release-owned-scratch-cleanup.mjs
+
+  publish-release:
+    # The only job with write access to the repository: it publishes assets and nothing else.
+    needs: host-release
+    # A tag push, not a manual dispatch: a dispatch may assemble, but only a tag names the version a player downloads.
+    if: >-
+      github.repository == 'zhexulong/gamebuddy' &&
+      startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    environment: gamebuddy-production-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Only the scripts are needed: the artifact arrives as an artifact, not from a build.
+          sparse-checkout: host/scripts
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.13.0
+      - name: Download the assembled release
+        uses: actions/download-artifact@v4
+        with:
+          name: gamebuddy-player-release
+          path: release
+      # Re-verified here rather than trusted from the build job: the bytes this job publishes are the bytes it checked,
+      # so a truncated or swapped artifact fails before it becomes a download.
+      - name: Verify the release manifest again
+        run: node host/scripts/check-release-manifest.mjs release/release-manifest.json
+        env:
+          GAMEBUDDY_SIGNTOOL: ${{ secrets.GAMEBUDDY_SIGNTOOL }}
+      # Refuses an unsigned artifact and a tag that disagrees with the manifest's version, so a release cannot be
+      # published under a name it does not have.
+      - name: Prepare the publication
+        run: >-
+          node host/scripts/prepare-release-publication.mjs
+          release/release-manifest.json
+          "${{ github.ref_name }}" > release/publication.json
+        env:
+          GAMEBUDDY_SIGNTOOL: ${{ secrets.GAMEBUDDY_SIGNTOOL }}
+      # `gh` with the runner's own token, not a third-party release action: the repository already treats this lane as
+      # protected, and an action that can write releases would widen what compromising that action reaches.
+      - name: Publish the release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $publication = Get-Content -Raw release/publication.json | ConvertFrom-Json
+          $publication.body | Set-Content -Encoding utf8 release/notes.md
+          # A tag is published once; a re-run edits the existing release and re-uploads with --clobber instead of
+          # failing the lane on a retry.
+          gh release view "${{ github.ref_name }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release edit "${{ github.ref_name }}" --title "GameBuddy $($publication.version)" --notes-file release/notes.md
+          } else {
+            gh release create "${{ github.ref_name }}" --title "GameBuddy $($publication.version)" --notes-file release/notes.md
+          }
+          foreach ($asset in $publication.assets) {
+            gh release upload "${{ github.ref_name }}" $asset --clobber
+          }

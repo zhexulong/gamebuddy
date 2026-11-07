@@ -19,7 +19,10 @@
     "check:production-artifact": "node scripts/check-production-artifact.mjs",
     "repair:test-artifact-lock": "node scripts/repair-test-artifact-lock.mjs",
     "check:historian-authoring": "node ../tools/run-ongoing-interaction-historian-authoring.mjs",
-    "clean": "node ../tools/scripts/clean-host-workspace.mjs"
+    "clean": "node ../tools/scripts/clean-host-workspace.mjs",
+    "build:player-release": "node scripts/build-release-installer.mjs --generation-output host/dist --out desktop/dist/release",
+    "check:release-manifest": "node scripts/check-release-manifest.mjs",
+    "test:release-chain": "node --test scripts/build-release-installer.test.mjs scripts/check-release-manifest.test.mjs scripts/prepare-release-publication.test.mjs"
   },
   "dependencies": {
     "@cortexkit/pi-magic-context": "file:..\\vendor\\magic-context\\packages\\pi-plugin",
