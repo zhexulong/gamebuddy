@@ -13,7 +13,7 @@
 # in `C:\gamebuddy-share`, which made the proof depend on sandbox state and fail outside a run.
 #
 # Measured defect this caught: the predicate half of the rule compared text carrying a trailing space, so
-# `EndsWith('SMAPI LGPL text present')` failed, the check fell to the observed-value branch, and the failing
+# `EndsWith('program root created')` failed, the check fell to the observed-value branch, and the failing
 # value `1` was accepted. The red transcript passed. Both halves are trimmed before comparison.
 
 $ErrorActionPreference = 'Stop'
@@ -52,7 +52,7 @@ $green = @(
     '[uninstall] program root removed | ok'
 ) -join "`r`n"
 
-$red = $green -replace '\[compliance\] SMAPI LGPL text present \| 0', '[compliance] SMAPI LGPL text present | 1'
+$red = $green -replace '\[layout\] program root created \| ok', '[layout] program root created | 1'
 
 $failures = 0
 function Report([string]$label, [bool]$ok, [string]$detail) {
@@ -67,7 +67,7 @@ Report 'green transcript counts every check' ($greenResult.productChecks -eq 7) 
 $redResult = Invoke-Verdict $red
 Report 'red transcript fails' ($redResult.ok -eq $false) ("ok=$($redResult.ok)")
 Report 'red transcript names exactly one failure' ($redResult.failingCount -eq 1) "count=$($redResult.failingCount)"
-Report 'red transcript names the violated check' (($redResult.failing -join ' ') -match 'SMAPI LGPL text present') (($redResult.failing -join ' '))
+Report 'red transcript names the violated check' (($redResult.failing -join ' ') -match 'program root created') (($redResult.failing -join ' '))
 
 $emptyResult = Invoke-Verdict ''
 Report 'empty transcript does not pass vacuously' ($emptyResult.ok -eq $false) ("ok=$($emptyResult.ok)")

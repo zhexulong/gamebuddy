@@ -93,23 +93,8 @@ for %%F in (runtime\node.exe main.js) do (
   )
 )
 
-REM The one-click SMAPI install reads exactly these three entries; a payload that ships
-REM without them can only refuse after the player already chose their game folder.
-for %%F in (
-  "native\smapi\win-x64\StardewModdingAPI.exe"
-  "native\smapi\payload-manifest.json"
-  "native\smapi\SMAPI-LICENSE.txt"
-) do (
-  if exist "%GEN_ROOT%\%%~F" (
-    call :record "smapi-payload" "%%~F present" "ok"
-  ) else (
-    call :record "smapi-payload" "%%~F present" "FAIL:missing"
-  )
-)
-
-REM The payload is LGPL-3.0, so the licence text has to travel with the binary.
-findstr /C:"GNU LESSER GENERAL PUBLIC LICENSE" "%GEN_ROOT%\native\smapi\SMAPI-LICENSE.txt" >nul 2>&1
-call :record "compliance" "SMAPI LGPL text present" "%ERRORLEVEL%"
+REM The mod loader is installed by the player from its own publisher, so a generation no longer
+REM carries one and there is nothing to assert here.
 
 REM ------------------------------------------------------- 4. the desktop shortcut
 powershell -NoProfile -Command "$desktop = [Environment]::GetFolderPath('Desktop'); $link = Get-ChildItem -LiteralPath $desktop -Filter '*.lnk' -ErrorAction SilentlyContinue | Where-Object { $_.BaseName -eq ([char]0x661F + [char]0x9732 + [char]0x8C37 + 'AI' + [char]0x4F34 + [char]0x4FA3) } | Select-Object -First 1; if ($null -ne $link) { (New-Object -ComObject WScript.Shell).CreateShortcut($link.FullName).TargetPath } else { 'MISSING' }" > "%SHARE%\shortcut.txt" 2>&1
@@ -172,7 +157,7 @@ if %ERRORLEVEL%==0 (
 :finish
 echo.>> "%RESULT%"
 echo end %DATE% %TIME%>> "%RESULT%"
-powershell -NoProfile -Command "$lines = @(Get-Content -LiteralPath '%RESULT%' | Where-Object { $_ -match '^\[.+\] ' }); $product = @($lines | Where-Object { $_ -notmatch '^\[tooling\]' }); $predicate = @('program root created','GameBuddy.Desktop.exe present','current.json present','uninstall\\GameBuddy.Setup.exe present','runtime\\node.exe present','main.js present','native\\smapi\\win-x64\\StardewModdingAPI.exe present','native\\smapi\\payload-manifest.json present','native\\smapi\\SMAPI-LICENSE.txt present','SMAPI LGPL text present','launcher process running','scheduled removal strategy','program root removed','removal completion marker written','registration removed','current-user marker written','add-remove entry written'); $failing = @($product | Where-Object { $parts = $_ -split '\|', 2; $text = ($parts[0]).Trim(); $v = ($parts[1]).Trim(); $isPredicate = $false; foreach ($p in $predicate) { if ($text.EndsWith($p)) { $isPredicate = $true; break } }; if ($isPredicate) { ($v -ne 'ok') -and ($v -ne '0') } else { ($v -eq '') -or ($v -match 'FAIL') -or ($v -match 'MISSING') } } | ForEach-Object { [string]$_ }); $ok = ($product.Count -gt 0) -and ($failing.Count -eq 0); [ordered]@{ schema='gamebuddy-sandbox-result/v1'; productChecks=$product.Count; failingCount=$failing.Count; failing=@($failing); checks=@($lines | ForEach-Object { [string]$_ }); ok=$ok } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath '%SUMMARY%' -Encoding utf8" 2>&1
+powershell -NoProfile -Command "$lines = @(Get-Content -LiteralPath '%RESULT%' | Where-Object { $_ -match '^\[.+\] ' }); $product = @($lines | Where-Object { $_ -notmatch '^\[tooling\]' }); $predicate = @('program root created','GameBuddy.Desktop.exe present','current.json present','uninstall\\GameBuddy.Setup.exe present','runtime\\node.exe present','main.js present','launcher process running','scheduled removal strategy','program root removed','removal completion marker written','registration removed','current-user marker written','add-remove entry written'); $failing = @($product | Where-Object { $parts = $_ -split '\|', 2; $text = ($parts[0]).Trim(); $v = ($parts[1]).Trim(); $isPredicate = $false; foreach ($p in $predicate) { if ($text.EndsWith($p)) { $isPredicate = $true; break } }; if ($isPredicate) { ($v -ne 'ok') -and ($v -ne '0') } else { ($v -eq '') -or ($v -match 'FAIL') -or ($v -match 'MISSING') } } | ForEach-Object { [string]$_ }); $ok = ($product.Count -gt 0) -and ($failing.Count -eq 0); [ordered]@{ schema='gamebuddy-sandbox-result/v1'; productChecks=$product.Count; failingCount=$failing.Count; failing=@($failing); checks=@($lines | ForEach-Object { [string]$_ }); ok=$ok } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath '%SUMMARY%' -Encoding utf8" 2>&1
 
 type "%RESULT%"
 powershell -NoProfile -Command "if (Test-Path '%SUMMARY%') { $r = Get-Content -Raw '%SUMMARY%' | ConvertFrom-Json; if ($r.ok) { Write-Host ('SANDBOX VERDICT: PASS (' + $r.productChecks + ' product checks)') } else { Write-Host ('SANDBOX VERDICT: FAIL (' + $r.failingCount + ' of ' + $r.productChecks + ' product checks)') } }"

@@ -32,7 +32,8 @@
  * `Pathoschild.Stardew.ModBuildConfig` 4.4.0 emits `<Error>` in `BeforeBuild` when
  * `!Exists('$(GamePath)')` or `!Exists('$(GamePath)\Stardew Valley.dll')` - before the compiler
  * runs - and the seven references it adds are `HintPath`s into that folder. This repository tracks
- * no game assembly (`assets/smapi/` holds SMAPI only; `/ref/` is gitignored), so there is no
+ * no game assembly (`/ref/` is gitignored, and this repository carries neither the game nor a mod
+ * loader), so there is no
  * reference assembly to compile against either. The exclusion is therefore printed on every run
  * with its cost spelled out, rather than left to look like coverage. Where `GamePath` resolves -
  * the caller's `GAMEBUDDY_STARDEW_GAME_PATH`, or `%USERPROFILE%\stardewvalley.targets` - those
