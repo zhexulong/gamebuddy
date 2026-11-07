@@ -13,6 +13,8 @@ import type {
   StardewGameSurfaceInstallationReader,
   StardewGameSurfaceLaunchReadinessReader,
   StardewGameSurfaceLaunchReadinessView,
+  StardewGameSurfaceWorldBindingReader,
+  StardewGameSurfaceWorldBindingView,
 } from "../stardew-production-lifecycle-coordinator.internal.js";
 import type { StardewRoleLifecycleReader, StardewRoleLifecycleView } from "../stardew-role-lifecycle-facade.js";
 
@@ -30,8 +32,9 @@ type GameBrowserReadStateContext = Readonly<{
  * This deliberately projects only facts that already exist. Role lifecycle
  * evidence governs installation compatibility; the independent Host-owned
  * attachment reader governs the exact surface generation and connection state;
- * the Host-owned action authority reader governs ready-actions-paused. Neither
- * source attests catalog, companion, world/save, or action outcomes.
+ * the Host-owned action authority reader governs ready-actions-paused; the
+ * integration-private world-binding reader governs the selected world. Neither
+ * source attests catalog, companion, actions outcomes, or any launch fact.
  */
 export type GameBrowserStateProvider = Readonly<{
   readState(context: GameBrowserReadStateContext): Promise<GameBrowserStateV1>;
@@ -44,6 +47,7 @@ export function createGameBrowserStateProvider(
   launchReadiness: StardewGameSurfaceLaunchReadinessReader,
   actionAuthority?: StardewGameSurfaceActionAuthorityReader,
   installation?: StardewGameSurfaceInstallationReader,
+  worldBinding?: StardewGameSurfaceWorldBindingReader,
 ): GameBrowserStateProvider {
   if (!isComposedGameProfile(profile)) throw new TypeError("game_browser_profile_not_composed");
   if (!profile.operationIds.includes("game.state.read")) throw new TypeError("game_browser_state_read_not_mounted");
@@ -60,6 +64,11 @@ export function createGameBrowserStateProvider(
       // registered, ready installation still projected `prerequisites: unknown`
       // until a launch happened to be staged.
       const installationView = installation === undefined ? undefined : await installation.readInstallationView();
+      // The bound world is the ONE durable answer to "which world is this player in".
+      // It reaches the projection through the integration-private resolver, so the
+      // browser and the resume seam can never name different worlds; no launch fact
+      // (dataRoot, pid, pipe, token, native frame) travels with it.
+      const worldBindingView = worldBinding === undefined ? undefined : await worldBinding.readWorldBindingView();
       return projectGameBrowserState(
         profile,
         context,
@@ -68,6 +77,7 @@ export function createGameBrowserStateProvider(
         launchReadinessView,
         actionAuthorityView,
         installationView,
+        worldBindingView,
       );
     },
   });
@@ -81,6 +91,7 @@ function projectGameBrowserState(
   launchReadiness: StardewGameSurfaceLaunchReadinessView,
   actionAuthority: StardewGameSurfaceActionAuthorityView | undefined,
   installation: "registered" | "absent" | undefined,
+  worldBinding: StardewGameSurfaceWorldBindingView | undefined,
 ): GameBrowserStateV1 {
   const compatibility = projectCompatibility(lifecycle);
   const playerHostStarted = lifecycle.playerHost.ownership === "gamebuddy_direct_spawn";
@@ -110,7 +121,7 @@ function projectGameBrowserState(
       actionAuthority: actionAuthority?.status ?? "unavailable",
       role: null,
       companionName: null,
-      selectedWorld: null,
+      selectedWorld: worldBinding?.status === "bound" ? worldBinding.worldRef : null,
       selectedSave: null,
       capabilitySummary: Object.freeze({ available: false, count: 0 }),
       // The coordinator's launch terminality is the only honest source of a

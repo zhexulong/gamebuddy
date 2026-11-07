@@ -333,6 +333,58 @@ export type StardewGameSurfaceActionAuthorityReader = Readonly<{
 }>;
 
 /**
+ * Integration-private redacted projection of the world this lifecycle currently
+ * holds bound.
+ *
+ * It is the read-side consumer of the integration-private world-binding resolver:
+ * the ONE durable `production_game_session_world_binding` row the lifecycle's own
+ * active game session resolves to, and nothing else. `bound` carries the opaque
+ * bindingRef the store holds (the slot basename the launched Player Host's signed
+ * join manifest named) because that is the only world identity the product has;
+ * `none` means this lifecycle holds no bound session - the row may still exist and
+ * be resumable, which is a different surface; `unavailable` means the durable read
+ * itself produced no fact, and it is a distinct word so a store failure is never
+ * projected as "no world". It never carries a dataRoot, process id, pipe, token or
+ * native frame.
+ */
+export type StardewGameSurfaceWorldBindingView = Readonly<
+  { status: "none" } | { status: "unavailable" } | { status: "bound"; worldRef: string }
+>;
+
+export type StardewGameSurfaceWorldBindingReader = Readonly<{
+  readWorldBindingView(): Promise<StardewGameSurfaceWorldBindingView>;
+}>;
+
+/**
+ * The one consumer of the integration-private resolver: turns the lifecycle's own
+ * active game session into the world-binding projection the browser read publishes.
+ * It owns no store, no cache and no second session identity - it resolves through
+ * the same resolver the resume seam uses, so a projection can never name a world
+ * the resume path would refuse.
+ */
+export function createStardewGameSurfaceWorldBindingReader(
+  resolver: StardewWorldBindingResolver,
+  readActiveGameSessionId: () => string | undefined,
+): StardewGameSurfaceWorldBindingReader {
+  return Object.freeze({
+    async readWorldBindingView(): Promise<StardewGameSurfaceWorldBindingView> {
+      const gameSessionId = readActiveGameSessionId();
+      if (gameSessionId === undefined) return Object.freeze({ status: "none" });
+      try {
+        const outcome = await resolver.resolveWorldBinding(gameSessionId);
+        // A missing, foreign or terminal binding is a lifecycle that holds no world
+        // here: the create/resume seam that produced this id settles such a row by
+        // failing or terminating it, so there is no world to name.
+        if (!outcome.ok) return Object.freeze({ status: "none" });
+        return Object.freeze({ status: "bound", worldRef: outcome.binding.bindingRef });
+      } catch {
+        return Object.freeze({ status: "unavailable" });
+      }
+    },
+  });
+}
+
+/**
  * The outcome of confirming or picking an installation.
  *
  * `mod_loader_missing` is the refusal a player can act on: the folder holds
@@ -510,6 +562,8 @@ export type StardewProductionLifecycleCoordinator = Readonly<{
   readonly launchReadinessReader: StardewGameSurfaceLaunchReadinessReader;
   readonly installationReader: StardewGameSurfaceInstallationReader;
   readonly actionAuthorityReader: StardewGameSurfaceActionAuthorityReader;
+  /** The world this lifecycle holds bound, resolved through the integration-private resolver. */
+  readonly worldBindingReader: StardewGameSurfaceWorldBindingReader;
   readonly activationOwner: StardewProductionLifecycleActivationOwner;
   readonly headlessOperationalGame: HeadlessOperationalGame;
   close(): Promise<void>;
@@ -2647,15 +2701,22 @@ function createCoordinator(
           }
           // Phase 2f: first activation (generation 1 from a clean surface, else
           // strictly incrementing). This is a new world session, not a resume:
-          // the previous resume lineage's in-memory guard is cleared so it can
-          // never shadow the new session, and actions stay paused until a fresh
-          // explicit Game instruction reopens them. Whether this owner still holds
-          // its intact first activation or must be re-armed onto a fresh one is
-          // not the coordinator's to decide: the attach asks the core, which is
-          // the only owner of that fact (see `beginFarmhandAiClientActivation`).
+          // the previous resume lineage's in-memory guard is cleared by the stale
+          // teardown so it can never shadow the new session, and actions stay
+          // paused until a fresh explicit Game instruction reopens them. Whether
+          // this owner still holds its intact first activation or must be re-armed
+          // onto a fresh one is not the coordinator's to decide: the attach asks
+          // the core, which is the only owner of that fact (see
+          // `beginFarmhandAiClientActivation`).
           resumedGameSessionId = undefined;
           await closeStaleAttachment();
           if (isClosing()) throw new Error("stardew_lifecycle_closing");
+          // The world this create just bound is now the world this lifecycle owns,
+          // so the browser read resolves it through the same integration-private
+          // resolver the resume seam uses. Without this the binding was durable but
+          // invisible: every projection of a just-created world said `selectedWorld:
+          // null` while the session was already resumable.
+          resumedGameSessionId = metadata.gameSessionId;
           attachmentGeneration = Math.max(attachmentGeneration + 1, 1);
           attachmentConnectionStatus = "reconnecting";
           actionAuthorityStatus = "paused";
@@ -3368,6 +3429,7 @@ function createCoordinator(
     launchReadinessReader,
     installationReader,
     actionAuthorityReader,
+    worldBindingReader: createStardewGameSurfaceWorldBindingReader(worldBindingResolver, () => resumedGameSessionId),
     activationOwner,
     headlessOperationalGame,
     close,
