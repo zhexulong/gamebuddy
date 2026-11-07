@@ -352,7 +352,9 @@
     "test:child-output-parsing": "node --test tools/check-child-output-parsing.test.mjs",
     "test:derived-population": "node --test tools/check-derived-population.test.mjs",
     "check:ci-dead-conditions": "node tools/check-ci-dead-conditions.mjs",
-    "test:ci-dead-conditions": "node --test tools/check-ci-dead-conditions.test.mjs"
+    "test:ci-dead-conditions": "node --test tools/check-ci-dead-conditions.test.mjs",
+    "check:vendored-bundle-leaks": "node tools/check-vendored-bundle-leaks.mjs",
+    "test:vendored-bundle-leaks": "node --test tools/check-vendored-bundle-leaks.test.mjs"
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",

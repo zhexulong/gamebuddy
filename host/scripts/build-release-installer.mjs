@@ -28,9 +28,11 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { packageGenerationForDistribution } from "./package-player-distribution.mjs";
+import { reportPackagingCompleteness } from "./verify-self-contained-generation.mjs";
+import { checkVendoredBundleLeaks } from "../../tools/check-vendored-bundle-leaks.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const hostRoot = resolve(dirname(scriptPath), "..");
@@ -114,6 +116,54 @@ export function releaseIdentity({ version, repository, tagUrlPattern = undefined
     repository,
     downloadUrl: `https://github.com/${repository}/releases/download/v${normalized}/${INSTALLER_FILE}`,
     ...(tagUrlPattern === undefined ? {} : { downloadUrlPattern: tagUrlPattern }),
+  });
+}
+
+/**
+ * Reports what a release would be assembled from, and refuses if any of it is unusable.
+ *
+ * This is the half of the chain that can run without a certificate and without the protected environment: the pointer is
+ * readable, the generation carries every piece the packaging step requires, and no shipped bundle names the build
+ * machine. It writes nothing and spawns nothing.
+ */
+export async function dryRunPlayerRelease({
+  generationOutputRoot,
+  version,
+  repository,
+  vendorRoot = join(repositoryRoot, "vendor"),
+} = {}) {
+  if (typeof generationOutputRoot !== "string" || generationOutputRoot.length === 0) {
+    fail("generation_output_root_required");
+  }
+  const identity = releaseIdentity({ version, repository });
+  const resolvedGenerationRoot = resolve(generationOutputRoot);
+  const published = await readPublishedGeneration(resolvedGenerationRoot);
+  const generationRoot = join(resolvedGenerationRoot, "generations", published.generation);
+
+  const packaging = await reportPackagingCompleteness({ outputRoot: resolvedGenerationRoot, generationRoot });
+  // The launcher is staged by the packaging step itself, so a generation cannot carry it yet. Everything else reported
+  // `absent` means the generation really is unusable as a release source.
+  const incomplete = Object.entries(packaging)
+    .filter(([piece, value]) => value === "absent" && piece !== "desktopBundle")
+    .map(([piece]) => piece);
+
+  const leaks = await checkVendoredBundleLeaks({ vendorRoot });
+
+  return Object.freeze({
+    version: identity.version,
+    downloadUrl: identity.downloadUrl,
+    generation: published.generation,
+    packaging: Object.freeze(packaging),
+    incomplete: Object.freeze(incomplete),
+    leaks: Object.freeze({
+      examined: leaks.examined,
+      roots: leaks.roots.length,
+      blocking: Object.freeze(leaks.blocking.map((finding) => ({
+        file: finding.file,
+        line: finding.line,
+        value: finding.value,
+      }))),
+    }),
   });
 }
 
@@ -261,6 +311,9 @@ function parseArguments(argv) {
         options.timestampUrl = value;
         index += 1;
         break;
+      case "--dry-run":
+        options.dryRun = true;
+        break;
       case "--unsigned":
         // Only for a build nobody publishes: a developer check, or a clean-machine run of the installer.
         options.protectedRelease = false;
@@ -275,6 +328,31 @@ function parseArguments(argv) {
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === scriptPath) {
   try {
     const options = parseArguments(process.argv.slice(2));
+    if (options.dryRun === true) {
+      // Reports and refuses, writes nothing: the half of the chain that needs neither a certificate nor the protected
+      // environment.
+      const plan = await dryRunPlayerRelease({
+        generationOutputRoot: options.generationOutputRoot ?? join(hostRoot, "dist"),
+        version: options.version ?? process.env.GAMEBUDDY_RELEASE_VERSION,
+        repository: options.repository ?? process.env.GAMEBUDDY_RELEASE_REPOSITORY ?? "zhexulong/gamebuddy",
+      });
+      const lines = [
+        `dry_run:version=${plan.version}`,
+        `dry_run:downloadUrl=${plan.downloadUrl}`,
+        `dry_run:generation=${plan.generation}`,
+        ...Object.entries(plan.packaging).map(([piece, value]) => `dry_run:packaging:${piece}=${value}`),
+        `dry_run:leaks:examined=${plan.leaks.examined} roots=${plan.leaks.roots} blocking=${plan.leaks.blocking.length}`,
+        ...plan.leaks.blocking.map(
+          (finding) => `dry_run:leak:${relative(repositoryRoot, finding.file).replaceAll("\\", "/")}:${finding.line}`,
+        ),
+      ];
+      process.stdout.write(`${lines.join("\n")}\n`);
+      if (plan.incomplete.length > 0) fail(`dry_run_incomplete:${plan.incomplete.join(",")}`);
+      if (plan.leaks.blocking.length > 0) fail(`dry_run_leaks:${plan.leaks.blocking.length}`);
+      process.stdout.write("dry_run_ok\n");
+      process.exit(0);
+    }
+
     const result = await buildPlayerRelease({
       generationOutputRoot: options.generationOutputRoot ?? join(hostRoot, "dist"),
       outputDirectory: options.outputDirectory ?? join(repositoryRoot, "desktop", "dist", "release"),

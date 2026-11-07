@@ -309,6 +309,12 @@ jobs:
       # run happened to need it. A gate nobody calls is indistinguishable from a passing one.
       - run: node tools/check-release-generation-self-contained.mjs
       - run: node --test tools/check-release-generation-self-contained.test.mjs
+      # A shipped bundle must not name the machine that built it. Measured: `bun build` inlined
+      # `E:\\projects\\ai-game-companion\\vendor\\...` into `__dirname`/`__filename` for the CommonJS dependencies
+      # it bundles, and the release lane only noticed at packaging time - six files, on a path that means
+      # nothing on a player's machine. This job runs the same build, so it can say so on the push instead.
+      - run: node tools/check-vendored-bundle-leaks.mjs
+      - run: node --test tools/check-vendored-bundle-leaks.test.mjs
       - run: node host/scripts/check-production-artifact.mjs
       - run: node tools/check-ci-coverage.mjs
       # `check:draft-declaration-coverage` drives a mounted zone, and the prerequisite it declares is a Chromium the
