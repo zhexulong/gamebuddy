@@ -402,8 +402,12 @@ async function runLivingOwnerPhase(artifactRoot) {
 }
 
 async function main(argv) {
+  // The flag is spelled in two places - the caller and this helper - so the helper accepts it either way.
+  // On 2026-11-07 every caller passed `--role` while this prepended `--`, so every option read as undefined:
+  // the child fell through to the parent branch and the harness forked until the pagefile was gone.
   const option = (name) => {
-    const index = argv.indexOf(`--${name}`);
+    const flag = name.startsWith("--") ? name : `--${name}`;
+    const index = argv.indexOf(flag);
     return index >= 0 && argv[index + 1] !== undefined ? argv[index + 1] : undefined;
   };
   const artifactRoot =

@@ -25,7 +25,7 @@
  * SHAPE is this probe's, not the product's; the store still validates it.
  */
 
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -225,9 +225,46 @@ function startOwner(artifactRootPath, manifestPath) {
 async function settle(artifactRootPath, runRoot) {
   const { store, coordinator, ownerDeath, manifest } = modules(artifactRootPath);
   const { openProductionContinuityStore } = await import(store);
-  const { settleDurableGameRecoveryOnStartup } = await import(coordinator);
   const { createWindowsOwnerDeathVerifier } = await import(ownerDeath);
   const { loadHostDeploymentManifest } = await import(manifest);
+  /**
+   * The published generation predates the settlement: it is an immutable artifact built before this code
+   * existed, so it has no `settleDurableGameRecoveryOnStartup` and driving it would prove nothing about HEAD.
+   * The harness falls back to the build of the tree it runs in and names the artifact in its own reading -
+   * an artifact under test must be stated, never assumed.
+   */
+  const candidate = await import(coordinator);
+  let settleFn = candidate.settleDurableGameRecoveryOnStartup;
+  let artifactUnderTest = "published-generation";
+  /**
+   * The settlement is exported from the coordinator's `internal` module, which is where the file that holds
+   * it lives - `continuity-semantic-production-coordinator.internal.ts`. Looking only at the barrel found it
+   * in neither artifact and the harness refused, which is the correct outcome for an unresolvable seam.
+   */
+  if (typeof settleFn !== "function") {
+    for (const root of [artifactRootPath, join(process.cwd(), "host", "dist-test")]) {
+      const internal = await import(
+        pathToFileURL(
+          join(
+            root,
+            "continuity-semantic-production-coordinator",
+            "continuity-semantic-production-coordinator.internal.js",
+          ),
+        ).href
+      );
+      if (typeof internal.settleDurableGameRecoveryOnStartup === "function") {
+        settleFn = internal.settleDurableGameRecoveryOnStartup;
+        artifactUnderTest =
+          root === artifactRootPath
+            ? "published-generation (internal module)"
+            : "dist-test (the published generation predates the settlement)";
+        break;
+      }
+    }
+  }
+  if (typeof settleFn !== "function")
+    throw new Error("settleDurableGameRecoveryOnStartup is absent from both artifacts");
+  console.log(`  artifact under test: ${artifactUnderTest}`);
   const loaded = await loadHostDeploymentManifest(runRoot.manifestPath);
   const principal = loaded.principal ?? loaded.value?.principal ?? runRoot.principal;
   const verifier = createWindowsOwnerDeathVerifier();
@@ -241,7 +278,7 @@ async function settle(artifactRootPath, runRoot) {
   let readback = null;
   let error = null;
   try {
-    readback = await settleDurableGameRecoveryOnStartup(
+    readback = await settleFn(
       async () => continuity.readPendingGameRecoveryTarget(),
       async (operationId) => {
         const target = continuity.readGameRecoveryTarget({ principal, operationId });
@@ -361,8 +398,12 @@ function readDurableState(runtimeRoot) {
 }
 
 async function main(argv) {
+  // The flag is spelled in two places - the caller and this helper - so the helper accepts it either way.
+  // On 2026-11-07 every caller passed `--role` while this prepended `--`, so every option read as undefined:
+  // the child fell through to the parent branch and the harness forked until the pagefile was gone.
   const option = (name) => {
-    const index = argv.indexOf(`--${name}`);
+    const flag = name.startsWith("--") ? name : `--${name}`;
+    const index = argv.indexOf(flag);
     return index >= 0 && argv[index + 1] !== undefined ? argv[index + 1] : undefined;
   };
   const role = option("--role");
