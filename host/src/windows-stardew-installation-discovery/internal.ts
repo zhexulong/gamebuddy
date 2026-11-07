@@ -67,6 +67,13 @@ export type DiscoveryDiagnostic =
   | "vdf-unreadable"
   | "vdf-malformed"
   | "invalid-app-manifest"
+  /**
+   * A Steam library that simply does not hold this game: no `appmanifest_413150.acf` to read.
+   *
+   * Its own name because it is the normal state of most libraries, not a fault - reporting it as an invalid manifest
+   * made a healthy scan look broken.
+   */
+  | "library-without-game"
   | "no-candidates"
   | "source-unavailable"
   | "candidate-invalid"

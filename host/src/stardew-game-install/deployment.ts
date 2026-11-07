@@ -289,10 +289,25 @@ export async function deployStardewCompanionMod(
   if (!probe.smapi) return failed("smapi_not_installed");
 
   const modsDirectory = win32.join(installRoot, STARDEW_MODS_DIRECTORY);
+  let modsState: Awaited<ReturnType<typeof lstat>> | undefined;
   try {
-    const state = await lstat(modsDirectory);
-    if (!state.isDirectory() || state.isSymbolicLink()) return failed("mods_directory_missing");
+    modsState = await lstat(modsDirectory);
   } catch {
+    // Not there, or not readable. Absence is the ordinary case this branch creates; an unreadable path fails the
+    // `mkdir` below and is refused there.
+    modsState = undefined;
+  }
+  if (modsState === undefined) {
+    // A loader without a `Mods` folder is a loader that has not run yet: SMAPI creates this directory on first
+    // launch. The player has nothing to fix here, so the folder is created rather than the install refused.
+    try {
+      await mkdir(modsDirectory, { recursive: true });
+    } catch {
+      return failed("mods_directory_missing");
+    }
+  } else if (!modsState.isDirectory() || modsState.isSymbolicLink()) {
+    // A file owns the name, or the directory is a link: writing here would put the Mod somewhere the game does not
+    // read, or outside the game folder entirely.
     return failed("mods_directory_missing");
   }
 

@@ -1,14 +1,14 @@
 import { readFile } from "node:fs/promises";
 import {
-  StardewDiscoverySession,
+  type DiscoveryDiagnostic,
   normalizeBoundCandidates,
   normalizeWindowsPath,
   parseAppManifest,
-  WINDOWS_PATH_MAX_LENGTH,
   STEAM_METADATA_MAX_BYTES,
-  type DiscoveryDiagnostic,
   type StardewCandidateModLoader,
+  StardewDiscoverySession,
   type StardewInstallationCandidate,
+  WINDOWS_PATH_MAX_LENGTH,
 } from "./internal.js";
 import type { StardewSteamSource } from "./source.js";
 
@@ -127,8 +127,11 @@ export function createStardewInstallationDiscoveryProvider(
             return;
           }
           roots.push([sourceKind, installRoot, await modLoaderFor(installRoot)]);
-        } catch {
-          diagnostics.push("invalid-app-manifest");
+        } catch (error) {
+          // Absence is not invalidity: a library that does not hold this game has no manifest, and calling that an
+          // invalid manifest made an ordinary scan read as a fault.
+          const code = (error as { code?: string } | null)?.code;
+          diagnostics.push(code === "ENOENT" || code === "ENOTDIR" ? "library-without-game" : "invalid-app-manifest");
         }
       };
       for (const [sourceKind, steamLibraryRoot] of facts.roots) await addRoot(sourceKind, steamLibraryRoot);

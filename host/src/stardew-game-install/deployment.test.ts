@@ -276,7 +276,7 @@ test(
 );
 
 test(
-  "a game without SMAPI, without a Mods folder, or absent is named",
+  "an absent game or loader is named, while a folder that merely lacks Mods is created",
   { skip: process.platform !== "win32" },
   async () => {
     const packageRoot = await temporaryDirectory("gamebuddy-mod-precondition-package-");
@@ -290,10 +290,12 @@ test(
         isFailure(await deployStardewCompanionMod({ installRoot: noSmapi, package: mod }), "smapi_not_installed"),
         true,
       );
-      assert.equal(
-        isFailure(await deployStardewCompanionMod({ installRoot: noMods, package: mod }), "mods_directory_missing"),
-        true,
-      );
+      // A loader without a `Mods` folder is a loader that has not run yet: the folder is created and the Mod lands.
+      const created = await deployStardewCompanionMod({ installRoot: noMods, package: mod });
+      assert.equal(created.kind, "installed");
+      assert.equal((await lstat(join(noMods, "Mods", "GameBuddy", "manifest.json"))).isFile(), true);
+      // And a second deployment is `current`: the created folder is a normal installation from then on.
+      assert.equal((await deployStardewCompanionMod({ installRoot: noMods, package: mod })).kind, "current");
       assert.equal(
         isFailure(
           await deployStardewCompanionMod({ installRoot: missing, package: mod }),

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createStardewInstallationDiscoveryProvider } from "./index.js";
 import type { StardewGogInstallRootSource, StardewSteamSource } from "./index.js";
+import { createStardewInstallationDiscoveryProvider } from "./index.js";
 import type { DiscoveryDiagnostic } from "./internal.js";
 
 const manifest = '"appid" "413150" "installdir" "Stardew Valley"';
@@ -42,6 +42,30 @@ test("each candidate reports the loader state of its own folder", async () => {
     ["C: · Steam", "present"],
     ["D: · SteamLibrary", "missing"],
   ]);
+});
+
+test("a library without the game is not a library with a broken manifest", async () => {
+  // Both used to report `invalid-app-manifest`, which made an ordinary scan read as a fault: most libraries do not
+  // hold a given game, and the absence of `appmanifest_413150.acf` is the normal state.
+  const broken = "C:\\Broken\\steamapps\\appmanifest_413150.acf";
+  const provider = createStardewInstallationDiscoveryProvider({
+    probe: async () => ({ readable: true, smapi: false }),
+    source: source([
+      ["steam-vdf", "C:\\Absent"],
+      ["steam-vdf", "C:\\Broken"],
+    ]),
+    readFile: async (path) => {
+      if (path === broken) return '"appid" "1"';
+      // The same error shape `readFile` produces for a file that is not there.
+      const error = new Error(`ENOENT: no such file or directory, open '${path}'`);
+      (error as { code?: string }).code = "ENOENT";
+      return Promise.reject(error);
+    },
+  });
+
+  const result = await provider.discover();
+  assert.equal(result.candidates.length, 0);
+  assert.deepEqual([...result.diagnostics].sort(), ["invalid-app-manifest", "library-without-game", "no-candidates"]);
 });
 
 test("binds each source root to its own manifest and only publishes valid roots", async () => {
