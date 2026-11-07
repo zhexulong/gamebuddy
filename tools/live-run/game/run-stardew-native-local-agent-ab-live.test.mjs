@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFil
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { turnSettled } from "../../lib/turn-settled.mjs";
@@ -145,6 +145,14 @@ test("a model profile is filled only where one is missing, never overwritten", (
   assert.match(RUNNER_SOURCE, /modelId: existingProfile\?\.game\?\.modelId \?\? MODEL/);
 });
 
+/** The runner's rung-clause list, sliced out so a test can read the declarations the verdict is built from. */
+function rungClauseList(source) {
+  const start = source.indexOf("const rungClauses = Object.freeze([");
+  const end = source.indexOf("const result = await buildRunResult({\n    rungClauses,");
+  assert.ok(start >= 0 && end > start, "the runner must declare its rung clauses in one list, and pass them");
+  return source.slice(start, end);
+}
+
 test("the runner enforces a companion-interaction gate on every speaking scenario", () => {
   // The gate must be wired into the verdict so a "checklist of what I did" closing
   // line blocks the run instead of passing silently.
@@ -159,10 +167,30 @@ test("the runner enforces a companion-interaction gate on every speaking scenari
   // only `failed` blocks, so `unobserved` stays distinguishable from `verified`.
   assert.match(RUNNER_SOURCE, /const interactionPassed = interactionOutcome !== "failed";/);
   assert.match(RUNNER_SOURCE, /interactionOutcome,/);
-  // Every scenario's clause plus the shared gates, in one conjunction the verdict reads.
-  assert.match(
+  // Every scenario's clause plus the shared gates, in ONE list the verdict reads - and each clause carries the code
+  // that reports it, so a blocked run cannot publish a code borrowed from a clause that passed.
+  const clauses = rungClauseList(RUNNER_SOURCE);
+  for (const id of [
+    "morning_routine",
+    "memory_covenant",
+    "npc_social_and_presence",
+    "multiday_routine",
+    "context",
+    "content",
+    "world_book",
+    "companion_interaction",
+    "historian_rubric",
+  ])
+    assert.ok(clauses.includes(`id: "${id}"`), `the rung's clause list must carry ${id}`);
+  assert.equal(
+    (clauses.match(/reasonCode:/gu) ?? []).length,
+    (clauses.match(/id: "/gu) ?? []).length,
+    "every clause names the code that reports it; a clause without one is a verdict nobody can explain",
+  );
+  assert.doesNotMatch(
     RUNNER_SOURCE,
-    /contextPassed &&\n      contentPassed &&\n      worldBookPassed &&\n      interactionPassed/,
+    /state:\n\s+morningRoutinePassed/,
+    "the state is derived from the clauses, never written beside them",
   );
 });
 
@@ -775,16 +803,13 @@ test("morning_routine is a self-directed session whose output is a capability au
     /SCENARIO === "morning_routine"\n      \? buildCapabilityAudit\(\{\n          actionTrace,/,
   );
   assert.match(RUNNER_SOURCE, /capabilityAudit,/);
-  const verdictExpression = RUNNER_SOURCE.slice(
-    RUNNER_SOURCE.indexOf("    state:\n"),
-    RUNNER_SOURCE.indexOf('        ? "passed"'),
-  );
-  assert.ok(
-    verdictExpression.includes("morningRoutinePassed &&"),
-    "the verdict must depend on the scenario's own clause",
-  );
-  assert.ok(verdictExpression.includes("memoryCovenantPassed &&"));
-  assert.ok(verdictExpression.includes("npcSocialAndPresencePassed &&"));
+  const clauseList = rungClauseList(RUNNER_SOURCE);
+  for (const clause of [
+    "passed: morningRoutinePassed",
+    "passed: memoryCovenantPassed",
+    "passed: npcSocialAndPresencePassed",
+  ])
+    assert.ok(clauseList.includes(clause), `the verdict must depend on the scenario's own clause (${clause})`);
   // A session cut off mid-turn must not be reported as a completed session: the first
   // real run of this rung passed on a 609s `agent_turn_timeout` while the companion had
   // emitted a 10-character fragment and never delivered its closing report.
@@ -1499,42 +1524,46 @@ test("a run that cannot bind its own session record publishes no timings, naming
 });
 
 test("the assembly logs a tool-timing disagreement by name", async () => {
-  const [, buildRunResult] = extractRunnerFunction(RUNNER_SOURCE, ["summarizeDispatchedActions", "buildRunResult"], {
-    executedActionIds,
-    NON_ACCOMPLISHMENT_ACTIONS: new Set(),
-    phaseTimings: { runStartedAtMs: 1, marks: {} },
-    lastObservedSnapshot: null,
-    lastObservedPose: null,
-    actionTrace: [],
-    programSubmissions: [],
-    programOutcomes: [],
-    sampleProgramOutcomes: async () => [],
-    programExecutionRows,
-    executionTraceInvariant,
-    TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
-    multidayOutcome: null,
-    SCENARIO: "morning_routine",
-    LEGACY_LADDER: null,
-    historianRubricOutcome: null,
-    runSessionRecord: Object.freeze({ path: "/tmp/session.jsonl", reason: null }),
-    summarizeActionCadence: () => ({ spans: [] }),
-    summarizePresentationEvidence: () => ({ pieces: [] }),
-    // The reader's own answer for a violated invariant, verbatim: this test is about the assembly NAMING the violation
-    // and publishing the withheld shape, not about re-reading a record.
-    readToolTiming: () => ({
-      observed: false,
-      reason: "tool_timing_invariant_violated",
-      record: "session.jsonl",
-      byCategory: null,
-      longest: null,
-      invariant: { checked: true, ok: false, calls: 45, frames: 0 },
-    }),
-    buildFailureSnapshot: (input) => input,
-    writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
-    closeCapture: async () => ({ state: "closed" }),
-    writeFile: async () => {},
-    join: (...parts) => parts.join("/"),
-  });
+  const [, buildRunResult] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
+    {
+      executedActionIds,
+      NON_ACCOMPLISHMENT_ACTIONS: new Set(),
+      phaseTimings: { runStartedAtMs: 1, marks: {} },
+      lastObservedSnapshot: null,
+      lastObservedPose: null,
+      actionTrace: [],
+      programSubmissions: [],
+      programOutcomes: [],
+      sampleProgramOutcomes: async () => [],
+      programExecutionRows,
+      executionTraceInvariant,
+      TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
+      multidayOutcome: null,
+      SCENARIO: "morning_routine",
+      LEGACY_LADDER: null,
+      historianRubricOutcome: null,
+      runSessionRecord: Object.freeze({ path: "/tmp/session.jsonl", reason: null }),
+      summarizeActionCadence: () => ({ spans: [] }),
+      summarizePresentationEvidence: () => ({ pieces: [] }),
+      // The reader's own answer for a violated invariant, verbatim: this test is about the assembly NAMING the violation
+      // and publishing the withheld shape, not about re-reading a record.
+      readToolTiming: () => ({
+        observed: false,
+        reason: "tool_timing_invariant_violated",
+        record: "session.jsonl",
+        byCategory: null,
+        longest: null,
+        invariant: { checked: true, ok: false, calls: 45, frames: 0 },
+      }),
+      buildFailureSnapshot: (input) => input,
+      writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
+      closeCapture: async () => ({ state: "closed" }),
+      writeFile: async () => {},
+      join: (...parts) => parts.join("/"),
+    },
+  );
   const logged = [];
   const original = console.error;
   console.error = (...args) => logged.push(args);
@@ -2699,37 +2728,41 @@ test("the runner assembles its result in exactly one place, so no exit path can 
 test("a run whose trace has dispatches publishes a non-empty attempted list", async () => {
   // The falsifier for the field the 131-dispatch run lost: the REAL builder, evaluated against a synthetic trace, must
   // answer with what the trace holds - on the crashed path, which is the one that published nothing.
-  const [, buildRunResult] = extractRunnerFunction(RUNNER_SOURCE, ["summarizeDispatchedActions", "buildRunResult"], {
-    executedActionIds,
-    NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
-    phaseTimings: { runStartedAtMs: 1, marks: {} },
-    lastObservedSnapshot: null,
-    lastObservedPose: null,
-    actionTrace: [
-      { action: "move_to_tile", state: "succeeded" },
-      { action: "harvest_crop", state: "succeeded" },
-      { action: "plant_seed", state: "rejected" },
-    ],
-    programSubmissions: [{ tool: "stardew_submit_action_program", accepted: false }],
-    programOutcomes: [],
-    sampleProgramOutcomes: async () => [],
-    programExecutionRows,
-    executionTraceInvariant,
-    TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
-    multidayOutcome: { crossings: 1, dayRecords: [] },
-    SCENARIO: "morning_routine",
-    LEGACY_LADDER: null,
-    historianRubricOutcome: null,
-    runSessionRecord: Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" }),
-    summarizeActionCadence: () => ({ spans: [] }),
-    summarizePresentationEvidence: () => ({ pieces: [] }),
-    readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
-    buildFailureSnapshot: (input) => input,
-    writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
-    closeCapture: async () => ({ state: "closed" }),
-    writeFile: async () => {},
-    join: (...parts) => parts.join("/"),
-  });
+  const [, buildRunResult] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
+    {
+      executedActionIds,
+      NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
+      phaseTimings: { runStartedAtMs: 1, marks: {} },
+      lastObservedSnapshot: null,
+      lastObservedPose: null,
+      actionTrace: [
+        { action: "move_to_tile", state: "succeeded" },
+        { action: "harvest_crop", state: "succeeded" },
+        { action: "plant_seed", state: "rejected" },
+      ],
+      programSubmissions: [{ tool: "stardew_submit_action_program", accepted: false }],
+      programOutcomes: [],
+      sampleProgramOutcomes: async () => [],
+      programExecutionRows,
+      executionTraceInvariant,
+      TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
+      multidayOutcome: { crossings: 1, dayRecords: [] },
+      SCENARIO: "morning_routine",
+      LEGACY_LADDER: null,
+      historianRubricOutcome: null,
+      runSessionRecord: Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" }),
+      summarizeActionCadence: () => ({ spans: [] }),
+      summarizePresentationEvidence: () => ({ pieces: [] }),
+      readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
+      buildFailureSnapshot: (input) => input,
+      writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
+      closeCapture: async () => ({ state: "closed" }),
+      writeFile: async () => {},
+      join: (...parts) => parts.join("/"),
+    },
+  );
   const result = await buildRunResult({
     state: "blocked",
     error: "agent_turn_timeout",
@@ -2793,47 +2826,51 @@ test("a run whose work all went through programs publishes a non-empty attempted
       ],
     },
   ];
-  const [, buildRunResult] = extractRunnerFunction(RUNNER_SOURCE, ["summarizeDispatchedActions", "buildRunResult"], {
-    executedActionIds,
-    NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
-    phaseTimings: { runStartedAtMs: 1, marks: {} },
-    lastObservedSnapshot: null,
-    lastObservedPose: null,
-    actionTrace: [],
-    programSubmissions: [
-      {
-        programId: "plan_morning_1",
-        code: "accepted",
-        accepted: true,
-        nodes: [
-          { nodeId: "n01", actionId: "harvest_crop" },
-          { nodeId: "n02", actionId: "plant_seed" },
-          { nodeId: "n03", actionId: "water_crop" },
-        ],
+  const [, buildRunResult] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
+    {
+      executedActionIds,
+      NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
+      phaseTimings: { runStartedAtMs: 1, marks: {} },
+      lastObservedSnapshot: null,
+      lastObservedPose: null,
+      actionTrace: [],
+      programSubmissions: [
+        {
+          programId: "plan_morning_1",
+          code: "accepted",
+          accepted: true,
+          nodes: [
+            { nodeId: "n01", actionId: "harvest_crop" },
+            { nodeId: "n02", actionId: "plant_seed" },
+            { nodeId: "n03", actionId: "water_crop" },
+          ],
+        },
+      ],
+      // The read is CARRIED, as the run's own pre-teardown read is: the builder must not have to ask a closed bridge.
+      programOutcomes: [],
+      sampleProgramOutcomes: async () => {
+        throw new Error("the carried read must be used, not a second query");
       },
-    ],
-    // The read is CARRIED, as the run's own pre-teardown read is: the builder must not have to ask a closed bridge.
-    programOutcomes: [],
-    sampleProgramOutcomes: async () => {
-      throw new Error("the carried read must be used, not a second query");
+      programExecutionRows,
+      executionTraceInvariant,
+      TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
+      multidayOutcome: null,
+      SCENARIO: "morning_routine",
+      LEGACY_LADDER: null,
+      historianRubricOutcome: null,
+      runSessionRecord: Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" }),
+      summarizeActionCadence: () => ({ spans: [] }),
+      summarizePresentationEvidence: () => ({ pieces: [] }),
+      readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
+      buildFailureSnapshot: (input) => input,
+      writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
+      closeCapture: async () => ({ state: "closed" }),
+      writeFile: async () => {},
+      join: (...parts) => parts.join("/"),
     },
-    programExecutionRows,
-    executionTraceInvariant,
-    TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
-    multidayOutcome: null,
-    SCENARIO: "morning_routine",
-    LEGACY_LADDER: null,
-    historianRubricOutcome: null,
-    runSessionRecord: Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" }),
-    summarizeActionCadence: () => ({ spans: [] }),
-    summarizePresentationEvidence: () => ({ pieces: [] }),
-    readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
-    buildFailureSnapshot: (input) => input,
-    writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
-    closeCapture: async () => ({ state: "closed" }),
-    writeFile: async () => {},
-    join: (...parts) => parts.join("/"),
-  });
+  );
   const result = await buildRunResult({
     state: "passed",
     error: null,
@@ -2884,6 +2921,7 @@ test("an error that escapes the run still publishes the work it had already reco
       "writeFailureDump",
       "writeRunDump",
       "writeKilledDump",
+      "deriveRungVerdict",
     ],
     {
       executedActionIds,
@@ -3077,6 +3115,7 @@ test("a run interrupted from outside publishes its own verdict, with the evidenc
         "writeKilledDump",
         "bundleCrossingRecord",
         "writeRunBundle",
+        "deriveRungVerdict",
       ],
       {
         // The run's accumulated evidence: this is what a killed run must not lose.
@@ -3490,4 +3529,170 @@ test("a settled turn keeps the day going, and the single accessor is what says s
   // The old reading, kept here so the difference is visible: the envelope has no such field.
   assert.equal(settledTurn.settled, undefined);
   assert.equal(settledTurn.settled === true, false);
+});
+
+/** The globals `buildRunResult` reads besides the ones a test supplies, kept in one place for the reason tests below. */
+function builderGlobals(overrides = {}) {
+  return {
+    executedActionIds,
+    NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
+    phaseTimings: { runStartedAtMs: 1, marks: {} },
+    lastObservedSnapshot: null,
+    lastObservedPose: null,
+    actionTrace: [],
+    programSubmissions: [],
+    programOutcomes: [],
+    sampleProgramOutcomes: async () => [],
+    programExecutionRows,
+    executionTraceInvariant,
+    TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
+    multidayOutcome: null,
+    SCENARIO: "multiday_routine",
+    LEGACY_LADDER: null,
+    historianRubricOutcome: null,
+    runSessionRecord: Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" }),
+    summarizeActionCadence: () => ({ spans: [] }),
+    summarizePresentationEvidence: () => ({ pieces: [] }),
+    readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
+    buildFailureSnapshot: (input) => input,
+    writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
+    closeCapture: async () => ({ state: "closed" }),
+    writeFile: async () => {},
+    join: (...parts) => parts.join("/"),
+    ...overrides,
+  };
+}
+
+/** ROUND38'S OWN CLAUSE LIST, in the order the runner declares it (measured 2026-11-06). */
+const ROUND38_CLAUSES = Object.freeze([
+  { id: "morning_routine", passed: true, reasonCode: "multiday_routine_blocked" },
+  { id: "memory_covenant", passed: true, reasonCode: "covenant_not_honoured" },
+  { id: "npc_social_and_presence", passed: true, reasonCode: "harvest_and_offer_not_delivered" },
+  { id: "multiday_routine", passed: true, reasonCode: "multiday_routine_blocked" },
+  { id: "context", passed: true, reasonCode: "no_expectation_configured" },
+  { id: "content", passed: true, reasonCode: "no_expectation_configured" },
+  { id: "world_book", passed: true, reasonCode: "product_has_no_world_book_configured" },
+  { id: "companion_interaction", passed: false, reasonCode: "summary_too_long" },
+  { id: "historian_rubric", passed: true, reasonCode: "historian_rubric_passed" },
+]);
+
+test("a blocked run names the clause that failed, never the scenario it ran in", async () => {
+  // MEASURED 2026-11-06 (`round38`): the bundle published `state: "blocked"` with
+  // `failure.reasonCode: "multiday_routine_blocked"` while `multiday.assessment.state` was "passed",
+  // `sessionVerdict` "completed" and `historianRubric.state` "passed". The only clause the run failed was its
+  // companion-interaction gate - `summary_too_long`, a 124-character line - and the artifact said none of that.
+  // The code came from `buildRunResult`'s fallback, `${SCENARIO}_blocked`, which names the RUNG and not the fault.
+  const deriveRungVerdict = extractRunnerFunction(RUNNER_SOURCE, "deriveRungVerdict");
+  assert.deepEqual(
+    deriveRungVerdict([{ id: "a", passed: true, reasonCode: "x" }]),
+    { state: "passed", reasonCode: null, failedClause: null },
+    "`passed` is the residual: no clause objected",
+  );
+  assert.deepEqual(
+    deriveRungVerdict([
+      { id: "multiday_routine", passed: true, reasonCode: "multiday_routine_blocked" },
+      { id: "companion_interaction", passed: false, reasonCode: "summary_too_long" },
+    ]),
+    { state: "blocked", reasonCode: "summary_too_long", failedClause: "companion_interaction" },
+    "a code that names something which passed must not be able to stand in for the clause that failed",
+  );
+
+  const [, buildRunResult] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
+    builderGlobals(),
+  );
+  const result = await buildRunResult({ rungClauses: ROUND38_CLAUSES, settlement: null });
+  assert.equal(result.state, "blocked");
+  assert.equal(result.failure.reasonCode, "summary_too_long", "the failure record names the clause that failed");
+  assert.equal(result.reasonCode, "summary_too_long", "and the result's own reason agrees with it, one spelling");
+  assert.doesNotMatch(result.failure.reasonCode, /_blocked$/u, "the scenario's own name is not a diagnosis");
+  // The passing side, so this is not a gate that reds everything: the same list with the interaction gate satisfied.
+  const passed = await buildRunResult({
+    rungClauses: ROUND38_CLAUSES.map((clause) => ({ ...clause, passed: true })),
+    settlement: null,
+  });
+  assert.equal(passed.state, "passed");
+  assert.equal(passed.failure, null);
+  assert.equal(passed.reasonCode, undefined, "a passed run publishes no reason at all");
+});
+
+test("a run whose execution record could not be read to the end cannot be `passed`", async () => {
+  // `executionTrace.ok` was published and consumed by nobody: measured 2026-11-06, round38 published
+  // `{ ok: false, unobservedPrograms: 9, rows: 379, expectedRows: 379 }` and the field never reached a verdict. A red
+  // flag nobody reads is decoration, so it is a clause - the LAST one, because it qualifies the clauses above rather
+  // than competing with them.
+  const [, buildRunResult] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
+    builderGlobals(),
+  );
+  const unread = [{ programId: "p_unobserved", observed: false, dispatched: null, executions: [] }];
+  const blocked = await buildRunResult({
+    rungClauses: ROUND38_CLAUSES.map((clause) => ({ ...clause, passed: true })),
+    settlement: null,
+    programOutcomesAtTeardown: unread,
+  });
+  assert.equal(blocked.executionTrace.ok, false, "an unobserved program makes the trace incomplete");
+  assert.equal(blocked.state, "blocked", "a pass cannot rest on evidence the run failed to read");
+  assert.equal(blocked.failure.reasonCode, "execution_trace_incomplete");
+
+  // AND IT DOES NOT STEAL THE REASON. round38's trace was incomplete for this reason, and its actual defect was the
+  // companion's 124-character line: reporting the unread journal instead would have hidden the finding the run was red
+  // for in the first place.
+  const both = await buildRunResult({
+    rungClauses: ROUND38_CLAUSES,
+    settlement: null,
+    programOutcomesAtTeardown: unread,
+  });
+  assert.equal(both.failure.reasonCode, "summary_too_long", "the first clause that failed is the reason");
+});
+
+test("the observation block counts executions from both channels, and says `not_measured` when it cannot", () => {
+  // MEASURED 2026-11-06 (`round38`): 379 program executions and the block published `actionCount: 0`,
+  // `rejectionCount: 0` - a zero that means "no request frame was sent" reading exactly like "this run did nothing".
+  const [buildRunObservation] = extractRunnerFunction(RUNNER_SOURCE, ["buildRunObservation"], { createHash, process });
+  const common = {
+    prompt: "a day on the farm",
+    scenario: "multiday_routine",
+    turnStartedAtMs: 1,
+    factLog: [],
+    contextAssembled: true,
+    worldBookAssembled: true,
+    presentedSummary: "收工了。",
+    runManifestModel: null,
+  };
+  const batched = buildRunObservation({
+    ...common,
+    actionTrace: [],
+    executionTrace: { ok: false, flat: 0, program: 379, rows: 379, programDispatches: 379, unobservedPrograms: 9 },
+  });
+  assert.equal(batched.actionCount, 379, "the count is every execution the run had, not the flat half");
+  assert.deepEqual(batched.executionChannels, { flat: 0, program: 379 });
+  assert.equal(batched.actionCountNotMeasured, null);
+  // A rejection count over zero request frames is not "no rejections": the state of a program node lives in the Mod
+  // journal, so the block names the input it is missing instead of publishing a zero it cannot support.
+  assert.equal(batched.rejectionCount, null);
+  assert.equal(batched.rejectionRate, null);
+  assert.match(batched.rejectionNotMeasured ?? "", /flat_request_frames_only/u);
+
+  // The other side: a run that dispatched flat is measured, and the numbers are its own.
+  const flat = buildRunObservation({
+    ...common,
+    actionTrace: [
+      { action: "till_soil", state: "succeeded" },
+      { action: "plant_seed", state: "rejected" },
+    ],
+    executionTrace: { ok: true, flat: 2, program: 0, rows: 2, programDispatches: 0, unobservedPrograms: 0 },
+  });
+  assert.equal(flat.actionCount, 2);
+  assert.equal(flat.rejectionCount, 1);
+  assert.equal(flat.rejectionRate, 0.5);
+  assert.equal(flat.rejectionNotMeasured, null);
+
+  // And when no journal was read at all, the count is not a zero: it is absent, and the field says why.
+  const unread = buildRunObservation({ ...common, actionTrace: [], executionTrace: null });
+  assert.equal(unread.actionCount, null);
+  assert.equal(unread.executionChannels, null);
+  assert.match(unread.actionCountNotMeasured ?? "", /no_program_journal_read/u);
 });

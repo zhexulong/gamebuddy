@@ -76,7 +76,7 @@ test("the failure dump is built from the bridge's own facts and the trace's own 
   // counted as a product defect. Every other outcome builds one from the bridge's own facts.
   assert.match(
     SOURCE,
-    /const failure =\n\s*state === "passed" \|\| state === "killed"\n\s*\? null\n\s*: buildFailureSnapshot\(\{/,
+    /const failure =\n\s*runState === "passed" \|\| runState === "killed"\n\s*\? null\n\s*: buildFailureSnapshot\(\{/,
   );
   assert.match(
     SOURCE,
@@ -121,9 +121,10 @@ test("the run's own narrative is judged and folded into the verdict", () => {
   // Formatting-insensitive: what matters is that the no-narrative case is its own named state.
   assert.match(SOURCE, /state: "unmeasured",[\s\S]{0,60}?no_compartments_written/);
   assert.match(SOURCE, /historian_rubric_violation:\$\{entry\.obligation\}@\$\{entry\.where\}/);
-  // The verdict reads it, and the manifest carries it next to the voice lane.
-  const verdict = SOURCE.slice(SOURCE.indexOf("      worldBookPassed &&"), SOURCE.indexOf('        ? "passed"'));
-  assert.ok(verdict.includes("historianRubricPassed"), "the verdict must read the narrative obligation");
+  // The verdict reads it, and the manifest carries it next to the voice lane. The obligation is one of the rung's
+  // clauses, so a rubric violation reaches the run's verdict through the one derivation every other clause uses.
+  assert.match(SOURCE, /passed: historianRubricPassed,/u, "the verdict must read the narrative obligation");
+  assert.match(SOURCE, /const rung =\n\s*rungClauses === null\n\s*\? null\n\s*: deriveRungVerdict\(\[/u);
   assert.match(SOURCE, /historianRubric: \{\n      state: historianRubricOutcome\.state,/);
   // The failure path reports it too, which is why the variable is declared outside the try.
   assert.match(SOURCE, /let historianRubricOutcome = null;/);
@@ -417,4 +418,28 @@ test("program submissions are published on the failure path too, through the bun
     "both exits and the escaped-error dump use the one assembly",
   );
   assert.doesNotMatch(SOURCE, /partialResult/u);
+});
+
+test("the iteration report prints the reason the artifact carries, never a code it re-derived", () => {
+  // MEASURED 2026-11-06 (`round38`): the bundle named `failure.reasonCode: "multiday_routine_blocked"` and the report
+  // beside it printed `reason       (none)`, because the line read `multiday.reasonCode` - the multi-day assessment's
+  // own field, which is null on a run the assessment did not block. A reader was told there was no reason at all.
+  const iterate = readFileSync(new URL("../multiday-iterate.mjs", import.meta.url), "utf8");
+  const line = iterate.split("\n").find((entry) => entry.includes("reason       ${"));
+  assert.ok(line !== undefined, "the iteration report must print the run's reason");
+  const expression = line.slice(line.indexOf("${") + 2, line.lastIndexOf("}"));
+  const render = (parsed) =>
+    new Function("parsed", "multiday", `return \`\${${expression}}\`;`)(parsed, parsed.multiday ?? {});
+  assert.equal(
+    render({ state: "blocked", failure: { reasonCode: "summary_too_long" }, multiday: { reasonCode: null } }),
+    "summary_too_long",
+    "the reason printed is the one the artifact names",
+  );
+  assert.equal(render({ state: "passed", failure: null }), "(none)", "a passed run has no reason, and says so");
+  // The exact round38 shape: the multi-day field is empty and the artifact's own code is not.
+  assert.equal(
+    render({ state: "blocked", failure: { reasonCode: "multiday_routine_blocked" }, multiday: { reasonCode: null } }),
+    "multiday_routine_blocked",
+    "reading the assessment's field printed (none) beside a blocked run",
+  );
 });

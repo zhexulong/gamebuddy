@@ -438,3 +438,108 @@ test("a strip is the strip whether it is one tile short or one tile over", () =>
   const over = judgeTaskPurpose("clear_and_plant_long_patch", patchReceipts([...strip, [40, 40]]));
   assert.equal(over.state, "achieved");
 });
+
+/**
+ * ROUND38'S OWN DAY, RE-JUDGED. Measured 2026-11-06 on `_multiday_routine-round38.result.json`, day 1.
+ *
+ * The day declared `clear_and_plant_long_patch`. It tilled twenty tiles scattered over a 9x8 box (x 61..69, y 18..25),
+ * planted thirteen across eighteen columns (x 62..79, y 16..20), and the criterion answered
+ * `unproven / task_purpose_evidence_without_postcondition` - because nine OTHER receipts were refused:
+ * `move_to_tile`, `shop_purchase`, `harvest_crop`, `dismiss_modal`. Not one of those actions publishes a coordinate
+ * this criterion reads, and yet their refusal replaced the answer with "the run cannot tell", so the artifact could
+ * say neither "achieved" nor "3/60". A patch criterion that cannot answer a patch day is the whole finding.
+ *
+ * The tiles and the evidence strings below are the run's own, taken from its `bridgeFacts`.
+ */
+const ROUND38_TILLED = Object.freeze([
+  [61, 18],
+  [62, 19],
+  [62, 21],
+  [63, 20],
+  [64, 20],
+  [64, 21],
+  [64, 22],
+  [64, 23],
+  [64, 24],
+  [65, 22],
+  [65, 23],
+  [65, 24],
+  [65, 25],
+  [66, 21],
+  [66, 22],
+  [66, 23],
+  [66, 24],
+  [67, 19],
+  [68, 20],
+  [69, 18],
+]);
+const ROUND38_PLANTED = Object.freeze([
+  [62, 20],
+  [63, 20],
+  [64, 20],
+  [75, 18],
+  [75, 19],
+  [75, 20],
+  [76, 18],
+  [77, 18],
+  [79, 18],
+  [69, 18],
+  [70, 18],
+  [71, 16],
+  [71, 17],
+]);
+/** The run's own refused receipts, in the fact log's shape: succeeded, and not their own postcondition. */
+const ROUND38_REFUSED = Object.freeze([
+  Object.freeze({
+    actionId: "harvest_crop",
+    state: "succeeded",
+    reasonCode: "crop_harvested",
+    evidence: {
+      detail:
+        "location=Farm;target=crop_5481d34df6f60c18;tile=58,14;crop=474;item=(O)190;native_path_return=true;native_accepted=true;regrows=false;phase_before=5;phase_after=none;day_of_phase_before=0;day_of_phase_after=none;regrow_advanced=false;inventory_before=0;inventory_after=1;inventory_gained=true;crop_present_after=false;harvest_quality=0;quality_counts_before=;quality_counts_after=0:1",
+    },
+  }),
+]);
+
+test("round38's patch day is 3/60 of the declared strip, not `unproven`", () => {
+  const receipts = [
+    ...ROUND38_TILLED.map(([x, y]) => TILLED(x, y)),
+    ...ROUND38_PLANTED.map(([x, y]) => PLANTED(x, y)),
+    ...ROUND38_REFUSED,
+  ];
+  // The fixture is only the measured run if that receipt IS refused: a fixture that was quietly admitted would test
+  // nothing about the branch this guards.
+  assert.equal(purposeReceipts(receipts).refused.length, 1, "the run's refused receipt must be refused here too");
+  const judged = judgeTaskPurpose("clear_and_plant_long_patch", receipts);
+  assert.equal(
+    judged.state,
+    "not_achieved",
+    "twenty tiles tilled in a 9x8 box and thirteen planted across eighteen columns is not a 3x20 strip, and the criterion has to be able to say so",
+  );
+  assert.equal(judged.reasonCode, "task_purpose_not_achieved");
+  assert.equal(judged.missingFact, null, "nothing is missing: the tiles are all in the receipts");
+  // The fraction, the shape, and where it sits: the (x, y, w, h) a reader needs to see that the work was somewhere
+  // else. Three tiles carry both her tilling and her seed; the other ten crops went into ground this day did not till.
+  assert.equal(judged.detail, "3/60 tiles inside the best 20x3 window at 50,18");
+  assert.deepEqual(judged.patchWindow, { x: 50, y: 18, width: 20, height: 3, count: 3 });
+  assert.equal(judged.patchTiles, 3);
+});
+
+test("a refused receipt of an action that proves a TILE still leaves the patch unproven", () => {
+  // The exemption above is scoped to the actions that publish no coordinate. The moment the refused receipt is one the
+  // criterion reads, the run genuinely cannot tell, and answering a fraction from the remaining receipts would report
+  // a plot the evidence did not describe.
+  const receipts = [
+    ...ROUND38_TILLED.map(([x, y]) => TILLED(x, y)),
+    Object.freeze({
+      actionId: "plant_seed",
+      state: "succeeded",
+      reasonCode: "seed_planted",
+      evidence: { detail: "target=soil_02" },
+    }),
+  ];
+  assert.equal(purposeReceipts(receipts).refused.length, 1, "the malformed planting must be refused");
+  const judged = judgeTaskPurpose("clear_and_plant_long_patch", receipts);
+  assert.equal(judged.state, "unproven");
+  assert.equal(judged.reasonCode, "task_purpose_evidence_without_postcondition");
+});

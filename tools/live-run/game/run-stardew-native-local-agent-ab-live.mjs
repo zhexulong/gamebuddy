@@ -1529,6 +1529,32 @@ function deriveSessionVerdict({
 }
 
 /**
+ * The rung's verdict, and the ONE code that says why it is not a pass.
+ *
+ * A blocked run used to publish the SCENARIO it ran in as its reason (`${SCENARIO}_blocked` was the fallback in
+ * `buildRunResult`), which is not a diagnosis: it names the rung, and the rung is not what failed. Measured
+ * 2026-11-06 on `round38` - `state: "blocked"`, `failure.reasonCode: "multiday_routine_blocked"`, while the
+ * multi-day assessment said `passed`, the session verdict said `completed` and the historian rubric said `passed`.
+ * The only thing the run had actually failed was its companion-interaction gate (`summary_too_long`, 124 characters),
+ * and nothing in the artifact said so; the launcher's own summary printed `reason (none)`.
+ *
+ * So the clauses are named, in the order a reader should be told about them, and the FIRST one that fails is the
+ * reason. `passed` is the residual - a run is passed when no clause objects - and every clause carries a code, so a
+ * blocked run can never publish an empty or borrowed reason.
+ */
+function deriveRungVerdict(clauses) {
+  for (const clause of clauses ?? []) {
+    if (clause?.passed !== true)
+      return Object.freeze({
+        state: "blocked",
+        reasonCode: clause?.reasonCode ?? null,
+        failedClause: clause?.id ?? null,
+      });
+  }
+  return Object.freeze({ state: "passed", reasonCode: null, failedClause: null });
+}
+
+/**
  * A scenario may deliver one player turn, or a session of them.
  * This is that one turn's machinery, extracted so every scenario shares it: admit
  * the player text, wait for the turn to settle (or for a submitted program to
@@ -4617,6 +4643,18 @@ try {
         })
       : null;
   void turnStartedMs;
+  // The execution record, derived ONCE from the journal read taken before teardown, and handed to both the
+  // observation block below and the result assembly: the two are then the same object rather than two derivations
+  // that a reader has to reconcile. `null` when the run never got a journal read (the builder then asks the live
+  // bridge, which is the one path that can still answer).
+  const carriedExecutionTrace =
+    programOutcomesAtTeardown === null
+      ? null
+      : executionTraceInvariant({
+          actionTrace,
+          programOutcomes: programOutcomesAtTeardown,
+          programRows: programExecutionRows(programOutcomesAtTeardown),
+        });
   const observation = buildRunObservation({
     prompt,
     scenario: SCENARIO,
@@ -4627,24 +4665,61 @@ try {
     worldBookAssembled,
     presentedSummary: presentedSummary ?? null,
     runManifestModel: personaWorldBook.model,
+    executionTrace: carriedExecutionTrace,
   });
   // One assembly for EVERY exit path (see buildRunResult): what this path observed goes in as evidence, and the
   // builder owns what the result publishes.
+  // The rung's CLAUSES, each with the code that names it when it fails. The builder ANDs them into `state` and takes
+  // the first failing one as `failure.reasonCode` (see `deriveRungVerdict`), so the verdict and the reason cannot be
+  // decided in two places - and a blocked run cannot publish a code that names something that passed.
+  //
+  // Each code is derived from the assessment that decides the clause where that assessment has its own vocabulary
+  // (`summary_too_long`, `configured_world_book_did_not_mount`, the session verdict); only the two delivery clauses,
+  // which are conjunctions of receipts, are named here.
+  const rungClauses = Object.freeze([
+    // This scenario's session must have run and finished; another scenario's clause never fails.
+    Object.freeze({
+      id: "morning_routine",
+      passed: morningRoutinePassed,
+      reasonCode: sessionVerdict === "completed" ? "morning_routine_without_work" : sessionVerdict,
+    }),
+    Object.freeze({
+      id: "memory_covenant",
+      passed: memoryCovenantPassed,
+      reasonCode: covenantVerdict.reason ?? "covenant_not_honoured",
+    }),
+    Object.freeze({
+      id: "npc_social_and_presence",
+      passed: npcSocialAndPresencePassed,
+      reasonCode: "harvest_and_offer_not_delivered",
+    }),
+    // The multi-day clause IS the session verdict (see `multidayRoutinePassed`), so its code is the verdict's own.
+    Object.freeze({ id: "multiday_routine", passed: multidayRoutinePassed, reasonCode: sessionVerdict }),
+    Object.freeze({
+      id: "context",
+      passed: contextPassed,
+      reasonCode: contextAssembled ? worldBookVerdict.reason : contextVerdict.reason,
+    }),
+    Object.freeze({ id: "content", passed: contentPassed, reasonCode: contentVerdict.reason }),
+    Object.freeze({ id: "world_book", passed: worldBookPassed, reasonCode: worldBookGateVerdict.reason }),
+    // The gate's OWN reasons, never a paraphrase: a `summary_too_long` run and a `machine_token_leak` run are
+    // different findings about the companion and the reader has to be able to tell them apart.
+    Object.freeze({
+      id: "companion_interaction",
+      passed: interactionPassed,
+      reasonCode: interactionAssessment?.reasons?.[0] ?? "companion_interaction_not_assessed",
+    }),
+    Object.freeze({
+      id: "historian_rubric",
+      passed: historianRubricPassed,
+      reasonCode:
+        historianRubricOutcome?.reasonCode ??
+        `historian_rubric_${String(historianRubricOutcome?.state ?? "unmeasured")}`,
+    }),
+  ]);
   const result = await buildRunResult({
-    // One verdict per run, ANDed from the scenario's own clause plus the shared gates. Each scenario's
-    // clause is already `true` for the other scenarios, so this line stays a single readable conjunction.
-    state:
-      morningRoutinePassed &&
-      memoryCovenantPassed &&
-      npcSocialAndPresencePassed &&
-      multidayRoutinePassed &&
-      contextPassed &&
-      contentPassed &&
-      worldBookPassed &&
-      interactionPassed &&
-      historianRubricPassed
-        ? "passed"
-        : "blocked",
+    rungClauses,
+    carriedExecutionTrace,
     capture,
     runtimeRoot,
     providerReadiness,
@@ -5037,7 +5112,14 @@ function bundleCrossingRecord(outcome) {
  * contract; `evidence` is what the calling path could observe, spread in first so it can never override it.
  */
 async function buildRunResult({
+  // The state a NON-rung exit publishes: only the escaped-error and killed paths pass one. The main path passes
+  // `rungClauses` instead, so the state and the reason a run is not passed are decided by ONE derivation below.
   state,
+  // The rung's clauses, in the order a reader should be told about them (see `deriveRungVerdict`).
+  rungClauses = null,
+  // The execution record the caller already derived from its pre-teardown journal read, so the observation block and
+  // this result publish the same numbers. `null` means the caller had no read; the live query below answers instead.
+  carriedExecutionTrace = null,
   error = null,
   // The run's NAMED outcome when nothing was thrown: a killed run publishes `run_killed_by_signal:<signal>` here,
   // beside `state: "killed"`, so the reason is a code the artifact can be matched on instead of the shape of an
@@ -5056,14 +5138,43 @@ async function buildRunResult({
   // observation carries the pose (the snapshot has no facing). Neither can be re-read after teardown.
   const snapshot = settlement?.snapshot ?? lastObservedSnapshot ?? lastObservedPose ?? null;
   const pose = lastObservedPose;
-  // ONE derivation for the reason a run is not passed, so a code that came from a crash and a code a caller decided on
-  // cannot both be written. A refused run names its own code; a crashed run is named by its classified throw.
-  const failureReasonCode = errorDetail?.reasonCode ?? error ?? settlement?.reasonCode ?? `${SCENARIO}_blocked`;
+  // The trace is read BEFORE the verdict because the verdict reads it: an execution record that could not be read to
+  // the end is absent evidence, and a run cannot be `passed` on evidence it failed to read. `carriedExecutionTrace`
+  // is the caller's derivation from the pre-teardown read, so the observation block published the same object.
+  const carried = evidence.programOutcomesAtTeardown;
+  programOutcomes = carried ?? (await sampleProgramOutcomes());
+  const programRows = programExecutionRows(programOutcomes);
+  const executionTrace =
+    carriedExecutionTrace ?? executionTraceInvariant({ actionTrace, programOutcomes, programRows });
+  // The LAST clause, because it qualifies everything above rather than competing with it: a run that would otherwise
+  // pass is blocked when its own execution record is incomplete (`ok` is false when a program's journal could not be
+  // read, or when the rows disagree with what the programs reported). Published as a bare flag until 2026-11-06, when
+  // round38 published `executionTrace.ok: false` with nine unobserved programs and `state: "blocked"` for an unrelated
+  // reason - a red flag nothing consumed is decoration, so it is a clause now and `state` cannot outrun it.
+  const rung =
+    rungClauses === null
+      ? null
+      : deriveRungVerdict([
+          ...rungClauses,
+          Object.freeze({
+            id: "execution_trace",
+            passed: executionTrace.ok === true,
+            reasonCode: "execution_trace_incomplete",
+          }),
+        ]);
+  const runState = rung === null ? state : rung.state;
+  // ONE derivation for the reason a run is not passed, so a code that came from a crash, a code the rung failed on
+  // and a code a caller decided cannot all be written. A refused run names its own code; a crashed run is named by
+  // its classified throw; a rung names the clause that failed. `${SCENARIO}_blocked` is the last resort for a blocked
+  // run that produced no clause at all, and it is never reached on the rung path.
+  const publishReasonCode =
+    errorDetail?.reasonCode ?? error ?? settlement?.reasonCode ?? rung?.reasonCode ?? reasonCode ?? null;
+  const failureReasonCode = publishReasonCode ?? `${SCENARIO}_blocked`;
   // A killed run has NO failure moment: nothing the product did ended it, so there is no block to locate and no dump
   // a replay could re-enter - and every aggregate that counts `failure` would otherwise count an external interrupt as
   // a product defect.
   const failure =
-    state === "passed" || state === "killed"
+    runState === "passed" || runState === "killed"
       ? null
       : buildFailureSnapshot({
           reasonCode: failureReasonCode,
@@ -5087,21 +5198,11 @@ async function buildRunResult({
         });
   // Read the Mod's own journal NOW, once per run: this is assembly time, so the per-program execution facts are
   // committed to the result and the bundle together and neither can disagree with the other. Assigned to the module
-  // binding `writeRunBundle` reads, so both result paths publish the same read without a second query.
-  // The caller hands in the read it took BEFORE teardown when it has one - the bridge is closed by the time the
-  // builder runs on several paths, and asking again can only produce `bridge_not_authenticated`, which says nothing
-  // about the program. Falling back to a live read keeps the paths that assemble while the bridge is still up.
-  const carried = evidence.programOutcomesAtTeardown;
-  programOutcomes = carried ?? (await sampleProgramOutcomes());
+  // binding `writeRunBundle` reads, so both result paths publish the same read without a second query. The read
+  // itself happened above, because the verdict needs it.
   // What the run tried and changed, read from BOTH channels once the program record is in hand: the builder is the
   // single place every exit assembles its result, so the crashed path answers exactly what the passed one would.
   const dispatched = summarizeDispatchedActions(actionTrace, programOutcomes, programSubmissions);
-  // The executions those programs dispatched, as trace rows, and the count identity they have to satisfy together with
-  // the flat request frames: rows == flat dispatches + the observed programs' `dispatched` counts. Published on the
-  // result because this identity is the one that was silently broken - a run with 22 submissions and program
-  // `dispatched` counts of 1-4 published a trace of ZERO rows, and nobody could tell from the artifact.
-  const programRows = programExecutionRows(programOutcomes);
-  const executionTrace = executionTraceInvariant({ actionTrace, programOutcomes, programRows });
   // The disconnect record reads this, and it is only knowable here: a run whose work all went through programs has
   // `flat: 0` and a large program count, so a disconnect that reported the flat half alone said "nothing had
   // happened" beside its own dispatches.
@@ -5124,9 +5225,11 @@ async function buildRunResult({
     // dispatch -> end) instead of inferring it from a bundle that may be refused.
     startedAtMs: phaseTimings.runStartedAtMs,
     endedAtMs: Date.now(),
-    state,
+    state: runState,
     ...(error === null ? {} : { error }),
-    ...(reasonCode === null ? {} : { reasonCode }),
+    // The SAME code the failure record carries (see `publishReasonCode`): a reader that looks at the result's own
+    // `reasonCode` and one that opens `failure.json` are told the same thing, because there is one derivation.
+    ...(publishReasonCode === null ? {} : { reasonCode: publishReasonCode }),
     scenario: SCENARIO,
     legacyLadder: LEGACY_LADDER,
     // The multi-day crossing record, when the scenario crossed days: each night's own terminal and menus, the
@@ -5427,6 +5530,10 @@ function buildRunObservation({
   worldBookAssembled,
   presentedSummary,
   runManifestModel,
+  // The run's merged execution record (both channels), or `null` when no journal read was taken. Without it the only
+  // thing this block can see is the flat half, and `actionCount: 0` then means "no request frame was sent" - which is
+  // what a run that batched everything through program tools publishes while it executes hundreds of actions.
+  executionTrace = null,
 }) {
   let promptSha256 = null;
   if (typeof prompt === "string" && prompt.length > 0) {
@@ -5454,6 +5561,16 @@ function buildRunObservation({
         ? null
         : createHash("sha256").update(JSON.stringify(entry.args), "utf8").digest("hex").slice(0, 12),
   }));
+  // WHAT COUNTS AS AN EXECUTION, and why this is not `actionTrace.length`. Measured 2026-11-06 on round38: the run
+  // executed 379 nodes through Body Programs and the block published `actionCount: 0, rejectionCount: 0` - a zero that
+  // means "this connection sent no request frame" reading exactly like "this run did nothing". The merged record is the
+  // authority (`execution-trace.mjs`), so the count is taken from it and each channel is published beside it.
+  const flatExecutions = executionTrace === null ? (actionTrace ?? []).length : executionTrace.flat;
+  const programExecutions = executionTrace === null ? null : executionTrace.program;
+  // Rejections are read from the request frame, which names the action and its refusal. Program executions record their
+  // state in the journal instead: when every execution went that way there is no rejection count here to publish, and
+  // `null` with the missing input named is the only honest answer.
+  const rejectionsMeasured = flatExecutions > 0 || programExecutions === 0;
   return Object.freeze({
     schema: "game_ladder_observation/v1",
     // Grouping keys: the exact prompt text (overridden or default) and the rung.
@@ -5479,12 +5596,23 @@ function buildRunObservation({
     worldBookAssembled: worldBookAssembled ?? false,
     // Behavioral monitor points (L1/L2) — meaningful only across runs.
     turnMs: turnStartedAtMs === null ? null : Date.now() - turnStartedAtMs,
-    actionCount: (actionTrace ?? []).length,
-    rejectionCount: rejections.length,
+    // Every execution the run has, from both channels, plus the split so a reader can tell a run that dispatched flat
+    // from one that batched. `null` is NOT a zero: it is "no journal was read", named in the field below.
+    actionCount: executionTrace === null ? null : executionTrace.rows,
+    executionChannels:
+      executionTrace === null ? null : Object.freeze({ flat: executionTrace.flat, program: executionTrace.program }),
+    actionCountNotMeasured:
+      executionTrace === null
+        ? "no_program_journal_read: the flat request frames are the only executions this block can see, and counting them alone reported zero for a run whose work all went through programs"
+        : null,
+    rejectionCount: rejectionsMeasured ? rejections.length : null,
     // M4: the rejection definition behind the count (uncertain/failed are
     // included too, unlike systemFindings which counts only rejected).
     rejectionCountIncludes: Object.freeze(["rejected", "uncertain", "failed"]),
-    rejectionRate: (actionTrace ?? []).length === 0 ? null : rejections.length / (actionTrace ?? []).length,
+    rejectionRate: rejectionsMeasured && flatExecutions > 0 ? rejections.length / flatExecutions : null,
+    rejectionNotMeasured: rejectionsMeasured
+      ? null
+      : "flat_request_frames_only: every execution of this run went through a program, and a program node's terminal state is published in the Mod journal rather than in a request frame",
     receiptCount: terminalReceipts.length,
     // M4: executionId-unique receipt count (dedupes the fact-route + execute
     // response double delivery); always <= receiptCount.
