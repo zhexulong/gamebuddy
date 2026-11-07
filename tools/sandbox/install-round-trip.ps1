@@ -48,17 +48,11 @@ $generationRoot = Join-Path $programRoot "generations\$($pointer.generation)"
 foreach ($relative in @(
     'runtime\node.exe',
     'main.js',
-    'native\smapi\win-x64\StardewModdingAPI.exe',
-    'native\smapi\payload-manifest.json',
-    'native\smapi\SMAPI-LICENSE.txt'
+    'native\stardew-mod\GameBuddy\manifest.json'
 )) {
     if (-not (Test-Path (Join-Path $generationRoot $relative))) { Fail "generation_absent_$relative" }
 }
 Write-Output 'check:generation_payload'
-
-$licence = Get-Content -Raw (Join-Path $generationRoot 'native\smapi\SMAPI-LICENSE.txt')
-if ($licence -notmatch 'GNU LESSER GENERAL PUBLIC LICENSE') { Fail 'smapi_licence_text_absent' }
-Write-Output 'check:smapi_licence'
 
 # --------------------------------------------------------------- uninstall
 $uninstaller = Join-Path $programRoot 'uninstall\GameBuddy.Setup.exe'

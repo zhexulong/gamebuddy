@@ -44,8 +44,15 @@ internal static class Program
 {
     private const string UnattributedLaunchFailureCode = "desktop_launch_failed";
 
-    private static async Task<int> Main()
+    private static async Task<int> Main(string[] args)
     {
+        // `--rollback` steps back one generation and exits: it is a recovery action, not a second launch mode. Arguments
+        // are matched exactly, so an unknown one still reaches the normal path rather than being silently accepted.
+        if (args.Length == 1 && string.Equals(args[0], "--rollback", StringComparison.Ordinal))
+        {
+            return RollBack();
+        }
+
         try
         {
             var outcomeCode = OutcomeCode(await RunProductionAsync(CancellationToken.None).ConfigureAwait(false));
@@ -63,6 +70,33 @@ internal static class Program
             return 1;
         }
     }
+
+    /// <summary>
+    /// Steps back one installed generation and reports what happened, without starting anything.
+    ///
+    /// Recovery has to be available on a machine where the current release does not start - which is exactly when the
+    /// tray and the Host cannot be relied on - so this path touches two files and no composition.
+    /// </summary>
+    private static int RollBack()
+    {
+        var result = InstalledGenerationRollback.Restore(CurrentUserRootLayout.DeriveForCurrentUser().ProgramRoot);
+        if (result == InstalledGenerationRollback.Result.Restored)
+        {
+            Console.WriteLine("rollback:restored");
+            return 0;
+        }
+
+        Console.Error.WriteLine($"rollback:{Reason(result)}");
+        return 1;
+    }
+
+    private static string Reason(InstalledGenerationRollback.Result result) => result switch
+    {
+        InstalledGenerationRollback.Result.NothingToRollBack => "nothing_to_roll_back",
+        InstalledGenerationRollback.Result.TargetUnavailable => "target_unavailable",
+        InstalledGenerationRollback.Result.PointerBusy => "pointer_busy",
+        _ => "unavailable",
+    };
 
     /// <summary>
     /// The production entry's full result: the bounded failure it names, and the

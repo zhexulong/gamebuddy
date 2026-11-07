@@ -368,6 +368,10 @@ internal static class Program
     {
         var generationsRoot = Path.Combine(programRoot, SetupLayout.GenerationsDirectoryName);
         var staged = new List<string>();
+        // Read before extraction: the payload carries the new pointer and overwrites it entry by entry.
+        var pointerPath = Path.Combine(programRoot, SetupLayout.PointerFileName);
+        byte[]? previousPointer = File.Exists(pointerPath) ? File.ReadAllBytes(pointerPath) : null;
+        var previousGeneration = InstalledGenerationRetention.ReadGeneration(previousPointer);
         using (var archive = new ZipArchive(payload, ZipArchiveMode.Read))
         {
             foreach (var entry in archive.Entries)
@@ -397,13 +401,19 @@ internal static class Program
             return;
         }
 
+        // One generation back survives the prune, so a release that fails to start is recoverable. Everything older is
+        // still removed: two generations are enough to step back once.
+        var keep = InstalledGenerationRetention.GenerationToKeep(previousGeneration, staged);
         foreach (var existing in Directory.GetDirectories(generationsRoot))
         {
-            if (!staged.Contains(Path.GetFileName(existing), StringComparer.Ordinal))
-            {
-                Directory.Delete(existing, recursive: true);
-            }
+            var name = Path.GetFileName(existing);
+            if (staged.Contains(name, StringComparer.Ordinal)) continue;
+            if (keep is not null && string.Equals(name, keep, StringComparison.Ordinal)) continue;
+            Directory.Delete(existing, recursive: true);
         }
+
+        InstalledGenerationRetention.WriteRollbackPointer(
+            programRoot, previousPointer, previousGeneration, staged, generationsRoot);
     }
 
     private static string SafeTarget(string programRoot, string entryName)
