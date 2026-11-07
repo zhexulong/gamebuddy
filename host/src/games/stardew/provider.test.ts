@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isComposedGameProfile } from "../../game-browser-contract/index.js";
+import { isComposedGameProfile, GAME_BROWSER_OPERATION_IDS_V1 } from "../../game-browser-contract/index.js";
 import type {
   StardewGameSurfaceActionAuthorityReader,
   StardewGameSurfaceAttachmentReader,
@@ -262,4 +262,27 @@ test("the game surface's install state follows the Host registration in both dir
   assert.equal(registered.game.prerequisites.status, "met");
   assert.equal(registered.game.prerequisites.detectedGame, "Stardew Valley");
   assert.equal(calls.installation, 2);
+});
+
+/**
+ * The projection's operation list and the contract's operation list are two spellings of one fact: which game
+ * operations this product exposes. They drifted on 2026-11-07 - the projection still declared
+ * `game.prerequisites.smapi.install` after `870d074c` stopped distributing SMAPI and dropped it from the
+ * contract - and nothing failed until a runtime call threw `Game operation is not declared by the contract`,
+ * which took the entire game projection down (5 of 5 provider tests red, and every mounted journey with it).
+ *
+ * So the assertion is a subset check with a symmetric difference in the message: a member the contract does
+ * not know is a call that will throw, and the reader is told which one instead of being handed a count.
+ */
+test("every operation the stardew projection declares is one the contract knows", () => {
+  const { coordinator } = fakeCoordinator();
+  const projection = createStardewGamePresentationProjection(coordinator);
+  const known = new Set<string>(GAME_BROWSER_OPERATION_IDS_V1);
+  const unknown = projection.gameProfile.operationIds.filter((id) => !known.has(id));
+  assert.deepEqual(
+    unknown,
+    [],
+    `the projection declares operations the contract does not know, so calling one throws ` +
+      `"Game operation is not declared by the contract":\n  + declared here, absent from the contract: [${unknown.join(", ")}]`,
+  );
 });

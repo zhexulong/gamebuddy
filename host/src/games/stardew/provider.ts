@@ -97,7 +97,6 @@ export function createStardewGamePresentationProjection(
     operationIds: [
       "game.state.read",
       "game.prerequisites.setup",
-      "game.prerequisites.smapi.install",
       "game.launch",
       "game.stop",
       "game.resume",
