@@ -5766,6 +5766,17 @@ test("a stale attachment epoch cannot mutate the live world, and every stale ver
   //   is NOT observable in this fixture and is not claimed by these assertions.
   //   What is claimed is the browser-visible half: the stale controller cannot
   //   re-open action authority, stop, close, endgame, resume or cancel.
+  // The two ways this lifecycle can end the player's world, both counted so that
+  // "the refusal reached nothing" is an observation rather than a missing throw:
+  // the contained-runtime seam (`settle` is the one member that advances the
+  // durable attempt to `contained` and releases the bound registration pointer)
+  // and the durable session store slice the lifecycle owns.
+  const containmentCalls: string[] = [];
+  const durableStoreCalls: string[] = [];
+  const unreachableStoreMember = (member: string) => async (): Promise<never> => {
+    durableStoreCalls.push(member);
+    throw new Error(`stardew_durable_store_unreachable:${member}`);
+  };
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
     overrides: {
       worldBindingResolver: async () => ({
@@ -5774,6 +5785,38 @@ test("a stale attachment epoch cannot mutate the live world, and every stale ver
         bindingRef: "opaque-world-ref",
         status: "registered" as const,
         revision: 1,
+      }),
+      containedRuntimeTeardown: Object.freeze({
+        containPlayerHost: async () => {
+          containmentCalls.push("contain_player_host");
+        },
+        containAiClient: async () => {
+          containmentCalls.push("contain_ai_client");
+        },
+        settle: async () => {
+          containmentCalls.push("settle");
+        },
+        recover: async () => {
+          throw new Error("stardew_contained_recovery_drive_unavailable");
+        },
+        finalizeRecovered: async () => {
+          throw new Error("stardew_contained_recovery_drive_unavailable");
+        },
+        finalizeRecoveredAiSettled: async () => {
+          throw new Error("stardew_contained_recovery_drive_unavailable");
+        },
+        close: async () => {
+          containmentCalls.push("close");
+        },
+      }),
+      gameSessionCreationAuthority: Object.freeze({
+        createGameSessionMetadata: unreachableStoreMember("createGameSessionMetadata"),
+        registerGameSessionWorldBinding: unreachableStoreMember("registerGameSessionWorldBinding"),
+        completeGameSessionBinding: unreachableStoreMember("completeGameSessionBinding"),
+        failGameSessionCreation: unreachableStoreMember("failGameSessionCreation"),
+        markGameSessionWorldBindingTerminal: unreachableStoreMember("markGameSessionWorldBindingTerminal"),
+        readGameSessionWorldBindingSlotHolder: unreachableStoreMember("readGameSessionWorldBindingSlotHolder"),
+        releaseGameSessionWorldBindingSlot: unreachableStoreMember("releaseGameSessionWorldBindingSlot"),
       }),
     },
   });
@@ -5815,6 +5858,16 @@ test("a stale attachment epoch cannot mutate the live world, and every stale ver
     // asserting against an epoch that was never minted.
     assert.equal(before.enters, 2);
     assert.equal(before.bridgeConnects, 2);
+    // The real durable pointer binding this live attempt to the installation. The
+    // explicit endgame is the only operation that releases it (`settle` settles the
+    // attempt and releases the pointer), so its survival is what "the stale
+    // endgame did not end the new world" means in durable terms.
+    const registrationBefore = await readStardewInstallationRegistration(fixture.runtimeRoot);
+    assert.notEqual(
+      registrationBefore?.activeAttempt ?? null,
+      null,
+      "the live attempt is bound before the matrix runs",
+    );
 
     const stale = { expectedAttachmentGeneration: 1 } as const;
     const mutations: readonly Readonly<{ name: string; expectedRefusal: string; run(): unknown }>[] = Object.freeze([
@@ -5918,6 +5971,19 @@ test("a stale attachment epoch cannot mutate the live world, and every stale ver
       assert.equal(fixture.gameRuntimeVoiceStopperAttachCalls(), before.voiceStoppers, detail);
       assert.equal(fixture.gameRuntimeTaskCancelCalls(), before.taskCancels, detail);
       assert.deepEqual(fixture.lifecycleOrder, before.lifecycleOrder, detail);
+      // Containment is how a stale endgame would REALLY end the live world: these
+      // three members are the only path to terminating both role Jobs and
+      // settling the attempt. A refusal that still ran them would otherwise pass
+      // on the refusal alone.
+      assert.deepEqual(containmentCalls, [], `${detail} (contained-runtime containment/settle)`);
+      // The durable half: no new store row, no terminal binding, no receipt - the
+      // store slice the lifecycle owns was never reached by a refused verb.
+      assert.deepEqual(durableStoreCalls, [], `${detail} (durable store write)`);
+      assert.deepEqual(
+        await readStardewInstallationRegistration(fixture.runtimeRoot),
+        registrationBefore,
+        `${detail} (the bound attempt pointer endgame releases)`,
+      );
     }
   } finally {
     await fixture.coordinator.close();
