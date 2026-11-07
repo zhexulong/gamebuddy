@@ -266,7 +266,7 @@ export const programStatusProgress: ProgramProgressObserver = createProgramProgr
  * difference between a refusal and a cancellation, which is the difference between "fix the argument" and "you stopped
  * me".
  */
-export interface PlanNodeAnswer {
+interface PlanNodeAnswer {
   /** The 0-based position among the nodes THIS plan carries, so a script can be read back positionally. */
   readonly index: number;
   readonly actionId: string;

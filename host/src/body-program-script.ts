@@ -159,7 +159,7 @@ type PlanScriptThrow = Readonly<{ message: string; line: number | null }>;
  * included - so a companion that wrote thirty calls reads back WHICH of its thirty was wrong without counting the nodes
  * that survived.
  */
-export type PlanCallRejection = Readonly<{
+type PlanCallRejection = Readonly<{
   call: number;
   actionId: string | null;
   reasonCode: string;
