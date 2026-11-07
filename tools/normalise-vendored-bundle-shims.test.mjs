@@ -5,6 +5,10 @@ import { normaliseShim } from "./normalise-vendored-bundle-shims.mjs";
 /**
  * The rewrite is a regex over generated code, so the cases that matter are the shapes bun emits and the shapes it does not.
  * A rewrite that touched ordinary source would be far worse than the leak it fixes.
+ *
+ * red-proof: inject  delete the `PAIR` rewrite (`result.replace(PAIR, PAIR_REPLACEMENT)`) so the two-variable inline
+ *                   bun emits is left in place -> `the pair bun emits for a bundled CommonJS dependency is
+ *                   rewritten` fails (`3 pass / 1 fail`); restoring the file leaves `git diff` empty
  */
 
 test("the pair bun emits for a bundled CommonJS dependency is rewritten", () => {

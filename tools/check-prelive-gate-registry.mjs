@@ -403,6 +403,15 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "on-demand",
   },
   {
+    path: "tools/check-release-live-evidence.mjs",
+    reason:
+      "elsewhere: runs in the protected release lane, where the evidence it reads is the release claim - " +
+      "release-windows.yml invokes it by path on tag pushes (not every push, which is why runsIn names that workflow " +
+      "rather than a pnpm script). prelive would be the wrong home for it: the ladder asks whether a live run can " +
+      "start, and this gate asks whether the last committed live evidence still describes this tree",
+    runsIn: "ci:.github/workflows/release-windows.yml",
+  },
+  {
     path: "tools/check-scope-references.mjs",
     reason: "debt: measured 4 findings (3 out_of_scope_reference, 1 read_before_declaration) at HEAD",
     runsIn: "pnpm check:scope-references",

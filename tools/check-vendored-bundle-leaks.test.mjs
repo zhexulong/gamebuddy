@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { inspectBundleText, isBuildMachinePath } from "./check-vendored-bundle-leaks.mjs";
+import { checkVendoredBundleLeaks, inspectBundleText, isBuildMachinePath } from "./check-vendored-bundle-leaks.mjs";
 
 /**
  * The gate is only worth its lines if it finds the real defect and nothing else. Both directions are measured here, because
@@ -66,4 +69,45 @@ test("the blocking classes are the ones that never mean anything useful in shipp
 test("a POSIX runner home is reported, since no path there can be the player's", () => {
   const result = inspect('const p = "/home/runner/work/gamebuddy/gamebuddy/src";');
   assert.equal(result.reported.length + result.blocking.length, 1, JSON.stringify(result));
+});
+
+/**
+ * The matcher cases above all hand the gate a string. These drive the gate itself - its own file walk, its own report
+ * shape - over a synthetic bundle tree, because "the matcher notices" and "the gate fails" are two different claims and
+ * only the second is what CI depends on. They are the falsifier named in `tools/lib/harness-conformance.mjs`.
+ *
+ * red-proof: inject  make `bundleFiles` return nothing -> the two cases below fail with `examined 0`
+ *                   (`15 pass / 3 fail` across this file and check-workflow-expressions.test.mjs)
+ */
+test("the gate itself reports a build-machine path in a synthetic bundle tree", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-vendored-leak-"));
+  try {
+    const bundleRoot = join(root, "dist");
+    mkdirSync(bundleRoot, { recursive: true });
+    writeFileSync(
+      join(bundleRoot, "index.js"),
+      'var __filename = "E:\\\\projects\\\\ai-game-companion\\\\vendor\\\\magic-context\\\\node_modules\\\\x\\\\index.js";\n',
+      "utf8",
+    );
+    const result = await checkVendoredBundleLeaks({ roots: [bundleRoot] });
+    assert.equal(result.examined, 1, JSON.stringify(result));
+    assert.equal(result.blocking.length, 1, JSON.stringify(result));
+    assert.match(result.blocking[0].value, /ai-game-companion/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the gate itself stays quiet on a bundle tree holding no build-machine path", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-vendored-clean-"));
+  try {
+    const bundleRoot = join(root, "dist");
+    mkdirSync(bundleRoot, { recursive: true });
+    writeFileSync(join(bundleRoot, "index.js"), 'var __filename = "index.js";\n', "utf8");
+    const result = await checkVendoredBundleLeaks({ roots: [bundleRoot] });
+    assert.equal(result.examined, 1, JSON.stringify(result));
+    assert.deepEqual(result.blocking, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

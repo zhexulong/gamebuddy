@@ -11,6 +11,13 @@
  * tree rather than listed here, so a submodule that starts publishing a bundle joins the gate automatically. Zero
  * population is blocked, never green.
  *
+ * The matcher and the gate are two different claims, and CI depends on the second, so the sibling test drives the gate
+ * itself over a synthetic bundle tree. Measured 2026-11-07:
+ *
+ * red-proof: inject  make `bundleFiles` return nothing, so the walk examines no file at all -> `examined 0` and both
+ *                   end-to-end cases fail (`15 pass / 3 fail` across the two sibling test files); restoring the file
+ *                   leaves `git diff` empty
+ *
  * Two classes, because they fail differently:
  *
  *   - *build-machine paths* (the repository root, this user's home, or anything through `node_modules`/`vendor`/`.bun`)

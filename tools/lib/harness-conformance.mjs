@@ -415,6 +415,25 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "member-diff format that replaces a bare pair of counts",
   },
   {
+    gate: "check-vendored-bundle-leaks.mjs",
+    reason:
+      "reads a built bundle for the build machine's own paths (`bun build` inlined `E:\\\\projects\\\\…` into " +
+      "`__dirname`/`__filename` for its CommonJS dependencies); its falsifier is " +
+      "tools/check-vendored-bundle-leaks.test.mjs, whose case 'a build-machine path written with doubled " +
+      "separators is blocking' hands it the exact line that build produced and requires " +
+      "`result.blocking.length === 1`, with the sibling cases proving a regex literal, a template hole and a " +
+      "path outside the repository are NOT reported so the matcher is not simply matching slashes",
+  },
+  {
+    gate: "check-workflow-expressions.mjs",
+    reason:
+      "reads every workflow's `${{ }}` expressions against the contexts GitHub allows in that position; its " +
+      "falsifier is tools/check-workflow-expressions.test.mjs, whose case 'a key re-exporting itself through " +
+      "the env context is blocking, because it can only be empty' plants the always-empty shape and requires " +
+      "it to be reported, alongside a clean workflow that must report nothing - so neither the blocking nor " +
+      "the silent branch is untested",
+  },
+  {
     gate: "check-ci-dead-conditions.mjs",
     reason:
       "reads every workflow's `if:` expressions against every writer of the variables they name; its falsifier is " +
@@ -478,6 +497,11 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
     reason: "this suite's CLI; falsifiers in tools/lib/harness-conformance.test.mjs",
   },
   { gate: "check-head-typecheck.mjs", reason: "runs tsc over the worktree; no offline rule set" },
+  {
+    gate: "check-release-live-evidence.mjs",
+    reason:
+      "reads the committed evidence under tools/fixtures/live-evidence and asks git whether each pin is an ancestor of HEAD; its falsifier is tools/check-release-live-evidence.test.mjs, which plants a side-branch pin, a pin git has never seen, a capture date 60 days before and 60 days after the pin, an empty declaration, a failed verdict that a reading contradicts, a file copied from the other surface and a duplicated reading id in throwaway `git init` repositories, and the gate's own red-proof markers name them",
+  },
   {
     gate: "check-release-generation-self-contained.mjs",
     reason:

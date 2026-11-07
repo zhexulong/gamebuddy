@@ -15,6 +15,13 @@
  *
  * The rules are the documented ones, and they are narrow on purpose: a gate that also guesses at `matrix` or `steps`
  * ordering would fire on workflows that are fine, and a gate people mute is not a gate.
+ *
+ * The matcher and the gate are two different claims, so the sibling test drives the gate itself over a temporary
+ * workflows directory. Measured 2026-11-07:
+ *
+ * red-proof: inject  narrow the extension filter so the gate lists no file -> `examined 0`, the synthetic-directory
+ *                   case fails (`15 pass / 3 fail` across the two sibling test files) and the empty-directory case
+ *                   only passes because it already expects 0; restoring the file leaves `git diff` empty
  */
 
 import { readdir, readFile } from "node:fs/promises";

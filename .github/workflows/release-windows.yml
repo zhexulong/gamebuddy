@@ -13,6 +13,14 @@ jobs:
   host-release:
     # YAML cannot protect tags. Repository administrators must protect the v* tag
     # namespace and require approval for the gamebuddy-production-release environment.
+    #
+    # This job holds NO provider credential. The three live steps that drove real embedded
+    # provider turns (Tavern management operation evidence, the Tavern release live gate, the
+    # Companion memory fold gate) are gone, together with the CPA_OAI_API_KEY environment they
+    # read; the claim they carried is read from the committed evidence under
+    # tools/fixtures/live-evidence, and `tools/check-release-live-evidence.mjs` validates each
+    # surface's pin against this tree and its freshness. That is a weaker declaration than a
+    # provider turn measured during this release, and the step below records it as such.
     if: >-
       github.repository == 'zhexulong/gamebuddy' &&
       startsWith(github.ref, 'refs/tags/v') &&
@@ -150,6 +158,21 @@ jobs:
           --repository "${{ github.repository }}"
           --unsigned
 
+      # The two artifact gates run HERE, not in `ci.yml`, because this is the only job that can satisfy them.
+      # `build-production-artifact` refuses without a verified bundled runtime
+      # (`verified_bundled_runtime_input_required`, node-runtime-release-acquisition.mjs:172), so a fresh generation
+      # cannot be produced on a developer machine or in the `gates` job - and `host/dist` is gitignored, so a clean
+      # checkout holds no generation at all. Running `check-production-artifact` there made that job permanently red:
+      # a gate that can never pass is the same defect as a gate nobody calls.
+      # `check-release-generation-self-contained` additionally compares the generation against every module
+      # `production-artifact.config.json` declares, which is the half that named
+      # `composition/companion-session-reflection.js` when this artifact was frozen a day before that module landed.
+      - name: Verify the generation the release was assembled from
+        run: node tools/check-release-generation-self-contained.mjs
+
+      - name: Verify the published generation completely
+        run: node host/scripts/check-production-artifact.mjs
+
       # The manifest is held to the bytes it describes, and to the generation the pointer names, so a release cannot
       # claim an artifact this job did not build.
       - name: Verify the release manifest
@@ -182,31 +205,18 @@ jobs:
             desktop/dist/release/payload.zip
             desktop/dist/release/release-manifest.json
             desktop/dist/release/publication.json
-      # Tavern management P9 live evidence, run against the generation this job
-      # just built and verified. The evidence runner mounts the real management
-      # composition on a fresh gate-owned root and performs every operation the
-      # mounted profile declares (including the reviewed ST-card import
-      # pipeline) against the authenticated HTTP surface; the recorder converts
-      # its content-free outcomes into the release gate's operation-to-evidence
-      # mapping and writes the measured profile next to it. Both derive their
-      # operation vocabulary from the composition source, so a new surface never
-      # needs a hand-edited fixture here.
-      - name: Tavern management operation evidence
-        run: node tools/run-tavern-management-operation-evidence.mjs --outcomes tavern-ui-outcomes.json
-        env:
-          # The gate drives three real embedded provider turns; without the
-          # environment credential they report blocked and the verdict stays
-          # inconclusive rather than passing.
-          CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
-      - name: Record Tavern operation evidence mapping
-        run: node tools/record-tavern-ui-operation-evidence.mjs tavern-ui-outcomes.json tavern-operation-evidence.json
-      # The single Chat/Tavern release verdict: automated prerequisites plus
-      # three real provider turns plus the complete mounted-operation mapping.
-      # A non-passed verdict exits 2, so this step fails closed.
-      - name: Tavern release live gate
-        run: node tools/run-tavern-release-live-gate.mjs --orchestrate --mounted-profile tavern-operation-evidence.json.profile.json --operation-evidence-mapping tavern-operation-evidence.json --report tavern-release-live-gate.json
-        env:
-          CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
+      # The release's Chat/Tavern and memory claim is READ here, not produced. Three live steps
+      # used to drive real embedded provider turns in this job - the management operation evidence,
+      # the release live gate and the companion memory fold - each reading CPA_OAI_API_KEY, so the
+      # lane that publishes a player artifact could not run without a provider credential. They
+      # are gone with it. What replaces them is the committed evidence under
+      # tools/fixtures/live-evidence: one file per surface, naming the commit it describes, when it
+      # was captured, and what it measured. The gate refuses evidence pinned to a commit this
+      # release does not contain, evidence captured too far from that commit to describe it, and a
+      # surface whose own verdict is failed; it names every surface nobody has measured, on every
+      # run, instead of reading an absent measurement as a pass.
+      - name: Verify the committed live evidence
+        run: node tools/check-release-live-evidence.mjs
       # The player-visible side of the same release claim, run as the mounted gate
       # zone. The zone's corpus is the whole tests/ journey directory, so the
       # journeys the removed management/Chat shells used to carry (draft/rename,
@@ -232,23 +242,14 @@ jobs:
       # Authority for the obligations:
       # tools/fixtures/tavern-frontend-conformance/required-suites.json, executed by
       # dialogue-web/tests/frontend-criteria.ts.
+      #
+      # This step keeps running without a provider credential, and that is a measured fact rather
+      # than an assumption: the contract's `credentialTestTitles` is empty and the only mention of
+      # CPA_OAI_API_KEY under dialogue-web/tests is a prose comment (i18n.test.mjs:181), so no
+      # journey in this corpus skips on a missing credential and nothing downgrades to a declared
+      # skip. A journey that does start skipping still fails, which is the gate working as designed.
       - name: Tavern frontend conformance gate
         run: node tools/run-tavern-frontend-conformance.mjs --report tavern-frontend-conformance.json
-        env:
-          CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
-      # The companion's long-term memory, end to end with real provider turns: a real fold seals a chapter
-      # into m[0], and the historian's own output is judged against the obligations in
-      # design/architecture/historian-prompt-rubric.md (voice, no role labels, no transcript references, no
-      # internal markers). A compartment is MODEL OUTPUT, so no cheaper check can stand in for this one - a
-      # run without a provider call proves the plumbing, not the memory.
-      # Soft on the first landings, and deliberately so: a fold is paced by Magic Context's protected-tail
-      # drain budget, so its stability across releases is not yet known and this gate must not pretend it is.
-      # It exits 3 (blocked, not failed) when the credential is absent.
-      - name: Companion memory fold gate (soft)
-        continue-on-error: true
-        run: node tools/run-memory-fold-live-gate.mjs --report memory-fold-gate.json
-        env:
-          CPA_OAI_API_KEY: ${{ secrets.CPA_OAI_API_KEY }}
       # Screenshots, traces and the page snapshots of any failure, so a broken
       # journey is diagnosable from the run without a local reproduction.
       - name: Upload browser journey failures
@@ -260,22 +261,18 @@ jobs:
           path: |
             dialogue-web/test-results
             dialogue-web/playwright-report
-      # The gate report and the mapping it was decided on are the release's
-      # Chat/Tavern live claim; keep them with the run instead of a runner scratch
-      # path. Uploaded on every outcome so a failure is still auditable.
-      - name: Upload Tavern live gate evidence
+      # The frontend criteria report is the one live artifact this job still produces for the
+      # Chat/Tavern claim, so it is kept with the run instead of a runner scratch path. Uploaded on
+      # every outcome so a failure is still auditable. The management outcomes, the operation
+      # mapping, the release live gate verdict and the memory fold report used to be here too; they
+      # are committed evidence now (tools/fixtures/live-evidence), not run outputs.
+      - name: Upload the frontend criteria report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tavern-release-live-evidence
+          name: tavern-frontend-conformance
           if-no-files-found: warn
-          path: |
-            tavern-ui-outcomes.json
-            tavern-operation-evidence.json
-            tavern-operation-evidence.json.profile.json
-            tavern-frontend-conformance.json
-            memory-fold-gate.json
-            tavern-release-live-gate.json
+          path: tavern-frontend-conformance.json
       # Recovery cleanup is repository-owned and derives only this exact protected
       # workflow run root. It never accepts a path or scans TEMP. The native
       # inspector remains the authority for Windows reparse-chain verification.

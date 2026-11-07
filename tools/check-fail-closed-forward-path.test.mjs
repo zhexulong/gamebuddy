@@ -2,6 +2,11 @@
 /**
  * The falsifier of `tools/check-fail-closed-forward-path.mjs`.
  *
+ * red-proof: inject  make the `step_missing` branch unreachable (`if (false && member.step === null)`) ->
+ *                   `a code with no family is a missing member, printed as a difference` fails and the
+gate reports
+ *                   it (`8 pass / 1 fail`); restoring the file leaves `git diff` empty
+ *
  * Each case turns one of the gate's findings red on a real violation, by pointing one source at a
  * throwaway copy of the product's own file with exactly one defect injected. The gate's readers run
  * unchanged (`checkForwardPathOf`), so what is proved is the gate's behaviour on the product's shape,

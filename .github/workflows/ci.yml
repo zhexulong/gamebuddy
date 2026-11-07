@@ -299,14 +299,16 @@ jobs:
       # which is what `assertLiveRunArtifactFresh` in the harness loader requires.
       - run: pnpm --dir host build:test
         timeout-minutes: 15
-      # Two gates that read the published generation, and neither ran anywhere before this step.
-      # `check-release-generation-self-contained` asks whether the generation on disk holds every module it
-      # names AND every module the current `production-artifact.config.json` declares - measured 2026-11-07 it
-      # did not hold `composition/companion-session-reflection.js`, whose import lives in a source file emitted
-      # a day after the artifact was frozen, so no specifier inside the artifact could point at it.
-      # `check-production-artifact` is the publisher's own complete re-verification; `grep` over `package.json`
-      # and `.github/workflows` found nothing naming it, so the generation on disk was verified only when a live
-      # run happened to need it. A gate nobody calls is indistinguishable from a passing one.
+      # `check-release-generation-self-contained` asks whether the generation on disk holds every module it names AND
+      # every module the current `production-artifact.config.json` declares - measured 2026-11-07 it did not hold
+      # `composition/companion-session-reflection.js`, whose import lives in a source file emitted a day after the
+      # artifact was frozen, so no specifier inside the artifact could point at it. With no generation on disk (a clean
+      # checkout: `host/dist` is gitignored) it reports `not_measured` and exits 0, which is the honest reading here.
+      #
+      # `check-production-artifact` is deliberately NOT here. It re-verifies the publisher's own complete artifact, and
+      # that artifact cannot be built outside the release pipeline: `build-production-artifact` refuses without a
+      # verified bundled runtime (`verified_bundled_runtime_input_required`), so on a runner with no such input the step
+      # could only ever be red. It runs in `release-windows.yml`, immediately after the generation is assembled.
       - run: node tools/check-release-generation-self-contained.mjs
       - run: node --test tools/check-release-generation-self-contained.test.mjs
       # A shipped bundle must not name the machine that built it. Measured: `bun build` inlined
@@ -321,7 +323,6 @@ jobs:
       # visible in review and both are fatal at runtime, so the workflow file itself is now checked.
       - run: node tools/check-workflow-expressions.mjs
       - run: node --test tools/check-workflow-expressions.test.mjs
-      - run: node host/scripts/check-production-artifact.mjs
       - run: node tools/check-ci-coverage.mjs
       # `check:draft-declaration-coverage` drives a mounted zone, and the prerequisite it declares is a Chromium the
       # checkout does not create. Without this the gate refuses with `playwright_browser_missing`, which reads in the

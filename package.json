@@ -348,6 +348,8 @@
     "test:head-self-contained": "node --test tools/check-head-self-contained.test.mjs",
     "check:release-generation-self-contained": "node tools/check-release-generation-self-contained.mjs",
     "test:release-generation-self-contained": "node --test tools/check-release-generation-self-contained.test.mjs",
+    "check:release-live-evidence": "node tools/check-release-live-evidence.mjs",
+    "test:release-live-evidence": "node --test tools/check-release-live-evidence.test.mjs",
     "check:production-artifact": "node host/scripts/check-production-artifact.mjs",
     "test:child-output-parsing": "node --test tools/check-child-output-parsing.test.mjs",
     "test:derived-population": "node --test tools/check-derived-population.test.mjs",
