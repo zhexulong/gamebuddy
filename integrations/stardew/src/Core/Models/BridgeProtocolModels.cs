@@ -841,7 +841,11 @@ public sealed record BridgeSnapshot(
     // Defaulted and LAST for the same reason as its siblings above: the positional list is already
     // closed by the parameters before them.
     IReadOnlyList<BridgeFixedInteractionPoint>? FixedInteractionPoints = null,
-    int? FixedInteractionPointsOmitted = null);
+    int? FixedInteractionPointsOmitted = null,
+    // The soil tiles the cap left out, beside the family it truncates: `soilTiles` is a bounded slice of a 13x13
+    // neighbourhood, so without this count a patch larger than the bound is indistinguishable from a complete one.
+    // Defaulted and LAST for the same reason as its siblings above: the positional list is already closed.
+    int? SoilTilesOmitted = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,
