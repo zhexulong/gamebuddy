@@ -1,0 +1,90 @@
+{
+  "schema": "gamebuddy-endgame-entry-chain/v1",
+  "measured": false,
+  "measurement": "source-read on 2026-11-08, no live run: this file carries what was read, not what was measured",
+  "subject": "the authenticated `game_endgame` operation from HTTP ingress to the `gameended` projection",
+  "install": "D:\\steam\\steamapps\\common\\Stardew Valley   (SMAPI 4.5.2 / Stardew 1.6.15 build 24356)",
+  "entryChain": [
+    {
+      "step": "POST /api/composed-reference-game/v1/game/endgame",
+      "where": "host/src/composed-reference-game-browser.ts:207 (path), :1880 (route)",
+      "auth": "loopback http origin, exact Origin header, exact JSON content type, session cookie bearer token and x-csrf-token (host/src/composed-reference-game-browser.ts:947-971); a request that fails any of them answers 401 unauthorized (:1894)"
+    },
+    {
+      "step": "one-shot lifecycle admission",
+      "where": "host/src/composed-reference-game-browser.ts:881 (issue), :988 (consume)",
+      "reading": "the admission names the exact browser session and the exact operation (`game_endgame`) and is consumed synchronously before the coordinator runs"
+    },
+    {
+      "step": "the sink the desktop composition binds",
+      "where": "host/src/composed-reference-game-browser.ts:163 (sink member endgameGame), host/src/tavern/composed-reference-game-static-shell-composition.ts:155-159",
+      "reading": "the route is mounted only when the sink declares endgameGame; a composition that does not answers 404 not_found (:1882-1887)"
+    },
+    {
+      "step": "coordinator endgame",
+      "where": "host/src/stardew-production-lifecycle-coordinator.internal.ts:2164 (endgameGame), :2168 (consumeBrowserAdmission \"game_endgame\")",
+      "reading": "guards in order: endgameSettled replay (:2177 -> projected gameended again), idempotency conflict (:2180-2187), isClosing (:2189), expectedAttachmentGeneration (:2190), exactOwner (:2192-2193 -> stardew_game_endgame_unavailable)"
+    },
+    {
+      "step": "containment and settlement",
+      "where": "host/src/stardew-production-lifecycle-coordinator.internal.ts:2199-2224",
+      "reading": "teardownAttachment -> containPlayerHost(owner) (:2209-2211) -> containAiClient(owner) when the AI role launched (:2213-2216) -> containedRuntimeTeardown.settle(owner) (:2221) -> endgameSettled = true (:2222) -> Object.freeze({ apiVersion: 1, status: \"gameended\" }) (:2224)"
+    },
+    {
+      "step": "where the teardown object comes from",
+      "where": "host/src/stardew-production-lifecycle-coordinator.internal.ts:777 and :3563-3566 (containedRuntimeTeardownFromCollaborator(runtimeLaunchPlayerHost)), host/src/composition/stardew/stardew-guardian-platform.ts:401 (createStardewPlayerHostRuntimeLaunchCollaboratorFactory), :714 (createDesktopGuardianGameRuntimePlatform(session))",
+      "reading": "the containment and the settle are answered by a ContainedGameRuntimePlatform built over one DesktopGuardianSession; without a collaborator the factory installs a playerHostLaunch that throws stardew_player_host_launch_runtime_unavailable (:3545-3563)"
+    },
+    {
+      "step": "where the Guardian session comes from",
+      "where": "host/src/composition/desktop-host-composition.ts:135 (createDesktopProductComposition), :242-244 (platform built from session), host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts:484-486 and :617-629 (createAuthenticatedDesktopGuardianSession)",
+      "reading": "the session is a named-pipe client for \\\\.\\pipe\\GameBuddy.HostGuardian.<bootstrapId> that speaks hello/arm/launch/contain/recovery; it is constructed only inside the desktop bootstrap from the bootstrap frame's guardian capability"
+    }
+  ],
+  "projectionFacts": {
+    "gameendedIsAResultNotAState": "`gameended` exists in exactly one schema, GameEndgameResultV1 (host/src/game-browser-contract/index.ts:504-513), the redacted outcome of the operation. The state projection (host/src/game-browser/game-browser-state-provider.ts:89-121) has no `gameended` member: it reports instance status, attachment status and actionAuthority, so the browser reads the end of the game through those fields, not through a `gameended` state value.",
+    "mintedOnlyAfterSettle": "the literal is produced at stardew-production-lifecycle-coordinator.internal.ts:2224, after settle(owner) resolved; every other exit throws and is projected as a problem code (:595-601 in composed-reference-game-browser.ts)"
+  },
+  "prerequisiteMatrix": [
+    {
+      "prerequisite": "loopback HTTP ingress with real bootstrap token, session cookie, CSRF and exact Origin",
+      "needed": true,
+      "satisfiableOnThisMachine": "yes",
+      "why": "all of it is JavaScript in the product's own handler (host/src/composed-reference-game-browser.ts:197-217, :881-981); a harness can bootstrap one session and send the real headers"
+    },
+    {
+      "prerequisite": "a durable semantic authority and a registered Stardew installation",
+      "needed": true,
+      "satisfiableOnThisMachine": "yes, in principle",
+      "why": "createSharedSemanticProductionAuthorityFromDeploymentManifest + the discovery/confirm route (host/src/composed-reference-game-browser.ts:911-912, coordinator :2933) over the real install; not exercised by this reading"
+    },
+    {
+      "prerequisite": "a real Player Host launch through the contained runtime",
+      "needed": true,
+      "satisfiableOnThisMachine": "no",
+      "why": "runPlayerHostLaunch (:1424-1457) goes through playerHostLaunch, which is built only from runtimeLaunchPlayerHost (:3545-3553); without it nothing sets playerHostLaunchThroughRuntime (:1437), so endgame would contain no role at all"
+    },
+    {
+      "prerequisite": "the Guardian endpoint that answers arm_attempt / launch_role / contain_role for the private session",
+      "needed": true,
+      "satisfiableOnThisMachine": "no",
+      "why": "the server side of \\\\.\\pipe\\GameBuddy.HostGuardian.<bootstrapId> exists only in the native Desktop supervisor (desktop/GameBuddy.Desktop, host/native/windows-bootstrap-guardian/GuardianProtocol.cs, GuardianPrivateLaunchIngress.cs), which injects the one token key the Host's arm frame deliberately omits; the repository's own desktop gate launcher serves hello and then destroys the socket on any arm/launch/contain frame (tools/desktop-composition-launch.mjs:507, :542-545), so even a harness that mints a full desktop composition cannot drive the game surface's containment"
+    },
+    {
+      "prerequisite": "a Pi runtime",
+      "needed": false,
+      "satisfiableOnThisMachine": "not applicable",
+      "why": "endgame never attaches: teardownAttachment returns immediately when no facade, lease or generation exists (stardew-production-lifecycle-coordinator.internal.ts:2056-2061), and the AI role is contained only when aiClientLaunchThroughRuntime is set (:1437, :2213)"
+    },
+    {
+      "prerequisite": "an AI provider credential",
+      "needed": false,
+      "satisfiableOnThisMachine": "not applicable",
+      "why": "no route on the endgame path reads a provider, a credential, or a model; the previous notProven wording named it as the blocker and reading the chain does not support that"
+    }
+  ],
+  "notProven": [
+    "the `gameended` projection: the authenticated `game_endgame` operation is reachable over real HTTP ingress with no AI provider credential, but its result is minted only after containedRuntimeTeardown.settle(owner), and that teardown is built over a DesktopGuardianSession whose Guardian endpoint exists only in the native Desktop supervisor; reading 6 proves the containment half (`contain_role player_host` over the public guardian control channel), not the projection",
+    "the desktop/browser read of that outcome: the state projection has no `gameended` member, so what a browser reads after an endgame is instance status plus actionAuthority, and no live run has yet held a session that could reach the operation"
+  ]
+}
