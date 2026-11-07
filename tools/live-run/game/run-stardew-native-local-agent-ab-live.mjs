@@ -68,7 +68,7 @@ import {
   pickVoiceGatewayPort,
   resolveVoiceConfiguration,
 } from "../../lib/voice-gateway-launch.mjs";
-import { assessCompanionInteraction } from "../../lib/companion-interaction-gate.mjs";
+import { assessCompanionInteraction, assessSpokenUtterances } from "../../lib/companion-interaction-gate.mjs";
 import { assertLiveRunArtifactFresh } from "../../lib/live-run-artifact-freshness.mjs";
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
 import { redactLiveRunText } from "../core/capture-text.mjs";
@@ -4035,16 +4035,17 @@ try {
             // What THIS turn said, sliced by index so a line cannot be attributed to another turn.
             const spokenThisTurn = presentationPieces
               .slice(spokenBefore)
-              .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")))
-              .join("")
-              .trim();
+              .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")).trim())
+              .filter((text) => text.length > 0);
             sessionTurns.push(
               Object.freeze({
                 goalIndex: day - 1,
                 goal: promptForDay(day),
                 turn: walked.turn,
                 day,
-                spokenText: spokenThisTurn,
+                // The turn's lines, kept APART: joining them was how a turn of fifteen short bubbles became one
+                // 120-code-point "utterance" the gate then failed.
+                spokenLines: Object.freeze(spokenThisTurn),
               }),
             );
             // A turn that never settled will not settle differently for the next one; the reason is already recorded.
@@ -4191,11 +4192,12 @@ try {
         goalIndex: 0,
         goal: prompt,
         turn: agentTurnResult,
-        spokenText: presentationPieces
-          .slice(firstSpokenBefore)
-          .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")))
-          .join("")
-          .trim(),
+        spokenLines: Object.freeze(
+          presentationPieces
+            .slice(firstSpokenBefore)
+            .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")).trim())
+            .filter((text) => text.length > 0),
+        ),
       }),
     );
     // A self-directed scenario keeps playing: each extra goal is delivered as a NEW player turn
@@ -4211,11 +4213,12 @@ try {
             goalIndex: index + 1,
             goal,
             turn: next.turn,
-            spokenText: presentationPieces
-              .slice(spokenBefore)
-              .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")))
-              .join("")
-              .trim(),
+            spokenLines: Object.freeze(
+              presentationPieces
+                .slice(spokenBefore)
+                .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")).trim())
+                .filter((text) => text.length > 0),
+            ),
           }),
         );
       }
@@ -4568,30 +4571,41 @@ try {
   // Every scenario that SPOKE is assessed: the companion's speech is part of what every scenario promises
   // (morning_routine included - it reports its day to the player), so gating it on particular rungs was how
   // dialogue went unassessed on the others.
-  // Judged PER TURN, because the gate's limits are per utterance.
   //
-  // The single call used to hand it `presentedSummary`, which accumulates every line of every turn: a three-day run
-  // produced one 285-character "summary" out of nine short lines and then failed its own 120-character limit -
-  // `summary_too_long` about a companion that had spoken exactly as asked, once per turn. Measured 2026-11-03: the
-  // speech was 9 lines of 2-45 characters each.
+  // Judged PER UTTERANCE, over the population the run can PROVE it said: the lines in its own session record, which is
+  // the same population `interactionValue` counts above. The two earlier spellings of this were both wrong the same
+  // way - one string per SESSION (a three-day run produced a 285-character "summary" out of nine short lines), then one
+  // string per TURN (measured 2026-11-06: 207 spoken lines across 14 turns were judged as 14 concatenations, the other
+  // 193 lines never looked at, and the run blocked by `summary_too_long` on a join of short bubbles). A concatenation
+  // is a summary, and this gate's limits are per utterance.
   //
-  // A run fails when ANY turn's own speech fails, and passes when they all pass - the failing turn is reported, because
-  // "one turn broke the rule" and "the run broke it" are not the same finding.
-  const spokenTurnTexts = sessionTurns
-    .map((entry) => entry?.spokenText)
-    .filter((text) => typeof text === "string" && text.trim().length > 0);
-  const interactionAssessments = spokenTurnTexts.map((text) => assessCompanionInteraction(text, observedEvents));
-  const interactionAssessment =
-    interactionAssessments.length === 0
+  // When the session record cannot be bound the population is UNKNOWN: the in-memory pieces are still judged, the
+  // answer says how many, and the verdict is `partial` - a sample is never a pass.
+  const spokenRecordLines =
+    interactionValue.verdict === "not_established"
       ? null
-      : (interactionAssessments.find((assessment) => !assessment.passed) ?? interactionAssessments[0]);
-  // The interaction gate assesses what the companion SAID. `unobserved` means nobody could assess it, which a
-  // reader must be able to tell apart from "assessed and fine" — the previous boolean could not.
-  const interactionOutcome =
-    interactionAssessment === null ? "unobserved" : interactionAssessment.passed ? "verified" : "failed";
+      : interactionValue.measurements.lines.map((line) => line.text);
+  const interactionAssessment =
+    spokenRecordLines === null
+      ? assessSpokenUtterances({
+          utterances: presentationPieces.map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? ""))),
+          population: null,
+          omittedReason: `session_record_unbound:${interactionValue.unestablishedReason ?? "no_session_record"}`,
+          observedEvents,
+        })
+      : assessSpokenUtterances({
+          utterances: spokenRecordLines,
+          population: interactionValue.measurements.spokenLines.count,
+          observedEvents,
+        });
+  // The interaction gate assesses what the companion SAID. `unobserved` means there was nothing to assess, which a
+  // reader must be able to tell apart from "assessed and fine" — the previous boolean could not. `partial` (a verdict
+  // about a sample) and `not_established` (a population nobody could measure) are neither.
+  const interactionOutcome = interactionAssessment.verdict === "passed" ? "verified" : interactionAssessment.verdict;
   // absence-as-pass: rungs 0-2 emit no companion line by design, and rung 6 requires speech before this point
-  // (sessionSpoken), so an unassessed interaction can never turn a rung into a pass.
-  const interactionPassed = interactionOutcome !== "failed";
+  // (sessionSpoken), so a run with nothing to judge is not failed for it. A sample is not that case: `partial` and
+  // `not_established` never pass.
+  const interactionPassed = interactionOutcome === "verified" || interactionOutcome === "unobserved";
   // The narrative obligation, in the verdict rather than beside it: a run whose Historian wrote a technical
   // changelog has nothing worth reflecting on, and a report that says `passed` while the rubric found a violation
   // would be the "gate passes while the behaviour is absent" shape the plan names. `unmeasured` (the run wrote no
@@ -4709,11 +4723,13 @@ try {
     Object.freeze({ id: "content", passed: contentPassed, reasonCode: contentVerdict.reason }),
     Object.freeze({ id: "world_book", passed: worldBookPassed, reasonCode: worldBookGateVerdict.reason }),
     // The gate's OWN reasons, never a paraphrase: a `summary_too_long` run and a `machine_token_leak` run are
-    // different findings about the companion and the reader has to be able to tell them apart.
+    // different findings about the companion and the reader has to be able to tell them apart. A verdict that is not
+    // about the companion at all - a sample (`partial`) or a population nobody could measure (`not_established`) -
+    // names the fact that stopped it, from the same assessment.
     Object.freeze({
       id: "companion_interaction",
       passed: interactionPassed,
-      reasonCode: interactionAssessment?.reasons?.[0] ?? "companion_interaction_not_assessed",
+      reasonCode: interactionAssessment.reason ?? "companion_interaction_not_assessed",
     }),
     Object.freeze({
       id: "historian_rubric",

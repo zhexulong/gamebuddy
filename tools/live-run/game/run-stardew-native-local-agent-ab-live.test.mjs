@@ -162,12 +162,38 @@ test("the runner enforces a companion-interaction gate on every speaking scenari
   // which must stay distinguishable from `verified`. The old boolean (`=== null || .passed`) could not say
   // which, and the verdict-guard now rejects that spelling outright.
   assert.match(RUNNER_SOURCE, /const interactionOutcome =/);
-  assert.match(RUNNER_SOURCE, /interactionAssessment === null \? "unobserved"/);
-  assert.match(RUNNER_SOURCE, /const interactionPassed = interactionOutcome !== "failed";/);
-  // An unassessed interaction can never turn a scenario into a pass: the outcome vocabulary is published and
-  // only `failed` blocks, so `unobserved` stays distinguishable from `verified`.
-  assert.match(RUNNER_SOURCE, /const interactionPassed = interactionOutcome !== "failed";/);
+  assert.match(RUNNER_SOURCE, /interactionAssessment\.verdict === "passed" \? "verified"/);
+  // MEASURED 2026-11-06: the gate was handed one string per TURN, so a run with 207 spoken lines was judged on 14
+  // concatenations and blocked by `summary_too_long` on one of them. The population is now the run's own session
+  // record - the same lines `interactionValue` counts - judged one by one.
+  assert.match(RUNNER_SOURCE, /assessSpokenUtterances\(\{/);
+  assert.match(
+    RUNNER_SOURCE,
+    /interactionValue\.measurements\.lines\.map\(\(line\) => line\.text\)/,
+    "the judged population is the session record's own lines, not a re-derived list",
+  );
+  assert.match(
+    RUNNER_SOURCE,
+    /population: interactionValue\.measurements\.spokenLines\.count,/,
+    "and the declared population is the count the interaction gate publishes, so `judged N of M` is checkable",
+  );
+  assert.doesNotMatch(
+    RUNNER_SOURCE,
+    /spokenText:/,
+    "the per-turn concatenation is gone: a join of short bubbles is a summary, not an utterance",
+  );
+  // A verdict about a sample, or about a population nobody could measure, must not pass. Only the two states that
+  // are actually about her - judged and fine, or nothing to judge - can.
+  assert.match(
+    RUNNER_SOURCE,
+    /const interactionPassed = interactionOutcome === "verified" \|\| interactionOutcome === "unobserved";/,
+  );
   assert.match(RUNNER_SOURCE, /interactionOutcome,/);
+  assert.match(
+    RUNNER_SOURCE,
+    /reasonCode: interactionAssessment\.reason \?\? "companion_interaction_not_assessed"/,
+    "a clause that did not pass names the fact that stopped it, from the assessment that stopped it",
+  );
   // Every scenario's clause plus the shared gates, in ONE list the verdict reads - and each clause carries the code
   // that reports it, so a blocked run cannot publish a code borrowed from a clause that passed.
   const clauses = rungClauseList(RUNNER_SOURCE);
@@ -298,11 +324,13 @@ test("the runner emits system findings as a first-class health signal", () => {
   // Ladder 5 dialogue is covered by the interaction gate too (its reply is the covenant answer to the player);
   // before this it was never assessed at all.
   //
-  // The gate is now fed PER TURN, not with the session's concatenation: the limits it enforces are per utterance, and
-  // a three-day run built one 285-character "summary" out of nine short lines and then failed its own 120-character
-  // limit - `summary_too_long` about a companion that had spoken exactly as asked. Measured 2026-11-03.
-  assert.match(RUNNER_SOURCE, /interactionAssessments\.length === 0/);
-  assert.match(RUNNER_SOURCE, /assessCompanionInteraction\(text, observedEvents\)/);
+  // The gate is fed one UTTERANCE at a time and says how many of the population it judged. Per turn was still a
+  // concatenation - measured 2026-11-06, 207 spoken lines judged as 14 strings - and per session was worse.
+  assert.match(RUNNER_SOURCE, /const interactionAssessment =\n\s+spokenRecordLines === null/);
+  assert.match(
+    RUNNER_SOURCE,
+    /utterances: spokenRecordLines,\n\s+population: interactionValue\.measurements\.spokenLines\.count,/,
+  );
   assert.doesNotMatch(
     RUNNER_SOURCE,
     /presentedSummary\.trim\(\)\.length > 0\n\s+\? assessCompanionInteraction\(presentedSummary, observedEvents\)/,

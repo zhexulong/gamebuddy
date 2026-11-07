@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assessCompanionInteraction } from "./companion-interaction-gate.mjs";
+import { assessCompanionInteraction, assessSpokenUtterances } from "./companion-interaction-gate.mjs";
+
+/** Two hundred short lines: the shape a real 37.5-minute run produced (207 lines across 14 turns). */
+const TWO_HUNDRED_LINES = Array.from({ length: 200 }, (_, index) => `第${index + 1}行：草清完了，你那边慢慢来。`);
 
 test("accepts a short spoken line that addresses the player", () => {
   const result = assessCompanionInteraction("（轻声）种好啦，接下来就看它慢慢长大了——你想不想等它几天？");
@@ -119,4 +122,104 @@ test("hypothetical condition with NPC verb is not an unobserved event", () => {
   const result = assessCompanionInteraction(line, []);
   assert.equal(result.passed, true, line);
   assert.equal(result.reasons.includes("unobserved_event"), false, line);
+});
+
+test("two hundred short utterances are judged one by one, and the answer says how many it saw", () => {
+  // MEASURED 2026-11-06: a 37.5-minute run whose session record held 207 companion lines was judged on 14 - one
+  // concatenated string per turn - and the run was then blocked by `summary_too_long` on a concatenation. The
+  // population is the evidence: a verdict over 14 of 207 is a verdict about a sample, and it has to say so.
+  const whole = assessSpokenUtterances({ utterances: TWO_HUNDRED_LINES, population: 200 });
+  assert.equal(whole.verdict, "passed");
+  assert.equal(whole.sample.population, 200);
+  assert.equal(whole.sample.judged, 200, "every line is judged, not summarised into one");
+  assert.equal(whole.sample.omitted, 0);
+  assert.equal(whole.sample.omittedReason, null);
+  assert.equal(whole.sample.representation, "utterances");
+  assert.deepEqual(whole.reasons, []);
+
+  // THE SHAPE THIS REPLACES, still callable: the same 200 lines joined into the one string the runner used to hand
+  // over per turn. The per-utterance ceiling then fails a run whose every line is short, which is the defect.
+  const joined = assessCompanionInteraction(TWO_HUNDRED_LINES.join(""));
+  assert.equal(joined.reasons.includes("summary_too_long"), true);
+  assert.equal(
+    assessSpokenUtterances({ utterances: TWO_HUNDRED_LINES, population: 200 }).verdict,
+    "passed",
+    "and the same evidence judged per utterance passes",
+  );
+});
+
+test("a sample is never a pass: judged 14 of 200 is partial, and it names what filled the budget", () => {
+  const report = assessSpokenUtterances({
+    utterances: TWO_HUNDRED_LINES.slice(0, 14),
+    population: 200,
+    omittedReason: "turn_budget",
+  });
+  assert.equal(report.verdict, "partial", "a verdict about 14 of 200 utterances is not a pass");
+  assert.equal(report.sample.judged, 14);
+  assert.equal(report.sample.population, 200);
+  assert.equal(report.sample.omitted, 186);
+  assert.equal(report.sample.omittedReason, "turn_budget", "the reason is named, never implied");
+  assert.equal(report.reason, "turn_budget", "and the assessment's own reason agrees with the sample's");
+
+  // FALSIFIER: the same proof the other way. Give it the whole population and the same lines must pass, or the
+  // `partial` above is produced by the fixture rather than by the omission.
+  const whole = assessSpokenUtterances({
+    utterances: TWO_HUNDRED_LINES,
+    population: 200,
+    omittedReason: "turn_budget",
+  });
+  assert.equal(whole.verdict, "passed");
+  assert.equal(whole.sample.omitted, 0);
+  assert.equal(whole.reason, null);
+});
+
+test("an unmeasurable population is partial, never passed", () => {
+  // The session record could not be bound, so the run cannot prove how many lines it said: the in-memory pieces are
+  // still worth judging, but the count behind them is unknown and the answer must not read as a pass.
+  const report = assessSpokenUtterances({
+    utterances: ["（轻声）我把草清了。"],
+    population: null,
+    omittedReason: "session_record_unbound",
+  });
+  assert.equal(report.verdict, "partial");
+  assert.equal(report.sample.population, null, "an unmeasured population is null, never a guess");
+  assert.equal(report.sample.judged, 1);
+  assert.equal(report.sample.omitted, null, "a count that cannot be measured is not zero");
+  assert.equal(report.reason, "session_record_unbound");
+});
+
+test("one utterance over the ceiling fails the run, and the finding is the line itself", () => {
+  const long = `我把花椰菜送去给乔迪了，${"她还站在门口等".repeat(20)}`;
+  const report = assessSpokenUtterances({ utterances: ["（点头）好。", long], population: 2 });
+  assert.equal(report.verdict, "failed");
+  assert.deepEqual(report.reasons, ["summary_too_long"]);
+  assert.equal(report.findings.length, 1, "the one line that failed is the finding");
+  assert.equal(report.findings[0].index, 1, "and it is registered by its own position in the population");
+  assert.equal(report.findings[0].text, long);
+  assert.equal(report.sample.judged, 2, "a failure does not shrink the sample it was found in");
+});
+
+test("nothing to judge is `unobserved`, and an unknown nothing is `not_established`", () => {
+  const empty = assessSpokenUtterances({ utterances: [], population: 0 });
+  assert.equal(empty.verdict, "unobserved");
+  assert.equal(empty.reason, "no_spoken_lines");
+
+  const unmeasured = assessSpokenUtterances({
+    utterances: [],
+    population: null,
+    omittedReason: "session_record_unbound",
+  });
+  assert.equal(unmeasured.verdict, "not_established", "a run that cannot prove it said nothing has not said nothing");
+  assert.equal(unmeasured.reason, "session_record_unbound");
+});
+
+test("a bounded representation still judges every line", () => {
+  // A run with hundreds of lines must not turn result.json into a transcript, so only the lines that decided the
+  // verdict are carried - but the sample says how many were decided, so the bound cannot hide an unjudged line.
+  const lines = Array.from({ length: 60 }, (_, index) => `第${index}行说一句很长的话，${"再说".repeat(70)}`);
+  const report = assessSpokenUtterances({ utterances: lines, population: 60 });
+  assert.equal(report.verdict, "failed");
+  assert.equal(report.sample.judged, 60);
+  assert.ok(report.findings.length <= 20, "the published findings are bounded");
+  assert.equal(report.findingsReported.total, 60, "and the count of failures is not bounded with them");
 });
