@@ -245,7 +245,9 @@ test("the action cadence is split into exec, think and idle, stamped honestly", 
   const callAt = SOURCE.indexOf("const receipt = await originalExecute(request);");
   assert.ok(stampAt > 0 && callAt > stampAt, "the dispatch stamp must precede the call it names");
   assert.match(SOURCE, /settledAtMs: Date\.now\(\),/);
-  assert.match(SOURCE, /actionCadence: summarizeActionCadence\(actionTrace\),/);
+  // Both channels feed the cadence: a run whose work all went through Body Programs has an empty `actionTrace` and a
+  // full `programRows`, and reading only the flat trace is how "measured: 0" was published for 379 executions.
+  assert.match(SOURCE, /actionCadence: summarizeActionCadence\(actionTrace, programRows\),/);
   assert.match(SOURCE, /import \{ summarizeActionCadence \} from "\.\.\/\.\.\/lib\/action-cadence\.mjs";/);
 });
 

@@ -51,6 +51,70 @@ test("the summary is ordered by dispatch time, not by trace order", () => {
   assert.equal(cadence.thinkMs.median, 3700);
 });
 
+/**
+ * A execution the Mod ran natively: `atMs` is the moment it dispatched, `settledAtMs` the moment the action's terminal
+ * landed - both on the game's monotonic clock (`BodyProgramJournalClock`), neither taken by this evaluator.
+ */
+const programExecution = (atMs, settledAtMs) => ({ atMs, settledAtMs });
+
+test("a run whose work all went through programs gets a real execMs from the game's own stamps", () => {
+  // Measured on a finished run: `executions 379, of which timed 0`, so `execMs.median` was null on a run that executed
+  // 379 times. The stamps are the journal's, the durations are the game's work, and the median is over REAL executions.
+  const cadence = summarizeActionCadence(
+    [],
+    [programExecution(1000, 1300), programExecution(5000, 5400), programExecution(6000, 6150)],
+  );
+  assert.equal(cadence.actions, 3);
+  assert.equal(cadence.measured, 3);
+  assert.equal(cadence.unmeasured, 0);
+  assert.equal(cadence.flat, 0, "a program-path run has no flat request frame at all");
+  assert.equal(cadence.program, 3);
+  assert.equal(cadence.execMs.median, 300);
+  assert.equal(cadence.execMs.max, 400);
+  assert.equal(cadence.execMs.sum, 850);
+  // A game clock cannot measure the agent's thinking, and mixing the two clocks for a gap would be meaningless: the
+  // fields stay null rather than borrowing the flat channel's numbers.
+  assert.equal(cadence.thinkMs.median, null);
+  assert.equal(cadence.idleMs.median, null);
+});
+
+test("an unsettled or untimed program execution is COUNTED and excluded, never read as instant", () => {
+  const cadence = summarizeActionCadence(
+    [],
+    [
+      programExecution(1000, 1300),
+      programExecution(5000, null),
+      programExecution(null, 9000),
+      programExecution(9000, 8000),
+    ],
+  );
+  assert.equal(cadence.actions, 4);
+  assert.equal(cadence.measured, 1, "only the executed-and-settled one is a duration");
+  assert.equal(cadence.unmeasured, 3, "a never-settled, a never-timed and a backwards one are all unmeasured");
+  assert.equal(cadence.execMs.median, 300);
+  assert.equal(cadence.execMs.sum, 300);
+});
+
+test("both channels share execMs, while thinkMs and idleMs stay on the flat clock that can measure them", () => {
+  // A duration is a difference of two readings of ONE clock, so a game-clock execution and a runner-clock dispatch can
+  // sit in the same execMs columns. The gaps between them cannot: subtracting a game-clock reading from a runner-clock
+  // one produces a number with no meaning, so only the flat channel feeds thinkMs/idleMs.
+  const cadence = summarizeActionCadence(
+    [entry(1000, 1200), entry(5000, 5900)],
+    [programExecution(100, 500), programExecution(2000, 2200)],
+  );
+  assert.equal(cadence.actions, 4);
+  assert.equal(cadence.flat, 2);
+  assert.equal(cadence.program, 2);
+  assert.equal(cadence.measured, 4);
+  assert.deepEqual(
+    [cadence.execMs.sum, cadence.execMs.max],
+    [200 + 900 + 400 + 200, 900],
+    "the sum and max are over both channels' real durations",
+  );
+  assert.equal(cadence.thinkMs.median, 3800, "the one flat gap (5000 - 1200), and the program rows are not in it");
+});
+
 test("an empty or malformed trace answers with nulls instead of zeros", () => {
   // A well-formed but empty trace keeps its SHAPE (so a caller can read `.execMs.median` without a null guard),
   // while a malformed input has no shape to promise and answers flat nulls.

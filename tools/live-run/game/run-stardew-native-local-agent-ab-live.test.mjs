@@ -21,6 +21,7 @@ import { watchRollover } from "../../lib/multiday-loop.mjs";
 import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mjs";
 import { killedReasonCode } from "../../lib/live-run-teardown.mjs";
 import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
+import { executionsFromJournalEvents } from "../../lib/stardew-body-program-journal.mjs";
 import {
   COMPANION_DID_NOT_SLEEP,
   COMPANION_SLEEP_REFUSED,
@@ -1020,15 +1021,15 @@ test("a disposable root's identity belongs to its own run, so a lane can be run 
  * runner module never loads here (top-level live side effects), so the function
  * text is evaluated in isolation; it must therefore be free of closures.
  */
-function extractRunnerFunction(source, name, globals = {}) {
+function extractRunnerFunction(source, name, bindings = {}) {
   // An array of names compiles ALL of them into one scope, so a helper that a tested function calls is
   // evaluated with it. Without this, an extracted copy referenced a function that only existed in the
   // runner file and the behavioural test failed for a reason that had nothing to do with the behaviour.
   if (Array.isArray(name)) {
     const parts = name.map((one) => extractRunnerFunction(source, one).source);
-    const names = Object.keys(globals);
+    const names = Object.keys(bindings);
     return new Function(...names, `${parts.join("\n")}\nreturn [${name.join(", ")}];`)(
-      ...names.map((key) => globals[key]),
+      ...names.map((key) => bindings[key]),
     );
   }
   const marker = `function ${name}`;
@@ -1068,7 +1069,11 @@ function extractRunnerFunction(source, name, globals = {}) {
   // Include the signature from the name through the body so the evaluated text is
   // a complete declaration.
   const body = source.slice(start, end);
-  const value = new Function(`${body}\nreturn ${name};`)();
+  // A helper the extracted function calls from ANOTHER module (rather than from the runner file) is handed in as a
+  // binding: the tested function then runs against the real implementation instead of throwing a ReferenceError into
+  // its own catch block, which answers "the fallback was used" to a question nobody asked.
+  const globals = Object.keys(bindings);
+  const value = new Function(...globals, `${body}\nreturn ${name};`)(...globals.map((key) => bindings[key]));
   // Carry the declaration text so several declarations can be composed into one scope.
   Object.defineProperty(value, "source", { value: body, enumerable: false });
   return value;
@@ -3235,7 +3240,9 @@ test("an unobserved program is not a program that dispatched nothing", async () 
   // Decision (c): a failed journal read and a program that ran nothing are DIFFERENT facts. The falsifier: when the
   // Mod's status query throws or answers not_found, the record is `observed: false` with `dispatched: null` - never
   // `dispatched: 0`, which would silently turn a read failure into a measured empty execution.
-  const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes");
+  const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes", {
+    executionsFromJournalEvents,
+  });
   const failing = await readProgramOutcomes({
     submissions: [{ programId: "p_unreadable", accepted: true }],
     statusQuery: async () => {
@@ -3283,13 +3290,15 @@ test("an unobserved program is not a program that dispatched nothing", async () 
 test("a program that dispatched three nodes reports dispatched: 3, and its node outcomes", async () => {
   // The positive falsifier: `dispatched` is exactly the count of the Mod's own `native_dispatch` events - the executions
   // the program produced - and the per-node states are what the Mod's status snapshot reports.
-  const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes");
+  const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes", {
+    executionsFromJournalEvents,
+  });
   const events = [
     { cursor: 1, programId: "p1", kind: "admitted", nodeId: "a" },
-    { cursor: 2, programId: "p1", kind: "native_dispatch", nodeId: "a" },
-    { cursor: 3, programId: "p1", kind: "node_succeeded", nodeId: "a" },
-    { cursor: 4, programId: "p1", kind: "native_dispatch", nodeId: "b" },
-    { cursor: 5, programId: "p1", kind: "native_dispatch", nodeId: "b" },
+    { cursor: 2, programId: "p1", kind: "native_dispatch", nodeId: "a", atMs: 1000 },
+    { cursor: 3, programId: "p1", kind: "node_succeeded", nodeId: "a", atMs: 1300 },
+    { cursor: 4, programId: "p1", kind: "native_dispatch", nodeId: "b", atMs: 2000 },
+    { cursor: 5, programId: "p1", kind: "native_dispatch", nodeId: "b", atMs: 2100 },
   ];
   const records = await readProgramOutcomes({
     submissions: [{ programId: "p1", accepted: true }],
@@ -3314,9 +3323,9 @@ test("a program that dispatched three nodes reports dispatched: 3, and its node 
   assert.deepEqual(
     records[0].executions,
     [
-      { nodeId: "a", nodeAttempt: null, cursor: 2 },
-      { nodeId: "b", nodeAttempt: null, cursor: 4 },
-      { nodeId: "b", nodeAttempt: null, cursor: 5 },
+      { nodeId: "a", nodeAttempt: null, cursor: 2, atMs: 1000, settledAtMs: null },
+      { nodeId: "b", nodeAttempt: null, cursor: 4, atMs: 2000, settledAtMs: null },
+      { nodeId: "b", nodeAttempt: null, cursor: 5, atMs: 2100, settledAtMs: null },
     ],
     "each execution keeps the journal's own identity, which is what makes it a trace row rather than a count",
   );

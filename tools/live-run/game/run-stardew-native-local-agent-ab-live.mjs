@@ -132,7 +132,11 @@ import {
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
 // The Mod's own durable Body Program journal: the fallback that answers when the game - and with it the bridge - dies
 // mid-run, which is exactly when a program's evidence matters most.
-import { createBodyProgramJournalFallback, stardewDataPath } from "../../lib/stardew-body-program-journal.mjs";
+import {
+  createBodyProgramJournalFallback,
+  executionsFromJournalEvents,
+  stardewDataPath,
+} from "../../lib/stardew-body-program-journal.mjs";
 import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
 // Whether the provider answers at all, resolved from the same files the runtime reads (the Game model profile, Pi's
 // `models.json`, the credential beside it) and asked BEFORE the first model turn: two runs spent their whole budget on
@@ -3497,16 +3501,10 @@ async function readProgramOutcomes({ submissions, statusQuery, eventsQuery, jour
         cursor = result.nextCursor;
       }
       // The journal's own identity for each execution: `cursor` is the event's page position, so the same event read on
-      // two pages is one execution, while a retried node is a new `nodeAttempt` and therefore a second one.
-      const executions = events
-        .filter((event) => event?.kind === "native_dispatch")
-        .map((event) =>
-          Object.freeze({
-            nodeId: event?.nodeId ?? null,
-            nodeAttempt: event?.nodeAttempt ?? null,
-            cursor: event?.cursor ?? null,
-          }),
-        );
+      // two pages is one execution, while a retried node is a new `nodeAttempt` and therefore a second one. The same
+      // derivation the durable-journal fallback uses, so a bridge read and a post-restart file read agree about both the
+      // execution's identity and its two moments (`atMs` dispatched, `settledAtMs` settled).
+      const executions = executionsFromJournalEvents(events);
       records.push(
         Object.freeze({
           programId,
@@ -5250,7 +5248,7 @@ async function buildRunResult({
     // The run's own cadence, split into the three spans that a single "gap" number conflated: the game doing the
     // work, the agent deciding, and the dispatch-to-dispatch total. Published for EVERY scenario, because "the
     // companion feels laggy" is a question about all of them.
-    actionCadence: summarizeActionCadence(actionTrace),
+    actionCadence: summarizeActionCadence(actionTrace, programRows),
     // What the run tried and what it achieved, read from its own dispatch trace. A crashed run reads the same
     // trace, so "it did nothing" and "the artifact forgot" can never be the same answer.
     attemptedActionIds: dispatched.attempted,

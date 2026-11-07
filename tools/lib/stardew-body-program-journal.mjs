@@ -99,18 +99,10 @@ function nodeStateName(value) {
 
 /** One program's journal entry, folded into the same evidence shape `readProgramOutcomes` publishes. */
 function programEvidence(program, events) {
-  const executions = events
-    .filter((event) => event?.kind === "native_dispatch")
-    .map((event) =>
-      Object.freeze({
-        nodeId: event?.nodeId ?? null,
-        nodeAttempt: event?.nodeAttempt ?? null,
-        cursor: event?.cursor ?? null,
-      }),
-    );
+  const executions = executionsFromJournalEvents(events);
   return Object.freeze({
     dispatched: executions.length,
-    executions: Object.freeze(executions),
+    executions,
     nodeOutcomes: Object.freeze(
       (Array.isArray(program?.nodes) ? program.nodes : []).map((node) =>
         Object.freeze({ nodeId: node?.nodeId ?? null, state: nodeStateName(node?.state) }),
@@ -118,6 +110,55 @@ function programEvidence(program, events) {
     ),
     programState: programStateName(program?.state),
   });
+}
+
+/**
+ * The two journal kinds that close one node attempt, most specific first.
+ *
+ * `node_completed` is the action's OWN terminal - the moment its receipt, evidence and postcondition were committed -
+ * and `node_settled` is the program's settlement of the node, which can land a tick later. An execution's duration is
+ * the action's, so the action's own terminal wins and the program's settlement is the fallback.
+ */
+const NODE_TERMINAL_PRIORITY = Object.freeze({ node_completed: 2, node_settled: 1 });
+
+/**
+ * One row per execution the journal's events prove, each carrying the two moments that make it a duration.
+ *
+ * `atMs` is the journal's own monotonic stamp of the `native_dispatch` event: the moment the Mod dispatched the native
+ * effect, NOT the moment this evaluator read the page. `settledAtMs` is the stamp of the same node attempt's terminal
+ * event, or null while the node has not settled - an unmeasured execution is null, never zero, because a zero would
+ * read as an impossibly fast one.
+ *
+ * One derivation for both sources: the bridge forwards these events (`program_events_result`) and the durable journal
+ * stores them, with the same field names (`BodyProgramJournalPersistence` writes camelCase), so a bridge read and a
+ * post-restart journal read produce the same rows and neither can invent a clock of its own.
+ */
+export function executionsFromJournalEvents(events) {
+  const settledAt = new Map();
+  const terminalPriority = new Map();
+  for (const event of events ?? []) {
+    const priority = NODE_TERMINAL_PRIORITY[event?.kind] ?? 0;
+    if (priority === 0 || event?.nodeId === null || event?.nodeId === undefined) continue;
+    if (!Number.isFinite(event?.atMs)) continue;
+    const key = `${String(event.nodeId)}\u001f${String(event?.nodeAttempt ?? null)}`;
+    if ((terminalPriority.get(key) ?? 0) >= priority) continue;
+    terminalPriority.set(key, priority);
+    settledAt.set(key, event.atMs);
+  }
+  return Object.freeze(
+    (events ?? [])
+      .filter((event) => event?.kind === "native_dispatch")
+      .map((event) =>
+        Object.freeze({
+          nodeId: event?.nodeId ?? null,
+          nodeAttempt: event?.nodeAttempt ?? null,
+          cursor: event?.cursor ?? null,
+          atMs: Number.isFinite(event?.atMs) ? event.atMs : null,
+          settledAtMs:
+            settledAt.get(`${String(event?.nodeId ?? null)}\u001f${String(event?.nodeAttempt ?? null)}`) ?? null,
+        }),
+      ),
+  );
 }
 
 /**

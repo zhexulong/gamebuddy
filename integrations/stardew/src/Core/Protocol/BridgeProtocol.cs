@@ -951,7 +951,8 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         && IsReasonCode(@event.Kind)
         && IsJavaScriptSafeInteger(@event.CatalogRevision)
         && (@event.NodeId is null || IsOpaqueId(@event.NodeId))
-        && (@event.NodeAttempt is null || IsJavaScriptSafeInteger(@event.NodeAttempt.Value));
+        && (@event.NodeAttempt is null || IsJavaScriptSafeInteger(@event.NodeAttempt.Value))
+        && IsJavaScriptSafeInteger(@event.AtMs);
 
     private static bool IsJavaScriptSafeInteger(long value) => value is >= 0 and <= BodyProgramValidation.MaximumJavaScriptSafeInteger;
 
@@ -997,12 +998,13 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         || property.ValueKind == JsonValueKind.Null
         || (property.ValueKind == JsonValueKind.String && IsReasonCode(property.GetString()));
 
-    private static bool IsValidBodyProgramEvent(JsonElement value) => HasExactProperties(value, "cursor", "programId", "kind", "catalogRevision", "nodeId", "nodeAttempt")
+    private static bool IsValidBodyProgramEvent(JsonElement value) => HasExactProperties(value, "cursor", "programId", "kind", "catalogRevision", "nodeId", "nodeAttempt", "atMs")
         && value.GetProperty("cursor").TryGetInt64(out long cursor) && cursor >= 0 && cursor <= BodyProgramValidation.MaximumJavaScriptSafeInteger && ReadOpaqueString(value.GetProperty("programId"), out _)
         && value.GetProperty("kind").ValueKind == JsonValueKind.String && IsReasonCode(value.GetProperty("kind").GetString())
         && value.GetProperty("catalogRevision").TryGetInt64(out long revision) && IsJavaScriptSafeInteger(revision)
         && (value.GetProperty("nodeId").ValueKind == JsonValueKind.Null || ReadOpaqueString(value.GetProperty("nodeId"), out _))
-         && (value.GetProperty("nodeAttempt").ValueKind == JsonValueKind.Null || (value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) && attempt >= 0));
+         && (value.GetProperty("nodeAttempt").ValueKind == JsonValueKind.Null || (value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) && attempt >= 0))
+         && value.GetProperty("atMs").TryGetInt64(out long atMs) && IsJavaScriptSafeInteger(atMs);
 
     private static BridgeScope ReadScope(JsonElement value)
     {
@@ -1074,7 +1076,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
 
     public static BridgeBodyProgramEventsResult ProjectBodyProgramEventsResult(BodyProgramEventsResult result) =>
         new(result.ProgramId, result.Code.ToWireValue(), result.Events.Select(@event => new BridgeBodyProgramEvent(
-            @event.Cursor, @event.ProgramId, @event.Kind, @event.CatalogRevision, @event.NodeId, @event.NodeAttempt)).ToArray(), result.NextCursor, result.HighWater);
+            @event.Cursor, @event.ProgramId, @event.Kind, @event.CatalogRevision, @event.NodeId, @event.NodeAttempt, @event.AtMs)).ToArray(), result.NextCursor, result.HighWater);
 
     private static BridgeBodyProgramDiagnostic ProjectDiagnostic(BodyProgramDiagnostic diagnostic) =>
         new(diagnostic.Severity == BodyProgramDiagnosticSeverity.Error ? "error" : throw new ArgumentOutOfRangeException(nameof(diagnostic)),

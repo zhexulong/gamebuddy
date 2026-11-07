@@ -109,19 +109,47 @@ line(
   `player_input ${playerInputs.length} / days ${days ?? "?"} (fact batches ${factBatches.length} excluded)`,
 );
 
-// 2. Time to first effective result. Receipts carry no timestamp today, so this must not fall back to tool returns:
-//    a submission is accepted instantly and executed later, and those are different moments.
-const receiptsWithTime = Array.isArray(result.programOutcomes)
-  ? result.programOutcomes.flatMap((outcome) => outcome.executions ?? []).filter((entry) => Number.isFinite(entry.atMs))
-      .length
-  : 0;
-const executions = Array.isArray(result.programOutcomes)
-  ? result.programOutcomes.flatMap((outcome) => outcome.executions ?? []).length
-  : 0;
+// 2. Input -> first effective result. The receipts now carry the Mod's own monotonic stamp of the moment it dispatched
+//    each execution (`atMs`) and of the moment its action settled (`settledAtMs`), so the execution half is a real
+//    number. The INPUT half needs the player's wall clock and the game's clock on ONE timeline, which a run does not
+//    publish - so it is named as unmeasured rather than approximated from a tool return (a submission is accepted
+//    instantly and executed later, and those are different moments).
+const programExecutions = Array.isArray(result.programOutcomes)
+  ? result.programOutcomes.flatMap((outcome) =>
+      (outcome.executions ?? []).map((execution) => ({ ...execution, nodeOutcomes: outcome.nodeOutcomes ?? [] })),
+    )
+  : [];
+const executions = programExecutions.length;
+const timed = programExecutions.filter((entry) => Number.isFinite(entry.atMs));
+const settled = timed.filter((entry) => Number.isFinite(entry.settledAtMs) && entry.settledAtMs >= entry.atMs);
+const durations = settled.map((entry) => entry.settledAtMs - entry.atMs).sort((left, right) => left - right);
+const stateOfNode = (entry) => entry.nodeOutcomes.find((node) => node?.nodeId === entry.nodeId)?.state ?? "unreported";
+const succeededStamps = timed
+  .filter((entry) => stateOfNode(entry) === "succeeded")
+  .map((entry) => entry.atMs)
+  .sort((left, right) => left - right);
+const medianOf = (values) =>
+  values.length === 0
+    ? null
+    : values.length % 2 === 1
+      ? values[Math.floor(values.length / 2)]
+      : Math.round((values[values.length / 2 - 1] + values[values.length / 2]) / 2);
+const inputHalf =
+  playerInputs.length === 0
+    ? "input half NOT_EXERCISED (no player input)"
+    : "input half UNMEASURED (game-clock stamps; the run publishes no wall-clock anchor to subtract)";
+const executionHalf =
+  timed.length === 0
+    ? "NOT_EXERCISED (no receipt timestamps)"
+    : succeededStamps.length > 0
+      ? `first effective at ${succeededStamps[0]} ms (game clock)`
+      : `first dispatch at ${Math.min(...timed.map((entry) => entry.atMs))} ms (game clock), nothing succeeded`;
 line(
-  "2 first effective result",
-  receiptsWithTime === 0 ? "NOT_EXERCISED (no receipt timestamps)" : `${receiptsWithTime} timed`,
-  `executions ${executions}, of which timed ${receiptsWithTime}`,
+  "2 input -> first effective result",
+  executionHalf,
+  timed.length === 0
+    ? `executions ${executions}, of which timed 0`
+    : `executions ${executions}, timed ${timed.length}, settled ${settled.length}; exec ms p50 ${medianOf(durations) ?? "-"} max ${durations.at(-1) ?? "-"}; ${inputHalf}`,
 );
 
 // 3. Uncertain / recovery rate: only meaningful when a receipt actually reported that state.

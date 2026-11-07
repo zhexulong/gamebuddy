@@ -1077,6 +1077,74 @@ public sealed class BodyProgramAuthorityTests
          reopened.Snapshot.Programs.Single().Nodes.Single().ExecutionBinding.Should().Be(execution);
      }
 
+     /// <summary>
+     /// The stamp on an event is the moment the event happened, and the test can tell that apart from the moment the
+     /// reader arrived: the reader waits, so a stamp taken at read (or at encode, or at projection) time is hundreds of
+     /// milliseconds later than the dispatch it claims to describe. This is the whole point of the field - a receipt
+     /// that carried the reader's clock measures the bridge instead of the game.
+     /// </summary>
+     [Fact]
+     public void EventStampIsTheMomentTheEffectWasDispatchedOrSettledNotTheMomentItWasRead()
+     {
+         const int ReadGapMs = 250;
+         var store = new MemoryStore();
+         OpenBodyProgramJournalAuthority authority = Open(store);
+         authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+         HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
+         NodeExecutionBinding execution = Execution(grant);
+
+         long beforeDispatch = BodyProgramJournalClock.ElapsedMs;
+         authority.TryBeginNativeDispatch(grant, execution).IsSuccess.Should().BeTrue();
+         long afterDispatch = BodyProgramJournalClock.ElapsedMs;
+
+         authority.TryComplete(grant, TerminalSuccess(grant, Fact(grant))).IsSuccess.Should().BeTrue();
+         long afterSettle = BodyProgramJournalClock.ElapsedMs;
+
+         // The reader arrives later than the events it reads. Any implementation that stamped on the way OUT - at
+         // Events(), at Encode(), at the wire projection - would answer with this moment instead.
+         Thread.Sleep(ReadGapMs);
+         long readMoment = BodyProgramJournalClock.ElapsedMs;
+         BodyProgramJournalEvent[] events = authority.Events("program", 0, 32).Events.ToArray();
+
+         BodyProgramJournalEvent dispatched = events.Single(@event => @event.Kind == "native_dispatch");
+         BodyProgramJournalEvent settled = events.Single(@event => @event.Kind == "node_completed");
+         dispatched.AtMs.Should().BeInRange(beforeDispatch, afterDispatch, "the dispatch is stamped where it is dispatched");
+         settled.AtMs.Should().BeInRange(afterDispatch, afterSettle, "the settlement is stamped where it settles");
+         settled.AtMs.Should().BeGreaterThanOrEqualTo(dispatched.AtMs);
+         readMoment.Should().BeGreaterThan(afterSettle);
+         dispatched.AtMs.Should().BeLessThan(readMoment - ReadGapMs, "a read-time stamp would equal the read moment");
+         settled.AtMs.Should().BeLessThan(readMoment - ReadGapMs);
+     }
+
+     /// <summary>
+     /// A receipt read back after a restart still carries the stamp the game wrote when it acted, because the stamp is
+     /// durable journal state and not something a reader fabricates. The re-read is deliberately delayed: a build that
+     /// re-stamped events when the journal reopened (or when the events were projected) would answer with a later value
+     /// on the second read.
+     /// </summary>
+     [Fact]
+     public void JournalReplayKeepsTheOriginalStampForEveryEvent()
+     {
+         var store = new MemoryStore();
+         OpenBodyProgramJournalAuthority authority = Open(store);
+         authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+         HostAdmissionGrant grant = authority.TryConsumeHostGrant(Grant(challenge)).Value!;
+         NodeExecutionBinding execution = Execution(grant);
+         authority.TryBeginNativeDispatch(grant, execution).IsSuccess.Should().BeTrue();
+         authority.TryComplete(grant, TerminalSuccess(grant, Fact(grant))).IsSuccess.Should().BeTrue();
+
+         long[] written = authority.Events("program", 0, 32).Events.Select(@event => @event.AtMs).ToArray();
+         written.Should().HaveCountGreaterThanOrEqualTo(2);
+         store.Value.Should().Contain("\"atMs\":", "the stamp is persisted with the event, not derived when it is read");
+
+         Thread.Sleep(250);
+         OpenBodyProgramJournalAuthority reopened = Open(store);
+         reopened.OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
+         reopened.Events("program", 0, 32).Events.Select(@event => @event.AtMs).Should().Equal(written);
+     }
+
      [Fact]
      public void PreAdmissionCancellationRemainsUnboundAndPreservesAttemptProjection()
      {
