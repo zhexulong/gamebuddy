@@ -216,6 +216,126 @@ public sealed class NpcDialoguePagerTests
     }
 
     [Fact]
+    public void Observe_DoesNotOfferAReportedDialogueAgainWhenTheBoxComesBack()
+    {
+        // MEASURED 2026-11-06 (round38, `.live-runs/.../18-41-39-799Z-multiday_routine`): the game's own sleep question
+        // (`Strings\\Locations:FarmHouse_Bed_GoToSleep`, raised by `GameLocation.cs:3765`) was reported as
+        // `npc_dialogue_116401_36` at 17:30, and then as `_117099_37` and `_117331_38` at 06:00 on the next two days -
+        // the SAME box, re-tracked after `activeClickableMenu` went transiently null across each rollover. Each fresh
+        // identity offered the Agent a question whose night was over, and each answer ended the day that had just
+        // begun: three `day_started` facts in 8.7 s.
+        //
+        // A box that is still on screen has already been reported; reporting it again under a new identity is how a
+        // finished dialogue comes back to life.
+        using var game = new GameStateScope();
+        ScriptedDialogueBox box = CreateScriptedDialogueBox("The night is over.");
+        box.isQuestion = true;
+        box.responses = new[] { new Response("Yes", "Yes"), new Response("No", "No") };
+        game.SetActiveMenu(box);
+        BridgeSession session = CreateSession();
+        var sink = new OutboundSink();
+        session.SetOutboundSink(sink.Capture);
+        Authenticate(session);
+        var pager = new NpcDialoguePager(new DummyMonitor(), () => 6);
+
+        pager.Observe(session);
+        sink.Emissions.Should().Be(1);
+
+        // The rollover: the menu drops for a tick and comes back. This is the shape the live log shows.
+        game.SetActiveMenu(null);
+        pager.Observe(session);
+        game.SetActiveMenu(box);
+        pager.Observe(session);
+
+        sink.Emissions.Should().Be(1, "a dialogue that has already been reported cannot be offered a second time");
+    }
+
+    [Fact]
+    public void Observe_DoesNotDriveAnAlreadyReportedBoxAgain()
+    {
+        // The same re-tracking, on a non-question box, is worse than a duplicate fact: re-tracking runs the native
+        // click again, so the lines' `SideEffects` run twice (DialogueLine.cs:12). Reporting is the visible half; the
+        // second execution of the reached lines is the invisible one.
+        using var game = new GameStateScope();
+        ScriptedDialogueBox box = CreateScriptedDialogueBox("Only page.");
+        game.SetActiveMenu(box);
+        BridgeSession session = CreateSession();
+        var sink = new OutboundSink();
+        session.SetOutboundSink(sink.Capture);
+        Authenticate(session);
+        var pager = new NpcDialoguePager(new DummyMonitor(), () => 6);
+
+        pager.Observe(session);
+        pager.Observe(session);
+        box.transitioning = true;
+        box.transitioningBigger = false;
+        pager.Observe(session);
+        sink.Emissions.Should().Be(1);
+        int clicksAfterReport = box.Clicks;
+
+        game.SetActiveMenu(null);
+        pager.Observe(session);
+        game.SetActiveMenu(box);
+        pager.Observe(session);
+
+        box.Clicks.Should().Be(clicksAfterReport, "an already-reported box is not the pager's to drive any more");
+        sink.Emissions.Should().Be(1);
+    }
+
+    [Fact]
+    public void StandingBoxDay_IsTheDayTheBoxAppearedNotTheDayItIsRead()
+    {
+        // What the day boundary asks: is the question standing here one the day that just ENDED raised? A live read of
+        // the current day would answer "today" on every tick after the boundary, so the prompt would never be
+        // recognised as yesterday's and would be offered again at 06:00.
+        using var game = new GameStateScope();
+        ScriptedDialogueBox box = CreateScriptedDialogueBox("Do you want to go to sleep?");
+        box.isQuestion = true;
+        box.responses = new[] { new Response("Yes", "Yes") };
+        game.SetActiveMenu(box);
+        BridgeSession session = CreateSession();
+        session.SetOutboundSink((_, _) => true);
+        Authenticate(session);
+        int day = 6;
+        var pager = new NpcDialoguePager(new DummyMonitor(), () => day);
+
+        pager.Observe(session);
+        pager.StandingBoxDay.Should().Be(6);
+        pager.CurrentDay.Should().Be(6);
+
+        day = 7;
+        pager.Observe(session);
+        pager.StandingBoxDay.Should().Be(6, "the standing question belongs to the day it was raised on");
+        pager.CurrentDay.Should().Be(7);
+    }
+
+    [Fact]
+    public void StandingBox_IsNothingOnceTheDialogueIsGone()
+    {
+        // The day boundary closes the question it finds standing, through `DialogueBox.closeDialogue()` - which
+        // dereferences `Game1.activeClickableMenu` to decide whether the box is still on screen (DialogueBox.cs:194).
+        // A pager that kept reporting its last box would hand the boundary a closed reference and turn every day
+        // boundary after a dialogue into a NullReferenceException inside the game loop.
+        using var game = new GameStateScope();
+        ScriptedDialogueBox box = CreateScriptedDialogueBox("Do you want to go to sleep?");
+        box.isQuestion = true;
+        box.responses = new[] { new Response("Yes", "Yes") };
+        game.SetActiveMenu(box);
+        BridgeSession session = CreateSession();
+        session.SetOutboundSink((_, _) => true);
+        Authenticate(session);
+        var pager = new NpcDialoguePager(new DummyMonitor(), () => 6);
+
+        pager.Observe(session);
+        pager.StandingBox.Should().BeSameAs(box);
+
+        game.SetActiveMenu(null);
+        pager.Observe(session);
+        pager.StandingBox.Should().BeNull("a dialogue that is gone is not standing");
+        pager.StandingBoxDay.Should().Be(0);
+    }
+
+    [Fact]
     public void Observe_WithoutAPublishableSession_LeavesTheDialogueToThePlayer()
     {
         using var game = new GameStateScope();
@@ -336,7 +456,11 @@ public sealed class NpcDialoguePagerTests
     {
         string? path = TryFindRepoFile(ImplementationRelativePath);
         path.Should().NotBeNull();
-        string text = File.ReadAllText(path!);
+        // CODE, with its comments stripped first. These assertions are about CALLS, and the pager's comments quote the
+        // natives it must not call (`DialogueBox.closeDialogue()` reads `Game1.activeClickableMenu` to decide whether
+        // the box is still on screen). A whole-file search cannot tell an explanation from a call - the same reason
+        // `SettlementMenuTerminalTests` strips comments before asserting on `exitThisMenu`.
+        string text = StripComments(File.ReadAllText(path!));
 
         // The single permitted world mutation.
         text.Should().Contain("tracked.receiveLeftClick(0, 0);");
@@ -357,6 +481,14 @@ public sealed class NpcDialoguePagerTests
     }
 
     // ---- fixtures --------------------------------------------------------------
+
+    private static string StripComments(string source)
+    {
+        var withoutBlocks = System.Text.RegularExpressions.Regex.Replace(
+            source, @"/\*.*?\*/", string.Empty, System.Text.RegularExpressions.RegexOptions.Singleline);
+        return System.Text.RegularExpressions.Regex.Replace(withoutBlocks, @"//.*?$", string.Empty,
+            System.Text.RegularExpressions.RegexOptions.Multiline);
+    }
 
     private static DialogueBox CreateDialogueBox(params string[] pages)
     {

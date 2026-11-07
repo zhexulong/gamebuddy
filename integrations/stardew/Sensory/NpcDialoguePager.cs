@@ -57,15 +57,66 @@ internal sealed class NpcDialoguePager
     /// <summary>Distinct failures already reported, so a per-tick fault cannot flood the log.</summary>
     private readonly HashSet<string> reportedFailures = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// The box this pager has already reported. It is remembered ACROSS <see cref="Reset"/> because a dialogue does
+    /// not become unreported when the menu blinks out for a tick - and the blink is exactly what a rollover produces.
+    /// </summary>
+    private DialogueBox? reportedBox;
+
     private DialogueBox? trackedBox;
     private long dialogueStartTick;
     private bool capturedCurrentPage;
     private bool emitted;
 
-    internal NpcDialoguePager(IMonitor? monitor = null)
+    /// <summary>
+    /// What is on screen, and the day it APPEARED. Both survive <see cref="Reset"/> on purpose: a box that outlives a
+    /// rollover must keep the day it arrived on, or the day boundary cannot tell yesterday's question from one asked
+    /// today.
+    /// </summary>
+    private DialogueBox? boxSeen;
+    private int boxDay;
+
+    private readonly Func<int> currentDay;
+
+    internal NpcDialoguePager(IMonitor? monitor = null, Func<int>? currentDay = null)
     {
         this.monitor = monitor;
+        this.currentDay = currentDay ?? CurrentWorldDay;
     }
+
+    /// <summary>
+    /// The world day now, or 0 when the game has no calendar to read.
+    ///
+    /// `Game1.Date` is `netWorldState.Value.Date` (Game1.cs:1792), and the network state is not built until a save is
+    /// loaded, so before that (and in a headless runner) the day is NOT KNOWABLE rather than a day. 0 is the honest
+    /// answer there, and it can never suppress anything for a reason nobody measured.
+    /// </summary>
+    private static int CurrentWorldDay()
+    {
+        try
+        {
+            return Game1.Date?.TotalDays ?? 0;
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>The world day now, from the game's own calendar.</summary>
+    internal int CurrentDay => this.currentDay();
+
+    /// <summary>The day the dialogue now on screen first appeared, or 0 when nothing is on screen.</summary>
+    internal int StandingBoxDay => this.boxSeen is null ? 0 : this.boxDay;
+
+    /// <summary>
+    /// The dialogue on screen NOW, as this pager last saw it - and null the moment it is not the active menu.
+    ///
+    /// The identity check is not belt-and-braces: `DialogueBox.closeDialogue()` dereferences
+    /// `Game1.activeClickableMenu` to decide whether the box is still the one on screen (DialogueBox.cs:194), so a
+    /// caller holding a closed box turns a day boundary into a NullReferenceException inside the game loop.
+    /// </summary>
+    internal DialogueBox? StandingBox => ReferenceEquals(Game1.activeClickableMenu, this.boxSeen) ? this.boxSeen : null;
 
     /// <summary>
     /// One game tick of the dialogue stream. Called on the AI Farmhand's game
@@ -75,6 +126,14 @@ internal sealed class NpcDialoguePager
     internal void Observe(BridgeSession? session)
     {
         DialogueBox? box = Game1.activeClickableMenu as DialogueBox;
+        // WHAT IS ON SCREEN IS RECORDED EVERY TICK, INCLUDING "NOTHING". A box that has gone must stop being the
+        // standing box, or the day boundary would close a dialogue that is no longer there. `boxDay` is the day it
+        // APPEARED, so it survives the `Reset()` a rollover's transient null menu performs.
+        if (!ReferenceEquals(box, this.boxSeen))
+        {
+            this.boxSeen = box;
+            this.boxDay = box is null ? 0 : this.currentDay();
+        }
         // NO MENU AND NO DIALOGUE IN FLIGHT IS THE ORDINARY STATE. `activeClickableMenu` is null on every tick
         // that no modal is up - startup and world load, walking around, and any non-dialogue menu as well - so
         // there is nothing to page and nothing to report. It returns BEFORE the try below because that try is
@@ -120,10 +179,22 @@ internal sealed class NpcDialoguePager
             this.Reset();
             if (box is null)
                 return;
-            // Taking over a dialogue is a real world mutation (the native click
-            // runs the lines' side effects), so it happens only when the fact it
-            // produces can actually leave on the authenticated bridge. Without
-            // that, the box is a player's dialogue and is left alone.
+            // A DIALOGUE THAT WAS ALREADY REPORTED IS OVER, EVEN IF THE BOX IS STILL ON SCREEN.
+            //
+            // Measured 2026-11-06 (`round38`, `18-41-39-799Z-multiday_routine`): the game's own sleep question
+            // (`Strings\Locations:FarmHouse_Bed_GoToSleep`, raised at `GameLocation.cs:3765`) went out as
+            // `npc_dialogue_116401_36` at 17:30 and then as `_117099_37` and `_117331_38` at 06:00 on the two mornings
+            // after it - the SAME box, re-tracked because `activeClickableMenu` went transiently null across each
+            // rollover. Every fresh identity offered the Agent a question whose night was already over, and answering
+            // it ended the day that had just begun: three `day_started` facts in 8.7 s, farm untouched.
+            //
+            // So the reference is remembered across `Reset()`. The box keeps neither its pages (they were reported)
+            // nor its identity (it was spent), and re-tracking it would also re-run the native click on its lines.
+            if (ReferenceEquals(box, this.reportedBox))
+                return;
+            // Taking over a dialogue is a real world mutation (the native click runs the lines' side effects), so it
+            // happens only when the fact it produces can actually leave on the authenticated bridge. Without that,
+            // the box is a player's dialogue and is left alone.
             if (session is null || !session.CanPublishWorldFact)
                 return;
 
@@ -294,6 +365,8 @@ internal sealed class NpcDialoguePager
         if (this.emitted)
             return;
         this.emitted = true;
+        // Spent, whatever it turns out to present: even a box that reports nothing is not driven twice.
+        this.reportedBox = box;
 
         bool isQuestion = box.isQuestion;
         if (!isQuestion && this.pages.Count == 0)

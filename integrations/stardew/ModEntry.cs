@@ -1404,12 +1404,34 @@ public sealed partial class ModEntry : Mod
         SleepAndAdvanceDayLifecycle.SettleStandingSettlementMenuNoLifecycleCanCommit(
             this.sleepLifecycle,
             Game1.activeClickableMenu);
+        this.DismissQuestionTheEndedDayLeftStanding();
         if (!this.TryGetAiState(out ScreenEmbodimentState state))
             return;
         ExecutionManager executions = state.Executions!;
         executions.ObserveDayAdvanceDayStarted();
         executions.InvalidateForLifecycle("day_started");
         this.PublishLifecycle(state, "connected", "day_started");
+    }
+
+    /// <summary>
+    /// A question still on screen when a new day begins belongs to the day that ended. The pager knows which day the
+    /// box appeared on, because it is the only thing that watched it arrive.
+    /// </summary>
+    private void DismissQuestionTheEndedDayLeftStanding()
+    {
+        if (this.npcDialoguePager is not { } pager)
+            return;
+        SleepAndAdvanceDayLifecycle.StandingQuestionOutcome outcome =
+            SleepAndAdvanceDayLifecycle.DismissQuestionLeftFromAnEndedDay(
+                pager.StandingBox,
+                pager.StandingBoxDay,
+                pager.CurrentDay);
+        if (outcome != SleepAndAdvanceDayLifecycle.StandingQuestionOutcome.Dismissed)
+            return;
+        this.Monitor.Log(
+            "GameBuddy closed the question the ended day left standing; "
+                + $"raised_on_day={pager.StandingBoxDay};now_day={pager.CurrentDay}.",
+            LogLevel.Info);
     }
 
     private void OnWarped(object? sender, WarpedEventArgs e)
