@@ -17,6 +17,12 @@ public sealed partial class ModEntry
     /// <summary>The one animal inside it.</summary>
     private const string PlaySessionAnimalType = "White Chicken";
 
+    /// <summary>The one item an animal house trough accepts.</summary>
+    private const string PlaySessionHayQualifiedItemId = "(O)178";
+
+    /// <summary>One stack, because a stack is what a player buys - not a silo and not a stockpile.</summary>
+    private const int PlaySessionHayStack = 5;
+
     /// <summary>
     /// The play-session world's ANIMAL Given: one coop holding ONE adult animal, placed where the session's own
     /// crossroads can walk to its door.
@@ -130,6 +136,67 @@ public sealed partial class ModEntry
                 + $"tile={(int)animal.Tile.X},{(int)animal.Tile.Y};adult={animal.isAdult().ToString().ToLowerInvariant()};"
                 + $"friendship={animal.friendshipTowardFarmer.Value};was_pet={animal.wasPet.Value.ToString().ToLowerInvariant()};"
                 + $"house_animals={house.animals.Count()};production alone pets, feeds and collects.",
+            LogLevel.Info);
+    }
+
+    /// <summary>
+    /// The play-session world's HAY Given: one stack of Hay in the pack, which is what turns the coop's troughs into
+    /// targets a day can reach.
+    ///
+    /// <para>
+    /// WHY. The coop Given brought the house and one adult animal, and `feed_animal` still had no target in every
+    /// multi-day run: `DiscoverFeedTroughTargets` (farmhandexecutioncontroller.cs:4178) publishes a trough only for a
+    /// pack stack of `(O)178`, and the play-session world carried none. The action was in the catalog and unreachable in
+    /// the world it was advertised for.
+    /// </para>
+    ///
+    /// <para>
+    /// NO SILO, because feeding does not go through one. `AnimalHouse.checkAction` (AnimalHouse.cs:58-69) takes the
+    /// Hay from the actor's own hand - the empty trough tile is filled with `who.ActiveObject.getOne()` and
+    /// `reduceActiveItemByOne()` charges the pack - while the silo pool is a different route that only
+    /// `AnimalHouse.feedAllAnimals` (AnimalHouse.cs:195-224, via `GameLocation.GetHayFromAnySilo`, GameLocation.cs:16482)
+    /// and the hay hopper read. So a stack in the pack is not a shortcut around the engine; it is the exact item the
+    /// native seam consumes.
+    /// </para>
+    ///
+    /// <para>
+    /// A REAL PLAYER CAN BE IN THIS WORLD ON DAY ONE. The hay is bought, not conjured: `Data/Shops` shop `AnimalShop`
+    /// (owner Marnie) lists `(O)178` at 50g with unlimited stock and no condition on the entry (measured 2026-11-09 by
+    /// loading the shipped `Content/Data/Shops.xnb`). One stack is therefore a Given the engine already permits.
+    /// </para>
+    ///
+    /// <para>
+    /// IDEMPOTENT, AND ONLY HAY. A world that already holds Hay keeps exactly what it holds - no second stack, no
+    /// backpack growth, no tools, no animal change. A pack with no room is a NAMED refusal rather than a world carrying
+    /// one affordance fewer: an advertised `feed_animal` with no target for the whole session is the defect this Given
+    /// exists to remove, so it must not be reproduced silently.
+    /// </para>
+    /// </summary>
+    private void InstallNativeLocalPlaySessionHayGiven(Farmer player)
+    {
+        StardewValley.Object? hay = player.Items.OfType<StardewValley.Object>()
+            .FirstOrDefault(item => string.Equals(item.QualifiedItemId, PlaySessionHayQualifiedItemId, StringComparison.Ordinal) && item.Stack > 0);
+        if (hay is null)
+        {
+            if (player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(PlaySessionHayQualifiedItemId, PlaySessionHayStack)) is not null)
+                throw new InvalidOperationException("fixture_native_local_play_session_hay_inventory_full");
+            hay = player.Items.OfType<StardewValley.Object>()
+                .FirstOrDefault(item => string.Equals(item.QualifiedItemId, PlaySessionHayQualifiedItemId, StringComparison.Ordinal) && item.Stack > 0)
+                ?? throw new InvalidOperationException("fixture_native_local_play_session_hay_missing_after_add");
+        }
+
+        // The stack is asked about AFTER the write, not assumed from it: `addItemToInventory` returns the leftover item
+        // and a merged or refused add is exactly what a silent pass would hide.
+        int slot = player.Items.IndexOf(hay);
+        if (slot < 0 || hay.Stack < 1)
+            throw new InvalidOperationException($"fixture_native_local_play_session_hay_slot_unresolved:slot={slot};stack={hay.Stack}");
+        int hayTotal = player.Items.OfType<StardewValley.Object>()
+            .Where(item => string.Equals(item.QualifiedItemId, PlaySessionHayQualifiedItemId, StringComparison.Ordinal))
+            .Sum(item => item.Stack);
+        this.Monitor.Log(
+            "GameBuddy native-local-player initialized play-session hay Given before bridge attachment: "
+                + $"hay_item={hay.QualifiedItemId};slot={slot};stack={hay.Stack};hay_total={hayTotal};silo=none;"
+                + "troughs are the animal house interior's own; production alone places the hay.",
             LogLevel.Info);
     }
 

@@ -3750,6 +3750,10 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         // `DiscoverFarmAnimalPetTargets` filters the engine's own `wasPet` marker and "the animal I touched left the
         // family" is only unambiguous when the family holds exactly one member.
         InstallNativeLocalPlaySessionAnimalGiven(player, farm, startTile, requiredReachable);
+        // THE HAY HALF OF THE DAY. The house and its one animal are what the trough belongs to; the hay in the pack is
+        // what makes a trough a published target at all (`DiscoverFeedTroughTargets` requires an owned `(O)178`
+        // stack), so the two Givens only mean something together.
+        InstallNativeLocalPlaySessionHayGiven(player);
 
         if (standingTile is null)
             throw new InvalidOperationException("fixture_native_local_play_session_standing_tile_missing");
