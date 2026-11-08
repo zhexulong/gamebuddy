@@ -33,6 +33,16 @@ import ts from "typescript";
 /** The four groups, in the order the rules are tried. */
 export const GROUP_ORDER = Object.freeze(["wire", "catalogue", "rendered", "state"]);
 
+/**
+ * A colocated unit test (a `*.test.ts` beside the source it exercises, under `src/`).
+ *
+ * It is not code the browser can load: no journey can ever reach it, so counting it would
+ * make the product's coverage a function of how many unit tests somebody wrote - and it
+ * would punish exactly the change that raises confidence. It is excluded from the
+ * denominator and counted in the report (`excluded=N test file(s)`), never dropped silently.
+ */
+const UNIT_TEST_FILE = /\.test\.tsx?$/u;
+
 const NARROWING_NAME = /^(?:is|assert|parse|read|validate)[A-Z]/u;
 
 /** One exported function that checks an `unknown` payload and returns a declared shape. */
@@ -67,26 +77,34 @@ export function groupOf(shape) {
   return "state";
 }
 
-/** Every TypeScript module of the frontend, relative to `src` with `/` separators. */
+/**
+ * Every module of the frontend, and every unit test that sits beside one.
+ *
+ * One walk answers both: `modules` are the product files the coverage denominator is
+ * built from, `excluded` are the colocated unit tests it leaves out. Returned together
+ * so the report prints the exclusion from the same scan that made it.
+ */
 export function sourcePopulation(srcDirectory) {
-  const found = [];
+  const modules = [];
+  const excluded = [];
   const walk = (directory) => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) walk(path);
       else if (extname(path) === ".ts" || extname(path) === ".tsx") {
-        found.push(relative(srcDirectory, path).split(sep).join("/"));
+        const module = relative(srcDirectory, path).split(sep).join("/");
+        (UNIT_TEST_FILE.test(entry.name) ? excluded : modules).push(module);
       }
     }
   };
   walk(srcDirectory);
-  return found.sort();
+  return { modules: modules.sort(), excluded: excluded.sort() };
 }
 
-/** The group of every module under `src`, keyed by its `src`-relative path. */
-export function classify(srcDirectory) {
+/** The group of every product module under `src`, keyed by its `src`-relative path. */
+export function classify(srcDirectory, modules = sourcePopulation(srcDirectory).modules) {
   const groups = new Map();
-  for (const module of sourcePopulation(srcDirectory)) {
+  for (const module of modules) {
     groups.set(module, groupOf(shapeOf(join(srcDirectory, module))));
   }
   return groups;

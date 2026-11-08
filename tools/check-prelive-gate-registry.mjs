@@ -274,6 +274,14 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "on-demand",
   },
   {
+    path: "tools/check-contrast-tokens.mjs",
+    reason:
+      "report: measures every declared token pair in dialogue-web/src/style.css and prints each ratio while exiting 0 " +
+      "unless --fail is passed, so a rung would call a pair below AA green; it also has no pnpm script yet, so " +
+      "on-demand is the honest home rather than a rung",
+    runsIn: "on-demand",
+  },
+  {
     path: "tools/check-crab-pot-output-fixture-contract.mjs",
     reason:
       "arguments: requires `--contract <path>` to a provenance contract; without it the gate exits 1 with its own " +
