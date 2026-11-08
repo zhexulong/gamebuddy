@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { LOOKUP_SUBJECTS, lookUp, MAX_LOOKUP_ROWS, noSnapshot } from "./game-lookup.js";
+import { MAX_AFFORDANCE_GROUPS, MAX_LOOKUP_ROWS, LOOKUP_SUBJECTS, lookUp, noSnapshot } from "./game-lookup.js";
+import type { AffordanceAction } from "./game-lookup.js";
 import type { Snapshot } from "./protocol.js";
 
 const base: Snapshot = {
@@ -189,4 +190,210 @@ test("an answer that dropped nothing says so with 0 rather than an absent key", 
   const body = answer.answer as Record<string, unknown>;
   assert.equal(body.omitted, 0);
   assert.equal((body.rows as readonly unknown[]).length + (body.omitted as number), 1);
+});
+
+/**
+ * AFFORDANCES: the derived subject, at the module boundary.
+ *
+ * The surface is passed in rather than reached for, so these cases can hand it families the live Mod does not publish yet -
+ * which is the only way to prove the grouping comes from the surface rather than from a table that happens to match
+ * today's surface.
+ */
+const AFFORDANCE_SURFACE: readonly AffordanceAction[] = Object.freeze([
+  { actionId: "cut_weeds", targetFamily: "weedTargets" },
+  { actionId: "break_rock", targetFamily: "rockSourceTargets" },
+  { actionId: "machine_inspect", targetFamily: "machineTargets" },
+  { actionId: "machine_load", targetFamily: "machineTargets" },
+  { actionId: "machine_collect_output", targetFamily: "machineTargets" },
+  { actionId: "pet_farm_animal", targetFamily: "farmAnimalPetTargets" },
+]);
+
+function farmWith(targets: Readonly<Record<string, unknown>>): Snapshot {
+  return { ...base, ...targets, tile: { x: 40, y: 10 } };
+}
+
+function groupsOf(answer: ReturnType<typeof lookUp>): readonly Record<string, any>[] {
+  assert.ok("answer" in answer, `affordances must answer, got ${JSON.stringify(answer)}`);
+  return answer.answer.groups as readonly Record<string, any>[];
+}
+
+test("affordances groups the families that have a target in view, with count, action and nearest target", () => {
+  const answer = lookUp(
+    farmWith({
+      weedTargets: [0, 1, 2].map((index) => ({ targetId: `weed_${String(index)}`, x: 40 + index, y: 9, health: 1 })),
+      rockSourceTargets: [
+        {
+          targetId: "rock_0",
+          location: "Farm",
+          x: 44,
+          y: 9,
+          qualifiedItemId: "(O)32",
+          health: 1,
+          displayName: "Stone",
+        },
+      ],
+      machineTargets: [
+        {
+          targetId: "machine_0",
+          displayName: "Furnace",
+          x: 43,
+          y: 12,
+          qualifiedItemId: "(BC)13",
+          readyForHarvest: false,
+          minutesUntilReady: 30,
+        },
+      ],
+      farmAnimalPetTargets: [{ targetId: "farm_animal_0", x: 46, y: 8, animalType: "White Chicken", friendship: 40 }],
+    }),
+    "affordances",
+    "",
+    AFFORDANCE_SURFACE,
+  );
+  const groups = groupsOf(answer);
+  assert.deepEqual(
+    groups.map((group) => group.kind),
+    ["weed", "farmAnimalPet", "machine", "rockSource"],
+    "count desc, then kind name - the order a caller can rely on",
+  );
+  assert.deepEqual(groups[0], {
+    kind: "weed",
+    family: "weedTargets",
+    count: 3,
+    action: "cut_weeds",
+    actions: ["cut_weeds"],
+    nearest: { targetId: "weed_0", x: 40, y: 9, tiles: 1 },
+  });
+  assert.deepEqual(groups.find((group) => group.family === "machineTargets")?.actions, [
+    "machine_inspect",
+    "machine_load",
+    "machine_collect_output",
+  ]);
+  assert.ok("answer" in answer);
+  assert.equal(answer.answer.omitted, 0);
+  assert.equal(answer.answer.actionable, true);
+});
+
+test("a kind the surface does not declare is absent even when the snapshot carries its family", () => {
+  // The snapshot has weeds; the surface says nothing consumes them. Reporting them would be inventing an action, and the
+  // answer is what can be done rather than what exists.
+  const answer = lookUp(
+    farmWith({ weedTargets: [{ targetId: "weed_0", x: 40, y: 9, health: 1 }] }),
+    "affordances",
+    "",
+    [{ actionId: "break_rock", targetFamily: "rockSourceTargets" }],
+  );
+  assert.deepEqual(groupsOf(answer), []);
+  assert.ok("answer" in answer);
+  assert.match(String(answer.answer.nothing_actionable_here), /is in this snapshot/u);
+});
+
+test("a new family arrives with a name, with no edit to the module", () => {
+  // The naming is derived from the wire's own shape, so a family the Mod adds later cannot arrive unnamed. It is also the
+  // falsifier for "the kinds are a list": `meadowTargets` is in no list anywhere.
+  const answer = lookUp(farmWith({ meadowTargets: [{ targetId: "meadow_0", x: 41, y: 10 }] }), "affordances", "", [
+    { actionId: "scythe_meadow", targetFamily: "meadowTargets" },
+  ]);
+  assert.deepEqual(
+    groupsOf(answer).map((group) => [group.kind, group.action]),
+    [["meadow", "scythe_meadow"]],
+  );
+});
+
+test("the nearest row is the closest by Chebyshev distance, then by id, and (0,0) is a real tile", () => {
+  const answer = lookUp(
+    farmWith({
+      // (0,0) is the top-left tile of every farm: a row there must be located, not read as "no coordinates".
+      weedTargets: [
+        { targetId: "weed_far", x: 0, y: 0, health: 1 },
+        { targetId: "weed_near_b", x: 39, y: 11, health: 1 },
+        { targetId: "weed_near_a", x: 41, y: 9, health: 1 },
+      ],
+    }),
+    "affordances",
+    "",
+    AFFORDANCE_SURFACE,
+  );
+  const weeds = groupsOf(answer)[0];
+  // Both are one step away on the diagonal; the tie is broken by id so two runs answer the same bytes.
+  assert.equal(weeds?.nearest.targetId, "weed_near_a");
+  assert.equal(weeds?.nearest.tiles, 1);
+  const onlyOrigin = lookUp(
+    farmWith({ weedTargets: [{ targetId: "weed_origin", x: 0, y: 0, health: 1 }] }),
+    "affordances",
+    "",
+    AFFORDANCE_SURFACE,
+  );
+  assert.deepEqual(groupsOf(onlyOrigin)[0]?.nearest, { targetId: "weed_origin", x: 0, y: 0, tiles: 40 });
+});
+
+test("a family whose rows carry no tile still reports its count, with the distance it does not know said out loud", () => {
+  const answer = lookUp(
+    farmWith({
+      cookingRecipeTargets: [{ targetId: "recipe_0" }],
+      weedTargets: [{ targetId: "weed_0", x: 40, y: 9, health: 1 }],
+    }),
+    "affordances",
+    "",
+    [...AFFORDANCE_SURFACE, { actionId: "cook_recipe", targetFamily: "cookingRecipeTargets" }],
+  );
+  const recipe = groupsOf(answer).find((group) => group.family === "cookingRecipeTargets");
+  assert.equal(recipe?.count, 1);
+  assert.deepEqual(recipe?.nearest, { targetId: "recipe_0", x: null, y: null, tiles: null });
+});
+
+test("an empty answer names which empty it is, and the two empties are different sentences", () => {
+  const noTargets = lookUp(base, "affordances", "", AFFORDANCE_SURFACE);
+  assert.ok("answer" in noTargets);
+  assert.deepEqual(noTargets.answer.groups, []);
+  assert.match(String(noTargets.answer.nothing_actionable_here), /is in this snapshot/u);
+  const noSurface = lookUp(farmWith({ weedTargets: [{ targetId: "weed_0", x: 40, y: 9, health: 1 }] }), "affordances");
+  assert.ok("answer" in noSurface);
+  assert.deepEqual(noSurface.answer.groups, []);
+  assert.match(String(noSurface.answer.nothing_actionable_here), /declares a target family/u);
+});
+
+test("the answer is capped and reports the kinds it dropped", () => {
+  // Twelve families in view, each with one row; the cap is what keeps this a question rather than an observation.
+  const families = [
+    "weedTargets",
+    "rockSourceTargets",
+    "machineTargets",
+    "debrisTargets",
+    "itemTargets",
+    "forageTargets",
+    "seedTargets",
+    "grassTargets",
+    "harvestTargets",
+    "treeChopSourceTargets",
+    "treeStumpTargets",
+    "treeSaplingTargets",
+  ];
+  const targets: Record<string, unknown> = {};
+  for (const family of families) targets[family] = [{ targetId: `${family}_0`, x: 41, y: 10 }];
+  const answer = lookUp(
+    farmWith(targets),
+    "affordances",
+    "",
+    families.map((family) => ({ actionId: `use_${family}`, targetFamily: family })),
+  );
+  const groups = groupsOf(answer);
+  assert.equal(groups.length, MAX_AFFORDANCE_GROUPS);
+  assert.ok("answer" in answer);
+  assert.equal(answer.answer.omitted, families.length - MAX_AFFORDANCE_GROUPS);
+});
+
+test("the same snapshot and surface answer the same bytes twice", () => {
+  const withTargets = farmWith({
+    weedTargets: [
+      { targetId: "weed_a", x: 40, y: 9, health: 1 },
+      { targetId: "weed_b", x: 41, y: 9, health: 1 },
+    ],
+    rockSourceTargets: [
+      { targetId: "rock_0", location: "Farm", x: 44, y: 9, qualifiedItemId: "(O)32", health: 1, displayName: "Stone" },
+    ],
+  });
+  assert.equal(
+    JSON.stringify(lookUp(withTargets, "affordances", "", AFFORDANCE_SURFACE)),
+    JSON.stringify(lookUp(withTargets, "affordances", "", AFFORDANCE_SURFACE)),
+  );
 });
