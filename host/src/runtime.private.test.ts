@@ -33,7 +33,6 @@ import {
   MAGIC_CONTEXT_MEMORY_DOMAIN,
   MAGIC_CONTEXT_MEMORY_ENABLED,
   MAGIC_CONTEXT_RECALL_ENABLED,
-  PHASE_0B_ALLOWED_TOOL_NAMES,
   resolveMagicContextExtensionEntry,
   resolveRuntimePaths,
   RUNTIME_PACKAGE_VERSIONS,
@@ -58,6 +57,20 @@ async function canonicalTemporaryRoot(): Promise<string> {
   const root = process.platform === "win32" ? process.env.LOCALAPPDATA : tmpdir();
   if (typeof root !== "string" || root.length === 0) throw new Error("test_local_app_data_unavailable");
   return realpath(root);
+}
+
+/**
+ * The mounted names a case speaks about: everything except the session-archive class.
+ *
+ * Every Game runtime that loads Magic Context also mounts that session's own archive readers, so a case about the
+ * adapter's tools would otherwise have to restate them. Their reach is asserted where it belongs - by property, in
+ * `tool-surface.test.ts` - so filtering them here keeps this file's lists about the adapter they describe.
+ */
+function mountedGameToolNames(runtime: Awaited<ReturnType<typeof createCompanionRuntime>>): readonly string[] {
+  return runtime.session.agent.state.tools
+    .map((tool) => tool.name)
+    .filter((name) => runtime.toolSurface.classOf[name] !== "session_inspection")
+    .sort();
 }
 
 const identity = Object.freeze({
@@ -381,7 +394,6 @@ test("offline runtime exposes only its deterministic Companion status tool", asy
   const tool = companionStatusTool;
   const result = await tool.execute("test-call", {}, new AbortController().signal, () => {}, {} as never);
 
-  assert.deepEqual(PHASE_0B_ALLOWED_TOOL_NAMES, ["companion_status"]);
   const firstContent = result.content[0];
   assert.equal(firstContent?.type, "text");
   assert.match(firstContent?.type === "text" ? firstContent.text : "", /"connected":false/);
@@ -557,10 +569,7 @@ test("runtime mounts a fake integration through the module port", async () => {
   } as never;
   const runtime = await createCompanionRuntime(identity, root, integration);
   try {
-    assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), [
-      "arcade_activate_console",
-      "companion_status",
-    ]);
+    assert.deepEqual(mountedGameToolNames(runtime), ["arcade_activate_console", "companion_status"]);
     const manifest = JSON.parse(await readFile(runtime.paths.runManifestPath, "utf8")) as CompanionRunManifest;
     assert.equal(manifest.actionRegistryRevision, actionRegistryRevision(registrations));
     assert.doesNotMatch(JSON.stringify(manifest.mountedTools), /stardew_/);
@@ -570,10 +579,7 @@ test("runtime mounts a fake integration through the module port", async () => {
     // snapshot churn. Admission moves to execution time, which rejects the
     // call with a structured receipt instead of hiding the tool.
     integrationState.capabilities = [];
-    assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), [
-      "arcade_activate_console",
-      "companion_status",
-    ]);
+    assert.deepEqual(mountedGameToolNames(runtime), ["arcade_activate_console", "companion_status"]);
     const withdrawn = runtime.session.agent.state.tools.find((tool) => tool.name === "arcade_activate_console");
     assert.ok(withdrawn);
     const withdrawnResult = await withdrawn.execute(
@@ -1369,7 +1375,7 @@ test("runtime mounts only the explicitly verified Stardew product tools", async 
         // capability snapshots no longer add or withdraw a tool (admission moved
         // to execution time), so a disconnected or empty snapshot mounts the
         // same names a fully capable one does.
-        assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), [
+        assert.deepEqual(mountedGameToolNames(runtime), [
           "companion_status",
           "stardew_bait_crab_pot",
           "stardew_break_rock",
@@ -1691,7 +1697,7 @@ test("runtime loads only Magic Context and preserves a session partition", async
   const runtime = await createCompanionRuntime(identity, root);
 
   try {
-    assert.deepEqual(runtime.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status"]);
+    assert.deepEqual(mountedGameToolNames(runtime), ["companion_status"]);
     assert.deepEqual(
       runtime.extensions.filter((extension) => !extension.startsWith("<inline:")),
       [resolveMagicContextExtensionEntry()],
@@ -1805,7 +1811,7 @@ test("runtime loads only Magic Context and preserves a session partition", async
     assert.match(resumedEntries, /Player conversation persistence sentinel\./);
     assert.match(resumedEntries, /Phase 0B todo\/session persistence sentinel\./);
     assert.match(resumedEntries, /gamebuddy_test_event/);
-    assert.deepEqual(resumed.session.agent.state.tools.map((tool) => tool.name).sort(), ["companion_status"]);
+    assert.deepEqual(mountedGameToolNames(resumed), ["companion_status"]);
   } finally {
     resumed.session.dispose();
   }

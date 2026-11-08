@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   type AgentSession,
-  createAgentSession,
   type CreateAgentSessionOptions,
+  createAgentSession,
   DefaultResourceLoader,
   defineTool,
   ModelRegistry,
@@ -21,6 +21,16 @@ import {
   createActionExecutionCoordinator,
 } from "./action-execution-coordinator.internal.js";
 import type { CompanionInterruption } from "./companion-interruption.js";
+import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
+import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
+import type { ProductionChatRuntimePermit } from "./continuity-semantic-store/continuity-semantic-production-store.js";
+import type { GameConnection } from "./game-connection.js";
+import {
+  assertIntegrationAdapter,
+  DEFAULT_INTEGRATION_ACTION_POLICY,
+  type GameIntegrationAdapter,
+  type IntegrationActionPolicy,
+} from "./game-integration-adapter.js";
 import { GameplayTaskSubagent } from "./gameplay-task-subagent.js";
 import {
   assertProfileMatchesBinding,
@@ -36,49 +46,39 @@ import {
   writeIdentityProfile,
   writeIdentityProfileBinding,
 } from "./identity-profile.js";
-import {
-  assertIntegrationAdapter,
-  DEFAULT_INTEGRATION_ACTION_POLICY,
-  type GameIntegrationAdapter,
-  type IntegrationActionPolicy,
-} from "./game-integration-adapter.js";
-import type { GameConnection } from "./game-connection.js";
+import { projectHistorianModel } from "./magic-context-historian-projection.internal.js";
+import { protectedToolsForRun } from "./magic-context-protected-tools.js";
+import { anchorPiSessionGreeting } from "./pi-session-greeting-anchor.internal.js";
+import { alignSessionToTranscriptRows } from "./pi-session-variant-branch.internal.js";
 import type { PresentationRuntime } from "./presentation.js";
 import type { ExecutionReceipt, Snapshot } from "./protocol.js";
+import {
+  createProviderTurnHeaderScope,
+  PROVIDER_TURN_HEADER_EXTENSION_NAME,
+  type ProviderTurnHeaderScope,
+  providerTurnHeaderExtension,
+} from "./provider-turn-header.internal.js";
 import { actionRegistryRevision, writeOrVerifyRunManifest } from "./run-manifest.js";
-import { type RunTrace } from "./run-trace.js";
+import type { RunTrace } from "./run-trace.js";
+import {
+  type CompanionIdentity,
+  type CompanionModelConfig,
+  type CompanionThinkingLevel,
+  identityKey,
+  type RuntimePaths,
+  resolveRuntimePaths,
+} from "./runtime-identity.js";
 import { resolveGamePromptAddition } from "./settings/player-preference-store.js";
 import {
   type ExactReceiptRecoveryPort,
   type ReceiptRecoveryOutcome,
   StardewExecutionRecoverySupervisor,
 } from "./stardew-execution-recovery-supervisor.js";
-import { createWorldBookTools, type WorldBookBinding } from "./worldbook.js";
 import type { TavernAuthoredContextCatalog } from "./tavern/catalog-service.js";
-import type { ProductionChatRuntimePermit } from "./continuity-semantic-store/continuity-semantic-production-store.js";
-import type { ChatRuntimeBindingExecution } from "./continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js";
-import { prepareExactChatRuntimeConstruction } from "./continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.js";
-import { anchorPiSessionGreeting } from "./pi-session-greeting-anchor.internal.js";
-import { projectHistorianModel } from "./magic-context-historian-projection.internal.js";
-import { alignSessionToTranscriptRows } from "./pi-session-variant-branch.internal.js";
+import { mergeModelProviderEntry, modelProviderEntry } from "./tavern/pi-provider-store.js";
 import { TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
-import { modelProviderEntry, mergeModelProviderEntry } from "./tavern/pi-provider-store.js";
-import { protectedToolsForRun } from "./magic-context-protected-tools.js";
-import {
-  createProviderTurnHeaderScope,
-  PROVIDER_TURN_HEADER_EXTENSION_NAME,
-  providerTurnHeaderExtension,
-  type ProviderTurnHeaderScope,
-} from "./provider-turn-header.internal.js";
-
-import {
-  identityKey,
-  resolveRuntimePaths,
-  type CompanionIdentity,
-  type CompanionModelConfig,
-  type CompanionThinkingLevel,
-  type RuntimePaths,
-} from "./runtime-identity.js";
+import { assertToolSurface, type DeclaredToolGroup, planToolSurface, type ToolSurfacePlan } from "./tool-surface.js";
+import { createWorldBookTools, type WorldBookBinding } from "./worldbook.js";
 export { identityKey, resolveRuntimePaths };
 export type { CompanionModelConfig, CompanionThinkingLevel, RuntimePaths };
 
@@ -453,7 +453,7 @@ function boundedName(value: string): string {
 
 /** The tile under her feet, in the map's own coordinates. */
 function formatGameTile(tile: { readonly x: number; readonly y: number }, zh: boolean): string {
-  if (!Number.isFinite(tile.x) || !Number.isFinite(tile.y)) return "";
+  if (!(Number.isFinite(tile.x) && Number.isFinite(tile.y))) return "";
   return `${zh ? "脚下" : "tile"}: (${tile.x}, ${tile.y})`;
 }
 
@@ -504,7 +504,7 @@ function formatHeldTool(source: GameEnvironmentFactsSource, zh: boolean): string
  */
 function formatNearbyVillagers(source: GameEnvironmentFactsSource, zh: boolean): string {
   const tile = source.tile;
-  if (!Number.isFinite(tile.x) || !Number.isFinite(tile.y)) return "";
+  if (!(Number.isFinite(tile.x) && Number.isFinite(tile.y))) return "";
   const here = (source.villagerWhereabouts ?? []).filter((villager) => villager.inCurrentLocation === true);
   if (here.length === 0) return "";
   const distance = (villager: { readonly x: number; readonly y: number }): number =>
@@ -997,7 +997,6 @@ export function createCompanionStatusTool(integration?: GameConnection) {
 
 /** Backward-compatible offline base tool for callers that do not mount an integration. */
 export const companionStatusTool = createCompanionStatusTool();
-export const PHASE_0B_ALLOWED_TOOL_NAMES = Object.freeze(["companion_status"]);
 
 /**
  * A Host-owned companion identity. `continuityId` is the logical shared
@@ -1075,6 +1074,12 @@ export type RuntimeSession = Readonly<{
   profile: IdentityProfile;
   extensions: readonly string[];
   /**
+   * The mounting decision this session was constructed from: the allowlist it handed Pi, and the capability class
+   * behind each name. It is the surface's own record of why each tool may be here, so a reader never has to
+   * reconstruct the classification from tool names.
+   */
+  toolSurface: ToolSurfacePlan;
+  /**
    * The turn whose provider request is in flight on this exact session.
    *
    * It is held here rather than sent with the prompt because Pi's `PromptOptions` carries no headers and
@@ -1129,7 +1134,7 @@ export type RuntimeSession = Readonly<{
 
 /** Stable, non-display-name partition for one logical Companion continuity. */
 export function assertFrozenFixedTools(tools: readonly ToolDefinition[]): void {
-  if (!Object.isFrozen(tools) || !tools.every((tool) => Object.isFrozen(tool)))
+  if (!(Object.isFrozen(tools) && tools.every((tool) => Object.isFrozen(tool))))
     throw new Error("fixed_runtime_tools_must_be_frozen");
   const names = tools.map((tool) => tool.name);
   if (names.some((name) => typeof name !== "string" || name.length === 0) || new Set(names).size !== names.length)
@@ -1562,12 +1567,12 @@ export async function createRuntimeWithFixedToolsCore(
           // Memory authority or exposing an authoring API. No `disallowed_tools` here: a historian runs with
           // zero tools by default upstream (measured: the flag survived as a no-op), so the intent needs no
           // key, and `expand_tools` stays off for the same reason - the historian reads plain text only.
-          historian: !magicContextHistorianEnabled
-            ? { disable: true }
-            : {
+          historian: magicContextHistorianEnabled
+            ? {
                 model: `${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).provider}/${(modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).modelId}`,
                 thinking_level: (modelConfig ?? DEFAULT_COMPANION_MODEL_CONFIG).thinkingLevel,
-              },
+              }
+            : { disable: true },
           ...(internalMagicContextFeatureTestOverride?.historianExecuteThresholdTokens === undefined
             ? {}
             : {
@@ -1852,11 +1857,6 @@ export async function createRuntimeWithFixedToolsCore(
 
   assertFrozenFixedTools(fixedTools);
   const fixedToolNames = fixedTools.map((tool) => tool.name);
-  // A fixed tool may declare `defaultActive: false` when the runtime cannot give it anything to act on yet. It stays
-  // allowlisted, so `setActiveToolsByName` can mount it, but Pi does not declare it to the provider until then.
-  const mountedFixedToolNames = new Set(
-    fixedTools.filter((tool) => tool.defaultActive !== false).map((tool) => tool.name),
-  );
   if (fixedTools.length > 0 && runtimeSurface !== "game") throw new Error("fixed_runtime_tools_require_game_surface");
   const companionStatus = createCompanionStatusTool(integration);
   const runTrace = actionExecutionOptions.trace;
@@ -1900,18 +1900,22 @@ export async function createRuntimeWithFixedToolsCore(
       : planActionSurface
         ? integrationToolSet.actions.filter((tool) => integrationModule?.actionIdForToolName(tool.name) === null)
         : integrationToolSet.actions;
-  const rawIntegrationTools =
+  // Tool definitions remain mounted for the lifetime of a Pi session. Every adapter tool therefore receives a
+  // Host-owned execution fence so a later lifecycle loss revokes stale closures rather than trusting the adapter
+  // to remember to check its own disconnected state. The adapter's own groups are also what CLASSIFY these tools:
+  // its observation and action tools act on the live world, and its knowledge bundle is authored context.
+  const gateIntegration = (tool: ToolDefinition): ToolDefinition =>
+    integration === undefined ? tool : gateIntegrationTool(tool, integration);
+  const integrationToolGroups: readonly DeclaredToolGroup[] =
     integrationToolSet === undefined
       ? []
-      : [...integrationToolSet.observation, ...actionToolsToMount, ...integrationToolSet.knowledge];
-  // Tool definitions remain mounted for the lifetime of a Pi session. Every
-  // adapter tool therefore receives a Host-owned execution fence so a later
-  // lifecycle loss revokes stale closures rather than trusting the adapter to
-  // remember to check its own disconnected state.
-  const integrationTools =
-    integration === undefined
-      ? rawIntegrationTools
-      : rawIntegrationTools.map((tool) => gateIntegrationTool(tool, integration));
+      : [
+          {
+            toolClass: "game_action",
+            tools: [...integrationToolSet.observation, ...actionToolsToMount].map(gateIntegration),
+          },
+          { toolClass: "world_context", tools: [...integrationToolSet.knowledge].map(gateIntegration) },
+        ];
   const worldBookScope = integration === undefined ? null : integration.module.worldScope(integration);
   const worldBookTools =
     worldBook === undefined
@@ -1936,38 +1940,48 @@ export async function createRuntimeWithFixedToolsCore(
             throw new Error("gameplay_subagent_requires_model_and_integration");
           })()
       : undefined;
-  // Chat is a pure dialogue surface. Native assistant content is its sole
-  // player-visible expression channel; no status, Magic Context, Game, or
-  // delegation tool may steer it into an intermediate tool-use turn.
-  const allowedToolNames =
+  // The one place a tool's reach is declared, and the reason this file no longer lists tool names. Chat is a pure
+  // dialogue surface: native assistant content is its sole player-visible expression channel, and no status, Magic
+  // Context, Game, or delegation tool may steer it into an intermediate tool-use turn, so it composes none and
+  // permits none. Game declares each group it assembles, plus the class each extension it loads contributes; a tool
+  // added to any of those sources mounts here by its class, with nothing to add to a list.
+  const hostToolGroups: readonly DeclaredToolGroup[] =
     runtimeSurface === "chat"
       ? []
       : [
-          ...PHASE_0B_ALLOWED_TOOL_NAMES,
-          ...fixedToolNames,
-          ...integrationTools.map((tool) => tool.name),
-          ...worldBookTools.map((tool) => tool.name),
-        ].sort();
-  const expectedToolNames = allowedToolNames.filter(
-    (name) => !fixedToolNames.includes(name) || mountedFixedToolNames.has(name),
-  );
-  const customTools =
-    runtimeSurface === "chat"
-      ? []
-      : [companionStatus, ...fixedTools, ...integrationTools, ...worldBookTools].map((tool) =>
-          runTrace === undefined
-            ? tool
-            : tracedTool(
-                tool,
-                runTrace,
-                fixedToolNames.includes(tool.name)
-                  ? "program_tool"
-                  : integration !== undefined && integration.module.actionIdForToolName(tool.name) !== null
-                    ? "action_dispatch"
-                    : undefined,
-              ),
-        );
-  if (new Set(allowedToolNames).size !== allowedToolNames.length) throw new Error("runtime_tool_name_collision");
+          { toolClass: "host_control", tools: [companionStatus] },
+          { toolClass: "program", tools: fixedTools },
+          ...integrationToolGroups,
+          { toolClass: "world_context", tools: worldBookTools },
+        ];
+  const toolSurface = planToolSurface({
+    surface: runtimeSurface,
+    groups: hostToolGroups,
+    // The Magic Context extension contributes a session's own archive and memory readers. Its entry is the one
+    // extension path this runtime hands the loader, so the class and the load site cannot drift apart.
+    extensions: loadMagicContextExtension ? [{ entry: magicContextEntry, toolClass: "session_inspection" }] : [],
+    registered: loader.getExtensions().extensions.map((extension) => ({
+      entry: extension.path,
+      tools: [...extension.tools.keys()],
+    })),
+  });
+  const inactiveFixedToolNames = fixedTools.filter((tool) => tool.defaultActive === false).map((tool) => tool.name);
+  const expectedToolNames = toolSurface.mounted.filter((name) => !inactiveFixedToolNames.includes(name));
+  const customTools = hostToolGroups
+    .flatMap((group) => group.tools)
+    .map((tool) =>
+      runTrace === undefined
+        ? tool
+        : tracedTool(
+            tool,
+            runTrace,
+            fixedToolNames.includes(tool.name)
+              ? "program_tool"
+              : integration !== undefined && integration.module.actionIdForToolName(tool.name) !== null
+                ? "action_dispatch"
+                : undefined,
+          ),
+    );
   let session: Awaited<ReturnType<typeof createAgentSession>>["session"];
   try {
     ({ session } = await createAgentSession({
@@ -1979,7 +1993,7 @@ export async function createRuntimeWithFixedToolsCore(
       modelRuntime,
       ...(model === undefined ? {} : { model }),
       noTools: "all",
-      tools: allowedToolNames,
+      tools: [...toolSurface.mounted],
       customTools,
       // The player's own thinking level is forwarded verbatim: the embedded
       // runtime clamps a level the selected model does not advertise instead of
@@ -2015,15 +2029,17 @@ export async function createRuntimeWithFixedToolsCore(
     | undefined;
   try {
     // Pi activates every allowlisted tool on construction, including a fixed tool that declared itself
-    // `defaultActive: false`: mounting it is this runtime's decision, not the allowlist's.
-    if (expectedToolNames.length !== allowedToolNames.length) session.setActiveToolsByName(expectedToolNames);
+    // `defaultActive: false`: keeping a tool available and declaring it are two decisions, and the second one is
+    // this runtime's. The isolation check that follows is a PROPERTY of the mounted set, not an equality against a
+    // list: every mounted tool's class is permitted on this surface, no denied-class tool is mounted, and every
+    // planned tool that did not declare itself inactive for this run is actually there.
+    if (expectedToolNames.length !== toolSurface.mounted.length) session.setActiveToolsByName(expectedToolNames);
+    assertToolSurface(
+      toolSurface,
+      session.agent.state.tools.map((tool) => tool.name),
+      inactiveFixedToolNames,
+    );
     const activeTools = session.agent.state.tools.map((tool) => tool.name).sort();
-    const expectedTools = expectedToolNames;
-    if (JSON.stringify(activeTools) !== JSON.stringify(expectedTools)) {
-      throw new Error(
-        `Companion tool isolation failed: expected ${expectedTools.join(", ")}, got ${activeTools.join(", ") || "(none)"}.`,
-      );
-    }
 
     const sessionFile =
       session.sessionFile === undefined || !(await pathExists(session.sessionFile))
@@ -2160,6 +2176,7 @@ export async function createRuntimeWithFixedToolsCore(
       identityProfile: profileMetadata,
       profile,
       extensions: loader.getExtensions().extensions.map((extension) => extension.path),
+      toolSurface,
       providerTurnHeader,
       ...(boundPresentation === undefined ? {} : { presentation: boundPresentation }),
       ...(gameplaySubagent === undefined ? {} : { gameplaySubagent }),

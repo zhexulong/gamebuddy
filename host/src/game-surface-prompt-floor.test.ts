@@ -20,12 +20,11 @@ import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
  * </p>
  *
  * <p>
- * The reading is `game-surface-prompt-floor.test-support.ts`, measured by `scratch/pf-measure.mjs` (tool
- * definitions read off a real materialized production session over an attested named-pipe bridge) and
- * `scratch/pf-combined.mjs` (that set plus the WorldBook tools a seeded root adds, and the system prompt from
- * the product's own builder), using Magic Context's own envelope shape and tokenizer. Its `method` block
- * states, per number, how it was obtained. What this file adds is that the reading cannot outlive the tree in
- * silence:
+ * The reading is `game-surface-prompt-floor.test-support.ts`. Its CHARACTER columns are re-derived here, from the
+ * product's own builder; its tool and token columns were measured off a real materialized production session over an
+ * attested named-pipe bridge (that session's own `agent.state.tools` is the tool population), using Magic Context's
+ * own envelope shape and tokenizer. Its `method` block states, per column, how it was obtained. What this file adds
+ * is that the reading cannot outlive the tree in silence:
  * </p>
  *
  * <ul>
@@ -90,8 +89,8 @@ test("the recorded Game system-prompt floor is what the product's builder still 
     GAME_PROMPT.length,
     READING.floor.systemChars,
     `the Game system prompt is ${GAME_PROMPT.length} chars, the reading records ${READING.floor.systemChars}. ` +
-      "Re-measure deliberately (scratch/pf-measure.mjs, scratch/pf-combined.mjs) and re-record the reading in its own commit; " +
-      "do not edit the number to match the tree.",
+      "Re-measure deliberately and re-record the reading in its own commit; do not edit the number to match the tree. " +
+      "The reading's `method` block says how each column was obtained.",
   );
 });
 
@@ -108,13 +107,22 @@ test("the conduct block is the measured slice of the prompt, and its share is st
     `the conduct block is ${(share * 100).toFixed(1)}% of the system prompt by characters, the reading records ` +
       `${(READING.conductBlock.charShareOfSystemPrompt * 100).toFixed(1)}%`,
   );
+  // The reading's share must be its own two measured slices divided, never a percentage typed beside them: a share
+  // that drifts from its own numbers still looks plausible, and nothing above would notice. The previous recording
+  // carried exactly that defect (0.5619 against 6,194/10,886 = 0.5690) through every green run.
+  const derivedFromReading = READING.conductBlock.chars / READING.floor.systemChars;
+  assert.ok(
+    Math.abs(derivedFromReading - READING.conductBlock.charShareOfSystemPrompt) < 0.0005,
+    `the reading's share ${READING.conductBlock.charShareOfSystemPrompt} is not its own slices' quotient: ` +
+      `${READING.conductBlock.chars}/${READING.floor.systemChars} = ${derivedFromReading.toFixed(4)}`,
+  );
 });
 
 test("the Chat surface still mounts zero tools, so the recorded comparison stays a comparison", () => {
-  // The reading's point is that the Game floor is heavy RELATIVE to Chat. `runtime-core.internal.ts` gives
-  // `allowedToolNames = []` for surface "chat", so Chat's floor is its system prompt alone. If Chat ever mounts
-  // a tool, the recorded comparison stops meaning what it says - and nothing else here would notice, because
-  // the number would still be the number.
+  // The reading's point is that the Game floor is heavy RELATIVE to Chat. `runtime-core.internal.ts` gives the
+  // Chat surface no tool group at all (`PERMITTED_TOOL_CLASSES.chat` is host status only, and Chat composes
+  // none), so Chat's floor is its system prompt alone. If Chat ever mounts a tool, the recorded comparison stops
+  // meaning what it says - and nothing else here would notice, because the number would still be the number.
   assert.equal(
     READING.comparison.chatSurfaceToolCount,
     0,

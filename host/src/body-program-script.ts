@@ -909,7 +909,9 @@ function refused(
     ...(requirement === undefined ? {} : { requirement }),
     ...(missingArguments === undefined ? {} : { missingArguments }),
     ...(threw === undefined ? {} : { threw }),
-    rejected: Object.freeze(state === undefined ? [] : state.rejected.slice(0, MAX_REPORTED_PLAN_REJECTIONS)),
+    rejected: Object.freeze(
+      state === undefined ? [] : state.rejected.slice(0, MAX_REPORTED_PLAN_REJECTIONS),
+    ),
     rejectedCount: state?.rejectedCount ?? 0,
   });
 }

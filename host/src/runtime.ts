@@ -27,7 +27,6 @@ export {
   MAGIC_CONTEXT_HISTORIAN_ENABLED,
   createCompanionStatusTool,
   companionStatusTool,
-  PHASE_0B_ALLOWED_TOOL_NAMES,
   assertFrozenFixedTools,
   identityKey,
   resolveRuntimePaths,
@@ -45,6 +44,7 @@ export type {
   GameHostBindingFactory,
   GameCompanionRuntimeAttachment,
 } from "./runtime-core.internal.js";
+export type { ToolCapabilityClass, ToolSurfacePlan } from "./tool-surface.js";
 
 /** Public construction never admits fixed Pi tools. */
 export async function createCompanionRuntime(

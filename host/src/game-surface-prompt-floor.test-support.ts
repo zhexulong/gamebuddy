@@ -81,23 +81,33 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       "A fresh root has no worldbook.json, so the pipe run mounts none. createWorldBookTools over DEFAULT_COMPANION_PRESET.worldBook supplies the two tools a seeded root adds.",
     remeasured_2026_11_05:
       "Negative prompt examples and quotes were removed in favor of affirmative target framing across card.json and identity-profile.ts. The CHARACTER columns below were re-derived from the product's builder exactly; the TOKEN columns were NOT re-measured, because that needs the whole materialized-session instrumentation above and the claude-encoding count this lane could reproduce differs from the reading's. `envelopeChars`/`envelopeBytes` moved by the exact character count delta.",
+    remeasured_2026_11_08:
+      "The Game prompt grew from 10,886 to 13,411 chars, and NONE of it is tool text: the builder renders no tool definition, and the conduct block - the only place the floor names a tool - is still 6,194 chars. The growth is the card's own authored text plus one Host line: its performance directive (characterVoice) +2,181, its persona and examples +237, and the Host floor's language line +107. The two card halves arrived in 63f0dcde (already stale at HEAD, +993) and in this tree's re-authored card (+1,425); the language line is this tree's identity-profile.ts. The CHARACTER columns are re-derived from the product's builder exactly; `envelopeChars`/`envelopeBytes` moved by the JSON-escaped system string's own delta (+2,594 chars, +6,846 bytes), which is the exact envelope delta because `tools` and `messages` are unchanged. The TOKEN columns are carried UNCHANGED and are now a substantial under-count: the ai-tokenizer in this tree counts the previously recorded 10,886-char prompt at 6,480, so the vocabulary behind the recorded 5,119 is not reproducible here at all, and no token number in this file describes the current prompt.",
   }),
   floor: Object.freeze({
     toolCount: 14,
-    // +177 chars when the conduct gained the sentence about the bed being inside the house. The character counts are
-    // re-derived from the product builder by the test itself; the token column below is the older MEASUREMENT and was not
-    // re-tokenised (ai-tokenizer is not resolvable from the Host package), so it is now a slight under-count.
-    systemChars: 10886,
+    // Re-derived 2026-11-08 from the product's builder by the test itself. The prompt grew 2,525 chars since the
+    // 2026-11-05 reading: the card's performance directive +2,181, its persona and examples +237, and the Host floor's
+    // language line +107. The `remeasured_2026_11_08` method entry attributes it line by line. The token column below
+    // is the older MEASUREMENT and is now an under-count of a shorter prompt (see that entry).
+    systemChars: 13411,
     systemTokens: 5119,
     toolsTokens: 3552,
-    envelopeChars: 23152,
-    envelopeBytes: 28210,
+    // 23,152 + 2,594: the JSON-escaped system string's own delta, which is the whole envelope's delta because the
+    // tool array and the empty message list are unchanged. The extra 69 characters over the raw 2,525 are the added
+    // newlines, which JSON escapes as two characters each.
+    envelopeChars: 25746,
+    // 28,210 + 6,846: the same delta in UTF-8 bytes, measured rather than derived from the character count, because
+    // most of what was added is three bytes per character.
+    envelopeBytes: 35056,
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
     chars: 6194,
     tokens: 1227,
-    charShareOfSystemPrompt: 0.5619,
+    // The measured slice over the measured prompt: 6,194 / 13,411. Recorded as the quotient, not as a share typed
+    // separately from the two numbers it divides - the previous recording carried 0.5619 against 6,194/10,886 = 0.5690.
+    charShareOfSystemPrompt: 0.4619,
     tokenShareOfSystemPrompt: 0.24,
   }),
   denominator: Object.freeze([
@@ -110,7 +120,7 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
   comparison: Object.freeze({
     chatSurfaceEnvelopeTokens: 4099,
     chatSurfaceToolCount: 0,
-    note: "runtime-core.internal.ts gives the Chat surface allowedToolNames = [], so its floor is its system prompt alone. The Game floor is more than twice the Chat floor, and 3,620 of the difference are tool definitions.",
+    note: "runtime-core.internal.ts gives the Chat surface no tool group at all, so its floor is its system prompt alone. The Game floor is more than twice the Chat floor, and 3,620 of the difference are tool definitions.",
   }),
   rows: Object.freeze([
     Object.freeze({
