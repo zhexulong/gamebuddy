@@ -861,6 +861,22 @@ export class CompanionHostService {
     for (const fact of facts) this.acceptIntegrationFact(fact);
   }
 
+  /**
+   * A fact the Host itself mints about the companion's own work, onto the same pump every other fact uses.
+   *
+   * The one producer today is the settled-plan digest (`program-settlement-digest.ts`): the per-node terminal ledger of
+   * a plan the Mod's journal has stopped. It travels here rather than through `acceptIntegrationFact` because that route
+   * is the ADAPTER's ingress - it gates on the integration admission switch and on receipt identity, none of which is a
+   * question about a fact the Host observed by reading the journal itself.
+   */
+  public acceptHostMintedFact(fact: WorldFact): void {
+    if (this.#closed) return;
+    this.loop.pump.enqueueFact(fact);
+    // A held fact (`isSettledPlanDigest`) does not set `hasPendingDelivery` on its own, so this flush delivers it with
+    // whatever else is queued and starts no turn of its own.
+    void this.flushSoon().catch(() => undefined);
+  }
+
   private acceptIntegrationFact(fact: WorldFact): void {
     if (this.#closed) return;
     // The Stardew adapter has already authenticated and scope-validated this

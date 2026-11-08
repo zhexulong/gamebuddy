@@ -76,9 +76,12 @@ import {
   planBatchAnswer,
   programStatusProgress,
   waitForTerminalProgramStatus,
+  type PlanAnswerNode,
   type PlanBatchAnswer,
   type ProgramStatusProgress,
 } from "../program-status-wait.js";
+import { createProgramSettlementReporter, watchProgramSettlement } from "../program-settlement-digest.js";
+import type { WorldFact } from "../event-pump.js";
 import { createGameRuntimeAttachment } from "./game-runtime-attachment.js";
 import {
   type GameRuntimeMaterializer,
@@ -104,6 +107,18 @@ let lastAcceptedProgramId: string | null = null;
 /** The program's two readers: they answer only for a program a submission recorded. */
 const programReaderToolNames = Object.freeze(["stardew_action_program_status", "stardew_action_program_events"]);
 
+/** The wire's own maximum page size, so the settled-stamp read reaches a program's tail in the fewest pages. */
+const SETTLED_DIGEST_EVENT_PAGE_SIZE = 32;
+
+/**
+ * How many event pages the settled-stamp read may walk.
+ *
+ * Four pages is 128 events: a 16-node plan writes one `accepted` plus a challenge, an admission, a dispatch and a
+ * terminal per node - about 65 - so the tail of every plan `plan_work` can produce is reachable. The bound exists so a
+ * journal that answers pages forever cannot hold the digest's composition open.
+ */
+const MAX_SETTLED_DIGEST_EVENT_PAGES = 4;
+
 /**
  * Companion presentation locale used when no frontend-set language preference
  * has been injected yet. Existing callers predate the Tavern language
@@ -122,6 +137,7 @@ function createBodyProgramTools(
   retainedPolicyIdentity: FarmhandPolicyIdentity,
   revealReaders: () => void,
   runTrace: RunTrace,
+  announceSettledFact: (fact: WorldFact) => void,
 ): readonly ToolDefinition[] {
   const withPort = async <TResult>(
     request: Record<string, unknown>,
@@ -148,6 +164,63 @@ function createBodyProgramTools(
     validateResult: (value: Record<string, unknown>) => string | null,
     call: (port: BodyProgramPort) => Promise<TResult>,
   ) => toolResult(await withPort(request, validateRequest, validateResult, call), null);
+  /**
+   * The settled-plan ledger. One per runtime, never global: the exactly-once claim is about what THIS session did
+   * (`createProgramSettlementReporter`).
+   */
+  const settlement = createProgramSettlementReporter(announceSettledFact);
+
+  /**
+   * The Mod's own stamp of the moment it closed this program's journal, or `null` when it cannot be read.
+   *
+   * The Mod stamps every journal event with `atMs` (`BodyProgramJournalEvent.AtMs`: the moment it appended the event,
+   * on its own monotonic clock), and the LAST event it appended for a program is the one that settled it - there is no
+   * program-level settlement event, only `node_completed`/`node_skipped`/`node_settled`/`stopped`/`abandoned`. The
+   * reader is a cursor page, so reaching the tail means walking it; the walk is bounded because a 16-node plan writes
+   * about 65 events. Past the bound the stamp is `null` rather than the newest one seen: "the newest I could read" is
+   * not when the program settled, and a Host clock would measure the bridge instead of the game.
+   */
+  const readProgramSettledAtMs = async (programId: string): Promise<number | null> => {
+    let cursor = 0;
+    for (let page = 0; page < MAX_SETTLED_DIGEST_EVENT_PAGES; page += 1) {
+      const request = { programId, cursor, pageSize: SETTLED_DIGEST_EVENT_PAGE_SIZE };
+      const read = await withPort(request, validateEventsRequest, validateBodyProgramEventsResult, (port) =>
+        port.events(request),
+      );
+      if (read.code !== "found" || read.events.length === 0) return null;
+      const last = read.events[read.events.length - 1];
+      if (last === undefined) return null;
+      if (read.events.length < SETTLED_DIGEST_EVENT_PAGE_SIZE) return last.atMs;
+      cursor = read.nextCursor;
+    }
+    return null;
+  };
+
+  /**
+   * Follow one submitted program to its terminal state, so the digest arrives without the companion asking.
+   *
+   * NOT awaited: `plan_work` must return as soon as the Mod accepts, because the control points that make a body
+   * program interruptible (`program_stop`, steering) live in the turn such a wait would hold. This watch is the
+   * background half - the Mod's later terminal states become ONE fact on the pump, and a session whose port drained
+   * ends it (`stillWatching`), so nothing polls a runtime that is gone.
+   */
+  const startSettlementWatch = (programId: string, nodes: readonly PlanAnswerNode[]): void => {
+    void watchProgramSettlement({
+      read: async () => {
+        const record = bodyProgramConsumers.get(consumer);
+        if (record === undefined || !record.available) throw new Error("action_program_runtime_unavailable");
+        const result = await record.port.status({ programId });
+        programStatusProgress.observe(result);
+        return result;
+      },
+      onSettled: async (status) => {
+        const settledAtMs = await readProgramSettledAtMs(programId).catch(() => null);
+        settlement.report({ programId, settledAtMs, compiled: nodes, status, nowMs: Date.now() });
+      },
+      stillWatching: () => bodyProgramConsumers.get(consumer)?.available === true,
+    }).catch(() => undefined);
+  };
+
   // ONE submission path. The raw program tool and the routine tool both hand their candidate here,
   // so a routine can never reach the Mod by a route a model-authored program cannot.
   const submitProgram = async (request: BodyProgramCandidateRequest) => {
@@ -159,7 +232,10 @@ function createBodyProgramTools(
     // Only a recorded program gives the readers anything to answer; a rejected candidate leaves none.
     const details: unknown = result.details;
     const code = isRecord(details) ? details.code : undefined;
-    if (code === "accepted" || code === "idempotent") revealReaders();
+    if (code === "accepted" || code === "idempotent") {
+      revealReaders();
+      startSettlementWatch(request.programId, request.nodes);
+    }
     return result;
   };
   /**
@@ -1042,6 +1118,10 @@ export function createHostGameRuntimeMaterializer(
         // Resolve exactly once for this construction; closures and adapter tools
         // share this same object while live state remains freshly read per call.
         let revealProgramReaders = (): void => {};
+        // The settled digest's route onto the pump. Assigned the moment the Host service exists - the tools are built
+        // first and cannot see it - and a fact that arrives before then (it cannot: nothing has been submitted) is
+        // dropped by the no-op rather than queued somewhere else.
+        let announceHostFact: (fact: WorldFact) => void = () => {};
         const fixedTools = bodyProgramMounted
           ? createBodyProgramTools(
               bodyProgramConsumer,
@@ -1050,6 +1130,7 @@ export function createHostGameRuntimeMaterializer(
               retainedPolicyIdentity,
               () => revealProgramReaders(),
               runTrace,
+              (fact) => announceHostFact(fact),
             )
           : Object.freeze([]);
         const recovery = readStardewRecoveryBindingContext(recoveryContext);
@@ -1169,6 +1250,9 @@ export function createHostGameRuntimeMaterializer(
                   );
                 }),
         );
+        // The settled digest rides the pump from here on. `host` is the only layer that owns it, which is why the
+        // tools' sink was left unbound until this line.
+        announceHostFact = (fact) => host.acceptHostMintedFact(fact);
         const operationalGateEvidence =
           options.gameOperationalGateNonceSha256 === undefined
             ? undefined

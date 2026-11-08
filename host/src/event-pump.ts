@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND } from "./program-settlement-digest.js";
+
 export type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" | "world_fact";
 export type WorldFact = Readonly<{
   /** Adapter-owned source label, or Host's explicitly non-world transport label. */
@@ -758,7 +760,21 @@ function isHeldFact(fact: WorldFact): boolean {
  * batch that carried facts without it would describe a state the model cannot see.
  */
 function isHeldProgressFact(fact: WorldFact): boolean {
-  return isMeaningfulProgressFact(fact) || isProgressSemanticEvent(fact);
+  return isMeaningfulProgressFact(fact) || isProgressSemanticEvent(fact) || isSettledPlanDigest(fact);
+}
+
+/**
+ * The Host's own "what that plan did" ledger, held so it rides the next batch instead of minting a turn.
+ *
+ * A settlement is news for the next turn, not a reason to interrupt one: measured over 29 plan batches in 42 minutes,
+ * turning every settled program into its own turn would have spent the run's turns on bookkeeping. Held means the pump
+ * suppresses a repeat of the SAME fact (there is only ever one per program - see `program-settlement-digest.ts`) and
+ * `#hasPendingFactTrigger` does not count it, while `takeBatch` still delivers it. Deliberately the one kind it is:
+ * a `world_fact` window never closes the bridge when it fills (`enqueueFact` evicts the oldest and counts the loss),
+ * which is the right failure for a ledger entry and the wrong one for a turn trigger.
+ */
+function isSettledPlanDigest(fact: WorldFact): boolean {
+  return fact.kind === "world_fact" && fact.semanticKind === PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND;
 }
 
 function isTerminalExecutionFact(fact: WorldFact): boolean {
