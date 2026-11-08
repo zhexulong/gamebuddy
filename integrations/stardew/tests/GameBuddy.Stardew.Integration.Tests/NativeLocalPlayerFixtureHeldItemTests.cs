@@ -23,6 +23,10 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// initializer's source, which is the only place the mint/select/refusal order exists.
 /// </para>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: five cases drive the declared hand end to end (config validation, the whole-record write,
+// the engine item factory after the scenario Given, both refusals, and the pet scenario no longer clearing it), while
+// four pin the source shape a behaviour test cannot see - that the field has exactly one placement path whatever the
+// item kind, and that no second writer of the hand exists to disagree with it later.
 public sealed class NativeLocalPlayerFixtureHeldItemTests
 {
     private static NativeLocalPlayerFixtureConfig Fixture(string scenario, string heldItemQualifiedId) => new()

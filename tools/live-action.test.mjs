@@ -20,10 +20,24 @@
  * here. The transaction gate builds a real lock directory and asserts both the refusal code and that the lock survives.
  */
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+// The pipe name has one owner (the Mod's example config); a literal here once made the Mod open one pipe while the
+// launcher listened on another (2026-10-19). `tools/check-duplicated-authority.mjs` names this exact rule.
+const EXAMPLE_BRIDGE_CONFIG = JSON.parse(
+  readFileSync(new URL("../integrations/stardew/config.example.json", import.meta.url), "utf8"),
+);
 import {
   configureNativeLocalPlayer,
   verifyNativeLocalPlayerFixture,
@@ -1011,7 +1025,7 @@ async function planForStub({ held = "axe", heldItem = null } = {}) {
 
 function stubClientConfig(plan) {
   return {
-    PipeName: "gamebuddy-stardew",
+    PipeName: EXAMPLE_BRIDGE_CONFIG.PipeName,
     BridgeToken: "0123456789abcdef0123456789abcdef",
     SaveId: plan.binding.saveId,
     WorldId: plan.binding.worldId,

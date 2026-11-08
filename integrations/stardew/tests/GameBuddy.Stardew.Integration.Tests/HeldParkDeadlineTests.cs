@@ -33,7 +33,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// hold it waited on and the fact that no bridge was left to take the answer.
 /// </para>
 /// </summary>
-// MIXED SHAPE AND BEHAVIOUR: the deadline pins drive the real admission/park/pump path on a probe actor; the
+// MIXED SHAPE AND BEHAVIOUR: the deadline pins drive the real admission, park and pump path on a probe actor; the
 // delivery pin reads ModEntry's source because the native tick it covers cannot load headless. Both live here
 // because they are the two halves of one answer.
 public sealed class HeldParkDeadlineTests

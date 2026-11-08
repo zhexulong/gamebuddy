@@ -21,7 +21,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// something asked AFTER this day began (not ours to touch) and one the previous day left standing (nobody can still
 /// mean it).
 /// </summary>
-// MIXED SHAPE AND BEHAVIOUR: the native close (`DialogueBox.closeDialogue`, DialogueBox.cs:192) dereferences
+// MIXED SHAPE AND BEHAVIOUR: the native close call (`DialogueBox.closeDialogue`, DialogueBox.cs:192) dereferences
 // `Game1.player` and the game's dialogue queues, which a headless runner does not have, so the effect is pinned on the
 // source text while the decision itself is called for real.
 public sealed class DayBoundaryQuestionTests

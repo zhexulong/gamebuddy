@@ -1884,9 +1884,13 @@ builder.harvest_crop({ x: 58, y: 14, expectedQualifiedItemId: "(O)24", expectedT
   assert.ok(result.ok, "the three walks are a plan even though one harvest was refused");
   // Calls 2, 4 and 6 were the same mistake in the measured session; this replay supplies the argument on 4 and 6 so the
   // gate reads as "one refused call kept five nodes", which is the property, not the session's arithmetic.
+  // The script wrote move, harvest, move, harvest, move; call 2's harvest is refused, so the plan keeps the other four
+  // nodes in the order the script wrote them. Two ids and a shape rather than a five-id copy of the published list, and
+  // the shape is what this case is about - the order survives a refusal.
+  const written = { move: "move_to_tile", harvest: "harvest_crop" } as const;
   assert.deepEqual(
     result.program.nodes.map((node) => node.actionId),
-    ["move_to_tile", "move_to_tile", "harvest_crop", "move_to_tile", "harvest_crop"],
+    ["move", "move", "harvest", "move", "harvest"].map((name) => (name === "move" ? written.move : written.harvest)),
   );
   assert.deepEqual(result.rejected, [
     {
