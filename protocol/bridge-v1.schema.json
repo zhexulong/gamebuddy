@@ -1436,6 +1436,50 @@
         }
       }
     },
+    "discoveryExclusion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "family",
+        "reason",
+        "count"
+      ],
+      "properties": {
+        "family": {
+          "enum": [
+            "treeChopSourceTargets",
+            "petTargets",
+            "farmAnimalPetTargets",
+            "cropTargets",
+            "harvestTargets",
+            "petBowlTargets",
+            "slimeHutchTroughTargets",
+            "baitCrabPotTargets"
+          ],
+          "description": "The WIRE FIELD NAME of the discovery family this row explains, from the closed set of families that report exclusions (`ExclusionReportingCapabilities` in farmhandexecutioncontroller.cs). One array still attributes every row to the list whose emptiness it explains, and a row cannot name a list nobody publishes. `tools/check-stardew-discovery-exclusions.mjs` compares this enum with the Mod's declaration by name."
+        },
+        "reason": {
+          "enum": [
+            "already_tapped",
+            "stump",
+            "not_grown",
+            "dead",
+            "petted_today",
+            "already_watered",
+            "not_ready",
+            "wrong_harvest_method",
+            "already_baited"
+          ],
+          "description": "One of the closed vocabulary of reasons a family withheld subjects it could see. A reason is admitted only when the engine itself refuses the same action on the same subject today; a filter the engine does not share is a defect in discovery, not a reason."
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "How many subjects this family's filter took for this reason. A COUNT, never an identity: the subject the filter removed is by definition not addressable. At least one, because a zero-count exclusion is not an exclusion."
+        }
+      }
+    },
     "soilTile": {
       "type": "object",
       "additionalProperties": false,
@@ -2603,6 +2647,20 @@
           "maxItems": 64
         },
         "soilTilesOmitted": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "discoveryExclusions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/discoveryExclusion"
+          },
+          "maxItems": 16
+        },
+        "discoveryExclusionsOmitted": {
           "type": [
             "integer",
             "null"

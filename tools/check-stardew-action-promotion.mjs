@@ -509,7 +509,7 @@ function hasSnapshotCapabilitySurfaceProvenance(source) {
       "IReadOnlyList<string> advertisedCapabilities = capabilityPublication.CapabilitySet.AdvertisedCapabilityIds;",
     ) &&
     /return CreateWorldNotReadyBridgeSnapshot\(capabilityPublication\);/.test(body) &&
-    /return new BridgeSnapshot\([\s\S]*?\n {12}advertisedCapabilities,/.test(body)
+    /(?:BridgeSnapshot snapshot = )?new BridgeSnapshot\([\s\S]*?\n {12}advertisedCapabilities,/.test(body)
   );
 }
 function parseHostRequestValidators(source) {

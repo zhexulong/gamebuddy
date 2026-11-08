@@ -2294,6 +2294,29 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         };
     }
 
+    /// <summary>
+    /// The capabilities whose discovery reports what it withheld, each with the wire family it publishes into.
+    ///
+    /// <para>
+    /// It exists to answer ONE question the recorder cannot: "was any exclusion-reporting family measured at all".
+    /// Without it a snapshot whose `chop_tree` is not advertised would publish `discoveryExclusions: []`, which reads
+    /// as "nothing was withheld" when the truth is "nothing was looked at" - the same distinction `soilTiles` null
+    /// draws against `soilTiles: []`. The families here are the ones whose <c>Discover*</c> takes the recorder;
+    /// <c>tools/check-stardew-discovery-exclusions.mjs</c> is what keeps this table and those call sites agreeing.
+    /// </para>
+    /// </summary>
+    private static readonly (string Capability, string Family)[] ExclusionReportingCapabilities =
+    {
+        ("chop_tree", "treeChopSourceTargets"),
+        ("pet_animal", "petTargets"),
+        ("pet_farm_animal", "farmAnimalPetTargets"),
+        ("water_crop", "cropTargets"),
+        ("harvest_crop", "harvestTargets"),
+        ("water_pet_bowl", "petBowlTargets"),
+        ("water_slime_hutch_trough", "slimeHutchTroughTargets"),
+        ("bait_crab_pot", "baitCrabPotTargets"),
+    };
+
     /// <summary>Explicit Phase 2 wire DTO; call only on the SMAPI game thread while a world is ready.</summary>
     public BridgeSnapshot CreateBridgeSnapshot()
     {
@@ -2303,6 +2326,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (player is null)
             return CreateWorldNotReadyBridgeSnapshot(capabilityPublication);
         BridgeActiveExecution? activeExecution = this.DescribeActiveExecution();
+        // What discovery WITHHELD this snapshot, and why. Created before the first radar runs because the recording
+        // families write into it as they walk the world; published at the end, once every family has had its say.
+        DiscoveryExclusionRecorder discoveryExclusions = new();
         // The container family's SENSED-ENTITY projection: one row per container, whole contents. Published while
         // EITHER container action is advertised, because both name the same containers, and never derived from the
         // action arguments - perception is a fact about the world, execution is the slice a handler re-derives.
@@ -2318,7 +2344,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         IReadOnlyList<BridgeSoilTile>? soilTiles = advertisedCapabilities.Contains("till_soil", StringComparer.Ordinal)
             ? DiscoverSoilTiles(player, out soilTilesOmitted)
             : null;
-        return new BridgeSnapshot(
+        // Whether any family that reports exclusions was measured at all. Null means NOT MEASURED (no such family was
+        // advertised); an empty array means measured and nothing withheld. A world with one tapped tree and a world
+        // with no tree must not answer the same thing, and neither must "not measured" and "nothing withheld".
+        bool exclusionFamilyAdvertised = ExclusionReportingCapabilities
+            .Any(entry => advertisedCapabilities.Contains(entry.Capability, StringComparer.Ordinal));
+        BridgeSnapshot snapshot = new BridgeSnapshot(
             this.revision,
             player.currentLocation?.NameOrUniqueName ?? "unknown",
             new BridgeTile(player.Tile.X, player.Tile.Y),
@@ -2356,10 +2387,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("refill_watering_can", StringComparer.Ordinal) ? DiscoverRefillWateringCanTargets(player) : null,
             advertisedCapabilities.Contains("pickup_forage", StringComparer.Ordinal) ? DiscoverForageTargets(player) : null,
             advertisedCapabilities.Contains("pickup_item", StringComparer.Ordinal) ? DiscoverItemTargets(player) : null,
-            advertisedCapabilities.Contains("water_crop", StringComparer.Ordinal) ? DiscoverCropTargets(player) : null,
-            advertisedCapabilities.Contains("water_pet_bowl", StringComparer.Ordinal) ? DiscoverPetBowlTargets(player) : null,
-            advertisedCapabilities.Contains("water_slime_hutch_trough", StringComparer.Ordinal) ? DiscoverSlimeHutchTroughTargets(player) : null,
-            advertisedCapabilities.Contains("harvest_crop", StringComparer.Ordinal) ? DiscoverHarvestTargets(player) : null,
+            advertisedCapabilities.Contains("water_crop", StringComparer.Ordinal) ? DiscoverCropTargets(player, discoveryExclusions) : null,
+            advertisedCapabilities.Contains("water_pet_bowl", StringComparer.Ordinal) ? DiscoverPetBowlTargets(player, discoveryExclusions) : null,
+            advertisedCapabilities.Contains("water_slime_hutch_trough", StringComparer.Ordinal) ? DiscoverSlimeHutchTroughTargets(player, discoveryExclusions) : null,
+            advertisedCapabilities.Contains("harvest_crop", StringComparer.Ordinal) ? DiscoverHarvestTargets(player, discoveryExclusions) : null,
             advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal) ? DiscoverSeedTargets(player) : null,
             advertisedCapabilities.Contains("fertilize_tile", StringComparer.Ordinal) ? DiscoverFertilizerTargets(player) : null,
             advertisedCapabilities.Contains("place_wood_fence", StringComparer.Ordinal) ? DiscoverWoodFenceTargets(player) : null,
@@ -2367,7 +2398,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("place_crab_pot", StringComparer.Ordinal) ? DiscoverCrabPotTargets(player) : null,
             advertisedCapabilities.Contains("place_crab_pot", StringComparer.Ordinal) ? this.DiscoverCrabPotResultTargets(player) : null,
             advertisedCapabilities.Contains("collect_crab_pot_output", StringComparer.Ordinal) ? DiscoverCrabPotCollectTargets(player) : null,
-            advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? DiscoverBaitCrabPotTargets(player) : null,
+            advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? DiscoverBaitCrabPotTargets(player, discoveryExclusions) : null,
             advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? this.DiscoverBaitCrabPotResultTargets(player) : null,
             (advertisedCapabilities.Contains("clear_debris", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_resource_clump", StringComparer.Ordinal)) ? DiscoverDebrisTargets(player) : null,
             // `break_rock`, not `break_rock_source`: the capability word is the ACTION ID, and the old spelling meant this
@@ -2378,7 +2409,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("dig_artifact_spot", StringComparer.Ordinal) ? this.DiscoverArtifactSpotResultTargets(player) : null,
             advertisedCapabilities.Contains("dig_artifact_spot", StringComparer.Ordinal) ? CountArtifactSpotFarmSources() : null,
             (advertisedCapabilities.Contains("machine_inspect", StringComparer.Ordinal) || advertisedCapabilities.Contains("machine_load", StringComparer.Ordinal) || advertisedCapabilities.Contains("machine_collect_output", StringComparer.Ordinal)) ? DiscoverMachineTargets(player) : null,
-            advertisedCapabilities.Contains("chop_tree", StringComparer.Ordinal) ? DiscoverTreeChopSourceTargets(player) : null,
+            advertisedCapabilities.Contains("chop_tree", StringComparer.Ordinal) ? DiscoverTreeChopSourceTargets(player, discoveryExclusions) : null,
             advertisedCapabilities.Contains("chop_tree", StringComparer.Ordinal) ? DiscoverTreeChopResultTargets(player) : null,
             advertisedCapabilities.Contains("chop_stump", StringComparer.Ordinal) ? DiscoverTreeStumpTargets(player) : null,
             advertisedCapabilities.Contains("plant_sapling", StringComparer.Ordinal) ? DiscoverTreeSaplingTargets(player) : null,
@@ -2394,8 +2425,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             DiscoverVillagerWhereabouts(),
             DiscoverHarvestWhereabouts(),
             DiscoverWateringWhereabouts(),
-            advertisedCapabilities.Contains("pet_animal", StringComparer.Ordinal) ? DiscoverPetTargets(player) : null,
-            advertisedCapabilities.Contains("pet_farm_animal", StringComparer.Ordinal) ? DiscoverFarmAnimalPetTargets(player) : null,
+            advertisedCapabilities.Contains("pet_animal", StringComparer.Ordinal) ? DiscoverPetTargets(player, discoveryExclusions) : null,
+            advertisedCapabilities.Contains("pet_farm_animal", StringComparer.Ordinal) ? DiscoverFarmAnimalPetTargets(player, discoveryExclusions) : null,
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverAnimalProductTargets(player) : null,
             advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? DiscoverFeedTroughTargets(player) : null,
             chests,
@@ -2491,6 +2522,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             FixedInteractionPointsOmitted: fixedInteractionPointsOmitted,
             SoilTilesOmitted: soilTiles is null ? null : soilTilesOmitted
         );
+        // The rows are read AFTER every family above has walked the world and recorded into the same recorder, so this
+        // is one publication of one measurement rather than a second pass over the map.
+        if (!exclusionFamilyAdvertised) return snapshot;
+        return snapshot with
+        {
+            DiscoveryExclusions = discoveryExclusions.Publish(out int discoveryExclusionsOmitted),
+            DiscoveryExclusionsOmitted = discoveryExclusionsOmitted,
+        };
     }
 
     /// <summary>
@@ -3073,14 +3112,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"pet_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static IReadOnlyList<BridgePetTarget> DiscoverPetTargets(Farmer player)
+    private static IReadOnlyList<BridgePetTarget> DiscoverPetTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgePetTarget>();
-        return location.characters.OfType<Pet>()
+        List<BridgePetTarget> result = new();
+        // The window is taken over the pets in RANGE and the day filter runs after it, which is the order this family
+        // has always published in; moving the cap after the filter would change which pets the list can hold.
+        foreach (Pet pet in location.characters.OfType<Pet>()
             .Where(pet => Utility.tileWithinRadiusOfPlayer((int)pet.Tile.X, (int)pet.Tile.Y, TargetDiscoveryRadius, player))
-            .Take(16)
-            .Select(pet => new BridgePetTarget(
+            .Take(16))
+        {
+            BridgePetTarget target = new(
                 BuildPetTargetId(location, (int)pet.Tile.X, (int)pet.Tile.Y, pet),
                 (int)pet.Tile.X,
                 (int)pet.Tile.Y,
@@ -3094,9 +3137,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 // pet moving right now"; naming it `Stationary` and nothing more
                 // avoids collapsing several native behaviours into phases the Mod
                 // would then own and have to keep in sync.
-                Stationary: !(pet.GetCurrentPetBehavior()?.WalkInDirection ?? false)))
-            .Where(target => !target.PettedToday)
-            .ToArray();
+                Stationary: !(pet.GetCurrentPetBehavior()?.WalkInDirection ?? false));
+            // The row states the day fact either way; the reason states why it is not a target. A pet petted today is
+            // excluded rather than published-and-refused because there is nothing left to do with it - the second pet
+            // opens `AnimalQueryMenu` instead (Pet.cs:641-643) - but an empty list must not be the only evidence.
+            if (target.PettedToday)
+            {
+                exclusions.Record("petTargets", DiscoveryExclusionReasons.PettedToday);
+                continue;
+            }
+            result.Add(target);
+        }
+        return result;
     }
 
     /// <summary>
@@ -3126,24 +3178,34 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// `AnimalQueryMenu` instead of petting.
     /// </para>
     /// </summary>
-    private static IReadOnlyList<BridgeFarmAnimalPetTarget> DiscoverFarmAnimalPetTargets(Farmer player)
+    private static IReadOnlyList<BridgeFarmAnimalPetTarget> DiscoverFarmAnimalPetTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeFarmAnimalPetTarget>();
-        return location.animals.Values
-            .Where(animal => !animal.wasPet.Value)
+        List<BridgeFarmAnimalPetTarget> result = new();
+        foreach (FarmAnimal animal in location.animals.Values
             .Where(animal => IsTileWithinChebyshevRadius(player, (int)animal.Tile.X, (int)animal.Tile.Y, TargetDiscoveryRadius))
             .OrderBy(animal => ChebyshevDistance(player, (int)animal.Tile.X, (int)animal.Tile.Y))
             .ThenBy(animal => animal.Tile.X)
-            .ThenBy(animal => animal.Tile.Y)
-            .Take(16)
-            .Select(animal => new BridgeFarmAnimalPetTarget(
+            .ThenBy(animal => animal.Tile.Y))
+        {
+            if (result.Count >= 16) break;
+            // The day marker the engine itself sets on the first manual pet and clears overnight (FarmAnimal.cs:745-749,
+            // :976). Filtered rather than published-and-refused - there is nothing left to do with it - and now
+            // RECORDED, so the empty list says "already petted" instead of "no animals here".
+            if (animal.wasPet.Value)
+            {
+                exclusions.Record("farmAnimalPetTargets", DiscoveryExclusionReasons.PettedToday);
+                continue;
+            }
+            result.Add(new BridgeFarmAnimalPetTarget(
                 BuildFarmAnimalPetTargetId(location, animal),
                 (int)animal.Tile.X,
                 (int)animal.Tile.Y,
                 animal.type.Value,
-                animal.friendshipTowardFarmer.Value))
-            .ToArray();
+                animal.friendshipTowardFarmer.Value));
+        }
+        return result;
     }
 
     private static IReadOnlyList<BridgeMachineTarget> DiscoverMachineTargets(Farmer player)
@@ -3209,48 +3271,73 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"machine_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static IReadOnlyList<BridgeTreeChopSourceTarget> DiscoverTreeChopSourceTargets(Farmer player)
+    private static IReadOnlyList<BridgeTreeChopSourceTarget> DiscoverTreeChopSourceTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null || string.IsNullOrEmpty(location.NameOrUniqueName) || location.NameOrUniqueName.Length > 256)
             return Array.Empty<BridgeTreeChopSourceTarget>();
 
-        return NearestFirst(location.terrainFeatures.Pairs
-            .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree tree
-                && !tree.stump.Value
-                && tree.growthStage.Value >= StardewValley.TerrainFeatures.Tree.treeStage
-                && !tree.hasMoss.Value
-                && !tree.tapped.Value
-                // HEALTH IS DURABILITY, NOT A FLAG. A mature tree starts at `health.Value = 10f`
-                // (Tree.cs:187/203) and is felled when it reaches `<= 0f` (Tree.cs:587). This read `== 1f`, which is a
-                // tree one axe swing from falling - so every living tree in the world was invisible to the discovery
-                // radar, while `observe_scene` still advertised it as choppable and the execution precheck refused. The
-                // value came from a unit test that stubbed a one-hit tree.
-                //
-                // `> 0f` is the same predicate the engine uses to decide the tree is still standing.
-                && tree.health.Value > 0f
+        List<BridgeTreeChopSourceTarget> result = new();
+        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in NearestFirst(location.terrainFeatures.Pairs
+            .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree
+                // The moss predicate is the ONE exclusion in this family that is not a vanilla refusal: the same axe
+                // swing harvests the moss and then chops (`Tree.performToolAction` moss branch, Tree.cs:1087-1115, falls
+                // through to the axe branch at :1120), so a mossy tree IS a chop source in the engine. It is left exactly
+                // as it was rather than given a reason, because a reason would make an illegal filter look legitimate;
+                // `tools/stardew-discovery-exclusions-backlog.json` names it and who deletes it.
+                && !((StardewValley.TerrainFeatures.Tree)pair.Value).hasMoss.Value
                 && pair.Key.X >= 0 && pair.Key.X <= 1000
                 && pair.Key.Y >= 0 && pair.Key.Y <= 1000
-                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)), player)
-            .Take(64)
-            .Select(pair =>
+                && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)), player))
+        {
+            if (result.Count >= 64) break;
+            StardewValley.TerrainFeatures.Tree tree = (StardewValley.TerrainFeatures.Tree)pair.Value;
+            string? exclusion = TreeChopSourceExclusion(tree);
+            if (exclusion is not null)
             {
-                StardewValley.TerrainFeatures.Tree tree = (StardewValley.TerrainFeatures.Tree)pair.Value;
-                int x = (int)pair.Key.X;
-                int y = (int)pair.Key.Y;
-                return new BridgeTreeChopSourceTarget(
-                    BuildTreeChopSourceTargetId(location, x, y, tree),
-                    location.NameOrUniqueName,
-                    x,
-                    y,
-                    tree.treeType.Value,
-                    tree.growthStage.Value,
-                    tree.health.Value,
-                    tree.stump.Value,
-                    tree.hasMoss.Value,
-                    tree.tapped.Value);
-            })
-            .ToArray();
+                exclusions.Record("treeChopSourceTargets", exclusion);
+                continue;
+            }
+            int x = (int)pair.Key.X;
+            int y = (int)pair.Key.Y;
+            result.Add(new BridgeTreeChopSourceTarget(
+                BuildTreeChopSourceTargetId(location, x, y, tree),
+                location.NameOrUniqueName,
+                x,
+                y,
+                tree.treeType.Value,
+                tree.growthStage.Value,
+                tree.health.Value,
+                tree.stump.Value,
+                tree.hasMoss.Value,
+                tree.tapped.Value));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Whether a standing tree is a <c>chop_tree</c> source, as the reason it is not.
+    ///
+    /// <para>
+    /// The predicate and the reason are the SAME decision on purpose: a filter plus a separate "why" function that
+    /// re-derived it would be two spellings of one fact, and the reason would drift from the filter it explains. Every
+    /// branch is the engine's own refusal, cited on its token in <see cref="DiscoveryExclusionReasons"/>.
+    /// </para>
+    /// </summary>
+    private static string? TreeChopSourceExclusion(StardewValley.TerrainFeatures.Tree tree)
+    {
+        if (tree.stump.Value) return DiscoveryExclusionReasons.Stump;
+        if (tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage) return DiscoveryExclusionReasons.NotGrown;
+        if (tree.tapped.Value) return DiscoveryExclusionReasons.AlreadyTapped;
+        // HEALTH IS DURABILITY, NOT A FLAG. A mature tree starts at `health.Value = 10f`
+        // (Tree.cs:187/203) and is felled when it reaches `<= 0f` (Tree.cs:587). This read `== 1f`, which is a
+        // tree one axe swing from falling - so every living tree in the world was invisible to the discovery
+        // radar, while `observe_scene` still advertised it as choppable and the execution precheck refused. The
+        // value came from a unit test that stubbed a one-hit tree.
+        //
+        // `> 0f` is the same predicate the engine uses to decide the tree is still standing.
+        if (tree.health.Value <= 0f) return DiscoveryExclusionReasons.Dead;
+        return null;
     }
 
     /// <summary>
@@ -3965,16 +4052,25 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// tile. The handler revalidates the exact tile identity and never trusts
     /// this coordinate as the target of the native call.
     /// </summary>
-    private static IReadOnlyList<BridgePetBowlTarget> DiscoverPetBowlTargets(Farmer player)
+    private static IReadOnlyList<BridgePetBowlTarget> DiscoverPetBowlTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgePetBowlTarget>();
         List<BridgePetBowlTarget> result = new();
         foreach (StardewValley.Buildings.PetBowl bowl in location.buildings.OfType<StardewValley.Buildings.PetBowl>())
         {
-            if (bowl.daysOfConstructionLeft.Value > 0) continue;
+            // A bowl still being built exists on the map but is not yet a target; the engine's own countdown says so.
+            if (bowl.daysOfConstructionLeft.Value > 0)
+            {
+                exclusions.Record("petBowlTargets", DiscoveryExclusionReasons.NotReady);
+                continue;
+            }
             // A watered bowl admits no further watering, so it is not a target.
-            if (bowl.watered.Value) continue;
+            if (bowl.watered.Value)
+            {
+                exclusions.Record("petBowlTargets", DiscoveryExclusionReasons.AlreadyWatered);
+                continue;
+            }
             // Advertise only the tiles the native watering gate accepts, derived
             // from the building's own tile-property data rather than assumed to be
             // the footprint origin.
@@ -3996,7 +4092,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// for tile properties; the handler revalidates the coordinate and the
     /// location identity and never trusts this list.
     /// </summary>
-    private static IReadOnlyList<BridgeSlimeHutchTroughTarget> DiscoverSlimeHutchTroughTargets(Farmer player)
+    private static IReadOnlyList<BridgeSlimeHutchTroughTarget> DiscoverSlimeHutchTroughTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         if (player.currentLocation is not StardewValley.SlimeHutch hutch)
             return Array.Empty<BridgeSlimeHutchTroughTarget>();
@@ -4005,7 +4101,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         {
             if (!IsSlimeHutchTroughTile(SlimeHutchTroughColumn, y)) continue;
             // A watered spot admits no further watering, so it is not a target.
-            if (hutch.waterSpots[y - SlimeHutchTroughFirstRow]) continue;
+            if (hutch.waterSpots[y - SlimeHutchTroughFirstRow])
+            {
+                exclusions.Record("slimeHutchTroughTargets", DiscoveryExclusionReasons.AlreadyWatered);
+                continue;
+            }
             if (!IsTileWithinChebyshevRadius(player, SlimeHutchTroughColumn, y, TargetDiscoveryRadius)) continue;
             result.Add(new BridgeSlimeHutchTroughTarget(BuildSlimeHutchTroughTargetId(hutch, SlimeHutchTroughColumn, y), SlimeHutchTroughColumn, y));
         }
@@ -4616,7 +4716,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         who.checkForExhaustion(staminaBefore);
     }
 
-    private static IReadOnlyList<BridgeBaitCrabPotTarget> DiscoverBaitCrabPotTargets(Farmer player)
+    private static IReadOnlyList<BridgeBaitCrabPotTarget> DiscoverBaitCrabPotTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeBaitCrabPotTarget>();
@@ -4629,7 +4729,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 Vector2 tile = pair.Key;
                 StardewValley.Object placed = pair.Value;
                 if (result.Count >= 16) return result;
-                if (placed is not StardewValley.Objects.CrabPot crabPot || crabPot.QualifiedItemId != "(O)710" || crabPot.owner.Value != player.UniqueMultiplayerID || crabPot.bait.Value is not null || !IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) continue;
+                if (placed is not StardewValley.Objects.CrabPot crabPot || crabPot.QualifiedItemId != "(O)710" || crabPot.owner.Value != player.UniqueMultiplayerID || !IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) continue;
+                // `CrabPot.NeedsBait` is false for a pot that already carries bait (CrabPot.cs:64-71), and the drop-in
+                // that fills one is gated on that same predicate (:239). The pot exists and is not a bait target.
+                if (crabPot.bait.Value is not null)
+                {
+                    exclusions.Record("baitCrabPotTargets", DiscoveryExclusionReasons.AlreadyBaited);
+                    continue;
+                }
                 result.Add(new BridgeBaitCrabPotTarget(BuildBaitCrabPotTargetId(location, slot, (int)tile.X, (int)tile.Y), location.NameOrUniqueName, slot, (int)tile.X, (int)tile.Y, "(O)710", RequireDisplayName("(O)710"), "(O)685", crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), 1));
             }
         }
@@ -4744,58 +4851,81 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"fertilizer_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static IReadOnlyList<BridgeHarvestTarget> DiscoverHarvestTargets(Farmer player)
+    private static IReadOnlyList<BridgeHarvestTarget> DiscoverHarvestTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeHarvestTarget>();
-        return NearestFirst(location.terrainFeatures.Pairs
+        List<BridgeHarvestTarget> result = new();
+        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in NearestFirst(location.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
                 && dirt.crop is not null
+                // A forage crop in the dirt is `pickup_forage`'s subject rather than a `harvest_crop` row; the kind test
+                // stays in the filter because it is a KIND, not a state the engine refuses.
                 && !dirt.crop.forageCrop.Value
-                && dirt.readyForHarvest()
-                && dirt.crop.GetHarvestMethod() == StardewValley.GameData.Crops.HarvestMethod.Grab
                 && !string.IsNullOrWhiteSpace(dirt.crop.indexOfHarvest.Value)
-                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player)
-            .Take(64)
-            .Select(pair =>
+                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player))
+        {
+            if (result.Count >= 64) break;
+            StardewValley.TerrainFeatures.HoeDirt dirt = (StardewValley.TerrainFeatures.HoeDirt)pair.Value;
+            StardewValley.Crop crop = dirt.crop!;
+            // `HoeDirt.readyForHarvest()` is the engine's readiness answer (HoeDirt.cs:465). A crop still growing is
+            // not a harvest row, and until now the only evidence of it was the row's absence.
+            if (!dirt.readyForHarvest())
             {
-                StardewValley.TerrainFeatures.HoeDirt dirt = (StardewValley.TerrainFeatures.HoeDirt)pair.Value;
-                StardewValley.Crop crop = dirt.crop!;
-                string harvestId = crop.indexOfHarvest.Value;
-                StardewValley.Item? harvestItem = StardewValley.ItemRegistry.Create(harvestId, 1);
-                return new BridgeHarvestTarget(
-                    BuildCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, crop.netSeedIndex.Value, harvestId),
-                    (int)pair.Key.X,
-                    (int)pair.Key.Y,
-                    crop.netSeedIndex.Value ?? harvestId,
-                    harvestItem.QualifiedItemId,
-                    harvestItem.DisplayName,
-                    crop.RegrowsAfterHarvest(),
-                    dirt.readyForHarvest(),
-                    crop.forageCrop.Value,
-                    ExecutionManager.HarvestMethodName(crop.GetHarvestMethod()));
-            })
-            .ToArray();
+                exclusions.Record("harvestTargets", DiscoveryExclusionReasons.NotReady);
+                continue;
+            }
+            // `Crop.GetHarvestMethod()` (HoeDirt.cs:483): a scythe crop is taken by a TOOL swing and has its own family
+            // (`scythe_crop`), so a grab row for it would promise an interaction the engine does not offer.
+            if (crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab)
+            {
+                exclusions.Record("harvestTargets", DiscoveryExclusionReasons.WrongHarvestMethod);
+                continue;
+            }
+            string harvestId = crop.indexOfHarvest.Value;
+            StardewValley.Item? harvestItem = StardewValley.ItemRegistry.Create(harvestId, 1);
+            result.Add(new BridgeHarvestTarget(
+                BuildCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, crop.netSeedIndex.Value, harvestId),
+                (int)pair.Key.X,
+                (int)pair.Key.Y,
+                crop.netSeedIndex.Value ?? harvestId,
+                harvestItem.QualifiedItemId,
+                harvestItem.DisplayName,
+                crop.RegrowsAfterHarvest(),
+                dirt.readyForHarvest(),
+                crop.forageCrop.Value,
+                ExecutionManager.HarvestMethodName(crop.GetHarvestMethod())));
+        }
+        return result;
     }
 
-    private static IReadOnlyList<BridgeCropTarget> DiscoverCropTargets(Farmer player)
+    private static IReadOnlyList<BridgeCropTarget> DiscoverCropTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeCropTarget>();
         // `water_crop` refuses a row that is watered and `harvest_crop` needs the ready flag, so the row states both
         // from the engine's own predicates on this dirt instead of leaving the reader to infer them from the filter.
-        return NearestFirst(location.terrainFeatures.Pairs
-            .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null } dirt
-                && CropNeedsWater(dirt)
-                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player)
-            .Take(64)
-            .Select(pair =>
+        List<BridgeCropTarget> result = new();
+        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in NearestFirst(location.terrainFeatures.Pairs
+            .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null }
+                && IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)), player))
+        {
+            if (result.Count >= 64) break;
+            StardewValley.TerrainFeatures.HoeDirt dirt = (StardewValley.TerrainFeatures.HoeDirt)pair.Value;
+            // The tile's own water state, which `water_crop` refuses on (HoeDirt.cs:391-394). It is the exclusion the
+            // companion was told nothing about: a farm whose every crop was already watered answered `[]`.
+            if (dirt.isWatered())
             {
-                StardewValley.TerrainFeatures.HoeDirt dirt = (StardewValley.TerrainFeatures.HoeDirt)pair.Value;
-                string cropId = dirt.crop!.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown";
-                return new BridgeCropTarget(BuildCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value), (int)pair.Key.X, (int)pair.Key.Y, cropId, RequireDisplayName(dirt.crop.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown"), dirt.isWatered(), dirt.readyForHarvest());
-            })
-            .ToArray();
+                exclusions.Record("cropTargets", DiscoveryExclusionReasons.AlreadyWatered);
+                continue;
+            }
+            // The other half of `CropNeedsWater`, still read through that ONE spelling so this family and the whole-map
+            // count cannot disagree: the crop itself needs no water (`HoeDirt.needsWatering`, HoeDirt.cs:380).
+            if (!CropNeedsWater(dirt)) continue;
+            string cropId = dirt.crop!.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown";
+            result.Add(new BridgeCropTarget(BuildCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value), (int)pair.Key.X, (int)pair.Key.Y, cropId, RequireDisplayName(dirt.crop.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown"), dirt.isWatered(), dirt.readyForHarvest()));
+        }
+        return result;
     }
 
     /// <summary>

@@ -372,6 +372,31 @@ export type Snapshot = Readonly<{
    */
   soilTilesOmitted?: number | null;
   /**
+   * What discovery WITHHELD, and why - the sibling of the truncation counts above.
+   *
+   * <p>
+   * `soilTilesOmitted` states "the cap took rows"; this states "the filter took rows, and here is the reason". A
+   * family that filters its subjects and says nothing about the filter answers two different questions with one empty
+   * list: "there is a tree on this tile but you cannot chop it" and "there is no tree here". The companion then plans
+   * against an empty world - measured as a gate whose farm held only weeds scoring 100%.
+   * </p>
+   *
+   * <p>
+   * `family` is the WIRE FIELD NAME of the list the row explains (`treeChopSourceTargets`, `petTargets`, ...), so one
+   * array still attributes every row to its family; `reason` is a member of the closed vocabulary below; `count` is at
+   * least 1 and is a COUNT, never an identity - the subject the filter removed is by definition not addressable.
+   * ABSENT means no exclusion-reporting family was measured this snapshot; an empty array means one was measured and
+   * nothing was withheld. The two are different answers, exactly as `soilTiles` null differs from `soilTiles: []`.
+   * </p>
+   */
+  discoveryExclusions?: readonly Readonly<{ family: string; reason: string; count: number }>[];
+  /**
+   * The distinct (family, reason) rows the Mod's cap left out of `discoveryExclusions`, so a truncated register says
+   * so instead of reading as complete. Absent on a Mod older than the field; null when the family itself was not
+   * measured.
+   */
+  discoveryExclusionsOmitted?: number | null;
+  /**
    * Current Farmhand inventory Tool slots: the slot, its bounded label, the tool's upgrade level and the category word
    * a `tool:<category>` claim uses. `category` is absent on a Mod older than that projection.
    */
@@ -1903,6 +1928,8 @@ export const SNAPSHOT_KEYS = [
   "fixedInteractionPointsOmitted",
   "soilTiles",
   "soilTilesOmitted",
+  "discoveryExclusions",
+  "discoveryExclusionsOmitted",
   "toolSlots",
   "wateringCanFacts",
   "refillWateringCanTargets",
@@ -3691,6 +3718,57 @@ export type SnapshotFamilyRule = Readonly<{
   narrate?: (targets: unknown, rule: SnapshotFamilyRule) => string;
 }>;
 
+/**
+ * The closed vocabulary of reasons a discovery family may publish for withholding a subject it could SEE.
+ *
+ * A reason is admitted ONLY when the engine itself refuses the same action on the same subject today, and each entry
+ * carries the engine member that refuses it. That rule is what keeps this list from becoming a place to file
+ * inconvenient filters: a filter the engine does not share is a BUG in discovery, and it belongs on
+ * `tools/stardew-discovery-exclusions-backlog.json` as "not vanilla", not here as a reason.
+ *
+ * The Mod publishes the same set (`DiscoveryExclusionReasons` in
+ * `integrations/stardew/src/Core/Policy/DiscoveryExclusionReasons.cs`), and `host/src/protocol.test.ts` compares the two
+ * by name, so a token added on one side alone fails here rather than travelling.
+ */
+export const DISCOVERY_EXCLUSION_REASONS = Object.freeze([
+  // `Tree.tapped`: the engine's own chop refuses it - `if (tapped.Value) { return false; }` in `Tree.performToolAction`
+  // (Tree.cs:1116-1119).
+  "already_tapped",
+  // `Tree.stump`: the FELLED phase (`stump.Value = true`, Tree.cs:1495); the remaining wood is `chop_stump`'s subject.
+  "stump",
+  // `Tree.growthStage < Tree.treeStage`: the chop branch needs `growthStage.Value >= 5` (Tree.cs:1085) and an axe on a
+  // growing tree returns false (Tree.cs:1157-1160).
+  "not_grown",
+  // `Tree.health <= 0` / `Crop.dead`: the engine's own felled/spent terminal (`Tree.performToolAction` returns false at
+  // `health.Value <= -99f`, Tree.cs:1081).
+  "dead",
+  // `Pet.lastPetDay` / `FarmAnimal.wasPet`: today's friendship is already granted (Pet.cs:641-643, FarmAnimal.cs:745-749).
+  "petted_today",
+  // `HoeDirt.isWatered()` (`state.Value == 1`, HoeDirt.cs:391-394), `PetBowl.watered`, `SlimeHutch.waterSpots[]`.
+  "already_watered",
+  // `HoeDirt.readyForHarvest()` false (HoeDirt.cs:465); `Building.daysOfConstructionLeft` above zero.
+  "not_ready",
+  // `Crop.GetHarvestMethod() != HarvestMethod.Grab` (HoeDirt.cs:483): a scythe crop is taken by a tool swing.
+  "wrong_harvest_method",
+  // `CrabPot.NeedsBait` false because `bait.Value != null` (CrabPot.cs:64-71), and the drop-in is gated on it (:239).
+  "already_baited",
+] as const);
+
+/**
+ * One exclusion row: the family it explains, the reason, and how many subjects the filter took.
+ *
+ * The family must be a WIRE FIELD NAME this snapshot can carry, so a row cannot name a list nobody publishes; the
+ * reason must be in the closed vocabulary; the count is at least one, because a zero-count exclusion is not an
+ * exclusion.
+ */
+function isDiscoveryExclusionFact(entry: unknown): boolean {
+  if (!isRecord(entry) || !hasExactKeys(entry, ["family", "reason", "count"])) return false;
+  if (typeof entry.family !== "string" || !(SNAPSHOT_KEYS as readonly string[]).includes(entry.family)) return false;
+  if (typeof entry.reason !== "string" || !(DISCOVERY_EXCLUSION_REASONS as readonly string[]).includes(entry.reason))
+    return false;
+  return isNonNegativeSafeInteger(entry.count) && entry.count >= 1;
+}
+
 export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freeze([
   { field: "worldObjectTargets", maxItems: 48, accepts: isWorldObjectTargetFact },
   { field: "farmBuildingTargets", maxItems: 16, accepts: isFarmBuildingTargetFact },
@@ -3789,6 +3867,11 @@ export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freez
   { field: "animalDoorTargets", maxItems: 32, accepts: isAnimalDoorTargetFact },
   { field: "obeliskTargets", maxItems: 32, accepts: isObeliskTargetFact },
   { field: "buildingChestTargets", maxItems: 16, accepts: isBuildingChestTargetFact },
+  // What discovery WITHHELD, and why: the sibling of the truncation counts. One array for every family, because one
+  // additive field with a closed vocabulary is one validator; `family` carries the wire field name of the list the row
+  // explains, so the row is still attributable. `narrate` names the offending entry, because a reason outside the
+  // vocabulary is exactly what a field-only message hides.
+  { field: "discoveryExclusions", maxItems: 16, accepts: isDiscoveryExclusionFact, narrate: namedEntryReason },
 ]);
 
 /** The verdict for one family, or null when the field is absent or acceptable. */
@@ -3909,6 +3992,14 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     !isNonNegativeSafeInteger(value.soilTilesOmitted)
   )
     return "invalid_snapshot:soilTilesOmitted";
+  // The same count for the exclusion register: it says how many distinct (family, reason) rows the Mod's cap left
+  // out, and without it a bounded register reads as a complete one.
+  if (
+    value.discoveryExclusionsOmitted !== undefined &&
+    value.discoveryExclusionsOmitted !== null &&
+    !isNonNegativeSafeInteger(value.discoveryExclusionsOmitted)
+  )
+    return "invalid_snapshot:discoveryExclusionsOmitted";
   // A scalar record, not a family, so it is checked here rather than by `SNAPSHOT_FAMILY_RULES`. Absent means the Mod did
   // not measure it (the container actions were not advertised); a present one must be the whole shape.
   if (value.chestsSummary !== undefined && !isChestsSummaryFact(value.chestsSummary))
@@ -3979,6 +4070,9 @@ function snapshotDecisionScalarsAccepted(value: Record<string, unknown>): boolea
     (value.soilTilesOmitted === undefined ||
       value.soilTilesOmitted === null ||
       isNonNegativeSafeInteger(value.soilTilesOmitted)) &&
+    (value.discoveryExclusionsOmitted === undefined ||
+      value.discoveryExclusionsOmitted === null ||
+      isNonNegativeSafeInteger(value.discoveryExclusionsOmitted)) &&
     (value.chestsSummary === undefined || isChestsSummaryFact(value.chestsSummary)) &&
     isStringArray(value.capabilities) &&
     isNonNegativeSafeInteger(value.catalogRevision) &&

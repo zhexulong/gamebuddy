@@ -597,6 +597,18 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "on-demand",
   },
   {
+    path: "tools/check-stardew-discovery-exclusions.mjs",
+    reason:
+      "debt: measured red at HEAD - `discoveries 84, with exclusions 8, filters without a reason 5 (filed 5)` plus 10" +
+      " `backlog_token_available` findings, i.e. ten discovery families still filter a subject on a state the closed" +
+      " vocabulary already names (`not_ready` for five building-construction countdowns, `already_tapped` and `dead`" +
+      " for two whereabouts counts, `wrong_harvest_method`, and a baitless crab pot) and publish nothing about it." +
+      " Wiring it into L0 today would stop the ladder on a defect this register is meant to report; the ten are" +
+      " named, with their owner files, in tools/stardew-discovery-exclusions-backlog.json, and the gate turns green" +
+      " the moment the last of them records its reason",
+    runsIn: "on-demand",
+  },
+  {
     path: "tools/check-stardew-tool-family-stamina-evidence.mjs",
     reason: "elsewhere: static stamina-evidence gate over the tool families, runs on every push",
     runsIn: "pnpm check:stardew-tool-family-stamina-evidence",

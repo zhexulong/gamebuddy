@@ -649,6 +649,14 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "without the observation summary, and asserts the --fail-on-ungranted arming itself",
   },
   {
+    gate: "check-stardew-discovery-exclusions.mjs",
+    reason:
+      "its falsifier is tools/check-stardew-discovery-exclusions.test.mjs, which drives the gate's own measure() with a" +
+      " synthetic population: an unexplained state filter is named with the member it filtered on, a filed filter is" +
+      " named with its disposition instead of being silent, a filed state that now has a token is red, a stale entry is" +
+      " red, and zero population is exit 2",
+  },
+  {
     gate: "check-post-history-instructions-live.mjs",
     reason: "requires a live-run artifact and a mounted card; no offline rule set",
   },

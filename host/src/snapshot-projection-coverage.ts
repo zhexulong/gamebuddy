@@ -163,6 +163,10 @@ const WITHHELD_SCALAR_KEYS: Readonly<Record<string, string>> = Object.freeze({
     "A count used only while reading the map's fixed interaction points, paired with the family it counts: it says the list was truncated, and it would be a second spelling of `fixedInteractionPoints.length` in a per-turn fact block that already has to stay under 4 KB. Delivered by `stardew_observe`.",
   soilTilesOmitted:
     "The number of soil tiles the Mod's bound left out of `soilTiles`, paired with the family it counts. The per-turn fact block reports the published count (`soilTilesCount`), and without the omission beside it a 64-row neighbourhood would read as a complete patch that happens to be 64 tiles - which is how a truncated list became a defect once already. Delivered by `stardew_observe`.",
+  discoveryExclusions:
+    "What discovery withheld and why, one row per (family, reason). Delivered by `stardew_observe` beside the family lists it explains: a row only means something next to the list it emptied, and the per-turn fact block carries no family rows at all. Without it a family's `[]` answers 'there is a tree here but you cannot chop it' and 'there is no tree here' with the same value.",
+  discoveryExclusionsOmitted:
+    "The number of distinct (family, reason) rows the Mod's cap left out of `discoveryExclusions`, paired with the register it counts. Without it a bounded register reads as a complete one - the same defect `soilTilesOmitted` exists for, one layer out. Delivered by `stardew_observe`.",
   currentToolSlotItem:
     "The qualified item id in the current tool slot; `currentTool` and `toolSlots[].label` already publish the tool identity, which the environment line renders as a tool word, so this would be a second spelling of a fact already in the prompt.",
 });

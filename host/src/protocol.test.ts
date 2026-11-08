@@ -2018,6 +2018,83 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     ),
     "accepted",
   );
+  // The exclusion register: what discovery WITHHELD and why. `SNAPSHOT_FAMILY_RULES` is walked by BOTH the decision
+  // path (`validateSnapshot`) and the diagnostic (`diagnoseSnapshot`), so one assertion here covers the two - a family
+  // can no longer be validated in one and forgotten by the other.
+  const exclusionSnapshot = newEnvelope(
+    "snapshot",
+    scope,
+    {
+      ...snapshot,
+      discoveryExclusions: [{ family: "treeChopSourceTargets", reason: "already_tapped", count: 1 }],
+      discoveryExclusionsOmitted: 0,
+    },
+    "snapshot_discovery_exclusions_01",
+    now,
+  );
+  assert.equal(diagnoseBridgeMessage(exclusionSnapshot, scope, now), "accepted");
+  // MEASURED AND NOTHING WITHHELD is an empty array, not an absent field: the two are different answers.
+  assert.equal(
+    diagnoseBridgeMessage(
+      { ...exclusionSnapshot, payload: { ...exclusionSnapshot.payload, discoveryExclusions: [] } },
+      scope,
+      now,
+    ),
+    "accepted",
+  );
+  // A reason outside the closed vocabulary is refused, and the refusal names the entry it could not read.
+  assert.equal(
+    diagnoseBridgeMessage(
+      {
+        ...exclusionSnapshot,
+        payload: {
+          ...exclusionSnapshot.payload,
+          discoveryExclusions: [{ family: "treeChopSourceTargets", reason: "mossy", count: 1 }],
+        },
+      },
+      scope,
+      now,
+    ),
+    "invalid_snapshot:discoveryExclusions:entry0:keys=family|reason|count",
+  );
+  // The family must be a wire field this snapshot can carry, so a row cannot explain a list nobody publishes.
+  assert.equal(
+    diagnoseBridgeMessage(
+      {
+        ...exclusionSnapshot,
+        payload: {
+          ...exclusionSnapshot.payload,
+          discoveryExclusions: [{ family: "notAFamily", reason: "already_tapped", count: 1 }],
+        },
+      },
+      scope,
+      now,
+    ),
+    "invalid_snapshot:discoveryExclusions:entry0:keys=family|reason|count",
+  );
+  // A zero-count exclusion is not an exclusion, and an extra key is not a shape the wire declared.
+  assert.equal(
+    diagnoseBridgeMessage(
+      {
+        ...exclusionSnapshot,
+        payload: {
+          ...exclusionSnapshot.payload,
+          discoveryExclusions: [{ family: "petTargets", reason: "petted_today", count: 0 }],
+        },
+      },
+      scope,
+      now,
+    ),
+    "invalid_snapshot:discoveryExclusions:entry0:keys=family|reason|count",
+  );
+  assert.equal(
+    diagnoseBridgeMessage(
+      { ...exclusionSnapshot, payload: { ...exclusionSnapshot.payload, discoveryExclusionsOmitted: -1 } },
+      scope,
+      now,
+    ),
+    "invalid_snapshot:discoveryExclusionsOmitted",
+  );
   assert.equal(
     diagnoseBridgeMessage(
       {

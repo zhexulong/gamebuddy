@@ -630,6 +630,21 @@ public sealed record BridgeRecipeTarget(string TargetId, string DisplayName, boo
 /// </summary>
 public sealed record BridgeCookingStationTarget(string TargetId, string Location, int X, int Y, string StationKind);
 
+/// <summary>
+/// One reason one discovery family withheld subjects it could see: the wire field the family publishes into, the
+/// reason from the closed vocabulary (<c>DiscoveryExclusionReasons</c>), and how many subjects it took.
+///
+/// <para>
+/// <c>Family</c> carries the WIRE FIELD NAME (<c>treeChopSourceTargets</c>, <c>petTargets</c>, ...), so the row is
+/// attributable to the family whose list it explains even though all the rows travel in one array: one array is one
+/// additive field and one closed vocabulary, where a field per family would have been eighteen more positional
+/// parameters on this record and eighteen more validators for one fact. <c>Count</c> is at least one - a zero-count
+/// exclusion is not an exclusion - and is a COUNT, never an identity: the subject the filter removed is by
+/// definition not addressable, so what a reader can act on is "one mature tapped tree is in range".
+/// </para>
+/// </summary>
+public sealed record BridgeDiscoveryExclusion(string Family, string Reason, int Count);
+
 public sealed record BridgeSnapshot(
     long Revision,
     string Location,
@@ -845,7 +860,16 @@ public sealed record BridgeSnapshot(
     // The soil tiles the cap left out, beside the family it truncates: `soilTiles` is a bounded slice of a 13x13
     // neighbourhood, so without this count a patch larger than the bound is indistinguishable from a complete one.
     // Defaulted and LAST for the same reason as its siblings above: the positional list is already closed.
-    int? SoilTilesOmitted = null);
+    int? SoilTilesOmitted = null,
+    // What discovery WITHHELD, and why: the sibling of the truncation counts above. `soilTilesOmitted` states "the cap
+    // took rows"; this states "the filter took rows, and here is the reason". Without it a family's empty list answers
+    // "there is a tree here but you cannot chop it" and "there is no tree here" with the same `[]`, and the companion
+    // plans against an empty world. Null when no exclusion-reporting capability was advertised this snapshot (the
+    // family was not measured); an empty array when one was and nothing was withheld - the two are different answers,
+    // exactly as `soilTiles` null differs from `soilTiles: []`.
+    // Defaulted and LAST for the same reason as its siblings above: the positional list is already closed.
+    IReadOnlyList<BridgeDiscoveryExclusion>? DiscoveryExclusions = null,
+    int? DiscoveryExclusionsOmitted = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,
