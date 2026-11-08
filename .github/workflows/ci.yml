@@ -51,7 +51,15 @@ jobs:
       # Build the vendored source before pnpm packages the local dependency.
       # Host production build hashes the packaged artifact against this output.
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
+      # `npm_config_verify_deps_before_run` is load-bearing, not tidiness. pnpm 11 verifies and completes
+      # dependencies before it runs a script, so `pnpm build:magic-context` installed the whole workspace FIRST
+      # (measured 2026-11-07 in CI: 18:12:04 `Scope: all 5 workspace projects` .. 18:12:20 `Done in 16.3s`), and
+      # only then ran `bun run ... build` at 18:12:20. Both `file:` dependencies were imported from trees whose
+      # gitignored `dist/` did not exist yet, the later `pnpm install --frozen-lockfile` said `Lockfile is up to
+      # date, resolution step is skipped`, and `host build:test` failed with 32 TS2307 for those two packages.
       - run: pnpm build:magic-context
+        env:
+          npm_config_verify_deps_before_run: "false"
       # pi-koe is the Voice repository mounted as vendor/pi-koe (git submodule)
       # and is a pnpm workspace of its own, so the root install does not install
       # it. Its protocol package must exist BEFORE the root install: the root
@@ -62,6 +70,12 @@ jobs:
       - run: pnpm --dir vendor/pi-koe install --frozen-lockfile
       - run: pnpm run build
         working-directory: vendor/pi-koe/packages/voice-protocol
+      # The gate, at the seam where the accident was: after both vendored packages are built and BEFORE the
+      # install that imports them. It names the subpath and the file, so a checkout that cannot resolve
+      # `@cortexkit/pi-magic-context/tavern` says so here instead of 32 TS2307 lines at `host build:test`.
+      - run: node tools/check-vendor-build-artifacts.mjs
+        env:
+          npm_config_verify_deps_before_run: "false"
       - run: pnpm install --frozen-lockfile
       - run: pnpm check:host-windows-test-preflight
       - run: pnpm test:host-windows-test-preflight
@@ -291,9 +305,14 @@ jobs:
       # compile fails with `Cannot find module '@gamebuddy/voice-protocol'`.
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
       - run: pnpm build:magic-context
+        env:
+          # See the `host` job: without this, pnpm installs the workspace before running the build, and the
+          # `file:` dependencies are imported from trees that have no `dist/` yet.
+          npm_config_verify_deps_before_run: "false"
       - run: pnpm --dir vendor/pi-koe install --frozen-lockfile
       - run: pnpm run build
         working-directory: vendor/pi-koe/packages/voice-protocol
+      - run: node tools/check-vendor-build-artifacts.mjs
       - run: pnpm install --frozen-lockfile
       # The two gates that need it. `pnpm build:test` under host is the locked entry (`build-test-artifact`),
       # which is what `assertLiveRunArtifactFresh` in the harness loader requires.
