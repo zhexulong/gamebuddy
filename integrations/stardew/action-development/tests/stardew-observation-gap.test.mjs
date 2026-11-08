@@ -659,21 +659,28 @@ test("the real tree is measured, and every red it reports is named", () => {
   assert.deepEqual(report.consumption.unclassified, []);
 
   // G - quadrants, measured on the real tree. Every family is classified from its own discovery, so the population is
-  // 81 (not a list here): 56 actor-bounded, 9 map-fixed, 14 the actor's own state, 2 with no discovery at all.
+  // 82 (not a list here): 55 actor-bounded, 11 map-fixed, 14 the actor's own state, 2 with no discovery at all.
+  //
+  // Re-measured 2026-11-07. The two quadrant exemptions that used to excuse `MineElevatorFloorTargets` and
+  // `ShopTargets` are gone, and correctly so: both are read every turn now (`row.hud`, asserted below), so the gap they
+  // excused is closed and `red`/`baselined` are 0. What moved with them: those two families left the actor-bounded
+  // half, and `RefillWateringCanTargets` and `FixedInteractionPoints` entered the map-fixed half, which is why the four
+  // numbers that are not `hud` moved together.
   assert.deepEqual(report.quadrant.counts, {
-    local: 56,
-    mapFixed: 9,
+    local: 55,
+    mapFixed: 11,
     actorOwned: 14,
     undeclared: 2,
-    mapFixedUntargeted: 5,
-    red: 2,
-    baselined: 2,
+    mapFixedUntargeted: 6,
+    red: 0,
+    baselined: 0,
     ungranted: 0,
   });
-  assert.equal(report.quadrant.population, 81);
+  assert.equal(report.quadrant.population, 82);
   assert.deepEqual(report.quadrant.undeclared, ["Warps", "PendingLevelUpChoices"]);
   assert.deepEqual(report.quadrant.mapFixed, [
     "DoorTargets",
+    "RefillWateringCanTargets",
     "VillagerWhereabouts",
     "HarvestWhereabouts",
     "WateringWhereabouts",
@@ -682,16 +689,24 @@ test("the real tree is measured, and every red it reports is named", () => {
     "ShopTargets",
     "MineEntranceTargets",
     "MailboxTargets",
+    "FixedInteractionPoints",
   ]);
-  // The two the HUD lines closed (the mine ladders and the mailbox) are read every turn now, and the two that are left
-  // carry a baseline entry with its reason - so the red list itself is the F finding only, as before.
+  // The HUD lines closed the mine ladders, the mailbox and - measured 2026-11-07 - the elevator floors and the shops.
+  // Those last two used to be excused by a baseline entry; they are asserted as READ now, because an exemption that
+  // outlives the defect it excused hides the next one.
   const hudRead = report.quadrant.rows.filter((row) => row.hud).map((row) => row.key);
   assert.ok(hudRead.includes("mineEntranceTargets"), "the way out of a mine level is in the per-turn block now");
   assert.ok(hudRead.includes("mailboxTargets"));
+  for (const family of ["MineElevatorFloorTargets", "ShopTargets"]) {
+    const row = report.quadrant.rows.find((entry) => entry.family === family);
+    assert.ok(row, `${family} is not in the report at all`);
+    assert.equal(row.quadrant, "map_fixed", `${family} is no longer map-fixed`);
+    assert.equal(row.hud, true, `${family} left the per-turn read, so its closed gap has reopened`);
+  }
+  // Nothing map-fixed and targeted is left unread: a new one here has to be read and explained rather than absorbed.
   assert.deepEqual(
     report.quadrant.rows.filter((row) => row.quadrant === "map_fixed" && row.targeted && !row.hud).map((row) => row.family),
-    ["MineElevatorFloorTargets", "ShopTargets"],
-    "both are baselined; a new one here has to be read and explained rather than absorbed",
+    [],
   );
 });
 
@@ -1346,13 +1361,15 @@ test("the field-level section on the real tree: every decision read is a row fie
   const report = observeActionGaps({});
 
   // Printed separately from the verdicts because member extraction is heuristic: 21 reads across 10 handlers,
-  // 84 handlers whose target decision is delegated to a helper or a type outside the engine vocabulary. The four
-  // absent members are the baselined ones: three `crop` reads on a family whose own subject IS the crop, and
-  // `needsWatering`, whose answer `watered` already publishes.
+  // 90 handlers whose target decision is delegated to a helper or a type outside the engine vocabulary (re-measured
+  // 2026-11-07: 84 was the count before the families the quadrant section now lists as `RefillWateringCanTargets` and
+  // `FixedInteractionPoints` joined the surface). The four absent members are unchanged, and they are the baselined
+  // ones: three `crop` reads on a family whose own subject IS the crop, and `needsWatering`, whose answer `watered`
+  // already publishes.
   assert.deepEqual(report.fieldLevel.counts, { readMembers: 21, carried: 17, absent: 4, red: 0, baselined: 4 });
   assert.equal(report.fieldLevel.handlers, report.postconditionMutations.handlers);
   assert.equal(report.fieldLevel.handlersWithReads, 10);
-  assert.equal(report.fieldLevel.unparsed.length, 84);
+  assert.equal(report.fieldLevel.unparsed.length, 90);
   assert.ok(report.fieldLevel.unparsed.every((entry) => entry.reason.length > 0));
   assert.ok(
     !report.fieldLevel.unparsed.some((entry) => report.fieldLevel.rows.some((row) => row.actionId === entry.actionId)),
