@@ -484,6 +484,47 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
   });
 
   /**
+   * The body this Host actually answered with, driven through the panel.
+   *
+   * Not a hand-written fixture: it is the JSON printed by `frontend-l3`'s own Host probe
+   * (`{"source":"steam-registry","location":"D: · steam","status":"admission_required","modLoader":"present"}`),
+   * captured from this machine's real installation. The point of the case is that the mirror's rule and the product's
+   * wire shape are checked against one another, so a member added on either side fails here in seconds instead of in a
+   * twenty-driver live run whose reader may not even look at the field.
+   */
+  test("the Host's own captured answer renders one row carrying its mod loader", async ({ page }) => {
+    const captured = {
+      apiVersion: 1,
+      candidates: [
+        {
+          candidateId: "FrqUQwRekgzoqzjk5CzmjZ52YHuPKFtP",
+          source: "steam-registry",
+          label: "Stardew Valley",
+          hint: "Detected installation (path hidden)",
+          location: "D: · steam",
+          status: "admission_required",
+          modLoader: "present",
+        },
+      ],
+      diagnostics: ["library-without-game", "gog-metadata-unreadable"],
+    };
+    await page.route(BOOTSTRAP_ROUTE, (route) => route.fulfill(jsonOk(root)));
+    await mountGameDrawerRoutes(page);
+    await page.route(DRAFT_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })));
+    await page.route(DISCOVERY_ROUTE, (route) => route.fulfill(jsonOk(captured)));
+
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await openGameDrawer(page);
+
+    await expect(panel(page)).toHaveAttribute("data-state", "candidates");
+    await expect(panel(page).locator(".installation-candidate")).toHaveCount(1);
+    const chip = panel(page).locator('[data-mod-loader="present"]');
+    await expect(chip).toHaveCount(1);
+    // Both locales name SMAPI, so the sentence itself is asserted without pinning a translation.
+    await expect(chip).toContainText(/SMAPI/u);
+  });
+
+  /**
    * A scan the player did not ask for may not lock the folder picker.
    *
    * The component's own contract says the picker is offered in every state, because it
