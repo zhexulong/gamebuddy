@@ -660,6 +660,42 @@ const DECLARED = Object.freeze([
     witness: "// Teardown is best-effort: a failed close must not replace the verdict already read.",
     sites: 2,
   }),
+  Object.freeze({
+    kind: "early-return",
+    path: "host/src/host-service.ts",
+    symbol: "announceProviderWait",
+    reason:
+      "said once by design: the stderr line written above it carries the same instant, so a second sentence is not progress and a status that keeps reappearing reads as a stall",
+    witness: "if (this.#providerWaitAnnounced) return;",
+    sites: 1,
+  }),
+  Object.freeze({
+    kind: "silent-catch",
+    path: "tools/live-action.mjs",
+    symbol: "closeSession",
+    reason:
+      "closing a bridge that is already gone owes no unsubscribe, and the session is dropped either way so the next action opens a fresh one",
+    witness: "a bridge that is already gone owes no unsubscribe",
+    sites: 1,
+  }),
+  Object.freeze({
+    kind: "silent-catch",
+    path: "tools/live-run/game/stardew-world-survival-live.mjs",
+    symbol: "observeWorld",
+    reason:
+      "a connection that could not observe is closed best-effort; the reading this function returns is the observation or the named last error, so a close failure changes no claim",
+    witness: "A connection that could not observe is closed best-effort",
+    sites: 1,
+  }),
+  Object.freeze({
+    kind: "silent-catch",
+    path: "tools/live-run/game/stardew-world-survival-live.mjs",
+    symbol: "teardownWorld",
+    reason:
+      "a failed reclamation is reported through note(...) and then judged by the survivor list below it; throwing here would replace that measurement with an exception",
+    witness: "reclamation of the ",
+    sites: 1,
+  }),
 ]);
 
 function declarationProblems(declared) {
