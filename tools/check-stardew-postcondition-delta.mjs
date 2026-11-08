@@ -27,6 +27,13 @@
  *      The same evidence also carries an ASSERTION shape, `expected` / `actual`, which every warp, ride and facing
  *      action uses; dropping it would report the strongest evidence in the tree as absent.
  *
+ * red-proof: inject the gate's own `--self-verification` mode removes the `_after` reading from the real recolour handler
+ * (`RequestLocalColorPlacedObject`) at run time and demands this gate name it -> `postcondition_delta_half`, printed in
+ * the run's `self_verification` block (tools/check-stardew-postcondition-delta.mjs --self-verification)
+ * red-proof: fixture the tree as it stands carries four `postcondition_delta_absent` debts (`answer_dialogue`,
+ * `respond_level_up`, `sleep`, `send_multiplayer_chat`) whose declared postcondition is an EVENT, not an engine member,
+ * so the gate records them with reasons rather than passing them (tools/stardew-postcondition-delta-baseline.json)
+ *
  *   2. THE HOST's completion-evidence contract (`host/src/stardew-game-integration-adapter.ts`): a per-action `case`
  *      that the receipt must satisfy before the Host will call the action complete, either through a named predicate
  *      or an inline key list. That contract names the exact keys, so it is the receipt SCHEMA for those actions - and

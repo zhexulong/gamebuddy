@@ -1,3 +1,16 @@
+#!/usr/bin/env node
+/**
+ * Falsifiers for `tools/check-stardew-postcondition-delta.mjs`.
+ *
+ * red-proof: inject deleting the `_after` slot from a write handler that still prints `_before` ->
+ * `postcondition_delta_half:<action>:<member>`, naming the member the author forgot (test "deleting the after slot names
+ * the half with the member the author forgot", tools/check-stardew-postcondition-delta.test.mjs)
+ * red-proof: inject replacing a member read on the after side with a constant -> `postcondition_delta_not_measured`,
+ * because a slot that claims to be a reading but carries a literal is worse than an absent one (test "a constant, or a
+ * local assigned from nothing, is not a reading and the gate says which", tools/check-stardew-postcondition-delta.test.mjs)
+ * red-proof: inject a write action whose handler reads neither side -> `postcondition_delta_absent` (test "a write action
+ * whose after side is a captured local is named, not passed", tools/check-stardew-postcondition-delta.test.mjs)
+ */
 import assert from "node:assert/strict";
 import test from "node:test";
 

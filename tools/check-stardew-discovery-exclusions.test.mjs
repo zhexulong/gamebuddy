@@ -7,6 +7,16 @@
  * These cases drive the gate's own `measure()` with a synthetic population, so the verdict is measured rather than
  * assumed, and the real tree is asserted only for the facts that must stay true of it (a non-empty population, the
  * families that record, and the two vocabularies agreeing).
+ *
+ * red-proof: inject removing the recorder call from `DiscoverHarvestWhereabouts` while its `.Where` still drops unripe
+ * crops -> `stardew_discovery_exclusions_missing:harvestWhereabouts` (test "a filter on an explained member with no
+ * publication is named, with the member it filtered on", tools/check-stardew-discovery-exclusions.test.mjs)
+ * red-proof: inject leaving a filter filed in the backlog after its state gained a token ->
+ * `stardew_discovery_exclusions_backlog_token_available:DiscoverHarvestWhereabouts` (test "a filed filter whose state now
+ * has a token is red, so the register cannot rot", tools/check-stardew-discovery-exclusions.test.mjs)
+ * red-proof: history the ten `token_available` findings this gate produced on 2026-11-08 against the real tree - nine
+ * `not_ready`/`already_tapped`/`dead`/`wrong_harvest_method` filters filed instead of published -> exit 1 naming each
+ * family (tools/stardew-discovery-exclusions-backlog.json)
  */
 import assert from "node:assert/strict";
 import test from "node:test";

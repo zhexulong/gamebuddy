@@ -91,9 +91,9 @@ const SIBLING_FALSIFIER = /\.(?:test\.mjs|test\.ts|mutation\.mjs)$/u;
 const RED_PROOF = /red-proof:\s*([A-Za-z][A-Za-z-]*)\s+([\s\S]{12,})/u;
 /** The kinds, each answering "how was the gate seen red" differently. */
 const KINDS = new Set(["inject", "history", "fixture", "self-check"]);
-/** A repo-relative path inside a claim that must resolve. */
+/** A repo-relative path inside a claim that must resolve. Longest extension first, or `x.json` resolves to `x.js`. */
 const POINTER =
-  /(?:tools|host|dialogue-web|integrations|scripts|desktop|vendor|\.github|packages)\/[\w./-]+\.(?:mjs|cjs|js|ts|tsx|ps1|py|json|cs|yml)/gu;
+  /(?:tools|host|dialogue-web|integrations|scripts|desktop|vendor|\.github|packages)\/[\w./-]+\.(?:json|mjs|cjs|tsx|yml|ps1|cs|js|ts|py)/gu;
 /** A marker is prose: read from a comment line only. */
 const COMMENT_LINE = /^\s*(?:\/\/|\*|\/\*|#|--)/u;
 /** A marker's claim may continue this many comment lines below its anchor. */
