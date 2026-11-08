@@ -132,6 +132,15 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:vendored-bundle-leaks",
   },
   {
+    path: "tools/check-vendor-build-artifacts.mjs",
+    reason:
+      "elsewhere: asks whether the files the workspace's `file:` dependencies promise exist, so it must run AFTER " +
+      "`vendor/magic-context` and `vendor/pi-koe` are built and BEFORE the install that imports them; that seam is " +
+      "the `host` and `gates` CI jobs, not a prelive rung (a rung that ran it before the build would only measure " +
+      "an unbuilt checkout)",
+    runsIn: "pnpm check:vendor-build-artifacts",
+  },
+  {
     path: "tools/check-workflow-expressions.mjs",
     reason:
       "elsewhere: reads `.github/workflows/*.yml`; runs in the CI `gates` job, and a prelive rung that examined them " +

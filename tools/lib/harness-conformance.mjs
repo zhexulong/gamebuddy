@@ -415,6 +415,15 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "member-diff format that replaces a bare pair of counts",
   },
   {
+    gate: "check-vendor-build-artifacts.mjs",
+    reason:
+      "reads the workspace's `file:` dependencies and the `exports` their packages declare, then asks whether every " +
+      "promised file exists; its falsifier is tools/check-vendor-build-artifacts.test.mjs, which builds throwaway " +
+      "workspace trees with a built subpath missing, an `exports` written as a bare string (the shape that made the " +
+      "gate read a string's characters as fifteen files), an export escaping its own package, no `exports` at all, " +
+      "and no `file:` dependency to examine",
+  },
+  {
     gate: "check-vendored-bundle-leaks.mjs",
     reason:
       "reads a built bundle for the build machine's own paths (`bun build` inlined `E:\\\\projects\\\\…` into " +
