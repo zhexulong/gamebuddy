@@ -63,10 +63,9 @@ export function ProblemView({
         )}
         {stepLine !== null && (
           // One row of the same card, and the only thing this screen can offer when no control of
-          // its own is the step: what to do instead, in the catalogue's own words.
-          <p className="problem-step" data-testid="problem-step">
-            {stepLine}
-          </p>
+          // its own is the step: what to do instead, in the catalogue's own words. No class - a name with
+          // no rule behind it is what `check:class-name-declarations` exists to refuse.
+          <p data-testid="problem-step">{stepLine}</p>
         )}
       </section>
     </main>
