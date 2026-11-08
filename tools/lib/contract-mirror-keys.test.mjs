@@ -18,6 +18,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const CONTRACT = "host/src/game-browser-contract/index.ts";
+const SETTINGS_CONTRACT = "host/src/game-browser-contract/index.ts";
 const MIRROR = "dialogue-web/src/composed-reference-game-browser-api.ts";
 
 /** The members of one `strictObject({...})` schema block, split by whether the contract marks them optional. */
@@ -47,33 +48,66 @@ const diff = (left, right) => ({
   extra: [...right].filter((member) => !left.has(member)).sort(),
 });
 
-test("the mirror's required and optional candidate keys are the contract's, member for member", () => {
-  const contract = readFileSync(CONTRACT, "utf8");
-  const mirror = readFileSync(MIRROR, "utf8");
-  const schema = contractMembers(contract, "GameCandidateV1Schema");
-  const mirrorRequired = mirrorList(mirror, "INSTALLATION_CANDIDATE_REQUIRED_KEYS");
-  const mirrorOptional = mirrorList(mirror, "INSTALLATION_CANDIDATE_OPTIONAL_KEYS");
+/** The two-sided assertion, so both schemas are checked by one rule rather than two copies of it. */
+function assertMirrorMatchesContract({ label, schemaName, contract, mirror, requiredList, optionalList, consequence }) {
+  const schema = contractMembers(contract, schemaName);
+  const mirroredRequired = mirrorList(mirror, requiredList);
+  const mirroredOptional = mirrorList(mirror, optionalList);
 
-  const required = diff(schema.required, mirrorRequired);
+  const required = diff(schema.required, mirroredRequired);
   assert.deepEqual(
-    { missing: required.missing, extra: required.extra },
+    required,
     { missing: [], extra: [] },
-    `the contract's required candidate members and the mirror's differ:\n` +
+    `the contract's required ${label} members and the mirror's differ:\n` +
       `  + required by the contract, absent from the mirror: [${required.missing.join(", ")}]\n` +
       `  - in the mirror, not required by the contract: [${required.extra.join(", ")}]`,
   );
 
-  const optional = diff(schema.optional, mirrorOptional);
+  const optional = diff(schema.optional, mirroredOptional);
   assert.deepEqual(
-    { missing: optional.missing, extra: optional.extra },
+    optional,
     { missing: [], extra: [] },
-    `the contract's OPTIONAL candidate members and the mirror's differ. A member missing on the mirror's side is\n` +
-      `rejected at runtime as an invalid candidate, which the player meets as "cannot read the installation search":\n` +
+    `the contract's OPTIONAL ${label} members and the mirror's differ. ${consequence}\n` +
       `  + declared optional by the contract, not allowed by the mirror: [${optional.missing.join(", ")}]\n` +
       `  - allowed by the mirror, not declared by the contract: [${optional.extra.join(", ")}]`,
   );
 
   // And the populations are not empty, so this cannot pass by having found nothing.
-  assert.ok(schema.required.size >= 5, `examined ${schema.required.size} required member(s)`);
-  assert.ok(schema.optional.size >= 1, `examined ${schema.optional.size} optional member(s)`);
+  assert.ok(schema.required.size >= 4, `examined ${schema.required.size} required ${label} member(s)`);
+  assert.ok(
+    mirroredRequired.size === schema.required.size,
+    `the mirror lists all ${schema.required.size} required member(s)`,
+  );
+}
+
+test("the mirror's required and optional candidate keys are the contract's, member for member", () => {
+  assertMirrorMatchesContract({
+    label: "candidate",
+    schemaName: "GameCandidateV1Schema",
+    contract: readFileSync(CONTRACT, "utf8"),
+    mirror: readFileSync(MIRROR, "utf8"),
+    requiredList: "INSTALLATION_CANDIDATE_REQUIRED_KEYS",
+    optionalList: "INSTALLATION_CANDIDATE_OPTIONAL_KEYS",
+    consequence: "A member missing on the mirror's side is rejected at runtime as an invalid candidate.",
+  });
+});
+
+/**
+ * The player-settings reply, where the same defect shipped a second time.
+ *
+ * `windowMode` and `deniedActions` are `Type.Optional` in `StardewPlayerSettingsV1Schema`, and the mirror listed all seven
+ * members in one exact-key check - so a player who never chose a window mode (a five-key reply) was refused, and the
+ * surface said the settings could not be read with nothing to retry. Reported by a frontend reviewer 2026-11-08 from
+ * `g-defects.txt`, verified here against the contract's own schema.
+ */
+test("the mirror's player-settings keys are the contract's, and its optional members stay optional", () => {
+  assertMirrorMatchesContract({
+    label: "player-settings",
+    schemaName: "StardewPlayerSettingsV1Schema",
+    contract: readFileSync(SETTINGS_CONTRACT, "utf8"),
+    mirror: readFileSync(MIRROR, "utf8"),
+    requiredList: "SETTINGS_REQUIRED_KEYS",
+    optionalList: "SETTINGS_OPTIONAL_KEYS",
+    consequence: "A required member the contract marks optional leaves the settings surface unreadable.",
+  });
 });

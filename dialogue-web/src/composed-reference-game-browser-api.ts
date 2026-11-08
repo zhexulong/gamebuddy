@@ -96,7 +96,8 @@ const INSTALLATION_CANDIDATE_ALLOWED_KEYS: ReadonlySet<string> = new Set([
 function hasInstallationCandidateKeys(value: Record<string, unknown>): boolean {
   const own = Object.keys(value);
   return (
-    INSTALLATION_CANDIDATE_REQUIRED_KEYS.every((key) => own.includes(key)) && own.every((key) => INSTALLATION_CANDIDATE_ALLOWED_KEYS.has(key))
+    INSTALLATION_CANDIDATE_REQUIRED_KEYS.every((key) => own.includes(key)) &&
+    own.every((key) => INSTALLATION_CANDIDATE_ALLOWED_KEYS.has(key))
   );
 }
 const INSTALLATION_DIAGNOSTICS_MAX = 32;
@@ -566,17 +567,30 @@ function validateStardewCabinChoices(value: unknown): StardewCabinChoicesV1 {
   return Object.freeze({ apiVersion: 1, choices: Object.freeze(choices) });
 }
 
-const SETTINGS_KEYS = [
+const SETTINGS_REQUIRED_KEYS = [
   "apiVersion",
   "revision",
   "families",
   "advanceDayMinimumOnlineFarmers",
-  // Optional on the wire, and named here because a validator that accepts this shape must know every key the contract
-  // declares for it - otherwise a response carrying one is refused and the surface goes down with it.
-  "windowMode",
-  "deniedActions",
   "appliesToRunningGame",
 ] as const;
+/**
+ * The members the contract declares `Type.Optional` for player settings, and the reason the list is separate.
+ *
+ * This was one `SETTINGS_KEYS` list used with an exact-key check, and `windowMode`/`deniedActions` were added to it to stop
+ * a reply that CARRIED them being refused. That fixed one direction and broke the other: a player who never chose a window
+ * mode gets a reply without the key (the contract says so at `game-browser-contract/index.ts:586`), and the exact-key check
+ * then refused it - the surface went to "these settings cannot be read" with nothing to retry. Same class as the
+ * installation candidate one above, one function apart, so it is fixed the same way: required members present, nothing
+ * outside required-plus-optional, and each optional member validated on its own.
+ */
+const SETTINGS_OPTIONAL_KEYS = ["windowMode", "deniedActions"] as const;
+const SETTINGS_ALLOWED_KEYS: ReadonlySet<string> = new Set([...SETTINGS_REQUIRED_KEYS, ...SETTINGS_OPTIONAL_KEYS]);
+
+function hasSettingsKeys(value: Record<string, unknown>): boolean {
+  const own = Object.keys(value);
+  return SETTINGS_REQUIRED_KEYS.every((key) => own.includes(key)) && own.every((key) => SETTINGS_ALLOWED_KEYS.has(key));
+}
 const SETTINGS_FAMILY_KEYS = ["familyId", "denied"] as const;
 const SETTINGS_APPLIES_KEYS = [
   "actionPolicy",
@@ -629,7 +643,7 @@ const SETTINGS_SAVE_KEYS = [
 function validateStardewPlayerSettings(value: unknown): StardewPlayerSettingsV1 {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, SETTINGS_KEYS) ||
+    !hasSettingsKeys(value) ||
     value.apiVersion !== 1 ||
     !isSafeInteger(value.revision, 0) ||
     !Array.isArray(value.families) ||
@@ -692,9 +706,7 @@ function validateStardewInstallationDiscovery(value: unknown): StardewInstallati
   for (const candidate of value.candidates) {
     if (
       !isRecord(candidate) ||
-      !(
-        hasInstallationCandidateKeys(candidate)
-      ) ||
+      !hasInstallationCandidateKeys(candidate) ||
       !isInstallationCandidateId(candidate.candidateId) ||
       !isBoundedString(candidate.source, 1, 64) ||
       !isBoundedString(candidate.label, 1, 256) ||
