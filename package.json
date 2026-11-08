@@ -271,6 +271,7 @@
     "test:stardew-player-command-equivalence-audit": "node --test tools/stardew-player-command-equivalence-audit.test.mjs",
     "test:stardew-player-command-graph": "node --test tools/stardew-player-command-graph.test.mjs",
     "test:stardew-player-reachable-exits": "node --test integrations/stardew/action-development/tests/stardew-player-reachable-exits.test.mjs",
+    "test:stardew-promotion-parity": "node --test tools/check-stardew-promotion-parity.test.mjs",
     "test:stardew-reachable-exits-reconciliation": "node --test integrations/stardew/action-development/tests/stardew-reachable-exit-reconciliation.test.mjs",
     "test:stardew-receipt-attribution": "node --test tools/check-stardew-receipt-attribution.test.mjs",
     "test:stardew-rejected-layer-verdicts": "node --test integrations/stardew/action-development/tests/stardew-rejected-layer-verdicts.test.mjs",

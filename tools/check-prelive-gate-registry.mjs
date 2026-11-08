@@ -459,11 +459,6 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:spec-reachability",
   },
   {
-    path: "tools/check-stardew-action-promotion.mjs",
-    reason: "elsewhere: static promotion gate over the action surface, runs on every push in the CI gates job",
-    runsIn: "pnpm check:stardew-action-promotion",
-  },
-  {
     path: "tools/check-stardew-actor-admissibility.mjs",
     reason:
       "debt: measured red at HEAD - ENOENT on " +
