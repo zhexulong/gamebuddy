@@ -501,6 +501,12 @@ internal sealed partial class ExecutionManager
     /// that only a specific tool breaks is refused by name rather than swung at twelve times.
     ///
     /// <para>
+    /// The slot is read out of the PACK, not out of the actor's hand: <c>Fence.performToolAction</c> is reached through
+    /// <c>Tool.DoFunction</c>, which this handler calls with the tool itself (<see cref="UseNativeToolOnTile"/>), so the
+    /// selection the actor happens to hold is not an input - exactly the shape <c>clear_debris</c> takes its tool in.
+    /// </para>
+    ///
+    /// <para>
     /// A GATE is its own native branch: <c>Fence.performToolAction</c> removes one only for an <c>Axe</c> or a
     /// <c>Pickaxe</c> (Fence.cs:447-454), while <c>IsValidRemovalTool</c> is data-driven and answers true for a scythe
     /// when the fence declares no tool lists. Both halves are asked, so the refusal matches what the swing would do.
@@ -512,11 +518,11 @@ internal sealed partial class ExecutionManager
         reasonCode = "accepted";
         blockedBy = RefusalLayerToken.None;
         evidence = string.Empty;
-        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.CurrentToolIndex != slot || Game1.player.Items[slot] is not Tool candidate || !ReferenceEquals(Game1.player.CurrentTool, candidate))
+        if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Tool candidate)
         {
-            reasonCode = "remove_fence_tool_not_equipped_in_requested_slot";
-            evidence = $"slot={slot};slot_item={(slot >= 0 && slot < Game1.player.Items.Count ? Game1.player.Items[slot]?.QualifiedItemId ?? "empty" : "out_of_range")};current_slot={Game1.player.CurrentToolIndex};current_tool={DescribeTool(Game1.player.CurrentTool) ?? "none"}";
-            blockedBy = new RefusalLayerToken(RefusalLayerKind.Tool, DescribeToolCategory(Game1.player.CurrentTool));
+            reasonCode = "remove_fence_tool_not_owned_in_slot";
+            evidence = $"slot={slot};slot_item={(slot >= 0 && slot < Game1.player.Items.Count ? Game1.player.Items[slot]?.QualifiedItemId ?? "empty" : "out_of_range")}";
+            blockedBy = new RefusalLayerToken(RefusalLayerKind.Tool, "none");
             return false;
         }
         bool gateNeedsAxeOrPickaxe = fence.isGate.Value && candidate is not Axe && candidate is not Pickaxe;
@@ -857,10 +863,13 @@ internal sealed partial class ExecutionManager
             // method once settles it inside one receipt.
             if (droppedIn)
                 pedestal.itemModifyMutex.Update(location);
-            // The engine's own ingress consumes the stack AFTER a handled drop (:7781-7784). `performObjectDropInAction`
-            // never consumes anything itself, so a caller that forgot this would hand out free items.
+            // The engine's own ingress consumes the stack AFTER a handled drop (GameLocation.cs:7781-7784), and the item
+            // it spends is the one it HANDED to the pedestal - `who.CurrentItem`, the held one (:7772). This action hands
+            // the item out of the slot the caller named, so that slot is what the deposit comes out of;
+            // `Farmer.reduceActiveItemByOne` (Farmer.cs:5083) spends whatever the actor happens to be HOLDING instead,
+            // which is a different item, or a tool, or nothing at all.
             if (droppedIn)
-                Game1.player.reduceActiveItemByOne();
+                ConsumeOneFromSlot(slot);
         }
         catch (Exception nativeException)
         {
@@ -901,6 +910,20 @@ internal sealed partial class ExecutionManager
         return droppedIn && leftThePack
             ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "pedestal_item_placed", evidence)
             : this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "pedestal_postcondition_not_observed", evidence);
+    }
+
+    /// <summary>
+    /// Takes one unit out of a NAMED pack slot, with the engine's own bookkeeping for an emptied stack
+    /// (<c>Farmer.removeItemFromInventory</c>, Farmer.cs:5105-5116: the item's <c>actionWhenStopBeingHeld</c> runs and the
+    /// slot is cleared). The engine's counterpart, <c>Farmer.reduceActiveItemByOne</c> (Farmer.cs:5083), is this same
+    /// fact read from the HAND; the two agree only when the item being spent is the held one.
+    /// </summary>
+    private static void ConsumeOneFromSlot(int slot)
+    {
+        if (slot < 0 || slot >= Game1.player.Items.Count) return;
+        if (Game1.player.Items[slot] is not Item item) return;
+        item.Stack--;
+        if (item.Stack <= 0) Game1.player.removeItemFromInventory(item);
     }
 
     /// <summary>

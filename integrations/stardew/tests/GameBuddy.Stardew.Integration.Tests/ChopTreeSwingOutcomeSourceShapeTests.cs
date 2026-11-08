@@ -81,16 +81,25 @@ public sealed class ChopTreeSwingOutcomeSourceShapeTests
         // reported "the discovery family must be findable" for a function that was findable all along.
         Match discovery = Regex.Match(
             controller,
-            @"private static IReadOnlyList<BridgeTreeChopSourceTarget> DiscoverTreeChopSourceTargets\(Farmer player\)[\s\S]*?\n    \}",
+            @"private static IReadOnlyList<BridgeTreeChopSourceTarget> DiscoverTreeChopSourceTargets\([^)]*\)[\s\S]*?\n    \}",
             RegexOptions.None,
             TimeSpan.FromSeconds(2));
         discovery.Success.Should().BeTrue("the discovery family must be findable");
-        discovery.Value.Should().Contain(
-            "tree.health.Value > 0f",
-            "health is durability: a standing tree is one with health above zero");
         discovery.Value.Should().NotContain(
             "tree.health.Value == 1f",
             "a tree one swing from falling is not the population, it is a fixture");
+        // The standing-tree test moved into the ONE predicate that also names the reason a tree is not a source, so the
+        // filter and the reason cannot disagree. The pin follows it: health is durability, and `> 0f` is the engine's
+        // own still-standing answer (Tree.cs:587), read here as its negation.
+        Match exclusion = Regex.Match(
+            controller,
+            @"private static string\? TreeChopSourceExclusion\([^)]*\)[\s\S]*?\n    \}",
+            RegexOptions.None,
+            TimeSpan.FromSeconds(2));
+        exclusion.Success.Should().BeTrue("the chop-source predicate and its reason must be one decision");
+        exclusion.Value.Should().Contain(
+            "tree.health.Value <= 0f",
+            "health is durability: a standing tree is one with health above zero");
     }
 
     [Fact]

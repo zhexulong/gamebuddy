@@ -923,6 +923,101 @@ public sealed class TargetFamilyCompletenessTests
         }
 
         /// <summary>
+        /// A mature tree carrying MOSS. <c>Tree.performToolAction</c> strips it on the way through - it drops the moss
+        /// item, sets <c>hasMoss = false</c> and falls into the axe branch in the SAME swing (Tree.cs:1087-1120) - so
+        /// this is a tree an axe fells, and the fixture writes the state rather than deciding the answer.
+        /// </summary>
+        internal StardewValley.TerrainFeatures.Tree PlaceMossyTree(int x, int y)
+        {
+            var tree = new StardewValley.TerrainFeatures.Tree("1", StardewValley.TerrainFeatures.Tree.treeStage);
+            tree.hasMoss.Value = true;
+            this.Farm.terrainFeatures[new Vector2(x, y)] = tree;
+            return tree;
+        }
+
+        /// <summary>
+        /// A ready crop whose own <c>Data/Crops</c> row says <c>HarvestMethod.Scythe</c> - the only state
+        /// <c>scythe_crop</c> claims. The row is the one fact the shipped <c>Crop.GetHarvestMethod()</c> reads, so the
+        /// engine decides the method and this method writes data rather than an answer.
+        ///
+        /// <para>
+        /// The seed id is one no other fixture uses, because <c>Game1.cropData</c> is a STATIC dictionary this process
+        /// never reloads: a row written for the id the other crop helpers share would change what their own cases read.
+        /// </para>
+        /// </summary>
+        internal StardewValley.TerrainFeatures.HoeDirt PlaceScytheMethodCrop(int x, int y)
+        {
+            var dirt = new StardewValley.TerrainFeatures.HoeDirt();
+            SetInstanceField(dirt, "state", new NetInt(0));
+            dirt.crop = NewCrop(seedIndex: "999", phaseDaysLeft: 0, fullyGrown: true);
+            Game1.cropData![dirt.crop.netSeedIndex.Value!] = new StardewValley.GameData.Crops.CropData
+            {
+                HarvestMethod = StardewValley.GameData.Crops.HarvestMethod.Scythe,
+            };
+            this.Farm.terrainFeatures[new Vector2(x, y)] = dirt;
+            return dirt;
+        }
+
+        /// <summary>
+        /// A real <c>CrabPot</c> in the object layer, built the way every other native object in this world is: an
+        /// uninitialized instance whose NetFields are supplied, because <c>new CrabPot()</c> reaches <c>Data/Objects</c>
+        /// through the <c>Object</c> constructor.
+        ///
+        /// <para>
+        /// <paramref name="bait"/> null is the LUREMASTER pot: <c>CrabPot.NeedsBait</c> is
+        /// <c>bait == null &amp;&amp; !professions.Contains(11)</c> and <c>CrabPot.DayUpdate</c> fills such a pot without
+        /// any bait at all, so a ready pot with no bait is a state the game produces.
+        /// </para>
+        /// </summary>
+        internal StardewValley.Objects.CrabPot PlaceCrabPot(int x, int y, string? bait, string? output)
+        {
+            var pot = (StardewValley.Objects.CrabPot)FormatterServices.GetUninitializedObject(typeof(StardewValley.Objects.CrabPot));
+            SeedMissingNetFields(pot);
+            SetInstanceField(pot, "itemId", new NetString("710"));
+            SetInstanceField(pot, "netName", new NetString("Crab Pot"));
+            SetInstanceField(pot, "stack", new NetInt(1));
+            SetInstanceField(pot, "parentSheetIndex", new NetInt(710));
+            SetInstanceField(pot, "tileLocation", new NetVector2 { Value = new Vector2(x, y) });
+            SetInstanceField(pot, "heldObject", new NetRef<StardewValley.Object>());
+            SetInstanceField(pot, "fragility", new NetInt(0));
+            SetInstanceField(pot, "bigCraftable", new NetBool(true));
+            // `CrabPot()`'s own constructor writes this word (CrabPot.cs:54-60), and `GameLocation.checkAction` is the
+            // branch that reads it (GameLocation.cs:7758).
+            SetInstanceField(pot, "type", new NetString("interactive"));
+            SetInstanceField(pot, "tileIndexToShow", output is null ? 710 : 714);
+            typeof(Item).GetProperty("ItemId", BindingFlags.Instance | BindingFlags.Public)!.SetValue(pot, "710");
+            typeof(Item).GetField("_qualifiedItemId", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!
+                .SetValue(pot, "(O)710");
+            pot.owner.Value = ActorId;
+            pot.Location = this.Farm;
+            pot.readyForHarvest.Value = output is not null;
+            if (output is not null) pot.heldObject.Value = Item(output, 1);
+            if (bait is not null) pot.bait.Value = BaitItem(bait, 1);
+            this.Farm.objects[new Vector2(x, y)] = pot;
+            return pot;
+        }
+
+        /// <summary>One BAIT in a pack slot: an `Object` in the bait category, which is the engine's own predicate.</summary>
+        internal void PutBaitInPackSlot(int slot, string qualifiedItemId, int stack) =>
+            this.PutInPackSlot(slot, qualifiedItemId, stack, category: StardewValley.Object.baitCategory);
+
+        private static StardewValley.Object BaitItem(string qualifiedItemId, int stack)
+        {
+            StardewValley.Object bait = PlacedObject(qualifiedItemId, name: null, category: StardewValley.Object.baitCategory);
+            bait.Stack = stack;
+            return bait;
+        }
+
+        /// <summary>An object in a pack slot carrying a category, which is what the engine's own predicates read.</summary>
+        internal void PutInPackSlot(int slot, string qualifiedItemId, int stack, int category)
+        {
+            while (this.Actor.Items.Count <= slot) this.Actor.Items.Add(null!);
+            StardewValley.Object item = PlacedObject(qualifiedItemId, name: null, category: category);
+            item.Stack = stack;
+            this.Actor.Items[slot] = item;
+        }
+
+        /// <summary>
         /// A mature bush in bloom, built the way the engine builds one and stored where the engine stores one.
         ///
         /// `Bush.size == 4` makes `inBloom()` return `readyForHarvest()` and `readyForHarvest()` return
@@ -1320,7 +1415,15 @@ public sealed class TargetFamilyCompletenessTests
             var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "chest_store", "chest_retrieve" });
             var executions = new ExecutionManager(new DummyMonitor(), () => publication);
             MethodInfo method = typeof(ExecutionManager).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)!;
-            object?[] arguments = method.IsStatic ? new object?[] { this.Actor } : new object?[] { this.Actor };
+            // The argument list comes from the method's OWN parameters rather than a hard-coded `{ Actor }`: a family that
+            // gained a parameter (the exclusion recorder, which reports what the family WITHHELD) must not turn this probe
+            // into `TargetParameterCountException`, and a probe that assumed the shape would report the family as
+            // unconstructable instead of the disagreement it exists to find.
+            object?[] arguments = method.GetParameters()
+                .Select(parameter => parameter.ParameterType == typeof(Farmer)
+                    ? (object?)this.Actor
+                    : new DiscoveryExclusionRecorder())
+                .ToArray();
             return method.Invoke(method.IsStatic ? null : executions, arguments)!;
         }
 

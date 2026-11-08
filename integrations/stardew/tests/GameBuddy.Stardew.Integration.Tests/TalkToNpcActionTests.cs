@@ -182,8 +182,11 @@ public sealed class TalkToNpcActionTests
         resolution.Should().NotContain("friendshipData");
 
         // The branch's own precondition: with an object in hand native takes the gift path
-        // (NPC.cs:2760) instead of the talk branch. Both entry points check it.
-        code.Should().Contain("Game1.player.ActiveObject is not null");
+        // (`who.ActiveObject != null`) and the talk branch is gated on `who.ActiveObject == null`,
+        // so the hand is INPUT SELECTION - emptied for the call, put back afterwards. Both entry
+        // points do it, and the refusal that survives is the one no selection can repair.
+        code.Should().Contain("SelectEmptyHandedSlot(");
+        code.Should().Contain("Game1.player.CurrentToolIndex = previousSlot");
         code.Should().Contain("\"hands_not_empty\"");
         body.Should().Contain("\"hands_not_empty\"");
         executed.Should().Contain("\"hands_not_empty\"");

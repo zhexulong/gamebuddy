@@ -274,9 +274,10 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "harvest_target_unavailable", $"target={targetX},{targetY}");
 
     StardewValley.Crop crop = dirt.crop;
-    // HoeDirt.performUseAction promotes a Golden Scythe to a scythe
-    // harvest even for a crop whose data says Grab. This narrow action
-    // exposes only the ordinary native Grab path, so reject that override.
+    // HoeDirt.performUseAction promotes the `(W)66` scythe to a scythe
+    // harvest even for a crop whose data says Grab (HoeDirt.cs:484-487). This
+    // narrow action exposes only the ordinary native Grab path, so reject that
+    // override.
     if (Game1.player.CurrentTool is StardewValley.Tool selectedTool
         && selectedTool.isScythe()
         && string.Equals(selectedTool.ItemId, "66", StringComparison.Ordinal))
@@ -842,8 +843,12 @@ internal sealed partial class ExecutionManager
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         Farmer player = Game1.player;
-        if (expectedQualifiedItemId != "(O)685") return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_bait_item", $"item={expectedQualifiedItemId}");
-        if (slot < 0 || slot >= player.Items.Count || player.Items[slot] is not StardewValley.Object bait || bait.QualifiedItemId != "(O)685" || bait.Stack <= 0) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_not_owned_in_slot", $"slot={slot}");
+        // THE BAIT IS WHATEVER THE POT ACCEPTS, not one item id. `CrabPot.performObjectDropInAction` takes any `Object`
+        // in the bait category while the pot still needs bait (CrabPot.cs:232-255), which covers Wild Bait, Magnet Bait
+        // and every other bait in the game; the request names the item it means and the pot's own probe decides below.
+        if (slot < 0 || slot >= player.Items.Count || player.Items[slot] is not StardewValley.Object bait || bait.Stack <= 0
+            || !string.Equals(bait.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_not_owned_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
         GameLocation location = player.currentLocation;
         // 5.2: out of the native radius, walk in rather than refuse. The bait item is
         // validated above; the pot and its state are re-checked after the walk inside
@@ -875,22 +880,28 @@ internal sealed partial class ExecutionManager
     private LocalExecutionReceipt ExecuteBaitCrabPot(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
         Farmer player = Game1.player;
-        if (expectedQualifiedItemId != "(O)685") return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "unsupported_bait_item", $"item={expectedQualifiedItemId}");
-        if (slot < 0 || slot >= player.Items.Count || player.Items[slot] is not StardewValley.Object bait || bait.QualifiedItemId != "(O)685" || bait.Stack <= 0) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_not_owned_in_slot", $"slot={slot}");
+        if (slot < 0 || slot >= player.Items.Count || player.Items[slot] is not StardewValley.Object bait || bait.Stack <= 0
+            || !string.Equals(bait.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_not_owned_in_slot", $"slot={slot};expected={expectedQualifiedItemId}");
         GameLocation location = player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? placed) || placed is not StardewValley.Objects.CrabPot crabPot || crabPot.QualifiedItemId != "(O)710" || crabPot.owner.Value != player.UniqueMultiplayerID || crabPot.bait.Value is not null || !string.Equals(BuildBaitCrabPotTargetId(location, slot, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_crab_pot_target_unavailable", $"target={targetX},{targetY}");
-        int beforeCount = CountQualifiedItem(player, "(O)685");
+        // THE POT'S OWN VERDICT, ASKED BEFORE THE WRITE: `probe: true` runs the acceptance test (an `Object` in the bait
+        // category, while `NeedsBait` still holds) and writes nothing, so an item the pot would refuse is named here
+        // rather than driven through the native entry.
+        if (!crabPot.performObjectDropInAction(bait, probe: true, player))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_not_accepted_by_pot", $"target={targetX},{targetY};item={expectedQualifiedItemId};pot=(O)710;bait_present={(crabPot.bait.Value is not null).ToString().ToLowerInvariant()}");
+        int beforeCount = CountQualifiedItem(player, expectedQualifiedItemId);
         int previousSlot = player.CurrentToolIndex;
         bool handled;
         try { player.CurrentToolIndex = slot; handled = location.checkAction(new xTile.Dimensions.Location(targetX, targetY), Game1.viewport, player); }
         finally { player.CurrentToolIndex = previousSlot; }
-        int afterCount = CountQualifiedItem(player, "(O)685");
-        bool succeeded = handled && crabPot.bait.Value?.QualifiedItemId == "(O)685" && crabPot.owner.Value == player.UniqueMultiplayerID && afterCount == beforeCount - 1;
+        int afterCount = CountQualifiedItem(player, expectedQualifiedItemId);
+        bool succeeded = handled && crabPot.bait.Value?.QualifiedItemId == expectedQualifiedItemId && crabPot.owner.Value == player.UniqueMultiplayerID && afterCount == beforeCount - 1;
         ExecutionState state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = succeeded ? "crab_pot_baited" : "bait_crab_pot_postcondition_unavailable";
-        if (succeeded) { this.baitCrabPotResultTarget = new BridgeBaitCrabPotResultTarget(expectedTargetId, location.NameOrUniqueName, slot, targetX, targetY, "(O)710", RequireDisplayName("(O)710"), "(O)685", crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), 1); this.baitCrabPotResultExecutionId = executionId; this.baitCrabPotResultRequestId = requestId; this.baitCrabPotResultRevision = this.revision; this.baitCrabPotResultDay = Game1.Date.TotalDays; }
-        string evidence = $"source=(O)685;location={location.NameOrUniqueName};x={targetX};y={targetY};target={expectedTargetId};pot=(O)710;slot={slot};owner={crabPot.owner.Value};bait_before=none;bait_after={crabPot.bait.Value?.QualifiedItemId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount};actionable={(player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp).ToString().ToLowerInvariant()};active_execution=null";
+        if (succeeded) { this.baitCrabPotResultTarget = new BridgeBaitCrabPotResultTarget(expectedTargetId, location.NameOrUniqueName, slot, targetX, targetY, "(O)710", RequireDisplayName("(O)710"), expectedQualifiedItemId, crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), 1); this.baitCrabPotResultExecutionId = executionId; this.baitCrabPotResultRequestId = requestId; this.baitCrabPotResultRevision = this.revision; this.baitCrabPotResultDay = Game1.Date.TotalDays; }
+        string evidence = $"source={expectedQualifiedItemId};location={location.NameOrUniqueName};x={targetX};y={targetY};target={expectedTargetId};pot=(O)710;slot={slot};owner={crabPot.owner.Value};bait_before=none;bait_after={crabPot.bait.Value?.QualifiedItemId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount};actionable={(player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp).ToString().ToLowerInvariant()};active_execution=null";
         LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence); this.Remember(receipt); this.AddTrace(receipt); return receipt;
     }
 
@@ -1566,12 +1577,16 @@ internal sealed partial class ExecutionManager
     /// <summary>
     /// Harvest exactly one ready Scythe-method crop (e.g. wheat/amaranth)
     /// through the native HoeDirt.performToolAction scythe branch (target
-    /// version 1.6). The equipped scythe must be the current tool. Ordinary
-    /// Grab-method crops stay exclusively in harvest_crop; this action never
-    /// uses the Golden Scythe grab override (HoeDirt line 700), which would
-    /// force-harvest a Grab crop. Fresh postcondition: the harvested item
-    /// entered the inventory and the crop was destroyed/regrown by the native
-    /// call, verified from live game state.
+    /// version 1.6). The handler takes the scythe its own `tool:scythe` claim
+    /// names. Ordinary Grab-method crops stay exclusively in harvest_crop:
+    /// this action's target set is `harvestMethod == Scythe` (or a dead crop),
+    /// and `HoeDirt.performToolAction` harvests that set with every scythe the
+    /// engine's own `MeleeWeapon.IsScythe` accepts (MeleeWeapon.cs:504-516).
+    /// The `(W)66` scythe only WIDENS that branch (`t.ItemId == "66"`,
+    /// HoeDirt.cs:714), so it is not a reason to refuse a target this action
+    /// owns. Fresh postcondition: the harvested item entered the inventory and
+    /// the crop was destroyed/regrown by the native call, verified from live
+    /// game state.
     /// </summary>
     public LocalExecutionReceipt RequestLocalScytheCrop(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
@@ -1676,7 +1691,6 @@ internal sealed partial class ExecutionManager
             if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
                 || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
                 || dirt.crop is null
-                || weapon.ItemId == "66"
                 || !ScytheCropTarget(
                     hasCrop: true,
                     forageCrop: dirt.crop.forageCrop.Value,

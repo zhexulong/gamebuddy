@@ -188,7 +188,13 @@ public sealed class FarmAnimalPetActionTests
         string discovery = MethodBody(Read(ControllerFile), "private static IReadOnlyList<BridgeFarmAnimalPetTarget> DiscoverFarmAnimalPetTargets(");
 
         discovery.Should().Contain("location.animals.Values", "farm animals live in the farm AND inside every barn/coop");
-        discovery.Should().Contain("!animal.wasPet.Value", "the engine's own per-farmer, per-day marker decides");
+        // The day marker is still the engine's own per-farmer, per-day `wasPet` - read as the GUARD it now is, and
+        // PUBLISHED as the reason: an animal this farmer already petted is withheld with `petted_today` instead of
+        // vanishing from a list that reads the same as "no animals here".
+        discovery.Should().Contain("if (animal.wasPet.Value)", "the engine's own per-farmer, per-day marker decides");
+        discovery.Should().Contain(
+            "exclusions.Record(\"farmAnimalPetTargets\", DiscoveryExclusionReasons.PettedToday)",
+            "a withheld animal must be counted under the reason that withheld it");
         discovery.Should().Contain("TargetDiscoveryRadius");
         discovery.Should().Contain("OrderBy(", "a wanderer's dictionary order is neither spatial nor stable");
         discovery.Should().NotContain("animal.happiness", "the row publishes what a caller can act on, not the whole animal");
@@ -200,7 +206,7 @@ public sealed class FarmAnimalPetActionTests
         string controller = Read(ControllerFile);
 
         controller.Should().Contain(
-            "advertisedCapabilities.Contains(\"pet_farm_animal\", StringComparer.Ordinal) ? DiscoverFarmAnimalPetTargets(player) : null",
+            "advertisedCapabilities.Contains(\"pet_farm_animal\", StringComparer.Ordinal) ? DiscoverFarmAnimalPetTargets(player, discoveryExclusions) : null",
             "a family published without its capability is a target the caller cannot address");
         // And the world-not-ready snapshot answers null for it, like every other family, so no consumer plans from it.
         controller.Should().Contain("FarmAnimalPetTargets: null");

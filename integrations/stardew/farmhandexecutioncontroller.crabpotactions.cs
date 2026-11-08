@@ -94,12 +94,6 @@ internal sealed partial class ExecutionManager
             return admissionRejection;
 
         Farmer player = Game1.player;
-        // GameLocation.checkAction reaches Object.checkForAction only while the
-        // farmer has no active object; with a held item the same entry would
-        // instead run the drop-in probe against this pot.
-        if (player.ActiveObject is not null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", "active_object_held");
-
         GameLocation location = player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? placed)
@@ -110,8 +104,14 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_target_changed", $"target={targetX},{targetY}");
         // Admission hard gate (source-corrected): only the mature 714 branch may
         // settle. Any other state is rejected without invoking checkForAction, so
-        // the unbaited non-714 removal branch (CrabPot.cs:302-321) is unreachable.
-        if (!crabPot.readyForHarvest.Value || crabPot.tileIndexToShow != 714 || crabPot.heldObject.Value is null || crabPot.bait.Value is null)
+        // the unbaited non-714 removal branch (the second arm of
+        // `CrabPot.checkForAction`) is unreachable.
+        // BAIT IS NOT PART OF THIS GATE: `CrabPot.DayUpdate` fills a pot that
+        // carries no bait at all for a Luremaster - `CrabPot.NeedsBait` is
+        // `bait == null && !professions.Contains(11)`, and the day update returns
+        // early only while `NeedsBait` holds - so demanding bait refused a mature
+        // pot the profession had just filled.
+        if (!crabPot.readyForHarvest.Value || crabPot.tileIndexToShow != 714 || crabPot.heldObject.Value is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_not_ready", $"target={targetX},{targetY};ready={crabPot.readyForHarvest.Value.ToString().ToLowerInvariant()};tile_index={crabPot.tileIndexToShow};held={(crabPot.heldObject.Value is null ? "none" : crabPot.heldObject.Value.QualifiedItemId)};bait={(crabPot.bait.Value?.QualifiedItemId ?? "none")}");
         // 5.2: out of the native radius, walk in rather than refuse. The pot and its
         // maturity are validated above; both are re-checked after the walk inside the
@@ -139,15 +139,12 @@ internal sealed partial class ExecutionManager
     /// Executes collect_crab_pot_output against the current world, re-validating the
     /// pot and its maturity because an approach leg may have taken several ticks. Shared
     /// by the in-range path and the post-approach path. Restores the same required
-    /// order the in-range path had: advancement gate, then the ActionableObject check,
-    /// then the native checkAction.
+    /// order the in-range path had: advancement gate, then the hand the native entry
+    /// needs, then the native checkAction.
     /// </summary>
     private LocalExecutionReceipt ExecuteCollectCrabPotOutput(string executionId, string requestId, int targetX, int targetY, string expectedTargetId)
     {
         Farmer player = Game1.player;
-        if (player.ActiveObject is not null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "player_not_actionable", "active_object_held");
-
         GameLocation location = player.currentLocation;
         Vector2 tile = new(targetX, targetY);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? placed)
@@ -156,7 +153,7 @@ internal sealed partial class ExecutionManager
             || crabPot.owner.Value != player.UniqueMultiplayerID
             || !string.Equals(BuildCollectCrabPotTargetId(location, targetX, targetY), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_target_changed", $"target={targetX},{targetY}");
-        if (!crabPot.readyForHarvest.Value || crabPot.tileIndexToShow != 714 || crabPot.heldObject.Value is null || crabPot.bait.Value is null)
+        if (!crabPot.readyForHarvest.Value || crabPot.tileIndexToShow != 714 || crabPot.heldObject.Value is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crab_pot_not_ready", $"target={targetX},{targetY};ready={crabPot.readyForHarvest.Value.ToString().ToLowerInvariant()};tile_index={crabPot.tileIndexToShow};held={(crabPot.heldObject.Value is null ? "none" : crabPot.heldObject.Value.QualifiedItemId)};bait={(crabPot.bait.Value?.QualifiedItemId ?? "none")}");
 
         StardewValley.Object output = crabPot.heldObject.Value;
@@ -166,7 +163,25 @@ internal sealed partial class ExecutionManager
         string outputQualifiedItemId = output.QualifiedItemId;
         int inventoryBefore = CountQualifiedItem(player, outputQualifiedItemId);
         int fishingExperienceBefore = player.experiencePoints[1];
-        bool nativeHandled = location.checkAction(new xTile.Dimensions.Location(targetX, targetY), Game1.viewport, player);
+        // THE NATIVE ENTRY'S OWN HAND PRECONDITION, MET RATHER THAN REFUSED. `GameLocation.checkAction` reaches the pot's
+        // `checkForAction` only while `who.ActiveObject == null` (GameLocation.cs:7760); with an object in hand the same
+        // entry runs the drop-in probe against the pot instead (:7766-7788) and would try to put the held item in it.
+        // The hand is INPUT SELECTION, not a world fact: hold a slot whose item is not an object, call, put the
+        // selection back. A pack with an object in every slot is the one hand state no selection repairs.
+        int previousSlot = player.CurrentToolIndex;
+        int emptyHandSlot = SelectEmptyHandedSlot(player);
+        if (emptyHandSlot < 0)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "hands_not_empty", $"target={expectedTargetId};hand_item={player.ActiveObject?.QualifiedItemId ?? "none"};slot=every_slot_holds_an_object");
+        bool nativeHandled;
+        try
+        {
+            player.CurrentToolIndex = emptyHandSlot;
+            nativeHandled = location.checkAction(new xTile.Dimensions.Location(targetX, targetY), Game1.viewport, player);
+        }
+        finally
+        {
+            player.CurrentToolIndex = previousSlot;
+        }
 
         int inventoryAfter = CountQualifiedItem(player, outputQualifiedItemId);
         int fishingExperienceAfter = player.experiencePoints[1];
@@ -196,5 +211,24 @@ internal sealed partial class ExecutionManager
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:(O)710:collect-crab-pot";
         return $"collect_crab_pot_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
+    }
+
+    /// <summary>
+    /// The slot that puts the actor's hand where a native object interaction needs it: <c>ActiveObject == null</c>.
+    /// <c>Farmer.ActiveObject</c> is <c>ActiveItem as Object</c> (Farmer.cs:1686-1694), so an empty slot and a tool slot
+    /// both answer null while a plain object does not - which is exactly the test <c>GameLocation.checkAction</c> makes
+    /// before it reaches an object's own <c>checkForAction</c> (GameLocation.cs:7760).
+    ///
+    /// <para>
+    /// The index travels back to the caller so the restore sits in a <c>finally</c> beside the call it was selected for.
+    /// <c>-1</c> is the one hand state no selection can repair: an object in every slot.
+    /// </para>
+    /// </summary>
+    private static int SelectEmptyHandedSlot(Farmer farmer)
+    {
+        for (int slot = 0; slot < farmer.Items.Count; slot++)
+            if (farmer.Items[slot] is not StardewValley.Object)
+                return slot;
+        return -1;
     }
 }

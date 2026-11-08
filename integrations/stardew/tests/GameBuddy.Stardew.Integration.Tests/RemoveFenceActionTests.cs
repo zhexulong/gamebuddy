@@ -146,11 +146,13 @@ public sealed class RemoveFenceActionTests
     }
 
     /// <summary>
-    /// The tool must be the one the actor is HOLDING, and named by the slot it occupies: a slot that is not the current
-    /// tool is a different request than the one the swing would use.
+    /// THE TOOL COMES OUT OF THE PACK, NOT OUT OF THE HAND. <c>Fence.performToolAction</c> is reached through
+    /// <c>Tool.DoFunction</c>, which this handler calls with the tool itself (<c>UseNativeToolOnTile</c>), so the
+    /// selection the actor happens to be holding is not an input - the same shape <c>clear_debris</c> takes its tool
+    /// in. The old guard demanded <c>CurrentToolIndex == slot</c> and refused a caller that owned the axe.
     /// </summary>
     [Fact]
-    public void AToolThatIsNotHeldInTheNamedSlot_IsRefusedByName()
+    public void AToolInANamedSlotIsUsedEvenWhenTheActorHoldsSomethingElse()
     {
         using var world = FenceWorld.Create();
         world.PlaceFence(x: 2, y: 2);
@@ -159,9 +161,34 @@ public sealed class RemoveFenceActionTests
 
         LocalExecutionReceipt receipt = world.Request(2, 2, slot: 3);
 
+        receipt.ReasonCode.Should().NotBe(
+            "remove_fence_tool_not_equipped_in_requested_slot",
+            "the axe IS in the slot the caller named, and the swing is driven with that tool object");
+        receipt.State.Should().Be(
+            ExecutionState.Uncertain,
+            "the swing ran with the named slot's axe; the fence's own removal sound is the harness limit this process cannot finish");
+        receipt.ReasonCode.Should().Be("remove_fence_native_exception");
+        receipt.Evidence.Should().Contain("slot=3");
+        receipt.Evidence.Should().Contain("item=(O)322");
+    }
+
+    /// <summary>
+    /// The refusal that SURVIVES: the named slot holds no tool at all, so no swing could be driven from it.
+    /// </summary>
+    [Fact]
+    public void ASlotHoldingNoToolIsRefusedByName()
+    {
+        using var world = FenceWorld.Create();
+        world.PlaceFence(x: 2, y: 2);
+        world.PutAxeInSlotAwayFromTheHand(3);
+        world.StandAt(2, 3);
+
+        LocalExecutionReceipt receipt = world.Request(2, 2, slot: 4);
+
         receipt.State.Should().Be(ExecutionState.Rejected);
-        receipt.ReasonCode.Should().Be("remove_fence_tool_not_equipped_in_requested_slot");
+        receipt.ReasonCode.Should().Be("remove_fence_tool_not_owned_in_slot");
         receipt.Evidence.Should().Contain("blocked_by=tool:");
+        world.Location.objects.ContainsKey(new Vector2(2, 2)).Should().BeTrue("nothing was swung, so the fence still stands");
     }
 
     /// <summary>

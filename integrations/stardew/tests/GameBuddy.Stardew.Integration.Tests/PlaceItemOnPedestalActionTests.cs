@@ -41,8 +41,10 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// WHAT IS NOT PROVEN HERE: the settled deposit. The write lives in <c>itemModifyMutex.RequestLock</c>'s acquired callback
 /// (:107-113) and the callback's first statement is <c>location.playSound("woodyStep")</c>, which needs a sound bank this
 /// process does not have; the action drives the engine's own <c>NetMutex.Update</c> once (the call
-/// <c>ItemPedestal.updateWhenCurrentLocation</c> makes every tick, :195-201) and reports the honest <c>Uncertain</c>. The
-/// success path belongs to the lane's native-local live gate, like the sibling placement, rotation, fence and tank mutations.
+/// <c>ItemPedestal.updateWhenCurrentLocation</c> makes every tick, :195-201) and reports the honest <c>Uncertain</c>. That
+/// same throw is what puts the CONSUMPTION line out of reach here, so which slot the deposit spends is driven directly in
+/// <c>TheConsumptionSpendsTheNamedSlotAndLeavesTheHeldItemAlone</c> rather than through the action. The success path
+/// belongs to the lane's native-local live gate, like the sibling placement, rotation, fence and tank mutations.
 /// </para>
 /// </summary>
 // MIXED SHAPE AND BEHAVIOUR: the shape pins below read the catalogue and handler source so a rename or a dropped declaration fails here, while the behaviour tests drive the handler and assert its postcondition; they are kept together because either half alone can be green while the action is wrong.
@@ -279,6 +281,45 @@ public sealed class PlaceItemOnPedestalActionTests
     }
 
     /// <summary>
+    /// THE CONSUMPTION RULE ITSELF, DRIVEN DIRECTLY.
+    ///
+    /// <para>
+    /// The action-level case cannot reach this line in this process: the deposit's write lives in the pedestal's
+    /// <c>itemModifyMutex</c> callback, whose first statement is <c>location.playSound("woodyStep")</c>, so the
+    /// engine's own <c>NetMutex.Update</c> throws before the pack is touched (see the class summary). What CAN be
+    /// driven is the one production seam that decides WHICH slot is spent - the rule the defect was about - against a
+    /// real pack: the slot the caller named loses one unit and the item in the actor's hand does not.
+    /// </para>
+    /// <para>
+    /// The engine's counterpart, <c>Farmer.reduceActiveItemByOne</c> (Farmer.cs:5083), spends <c>CurrentItem</c> - the
+    /// hand - and clears the slot through <c>removeItemFromInventory</c> (Farmer.cs:5105-5116) when the stack runs out.
+    /// Both halves are asserted, because a version that decremented the right slot and left it at zero would still be
+    /// wrong.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheConsumptionSpendsTheNamedSlotAndLeavesTheHeldItemAlone()
+    {
+        using var world = PedestalWorld.Create();
+        world.PutObjectInSlot(2, "(O)421", stack: 2);
+        world.PutObjectInSlot(3, "(O)422", stack: 1);
+        world.PutObjectInSlot(5, "(O)74", stack: 1);
+        world.HoldSlot(5);
+        MethodInfo consume = typeof(ExecutionManager)
+            .GetMethod("ConsumeOneFromSlot", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        consume.Invoke(null, new object[] { 2 });
+
+        world.CountItemById("(O)74").Should().Be(1, "the held shard is not what the caller asked to deposit");
+        world.CountItemById("(O)421").Should().Be(1, "the named slot paid one unit of the two it held");
+
+        consume.Invoke(null, new object[] { 3 });
+
+        Game1.player.Items[3].Should().BeNull("an emptied slot is cleared, as `removeItemFromInventory` does (Farmer.cs:5105-5116)");
+        world.CountItemById("(O)74").Should().Be(1, "and the hand is still untouched");
+    }
+
+    /// <summary>
     /// The ORDER the body must keep, and the one thing that must happen before any write: the occupied check. Its position
     /// is the whole point - past it lies the branch that knocks the displayed item off.
     /// </summary>
@@ -299,7 +340,7 @@ public sealed class PlaceItemOnPedestalActionTests
         int probe = execute.IndexOf("probe: true", StringComparison.Ordinal);
         int write = execute.IndexOf("probe: false", StringComparison.Ordinal);
         int settle = execute.IndexOf("pedestal.itemModifyMutex.Update(location)", StringComparison.Ordinal);
-        int consume = execute.IndexOf("Game1.player.reduceActiveItemByOne()", StringComparison.Ordinal);
+        int consume = execute.IndexOf("ConsumeOneFromSlot(slot)", StringComparison.Ordinal);
         int read = execute.IndexOf("pedestal.heldObject.Value is StardewValley.Object placed", StringComparison.Ordinal);
 
         foreach ((string step, int index) in new[]
@@ -592,6 +633,36 @@ public sealed class PlaceItemOnPedestalActionTests
         }
 
         /// <summary>
+        /// One plain object of the caller's choosing in a NAMED slot, at the caller's stack. The pedestal is handed the
+        /// item out of the slot a request names, so a fixture that can only fill slot 0 could not tell the two apart.
+        /// </summary>
+        internal void PutObjectInSlot(int slot, string qualifiedItemId, int stack)
+        {
+            var item = (StardewValley.Object)FormatterServices.GetUninitializedObject(typeof(StardewValley.Object));
+            SeedMissingNetFields(item);
+            SetField(item, "itemId", new NetString(qualifiedItemId[3..]));
+            SetField(item, "netName", new NetString("Slot Item"));
+            SetField(item, "stack", new NetInt(stack));
+            SetField(item, "parentSheetIndex", new NetInt(int.Parse(qualifiedItemId[3..], System.Globalization.CultureInfo.InvariantCulture)));
+            SetField(item, "tileLocation", new NetVector2());
+            SetField(item, "heldObject", new NetRef<StardewValley.Object>());
+            SetField(item, "fragility", new NetInt(0));
+            SetField(item, "bigCraftable", new NetBool(false));
+            typeof(Item).GetProperty("ItemId", BindingFlags.Instance | BindingFlags.Public)!
+                .SetValue(item, qualifiedItemId[3..]);
+            typeof(Item).GetField("_qualifiedItemId", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!
+                .SetValue(item, qualifiedItemId);
+            typeof(Item).GetField("_contextTags", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(item, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            typeof(Item).GetField("_contextTagsDirty", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(item, false);
+            Game1.player.Items[slot] = item;
+        }
+
+        /// <summary>Puts the actor's HAND on a pack slot, which is what `ActiveItem` and `reduceActiveItemByOne` read.</summary>
+        internal void HoldSlot(int slot) => Game1.player.CurrentToolIndex = slot;
+
+        /// <summary>
         /// Holds the tank's own mutex, which is the state <c>checkForAction</c> answers <c>true</c> to while doing nothing
         /// (FishTankFurniture.cs:231-234). <c>NetMutex.owner</c> is private, so the lock is taken by writing it the way
         /// <c>RequestLock</c> would.
@@ -687,10 +758,10 @@ public sealed class PlaceItemOnPedestalActionTests
                 ? this.TargetIdAt(x, y)
                 : "pedestal_deposit_0000000000000000";
 
-        internal LocalExecutionReceipt Request(int x, int y, string? expectedTargetId = null, string? expectedQualifiedItemId = null) =>
+        internal LocalExecutionReceipt Request(int x, int y, string? expectedTargetId = null, string? expectedQualifiedItemId = null, int slot = 0) =>
             this.Manager().RequestLocalPlaceItemOnPedestal(
-                $"req_pedestal_{x}_{y}_{expectedTargetId ?? "live"}_{expectedQualifiedItemId ?? "live"}",
-                0,
+                $"req_pedestal_{x}_{y}_{slot}_{expectedTargetId ?? "live"}_{expectedQualifiedItemId ?? "live"}",
+                slot,
                 x,
                 y,
                 expectedQualifiedItemId ?? ItemId,

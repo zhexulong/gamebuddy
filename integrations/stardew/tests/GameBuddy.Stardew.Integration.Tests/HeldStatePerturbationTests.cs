@@ -85,12 +85,6 @@ public sealed class HeldStatePerturbationTests
             "`Pet.checkAction` refuses nothing: any held item other than a Hat or (O)ButterflyPowder falls straight " +
             "through to the petting body and returns true (Pet.cs:646-664). With a (O)72 in hand the cat is petted, so " +
             "a refusal here names a precondition the game does not have"),
-        ["talk_to_npc"] = new(
-            HeldState.UnrelatedItem,
-            Ending.RefusesByName,
-            "hands_not_empty",
-            "with an object in hand native takes the gift path (NPC.cs:2760), which is `interact_npc_with_item`'s intent " +
-            "and not this action's, so the refusal is the action's own precondition"),
         ["break_rock"] = new(
             HeldState.UnrelatedItem,
             Ending.Succeeds,
@@ -116,6 +110,7 @@ public sealed class HeldStatePerturbationTests
     internal static readonly IReadOnlyDictionary<string, string> NoHeldStateApplies = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["chest_store"] = "the action reads a PACK SLOT it is told to store, never the selected slot, so the hand is not an input (`chest_store` succeeded `chest_stored` with a diamond in hand)",
+        ["talk_to_npc"] = "the hand is INPUT SELECTION and the handler meets the native entry's precondition itself: `NPC.checkAction`'s gift arm is gated on `who.ActiveObject != null` and its talk branch on `who.ActiveObject == null`, so a slot holding no object is selected for the call and the actor's own selection restored afterwards. A held item therefore cannot change the answer - the `hands_not_empty` refusal that used to stand here named a hand the game never required to be empty (see `NativeRefusalReachabilityTests.ATalkIsNotRefusedForTheItemInTheActorsHand`)",
         ["npc_relationship"] = "a read-only projection of a villager's friendship record; it takes no item and mutates nothing",
         ["pickup_item"] = "the action walks to a ground item and delivers it to the pack; the selected slot is where the game puts it, not where it reads from",
     };

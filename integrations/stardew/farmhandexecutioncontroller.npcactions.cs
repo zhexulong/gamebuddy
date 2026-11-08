@@ -50,7 +50,8 @@ namespace GameBuddy.Stardew;
 // location override hook — the same reason `ride_bus` drives
 // BusStop.answerDialogue instead of re-creating the fare/cutscene logic. The
 // native entry is therefore called with the precondition that selects the talk
-// branch (empty hands), and NOTHING else is reproduced.
+// branch - the hand emptied by selecting a slot that holds no object, then put
+// back - and NOTHING else is reproduced.
 //
 // WHAT THE NATIVE ENTRY ALSO DOES, named here so the receipt can never pretend a
 // different branch was a talk: checkAction has other exits that are reachable
@@ -97,9 +98,11 @@ namespace GameBuddy.Stardew;
 //     (`talk_to_npc_target_not_found` otherwise);
 //   * the villager is in a state checkAction refuses on before any dialogue
 //     logic (`talk_to_npc_target_unavailable`, evidence names invisible/sleeping);
-//   * the actor is EMPTY-HANDED (`hands_not_empty`). This is the branch's own
-//     precondition: with an object in hand native takes the gift path at :2760,
-//     which is `interact_npc_with_item`'s intent, not this action's;
+//   * the actor's hand CAN be emptied at all (`hands_not_empty`). The gift half
+//     is gated on `who.ActiveObject != null` (:2498) and the talk branch on
+//     `who.ActiveObject == null` (:2582), so the hand is emptied for the call by
+//     selecting a slot whose item is not an object, then put back. The one state
+//     no selection repairs - an object in every slot - is what that code names;
 //   * the actor is within Chebyshev-1 of the villager's live tile
 //     (`target_out_of_range`), else the shared approach leg walks there
 //     (`target_out_of_reach` if it cannot) and the whole admission runs again on
@@ -138,8 +141,8 @@ namespace GameBuddy.Stardew;
 // published id is location-scoped, so a villager elsewhere has a different id by
 // construction and is not distinguishable from an unknown one here), an NPC
 // state that makes the native entry refuse before any dialogue logic
-// (`talk_to_npc_target_unavailable`), an actor whose hands are not empty
-// (`hands_not_empty`, the existing family code), a walk that ended out of reach
+// (`talk_to_npc_target_unavailable`), an actor whose hand cannot be made empty at
+// all (`hands_not_empty`, the existing family code), a walk that ended out of reach
 // (`target_out_of_reach`, the existing approach-leg code),
 // the native entry declining the interaction (`talk_to_npc_not_handled`), the
 // native entry handling it through a branch that produced no dialogue
@@ -174,12 +177,13 @@ internal sealed partial class ExecutionManager
         if (!resolution.Accepted)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolution.ReasonCode, resolution.Evidence);
 
-        // The branch's own precondition: with an object in hand native takes the
-        // gift path (NPC.cs:2760) instead of the talk branch, which is
-        // interact_npc_with_item's intent and not this action's.
-        if (Game1.player.ActiveObject is not null)
+        // THE HAND IS INPUT SELECTION, NOT A REFUSAL. With an object in hand the native entry takes the gift path
+        // (`NPC.checkAction`, the `who.ActiveObject != null` arm) and the talk branch itself is gated on
+        // `who.ActiveObject == null`, so the hand is emptied for the call and put back afterwards. The one hand state no
+        // selection repairs - an object in every slot - is refused by name here, before any walk.
+        if (SelectEmptyHandedSlot(Game1.player) < 0)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "hands_not_empty",
-                $"{resolution.Identity};hand_item={Game1.player.ActiveObject.QualifiedItemId}");
+                $"{resolution.Identity};hand_item={Game1.player.ActiveObject?.QualifiedItemId ?? "none"};slot=every_slot_holds_an_object");
 
         int npcTileX = (int)resolution.Npc!.Tile.X;
         int npcTileY = (int)resolution.Npc.Tile.Y;
@@ -201,9 +205,12 @@ internal sealed partial class ExecutionManager
         TalkNpcTargetResolution resolution = ResolveTalkNpcTarget(location, targetId);
         if (!resolution.Accepted)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolution.ReasonCode, resolution.Evidence);
-        if (Game1.player.ActiveObject is not null)
+        // The same fact as the request path, re-read on arrival: the walk takes several ticks and the pack can change.
+        int previousSlot = Game1.player.CurrentToolIndex;
+        int emptyHandSlot = SelectEmptyHandedSlot(Game1.player);
+        if (emptyHandSlot < 0)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "hands_not_empty",
-                $"{resolution.Identity};hand_item={Game1.player.ActiveObject.QualifiedItemId}");
+                $"{resolution.Identity};hand_item={Game1.player.ActiveObject?.QualifiedItemId ?? "none"};slot=every_slot_holds_an_object");
 
         StardewValley.NPC npc = resolution.Npc!;
         int npcTileX = (int)npc.Tile.X;
@@ -224,16 +231,20 @@ internal sealed partial class ExecutionManager
         bool handled;
         try
         {
-            // THE SEAM. The native entry itself, with the empty-handed
-            // precondition established above selecting the talk branch. No
-            // input edge, no synthesized click, no reproduced dialogue
-            // construction.
+            // THE SEAM. The native entry itself, with the hand emptied for the
+            // call so it selects the talk branch. No input edge, no synthesized
+            // click, no reproduced dialogue construction.
+            Game1.player.CurrentToolIndex = emptyHandSlot;
             handled = npc.checkAction(Game1.player, location);
         }
         catch (Exception nativeException)
         {
             return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "talk_to_npc_native_exception",
                 $"{resolution.Identity};dialogue_up_before={dialogueUpBefore.ToString().ToLowerInvariant()};native_exception={nativeException.GetType().Name};native_call_ran_unknown=true");
+        }
+        finally
+        {
+            Game1.player.CurrentToolIndex = previousSlot;
         }
 
         // Re-read the world AFTER the call. The dialogue is the talk branch's

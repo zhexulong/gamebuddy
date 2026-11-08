@@ -30,8 +30,11 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_tree", toolRefusal, slot));
         GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
+        // MOSS IS NOT A REFUSAL. `Tree.performToolAction` strips it on the way through - it drops the moss item, sets
+        // `hasMoss = false` and keeps going into the axe branch in the SAME swing (Tree.cs:1087-1120) - so a mossy tree
+        // is a tree the axe fells. Refusing it here was a second, narrower answer than the engine's.
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
-            || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage || tree.hasMoss.Value || tree.tapped.Value || tree.health.Value <= 0f
+            || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage || tree.tapped.Value || tree.health.Value <= 0f
             || !string.Equals(BuildTreeChopSourceTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_chop_target_changed", $"target={targetX},{targetY}");
         // 5.2: outside the native interaction radius (Chebyshev-1), the action
@@ -94,7 +97,7 @@ internal sealed partial class ExecutionManager
             GameLocation location = Game1.player.currentLocation;
             Vector2 tile = new(targetX, targetY);
             if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature) || feature is not StardewValley.TerrainFeatures.Tree tree
-                || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage || tree.hasMoss.Value || tree.tapped.Value || tree.health.Value <= 0f
+                || tree.stump.Value || tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage || tree.tapped.Value || tree.health.Value <= 0f
                 || !string.Equals(BuildTreeChopSourceTargetId(location, targetX, targetY, tree), expectedTargetId, StringComparison.Ordinal))
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_chop_target_changed", $"target={targetX},{targetY}");
             float before = tree.health.Value;
