@@ -20,6 +20,9 @@ import {
  *
  * red-proof: inject  with `--fail-on-ungranted` removed from the reconciliation step, this suite failed on
  *   "the chain arms --fail-on-ungranted on the reconciliation step, which is the whole point"
+ * red-proof: with the failure excerpt cut back to the first 12 lines (the shape before 2026-11-08), this suite failed
+ *   on "a failing cause names the findings that failed it" - the run printed "3 undeclared" and cut the two
+ *   `mutation_not_observable` lines that were the verdict.
  */
 
 const SUMMARY = [
@@ -107,6 +110,33 @@ test("a chain that exits 0 without the analyzer's observation summary is a FAILU
   assert.equal(result.status, "failed");
   assert.equal(result.failedStep, "observation_gap");
   assert.match(result.cause, /without printing its observation summary/u);
+});
+
+test("a failing cause names the findings that failed it, even when they print after the section lines", () => {
+  // The analyzer prints one line per section and then the findings that failed the run, so a head-only excerpt of a
+  // failing run reported the section counts and cut the verdict - the reader got "3 undeclared" and no member.
+  const stderr = [
+    "observation gaps: 122 engine collections",
+    ...Array.from({ length: 20 }, (_, index) => `  ${index} section   1 measured, 2 kept`),
+    "  mutation_not_observable:collect_crab_pot_output:CurrentToolIndex: collect_crab_pot_output assigns `player.CurrentToolIndex`",
+    "  mutation_not_observable:talk_to_npc:CurrentToolIndex: talk_to_npc assigns `Game1.player.CurrentToolIndex`",
+    "  2 ungranted observation gap(s)",
+    "",
+  ].join("\n");
+  const result = runObservationGap({
+    exists: () => true,
+    makeTempDir: () => "C:/tmp/observation-gap",
+    removeTempDir: () => {},
+    run: (args) =>
+      args.some((arg) => arg.includes("stardew-action-inventory-reconciliation.mjs"))
+        ? { status: 1, stdout: "", stderr }
+        : okRun(args),
+  });
+  assert.equal(result.status, "failed");
+  assert.match(result.cause, /observation gaps: 122 engine collections/u, "the head of the run is still shown");
+  assert.match(result.cause, /mutation_not_observable:talk_to_npc:CurrentToolIndex/u, "the verdict names its members");
+  assert.match(result.cause, /2 ungranted observation gap\(s\)/u);
+  assert.match(result.cause, /line\(s\) omitted/u, "the elision is stated rather than silent");
 });
 
 test("a measured run carries the summary the analyzer printed, and every step's exit code", () => {

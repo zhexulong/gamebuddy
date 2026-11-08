@@ -64,21 +64,6 @@
     },
     {
       "kind": "mutation",
-      "id": "bait_crab_pot:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
-    },
-    {
-      "kind": "mutation",
-      "id": "clear_debris:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
-    },
-    {
-      "kind": "mutation",
-      "id": "collect_animal_product:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
-    },
-    {
-      "kind": "mutation",
       "id": "collect_animal_product:FacingDirection",
       "reason": "the handler turns the actor toward the target before the native call; no snapshot family publishes the actor's facing direction"
     },
@@ -114,61 +99,6 @@
     },
     {
       "kind": "mutation",
-      "id": "equip_tool:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
-    },
-    {
-      "kind": "mutation",
-      "id": "feed_animal:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
-    },
-    {
-      "kind": "mutation",
-      "id": "fertilize_tile:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
-    },
-    {
-      "kind": "mutation",
-      "id": "interact_npc_with_item:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
-    },
-    {
-      "kind": "mutation",
-      "id": "load_building_chest:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
-    },
-    {
-      "kind": "mutation",
-      "id": "machine_load:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
-    },
-    {
-      "kind": "mutation",
-      "id": "place_crab_pot:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
-    },
-    {
-      "kind": "mutation",
-      "id": "place_owned_object:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
-    },
-    {
-      "kind": "mutation",
-      "id": "place_wood_fence:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
-    },
-    {
-      "kind": "mutation",
-      "id": "plant_sapling:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
-    },
-    {
-      "kind": "mutation",
-      "id": "plant_seed:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
-    },
-    {
-      "kind": "mutation",
       "id": "respond_level_up:informationUp",
       "reason": "the level-up menu's own rendering flag; `pendingLevelUpChoices` publishes the choices, not the menu"
     },
@@ -194,18 +124,8 @@
     },
     {
       "kind": "mutation",
-      "id": "use_item:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
-    },
-    {
-      "kind": "mutation",
       "id": "use_item:mostRecentlyGrabbedItem",
       "reason": "`player.mostRecentlyGrabbedItem` is the engine's last-grab bookkeeping; the pack itself is published as `inventorySlots`"
-    },
-    {
-      "kind": "mutation",
-      "id": "use_warp_item:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it afterwards; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see"
     },
     {
       "kind": "field",
@@ -230,11 +150,6 @@
     {
       "id": "open_geode:activeClickableMenu",
       "reason": "GeodeMenu IS the interaction: the handler opens it, the native receiveLeftClick path runs inside it, and the receipt names the menu plus what the engine announced (nativeNotices). The menu object is modal state on the operation, not a world fact an action could address.",
-      "kind": "mutation"
-    },
-    {
-      "id": "put_item_in_fish_tank:CurrentToolIndex",
-      "reason": "the handler selects the tool slot the native call needs and restores it in a finally; the slot is published as `currentToolSlot`, a different spelling of the same fact, which name matching cannot see",
       "kind": "mutation"
     },
     {

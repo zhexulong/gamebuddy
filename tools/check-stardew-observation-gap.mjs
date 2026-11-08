@@ -134,7 +134,13 @@ export function runObservationGap({
       const exitCode = typeof outcome.status === "number" ? outcome.status : 1;
       steps.push({ name: step.name, ms: Date.now() - startedAt, exitCode });
       if (exitCode !== 0)
-        return { status: "failed", steps, failedStep: step.name, exitCode, cause: firstLines(`${stderr}${stdout}`) };
+        return {
+          status: "failed",
+          steps,
+          failedStep: step.name,
+          exitCode,
+          cause: failureExcerpt(`${stderr}${stdout}`),
+        };
       if (step.name === "observation_gap") summary = stderr;
     }
     if (!SUMMARY_MARKER.test(summary))
@@ -151,12 +157,19 @@ export function runObservationGap({
   }
 }
 
-function firstLines(text) {
-  return text
-    .split("\n")
-    .filter((line) => line.trim() !== "")
-    .slice(0, 12)
-    .join("\n");
+/**
+ * The head of a failed step's output PLUS its tail.
+ *
+ * The analyzer prints its seven section lines first and the findings that failed the run after them, so a head-only
+ * excerpt of a failing run showed "3 undeclared" and cut the two `mutation_not_observable:...:CurrentToolIndex` lines
+ * that were the actual verdict. A gate whose failure message carries a count and no member is the defect this whole
+ * file is about, so the excerpt keeps the verdict as well as the beginning.
+ */
+function failureExcerpt(text, head = 12, tail = 8) {
+  const lines = text.split("\n").filter((line) => line.trim() !== "");
+  if (lines.length <= head + tail) return lines.join("\n");
+  const omitted = lines.length - head - tail;
+  return `${lines.slice(0, head).join("\n")}\n… ${omitted} line(s) omitted …\n${lines.slice(-tail).join("\n")}`;
 }
 
 function main() {
