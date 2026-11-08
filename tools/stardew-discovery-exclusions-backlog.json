@@ -2,66 +2,6 @@
   "$comment": "Every `Discover*` filter that excludes a subject the world contains and does not publish a reason. `tools/check-stardew-discovery-exclusions.mjs` names each entry whose function no longer exists or no longer filters on `member` (backlog_stale), each entry whose `token` is now in the closed vocabulary (backlog_token_available - the family can publish today), and each entry whose disposition names no class (backlog_unreasoned). Classes: 'token pending: <state>' (the state has no token yet), 'not vanilla: <who deletes it>' (the engine does not refuse this; the filter is a defect), 'kind test: <why the member names this family's subject rather than a state it withholds>'.",
   "entries": [
     {
-      "function": "DiscoverAnimalDoorTargets",
-      "member": "daysOfConstructionLeft.Value",
-      "token": "not_ready",
-      "disposition": "token pending: not_ready - a building still under construction stands on the map and has no door yet (Building.daysOfConstructionLeft). The token exists, so this family can publish today; owner: the animal-door lane, integrations/stardew/farmhandexecutioncontroller.animaldooractions.cs:315."
-    },
-    {
-      "function": "DiscoverBuildFarmBuildingTargets",
-      "member": "daysOfConstructionLeft.Value",
-      "token": "not_ready",
-      "disposition": "token pending: not_ready - the same construction countdown decides whether a building is a finished target. Owner: the farm-building lane, integrations/stardew/farmhandexecutioncontroller.buildfarmbuildingactions.cs."
-    },
-    {
-      "function": "DiscoverBuildingChestTargets",
-      "member": "daysOfConstructionLeft.Value",
-      "token": "not_ready",
-      "disposition": "token pending: not_ready - a building under construction exposes no loadable chest. Owner: the building-chest lane, integrations/stardew/farmhandexecutioncontroller.buildingchestactions.cs:523."
-    },
-    {
-      "function": "DiscoverFishPondTargets",
-      "member": "daysOfConstructionLeft.Value",
-      "token": "not_ready",
-      "disposition": "token pending: not_ready - a pond under construction has nothing to clear. Owner: the fish-pond lane, integrations/stardew/farmhandexecutioncontroller.pondactions.cs:270."
-    },
-    {
-      "function": "DiscoverObeliskTargets",
-      "member": "daysOfConstructionLeft.Value",
-      "token": "not_ready",
-      "disposition": "token pending: not_ready - an obelisk under construction cannot be used. Owner: the obelisk lane, integrations/stardew/farmhandexecutioncontroller.obeliskactions.cs."
-    },
-    {
-      "function": "DiscoverCrabPotCollectTargets",
-      "member": "bait.Value",
-      "token": "not_ready",
-      "disposition": "token pending: not_ready - `CrabPot.NeedsBait` is true for a pot with no bait (CrabPot.cs:64-71), so it cannot be catching anything yet. The token exists; owner: the crab-pot lane, integrations/stardew/farmhandexecutioncontroller.cs DiscoverCrabPotCollectTargets."
-    },
-    {
-      "function": "DiscoverHarvestWhereabouts",
-      "member": "readyForHarvest()",
-      "token": "not_ready",
-      "disposition": "token pending: not_ready - the whole-map harvest COUNT omits locations whose crops are not ripe, and the count it publishes already says zero for them. Owner: the harvest lane, integrations/stardew/farmhandexecutioncontroller.cs DiscoverHarvestWhereabouts."
-    },
-    {
-      "function": "DiscoverHarvestWhereabouts",
-      "member": "GetHarvestMethod()",
-      "token": "wrong_harvest_method",
-      "disposition": "token pending: wrong_harvest_method - the count omits scythe-harvest crops for the same reason `harvestTargets` does. Owner: the harvest lane, integrations/stardew/farmhandexecutioncontroller.cs DiscoverHarvestWhereabouts."
-    },
-    {
-      "function": "DiscoverWateringWhereabouts",
-      "member": ".dead.Value",
-      "token": "dead",
-      "disposition": "token pending: dead - the whole-map watering COUNT omits dead crops (HoeDirt.cs:732-735), which no water can bring back. Owner: the watering lane, integrations/stardew/farmhandexecutioncontroller.cs DiscoverWateringWhereabouts."
-    },
-    {
-      "function": "DiscoverTreeChopResultTargets",
-      "member": "tapped.Value",
-      "token": "already_tapped",
-      "disposition": "token pending: already_tapped - a tapped stump is not the readback of this action's own swing. Owner: the chop-tree lane, integrations/stardew/farmhandexecutioncontroller.cs DiscoverTreeChopResultTargets."
-    },
-    {
       "function": "DiscoverTreeChopResultTargets",
       "member": "stump.Value",
       "disposition": "kind test: the family's SUBJECT is a felled tree - `stump.Value` selects it rather than withholding a standing tree from it. The state reason `stump` belongs to `chop_tree`, which has it."
@@ -74,12 +14,7 @@
     {
       "function": "DiscoverTreeChopResultTargets",
       "member": "health.Value",
-      "disposition": "kind test: `health == 5f` selects the exact durability this action's own swing produced - a postcondition readback, not a target list that could withhold a subject."
-    },
-    {
-      "function": "DiscoverTreeChopSourceTargets",
-      "member": "hasMoss.Value",
-      "disposition": "not vanilla: a mossy tree IS a chop source in the engine - `Tree.performToolAction` harvests the moss and falls into the axe branch in the SAME swing (Tree.cs:1087-1120) - so this filter withholds a subject vanilla allows. It is not tokenised and its behaviour is unchanged; the chop-tree lane deletes the predicate, and this entry then goes red as backlog_stale so the register cannot outlive the filter."
+      "disposition": "kind test: `health == 5f` selects the exact durability `Tree.performTreeFall` writes on the hit that fells a tree (`stump.Value = true; health.Value = 5f;`, Tree.cs:1495-1496) - a postcondition readback, not a target list that could withhold a subject."
     },
     {
       "function": "DiscoverTreeStumpTargets",

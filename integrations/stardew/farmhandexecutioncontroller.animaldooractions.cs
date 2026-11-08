@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using GameBuddy.Stardew.Core.Policy;
 using System.Linq;
 using Microsoft.Xna.Framework;
 using StardewValley;
@@ -305,14 +306,22 @@ internal sealed partial class ExecutionManager
     /// animal door. Nothing is synthesized — a coop that is not there, or whose door
     /// does not exist, is not advertised.
     /// </summary>
-    private static IReadOnlyList<BridgeAnimalDoorTarget> DiscoverAnimalDoorTargets(Farmer player)
+    private static IReadOnlyList<BridgeAnimalDoorTarget> DiscoverAnimalDoorTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeAnimalDoorTarget>();
         List<BridgeAnimalDoorTarget> result = new();
         foreach (Building building in location.buildings)
         {
-            if (building is null || building.daysOfConstructionLeft.Value > 0) continue;
+            if (building is null) continue;
+            // `Building.doAction` answers an under-construction building with the `UnderConstruction` dialogue and
+            // nothing else (Building.cs:937-940), and the animal door's own toggle is gated on the same countdown
+            // (`daysOfConstructionLeft.Value <= 0`, Building.cs:976). The door exists on the map and the engine refuses it.
+            if (building.daysOfConstructionLeft.Value > 0)
+            {
+                exclusions.Record("animalDoorTargets", DiscoveryExclusionReasons.NotReady);
+                continue;
+            }
             if (!TryDescribeAnimalDoor(building, out string buildingType, out bool isOpen)) continue;
             Point door = building.getPointForHumanDoor();
             if (!IsTileWithinChebyshevRadius(player, door.X, door.Y, TargetDiscoveryRadius)) continue;

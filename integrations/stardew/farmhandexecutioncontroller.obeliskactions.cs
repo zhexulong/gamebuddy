@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using GameBuddy.Stardew.Core.Abstractions;
 using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Policy;
 using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Buildings;
@@ -263,7 +264,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// IslandWest's own tile when the island obelisk upgrade is applied. Nothing is
     /// synthesized -- an obelisk that is not there is not advertised.
     /// </summary>
-    private IReadOnlyList<BridgeObeliskTarget> DiscoverObeliskTargets(Farmer player)
+    private IReadOnlyList<BridgeObeliskTarget> DiscoverObeliskTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         if (player is null || player.currentLocation is not StardewValley.GameLocation location)
             return Array.Empty<BridgeObeliskTarget>();
@@ -273,8 +274,15 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         // Route A: placed obelisk buildings.
         foreach (Building building in location.buildings)
         {
-            if (building is null || building.daysOfConstructionLeft.Value > 0)
+            if (building is null)
                 continue;
+            // An obelisk under construction cannot be used: `Building.doAction` answers it with the `UnderConstruction`
+            // dialogue and performs nothing else (Building.cs:937-940).
+            if (building.daysOfConstructionLeft.Value > 0)
+            {
+                exclusions.Record("obeliskTargets", DiscoveryExclusionReasons.NotReady);
+                continue;
+            }
             if (!TryGetObeliskWarp(building.buildingType.Value, out string destination, out _, out _, out bool forceDismount))
                 continue;
             targets.Add(new BridgeObeliskTarget(

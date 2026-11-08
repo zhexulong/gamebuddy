@@ -2315,6 +2315,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         ("water_pet_bowl", "petBowlTargets"),
         ("water_slime_hutch_trough", "slimeHutchTroughTargets"),
         ("bait_crab_pot", "baitCrabPotTargets"),
+        // The whole-map counts. They are published whether or not their action is advertised (a count is not a slice of
+        // one action), so the capability here only answers "was this family measured at all".
+        ("harvest_crop", "harvestWhereabouts"),
+        ("water_crop", "wateringWhereabouts"),
+        // The four building families: an under-construction building answers `Building.doAction` with the
+        // `UnderConstruction` dialogue and nothing else (Building.cs:937-940), so its door, its chest, its pond and its
+        // obelisk are subjects every one of these families sees and cannot serve.
+        ("toggle_animal_door", "animalDoorTargets"),
+        ("load_building_chest", "buildingChestTargets"),
+        ("clear_fish_pond", "fishPondTargets"),
+        ("use_obelisk", "obeliskTargets"),
     };
 
     /// <summary>Explicit Phase 2 wire DTO; call only on the SMAPI game thread while a world is ready.</summary>
@@ -2423,8 +2434,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("scythe_crop", StringComparer.Ordinal) ? DiscoverScytheCropTargets(player) : null,
             (advertisedCapabilities.Contains("npc_relationship", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("talk_to_npc", StringComparer.Ordinal)) ? DiscoverNpcRelationshipTargets(player) : null,
             DiscoverVillagerWhereabouts(),
-            DiscoverHarvestWhereabouts(),
-            DiscoverWateringWhereabouts(),
+            DiscoverHarvestWhereabouts(discoveryExclusions),
+            DiscoverWateringWhereabouts(discoveryExclusions),
             advertisedCapabilities.Contains("pet_animal", StringComparer.Ordinal) ? DiscoverPetTargets(player, discoveryExclusions) : null,
             advertisedCapabilities.Contains("pet_farm_animal", StringComparer.Ordinal) ? DiscoverFarmAnimalPetTargets(player, discoveryExclusions) : null,
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverAnimalProductTargets(player) : null,
@@ -2473,9 +2484,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             MineEntranceTargets: advertisedCapabilities.Contains("enter_mine", StringComparer.Ordinal) || advertisedCapabilities.Contains("use_mine_ladder", StringComparer.Ordinal) ? DiscoverMineEntranceTargets(player) : null,
             // Last parameter, defaulted, so it can be named here without disturbing the
             // positional arguments above it (CS1744 if the declaration moves earlier).
-            ObeliskTargets: advertisedCapabilities.Contains("use_obelisk", StringComparer.Ordinal) ? DiscoverObeliskTargets(player) : null,
-                    AnimalDoorTargets: advertisedCapabilities.Contains("toggle_animal_door", StringComparer.Ordinal) ? DiscoverAnimalDoorTargets(player) : null,
-        FishPondTargets: advertisedCapabilities.Contains("clear_fish_pond", StringComparer.Ordinal) ? DiscoverFishPondTargets(player) : null,
+            ObeliskTargets: advertisedCapabilities.Contains("use_obelisk", StringComparer.Ordinal) ? DiscoverObeliskTargets(player, discoveryExclusions) : null,
+                    AnimalDoorTargets: advertisedCapabilities.Contains("toggle_animal_door", StringComparer.Ordinal) ? DiscoverAnimalDoorTargets(player, discoveryExclusions) : null,
+        FishPondTargets: advertisedCapabilities.Contains("clear_fish_pond", StringComparer.Ordinal) ? DiscoverFishPondTargets(player, discoveryExclusions) : null,
     TailoringTargets: advertisedCapabilities.Contains("tailor_clothing", StringComparer.Ordinal) || advertisedCapabilities.Contains("dye_clothing_with_item", StringComparer.Ordinal) ? DiscoverTailoringTargets(player) : null,
             // Item/tile lane projections, each published only while its own action is advertised.
             WarpItemTargets: advertisedCapabilities.Contains("use_warp_item", StringComparer.Ordinal) ? DiscoverWarpItemTargets(player) : null,
@@ -2488,7 +2499,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // The farm-building commission sites and the buildings already standing, only while the
             // action is itself advertised.
             FarmBuildingTargets: advertisedCapabilities.Contains("build_farm_building", StringComparer.Ordinal) ? DiscoverBuildFarmBuildingTargets(player) : null,
-            BuildingChestTargets: advertisedCapabilities.Contains("load_building_chest", StringComparer.Ordinal) || advertisedCapabilities.Contains("collect_building_chest_output", StringComparer.Ordinal) ? DiscoverBuildingChestTargets(player) : null,
+            BuildingChestTargets: advertisedCapabilities.Contains("load_building_chest", StringComparer.Ordinal) || advertisedCapabilities.Contains("collect_building_chest_output", StringComparer.Ordinal) ? DiscoverBuildingChestTargets(player, discoveryExclusions) : null,
             // The world-object lane's single shared projection: placement candidates, removable and
             // non-removable objects, breakable containers, placed furniture and empty pedestals,
             // published while ANY action that names a target from this one array is advertised -
@@ -2993,7 +3004,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// the same pair `DiscoverCropTargets` and `water_crop` read, so the count cannot advertise a tile the action refuses.
     /// </para>
     /// </summary>
-    private static IReadOnlyList<BridgeWateringWhereabouts> DiscoverWateringWhereabouts()
+    private static IReadOnlyList<BridgeWateringWhereabouts> DiscoverWateringWhereabouts(DiscoveryExclusionRecorder exclusions)
     {
         List<BridgeWateringWhereabouts> result = new();
         Vector2 playerTile = Game1.player?.Tile ?? Vector2.Zero;
@@ -3010,9 +3021,16 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
             {
                 if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt dirt
-                    || dirt.crop is null
-                    || dirt.crop.dead.Value
-                    || !CropNeedsWater(dirt))
+                    || dirt.crop is null)
+                    continue;
+                // A dead crop is a subject this COUNT can see and will never count as thirsty, so it says so rather than
+                // leaving the reader to read its absence as "no crop here".
+                if (dirt.crop.dead.Value)
+                {
+                    exclusions.Record("wateringWhereabouts", DiscoveryExclusionReasons.Dead);
+                    continue;
+                }
+                if (!CropNeedsWater(dirt))
                     continue;
                 needsWaterCount++;
                 // A DISTANCE ACROSS MAPS IS NOT A DISTANCE. The loop walks every loaded location, and this used to subtract
@@ -3055,7 +3073,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// lists (Host accepts up to 64).
     /// </para>
     /// </summary>
-    private static IReadOnlyList<BridgeHarvestWhereabouts> DiscoverHarvestWhereabouts()
+    private static IReadOnlyList<BridgeHarvestWhereabouts> DiscoverHarvestWhereabouts(DiscoveryExclusionRecorder exclusions)
     {
         List<BridgeHarvestWhereabouts> result = new();
         foreach (GameLocation location in Game1.locations)
@@ -3073,10 +3091,20 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 if (pair.Value is not StardewValley.TerrainFeatures.HoeDirt dirt
                     || dirt.crop is null
-                    || dirt.crop.forageCrop.Value
-                    || !dirt.readyForHarvest()
-                    || dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab)
+                    || dirt.crop.forageCrop.Value)
                     continue;
+                // The count is derived from the SAME pair of engine predicates the bounded `harvestTargets` list uses, so
+                // each one it drops is recorded here rather than leaving an empty list to answer two questions at once.
+                if (!dirt.readyForHarvest())
+                {
+                    exclusions.Record("harvestWhereabouts", DiscoveryExclusionReasons.NotReady);
+                    continue;
+                }
+                if (dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab)
+                {
+                    exclusions.Record("harvestWhereabouts", DiscoveryExclusionReasons.WrongHarvestMethod);
+                    continue;
+                }
                 readyCount++;
                 // A DISTANCE ACROSS MAPS IS NOT A DISTANCE. The loop walks every loaded location, and this used to subtract
                 // an off-map tile from the player's own tile - so Desert (10,10) and Farm (10,10) came out as distance 0
@@ -3280,12 +3308,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         List<BridgeTreeChopSourceTarget> result = new();
         foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in NearestFirst(location.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree
-                // The moss predicate is the ONE exclusion in this family that is not a vanilla refusal: the same axe
-                // swing harvests the moss and then chops (`Tree.performToolAction` moss branch, Tree.cs:1087-1115, falls
-                // through to the axe branch at :1120), so a mossy tree IS a chop source in the engine. It is left exactly
-                // as it was rather than given a reason, because a reason would make an illegal filter look legitimate;
-                // `tools/stardew-discovery-exclusions-backlog.json` names it and who deletes it.
-                && !((StardewValley.TerrainFeatures.Tree)pair.Value).hasMoss.Value
                 && pair.Key.X >= 0 && pair.Key.X <= 1000
                 && pair.Key.Y >= 0 && pair.Key.Y <= 1000
                 && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player)), player))
@@ -3366,9 +3388,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     ///
     /// The execution side still proves the tree is the one asked for: it re-derives THIS id (so location, tile and
     /// species must all still match) and then requires the feature to be a `Tree`, not a stump, at least
-    /// `Tree.treeStage`, unmossed, untapped and `health > 0` - every remaining way a chop source can stop being the
-    /// source that was observed. Durability is a precondition there (`> 0`, the engine's own still-standing test,
-    /// Tree.cs:587), never part of the name.
+    /// `Tree.treeStage`, untapped and `health > 0` - every remaining way a chop source can stop being the source that
+    /// was observed. Durability is a precondition there (`> 0`, the engine's own still-standing test, Tree.cs:587),
+    /// never part of the name.
     /// </remarks>
     internal static string BuildTreeChopSourceTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
     {
@@ -3383,9 +3405,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return Array.Empty<BridgeTreeChopResultTarget>();
 
         return location.terrainFeatures.Pairs
+            // `health == 5f` IS THE READBACK of this action's own swing: `performTreeFall` sets `stump.Value = true;
+            // health.Value = 5f;` on the hit that fells the tree (Tree.cs:1495-1496). Neither `hasMoss` nor `tapped`
+            // is a second state to filter on: the same call clears the tap (`tapped.Value = false`, Tree.cs:1488) and
+            // moss only ever grows on a standing tree (`growthStage >= 14 && !stump.Value`, Tree.cs:991) and is cleared
+            // for a stump every day (Tree.cs:985-988) - a tapper cannot even be placed on one (Object.cs:6568). A felled
+            // subject is therefore never mossy or tapped, so a predicate for either would withhold nothing.
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.Tree tree
                 && tree.stump.Value && tree.growthStage.Value >= StardewValley.TerrainFeatures.Tree.treeStage
-                && !tree.hasMoss.Value && !tree.tapped.Value && tree.health.Value == 5f
+                && tree.health.Value == 5f
                 && pair.Key.X >= 0 && pair.Key.X <= 1000 && pair.Key.Y >= 0 && pair.Key.Y <= 1000
                 && Utility.tileWithinRadiusOfPlayer((int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius, player))
             .Take(64)
@@ -4772,7 +4800,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 || !crabPot.readyForHarvest.Value
                 || crabPot.tileIndexToShow != 714
                 || crabPot.heldObject.Value is null
-                || crabPot.bait.Value is null
                 || !IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
                 continue;
             result.Add(new BridgeCrabPotCollectTarget(

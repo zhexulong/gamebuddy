@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using GameBuddy.Stardew.Core.Policy;
 using Microsoft.Xna.Framework;
 using StardewValley;
 using StardewValley.Buildings;
@@ -260,14 +261,21 @@ internal sealed partial class ExecutionManager
     /// pond that is not there, is still being built, or is empty is not advertised, because an
     /// empty pond has nothing to clear.
     /// </summary>
-    private static IReadOnlyList<BridgeFishPondTarget> DiscoverFishPondTargets(Farmer player)
+    private static IReadOnlyList<BridgeFishPondTarget> DiscoverFishPondTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeFishPondTarget>();
         List<BridgeFishPondTarget> result = new();
         foreach (Building building in location.buildings)
         {
-            if (building is null || building.daysOfConstructionLeft.Value > 0) continue;
+            if (building is null) continue;
+            // A pond under construction is not a pond the engine will open: `Building.doAction` answers it with the
+            // `UnderConstruction` dialogue and performs nothing else (Building.cs:937-940).
+            if (building.daysOfConstructionLeft.Value > 0)
+            {
+                exclusions.Record("fishPondTargets", DiscoveryExclusionReasons.NotReady);
+                continue;
+            }
             if (!TryDescribeFishPond(building, out bool hasFish, out int occupants) || !hasFish) continue;
             Point door = building.getPointForHumanDoor();
             if (!IsTileWithinChebyshevRadius(player, door.X, door.Y, TargetDiscoveryRadius)) continue;

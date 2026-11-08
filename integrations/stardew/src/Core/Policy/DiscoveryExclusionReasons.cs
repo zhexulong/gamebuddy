@@ -132,8 +132,8 @@ public sealed class DiscoveryExclusionRecorder
 {
     /// <summary>
     /// The row cap, equal to the Host's <c>maxItems</c> for <c>discoveryExclusions</c> and to the schema's, so a
-    /// bounded list is published rather than a frame the Host refuses whole. One row per (family, reason), so nine
-    /// admitted reasons across the reporting families fit with room to spare; the count of what the cap left out is
+    /// bounded list is published rather than a frame the Host refuses whole. One row per (family, reason): fourteen
+    /// reporting families at their worst would name more rows than this, so the count of what the cap left out is
     /// published beside the list, like every other truncation on this wire.
     /// </summary>
     public const int MaximumRows = 16;

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.Serialization;
 using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Policy;
 using Microsoft.Xna.Framework;
 using Netcode;
 using StardewValley;
@@ -44,6 +45,9 @@ internal sealed class WhereaboutsWorld : IDisposable
     internal GameLocation FarmHouse { get; private set; } = null!;
 
     internal Farmer Actor { get; private set; } = null!;
+
+    /// <summary>The recorder the shipped discovery writes into, one per world.</summary>
+    internal DiscoveryExclusionRecorder Exclusions { get; } = new();
 
     internal static WhereaboutsWorld Create()
     {
@@ -95,6 +99,21 @@ internal sealed class WhereaboutsWorld : IDisposable
         location.terrainFeatures[new Vector2(x, y)] = Dirt(fullyGrown: true);
 
     /// <summary>
+    /// A crop the season change killed: <c>Crop.dead</c> is the flag <c>Crop.harvest</c> refuses, and the whole-map
+    /// counts read it before they read any growth stage.
+    /// </summary>
+    internal void PlaceDeadCrop(GameLocation location, int x, int y) =>
+        location.terrainFeatures[new Vector2(x, y)] = Dirt(fullyGrown: true, dead: true);
+
+    /// <summary>A hoed tile with no crop on it: the tile exists, the family's subject does not.</summary>
+    internal void PlaceEmptyHoeDirt(GameLocation location, int x, int y)
+    {
+        var dirt = new StardewValley.TerrainFeatures.HoeDirt();
+        SetInstanceField(dirt, "state", new NetInt(0));
+        location.terrainFeatures[new Vector2(x, y)] = dirt;
+    }
+
+    /// <summary>
     /// The tile's own state as the native Watering Can leaves it: <c>HoeDirt.performToolAction</c> writes
     /// <c>state.Value = 1</c> for a watered tile (<c>HoeDirt.cs:702</c>, and the day-update rain pass at
     /// <c>HoeDirt.cs:932</c>). Nothing else about the tile changes, which is exactly why the dry-count must read it.
@@ -112,12 +131,18 @@ internal sealed class WhereaboutsWorld : IDisposable
     internal IReadOnlyList<BridgeHarvestWhereabouts> Harvest() =>
         (IReadOnlyList<BridgeHarvestWhereabouts>)Discover("DiscoverHarvestWhereabouts");
 
-    private static object Discover(string name)
+    /// <summary>
+    /// What the same walk told the recorder it WITHHELD, in the wire order the snapshot publishes. Read from the one
+    /// recorder the shipped discovery writes into, so the rows are the Mod's own answer rather than a re-derivation.
+    /// </summary>
+    internal IReadOnlyList<BridgeDiscoveryExclusion> ExclusionRows() => this.Exclusions.Publish(out _);
+
+    private object Discover(string name)
     {
         MethodInfo method = typeof(ExecutionManager).GetMethod(
             name,
             BindingFlags.NonPublic | BindingFlags.Static)!;
-        return method.Invoke(null, null)!;
+        return method.Invoke(null, new object[] { this.Exclusions })!;
     }
 
     private static GameLocation NewLocation(string name)
@@ -135,15 +160,15 @@ internal sealed class WhereaboutsWorld : IDisposable
     /// <c>HoeDirt.needsWatering()</c> asks the CROP's data (whether this kind of crop wants water at all), not the
     /// tile's <c>state</c>: water is the tile's own <c>state</c> field, which <see cref="Water"/> sets.
     /// </summary>
-    private static StardewValley.TerrainFeatures.HoeDirt Dirt(bool fullyGrown)
+    private static StardewValley.TerrainFeatures.HoeDirt Dirt(bool fullyGrown, bool dead = false)
     {
         var dirt = new StardewValley.TerrainFeatures.HoeDirt();
         SetInstanceField(dirt, "state", new NetInt(0));
-        dirt.crop = NewCrop(fullyGrown);
+        dirt.crop = NewCrop(fullyGrown, dead);
         return dirt;
     }
 
-    private static StardewValley.Crop NewCrop(bool fullyGrown)
+    private static StardewValley.Crop NewCrop(bool fullyGrown, bool dead = false)
     {
         var crop = (StardewValley.Crop)FormatterServices.GetUninitializedObject(typeof(StardewValley.Crop));
         SetInstanceField(crop, "netSeedIndex", new NetString("472"));
@@ -152,7 +177,7 @@ internal sealed class WhereaboutsWorld : IDisposable
         SetInstanceField(crop, "rowInSpriteSheet", new NetInt(0));
         SetInstanceField(crop, "fullyGrown", new NetBool(fullyGrown));
         SetInstanceField(crop, "forageCrop", new NetBool(false));
-        SetInstanceField(crop, "dead", new NetBool(false));
+        SetInstanceField(crop, "dead", new NetBool(dead));
         SetInstanceField(crop, "dayOfCurrentPhase", new NetInt(0));
         var phases = new NetIntList();
         for (int index = 0; index < 5; index++) phases.Add(1);

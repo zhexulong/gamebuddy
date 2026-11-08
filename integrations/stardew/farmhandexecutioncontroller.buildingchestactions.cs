@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using GameBuddy.Stardew.Core.Policy;
 using Microsoft.Xna.Framework;
 using StardewValley;
 using StardewValley.Buildings;
@@ -513,14 +514,21 @@ internal sealed partial class ExecutionManager
     /// actor holds nothing that could be loaded. That is the same shape `machineTargets` publishes
     /// for the machine load input (farmhandexecutioncontroller.cs:2193-2203).
     /// </summary>
-    private static IReadOnlyList<BridgeBuildingChestTarget> DiscoverBuildingChestTargets(Farmer player)
+    private static IReadOnlyList<BridgeBuildingChestTarget> DiscoverBuildingChestTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
     {
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeBuildingChestTarget>();
         List<BridgeBuildingChestTarget> result = new();
         foreach (Building building in location.buildings)
         {
-            if (building is null || building.daysOfConstructionLeft.Value > 0) continue;
+            if (building is null) continue;
+            // An under-construction building has no chest the engine will open: `Building.doAction` answers it with the
+            // `UnderConstruction` dialogue and performs nothing else (Building.cs:937-940).
+            if (building.daysOfConstructionLeft.Value > 0)
+            {
+                exclusions.Record("buildingChestTargets", DiscoveryExclusionReasons.NotReady);
+                continue;
+            }
             BuildingData? data = building.GetData();
             if (data?.Chests is null) continue;
             foreach (BuildingChest declared in data.Chests)

@@ -471,7 +471,10 @@ internal sealed partial class ExecutionManager
         foreach (Building building in location.buildings)
         {
             if (builtCount >= BuildFarmBuildingTargetLimit) break;
-            if (building is null || building.daysOfConstructionLeft.Value < 0) continue;
+            // The countdown is a PUBLISHED FIELD of the `built` row, not a filter: a building still being built is a
+            // building standing on the farm, and `Building.dayUpdate` only ever decrements this while it is above zero
+            // (Building.cs:1582-1590), so a negative value names no state the engine can produce.
+            if (building is null) continue;
             BuildingData? data = building.GetData();
             result.Add(new BridgeFarmBuildingTarget(
                 $"built_{building.id.Value:N}",
