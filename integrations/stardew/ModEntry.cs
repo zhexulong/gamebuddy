@@ -1951,6 +1951,7 @@ public sealed partial class ModEntry : Mod
                     "observe_request" => this.HandleObserve(state, inbound.Generation, inbound.Json),
                     "observe_scene_request" => this.HandleObserveScene(state, inbound.Generation, inbound.Json, correlationId),
                     "navigation_read_request" => this.HandleNavigationRead(state, inbound.Generation, inbound.Json, correlationId),
+                    "data_query_request" => this.HandleDataQuery(state, inbound.Generation, inbound.Json, correlationId),
                     "execution_request" => this.HandleExecute(state, inbound.Generation, inbound.Json),
                     "cancel_request" => this.HandleCancel(state, inbound.Generation, inbound.Json),
                     "execution_receipt_query" => this.HandleExecutionReceiptQuery(state, inbound.Generation, inbound.Json, correlationId),
@@ -2303,6 +2304,14 @@ public sealed partial class ModEntry : Mod
             return this.SerializeError(state, correlationId, parseReason);
         return this.SerializeBridgeResponse<BridgeNavigationReadRequest, BridgeNavigationReadResult>(state, request,
             (BridgeEnvelope<BridgeNavigationReadRequest> r, out BridgeEnvelope<BridgeNavigationReadResult>? response, out string reason) => state.BridgeSession!.TryNavigationRead(generation, r, out response, out reason), out _);
+    }
+
+    private string? HandleDataQuery(ScreenEmbodimentState state, long generation, string json, string? correlationId)
+    {
+        if (!BridgeProtocol.TryDeserializeDataQueryRequest(json, out BridgeEnvelope<BridgeDataQueryRequest>? request, out string parseReason) || request is null)
+            return this.SerializeError(state, correlationId, parseReason);
+        return this.SerializeBridgeResponse<BridgeDataQueryRequest, BridgeDataQueryResult>(state, request,
+            (BridgeEnvelope<BridgeDataQueryRequest> r, out BridgeEnvelope<BridgeDataQueryResult>? response, out string reason) => state.BridgeSession!.TryDataQuery(generation, r, out response, out reason), out _);
     }
 
     private string? HandleExecute(ScreenEmbodimentState state, long generation, string json)

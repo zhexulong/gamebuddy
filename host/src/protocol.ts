@@ -1265,6 +1265,59 @@ type NavigationSelector = Readonly<{
   ref: string | null;
 }>;
 
+/**
+ * One engine content-table query: a table name, and optionally one row of it.
+ *
+ * `table` is an ENGINE table name (`FarmAnimals`, `Shops`, `Machines`, ...), resolved by the Mod against its own
+ * registry. It is a free string here on purpose: the Mod is the authority on which tables exist, so a table added to
+ * a future game version needs no Host edit, and a name the engine does not have comes back as a named `unknown_table`
+ * rather than as an empty answer.
+ */
+export type DataQueryRequest = Readonly<{ table: string; key: string | null }>;
+
+/**
+ * A projected field value. Scalars, string arrays and null only: a row is never a nested document.
+ *
+ * `null` is a real answer - `FarmAnimalData.HarvestTool` is null for a hen - and it is distinct from an ABSENT key,
+ * which means the projection does not carry that field at all. Two different facts must not share one spelling.
+ */
+export type DataQueryFieldValue = string | number | boolean | null | readonly (string | number | boolean)[];
+
+/** One content-table row, projected by the Mod to the fields that decide an action. */
+export type DataQueryRow = Readonly<{ id: string; fields: Readonly<Record<string, DataQueryFieldValue>> }>;
+
+/**
+ * The answer to one content-table query.
+ *
+ * `population` is how many rows the table has, and it is -1 exactly when no table was found to count. That is what
+ * keeps "the table is empty", "the table has no such row" and "there is no such table" three different answers.
+ */
+export type DataQueryResult =
+  | Readonly<{
+      status: "index";
+      table: string;
+      population: number;
+      ids: readonly string[];
+      row: null;
+      detail: null;
+    }>
+  | Readonly<{
+      status: "row";
+      table: string;
+      population: number;
+      ids: null;
+      row: DataQueryRow;
+      detail: null;
+    }>
+  | Readonly<{
+      status: "absent_row" | "unknown_table" | "not_projectable";
+      table: string;
+      population: number;
+      ids: null;
+      row: null;
+      detail: string;
+    }>;
+
 export type NavigationReadRequest =
   | Readonly<{ operation: "inspect_world_map"; args: Readonly<Record<string, never>> }>
   | Readonly<{ operation: "inspect_world_map"; args: Readonly<{ nodeRef: string }> }>
@@ -1823,6 +1876,8 @@ export type BridgeMessage =
   | Envelope<"observe_request", Readonly<Record<string, never>>>
   | Envelope<"navigation_read_request", NavigationReadRequest>
   | Envelope<"navigation_read_result", NavigationReadResult>
+  | Envelope<"data_query_request", DataQueryRequest>
+  | Envelope<"data_query_result", DataQueryResult>
   | Envelope<"observe_scene_request", ObserveSceneRequest>
   | Envelope<"observe_scene_result", ObserveSceneResult>
   | Envelope<"snapshot", Snapshot>
@@ -1861,6 +1916,8 @@ const BRIDGE_MESSAGE_TYPES = [
   "observe_request",
   "navigation_read_request",
   "navigation_read_result",
+  "data_query_request",
+  "data_query_result",
   "observe_scene_request",
   "observe_scene_result",
   "snapshot",
@@ -2155,6 +2212,10 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
       return validateNavigationReadRequest(payload);
     case "navigation_read_result":
       return validateNavigationReadResult(payload);
+    case "data_query_request":
+      return validateDataQueryRequest(payload);
+    case "data_query_result":
+      return validateDataQueryResult(payload);
     case "observe_scene_request":
       return validateObserveSceneRequest(payload);
     case "observe_scene_result":
@@ -2682,6 +2743,74 @@ function boundedSceneText(value: unknown, maximumLength: number): value is strin
 
 function isSceneReference(value: unknown): value is string {
   return typeof value === "string" && /^sr1_[A-Za-z0-9_-]{16}$/.test(value);
+}
+
+function validateDataQueryRequest(value: Record<string, unknown>): string | null {
+  if (!hasExactKeys(value, ["table", "key"])) return "invalid_data_query_request";
+  if (!isBoundedNonEmptyString(value.table, 64)) return "invalid_data_query_request";
+  if (value.key !== null && !isBoundedNonEmptyString(value.key, 128)) return "invalid_data_query_request";
+  return null;
+}
+
+/**
+ * A content-table answer, in the Mod's own closed vocabulary.
+ *
+ * `population` is -1 exactly when no table was found to count, and every status that carries no rows says why in
+ * `detail`: an answer that names nothing is the defect this shape exists to prevent.
+ */
+function validateDataQueryResult(value: Record<string, unknown>): string | null {
+  if (!hasExactKeys(value, ["status", "table", "population", "ids", "row", "detail"]))
+    return "invalid_data_query_result";
+  if (!isBoundedNonEmptyString(value.table, 64)) return "invalid_data_query_result";
+  if (typeof value.population !== "number" || !Number.isSafeInteger(value.population))
+    return "invalid_data_query_result";
+  if (value.status === "index")
+    return value.population >= 0 && isDataQueryIds(value.ids) && value.row === null && value.detail === null
+      ? null
+      : "invalid_data_query_result";
+  if (value.status === "row")
+    return value.population >= 0 && value.ids === null && isDataQueryRow(value.row) && value.detail === null
+      ? null
+      : "invalid_data_query_result";
+  if (value.status === "absent_row" || value.status === "unknown_table" || value.status === "not_projectable")
+    return value.population >= -1 &&
+      value.ids === null &&
+      value.row === null &&
+      isBoundedNonEmptyString(value.detail, 512)
+      ? null
+      : "invalid_data_query_result";
+  return "invalid_data_query_result";
+}
+
+function isDataQueryIds(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.length <= 4096 && value.every((id) => isBoundedNonEmptyString(id, 128));
+}
+
+/** One projected row: an id, and the fields the Mod kept - scalars and string arrays only, never a nested document. */
+function isDataQueryRow(value: unknown): value is DataQueryRow {
+  if (!isRecord(value) || !hasExactKeys(value, ["id", "fields"]) || !isBoundedNonEmptyString(value.id, 128))
+    return false;
+  if (!isRecord(value.fields)) return false;
+  const fields = Object.entries(value.fields);
+  if (fields.length > 32) return false;
+  return fields.every(([, field]) => isDataQueryFieldValue(field));
+}
+
+function isDataQueryFieldValue(value: unknown): value is DataQueryFieldValue {
+  if (value === null) return true;
+  if (typeof value === "string") return value.length <= 256;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "boolean") return true;
+  return (
+    Array.isArray(value) &&
+    value.length <= 16 &&
+    value.every(
+      (entry) =>
+        (typeof entry === "string" && entry.length <= 256) ||
+        (typeof entry === "number" && Number.isFinite(entry)) ||
+        typeof entry === "boolean",
+    )
+  );
 }
 
 function validateNavigationReadRequest(value: Record<string, unknown>): string | null {

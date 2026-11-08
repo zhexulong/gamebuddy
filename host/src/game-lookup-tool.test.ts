@@ -146,6 +146,9 @@ test("every subject answers through the tool and names the family it read", asyn
     // through a port this fixture does not carry, so its source is `BodyProgramJournal` and its revision is null by design.
     // It has its own file (`game-lookup-my-work.test.ts`), which asserts exactly that.
     if (subject === "my_work") continue;
+    // `data` reads the game's own content tables through the bridge rather than this snapshot, and this fixture carries no
+    // content-data reader; `game-lookup-data.test.ts` drives it end to end.
+    if (subject === "data") continue;
     const { body } = await ask(connection, { subject, ...(subject in filters ? { query: filters[subject] } : {}) });
     assert.ok(typeof body.source?.family === "string", `${subject} must name its source family`);
     assert.equal(body.source.snapshotRevision, snapshot.revision, `${subject} must name the revision it describes`);

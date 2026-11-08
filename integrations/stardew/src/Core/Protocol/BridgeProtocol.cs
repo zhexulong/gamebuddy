@@ -1802,6 +1802,64 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         }
     }
 
+    /// <summary>
+    /// One content-table query: `{ table, key }`, where `key` is null for the row ids.
+    ///
+    /// <para>
+    /// `table` is an engine table name, not a path: the Mod resolves it against its own registry and answers
+    /// `unknown_table` by name for anything else, so an unknown table can never become a filesystem read.
+    /// </para>
+    /// </summary>
+    public static bool TryDeserializeDataQueryRequest(
+        string json,
+        out BridgeEnvelope<BridgeDataQueryRequest>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        if (!TryReadInboundPayload(json, "data_query_request", out JsonDocument? document, out JsonElement payload, out reasonCode))
+            return false;
+
+        JsonDocument parsedDocument = document ?? throw new InvalidOperationException("Inbound data-query parser returned no document.");
+        using (parsedDocument)
+        {
+            if (!HasExactProperties(payload, "table", "key")
+                || !payload.TryGetProperty("table", out JsonElement table)
+                || table.ValueKind != JsonValueKind.String
+                || !IsTableName(table.GetString())
+                || !payload.TryGetProperty("key", out JsonElement key)
+                || key.ValueKind is not (JsonValueKind.String or JsonValueKind.Null)
+                || (key.ValueKind == JsonValueKind.String && !IsTableRowKey(key.GetString())))
+            {
+                reasonCode = "invalid_data_query_request";
+                return false;
+            }
+            try
+            {
+                envelope = JsonSerializer.Deserialize<BridgeEnvelope<BridgeDataQueryRequest>>(parsedDocument.RootElement.GetRawText(), JsonOptions);
+                if (envelope is null)
+                {
+                    reasonCode = "invalid_data_query_request";
+                    return false;
+                }
+                reasonCode = "accepted";
+                return true;
+            }
+            catch (JsonException)
+            {
+                reasonCode = "invalid_json";
+                return false;
+            }
+        }
+    }
+
+    /// <summary>An engine table name: a plain identifier, bounded so no caller can name a path.</summary>
+    private static bool IsTableName(string? value) => value is { Length: > 0 and <= 64 }
+        && value.All(static character => char.IsLetterOrDigit(character) || character is '_' or '/' or ' ');
+
+    /// <summary>One row id: bounded and printable, because table ids are the game's own keys.</summary>
+    private static bool IsTableRowKey(string? value) => value is { Length: > 0 and <= 128 }
+        && value.All(static character => !char.IsControl(character));
+
     private static bool IsExactNavigationReadArgs(string? operation, JsonElement args) => operation switch
     {
         "inspect_world_map" => IsExactInspectWorldMapArgs(args),

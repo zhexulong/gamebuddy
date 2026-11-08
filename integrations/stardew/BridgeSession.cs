@@ -488,6 +488,28 @@ string? bodyProgramUnavailableReason = null,
 
     internal void ClearNavigationForWorldUnload() => this.navigationReferences.ClearForWorldUnload();
 
+    /// <summary>
+    /// One content-table query, answered from the engine's own loaders on the game thread.
+    ///
+    /// <para>
+    /// Deliberately not gated on a published capability: the answer is static game content, it creates no receipt and
+    /// mutates nothing, and "what does a chicken cost" is a question a companion must be able to ask before any action
+    /// of that family has been advertised. The route is still authenticated, still owner-thread-only, and still
+    /// resolves its table name against the Mod's own registry, so an unknown name is a named refusal rather than a read.
+    /// </para>
+    /// </summary>
+    internal bool TryDataQuery(long generation, BridgeEnvelope<BridgeDataQueryRequest>? envelope, out BridgeEnvelope<BridgeDataQueryResult>? response, out string reasonCode)
+    {
+        response = null;
+        if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "data_query_request", out reasonCode)) return false;
+        if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
+
+        BridgeDataQueryResult payload = ContentDataQuery.Answer(envelope!.Payload.Table, envelope.Payload.Key);
+        response = Reply("data_query_result", envelope.CorrelationId, payload);
+        reasonCode = "accepted";
+        return true;
+    }
+
     internal bool TryExecute(long generation, BridgeEnvelope<BridgeExecutionRequest>? envelope, out BridgeEnvelope<BridgeReceipt>? response, out string reasonCode)
     {
         response = null;

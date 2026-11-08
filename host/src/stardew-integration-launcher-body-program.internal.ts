@@ -36,6 +36,7 @@ import type {
   BodyProgramSubmitResult,
   BodyNodeAdmissionChallenge,
   BodyNodeAdmissionResult,
+  DataQueryRequest,
   NavigationReadRequest,
   ObserveSceneRequest,
 } from "./protocol.js";
@@ -315,6 +316,7 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
       // gate's route-presence clause (`game-tools.ts:300`, `:342`) refuses every call synchronously.
       navigationRead: (request: NavigationReadRequest) => bridge.navigationRead(request),
       observeScene: (request: ObserveSceneRequest) => bridge.observeScene(request),
+      dataQuery: (request: DataQueryRequest) => bridge.dataQuery(request),
     });
     // Mint exactly one authenticated association for the exact frozen wrapper
     // returned by this launch handle. The adapter refuses any structural copy,

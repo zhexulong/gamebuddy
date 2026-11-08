@@ -468,13 +468,21 @@ internal sealed partial class ExecutionManager
             siteCount++;
         }
 
-        foreach (Building building in location.buildings)
+        // CONSTRUCTION FIRST. The countdown below is a published FIELD, and this family is capped at
+        // `BuildFarmBuildingTargetLimit` - so on a farm with more buildings than the cap, whichever building happened
+        // to sit last in `location.buildings` was the one dropped, and that could be the one the player is waiting on.
+        // Ordering by the countdown makes the cap drop finished buildings instead, which is a fact a caller can act on.
+        List<Building> standing = location.buildings
+            .Where(static building => building is not null)
+            .OrderByDescending(static building => building.daysOfConstructionLeft.Value > 0)
+            .ThenBy(static building => building.id.Value)
+            .ToList();
+        foreach (Building building in standing)
         {
             if (builtCount >= BuildFarmBuildingTargetLimit) break;
             // The countdown is a PUBLISHED FIELD of the `built` row, not a filter: a building still being built is a
             // building standing on the farm, and `Building.dayUpdate` only ever decrements this while it is above zero
             // (Building.cs:1582-1590), so a negative value names no state the engine can produce.
-            if (building is null) continue;
             BuildingData? data = building.GetData();
             result.Add(new BridgeFarmBuildingTarget(
                 $"built_{building.id.Value:N}",

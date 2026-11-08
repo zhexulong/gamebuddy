@@ -96,8 +96,7 @@ const INSTALLATION_CANDIDATE_ALLOWED_KEYS: ReadonlySet<string> = new Set([
 function hasInstallationCandidateKeys(value: Record<string, unknown>): boolean {
   const own = Object.keys(value);
   return (
-    INSTALLATION_CANDIDATE_REQUIRED_KEYS.every((key) => own.includes(key)) &&
-    own.every((key) => INSTALLATION_CANDIDATE_ALLOWED_KEYS.has(key))
+    INSTALLATION_CANDIDATE_REQUIRED_KEYS.every((key) => own.includes(key)) && own.every((key) => INSTALLATION_CANDIDATE_ALLOWED_KEYS.has(key))
   );
 }
 const INSTALLATION_DIAGNOSTICS_MAX = 32;
@@ -693,7 +692,9 @@ function validateStardewInstallationDiscovery(value: unknown): StardewInstallati
   for (const candidate of value.candidates) {
     if (
       !isRecord(candidate) ||
-      !hasInstallationCandidateKeys(candidate) ||
+      !(
+        hasInstallationCandidateKeys(candidate)
+      ) ||
       !isInstallationCandidateId(candidate.candidateId) ||
       !isBoundedString(candidate.source, 1, 64) ||
       !isBoundedString(candidate.label, 1, 256) ||

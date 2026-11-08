@@ -16,6 +16,8 @@ import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js
 import {
   LOOKUP_SUBJECTS,
   type AffordanceAction,
+  dataQueryUnavailable,
+  dataTable,
   journalUnavailable,
   lookUp,
   myWorkFromJournal,
@@ -28,6 +30,8 @@ import { RUN_SPAN_NAMES, type RunTrace, describeTraceFailure } from "./run-trace
 import {
   type ActionRegistrationDescriptor,
   type BodyProgramStatusResult,
+  type DataQueryRequest,
+  type DataQueryResult,
   type ExecutionReceipt,
   type ExecutionRequest,
   TOOL_SELECTOR_VALUES,
@@ -136,6 +140,16 @@ type NavigationReadIntegration = StardewBridgeConnection & {
       args: Readonly<Record<string, unknown>>;
     }>,
   ): Promise<unknown>;
+};
+
+/**
+ * The game's own content tables, read through the bridge.
+ *
+ * Duck-typed for the same reason the journal reader is: a content-table question is read-only and needs exactly one
+ * method, so a session that cannot answer it says so by not having one.
+ */
+type DataQueryReadIntegration = {
+  dataQuery(request: DataQueryRequest): Promise<DataQueryResult>;
 };
 
 /** Read-only tools always expose facts exactly as supplied by the Mod. */
@@ -271,7 +285,7 @@ export function createStardewObservationTools(
     name: "stardew_look_up",
     label: "Look Up Stardew",
     description:
-      "Answer a question about the Stardew state this session already holds, without asking the Mod again. Subjects: my_work (WHAT HAVE I ACTUALLY DONE: totals of programs submitted/settled/running, of nodes by terminal state and of `executions` - the actions that really reached the game; `byAction` with succeeded/failed/rejected per action; the distinct `tiles` your succeeded receipts addressed, with `unproven` for those that named none; and the newest `programs` ids with their state, so one can be passed to stardew_action_program_status. It needs no id and reads the Mod's durable journal, so it answers the same after any number of context folds and with no prior tool result in scope; `population` says \"programs read N of M\" when the journal is longer than one answer. `since` is NOT available: the journal records no day boundary, and the answer says so rather than guessing), affordances (WHAT CAN BE DONE HERE, NOW: one group per kind of target already in the snapshot, each naming the `family` it counts, the `action` every consumer would use, and the nearest target's id and tile; `count` is how many of that kind are in view, and the action's own preconditions still apply), crops (tiles that need water or are ready to harvest, per location), chests (which chest holds an item), inventory (items held), npcs (where a villager is), calendar (day, time, weather). Every answer names `source.family` and the `source.snapshotRevision` it describes; `source.family: null` means the snapshot does not carry that fact - that is not an empty world, and `missingField` names what the Mod would have to publish. Lists are bounded and report `omitted`. This never refreshes the world: call stardew_observe first if it may have moved.",
+      "Answer a question about the Stardew state this session already holds, without asking the Mod again. Subjects: my_work (WHAT HAVE I ACTUALLY DONE: totals of programs submitted/settled/running, of nodes by terminal state and of `executions` - the actions that really reached the game; `byAction` with succeeded/failed/rejected per action; the distinct `tiles` your succeeded receipts addressed, with `unproven` for those that named none; and the newest `programs` ids with their state, so one can be passed to stardew_action_program_status. It needs no id and reads the Mod's durable journal, so it answers the same after any number of context folds and with no prior tool result in scope; `population` says \"programs read N of M\" when the journal is longer than one answer. `since` is NOT available: the journal records no day boundary, and the answer says so rather than guessing), affordances (WHAT CAN BE DONE HERE, NOW: one group per kind of target already in the snapshot, each naming the `family` it counts, the `action` every consumer would use, and the nearest target's id and tile; `count` is how many of that kind are in view, and the action's own preconditions still apply), crops (tiles that need water or are ready to harvest, per location), chests (which chest holds an item), inventory (items held), npcs (where a villager is), calendar (day, time, weather), data (THE GAME'S OWN CONTENT TABLES, which no observation carries: pass `table` and, for one row, `key`. `table` is an engine table name - FarmAnimals, Buildings, Shops, Machines, Crops, Objects, BigCraftables, Tools - read through the engine's own loaders, so it answers what a chicken costs, how many days until it matures, what it produces and from what, what a shop sells it for, and what a machine accepts and how long it takes. Without `key` the answer is a bounded index of the row ids with `population` beside `matched` and `omitted`; with `key` it is that one row projected to the fields that decide an action. The outcome is named: `data_table_unknown:<table>` (no such table), `data_row_absent:<table>:<key>` (the table has no such row), `data_row_found:<table>:<key>`, `data_table_not_projectable:<table>:<why>`. A table with zero rows answers `population: 0`, never unknown). Every answer names `source.family` and the `source.snapshotRevision` it describes; `source.family: null` means the snapshot does not carry that fact - that is not an empty world, and `missingField` names what the Mod would have to publish. Lists are bounded and report `omitted`. This never refreshes the world: call stardew_observe first if it may have moved.",
     parameters: Type.Object(
       {
         // The subject vocabulary is the module's own table, so a subject cannot be advertised here and refused there.
@@ -280,11 +294,21 @@ export function createStardewObservationTools(
         // Accepted so a caller that asks for a day scope is TOLD the journal has none, instead of silently getting the
         // whole journal under a heading it did not earn.
         since: Type.Optional(Type.String({ minLength: 1, maxLength: 32 })),
+        // `subject: "data"` only. The table vocabulary belongs to the Mod's own registry, so this is a free name and an
+        // unknown one comes back as `data_table_unknown:<table>` rather than being rejected here.
+        table: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+        key: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
       },
       { additionalProperties: false },
     ),
     execute: async (_toolCallId, params) => {
-      const asked = params as Readonly<{ subject?: unknown; query?: unknown; since?: unknown }>;
+      const asked = params as Readonly<{
+        subject?: unknown;
+        query?: unknown;
+        since?: unknown;
+        table?: unknown;
+        key?: unknown;
+      }>;
       const state = integration.state;
       const since = typeof asked.since === "string" ? asked.since : undefined;
       // `my_work` is answered from the Mod's journal, not from the snapshot in `state`, so it is resolved before the
@@ -310,6 +334,31 @@ export function createStardewObservationTools(
         return lookupResult(myWorkFromJournal(journal, { since }), state.connected);
       }
       const snapshot = state.connected ? state.snapshot : null;
+      // `data` is answered by the game's own content tables, which no snapshot carries: the tables are engine state and
+      // publishing them in every observation would turn an observation into a dump.
+      if (String(asked.subject) === "data") {
+        const table = typeof asked.table === "string" ? asked.table.trim() : "";
+        if (table.length === 0)
+          return lookupResult(
+            dataQueryUnavailable("`data` needs a `table`: the engine table to read, e.g. FarmAnimals"),
+            state.connected,
+          );
+        const reader = (integration as Partial<DataQueryReadIntegration>).dataQuery;
+        if (typeof reader !== "function")
+          return lookupResult(dataQueryUnavailable("this session has no content-data reader"), state.connected);
+        const key = typeof asked.key === "string" && asked.key.trim().length > 0 ? asked.key.trim() : null;
+        try {
+          const result = await (integration as DataQueryReadIntegration).dataQuery({ table, key });
+          return lookupResult(dataTable(result, key), state.connected);
+        } catch (error) {
+          return lookupResult(
+            dataQueryUnavailable(
+              `the content table could not be read: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+            state.connected,
+          );
+        }
+      }
       const answer =
         snapshot === null
           ? noSnapshot(state.latestReasonCode ?? "integration_not_ready")

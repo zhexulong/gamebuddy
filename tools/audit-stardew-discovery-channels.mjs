@@ -14,10 +14,22 @@
 //   4. Agent contract  - host/src/game-tools.ts names the field in the tool
 //                        description so the Agent knows where to read it
 //
+// Two more hops were added when the missing channels stopped being about targets:
+//
+//   5. Content tables   - every `Game1.*Data` cache the Mod's own C# touches must be askable through
+//                        `look_up({ subject: "data", table })`, or carry a stated reason here. The
+//                        population is scanned out of the Mod's sources (and, when the decompiled tree is
+//                        present, out of `Game1.cs` too, so a table a future game version adds is a finding).
+//   6. Building state   - the `Building` members an action depends on, and the channel that carries each to
+//                        the Agent. This is where the owner's question is answered in code: a coop under
+//                        construction, with no chest, no fish pond and no obelisk, is published as a row
+//                        only by `farmBuildingTargets` - and that family is capped, so the cap must drop
+//                        finished buildings before the one being built.
+//
 // Any hole in the chain is silent: the game state exists, the Mod sends it, and
 // the Agent still cannot act. This tool reports per-action holes rather than a
 // single pass/fail, and exits non-zero when a target-bearing action has one.
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +40,8 @@ const MODELS = "integrations/stardew/src/Core/Models/BridgeProtocolModels.cs";
 const PROTOCOL = "host/src/protocol.ts";
 const SCHEMA = "protocol/bridge-v1.schema.json";
 const TOOLS = "host/src/game-tools.ts";
+const MOD_SOURCE_ROOT = "integrations/stardew";
+const CONTENT_QUERY_FILE = "ContentDataQuery.cs";
 
 /**
  * The snapshot field each action's opaque target is published under.
@@ -198,6 +212,152 @@ function read(relative) {
   return readFileSync(path.join(ROOT, relative), "utf8");
 }
 
+/**
+ * The engine content caches the Agent cannot ask about, and why not.
+ *
+ * <p>
+ * Two kinds only, because they are the only two honest answers: the fact reaches the Agent some other way (an action
+ * already publishes the row that carries it), or the table is engine bookkeeping no action chooses from. A third
+ * kind - "nobody got round to it" - is what this table exists to make impossible; it is a finding, not a reason.
+ * </p>
+ * <p>
+ * An entry EXPIRES: a reason naming a cache the Mod no longer references, or one a `look_up data` table now covers, is
+ * `stale_content_table_reason`. The list may not silently outlive the tables it excuses.
+ * </p>
+ */
+export const CONTENT_TABLE_REASONS = Object.freeze({
+  "Game1.characterData": {
+    kind: "published_by_action",
+    reason:
+      "`Data/Characters` describes the villagers the world already identifies by name; `npcRelationshipTargets` publishes the row an action chooses from (name, tile, relationship) and a handler reads the definition through `DataLoader` when the native call needs it",
+  },
+  "Game1.fruitTreeData": {
+    kind: "published_by_action",
+    reason:
+      "a fruit tree's own growth state is published from `terrainFeatures` as `fruitTreeTargets`; the definition is read through `DataLoader` when an action needs it",
+  },
+  "Game1.pantsData": {
+    kind: "published_by_action",
+    reason:
+      "the worn pants are published as the actor's equipped wearable (`wearableTargets`), which is what `unequip_wearable` names",
+  },
+  "Game1.shirtData": {
+    kind: "published_by_action",
+    reason:
+      "the worn shirt is published as the actor's equipped wearable (`wearableTargets`), which is what `unequip_wearable` names",
+  },
+  "Game1.petData": {
+    kind: "published_by_action",
+    reason:
+      "the household pet is published from the world as `petTargets` (tile, pet type, whether it was petted); the definition is read through `DataLoader`",
+  },
+  "Game1.floorPathData": {
+    kind: "engine_bookkeeping",
+    reason:
+      "`Data/FloorsAndPaths` is the indoor walkability map the native pathfinder reads; `navigate_to_destination` drives that pathfinder and the path itself is the action's result, not a row",
+  },
+  "Game1.jukeboxTrackData": {
+    kind: "engine_bookkeeping",
+    reason: "`Data/JukeboxTracks` is the jukebox catalogue; no action plays a jukebox track",
+  },
+  "Game1.locationContextData": {
+    kind: "engine_bookkeeping",
+    reason:
+      "`Data/LocationContexts` is the fish/forage/artifact table the ENGINE consults per location; no action chooses a target from it, and the definitions are read through `DataLoader` when a native call needs them",
+  },
+  "Game1.weaponData": {
+    kind: "engine_bookkeeping",
+    reason:
+      "`Data/Weapons` (damage, knockback); the surface publishes no combat action, so no row is chosen from this table",
+  },
+});
+
+/** The two kinds a content-table reason may be. */
+export const CONTENT_TABLE_REASON_KINDS = Object.freeze(["published_by_action", "engine_bookkeeping"]);
+
+/**
+ * The `Building` members an action depends on, and the channel that carries each to the Agent.
+ *
+ * <p>
+ * The owner's question lives in the second row: a coop under construction, with no chest, no fish pond and no obelisk,
+ * reaches the Agent only through `doorTargets` (no radius bound, `farmhandexecutioncontroller.cs:2814/2823`, skipping
+ * `!HasIndoors()`), and `doorTargets` carries a warp, not a countdown. So the countdown has exactly one channel -
+ * `farmBuildingTargets` `built` rows - and that family is capped at `BuildFarmBuildingTargetLimit`. A cap that drops the
+ * last building in `location.buildings` order can drop the one being built, which is why the Mod orders the countdown
+ * first and why this audit goes red if that ordering disappears.
+ * </p>
+ */
+export const BUILDING_STATE_CHANNELS = Object.freeze([
+  { member: "buildingType", family: "FarmBuildingTargets", field: "buildingType" },
+  { member: "daysOfConstructionLeft", family: "FarmBuildingTargets", field: "daysOfConstructionLeft" },
+  // The boolean itself is not a fact the Agent acts on: the building's human door IS the fact, and it is published
+  // exactly when `HasIndoors()` is true, which is the same test the discovery makes.
+  { member: "HasIndoors()", family: "DoorTargets", field: null, source: "HasIndoors()" },
+  { member: "humanDoor", family: "DoorTargets", field: null, source: "getPointForHumanDoor()" },
+  { member: "animalDoor", family: "AnimalDoorTargets", field: null, source: "animalDoor" },
+]);
+
+/** Every `Game1.<name>Data` cache the Mod's own C# names. */
+const CONTENT_TABLE_REFERENCE = /Game1\.(\w+Data)\b/gu;
+
+/** Every content cache `Game1.cs` declares (`public static IDictionary<string, X> nameData;`). */
+const ENGINE_CONTENT_TABLE = /public static IDictionary<[^>]*>\s+(\w+Data);/gu;
+
+/**
+ * The Mod's own sources, minus the test project and the build outputs.
+ *
+ * The population of the content-table hop is scanned out of these, never listed by hand: a cache the Mod starts
+ * touching is a table the Agent must be able to ask about, and nothing in this file has to change for it to count.
+ */
+export function loadModSources({ root = ROOT, directory = MOD_SOURCE_ROOT } = {}) {
+  const sources = [];
+  const stack = [path.join(root, directory)];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const absolute = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        if (["tests", "bin", "obj", "action-development"].includes(entry.name)) continue;
+        stack.push(absolute);
+        continue;
+      }
+      if (!entry.name.endsWith(".cs")) continue;
+      sources.push({
+        path: path.relative(root, absolute).split(path.sep).join("/"),
+        source: readFileSync(absolute, "utf8"),
+      });
+    }
+  }
+  return sources;
+}
+
+/**
+ * The tables `look_up({ subject: "data" })` exposes, parsed from the Mod's own registry.
+ *
+ * The registry is the one place a table is declared: its engine asset and the cache property it is the parsed form
+ * of. Parsing it here rather than keeping a list is what makes "the Agent can ask this table" a measurement instead of
+ * a promise - and a formatting change that hides an entry fails CLOSED (every table then reads as unreachable).
+ */
+export function contentTableRegistry(query) {
+  const tables = [];
+  const marks = [...query.matchAll(/\["([A-Za-z]+)"\]\s*=/gu)];
+  for (let index = 0; index < marks.length; index += 1) {
+    const start = marks[index].index;
+    const end = index + 1 < marks.length ? marks[index + 1].index : query.length;
+    const block = query.slice(start, end);
+    const asset = block.match(/"(Data\/[^"]+)"/u);
+    const cache = block.match(/"(Game1\.\w+Data|DataLoader\.\w+)"/u);
+    if (asset !== null && cache !== null) tables.push({ table: marks[index][1], asset: asset[1], cache: cache[1] });
+  }
+  return tables;
+}
+
 function lower(name) {
   return name[0].toLowerCase() + name.slice(1);
 }
@@ -207,7 +367,12 @@ export function auditDiscoveryChannels({
   models = read(MODELS),
   protocol = read(PROTOCOL),
   schema = JSON.parse(read(SCHEMA)),
+  schemaText = read(SCHEMA),
   gameTools = read(TOOLS),
+  // Null means "not measured". A caller injecting a synthetic action surface must not be handed gaps about the real
+  // Mod's content tables; the CLI and the committed-tree test pass the real sources, which is where these hops live.
+  modSources = null,
+  engine = null,
 } = {}) {
   const modFields = new Set(
     [...models.matchAll(/IReadOnlyList<Bridge\w+>\??\s+(\w+)\b/g)].map((m) => m[1].toLowerCase()),
@@ -332,26 +497,154 @@ export function auditDiscoveryChannels({
     }
   }
 
+  // ---- hop 5: the game's own content tables ---------------------------------
+  //
+  // The population is scanned out of the Mod's own C#, never listed here: a cache the Mod starts touching is a table
+  // the Agent must be able to ask about, and a table a future game version adds shows up the moment a handler reads it.
+  // When the decompiled tree is available the ENGINE's own `Game1.*Data` declarations join the population, so a table
+  // the game has that we neither expose nor explain is a finding rather than a silence.
+  const querySource =
+    modSources === null ? undefined : modSources.find((entry) => entry.path.endsWith(CONTENT_QUERY_FILE));
+  const registry = querySource === undefined ? [] : contentTableRegistry(querySource.source);
+  const coveredByCache = new Map(registry.map((entry) => [entry.cache, entry.table]));
+  const referenced = new Set();
+  for (const entry of modSources ?? [])
+    for (const match of entry.source.matchAll(CONTENT_TABLE_REFERENCE)) referenced.add(`Game1.${match[1]}`);
+  const enginePopulation =
+    engine === null
+      ? [...referenced]
+      : [...new Set([...engine.matchAll(ENGINE_CONTENT_TABLE)].map((match) => `Game1.${match[1]}`))];
+  const contentRows = enginePopulation.sort().map((cache) => {
+    const reason = CONTENT_TABLE_REASONS[cache];
+    return {
+      cache,
+      referencedByMod: referenced.has(cache),
+      table: coveredByCache.get(cache) ?? null,
+      reasonKind: reason === undefined ? null : reason.kind,
+    };
+  });
+  if (querySource === undefined && modSources !== null)
+    gaps.push({ subject: CONTENT_QUERY_FILE, gap: "content_data_query_missing" });
+  for (const row of contentRows) {
+    if (row.table !== null) continue;
+    if (row.reasonKind === null)
+      gaps.push({
+        subject: row.cache,
+        gap: `content_table_unreachable:${row.cache}`,
+      });
+    else if (!CONTENT_TABLE_REASON_KINDS.includes(row.reasonKind))
+      gaps.push({ subject: row.cache, gap: `content_table_reason_invalid:${row.cache}` });
+  }
+  if (modSources !== null)
+    for (const cache of Object.keys(CONTENT_TABLE_REASONS))
+      if (!contentRows.some((row) => row.cache === cache))
+        gaps.push({ subject: cache, gap: `stale_content_table_reason:${cache}` });
+  if (engine !== null)
+    for (const cache of referenced)
+      if (!enginePopulation.includes(cache)) gaps.push({ subject: cache, gap: `content_table_not_in_engine:${cache}` });
+
+  // ---- hop 6: the building state an action depends on ------------------------
+  //
+  // `daysOfConstructionLeft` is the owner's question: a coop being built, with no chest, no pond and no obelisk, has
+  // exactly one channel - the `built` rows of `farmBuildingTargets` - and that family is capped. The cap must therefore
+  // drop finished buildings before the one under construction, which is a source fact this hop measures.
+  const constructionFirst =
+    modSources !== null &&
+    modSources.some((entry) => /OrderByDescending\([^;]*daysOfConstructionLeft\.Value\s*>\s*0\)/u.test(entry.source));
+  const buildingRows = BUILDING_STATE_CHANNELS.map((entry) => ({
+    member: entry.member,
+    family: entry.family,
+    field: entry.field,
+    inMod: modFields.has(entry.family.toLowerCase()),
+    inProtocol: entry.field === null ? true : protocol.includes(entry.field),
+    inSchema: entry.field === null ? true : schemaText.includes(entry.field),
+    reader: (modSources ?? []).some((source) => source.source.includes(entry.source ?? entry.member)),
+  }));
+  for (const row of buildingRows) {
+    if (modSources === null) break;
+    if (!row.inMod) gaps.push({ subject: row.member, gap: `building_member_unpublished:${row.member}:${row.family}` });
+    if (!row.inProtocol) gaps.push({ subject: row.member, gap: `building_member_not_on_wire:${row.member}` });
+    if (!row.inSchema) gaps.push({ subject: row.member, gap: `building_member_not_in_schema:${row.member}` });
+    if (!row.reader) gaps.push({ subject: row.member, gap: `building_member_unread:${row.member}` });
+  }
+  if (modSources !== null && !constructionFirst)
+    gaps.push({
+      subject: "daysOfConstructionLeft",
+      gap: "building_construction_cap_can_drop_the_building:daysOfConstructionLeft",
+    });
+
   return Object.freeze({
     schema: "gamebuddy-stardew-discovery-channel-audit/v1",
     actionCount: rows.length,
     targetBearingCount: rows.filter((r) => r.needsTarget).length,
     rows,
+    contentTables: Object.freeze({
+      measured: modSources !== null,
+      examined: contentRows.length,
+      addressable: contentRows.filter((row) => row.table !== null).length,
+      withReason: contentRows.filter((row) => row.table === null && row.reasonKind !== null).length,
+      enginePopulationMeasured: engine !== null,
+      rows: contentRows,
+      registry,
+    }),
+    buildingState: Object.freeze({
+      measured: modSources !== null,
+      examined: buildingRows.length,
+      carried: buildingRows.filter((row) => row.inMod && row.reader).length,
+      constructionFirst,
+      rows: buildingRows,
+    }),
     gaps,
     ok: gaps.length === 0,
   });
 }
 
+/**
+ * The engine's own content-table declarations, when the decompiled tree is present.
+ *
+ * `ref/` is gitignored, so a fresh checkout has no tree and cannot measure the engine side. That is reported as
+ * `not measured` rather than as a pass: the Mod-referenced population is still measured, it is simply a smaller
+ * population, and the summary line says which one was used.
+ */
+function readEngineGame1() {
+  for (const relative of [
+    "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+    "ref/external/StardewValleyDecompiled/Game1.cs",
+  ]) {
+    try {
+      return readFileSync(path.join(ROOT, relative), "utf8");
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const report = auditDiscoveryChannels();
+  const engine = readEngineGame1();
+  const report = auditDiscoveryChannels({ modSources: loadModSources(), ...(engine === null ? {} : { engine }) });
   const byGap = new Map();
   for (const gap of report.gaps) {
     const list = byGap.get(gap.gap) ?? [];
-    list.push(gap.actionId);
+    list.push(gap.subject ?? gap.actionId);
     byGap.set(gap.gap, list);
   }
   process.stdout.write(
     `discovery channels: ${report.actionCount} actions, ${report.targetBearingCount} target-bearing\n`,
+  );
+  const tables = report.contentTables;
+  process.stdout.write(
+    `  content tables      examined ${tables.examined}, addressable ${tables.addressable}, with a reason ${tables.withReason}${
+      tables.enginePopulationMeasured
+        ? " (engine population)"
+        : " (Mod-referenced population; ref/ absent, engine side not measured)"
+    }\n`,
+  );
+  const building = report.buildingState;
+  process.stdout.write(
+    `  building state      examined ${building.examined}, carried ${building.carried}, construction-first cap ${building.constructionFirst ? "yes" : "NO"}: ${building.rows
+      .map((row) => `${row.member}->${row.family}${row.field === null ? "" : `.${row.field}`}`)
+      .join(", ")}\n`,
   );
   for (const [gap, actions] of [...byGap].sort())
     process.stdout.write(`  [${gap}] ${actions.length}: ${actions.join(", ")}\n`);

@@ -2,6 +2,8 @@ import type { GameIntegrationAdapter } from "./game-integration-adapter.js";
 import type { KnowledgeBundle } from "./knowledge.js";
 import type {
   ActionRegistration,
+  DataQueryRequest,
+  DataQueryResult,
   ExecutionReceipt,
   FarmhandPolicyIdentity,
   NavigationReadRequest,
@@ -88,6 +90,8 @@ export interface StardewBridgeConnection extends GameConnection {
   readonly observe?: () => Promise<Snapshot>;
   /** Mod-owned read-only Navigation discovery; never a game action. */
   readonly navigationRead?: (request: NavigationReadRequest) => Promise<NavigationReadResult>;
+  /** Mod-owned read-only content-table query; static game data, never a game action. */
+  readonly dataQuery?: (request: DataQueryRequest) => Promise<DataQueryResult>;
   /** Mod-owned read-only live scene observation; scene refs never authorize mutation. */
   readonly observeScene?: (request: ObserveSceneRequest) => Promise<ObserveSceneResult>;
 }

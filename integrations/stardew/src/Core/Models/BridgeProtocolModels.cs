@@ -1478,3 +1478,45 @@ public sealed record BridgeNavigationReadResult(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BridgeNavigationDestinationSelector? Destination = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? UnlockState = null
 );
+
+/// <summary>
+/// Inbound content-table query: one engine content table, and optionally one row of it.
+///
+/// <para>
+/// The engine's own tables (`Data/FarmAnimals`, `Data/Shops`, `Data/Machines`, ...) are what the game's rules are made
+/// of, and until this request there was no way to ask them: a companion could see that a coop stood on the farm and
+/// could not answer "how many days until this hen lays", because the answer lives in a table no snapshot family
+/// publishes. `Table` is the engine's table name, never a path we ship; an absent `Key` asks for the row ids.
+/// </para>
+/// </summary>
+public sealed record BridgeDataQueryRequest(string Table, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Key);
+
+/// <summary>
+/// One row of an engine content table, projected to the fields that decide an action.
+///
+/// <para>
+/// `Fields` holds scalars and string arrays only: a projection that carried the whole row would be an observe with a
+/// different name, and the fields it drops are the presentation ones (textures, sprite indexes, sounds) no action
+/// chooses a target from. Values keep their engine type - an int stays a number - so a caller can compare it.
+/// </para>
+/// </summary>
+public sealed record BridgeDataQueryRow(string Id, IReadOnlyDictionary<string, object?> Fields);
+
+/// <summary>
+/// The answer to one content-table query.
+///
+/// <para>
+/// `Status` is the closed vocabulary the Host turns into a named outcome: `index` (the row ids), `row` (one projected
+/// row), `absent_row` (the table exists and has no such row), `unknown_table` (the engine has no such table) and
+/// `not_projectable` (the table exists and its rows are too large to answer with, named by `Detail`). `Population` is
+/// how many rows the table has, so "the table is empty" and "the table has no such row" can never be the same answer;
+/// it is -1 exactly when no table was found to count.
+/// </para>
+/// </summary>
+public sealed record BridgeDataQueryResult(
+    string Status,
+    string Table,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] int Population,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyList<string>? Ids,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BridgeDataQueryRow? Row,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Detail);

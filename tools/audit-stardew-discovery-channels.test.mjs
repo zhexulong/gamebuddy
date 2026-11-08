@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { auditDiscoveryChannels } from "./audit-stardew-discovery-channels.mjs";
+import { auditDiscoveryChannels, loadModSources } from "./audit-stardew-discovery-channels.mjs";
 
 // A real target-bearing action, used so the audit's declared-field table
 // resolves exactly as it does in production.
@@ -49,6 +49,115 @@ test("the committed action surface has a complete discovery chain", () => {
   );
   assert.ok(report.actionCount > 0);
   assert.ok(report.targetBearingCount > 0);
+});
+
+/**
+ * HOP 5: the game's own content tables.
+ *
+ * <p>
+ * The population is the engine's `Game1.*Data` caches, scanned out of the Mod's C# (and, when the decompiled tree is
+ * present, out of `Game1.cs` too). Every one of them must be askable through `look_up({ subject: "data" })` or carry a
+ * reason of the two honest kinds - and the reason list must expire when the table it excuses goes away.
+ * </p>
+ */
+test("the committed tree exposes or explains every engine content table", () => {
+  const report = auditDiscoveryChannels({ modSources: loadModSources() });
+  const tables = report.contentTables;
+  assert.equal(tables.measured, true);
+  assert.ok(tables.examined > 0, "a population of zero would agree with itself");
+  assert.equal(
+    tables.addressable + tables.withReason,
+    tables.examined,
+    `every table is addressable or explained: ${JSON.stringify(tables.rows.filter((row) => row.table === null && row.reasonKind === null))}`,
+  );
+  assert.ok(tables.addressable > 0, "a content-table hop with no queryable table is not measuring anything");
+  assert.deepEqual(
+    report.gaps.filter((gap) => gap.gap.startsWith("content_table")),
+    [],
+    "no engine content table may be unreachable without a stated reason",
+  );
+});
+
+test("deleting one table mapping turns the content-table hop red, naming the table", () => {
+  // The real registry, with the FarmAnimals entry pointing at a cache that is not the engine's. That is the shape of
+  // "someone removed the mapping": the table is still declared, and the cache it was covering is now unreachable.
+  const broken = loadModSources().map((entry) =>
+    entry.path.endsWith("ContentDataQuery.cs")
+      ? { ...entry, source: entry.source.replace('"Game1.farmAnimalData"', '"Game1.farmAnimalDataRenamed"') }
+      : entry,
+  );
+  const report = auditDiscoveryChannels({ modSources: broken });
+  assert.ok(
+    report.gaps.some((gap) => gap.gap === "content_table_unreachable:Game1.farmAnimalData"),
+    `the drift must be named: ${JSON.stringify(report.gaps.map((gap) => gap.gap))}`,
+  );
+  assert.equal(report.ok, false);
+});
+
+test("an engine table nobody exposed and nobody explained is a finding, not a silence", () => {
+  const report = auditDiscoveryChannels({
+    modSources: loadModSources(),
+    engine: "public static IDictionary<string, NewThingData> newThingData;",
+  });
+  assert.ok(
+    report.gaps.some((gap) => gap.gap === "content_table_unreachable:Game1.newThingData"),
+    "a table a future game version adds must be a finding the moment the engine declares it",
+  );
+});
+
+test("a reason whose table is gone is stale, so the exemption list cannot outlive what it excuses", () => {
+  const report = auditDiscoveryChannels({ modSources: [] });
+  assert.ok(
+    report.gaps.some((gap) => gap.gap === "stale_content_table_reason:Game1.weaponData"),
+    `every reason must expire: ${JSON.stringify(report.gaps.map((gap) => gap.gap))}`,
+  );
+});
+
+/**
+ * HOP 6: the building state an action depends on.
+ *
+ * <p>
+ * `daysOfConstructionLeft` for a plain coop has exactly one channel - the `built` rows of `farmBuildingTargets` - and
+ * that family is capped at `BuildFarmBuildingTargetLimit`. If the Mod ever stops ordering the countdown first, the cap
+ * can drop the building the player is waiting on, and this is the assertion that says so.
+ * </p>
+ */
+test("the committed tree carries every Building member an action depends on", () => {
+  const report = auditDiscoveryChannels({ modSources: loadModSources() });
+  assert.equal(report.buildingState.measured, true);
+  assert.equal(report.buildingState.examined, 5);
+  assert.equal(report.buildingState.carried, 5);
+  assert.equal(
+    report.buildingState.constructionFirst,
+    true,
+    "the cap must drop finished buildings before a building site",
+  );
+  assert.deepEqual(
+    report.gaps.filter((gap) => gap.gap.startsWith("building_")),
+    [],
+  );
+});
+
+test("removing the construction-first ordering turns the building hop red, naming the fact", () => {
+  const broken = loadModSources().map((entry) => ({
+    ...entry,
+    source: entry.source.replace(
+      /OrderByDescending\([^;]*daysOfConstructionLeft\.Value\s*>\s*0\)/u,
+      "OrderBy(static building => building.id.Value)",
+    ),
+  }));
+  const report = auditDiscoveryChannels({ modSources: broken });
+  assert.ok(
+    report.gaps.some((gap) => gap.gap === "building_construction_cap_can_drop_the_building:daysOfConstructionLeft"),
+    `a capped family must publish the row a player is waiting on: ${JSON.stringify(report.gaps.map((gap) => gap.gap))}`,
+  );
+});
+
+test("a Building member with no published family is named", () => {
+  const report = auditDiscoveryChannels({ modSources: loadModSources(), models: "// no Bridge* family at all" });
+  assert.ok(
+    report.gaps.some((gap) => gap.gap === "building_member_unpublished:daysOfConstructionLeft:FarmBuildingTargets"),
+  );
 });
 
 test("the audit reports one hole per broken layer rather than passing silently", () => {

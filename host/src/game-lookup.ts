@@ -1,5 +1,5 @@
 import { SNAPSHOT_KEYS } from "./protocol.js";
-import type { BodyProgramStatusResult, Snapshot } from "./protocol.js";
+import type { BodyProgramStatusResult, DataQueryResult, Snapshot } from "./protocol.js";
 
 /**
  * Answers to questions the companion can already ask of the state it holds.
@@ -51,6 +51,8 @@ export const LOOKUP_SUBJECTS = Object.freeze([
   "calendar",
   // Derived from the Mod's journal rather than from the snapshot the other subjects read; see `myWork`.
   "my_work",
+  // The game's OWN content tables, read through the engine's loaders rather than from the snapshot; see `dataTable`.
+  "data",
 ] as const);
 
 type LookupSubject = (typeof LOOKUP_SUBJECTS)[number];
@@ -673,6 +675,122 @@ export function myWorkFromJournal(
   );
 }
 
+/**
+ * `data`: the game's own content tables, answered by the Mod through the engine's loaders.
+ *
+ * <p>
+ * This subject exists because the questions a player actually asks are about the TABLES, not about the world: what a
+ * chicken costs, how many days until it lays, what a keg accepts and what comes out. Every one of those facts lives in
+ * `Data/FarmAnimals`, `Data/Shops`, `Data/Machines` and their siblings, the engine already parses them into its own
+ * caches, and nothing could ask. The observation baseline filed those caches as "never read" - this is the asking.
+ * </p>
+ * <p>
+ * Three outcomes are named rather than inferred, because they need different corrections: `data_table_unknown:<table>`
+ * (the engine has no such table - check the spelling), `data_row_absent:<table>:<key>` (the table exists and has no such
+ * row), `data_row_found:<table>:<key>`. A table with ZERO rows is `data_table_index` with `population: 0`, never
+ * unknown: "this table is empty" and "there is no such table" are different worlds.
+ * </p>
+ * <p>
+ * An index is bounded by BYTES, not by rows, because a row id can be four characters (`72`) or forty (`(BC)67`): a fixed
+ * row cap would make one table cost 200 bytes and the next 3 KB. `omitted` is always present, so "nothing was dropped"
+ * is a measurement, and `population` sits beside `matched` so a short list can never be read as the whole table.
+ * </p>
+ */
+
+/** Bytes one content-table index may spend on row ids. An observation is ~8 KB; this must stay cheaper than one. */
+export const MAX_DATA_INDEX_BYTES = 1600;
+
+/** The family every content-table answer names: the engine's loaders, not the snapshot this session holds. */
+const DATA_SOURCE: LookupSource = Object.freeze({ family: "DataLoader", snapshotRevision: null });
+
+/** No reader to ask: the same named absence `my_work` answers when the session has no journal. */
+export function dataQueryUnavailable(reason: string): LookupUnknown {
+  return { source: NOT_LOOKED, unknown: reason, missingField: "dataQuery" };
+}
+
+/** The longest prefix of `ids` that fits `budget` bytes once quoted and comma-separated, plus what did not fit. */
+function boundIds(
+  ids: readonly string[],
+  budget = MAX_DATA_INDEX_BYTES,
+): Readonly<{ rows: readonly string[]; omitted: number }> {
+  const rows: string[] = [];
+  let bytes = 0;
+  for (const id of ids) {
+    // Quotes and the separator are part of what the model is handed, so they are part of the budget.
+    const cost = id.length + 4;
+    if (bytes + cost > budget) break;
+    rows.push(id);
+    bytes += cost;
+  }
+  return { rows, omitted: ids.length - rows.length };
+}
+
+/**
+ * The one content-table answer, shaped from the Mod's own result.
+ *
+ * Pure: the same result answers the same bytes, which is what lets the fixture-driven test assert the projection
+ * without a bridge.
+ */
+export function dataTable(result: DataQueryResult, key: string | null): LookupAnswer {
+  if (result.status === "unknown_table")
+    return {
+      subject: "data",
+      source: NOT_LOOKED,
+      answer: { code: `data_table_unknown:${result.table}`, table: result.table, detail: result.detail },
+    };
+  if (result.status === "not_projectable")
+    return {
+      subject: "data",
+      source: NOT_LOOKED,
+      answer: {
+        code: `data_table_not_projectable:${result.table}:${result.detail}`,
+        table: result.table,
+        detail: result.detail,
+      },
+    };
+  if (result.status === "absent_row")
+    return {
+      subject: "data",
+      source: DATA_SOURCE,
+      answer: {
+        code: `data_row_absent:${result.table}:${key ?? ""}`,
+        table: result.table,
+        population: result.population,
+        matched: 0,
+        rows: [],
+        omitted: 0,
+        detail: result.detail,
+      },
+    };
+  if (result.status === "row")
+    return {
+      subject: "data",
+      source: DATA_SOURCE,
+      answer: {
+        code: `data_row_found:${result.table}:${result.row.id}`,
+        table: result.table,
+        population: result.population,
+        matched: 1,
+        row: result.row,
+      },
+    };
+  const ids = result.status === "index" ? result.ids : [];
+  const bounded = boundIds(ids);
+  return {
+    subject: "data",
+    source: DATA_SOURCE,
+    answer: {
+      code: `data_table_index:${result.table}`,
+      table: result.table,
+      population: result.population,
+      matched: ids.length,
+      rows: bounded.rows,
+      omitted: bounded.omitted,
+      ...(result.population === 0 ? { note: "the table exists and has zero rows" } : {}),
+    },
+  };
+}
+
 export function lookUp(
   snapshot: Snapshot,
   subject: string,
@@ -696,6 +814,10 @@ export function lookUp(
     // journal reader at all, which is a different answer from "you have done nothing".
     case "my_work":
       return journalUnavailable("this session has no Body Program journal reader");
+    // `data` reads the game's own content tables through the bridge for the same reason: the tables are engine state,
+    // not snapshot state, and a snapshot cannot carry them without becoming an observation.
+    case "data":
+      return dataQueryUnavailable("this session has no content-data reader");
     default: {
       // Any family the snapshot declares is answerable by name. The subjects above are shaped answers (five read a
       // family, `affordances` derives one from the whole surface); this is the door to the other ~100 rooms, and its

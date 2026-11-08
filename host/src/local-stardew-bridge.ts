@@ -19,6 +19,8 @@ import {
   type CancelIdentity,
   type CompanionPresentationRequest,
   diagnoseBridgeMessage,
+  type DataQueryRequest,
+  type DataQueryResult,
   type ExecutionReceipt,
   type FarmhandPolicyIdentity,
   type ExecutionReceiptQuery,
@@ -127,6 +129,7 @@ type OutboundRequestType =
   | "hello"
   | "observe_request"
   | "navigation_read_request"
+  | "data_query_request"
   | "observe_scene_request"
   | "execution_request"
   | "execution_receipt_query"
@@ -404,6 +407,21 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     const response = await this.request("navigation_read_request", request);
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
     if (response.type !== "navigation_read_result") throw new Error("unexpected_navigation_read_response");
+    return response.payload;
+  }
+
+  /**
+   * Ask the game's own content tables one question.
+   *
+   * Read-only and receipt-free, like `navigationRead`: the answer is static game content (`Data/FarmAnimals`,
+   * `Data/Shops`, ...), resolved by the Mod against the engine's own loaders. It is deliberately not gated on a
+   * published capability - "what does a chicken cost" must be answerable before that family is advertised.
+   */
+  public async dataQuery(request: DataQueryRequest): Promise<DataQueryResult> {
+    this.requireAuthenticated();
+    const response = await this.request("data_query_request", request);
+    if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
+    if (response.type !== "data_query_result") throw new Error("unexpected_data_query_response");
     return response.payload;
   }
 
@@ -1107,6 +1125,8 @@ function isExpectedResponse(requestType: OutboundRequestType, responseType: Brid
       return responseType === "snapshot";
     case "navigation_read_request":
       return responseType === "navigation_read_result";
+    case "data_query_request":
+      return responseType === "data_query_result";
     case "observe_scene_request":
       return responseType === "observe_scene_result";
     case "execution_request":

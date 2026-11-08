@@ -38,6 +38,8 @@
         "observe_scene_result",
         "navigation_read_request",
         "navigation_read_result",
+        "data_query_request",
+        "data_query_result",
         "snapshot",
         "catalog_update",
         "execution_request",
@@ -219,6 +221,38 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/navigationReadResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "data_query_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/dataQueryRequest"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "data_query_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/dataQueryResult"
           }
         }
       }
@@ -5510,6 +5544,194 @@
           "const": "unknown"
         }
       }
+    },
+    "dataQueryRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "table",
+        "key"
+      ],
+      "properties": {
+        "table": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "dataQueryRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "fields"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "maxItems": 16,
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "maxLength": 256
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "dataQueryResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "table",
+            "population",
+            "ids",
+            "row",
+            "detail"
+          ],
+          "properties": {
+            "status": {
+              "const": "index"
+            },
+            "table": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "row": {
+              "type": "null"
+            },
+            "detail": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "table",
+            "population",
+            "ids",
+            "row",
+            "detail"
+          ],
+          "properties": {
+            "status": {
+              "const": "row"
+            },
+            "table": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ids": {
+              "type": "null"
+            },
+            "row": {
+              "$ref": "#/$defs/dataQueryRow"
+            },
+            "detail": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "table",
+            "population",
+            "ids",
+            "row",
+            "detail"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "absent_row",
+                "unknown_table",
+                "not_projectable"
+              ]
+            },
+            "table": {
+              "type": "string"
+            },
+            "population": {
+              "type": "integer",
+              "minimum": -1
+            },
+            "ids": {
+              "type": "null"
+            },
+            "row": {
+              "type": "null"
+            },
+            "detail": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          }
+        }
+      ]
     },
     "navigationReadRequest": {
       "oneOf": [
