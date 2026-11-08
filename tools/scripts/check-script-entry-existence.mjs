@@ -124,6 +124,40 @@ for (const dir of [
 if (problems.length) {
   console.error("幽灵脚本入口（package.json scripts 引用了不存在的文件）:");
   for (const p of problems) console.error(`  ${p.script} → ${p.ref}`);
+}
+
+/**
+ * The workflows' own `node tools/<x>.mjs` invocations, checked against the same tracked set.
+ *
+ * WHY: on 2026-11-08 CI failed two jobs - `host` and `gates` - with the same sentence,
+ *
+ *   Error: Cannot find module 'D:\a\gamebuddy\gamebuddy\tools\check-vendor-build-artifacts.mjs'
+ *
+ * because `ci.yml` invoked a script that existed on this machine's disk and in no commit; a commit deleted the file and
+ * the step stayed. The population above is `package.json` scripts only, so the workflow's own invocations were the half
+ * of the same fact nobody read. Both halves are now read, from `HEAD` rather than the filesystem.
+ */
+const WORKFLOW_REF = /node\s+(tools\/[A-Za-z0-9._/-]+\.mjs)/gu;
+const workflowProblems = [];
+const workflowChecked = [];
+for (const workflow of [...TRACKED].filter((path) => path.startsWith(".github/workflows/") && /\.ya?ml$/u.test(path))) {
+  const body = execFileSync("git", ["show", `HEAD:${workflow}`], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+  for (const match of body.matchAll(WORKFLOW_REF)) {
+    const ref = match[1];
+    if (TRACKED.has(ref)) workflowChecked.push(ref);
+    else workflowProblems.push({ workflow, ref });
+  }
+}
+if (workflowProblems.length) {
+  console.error("幽灵工作流步骤（workflow 运行了不在 HEAD 里的脚本）:");
+  for (const p of workflowProblems) console.error(`  ${p.workflow} → ${p.ref}`);
+}
+if (workflowChecked.length === 0) {
+  console.error("check-script-entry-existence: examined 0 workflow invocation(s), so nothing was verified");
   process.exit(1);
 }
-console.log(`check-script-entry-existence: ${checked.length} 个路径引用全部存在 ✓`);
+
+if (problems.length || workflowProblems.length) process.exit(1);
+console.log(
+  `check-script-entry-existence: ${checked.length} 个 scripts 路径引用与 ${workflowChecked.length} 个 workflow 脚本引用全部存在 ✓`,
+);
