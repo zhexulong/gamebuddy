@@ -394,6 +394,9 @@ function createBodyProgramTools(
             // planned around an item it never picked up.
             const refused = Object.freeze({
               droppedCount: compiled.rejectedCount,
+              // `dropped` is a bounded diagnostic list, not the population: when a loop refuses more times than the answer can
+              // afford, `droppedTruncated` says so instead of leaving a reader to compare lengths and guess.
+              droppedTruncated: compiled.rejectedCount > compiled.rejected.length,
               dropped: compiled.rejected.map((rejection) =>
                 Object.freeze({
                   call: rejection.call,

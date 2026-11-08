@@ -872,7 +872,9 @@ export function compilePlanScript(
     scriptSource,
     snapshotRevision,
     program: Object.freeze({ nodes: Object.freeze([...state.nodes]) }),
-    rejected: Object.freeze([...state.rejected]),
+    // The answer's rejection list is bounded because a loop over a published family can refuse hundreds of times with
+    // the same sentence; `rejectedCount` is not. Narrowing happens here, once, and never decides whether the plan runs.
+    rejected: Object.freeze(state.rejected.slice(0, MAX_REPORTED_PLAN_REJECTIONS)),
     rejectedCount: state.rejectedCount,
   });
 }
@@ -907,7 +909,7 @@ function refused(
     ...(requirement === undefined ? {} : { requirement }),
     ...(missingArguments === undefined ? {} : { missingArguments }),
     ...(threw === undefined ? {} : { threw }),
-    rejected: Object.freeze(state === undefined ? [] : [...state.rejected]),
+    rejected: Object.freeze(state === undefined ? [] : state.rejected.slice(0, MAX_REPORTED_PLAN_REJECTIONS)),
     rejectedCount: state?.rejectedCount ?? 0,
   });
 }
@@ -1727,15 +1729,17 @@ function atPlanCall<TResult>(state: PlanScriptState, actionId: string | null, ru
     return run();
   } catch (error) {
     if (!(error instanceof PlanScriptRefusal) || error.wholeScript) throw error;
-    if (state.rejected.length < MAX_REPORTED_PLAN_REJECTIONS)
-      state.rejected.push(
-        Object.freeze({
-          call: state.builderCalls,
-          actionId,
-          reasonCode: error.reasonCode,
-          ...(error.missingArguments === undefined ? {} : { missingArguments: error.missingArguments }),
-        }),
-      );
+    // Every refusal is recorded and the list is narrowed once, where the plan is built. A capacity comparison here
+    // would read as a business gate that refuses the script; this boundary only decides how many rejections the
+    // answer can afford to spell out (see `MAX_REPORTED_PLAN_REJECTIONS`).
+    state.rejected.push(
+      Object.freeze({
+        call: state.builderCalls,
+        actionId,
+        reasonCode: error.reasonCode,
+        ...(error.missingArguments === undefined ? {} : { missingArguments: error.missingArguments }),
+      }),
+    );
     state.rejectedCount += 1;
     return undefined;
   }
