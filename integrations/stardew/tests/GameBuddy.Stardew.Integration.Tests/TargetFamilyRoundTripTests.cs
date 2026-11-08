@@ -141,6 +141,16 @@ public sealed class TargetFamilyRoundTripTests
     /// A blocker is a missing `Game1` field, a `Data/*` asset this process does not load, or native state only a save
     /// carries - something a reader could falsify by teaching the harness. "Not implemented yet" is not a blocker and
     /// does not belong here: that is a driver owed, not a world that cannot exist.
+    ///
+    /// <para>
+    /// EVERY REASON HERE IS RE-CHECKED AGAINST THE PROBE'S OWN CONTRACT. <see cref="ProbeWorldContract"/> states the
+    /// values a complete world owns - the field initializers and startup statics `FormatterServices.GetUninitializedObject`
+    /// skips - and <see cref="ProbeWorldContractTests"/> fails, naming the family, when a reason here blames one of them:
+    /// that is a HARNESS omission recorded as an engine limit, and it has to be re-measured or rewritten rather than left
+    /// to stand. The five causes the contract was written for (`Farmer.maxStamina`, `Game1.recentMultiplayerRandom`,
+    /// `Game1.currentLocation`, `Farmer.experiencePoints`, `Crop.raisedSeeds`) cost two families a week of being reported
+    /// as "the engine cannot do this".
+    /// </para>
     /// </summary>
     internal static readonly IReadOnlyDictionary<string, string> Undriven = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -149,7 +159,7 @@ public sealed class TargetFamilyRoundTripTests
         ["artifactSpotTargets"] = "an Object (O)590 on a map tile that isTilePassable on one side; the harness map declares no passability properties",
         ["baitCrabPotTargets"] = "a placed CrabPot (O)710 object plus a (O)685 bait stack; the pot's rules come from Data/BigCraftables",
         ["buildingChestTargets"] = "a Building whose Data/Buildings row declares Chests; the asset is not loaded here",
-        ["bushTargets"] = "a Bush terrain feature whose size/health come from Data/WildTrees; the asset is not loaded here",
+        ["bushTargets"] = "a Bush terrain feature; re-measured 2026-11-08, `harvest_bush` publishes its row and passes its own target check, and the body that follows throws in `InstanceGame.IsMainInstance` - the XNA `GameRunner.instance` this process cannot construct - so the `Data/WildTrees` load the reason used to name is not reached before that, and the remaining blocker is the game object rather than the asset",
         ["caskTargets"] = "a Cask object whose ageing rules come from Data/BigCraftables; the asset is not loaded here",
         ["colorTargets"] = "a Chest carrying a DiscreteColorPicker colour; Chest.owner/playerChest are set, the palette state is not",
         ["cookingRecipeTargets"] = "Data/CookingRecipes; the asset is not loaded here",
@@ -178,7 +188,7 @@ public sealed class TargetFamilyRoundTripTests
         ["obeliskTargets"] = "Data/Buildings rows for the obelisk types plus a standing Building; the asset is not loaded here",
         ["panSites"] = "Game1.player.orePanPoint / the location's pan point, which the engine writes from map data",
         ["pedestalTargets"] = "an ItemPedestal object holding an item; its slot rules come from Data/Objects",
-        ["petTargets"] = "a Pet in the farm's characters, which a save load creates",
+        ["petTargets"] = "a Pet; the world already builds one headlessly (TargetFamilyWorld.PlacePet) with the `Dog` row Game1.petData carries, so this is not a save-only family - re-measured 2026-11-08, the round trip then throws ArgumentOutOfRangeException from Netcode.NetList.get_Item, an empty list the petting path indexes, and that harness fact is still to be narrowed",
         ["raftTargets"] = "a raft on a water tile, which GameLocation creates from map tile properties",
         ["refillWateringCanTargets"] = "a water-source landmark, which GameLocation derives from map tile properties",
         ["seedTargets"] = "plant_seed is owed a driver: a seed stack plus a tillable tile (map `Diggable` property); the harness map declares none",
