@@ -41,6 +41,12 @@ public sealed partial class ModEntry : Mod
     /// </summary>
     private Vector2? nativeLocalPlaySessionStartTile;
 
+    /// <summary>
+    /// Whether the declared hand has been placed. The initializer entry is called on every tick, and a declared Given
+    /// must exist exactly once.
+    /// </summary>
+    private bool nativeLocalPlayerFixtureHeldItemApplied;
+
     private sealed record NativeLocalFeedFixturePending(string AnimalHouseName, Vector2 TroughTile, Vector2 StandingTile);
     private sealed record NativeLocalCollectAnimalProductFixturePending(string AnimalHouseName, long AnimalId, Vector2 AnimalTile, string ProduceId, string ToolKind);
     private sealed record NativeLocalClearHoeDirtFixturePending(string FarmName, Vector2 DirtTile, Vector2 StandingTile);
@@ -84,6 +90,10 @@ public sealed partial class ModEntry : Mod
                 return;
             }
             this.TryInitializeNativeLocalPlayerFixtureScenario(fixture);
+            // The declared hand is the SECOND half of the same world: it is placed only
+            // after the scenario's own Given exists, so no scenario initializer can clear
+            // it, and always before attachment.
+            this.ApplyNativeLocalPlayerFixtureHeldItem(fixture);
             // The shared embodiment initializes only after the native load
             // lifecycle has made Game1.player available. Any scenario setup is
             // bounded, happens before attachment, and never produces a receipt.
@@ -136,6 +146,70 @@ public sealed partial class ModEntry : Mod
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log($"GameBuddy native-local-player fixture failed to request native save load: {exception.GetType().Name}.", LogLevel.Error);
         }
+    }
+
+    /// <summary>
+    /// Places the fixture's declared hand (<see cref="NativeLocalPlayerFixtureConfig.HeldItemQualifiedId"/>), once,
+    /// after the scenario's own Given and before bridge attachment.
+    ///
+    /// <para>
+    /// This is the one hand a scenario cannot state for itself: every other item-in-hand Given is hardcoded per
+    /// scenario and <c>InitializeNativeLocalPetFixture</c> used to clear the selected slot outright, so the world
+    /// <c>Pet.checkAction</c>'s fall-through needs - an ordinary item held while the pet is stroked (Pet.cs:619-667
+    /// only branches on a <c>Hat</c> and on <c>(O)ButterflyPowder</c>) - could not be armed at all.
+    /// </para>
+    /// <para>
+    /// A scenario whose Given completes through a native warp reports initialized on a LATER tick; until it does, this
+    /// waits with it rather than minting into a world that is not staged yet. A refused hand ends the fixture with a
+    /// code that carries the id, because an unremarkable failure is indistinguishable from a product defect at the far
+    /// end of a live run.
+    /// </para>
+    /// </summary>
+    private void ApplyNativeLocalPlayerFixtureHeldItem(NativeLocalPlayerFixtureConfig fixture)
+    {
+        string qualifiedId = fixture.HeldItemQualifiedId;
+        if (qualifiedId.Length == 0 || this.nativeLocalPlayerFixtureHeldItemApplied)
+            return;
+        if (this.nativeLocalPlayerFixtureTerminal || !this.nativeLocalPlayerFixtureInitialized)
+            return;
+        if (Game1.player is not Farmer player)
+            return;
+        string? refusal = TryPlaceNativeLocalFixtureHeldItem(player, qualifiedId);
+        if (refusal is not null)
+        {
+            this.nativeLocalPlayerFixtureTerminal = true;
+            this.Monitor.Log($"GameBuddy native-local-player fixture refused its declared hand: scenario={fixture.FixtureScenario}; error={refusal}.", LogLevel.Error);
+            return;
+        }
+        this.nativeLocalPlayerFixtureHeldItemApplied = true;
+        this.Monitor.Log($"GameBuddy native-local-player initialized the declared hand before bridge attachment: held_item={player.CurrentItem?.QualifiedItemId};slot={player.CurrentToolIndex};stack={player.CurrentItem?.Stack}; production alone observes and acts.", LogLevel.Info);
+    }
+
+    /// <summary>
+    /// Null when the declared item is in the actor's hand, else the fixture's named refusal. The item is minted by the
+    /// engine's own factory and lands in the first FREE slot: the slot the save's own tool occupies is not this field's
+    /// to overwrite, and a pack with no free slot is refused rather than quietly displacing a tool.
+    /// </summary>
+    private static string? TryPlaceNativeLocalFixtureHeldItem(Farmer player, string qualifiedId)
+    {
+        if (!ItemRegistry.Exists(qualifiedId))
+            return $"fixture_held_item_unknown:{qualifiedId}";
+        int slot = -1;
+        for (int index = 0; index < player.Items.Count; index++)
+        {
+            if (player.Items[index] is not null)
+                continue;
+            slot = index;
+            break;
+        }
+        if (slot < 0)
+            return $"fixture_held_item_no_room:{qualifiedId}";
+        if (player.addItemToInventory(ItemRegistry.Create(qualifiedId, 1), slot) is not null)
+            return $"fixture_held_item_no_room:{qualifiedId}";
+        player.CurrentToolIndex = slot;
+        if (player.CurrentItem?.QualifiedItemId != qualifiedId)
+            return $"fixture_held_item_not_held:{qualifiedId}";
+        return null;
     }
 
     private void TryBootstrapNativeLocalPlayerFixture(NativeLocalPlayerFixtureConfig fixture)
@@ -3775,12 +3849,12 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         Vector2? targetTile = FindNativeLocalFarmFixtureTile(location, player.Tile, 2, requireEmptyObjectTile: true);
         if (targetTile is null)
             throw new InvalidOperationException("fixture_native_local_pet_placement_missing");
-        // Pet.checkAction requires empty hands. Clearing the current selected
-        // inventory item is a legal pre-attachment starting condition, not an
-        // invocation of the interaction or any of its result mutations.
-        player.Items[player.CurrentToolIndex] = null;
-        if (player.CurrentItem is not null)
-            throw new InvalidOperationException("fixture_native_local_pet_hands_not_empty");
+        // Pet.checkAction reads the held item for two branches only - a Hat moved onto the
+        // pet, and (O)ButterflyPowder opening a dialogue (Pet.cs:619-645) - so the Given has
+        // an empty hand UNLESS the fixture declares one (HeldItemQualifiedId), in which case
+        // that hand is the declared fact and this initializer must not disturb it.
+        if (this.config.NativeLocalPlayerFixture?.HeldItemQualifiedId.Length is null or 0)
+            RequireNativeLocalPetEmptyHand(player);
         StardewValley.Characters.Pet pet = new((int)targetTile.Value.X, (int)targetTile.Value.Y, "0", "Dog");
         pet.Name = "Dog";
         pet.homeLocationName.Value = farm.NameOrUniqueName;
@@ -3796,6 +3870,38 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             throw new InvalidOperationException("fixture_native_local_pet_placement_validation_failed");
         this.nativeLocalPlayerFixtureInitialized = true;
         this.Monitor.Log($"GameBuddy native-local-player initialized pet-animal precondition before bridge attachment: pet_type={pet.petType.Value}; tile={(int)targetTile.Value.X},{(int)targetTile.Value.Y}; friendship=0; petted_today=false; friendship_callback=false; production alone invokes Pet.checkAction and emits receipt.", LogLevel.Info);
+    }
+
+    /// <summary>
+    /// An empty hand WITHOUT destroying what the save carries in it.
+    ///
+    /// <para>
+    /// This used to be <c>player.Items[player.CurrentToolIndex] = null</c>, and <c>currentToolIndex</c> starts at 0 -
+    /// which is the Axe in the starting kit. Every pet scenario therefore silently removed a tool the actor owned:
+    /// measured 2026-11-09, the post-run snapshot reported <c>1:(T)Hoe, 2:(T)WateringCan, 3:(T)Picaxe, 4:(W)47</c> and no
+    /// Axe, and a later held-axe slice refused <c>tool_not_found</c> against a world that had lost it. Selecting an
+    /// EMPTY slot produces the same Given - <see cref="Farmer.CurrentItem"/> is null - and the kit survives whole.
+    /// </para>
+    /// <para>
+    /// A pack with no empty slot cannot offer that hand and is refused by name rather than made to fit by deleting an
+    /// item, and the item count is asserted unchanged so "this fixture destroys nothing" is measured, not trusted.
+    /// </para>
+    /// </summary>
+    private static void RequireNativeLocalPetEmptyHand(Farmer player)
+    {
+        if (player.CurrentItem is null)
+            return;
+        int carriedBefore = player.Items.Count(item => item is not null);
+        for (int index = 0; index < player.Items.Count; index++)
+        {
+            if (player.Items[index] is not null)
+                continue;
+            player.CurrentToolIndex = index;
+            break;
+        }
+        if (player.CurrentItem is null && player.Items.Count(item => item is not null) == carriedBefore)
+            return;
+        throw new InvalidOperationException("fixture_native_local_pet_hands_not_empty");
     }
 
     /// <summary>Which WIA world-change interruption the fixture must stage.</summary>

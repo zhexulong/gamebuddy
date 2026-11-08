@@ -154,6 +154,23 @@ public sealed record NativeLocalPlayerFixtureConfig
     public int TimeoutSeconds { get; init; } = 90;
     /// <summary>Bounded pre-attachment native fixture setup; empty for move-only.</summary>
     public string FixtureScenario { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Optional qualified item id (for example <c>(O)72</c>) that the fixture puts IN THE ACTOR'S HAND, and selects,
+    /// once the scenario's own Given exists. It is the one hand a scenario could not previously declare: every other
+    /// item-in-hand Given is hardcoded per scenario (<c>(O)388</c> with a Sign, <c>(H)0</c> with a Mannequin) and the
+    /// pet scenario cleared the selected slot outright, so the world <c>Pet.checkAction</c>'s fall-through needs - an
+    /// ordinary item held while the pet is stroked - could not be armed at all.
+    ///
+    /// <para>
+    /// Empty means "this scenario declares no hand", which is what every existing fixture means. The FORMAT is judged
+    /// here, by the game's own <c>ItemRegistry.IsQualifiedItemId</c>, because config validation runs before content is
+    /// loaded and a value that is not a qualified id can never be resolved afterwards. Whether the id EXISTS is the
+    /// initializer's judgement: it can only ask once content is loaded, and it refuses by name with the id.
+    /// </para>
+    /// </summary>
+    public string HeldItemQualifiedId { get; init; } = string.Empty;
+
     /// <summary>Private transaction-owned target chosen from the live production topology for the one-shot Navigation mutation gate.</summary>
     public string NavigationMutationTargetLabel { get; set; } = string.Empty;
     /// <summary>
@@ -254,6 +271,7 @@ public sealed record NativeLocalPlayerFixtureConfig
         && NavigationMutationTargetLabel.Length <= 128
         && (FixtureScenario == "navigation_mutation_v1" || NavigationMutationTargetLabel.Length == 0)
         && KnownFixtureScenarios.Contains(FixtureScenario, StringComparer.Ordinal)
+        && HasValidHeldItemQualifiedId
         && (Bootstrap is null || !Bootstrap.Enable);
 
     internal bool IsBootstrapValid => Enable
@@ -261,7 +279,20 @@ public sealed record NativeLocalPlayerFixtureConfig
         && NavigationMutationTargetLabel.Length <= 128
         && (FixtureScenario == "navigation_mutation_v1" || NavigationMutationTargetLabel.Length == 0)
         && KnownFixtureScenarios.Contains(FixtureScenario, StringComparer.Ordinal)
+        && HasValidHeldItemQualifiedId
         && Bootstrap is { IsValid: true };
+
+    /// <summary>
+    /// The declared hand is the only field of this record an operator types as free text, so it is the only one a
+    /// rejected configuration can name back at them; the save identity and the scenario are fixed shapes and a
+    /// closed set. Null when the field is fine.
+    /// </summary>
+    internal string? HeldItemQualifiedIdRefusal =>
+        this.HasValidHeldItemQualifiedId ? null : $"HeldItemQualifiedId:{this.HeldItemQualifiedId}";
+
+    private bool HasValidHeldItemQualifiedId =>
+        this.HeldItemQualifiedId.Length <= 64
+        && (this.HeldItemQualifiedId.Length == 0 || StardewValley.ItemRegistry.IsQualifiedItemId(this.HeldItemQualifiedId));
 
     private static bool IsObservedFixtureSlot(string slot, string logicalName)
     {

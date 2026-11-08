@@ -92,6 +92,7 @@ MoveLocationChangeReleaseTests.cs	mod-assembly	NavigationWarpLifecycle, DummyMon
 MovePlacedFurnitureActionTests.cs	mod-assembly	Handlers, Xna, Netcode, StardewModdingAPI, StardewValley
 NativeFarmingContractTests.cs	mod-assembly	StardewModdingAPI, Handlers
 NativeItemPredicateTests.cs	mod-assembly	NativeItemPredicates
+NativeLocalPlayerFixtureHeldItemTests.cs	mod-assembly	ModConfig, NativeLocalPlayerFixtureConfig, NativeLocalPlayerFixtureBootstrapConfig
 nativelanendpointtargetsurfacetests.cs	game	StardewValley
 NativeNoticeObserverTests.cs	mod-assembly	Sensory, HUDMessage, StardewValley
 NativeToolContractTests.cs	mod-assembly	Handlers

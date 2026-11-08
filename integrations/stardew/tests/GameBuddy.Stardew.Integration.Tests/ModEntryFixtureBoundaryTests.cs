@@ -74,6 +74,12 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativeLocalStrawberryCovenantFixture",
         "InitializeNativeLocalPlaySessionFixture", "InitializeNativeLocalNpcRelationshipFixture",
         "InitializeNativeLocalPetFixture", "InitializeNativeLocalMoveStallProbeFixture",
+        // The declared hand: the fixture config's one free-text Given, placed after the scenario's own Given so no
+        // scenario initializer can clear it. Both halves live here for the same reason every other initializer does.
+        "ApplyNativeLocalPlayerFixtureHeldItem", "TryPlaceNativeLocalFixtureHeldItem",
+        // The pet Given's empty hand, without the destructive select-the-slot-and-null-it shape that deleted the
+        // starting Axe. Same reason every other initializer helper is registered: it lives in the fixtures partial.
+        "RequireNativeLocalPetEmptyHand",
         "InstallWiaInterruptionFixture",
         "IsCrabPotFixtureInventoryUnchanged", "FindNativeLocalFarmFixtureTile",
         "FindNativeLocalFarmResourceClumpFixtureTile", "IsFixtureOwnedOrdinaryChest",

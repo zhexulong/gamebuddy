@@ -320,7 +320,8 @@ public sealed partial class ModEntry : Mod
                 || this.config.HostAutomation?.Enable == true)
             {
                 this.provisioningConfigurationRejected = true;
-                this.Monitor.Log("GameBuddy rejected NativeLocalPlayerFixture configuration: it requires a GameBuddyFixture save and no HostAutomation, Farmhand provisioning, or LAN host.", LogLevel.Error);
+                this.Monitor.Log("GameBuddy rejected NativeLocalPlayerFixture configuration: it requires a GameBuddyFixture save and no HostAutomation, Farmhand provisioning, or LAN host"
+                    + (this.config.NativeLocalPlayerFixture.HeldItemQualifiedIdRefusal is { } declaredHand ? $"; declared_hand_rejected={declaredHand}." : "."), LogLevel.Error);
                 return;
             }
             this.hostRoleConfigured = false;
