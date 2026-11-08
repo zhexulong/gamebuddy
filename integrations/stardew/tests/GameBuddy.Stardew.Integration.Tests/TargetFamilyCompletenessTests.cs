@@ -392,6 +392,13 @@ public sealed class TargetFamilyCompletenessTests
             // `Game1.random` is a plain static assigned during game startup. `Bush`'s own constructor calls
             // `Game1.random.NextBool()` (Bush.cs:109), and so do several other engine constructors this world drives.
             Game1.random ??= new Random(1);
+            // `Game1.recentMultiplayerRandom` is the same kind of plain static (`new Random()`, Game1.cs:817/:2238), and
+            // every native DEBRIS spawn reads it: `Debris.InitializeChunks` builds each chunk from
+            // `Game1.recentMultiplayerRandom.Next(...)` (:557). An uninitialized `Game1` leaves it null, so the FIRST
+            // cosmetic chunk of any tool swing threw inside `Game1.createRadialDebris` - which is why
+            // `break_resource_clump`, `clear_debris` and `break_rock` were each reported as a harness limit there
+            // rather than at whatever they actually reach next.
+            Game1.recentMultiplayerRandom ??= new Random(1);
             // Two more plain statics the preflights dereference once the actor survives admission: `otherFarmers`
             // backs `FarmerCollection.Any` (`isPlayerPresent` reads it while building a native path), and
             // `hudMessages` is read by `Farmer.couldInventoryAcceptThisItem` (Farmer.cs:4741) whenever the pack is
@@ -450,6 +457,14 @@ public sealed class TargetFamilyCompletenessTests
             SetInstanceField(actor, "sprite", new NetRef<AnimatedSprite> { Value = sprite });
             SetInstanceField(actor, "uniqueMultiplayerID", new NetLong(ActorId));
             SetInstanceField(actor, "netStamina", new NetFloat(270f));
+            // `Farmer.maxStamina` is `new NetInt(270)` (Farmer.cs:599) and `MaxStamina` is
+            // `Math.Max(maxStamina.Value + buffs.MaxStamina, 0)` (Farmer.cs:1842). An uninitialized instance never ran
+            // the initializer, so it reports a maximum of ZERO, and `Farmer.Stamina`'s setter clamps every write to
+            // `Math.Min(MaxStamina, ...)` (Farmer.cs:1836) - which meant the FIRST tool swing of any action drove the
+            // probe actor to 0 stamina. That put every swing into `Farmer.checkForExhaustion`'s "you are exhausted"
+            // branch, which reads `Game1.content` strings, so `break_resource_clump`, `clear_hoedirt` and the rest were
+            // all reported as a harness limit at a seam none of them owns. A real farmer starts at 270.
+            SetInstanceField(actor, "maxStamina", new NetInt(270));
             SetInstanceField(actor, "temporaryItem", new NetRef<Item>());
             SetInstanceField(actor, "cursorSlotItem", new NetRef<Item>());
             SetInstanceField(actor, "currentToolIndex", new NetInt(0));
@@ -476,6 +491,12 @@ public sealed class TargetFamilyCompletenessTests
             // (`Bush.loadSprite` calls `Utility.CreateRandom(Game1.stats.DaysPlayed, ...)`, Bush.cs:277). A real farmer
             // always carries one; an uninitialized instance has null.
             SetInstanceField(actor, "stats", new Stats());
+            // `Farmer.experiencePoints` is `new NetArray<int, NetInt>(6)` in the field initializer - one slot per
+            // skill. An uninitialized farmer carries an EMPTY array, and every native skill award indexes it directly
+            // (`experiencePoints[which]`, Farmer.cs:3048-3049), so the destroying swing of `break_resource_clump`
+            // (`t.getLastFarmerToUse().gainExperience(2, 25)`, ResourceClump.cs:239) threw
+            // ArgumentOutOfRangeException from inside the game's own bookkeeping.
+            SetInstanceField(actor, "experiencePoints", new NetArray<int, NetInt>(6));
             actor.position.Set(new Vector2(1 * 64 + 8, 2 * 64));
             actor.currentLocation = farm;
             // `Farmer.canMove` is a plain bool whose initializer (`canMove = true`, Farmer.cs:690) never runs on an
@@ -516,6 +537,13 @@ public sealed class TargetFamilyCompletenessTests
             SetInstanceField(actor, "buffs", buffs);
             typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, actor);
             world.Actor = actor;
+            // `Game1.currentLocation` is a property over `game1.instanceGameLocation` (Game1.cs:1328-1333), which a real
+            // game assigns on every warp. Native bodies read that STATIC rather than `player.currentLocation` -
+            // `ResourceClump.performToolAction` hands `Game1.currentLocation` to `Game1.createRadialDebris` - so an
+            // uninitialized `Game1` made their cosmetic debris spawn dereference null. Written through the backing field
+            // rather than the property, because the setter runs `OnLocationChanged`, which brings up music and ambient
+            // loops this process has no audio device for.
+            SetInstanceField(Game1.game1!, "instanceGameLocation", farm);
 
             // The other gate in front of the target check: every request body opens with
             // `if (!Context.IsWorldReady ...) world_not_ready`.
@@ -811,6 +839,42 @@ public sealed class TargetFamilyCompletenessTests
             this.Farm.objects[new Vector2(x, y)] = rock;
         }
 
+        /// <summary>
+        /// One <c>ResourceClump</c> in the location's own clump layer - the entity <c>DiscoverDebrisTargets</c> scans
+        /// (<c>location.resourceClumps</c>, GameLocation.cs:452). A large stump, hollow log, boulder, meteorite or
+        /// mine rock lives there and nowhere else, so a fixture that never writes that collection can only ever
+        /// publish an empty <c>debrisTargets</c>.
+        ///
+        /// <para>
+        /// Built the way every other native object in this world is: an uninitialized instance whose NetFields are
+        /// supplied, because <c>ResourceClump</c>'s own constructor calls <c>loadSprite()</c> and therefore
+        /// <c>Game1.content</c>. Its health is read from <c>ResourceClump.GetDefaultHealth</c> itself rather than
+        /// restated here, because the swing loop in <c>break_resource_clump</c> derives its hit count from it - a
+        /// second copy of that table would silently change how many swings the action needs.
+        /// </para>
+        /// </summary>
+        internal void PlaceResourceClump(int x, int y, int parentSheetIndex, int width, int height)
+        {
+            var clump = (StardewValley.TerrainFeatures.ResourceClump)
+                FormatterServices.GetUninitializedObject(typeof(StardewValley.TerrainFeatures.ResourceClump));
+            // `TerrainFeature.NetFields` is a get-only property assigned in the base CONSTRUCTOR (`new NetFields(...)`,
+            // TerrainFeature.cs), and `NetCollection.Add` reaches the feature's own field tree through it: an
+            // uninitialized clump carries null and the collection throws before anything is placed.
+            typeof(StardewValley.TerrainFeatures.TerrainFeature)
+                .GetField("<NetFields>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(clump, new NetFields("ResourceClump"));
+            SetInstanceField(clump, "width", new NetInt(width));
+            SetInstanceField(clump, "height", new NetInt(height));
+            SetInstanceField(clump, "parentSheetIndex", new NetInt(parentSheetIndex));
+            SetInstanceField(clump, "textureName", new NetString(null));
+            SetInstanceField(clump, "netTile", new NetVector2 { Value = new Vector2(x, y) });
+            int health = (int)typeof(StardewValley.TerrainFeatures.ResourceClump)
+                .GetMethod("GetDefaultHealth", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(clump, new object[] { parentSheetIndex })!;
+            SetInstanceField(clump, "health", new NetFloat(health));
+            this.Farm.resourceClumps.Add(clump);
+        }
+
         /// <summary>A grass tuft, which is a TerrainFeature rather than an object-layer weed.</summary>
         internal void PlaceGrass(int x, int y) =>
             this.Farm.terrainFeatures[new Vector2(x, y)] = new StardewValley.TerrainFeatures.Grass(1, 4);
@@ -1005,6 +1069,10 @@ public sealed class TargetFamilyCompletenessTests
             SetInstanceField(crop, "rowInSpriteSheet", new NetInt(0));
             SetInstanceField(crop, "fullyGrown", new NetBool(fullyGrown));
             SetInstanceField(crop, "forageCrop", new NetBool(false));
+            // `Crop.raisedSeeds` is a NetBool field INITIALIZER, so an uninitialized crop carries null - and
+            // `HoeDirt.shake` multiplies by `crop.raisedSeeds.Value` on every native watering (HoeDirt.cs:371), which
+            // is the shake `WateringCan.DoFunction` ends in. Seeded false, the value a crop raised on plain dirt has.
+            SetInstanceField(crop, "raisedSeeds", new NetBool(false));
             SetInstanceField(crop, "dead", new NetBool(false));
             SetInstanceField(crop, "dayOfCurrentPhase", new NetInt(0));
             // `HoeDirt.readyForHarvest()` is `currentPhase >= phaseDays.Count - 1` (HoeDirt.cs:467), so the phase list
@@ -1069,6 +1137,19 @@ public sealed class TargetFamilyCompletenessTests
                     // A mine node's durability, so the family is exercised at something other than the one-hit value
                     // that `def2fb07` filtered everything else out with.
                     this.PlaceRock(x: 3, y: 2, durability: 3);
+                    this.StandAt(2, 2);
+                    break;
+                case "debrisTargets":
+                    // A large stump demands an AXE at upgrade 1 (ResourceClump.cs:150-170), and `DiscoverDebrisTargets`
+                    // publishes only a clump the pack can satisfy: without the axe there is no row to drive, and the
+                    // round trip would "pass" against an empty family.
+                    this.PutToolInPackSlot(0, typeof(StardewValley.Tools.Axe), "(T)Axe", upgradeLevel: 1);
+                    this.PlaceResourceClump(
+                        x: 3,
+                        y: 2,
+                        parentSheetIndex: StardewValley.TerrainFeatures.ResourceClump.stumpIndex,
+                        width: 2,
+                        height: 2);
                     this.StandAt(2, 2);
                     break;
                 case "grassTargets":
@@ -1171,6 +1252,7 @@ public sealed class TargetFamilyCompletenessTests
             "treeStumpTargets" => "DiscoverTreeStumpTargets",
             "weedTargets" => "DiscoverWeedTargets",
             "rockSourceTargets" => "DiscoverRockSourceTargets",
+            "debrisTargets" => "DiscoverDebrisTargets",
             "grassTargets" => "DiscoverGrassTargets",
             "chests" => "DiscoverChestStates",
             "npcRelationshipTargets" => "DiscoverNpcRelationshipTargets",

@@ -73,8 +73,10 @@ public sealed class TargetFamilyRoundTripTests
     /// made to print what each receipt actually said, THIRTEEN of the nineteen were passing on a swallowed
     /// `NullReferenceException` from a missing `Farmer`/`Tool` NetField and FIVE more on a refusal code that fell through
     /// the same gap (`chest_empty`, `item_not_owned_in_slot`, `observation_binding_precondition_failed`,
-    /// `already_equipped`). Five pairs remain, and each one now passes only by reaching its target check. The rest are
-    /// in <see cref="Undriven"/> or <see cref="UndrivenPairs"/> with the concrete native surface each one needs.
+    /// `already_equipped`). Seven pairs remain, and each one now passes only by reaching its target check. The rest are
+    /// in <see cref="Undriven"/> or <see cref="UndrivenPairs"/> with the concrete native surface each one needs, and the
+    /// two promoted on 2026-11-08 are the reason to read those blockers with suspicion: both had been blamed on the
+    /// engine while the real cause was four missing facts on the probe farmer.
     /// </para>
     /// </summary>
     internal static readonly IReadOnlyDictionary<string, string> DrivenFamilies = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -84,6 +86,23 @@ public sealed class TargetFamilyRoundTripTests
         ["talk_to_npc"] = "npcRelationshipTargets",
         ["pickup_item"] = "itemTargets",
         ["equip_tool"] = "toolSlots",
+        // PROMOTED 2026-11-08, and the reason both sat in `Undriven` is the finding: neither was an engine limit.
+        //
+        // `rockSourceTargets` was recorded as "a rock break drops native debris through Game1.createRadialDebris, which
+        // needs the item type-definition registry". The registry was never reached. The probe farmer had a ZERO maximum
+        // stamina (Farmer.maxStamina is a NetInt field initializer an uninitialized instance never runs), so the first
+        // swing clamped stamina to 0 and `Farmer.checkForExhaustion` took its exhausted branch, which reads
+        // `Game1.content`; and `Game1.recentMultiplayerRandom` - the static every native debris chunk is built from
+        // (`Debris.InitializeChunks`) - was null. Two one-line fixture facts had been reported as "the engine cannot do
+        // this" for a week.
+        //
+        // `clearHoeDirtTargets` was recorded as "the hoe swing ends in Farmer.checkForExhaustion, which reads
+        // Game1.content strings" - which was TRUE and was still the zero-max-stamina defect above, not the action.
+        //
+        // Both now pass by reaching their own target check and their own native body, and each is also measured under a
+        // held state in `HeldStatePerturbationTests` (`succeeded/rock_source_damaged`, `succeeded/hoedirt_cleared`).
+        ["break_rock"] = "rockSourceTargets",
+        ["clear_hoedirt"] = "clearHoeDirtTargets",
     };
 
     /// <summary>
@@ -138,7 +157,7 @@ public sealed class TargetFamilyRoundTripTests
         ["crabPotTargets"] = "a currentLocation of type Farm holding a (O)710 stack; TargetFamilyWorld builds a plain GameLocation",
         ["craftingRecipeTargets"] = "Data/CraftingRecipes; the asset is not loaded here",
         ["dailyQuestTargets"] = "Game1.questOfTheDay, which only a save load populates",
-        ["debrisTargets"] = "a ResourceClump in the location's resourceClumps layer; its kind comes from Data/Objects",
+        ["debrisTargets"] = "a ResourceClump in the location's resourceClumps layer is CONSTRUCTIBLE now (TargetFamilyWorld.PlaceResourceClump) and both its actions reach the native swing; what stops the round trip is the drop: `ResourceClump.destroy` calls `ItemRegistry.Create(\"(O)709\")`, and the item type-definition registry is populated from the game's Data/Objects at startup, so a process without it throws RequireTypeDefinition(\"(O)\"); measured 2026-11-08 as KeyNotFoundException after the target check",
         ["farmAnimalPetTargets"] = "a FarmAnimal in the location's animals dictionary; its type, behaviour and edibility come from Data/FarmAnimals, which this process never loads",
         ["farmBuildingTargets"] = "Data/Buildings (every buildable type, cost and material); the asset is not loaded here - it is 4.6% of the payload, just under the threshold, and will cross it on a heavier run",
         ["feedTroughTargets"] = "an AnimalHouse location with a Trough map property; the harness builds no interior location",
@@ -178,20 +197,23 @@ public sealed class TargetFamilyRoundTripTests
         ["woodFenceTargets"] = "a currentLocation of type Farm plus a (O)322 stack; TargetFamilyWorld builds a plain GameLocation",
         ["pendingLevelUpChoices"] = "Game1.player.newLevels, which only Game1.showEndOfNightStuff populates at the night boundary",
         ["petBowlTargets"] = "a PetBowl Building; Building's own constructor loads Data/Buildings",
-        ["worldObjectTargets"] = "a placeable owned Object whose placement rules (canBePlacedHere/placementAction) come from Data/Objects",
+        ["worldObjectTargets"] = "a `Furniture` in `location.furniture` is what `MovePlacedFurnitureActionTests.FurnitureWorld` already builds headlessly, but this family's row builder reads `placed.DisplayName` UNGUARDED (`string.IsNullOrEmpty(placed.DisplayName)`), which resolves through `ItemRegistry.GetDataOrErrorItem` -> `RequireTypeDefinition(\"(O)\")`; the item type-definition registry is populated from the game's Data/Objects at startup, so no object or furniture row can be published here at all - measured 2026-11-08, and the guarded `RequireDisplayName` every other family uses is what would make the family publishable",
         // ---- measured 2026-11-01, when the probe stopped reporting refusals as passes -------------------------
         // Every family below WAS reported as driven. Its row came from the real `Discover*` and the action's own
         // preflight then refused, threw, or answered a code the probe could not read - and the pair was counted green.
         // Each blocker names the native surface the handler reaches AFTER the target check, which is why the target
         // check itself is proven and the pair still cannot be a round trip.
-        ["treeChopSourceTargets"] = "a chop that fells a tree reaches Tree._LoadWildTreeData -> DataLoader.Load(Data/WildTrees) and this process has no content manager; measured 2026-11-01 as ContentLoadException, after the target check",
-        ["treeStumpTargets"] = "a stump chop reaches the same Tree._LoadWildTreeData content load; measured 2026-11-01 as ContentLoadException, after the target check",
-        ["rockSourceTargets"] = "a rock break drops native debris through Game1.createRadialDebris, which needs the item type-definition registry; measured 2026-11-01 as NullReferenceException, after the target check",
-        ["weedTargets"] = "Object.cutWeed spawns a TemporaryAnimatedSprite from a game texture; measured 2026-11-01 as NullReferenceException in TemporaryAnimatedSprite.loadTexture, after the target check",
-        ["grassTargets"] = "a scythe swing spawns the same TemporaryAnimatedSprite texture; measured 2026-11-01 as NullReferenceException in TemporaryAnimatedSprite.loadTexture, after the target check",
-        ["clearHoeDirtTargets"] = "the hoe swing ends in Farmer.checkForExhaustion, which reads Game1.content strings; measured 2026-11-01 as NullReferenceException, after the target check",
-        ["cropTargets"] = "WateringCan.DoFunction plays a native sound and sprite effect; measured 2026-11-01 as NullReferenceException, after the target check",
-        ["scytheCropTargets"] = "the scythe body calls ItemRegistry.Create for the harvest id, which needs Data/Objects; measured 2026-11-01 as KeyNotFoundException, after the target check",
+        //
+        // RE-MEASURED 2026-11-08. Four of these blockers were the PROBE FARMER, not the engine: zero `maxStamina`,
+        // null `Game1.recentMultiplayerRandom`, null `Game1.currentLocation` and a zero-length `experiencePoints`.
+        // `rockSourceTargets` and `clearHoeDirtTargets` were that shape and are now driven (see `DrivenFamilies`); the
+        // entries still here were re-run against the repaired world and each now names the surface it really reaches.
+        ["treeChopSourceTargets"] = "a chop that fells a tree reaches Tree._LoadWildTreeData -> DataLoader.Load(Data/WildTrees) and this process has no content manager; measured 2026-11-08 as ContentLoadException, after the target check",
+        ["treeStumpTargets"] = "a stump chop reaches the same Tree._LoadWildTreeData content load; measured 2026-11-08 as ContentLoadException, after the target check",
+        ["weedTargets"] = "Object.cutWeed spawns a TemporaryAnimatedSprite from a game texture; measured 2026-11-08 as NullReferenceException in TemporaryAnimatedSprite.loadTexture, after the target check",
+        ["grassTargets"] = "a scythe swing spawns the same TemporaryAnimatedSprite texture; measured 2026-11-08 as NullReferenceException in TemporaryAnimatedSprite.loadTexture, after the target check",
+        ["scytheCropTargets"] = "the scythe body calls ItemRegistry.Create for the harvest id, which needs Data/Objects; measured 2026-11-08 as KeyNotFoundException in ItemRegistry.RequireTypeDefinition, after the target check",
+        ["cropTargets"] = "the watering swing ends in HoeDirt.shake, whose billboard is a TemporaryAnimatedSprite built from a game texture; measured 2026-11-08 as NullReferenceException in TemporaryAnimatedSprite.loadTexture, after the target check",
         ["warps"] = "travel and enter_exit are owed a driver: a warp fades the screen through Game1.fadeScreenToBlack, whose ScreenFade is created only by the game's own constructor; measured 2026-11-01 as NullReferenceException after the target check, so the pair needs a fade surface rather than a different world",
         ["forageTargets"] = "pickup_forage refuses `observation_binding_precondition_failed` unless the Mod's scene-target resolver is wired, and that resolver is a Mod wiring slot rather than game state; the row's own binding is therefore never consulted by this harness",
         ["fruitTreeTargets"] = "DiscoverFruitTreeTargets itself throws: FruitTree.IsInSeasonHere reads GetData() -> Game1.fruitTreeData (Data/FruitTrees), which this process never loads; measured 2026-11-01 as NullReferenceException before any row exists",
@@ -306,12 +328,14 @@ public sealed class TargetFamilyRoundTripTests
         // A ratchet set from a false reading is worse than none - it locks in the fiction - so the floor is the number
         // that survives when a pair may only pass by reaching its target check.
         driven.Should().BeGreaterThanOrEqualTo(
-            5,
-            "the driven count may not fall: five pairs reach their action's own target check and pass it today "
-            + "(`chest_store`, `npc_relationship`, `talk_to_npc`, `pickup_item`, `equip_tool`). The previous floor of "
-            + "19 was measured against a vacuous probe and proved nothing");
+            7,
+            "the driven count may not fall: seven pairs reach their action's own target check and pass it today "
+            + "(`chest_store`, `npc_relationship`, `talk_to_npc`, `pickup_item`, `equip_tool`, `break_rock`, "
+            + "`clear_hoedirt`). The previous floor of 19 was measured against a vacuous probe and proved nothing; the "
+            + "floor of 5 was the honest reading of 2026-11-01, and `break_rock`/`clear_hoedirt` joined it on 2026-11-08 "
+            + "when four missing facts on the probe farmer were fixed");
         undriven.Should().BeLessThanOrEqualTo(
-            65,
+            63,
             "the undriven count may not rise without a new named blocker: the eleven families this file used to call "
             + "driven moved here when the probe stopped counting refusals as passes, and each one names the native "
             + "surface its handler reaches after the target check");
@@ -326,8 +350,8 @@ public sealed class TargetFamilyRoundTripTests
             $"driven {driven} pairs over {drivenFamilies} of {declaredFamilies.Count} families, "
             + $"known-drift {knownDrift}, undriven {undriven} families, undriven pairs {UndrivenPairs.Count}";
         report.Should().Be(
-            $"driven 5 pairs over {drivenFamilies} of {declaredFamilies.Count} families, known-drift 0, "
-            + "undriven 65 families, undriven pairs 2",
+            $"driven 7 pairs over {drivenFamilies} of {declaredFamilies.Count} families, known-drift 0, "
+            + "undriven 63 families, undriven pairs 2",
             "the counts are the ratchet; a change here is a change to what this gate covers");
     }
 

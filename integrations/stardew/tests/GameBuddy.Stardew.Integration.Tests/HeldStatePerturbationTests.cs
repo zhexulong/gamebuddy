@@ -91,6 +91,20 @@ public sealed class HeldStatePerturbationTests
             "hands_not_empty",
             "with an object in hand native takes the gift path (NPC.cs:2760), which is `interact_npc_with_item`'s intent " +
             "and not this action's, so the refusal is the action's own precondition"),
+        ["break_rock"] = new(
+            HeldState.UnrelatedItem,
+            Ending.Succeeds,
+            null,
+            "`Object.performToolAction`'s breakable-stone branch reads the PICKAXE and the stone's own `MinutesUntilReady` " +
+            "(Object.cs:1121-1136) and never the selected slot, and the handler resolves that pickaxe from the pack itself; " +
+            "with a (O)72 in hand the stone is still struck (`succeeded/rock_source_damaged`)"),
+        ["clear_hoedirt"] = new(
+            HeldState.UnrelatedItem,
+            Ending.Succeeds,
+            null,
+            "the action resolves its own hoe from the pack and the native body decides on the TILE's state " +
+            "(`HoeDirt.performToolAction`, HoeDirt.cs:726), not on the selected slot; with a (O)72 in hand the empty dirt " +
+            "is still cleared (`succeeded/hoedirt_cleared`)"),
     };
 
     /// <summary>

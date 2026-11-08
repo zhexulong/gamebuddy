@@ -69,6 +69,7 @@ FarmhandTypedReceiptContractTests.cs	mod-assembly	Handlers
 FixedInteractionPointMineMappingTests.cs	reference-tree	StardewValleyDecompiled (MineShaft.cs :3057 switch (getTileIndexAt(tileLocation, "Buildings", "mine")), the only authority for which mine tile index is a fixed interaction point); /ref/ is gitignored, so a hosted checkout has no reference tree
 FixedInteractionPointMineTileSourceShapeTests.cs	reference-tree	StardewValleyDecompiled (MineShaft.cs :3053-3124, the checkAction switch); /ref/ is gitignored, so a hosted checkout has no reference tree
 FixedInteractionPointSnapshotTests.cs	mod-assembly	ExecutionManager, Farmer, GameLocation, Game1, Netcode, Xna, xTile
+HeldParkDeadlineTests.cs	mod-assembly	BridgeHello, BridgeSession, ExecutionManager, Farmer, FarmhandExecutionJournalState
 HeldRequestAbsorptionTests.cs	mod-assembly	BridgeHello, BridgeSession, ExecutionManager, Farmer, FarmhandExecutionJournalState
 HeldToolProjectionTests.cs	game	Axe, Farmer, Hoe, Item, Lantern
 HollowRingStepOutTests.cs	mod-assembly	ExecutionManager, FarmhandExecutionJournal

@@ -639,6 +639,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal const string HeldRequestMarker = "held_awaiting_actionability";
 
     /// <summary>
+    /// The reason prefix for a park whose bounded wait ended with no bridge left to take the answer. Only that one
+    /// branch mints it: a park that a bridge can still answer keeps the admission's own hold code, byte for byte.
+    /// </summary>
+    internal const string HeldRequestNeverAnsweredPrefix = "held_request_never_answered:";
+
+    /// <summary>
     /// Answers one request the admission parked while the actor was Transiently held. <paramref name="refusal"/>
     /// is null when the body is free and the request must be dispatched now through the normal path, and is
     /// the named refusal when the bounded wait passed without the body freeing. Registered by the bridge,
@@ -1046,20 +1052,28 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// deadline, profile and ownership check runs again at THAT moment, because this is a wait and not a replay. Past
     /// <see cref="WorldModel.TransientRetryWindowMs"/> the wait ends in the named hold the admission captured on
     /// arrival.
+    ///
+    /// <para>
+    /// That window is enforced whether or not a bridge is left to take the answer. A park exists only while a bridge
+    /// does, so a missing resolver means the bridge that parked it went away mid-wait - and the park must still end,
+    /// in the same window every other park ends in. It is not a second, shorter deadline: the one branch that mints
+    /// <see cref="HeldRequestNeverAnsweredPrefix"/> differs in the CODE it names, never in the window.
+    /// </para>
     /// </summary>
     internal void PumpHeldRequests()
     {
-        if (this.heldRequestResolver is null || this.heldRequestsByRequestId.Count == 0)
+        if (this.heldRequestsByRequestId.Count == 0)
             return;
         foreach ((string requestId, HeldRequest held) in this.heldRequestsByRequestId.ToArray())
         {
             long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             (string HoldCode, string HoldEvidence)? hold = this.ReadCurrentHold();
-            if (hold is null)
+            HeldRequestResolver? resolver = this.heldRequestResolver;
+            if (hold is null && resolver is not null)
             {
                 this.heldRequestsByRequestId.Remove(requestId);
                 this.RecordHoldWait(requestId, nowMs - held.ParkedAtUnixMs);
-                this.heldRequestResolver(requestId, null);
+                resolver(requestId, null);
                 continue;
             }
             if (nowMs - held.ParkedAtUnixMs <= WorldModel.TransientRetryWindowMs)
@@ -1067,12 +1081,19 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // The wait ended in a hold that is still in force. While it is the parked hold, the code and
             // evidence are the pair the admission captured on arrival - byte for byte the refusal the Agent
             // would have read then; a world that changed behind the wait is named as it is NOW, because
-            // pointing the Agent at a hold that has ended would give it the wrong countermeasure.
-            (string holdCode, string holdEvidence) = hold.Value.HoldCode == held.HoldCode
+            // pointing the Agent at a hold that has ended would give it the wrong countermeasure. A body that
+            // freed with no bridge left to take the dispatch names the hold that arrived with the park, which is
+            // the only one this wait can claim.
+            (string holdCode, string holdEvidence) = hold is null || hold.Value.HoldCode == held.HoldCode
                 ? (held.HoldCode, held.HoldEvidence)
                 : (hold.Value.HoldCode, hold.Value.HoldEvidence);
             this.heldRequestsByRequestId.Remove(requestId);
-            this.heldRequestResolver(requestId, this.RefuseHeldRequest(requestId, held, holdCode, holdEvidence));
+            if (resolver is null)
+            {
+                this.RefuseHeldRequest(requestId, held, $"{HeldRequestNeverAnsweredPrefix}{holdCode}", holdEvidence);
+                continue;
+            }
+            resolver(requestId, this.RefuseHeldRequest(requestId, held, holdCode, holdEvidence));
         }
     }
 
@@ -1080,12 +1101,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// The named refusal for a request whose bounded wait passed without the actor becoming actionable. The
     /// shape is the admission's own on arrival - <see cref="ExecutionState.Rejected"/> carrying the hold's
     /// code and evidence - so an Agent that waited reads what it would have read had the hold been refused
-    /// immediately. The action identity travels on the receipt because no dispatch lineage exists to resolve
+    /// immediately. The one exception is the wait no bridge was left to take, which names itself through
+    /// <paramref name="reasonCode"/>: its caller passes <see cref="HeldRequestNeverAnsweredPrefix"/> and the hold
+    /// it waited on. The action identity travels on the receipt because no dispatch lineage exists to resolve
     /// it from: the handler that would have bound it never ran.
     /// </summary>
-    private LocalExecutionReceipt RefuseHeldRequest(string requestId, HeldRequest held, string holdCode, string holdEvidence)
+    private LocalExecutionReceipt RefuseHeldRequest(string requestId, HeldRequest held, string reasonCode, string holdEvidence)
     {
-        LocalExecutionReceipt receipt = new(held.ExecutionId, requestId, ExecutionState.Rejected, holdCode, this.revision, holdEvidence, ActionId: held.ActionId);
+        LocalExecutionReceipt receipt = new(held.ExecutionId, requestId, ExecutionState.Rejected, reasonCode, this.revision, holdEvidence, ActionId: held.ActionId);
         this.Remember(receipt);
         LocalExecutionReceipt published = this.AddTrace(receipt);
         return published;

@@ -42,6 +42,10 @@ public sealed partial class ModEntry : Mod
     ///
     /// Ownership of the ACTOR is untouched: this pumps the connection and the execution state machine, so a request
     /// that wants the body is refused by the body owner exactly as before - as a receipt, never as silence.
+    ///
+    /// The execution state machine and its answered parks travel together here exactly as they do on a full tick: the
+    /// pump resolves a parked wait, and the response it minted for that wait must reach the transport on the SAME tick
+    /// or the answer waits for a tick this gate may never let through (the cross-day night is made of nothing else).
     /// </summary>
     private void PumpBridgeWhileBodyOwned()
     {
@@ -54,6 +58,7 @@ public sealed partial class ModEntry : Mod
         this.DrainLocalPipeBridge(state);
         this.LogNativeLocalPipelineHeartbeat();
         state.Executions?.Update();
+        this.DeliverHeldExecutionResponses(state);
     }
 
     /// <summary>
