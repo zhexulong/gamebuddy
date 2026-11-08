@@ -317,6 +317,7 @@ const voicePreferenceStore = Object.freeze({
       persona: null,
       paced: false,
       gamePromptAddition: "",
+      appearance: "system" as const,
     };
   },
   async update(expectedRevision: number, update: PlayerPreferenceUpdate) {
@@ -331,6 +332,7 @@ const voicePreferenceStore = Object.freeze({
       persona: update.action === "setPersona" ? update.persona : null,
       paced: update.action === "setPaced" ? update.paced : false,
       gamePromptAddition: update.action === "setGamePromptAddition" ? update.addition : "",
+      appearance: update.action === "setAppearance" ? update.appearance : ("system" as const),
     };
   },
 });
@@ -1828,6 +1830,7 @@ test("management handler exposes the Host-owned language preference read and upd
     persona: null,
     paced: false,
     gamePromptAddition: "",
+    appearance: "system" as const,
   };
   // One Host-owned record carries both settings field groups (the companion
   // language and the Voice consent/output), so this language surface writes the
@@ -1981,6 +1984,7 @@ test("management handler maps Voice preference revision conflicts to the safe se
           persona: null,
           paced: false,
           gamePromptAddition: "",
+          appearance: "system" as const,
         };
       },
       async update() {
@@ -2054,6 +2058,7 @@ test("every CSRF-protected management mutation answers 403 csrf_failed for a mis
           persona: null,
           paced: false,
           gamePromptAddition: "",
+          appearance: "system" as const,
         };
       },
       async update() {
@@ -2067,6 +2072,7 @@ test("every CSRF-protected management mutation answers 403 csrf_failed for a mis
           persona: null,
           paced: false,
           gamePromptAddition: "",
+          appearance: "system" as const,
         };
       },
     }),

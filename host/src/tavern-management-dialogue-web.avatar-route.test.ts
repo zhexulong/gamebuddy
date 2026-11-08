@@ -234,6 +234,7 @@ function managementOptions(service: ReturnType<typeof createCompanionAvatarServi
           persona: null,
           paced: false,
           gamePromptAddition: "",
+          appearance: "system" as const,
         };
       },
       async update() {
@@ -247,6 +248,7 @@ function managementOptions(service: ReturnType<typeof createCompanionAvatarServi
           persona: null,
           paced: false,
           gamePromptAddition: "",
+          appearance: "system" as const,
         };
       },
     }),

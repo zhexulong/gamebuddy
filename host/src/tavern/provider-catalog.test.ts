@@ -12,10 +12,13 @@ import {
   TAVERN_PI_API_SHAPES,
   TAVERN_PROVIDER_CATALOG,
   catalogModel,
+  catalogModelById,
   catalogProvider,
   isTavernPiApi,
   playerOfferedProviders,
 } from "./provider-catalog.js";
+import { TAVERN_MODEL_LISTING_LIMIT } from "./browser-contract/index.js";
+import { PLAYER_MODEL_ID_PATTERN } from "../runtime-identity.js";
 
 /**
  * The catalog claims its shape list IS the set of APIs Pi can speak, and a player relies on
@@ -137,12 +140,10 @@ test("the browser is offered every catalog entry except the operator's own gatew
   }
 });
 
-test("the operator's gateway is reachable only through an explicit, labelled developer switch", () => {
+test("the operator's gateway is reachable only through an explicit developer switch", () => {
   const optedIn = playerOfferedProviders({ [TAVERN_OPERATOR_GATEWAY_ENV]: "1" });
   const operator = optedIn.find((entry) => entry.providerId === TAVERN_ENVIRONMENT_PROVIDER_ID);
   assert.ok(operator, "the switch offers the operator gateway");
-  // A developer path must never look like an ordinary choice: the label says what it is.
-  assert.match(operator.label, /developer/iu);
   assert.deepEqual(operator.setupFields, [], "the player has nothing to type for it, which is why it is not a default");
   // Any other value is not the opt-in.
   for (const value of ["", "0", "true", "yes", undefined]) {
@@ -154,6 +155,22 @@ test("the operator's gateway is reachable only through an explicit, labelled dev
       `${JSON.stringify(value)} must not count as the opt-in`,
     );
   }
+});
+
+test("no player-facing provider label names a developer path", () => {
+  // The measured defect: this entry's `label` read "Operator gateway (developer only)", and
+  // `projectProviders`/`projectRecord` publish a catalog label verbatim into the connection list, the
+  // provider picker and the model chips - so a fact about who may reach the entry was printed on the
+  // player's own screen. The switch above is what marks a developer path; a label names the endpoint.
+  //
+  // The population is the catalogue itself, so an entry added tomorrow is covered today, and the
+  // failure names the entry that drifted rather than the string it happens to carry.
+  const leaking = TAVERN_PROVIDER_CATALOG.filter((entry) => /developer|dev[- ]only/iu.test(entry.label));
+  assert.deepEqual(
+    leaking.map((entry) => entry.providerId),
+    [],
+    "a player-facing provider label names no developer path",
+  );
 });
 
 /**
@@ -219,4 +236,70 @@ test("a model id is stated only for the endpoint this product runs, never for so
   const hatch = catalogProvider(TAVERN_ESCAPE_HATCH_PROVIDER_ID);
   assert.ok(hatch);
   assert.deepEqual(hatch.allowedPlayerModels, []);
+});
+
+/**
+ * A suggestion is a starting point, never a claim (design/28 §1).
+ *
+ * The defect this exists for: a first run has nothing to offer. The model field is filled from
+ * `modelIds` - what the endpoint answered when it was last asked - and the only route that runs the
+ * probe needs an existing connection, whose own save already requires a model id. So a player who
+ * picked `DeepSeek` and knew no id typed one blind (`deepseek-chat` was the guess), with an empty
+ * dropdown and no sentence saying why. `suggestedModelIds` answers that with the endpoint's own
+ * documented ids and nothing more.
+ *
+ * The rule, stated so it outlives the ids: a suggestion is not a model this Host states. It must not
+ * reach `allowedPlayerModels` (that would publish a model we do not run, the `not_found`-looks-like-
+ * a-broken-key defect above), and it must not reach `catalogModel`/`catalogModelById`, because those
+ * answer what a MODEL is - its context window and its per-token cost - and this Host knows neither for
+ * an id it only read in someone's documentation.
+ *
+ * The population is the catalogue itself, so an entry added later is covered here without an edit.
+ */
+test("a suggested id is documented for a first run and never claims to describe the model", () => {
+  for (const entry of TAVERN_PROVIDER_CATALOG) {
+    const ids = entry.suggestedModelIds;
+    // Declared by every entry, so "no suggestion" is written down rather than left to a reader's guess.
+    assert.ok(Object.isFrozen(ids), `${entry.providerId} must freeze its suggestions`);
+    assert.ok(
+      ids.length <= TAVERN_MODEL_LISTING_LIMIT,
+      `${entry.providerId} publishes ${ids.length} suggestions past the ${TAVERN_MODEL_LISTING_LIMIT}-id ceiling`,
+    );
+    assert.equal(new Set(ids).size, ids.length, `${entry.providerId} suggests the same id twice`);
+    for (const id of ids) {
+      assert.match(
+        id,
+        PLAYER_MODEL_ID_PATTERN,
+        `${entry.providerId} suggests ${id}, which is not a model id this product accepts`,
+      );
+      // One id, one claim: a suggestion is never also a stated model of the same entry.
+      assert.equal(
+        catalogModel(entry, id),
+        null,
+        `${entry.providerId} both states and suggests ${id}; a stated model carries a window and a price this does not`,
+      );
+      // ...and it must not become a stated model somewhere else in the catalogue either.
+      assert.equal(
+        catalogModelById(id),
+        null,
+        `${id} is documented for an endpoint this Host does not run, not a model it describes`,
+      );
+    }
+  }
+
+  // The concrete cold start: the one public entry with documented ids, so the field is not empty
+  // before any probe has run. An id list that empties here is the defect, not a preference.
+  assert.deepEqual(catalogProvider("deepseek")?.suggestedModelIds, ["deepseek-chat", "deepseek-reasoner"]);
+  // And the entries where a suggestion would be a guess this source tree cannot keep true.
+  assert.deepEqual(catalogProvider("openai")?.suggestedModelIds, [], "an id OpenAI has retired is worse than no id");
+  assert.deepEqual(
+    catalogProvider(TAVERN_ESCAPE_HATCH_PROVIDER_ID)?.suggestedModelIds,
+    [],
+    "the endpoint is the player's",
+  );
+  assert.deepEqual(
+    catalogProvider(TAVERN_ENVIRONMENT_PROVIDER_ID)?.suggestedModelIds,
+    [],
+    "its ids are already stated",
+  );
 });

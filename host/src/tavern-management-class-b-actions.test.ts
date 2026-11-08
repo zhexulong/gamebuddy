@@ -363,7 +363,8 @@ function appliedPreference(
   if (update.action === "setOutputDevice") return { ...next, outputDevice: update.outputDevice };
   if (update.action === "setPaced") return { ...next, paced: update.paced };
   if (update.action === "setGamePromptAddition") return { ...next, gamePromptAddition: update.addition };
-  return { ...next, persona: update.persona };
+  if (update.action === "setPersona") return { ...next, persona: update.persona };
+  return { ...next, appearance: update.appearance };
 }
 
 test.before(async () => {
@@ -433,6 +434,7 @@ test(
       persona: null,
       paced: false,
       gamePromptAddition: "",
+      appearance: "system" as const,
     };
     const modelProfiles: Record<"chat" | "game", TavernModelProfileProjection> = {
       chat: { surface: "chat", revision: 0, thinkingLevel: "low" },

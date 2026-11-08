@@ -51,12 +51,14 @@ test("player preference defaults to unconfigured and projects one record with ex
       persona: null,
       paced: false,
       gamePromptAddition: "",
+      appearance: "system" as const,
     } satisfies PlayerPreference);
 
     const updated = await store.update(0, { action: "setLocale", locale: "zh-CN" });
     assert.equal(updated.revision, 1);
     assert.equal(updated.locale, "zh-CN");
     assert.deepEqual(Object.keys(updated).sort(), [
+      "appearance",
       "consent",
       "decidedAtMs",
       "disclosureVersion",
@@ -535,6 +537,7 @@ test("the Game prompt addition is bounded by the contract's ceiling and refuses 
         persona: null,
         paced: false,
         gamePromptAddition: "x".repeat(MAX_GAME_PROMPT_ADDITION_CHARS + 1),
+        appearance: "system" as const,
       }),
     );
     await assert.rejects(resolveGamePromptAddition(join(_path, "..", "..")), /invalid_player_preference_store/u);
@@ -566,5 +569,62 @@ test("an addition write cannot clobber the other groups and a stale revision is 
     const addition = await store.update(language.revision, { action: "setGamePromptAddition", addition: "hello" });
     assert.equal(addition.locale, "en-US");
     assert.equal(addition.gamePromptAddition, "hello");
+  });
+});
+
+/**
+ * The appearance is the one field group whose value is a CLOSED set: three names and nothing else.
+ *
+ * A free string here would reach the browser, become `data-theme` on `<html>`, and select no token
+ * root at all - the page would keep whatever appearance it already had while the settings control
+ * claimed the choice had been saved. So the store refuses a fourth value rather than storing it.
+ */
+test("the appearance round-trips as one of the three choices and refuses a fourth", async () => {
+  await withStore(async (path, store) => {
+    // Never chosen is `system` - following the OS - and not a missing value.
+    assert.equal((await store.read()).appearance, "system");
+
+    const written = await store.update(0, { action: "setAppearance", appearance: "light" });
+    assert.equal(written.appearance, "light");
+    assert.equal(written.revision, 1);
+    // Choosing an appearance touches no other field group.
+    assert.equal(written.locale, null);
+    assert.equal(written.consent, "undecided");
+    assert.equal(written.gamePromptAddition, "");
+
+    // Durable: a fresh store over the same path answers the same choice.
+    assert.equal((await new PlayerPreferenceStore(path).read()).appearance, "light");
+
+    // `system` is a choice the player can return to, stored like the other two.
+    const back = await store.update(written.revision, { action: "setAppearance", appearance: "system" });
+    assert.equal(back.appearance, "system");
+
+    for (const update of [
+      { action: "setAppearance" },
+      { action: "setAppearance", appearance: null },
+      { action: "setAppearance", appearance: "sepia" },
+      { action: "setAppearance", appearance: "Light" },
+      { action: "setAppearance", appearance: "light", extra: true },
+    ]) {
+      await assert.rejects(
+        store.update(back.revision, update as never),
+        /invalid_player_preference_update/u,
+        `expected ${JSON.stringify(update)} to be refused`,
+      );
+    }
+    assert.equal((await store.read()).appearance, "system", "a refused write leaves the record untouched");
+  });
+});
+
+test("an appearance write cannot clobber the other groups and a stale revision is refused", async () => {
+  await withStore(async (_path, store) => {
+    const language = await store.update(0, { action: "setLocale", locale: "en-US" });
+    await assert.rejects(
+      store.update(0, { action: "setAppearance", appearance: "dark" }),
+      PlayerPreferenceRevisionConflict,
+    );
+    const appearance = await store.update(language.revision, { action: "setAppearance", appearance: "dark" });
+    assert.equal(appearance.locale, "en-US");
+    assert.equal(appearance.appearance, "dark");
   });
 });

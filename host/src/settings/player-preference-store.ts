@@ -4,14 +4,14 @@ import { MAX_GAME_PROMPT_ADDITION_CHARS } from "../tavern/browser-contract/index
 import { join } from "node:path";
 
 /**
- * Host-owned player preference record. One path, one revision, four field
+ * Host-owned player preference record. One path, one revision, five field
  * groups: the companion language the runtimes read at mount, the cloud TTS
  * consent/output the Voice surface reads, whether Chat replies arrive as short
- * paced pieces, and the player's own addition to the Game companion's
- * instructions (read once, at Game-session start). Every player-visible settings
- * write goes through this one record's compare-and-swap, so a write from any
- * settings surface advances the same revision and a stale expectedRevision is
- * rejected for all of them.
+ * paced pieces, the player's own addition to the Game companion's instructions
+ * (read once, at Game-session start), and the appearance this browser paints
+ * itself in. Every player-visible settings write goes through this one record's
+ * compare-and-swap, so a write from any settings surface advances the same
+ * revision and a stale expectedRevision is rejected for all of them.
  */
 export const PLAYER_PREFERENCE_SCHEMA_VERSION = 1 as const;
 
@@ -99,6 +99,19 @@ export type PacedDelivery = boolean;
 export type GamePromptAddition = string;
 
 /**
+ * The appearance the player chose, or `system` when they have not chosen.
+ *
+ * `system` is a real choice and not the absence of one: it says "follow the
+ * operating system", and the two fixed appearances exist for the player whose
+ * OS answer is not the one they want for this product. The Host stores the
+ * choice; which colours an appearance paints, and what an un-chosen record
+ * resolves to, belong to the browser's stylesheet and the code that applies it.
+ */
+export type AppearanceChoice = "system" | "light" | "dark";
+
+export const APPEARANCE_CHOICES: readonly AppearanceChoice[] = Object.freeze(["system", "light", "dark"]);
+
+/**
  * The single root-level path of the record. One path, one authority: the
  * management surface writes it and every runtime reads it, so neither side
  * carries a preference of its own.
@@ -123,6 +136,8 @@ export type PlayerPreference = Readonly<{
   paced: PacedDelivery;
   /** The player's own addition to the Game companion's instructions; empty means none. */
   gamePromptAddition: GamePromptAddition;
+  /** The appearance the player chose; never chosen is `system`. */
+  appearance: AppearanceChoice;
 }>;
 
 /**
@@ -137,7 +152,8 @@ export type PlayerPreferenceUpdate =
   | Readonly<{ action: "setOutputDevice"; outputDevice: VoiceOutputDevice }>
   | Readonly<{ action: "setPersona"; persona: VoicePersona }>
   | Readonly<{ action: "setPaced"; paced: PacedDelivery }>
-  | Readonly<{ action: "setGamePromptAddition"; addition: GamePromptAddition }>;
+  | Readonly<{ action: "setGamePromptAddition"; addition: GamePromptAddition }>
+  | Readonly<{ action: "setAppearance"; appearance: AppearanceChoice }>;
 
 type StoredPlayerPreference = Readonly<{
   schemaVersion: typeof PLAYER_PREFERENCE_SCHEMA_VERSION;
@@ -150,6 +166,7 @@ type StoredPlayerPreference = Readonly<{
   persona: VoicePersona;
   paced: PacedDelivery;
   gamePromptAddition: GamePromptAddition;
+  appearance: AppearanceChoice;
 }>;
 
 export class PlayerPreferenceRevisionConflict extends Error {
@@ -183,6 +200,7 @@ export class PlayerPreferenceStore {
         persona: update.action === "setPersona" ? update.persona : current.persona,
         paced: update.action === "setPaced" ? update.paced : current.paced,
         gamePromptAddition: update.action === "setGamePromptAddition" ? update.addition : current.gamePromptAddition,
+        appearance: update.action === "setAppearance" ? update.appearance : current.appearance,
       });
       await writeAtomically(this.path, next);
       const readBack = await this.load();
@@ -263,6 +281,7 @@ const DEFAULT_PLAYER_PREFERENCE: StoredPlayerPreference = Object.freeze({
   persona: null,
   paced: false,
   gamePromptAddition: "",
+  appearance: "system",
 });
 
 function project(value: StoredPlayerPreference): PlayerPreference {
@@ -276,6 +295,7 @@ function project(value: StoredPlayerPreference): PlayerPreference {
     persona: value.persona,
     paced: value.paced,
     gamePromptAddition: value.gamePromptAddition,
+    appearance: value.appearance,
   });
 }
 
@@ -292,6 +312,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
     !isVoicePersona(value.persona) ||
     !isPaced(value.paced) ||
     !isGamePromptAddition(value.gamePromptAddition) ||
+    !isAppearanceChoice(value.appearance) ||
     !hasExactKeys(value, [
       "schemaVersion",
       "revision",
@@ -303,6 +324,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
       "persona",
       "paced",
       "gamePromptAddition",
+      "appearance",
     ])
   )
     throw new Error("invalid_player_preference_store");
@@ -329,6 +351,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
     persona: value.persona as VoicePersona,
     paced: value.paced as PacedDelivery,
     gamePromptAddition: value.gamePromptAddition as GamePromptAddition,
+    appearance: value.appearance as AppearanceChoice,
   });
 }
 
@@ -354,6 +377,9 @@ function isUpdate(value: unknown): value is PlayerPreferenceUpdate {
   }
   if (value.action === "setGamePromptAddition") {
     return hasExactKeys(value, ["action", "addition"]) && isGamePromptAddition(value.addition);
+  }
+  if (value.action === "setAppearance") {
+    return hasExactKeys(value, ["action", "appearance"]) && isAppearanceChoice(value.appearance);
   }
   return value.action === "revoke" && hasExactKeys(value, ["action"]);
 }
@@ -391,6 +417,11 @@ function isVoicePersona(value: unknown): value is VoicePersona {
 /** The player's own yes/no: a real boolean, never a truthy string or number. */
 function isPaced(value: unknown): value is PacedDelivery {
   return typeof value === "boolean";
+}
+
+/** One of the three appearances, exactly - never a free string from the wire. */
+function isAppearanceChoice(value: unknown): value is AppearanceChoice {
+  return value === "system" || value === "light" || value === "dark";
 }
 
 /**

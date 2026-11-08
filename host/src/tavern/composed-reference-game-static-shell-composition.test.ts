@@ -1286,6 +1286,7 @@ function managementBundle(): ManagementBundle {
           persona: null,
           paced: false,
           gamePromptAddition: "",
+          appearance: "system" as const,
         }),
       update: async () => {
         throw new Error("unused_preference_update");

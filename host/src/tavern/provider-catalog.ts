@@ -211,6 +211,18 @@ export type TavernCatalogProvider = Readonly<{
    * which the probe already reads - is the list, beside whatever the player types.
    */
   allowedPlayerModels: readonly TavernCatalogModel[];
+  /**
+   * Ids this Host DOCUMENTS for the entry's endpoint, as a suggestion only.
+   *
+   * `allowedPlayerModels` above cannot hold these: an entry there is a model this Host states, and
+   * for an endpoint we do not run it has no such fact to state. But a first run needs somewhere to
+   * start: before any probe has run there is no listing, and a player who has just picked a provider
+   * is otherwise asked to type a model id blind. These ids are the endpoint's own documentation, not
+   * the endpoint's answer - nothing here was read from `/models`, none of it is verified, and the
+   * probe remains the only authority on which of them actually answers. The panel renders them
+   * labelled as suggestions, never as served ids, and never selects one on the player's behalf.
+   */
+  suggestedModelIds: readonly string[];
   /** True only for the single OpenAI-compatible escape hatch entry. */
   escapeHatch: boolean;
   /**
@@ -257,6 +269,7 @@ const defineProvider = (provider: TavernCatalogProvider): TavernCatalogProvider 
     ...provider,
     setupFields: Object.freeze([...provider.setupFields]),
     allowedPlayerModels: Object.freeze([...provider.allowedPlayerModels]),
+    suggestedModelIds: Object.freeze([...provider.suggestedModelIds]),
   });
 
 export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.freeze([
@@ -268,7 +281,13 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
   // `operatorGatewayBaseUrl()` is how the rest of the Host reads it back.
   defineProvider({
     providerId: TAVERN_ENVIRONMENT_PROVIDER_ID,
-    label: "Operator gateway (developer only)",
+    // What the player reads. This string is projected verbatim into the connection list, the provider
+    // picker and the model chips (`projectProviders`/`projectRecord`), so it names the entry and
+    // nothing else: that the entry is offered only under `TAVERN_OPERATOR_GATEWAY_ENV` is a fact about
+    // reachability, and the switch - not a caveat on the player's screen - is where it is stated. What
+    // the player needs to know about the entry itself (that this machine provides the endpoint and the
+    // key, so there is nothing to type) is said in its own sentence beside the picker.
+    label: "Operator gateway",
     piProviderId: TAVERN_ENVIRONMENT_PROVIDER_ID,
     piApi: "openai-completions",
     baseUrl: OPERATOR_GATEWAY_BASE_URL,
@@ -285,6 +304,9 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
         cacheWrite: 0,
       }),
     ],
+    // The operator's gateway is the one entry whose ids this Host really states, so it needs no
+    // documentation-only suggestion beside them.
+    suggestedModelIds: [],
     escapeHatch: false,
     probeBearerAuth: true,
   }),
@@ -300,6 +322,9 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     // `api.deepseek.com` serves, so listing it made the first probe answer `not_found` for a player
     // with a perfectly good key. The endpoint's `/models` reply is the list.
     allowedPlayerModels: [],
+    // The two ids DeepSeek's own API documentation names, so a first run has a starting point while
+    // no probe has run yet. Suggestions: `api.deepseek.com` decides whether either still answers.
+    suggestedModelIds: ["deepseek-chat", "deepseek-reasoner"],
     escapeHatch: false,
     // `openai-completions` authenticates a request with a bearer token; without this the probe
     // sends no credential at all and a real endpoint answers 401.
@@ -315,6 +340,10 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     setupFields: ["apiKey", "modelId"],
     // Same rule, same failure: these ids were the CPA gateway's, not OpenAI's.
     allowedPlayerModels: [],
+    // Nothing documented here on purpose: OpenAI retires model ids on a schedule this source tree
+    // cannot track, and a stale id would be a suggestion that costs the player a failed first test.
+    // An empty list with the panel's stated reason is the honest first-run screen for this entry.
+    suggestedModelIds: [],
     escapeHatch: false,
     // `openai-responses` authenticates a request with a bearer token; without this the probe sends
     // no credential at all and a real endpoint answers 401.
@@ -334,6 +363,8 @@ export const TAVERN_PROVIDER_CATALOG: readonly TavernCatalogProvider[] = Object.
     // server needs no key at all, and a compatible gateway does.
     setupFields: ["baseUrl", "apiShape", "apiKey", "modelId", "apiKeyRequired"],
     allowedPlayerModels: [],
+    // The endpoint is the player's, so no id can be documented for it.
+    suggestedModelIds: [],
     escapeHatch: true,
     probeBearerAuth: true,
   }),
@@ -365,7 +396,8 @@ export function operatorGatewayBaseUrl(): string {
  * their disk. The entry stays in `TAVERN_PROVIDER_CATALOG` so that `catalogProvider()` still
  * resolves the operator's own stored records and the runtime provider block, and so that a
  * developer can reach it at all - but reaching it is an explicit act (`GAMEBUDDY_OPERATOR_GATEWAY=1`)
- * and it is labelled as one, never a default.
+ * and it is never a default. The switch is the whole of what marks it as a developer path: the entry's
+ * `label` is the player's, because the player is who reads it.
  *
  * Read at projection time, not at module load: a process started without the switch must not be
  * able to publish it because some earlier importer cached the list.

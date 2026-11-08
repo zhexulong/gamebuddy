@@ -70,18 +70,18 @@ test("the Game/chat system prompt shares one framework core and names the langua
   // prompt is written in English and only said "speak the player's language",
   // never which language that was. The locale now reaches the builder.
   const zh = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, "zh-CN");
-  assert.match(zh, /Consistently converse in Chinese \(Simplified\)/);
+  assert.match(zh, /Consistently think, reason, and converse in Chinese \(Simplified\)/);
   const en = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, "en-US");
-  assert.match(en, /Consistently converse in English/);
+  assert.match(en, /Consistently think, reason, and converse in English/);
   // A tag we do not map still yields an instruction rather than silence.
   const other = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, "fr-FR");
-  assert.match(other, /Consistently converse in fr-FR/);
+  assert.match(other, /Consistently think, reason, and converse in fr-FR/);
   // Omitting the locale falls back to a safe generic, never a dangling sentence.
   const bare = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.match(bare, /Consistently converse in the player's language/);
+  assert.match(bare, /Consistently think, reason, and converse in the player's language/);
   // Chat surface gets the same locale plumbing now.
   const chatZh = buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, "zh-CN");
-  assert.match(chatZh, /Consistently converse in Chinese \(Simplified\)/);
+  assert.match(chatZh, /Consistently think, reason, and converse in Chinese \(Simplified\)/);
 });
 
 test("the Game conduct permits company while working but still forbids step reports", () => {
@@ -151,6 +151,13 @@ test("the step-list ban names the one thing it does not forbid, so a plan is not
   assert.match(game, /work quietly until you are done/);
 });
 
+test("the Game conduct commands speaking before acting and forbids silent tool calls", () => {
+  const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  assert.match(game, /Speak before you act/);
+  assert.match(game, /Never run tools in total silence/);
+  assert.match(game, /Never claim work is already finished before the tool has run/);
+});
+
 test("the Game conduct names how a day ends, so going to bed is an act rather than a guess at an action id", () => {
   // Measured 2026-10-28 (run game-1793210285549, day 5). At in-game 22:00, standing in the
   // farmhouse, the companion's own thinking read: "Going to bed would be good. Let me check if
@@ -188,17 +195,19 @@ test("the system prompt states the action syntax and no longer prescribes the tu
   // - not the card - decided the output, and the audit measured the flat,
   // dialogue-only service voice that result produces.
   //
-  // This is the regression fence in both directions: the one syntax the RENDERER can
-  // draw must still be named (a prompt that stops naming it drifts from
+  // This is the regression fence in both directions: every construct the RENDERER
+  // can draw must still be named (a prompt that stops naming one drifts from
   // `MarkdownMessage`, which draws `<em class="message-action">` for single asterisks
-  // and nothing else), and no form rule may come back.
+  // and a leading full-width parenthesis as the prosody badge, and nothing else),
+  // and no form rule may come back. Both are the Chat surface's statement of the
+  // constructs declared in `dialogue-web/src/components/companion-reply-grammar.ts`.
   const chat = buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   assert.ok(
     chat.includes(COMPANION_ACTION_SYNTAX),
     "the prompt must name the exact asterisk syntax the renderer draws",
   );
   assert.match(chat, /draws that asterisk form as the action beat/);
-  assert.match(chat, /draws nothing else that way/);
+  assert.match(chat, /a full-width parenthesis that opens your reply as the prosody badge/);
   assert.doesNotMatch(chat, /a few sentences at most/);
   assert.doesNotMatch(chat, /rather than step-by-step actions/);
   assert.doesNotMatch(chat, /at most one short stage direction/);
@@ -626,7 +635,7 @@ test("the player's addition renders as its own labelled section AFTER the whole 
   for (const floor of [
     "Only state what you actually observed",
     "Body language goes through the native actions stardew_express_emote and stardew_face_direction",
-    "Consistently converse in Chinese (Simplified)",
+    "Consistently think, reason, and converse in Chinese (Simplified)",
     "never claim an NPC smiled, beamed, was delighted, or said something on your account",
   ]) {
     const at = game.indexOf(floor);

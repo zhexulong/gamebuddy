@@ -58,6 +58,8 @@ import {
   TavernBrowserContractV1,
   type TavernBrowserNavigationItemIdV1,
   TavernBrowserValidatorsV1,
+  type TavernAppearancePreferenceCommandV1,
+  type TavernAppearancePreferenceV1,
   type TavernConnectionCreateCommandV1,
   type TavernConnectionModelCommandV1,
   type TavernConnectionRevisionCommandV1,
@@ -87,6 +89,7 @@ import type { CompanionCardExportResult } from "./tavern/companion-card-export-s
 import type { CompanionAvatarService } from "./tavern/companion-avatar/index.js";
 import type { CompanionDeletionService } from "./tavern/companion-deletion-service.js";
 import type { CompanionActivationService } from "./tavern/companion-activation-service.js";
+import type { ProfileBackupExport } from "./profile-backup/profile-backup-export.js";
 import type { GameBrowserStateV1 } from "./game-browser-contract/index.js";
 import { TavernConnectionRevisionConflict } from "./tavern/connection-store.js";
 import { playerOfferedProviders } from "./tavern/provider-catalog.js";
@@ -165,6 +168,13 @@ const MANAGEMENT_DELIVERY_ROUTES = ["settings.delivery.read", "settings.delivery
  * against the Game surface's floor, and it reaches a game at its next start.
  */
 const MANAGEMENT_GAME_PROMPT_ROUTES = ["settings.game-prompt.read", "settings.game-prompt.update"] as const;
+/**
+ * Optional appearance-preference extension: only a profile that declares these routes mounts the
+ * read/write of the appearance this browser paints itself in. It is its own group directly after
+ * the Game-prompt group, so a profile that advertises it without the one Host-owned preference
+ * record fails closed at composition.
+ */
+const MANAGEMENT_APPEARANCE_ROUTES = ["settings.appearance.read", "settings.appearance.update"] as const;
 const MANAGEMENT_OPERATION_IDS_WITH_MEMORY = [
   "draft.save",
   "draft.discard",
@@ -327,6 +337,13 @@ const MANAGEMENT_WORLD_INFO_IMPORT_ROUTES = ["world-info.import"] as const;
  * profile that advertises it without the bound export member fails closed at composition.
  */
 const MANAGEMENT_CHAT_EXPORT_ROUTES = ["chat.export"] as const;
+/**
+ * Optional whole-profile backup extension: only a profile that declares this route mounts
+ * `GET /api/tavern/v1/profile/backup/export`, the one route that hands the player their own data.
+ * It appends last in the same frozen canonical order, and like every other option a profile that
+ * advertises it without the bound export member fails closed at composition.
+ */
+const MANAGEMENT_PROFILE_BACKUP_ROUTES = ["profile.backup.export"] as const;
 const bootstrapRequestValidator = Compile(
   (TavernBrowserContractV1.routes.find((route) => route.routeId === "bootstrap")! as { request: TSchema }).request,
 );
@@ -358,6 +375,9 @@ const deliveryPreferenceUpdateValidator = Compile(
 );
 const gamePromptAdditionUpdateValidator = Compile(
   TavernBrowserContractV1.schemas.TavernGamePromptAdditionCommandV1Schema,
+);
+const appearancePreferenceUpdateValidator = Compile(
+  TavernBrowserContractV1.schemas.TavernAppearancePreferenceCommandV1Schema,
 );
 const createCompanionValidator = Compile(TavernBrowserContractV1.schemas.CreateCompanionCommandV1Schema);
 const personaUpdateValidator = Compile(TavernBrowserContractV1.schemas.PersonaUpdateCommandV1Schema);
@@ -495,6 +515,14 @@ export type TavernManagementDialogueWebOptions = Readonly<{
    */
   companionCardExportService?: Readonly<{
     read(handle: string, format: CompanionCardFormat): Promise<CompanionCardExportResult | null>;
+  }>;
+  /**
+   * The whole-profile backup (`profile.backup.export`): every declared durable authority as one
+   * archive. Read-only by construction - there is no write member, and the export opens nothing in
+   * the installation for writing - so taking the player's data out cannot change it.
+   */
+  profileBackupService?: Readonly<{
+    export(): Promise<ProfileBackupExport>;
   }>;
   /**
    * The companion's own picture, written by the player who is looking at her
@@ -795,6 +823,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const companionWorldBookService = options.companionWorldBookService;
   const companionProfileService = options.companionProfileService;
   const companionCardExportService = options.companionCardExportService;
+  const profileBackupService = options.profileBackupService;
   const companionAvatarService = options.companionAvatarService;
   const companionDeletionService = options.companionDeletionService;
   const companionActivationService = options.companionActivationService;
@@ -850,7 +879,9 @@ export function createTavernManagementDialogueWebRequestHandler(
       profile.routeIds.includes("settings.language.read") ||
       profile.routeIds.includes("settings.language.update") ||
       profile.routeIds.includes("settings.delivery.read") ||
-      profile.routeIds.includes("settings.delivery.update")) &&
+      profile.routeIds.includes("settings.delivery.update") ||
+      profile.routeIds.includes("settings.appearance.read") ||
+      profile.routeIds.includes("settings.appearance.update")) &&
     playerPreferenceStore === undefined
   )
     throw new Error("tavern_management_composition_unavailable");
@@ -1233,6 +1264,45 @@ export function createTavernManagementDialogueWebRequestHandler(
           throw new Error("player_preference_store_unavailable");
         return sendJson(response, 200, preference);
       }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/appearance") {
+        if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (
+          !profile.routeIds.includes("settings.appearance.read") ||
+          !profile.operationIds.includes("settings.appearance.read") ||
+          playerPreferenceStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const preference: TavernAppearancePreferenceV1 = appearancePreference(await playerPreferenceStore.read());
+        if (!TavernBrowserValidatorsV1.TavernAppearancePreferenceV1Schema.Check(preference))
+          throw new Error("player_preference_store_unavailable");
+        return sendJson(response, 200, preference);
+      }
+      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/appearance") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = admitRequest(request, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("settings.appearance.update") ||
+          !profile.operationIds.includes("settings.appearance.update") ||
+          playerPreferenceStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!appearancePreferenceUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const command = body as TavernAppearancePreferenceCommandV1;
+        const preference = appearancePreference(
+          await playerPreferenceStore.update(command.expectedRevision, {
+            action: "setAppearance",
+            appearance: command.appearance,
+          }),
+        );
+        if (!TavernBrowserValidatorsV1.TavernAppearancePreferenceV1Schema.Check(preference))
+          throw new Error("player_preference_store_unavailable");
+        return sendJson(response, 200, preference);
+      }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/delivery") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
         const session = admitRequest(request, origin);
@@ -1446,6 +1516,17 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!chatExportQueryValidator.Check(queryValue)) return sendProblem(response, 400, "invalid_request");
         const exported = await managementService.exportChat({ chatHandle: queryValue.chatHandle! });
         if (!TavernBrowserValidatorsV1.ChatExportV1Schema.Check(exported))
+          throw new Error("chat_management_service_unavailable");
+        return sendJson(response, 200, exported);
+      }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/profile/backup/export") {
+        if (await hasRequestBody(request)) return sendProblem(response, 400, "invalid_request");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (!profile.routeIds.includes("profile.backup.export") || profileBackupService === undefined)
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        if (url.search !== "") return sendProblem(response, 400, "invalid_request");
+        const exported = await profileBackupService.export();
+        if (!TavernBrowserValidatorsV1.ProfileBackupExportV1Schema.Check(exported))
           throw new Error("chat_management_service_unavailable");
         return sendJson(response, 200, exported);
       }
@@ -2616,7 +2697,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
   // The core surface and the extension groups are declared per profile
   // revision. A profile may declare any subset of the optional groups, and only
   // them, in the frozen canonical order: core, output devices, language,
-  // delivery, Game prompt addition, connections, model profiles,
+  // delivery, Game prompt addition, appearance, connections, model profiles,
   // companions/personas/retention, card import,
   //  new-chat opening, new chat, chat selection, World Info authoring, companion
   //  profile, card export, companion avatar, lorebook import, chat export. A partially applied
@@ -2637,6 +2718,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_LANGUAGE_ROUTES,
     MANAGEMENT_DELIVERY_ROUTES,
     MANAGEMENT_GAME_PROMPT_ROUTES,
+    MANAGEMENT_APPEARANCE_ROUTES,
     MANAGEMENT_CONNECTION_ROUTES,
     MANAGEMENT_MODEL_PROFILE_ROUTES,
     MANAGEMENT_P9_ROUTES,
@@ -2653,6 +2735,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_COMPANION_ACTIVATE_ROUTES,
     MANAGEMENT_WORLD_INFO_IMPORT_ROUTES,
     MANAGEMENT_CHAT_EXPORT_ROUTES,
+    MANAGEMENT_PROFILE_BACKUP_ROUTES,
   ] as const;
   const operationGroups = [
     coreOperations,
@@ -2660,6 +2743,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_LANGUAGE_ROUTES,
     MANAGEMENT_DELIVERY_ROUTES,
     MANAGEMENT_GAME_PROMPT_ROUTES,
+    MANAGEMENT_APPEARANCE_ROUTES,
     MANAGEMENT_CONNECTION_ROUTES,
     MANAGEMENT_MODEL_PROFILE_ROUTES,
     MANAGEMENT_P9_ROUTES,
@@ -2882,6 +2966,13 @@ function gamePromptAddition(preference: PlayerPreference): TavernGamePromptAddit
   // `?? ""` here rather than a required field on `PlayerPreference`: the store always sets it, and a fixture that
   // does not care about this setting must not have to learn it (eleven did, when the field was required).
   return { revision: preference.revision, addition: preference.gamePromptAddition ?? "" };
+}
+
+/** The appearance field group of the one player preference record. */
+function appearancePreference(preference: PlayerPreference): TavernAppearancePreferenceV1 {
+  // `?? "system"` for the same reason the addition reads `?? ""`: the store always sets it, and a fixture that does
+  // not care about the appearance must not have to learn it.
+  return { revision: preference.revision, appearance: preference.appearance ?? "system" };
 }
 
 /**

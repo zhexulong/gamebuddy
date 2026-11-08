@@ -268,6 +268,10 @@ function projectProviders(): TavernConnectionStateV1["providers"] {
       defaultThinkingLevel: model.defaultThinkingLevel,
     })),
     escapeHatch: provider.escapeHatch,
+    // Documentation-only ids, published beside the curated ones because the panel needs them before
+    // any probe has run: `allowedPlayerModels` states a model this Host knows, and this states an id
+    // the player can start from. Both are suggestions; only the endpoint's own listing is served.
+    suggestedModelIds: [...provider.suggestedModelIds],
     environmentManaged: provider.providerId === TAVERN_ENVIRONMENT_PROVIDER_ID,
   }));
 }
