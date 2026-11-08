@@ -24,9 +24,15 @@
  *
  * Gate 2.2 and gate 2.3 stay here: they assert cascade *structure* (a named
  * component rule sits inside its declared layer, and the unlayered remainder
- * holds only the order statement and the `:root` token roots). No off-the-shelf
- * tool expresses "this selector must be inside this `@layer` block"; stylelint
+ * holds only the order statement and the token roots). No off-the-shelf tool
+ * expresses "this selector must be inside this `@layer` block"; stylelint
  * parses layers but has no rule for placing a selector in one.
+ *
+ * A token root is `:root`, optionally repeated with a `[data-theme="…"]`
+ * attribute - one appearance per theme, layered by specificity rather than by
+ * source order. Gate 2.3 accepts that selector shape and nothing else, and it
+ * reads the rule's own body: a token root that declares anything but a custom
+ * property is a component rule wearing a token root's selector.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -86,27 +92,47 @@ function unlayeredText(css) {
   return result + text.slice(cursor);
 }
 
+/** A token root's selector list: `:root` and `:root[data-theme="…"]`, comma-separated. Quoted strings are blanked. */
+const TOKEN_ROOT_SELECTOR = /^:root(?:\[data-theme=""\])?(?:\s*,\s*:root(?:\[data-theme=""\])?)*$/u;
+
+/**
+ * A token root declares custom properties and nothing else. A `color:` inside one of these blocks would be a
+ * component rule wearing a token root's selector, and it would win over every layered rule.
+ */
+function onlyCustomProperties(body) {
+  return body
+    .split(";")
+    .map((declaration) => declaration.trim())
+    .filter((declaration) => declaration.length > 0)
+    .every((declaration) => declaration.startsWith("--"));
+}
+
 /**
  * The top-level items of the unlayered remainder: `@layer a, b;` statements
  * (order declarations, not rules) and, if any leaked, rulesets. Each item is
- * `{ prelude, ruleset }`, where a ruleset's prelude is its selector list.
+ * `{ prelude, body, ruleset }`, where a ruleset's prelude is its selector list.
  */
 export function unlayeredItems(css) {
   const text = unlayeredText(css);
   const items = [];
   const depth = [];
+  const opening = [];
   let start = 0;
   for (let index = 0; index < text.length; index += 1) {
     const character = text[index];
     if (character === "{") {
-      if (depth.length === 0) items.push({ prelude: text.slice(start, index).trim().replace(/\s+/gu, " "), ruleset: true });
+      if (depth.length === 0) {
+        items.push({ prelude: text.slice(start, index).trim().replace(/\s+/gu, " "), body: "", ruleset: true });
+        opening.push(index);
+      }
       depth.push(index);
     } else if (character === "}") {
       depth.pop();
+      if (depth.length === 0) items.at(-1).body = text.slice(opening.pop() + 1, index).trim();
       start = index + 1;
     } else if (character === ";" && depth.length === 0) {
       const prelude = text.slice(start, index).trim().replace(/\s+/gu, " ");
-      if (prelude.length > 0) items.push({ prelude, ruleset: false });
+      if (prelude.length > 0) items.push({ prelude, body: "", ruleset: false });
       start = index + 1;
     }
   }
@@ -152,13 +178,19 @@ test("gate 2.2: a named component rule sits inside its declared layer, not unlay
 test("gate 2.3: the unlayered remainder is the order statement and the token roots only", (t) => {
   const css = readFileSync(STYLESHEET, "utf8");
   const items = unlayeredItems(css);
-  const leaked = items.filter(
-    (item) => item.ruleset ? item.prelude !== ":root" : !item.prelude.startsWith("@layer "),
-  );
+  const leaked = items.filter((item) => {
+    if (!item.ruleset) return !item.prelude.startsWith("@layer ");
+    return !TOKEN_ROOT_SELECTOR.test(item.prelude) || !onlyCustomProperties(item.body);
+  });
   t.diagnostic(`gate 2.3: ${items.length} unlayered top-level item(s): ${items.map((item) => item.prelude).join(", ")}`);
+  assert.ok(
+    items.some((item) => item.ruleset),
+    "examined 0 unlayered rule(s): this gate would pass by having found nothing",
+  );
   assert.deepEqual(
     leaked.map((item) => item.prelude),
     [],
-    "an unlayered rule wins over every layered rule regardless of specificity; a component rule must name its layer, and only the token roots stay unlayered",
+    "an unlayered rule wins over every layered rule regardless of specificity; a component rule must name its layer, " +
+      "and only the token roots (`:root` and `:root[data-theme=\u2026]`, declaring custom properties only) stay unlayered",
   );
 });

@@ -888,6 +888,19 @@ const chatProbe = {
     );
   },
   /**
+   * The words a bubble actually shows, whitespace-collapsed.
+   *
+   * `bubbleHtml` answers "what markup did the renderer build"; this answers "what can the
+   * player read", which is the question a claim about the reply's words surviving the
+   * renderer has to be asked in. The two are not the same question: a tag the renderer
+   * consumes leaves markup that still contains its words, and a badge that REPLACES a
+   * parenthetical keeps them while dropping the syntax around them.
+   */
+  bubbleText(handle: string): string | null {
+    const bubble = document.querySelector(`li[data-handle="${handle}"] .message-bubble`);
+    return bubble === null ? null : (bubble.textContent ?? "").replace(/\s+/gu, " ").trim();
+  },
+  /**
    * The computed reading treatment of a narration beat, next to the value each of
    * the two tokens it could be confused with actually has. A class name in the
    * markup proves nothing: this proves the style applied, that it is the

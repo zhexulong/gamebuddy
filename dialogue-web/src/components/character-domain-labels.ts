@@ -229,6 +229,11 @@ export type CharacterLabels = Readonly<{
   worldBookFailed: string;
   /** Said when the library read failed, as opposed to `worldBookUnavailable`: nothing was read. */
   worldBookReadFailed: string;
+  /**
+   * The selected Chat moved between the panel's read and its command, so the two facts a World Info command
+   * CASes on (the selection generation and the revision) no longer name one Chat. Nothing was sent.
+   */
+  worldBookSelectionConflict: string;
 
   /**
    * The managed library's authoring surface: a fresh product's library is
@@ -570,6 +575,8 @@ const en: CharacterLabels = Object.freeze({
   worldBookUnavailable: "The world book is temporarily unavailable.",
   worldBookFailed: "The world book could not be updated.",
   worldBookReadFailed: "The world book could not be read.",
+  worldBookSelectionConflict:
+    "The chat this panel was reading is no longer the selected one, so nothing was sent. Read it again to work on the chat that is selected now.",
 
   worldBookEmpty: "Your world book library is empty.",
   worldBookCreate: "Create a world book",
@@ -856,6 +863,8 @@ const zh: CharacterLabels = Object.freeze({
   worldBookUnavailable: "世界书暂时不可用。",
   worldBookFailed: "无法更新世界书。",
   worldBookReadFailed: "无法读取世界书。",
+  worldBookSelectionConflict:
+    "这个面板读的那条对话已经不是当前选中的那条了，所以什么都没提交。重新读取一下，再改现在选中的对话。",
 
   worldBookEmpty: "你的世界书库还是空的。",
   worldBookCreate: "新建世界书",

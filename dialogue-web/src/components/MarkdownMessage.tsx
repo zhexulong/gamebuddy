@@ -1,6 +1,7 @@
 import DOMPurify from "dompurify";
 import { Marked } from "marked";
 import { useMemo } from "react";
+import { REPLY_ALLOWED_TAGS, replyConstruct, type ReplySpeaker } from "./companion-reply-grammar";
 
 /**
  * Markdown presentation for companion prose.
@@ -23,6 +24,12 @@ import { useMemo } from "react";
  * format on both sides, and reading a person's words through the companion's
  * renderer is what keeps the identical beat from rendering two ways.
  *
+ * What a reply may be made of is not decided here. `companion-reply-grammar.ts`
+ * declares the constructs, the tags that carry them and whose text each one may
+ * appear in; `ALLOWED_TAGS` below IS that declaration's tag union, so the renderer
+ * cannot paint a construct the grammar does not permit, and the gate in
+ * `tests/chat-surface-renderer.spec.ts` fails by name when the two drift apart.
+ *
  * A reply can also open with a prosody tag - `（轻声）`, `(softly)` - which the voice
  * layer performs rather than speaks (`dehydrateCompanionSpeech`, host/src). Printed as
  * ordinary text it reads as though she had SAID the direction, so a leading tag is set
@@ -30,6 +37,12 @@ import { useMemo } from "react";
  * dropped: the tag's own words are the badge's text, and the speech beside it is
  * unchanged. A tag inside the sentence stays exactly where she put it - `她(轻轻点头)道`
  * is part of what she said - so only the opening run is read.
+ *
+ * That treatment belongs to the COMPANION's reply alone, and the grammar says so: the
+ * voice layer performs her speech and no one else's, so a player's parenthetical is the
+ * player's own stage direction and stays text. Applying it to both sides is what repainted
+ * the shipped card's `（站在田埂上看着远山没动静）` - the player's own action - as a
+ * direction for her tone, and deleted the parentheses the card wrote it with.
  */
 
 /** The class a `*beat*` (any `<em>`) gets so narration can read as narration. */
@@ -55,6 +68,18 @@ const LEADING_MOOD_TAG = /^[（(]([^（）()]*)[）)]/u;
 
 /** The blocks that hold her prose: a badge set ahead of the speech goes at their start. */
 const MOOD_TAG_BLOCKS = new Set(["P", "BLOCKQUOTE", "LI"]);
+
+/**
+ * Whether this speaker's text may open with a prosody tag.
+ *
+ * The answer is the declaration's, not this module's: `speaker` on the prosody construct is
+ * who the voice layer performs, so widening or narrowing the treatment is one edit there.
+ */
+const PROSODY_SPEAKER = replyConstruct("prosody-tag").speaker;
+
+function carriesProsodyTag(speaker: ReplySpeaker): boolean {
+  return PROSODY_SPEAKER === "both" || PROSODY_SPEAKER === speaker;
+}
 
 /**
  * The reply split into the prosody tags it opens with and the words she says.
@@ -114,8 +139,14 @@ function withMoodTags(html: string, tags: readonly string[]): string {
 
 const markdown = new Marked({ gfm: true, breaks: true });
 
-const SANITIZE_CONFIG = {
-  ALLOWED_TAGS: ["p", "br", "em", "strong", "del", "code", "pre", "blockquote", "ul", "ol", "li", "hr"],
+/**
+ * The sanitizer's options, exported so the gate can hold the allowlist against the
+ * declaration: a tag hand-added here would be painted without being declared.
+ */
+export const COMPANION_MARKDOWN_SANITIZE_CONFIG = {
+  // The reply grammar's tag union, and nothing else: a construct the grammar does not
+  // declare has no tag here, so it is dropped instead of painted.
+  ALLOWED_TAGS: [...REPLY_ALLOWED_TAGS],
   ALLOWED_ATTR: [] as string[],
   // DOMPurify keeps `data-*`/`aria-*` even with an empty allowlist; a deny-by-default
   // surface must turn both off so model output carries no attributes at all.
@@ -146,7 +177,7 @@ function normalizeBeatDelimiters(text: string): string {
 /** Parses untrusted message Markdown to inert, sanitised HTML. */
 export function renderCompanionMarkdown(text: string): string {
   const html = markdown.parse(normalizeBeatDelimiters(text), { async: false });
-  return DOMPurify.sanitize(html, SANITIZE_CONFIG);
+  return DOMPurify.sanitize(html, COMPANION_MARKDOWN_SANITIZE_CONFIG);
 }
 
 /** A block that only holds other blocks: the caret descends through it to the
@@ -188,9 +219,16 @@ export function MarkdownMessage({
   testId,
   trailingHtml = "",
   lang,
+  speaker = "companion",
 }: {
   text: string;
   className?: string;
+  /**
+   * Whose words these are, for the constructs the grammar scopes to one side of the
+   * conversation. Only the companion's speech is performed by the voice layer, so only her
+   * reply takes the leading prosody tag as a badge; a player's parenthetical stays text.
+   */
+  speaker?: ReplySpeaker;
   /**
    * The wrapper's own test handle, for a surface whose rendered Markdown IS the
    * element a journey measures (the openings chooser reads the option's line off
@@ -217,8 +255,10 @@ export function MarkdownMessage({
   // surface never re-parses (or re-sanitises) a settled message. The prosody tag is read
   // in the same pass: one text in, one rendered bubble out.
   const html = useMemo(() => {
-    const { tags, speech } = splitLeadingMoodTags(text);
+    const { tags, speech } = carriesProsodyTag(speaker)
+      ? splitLeadingMoodTags(text)
+      : { tags: [] as readonly string[], speech: text };
     return withMoodTags(withTrailingHtml(renderCompanionMarkdown(speech), trailingHtml), tags);
-  }, [text, trailingHtml]);
+  }, [text, trailingHtml, speaker]);
   return <div className={className} data-testid={testId} lang={lang} dangerouslySetInnerHTML={{ __html: html }} />;
 }

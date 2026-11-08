@@ -27,6 +27,16 @@
 @layer theme.reset, theme.surfaces, theme.interactions, theme.layout, theme.legacy, theme.polish;
 
 /* ==========================================================================
+   The two appearances: one token root per theme
+
+   The tokens below are the DARK set and are also the base: `:root` alone
+   paints dark, so a document whose appearance has not been resolved yet is
+   exactly the product as it shipped. `dialogue-web/src/appearance.ts` writes
+   the resolved appearance onto `<html data-theme>`, and the matching block
+   re-declares the same tokens. Only colour-bearing tokens are re-declared -
+   motion, spacing, radii and measure carry no appearance and restating them
+   would make one fact two.
+
    阶段三:现代酒馆暗色系令牌 (Modern Tavern Dark Tokens)
 
    The four-layer background system the visual plan mandates, over the same
@@ -47,7 +57,8 @@
    ========================================================================== */
 
 /* Layer 1: Primitive Tokens */
-:root {
+:root,
+:root[data-theme="dark"] {
   --motion-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --motion-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   /* The plan's own motion: 150-200 ms, one spring-like ease, native CSS only. */
@@ -112,6 +123,12 @@
      and a hover stays inside the same pair. */
   --accent-solid: #9c4e55;
   --accent-solid-hover: #8a4349;
+  /* The ink drawn ON a filled accent control. It is its own token because the
+     two themes disagree about which end of the ramp that ink sits at: dark
+     paints the lightest palette member, light paints the lightest one as well
+     while `--text-primary` goes dark. Without it, a filled button's ink would
+     follow the body ink and vanish into the fill. */
+  --on-accent: var(--palette-gray-100);
   --selection: #533137;
   --focus-ring: var(--palette-gold-base);
   --success: var(--palette-teal-base);
@@ -161,6 +178,47 @@
   --radius-sm: 6px;
   --radius-md: 12px;
   --radius-lg: 14px;
+}
+
+/* Layer 2, the second appearance. Every token here is one the dark root above
+   declares, re-stated for a light page: same names, same roles, and the ones
+   that are aliases in the dark set (`--text-primary`, `--surface-raised`,
+   `--accent`, ...) are not restated at all - they follow the literal they
+   already point at, so one appearance cannot disagree with itself. The four
+   literals nothing aliases are the palette ramp members a rule paints
+   directly, and those are restated here too.
+
+   Measured by `tools/check-contrast-tokens.mjs`, which reads this block as the
+   light theme's token table and holds every pair to the same AA floor as the
+   dark set. */
+:root[data-theme="light"] {
+  --surface-canvas: #e9e2d6;
+  --surface-panel: #f6f1e9;
+  --surface-card: #fdfaf4;
+  --surface-elevated: #f0e9dd;
+
+  --palette-gray-700: #e6dccc;
+  --palette-gray-600: #a89b8a;
+  --palette-gray-500: #7d7266;
+  --palette-gray-400: #665d54;
+  --palette-gray-200: #453d37;
+  --palette-gray-100: #1a1613;
+
+  --palette-burgundy-dark: #f7e3e3;
+  --palette-burgundy-base: #9d3441;
+  --palette-burgundy-border: rgba(157, 52, 65, 0.35);
+  --palette-crimson-base: #b02a2a;
+  --palette-gold-base: #7a5713;
+  --palette-teal-base: #14655a;
+
+  --border-subtle: rgba(26, 22, 19, 0.12);
+  --border-strong: rgba(26, 22, 19, 0.22);
+  --border-glass: rgba(157, 52, 65, 0.18);
+
+  --accent-solid: #9c4e55;
+  --accent-solid-hover: #8a4349;
+  --on-accent: #fdf8f2;
+  --selection: #f6ded9;
 }
 
 /* ==========================================================================
@@ -385,7 +443,7 @@
     height: 28px;
     border-radius: var(--radius-xs);
     background-color: var(--accent-solid);
-    color: var(--palette-gray-100);
+    color: var(--on-accent);
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.5px;
@@ -728,7 +786,7 @@
   .message.player .message-bubble {
     background-color: var(--selection);
     border: 1px solid var(--palette-burgundy-border);
-    color: var(--palette-gray-100);
+    color: var(--text-primary);
     border-top-right-radius: var(--radius-xs);
   }
 
@@ -1473,7 +1531,7 @@
 
   .send-button {
     background-color: var(--accent-solid);
-    color: var(--palette-gray-100);
+    color: var(--on-accent);
   }
 
   .send-button:hover:not(:disabled) {
@@ -2952,7 +3010,7 @@
   .game-action.primary {
     background-color: var(--accent-solid);
     border-color: var(--accent-solid);
-    color: var(--palette-gray-100);
+    color: var(--on-accent);
   }
 
   .game-action.primary:hover:not(:disabled) {

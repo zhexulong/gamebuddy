@@ -31,6 +31,9 @@
  * The two contracts this file once pinned as `test.fixme` are met: `Escape`
  * returns focus to the conversation's composer, and a 250-character companion
  * name wraps in the transcript's author line. Both gates run as normal tests.
+ * The composer landing place is pinned twice - from Escape and from an AppBar
+ * press - because the two are different commits and only the second one unmounts
+ * the conversation that has to name where focus goes.
  */
 import { expect, test, type Page } from "./frontend-coverage";
 
@@ -739,6 +742,42 @@ test("gate 4: Escape returns focus to the composer", async ({ page }) => {
     "gate-4-composer",
     `after Escape from Game: activeElement ${await page.evaluate(() => (document.activeElement as HTMLElement | null)?.id || (document.activeElement as HTMLElement | null)?.className || "(none)")}`,
   );
+  await expect(page.locator(".composer-textarea")).toBeFocused();
+});
+
+/**
+ * Gate 4, the same landing place reached with a pointer: the AppBar's own entries.
+ *
+ * The keyboard path above goes through Escape, and Escape is not what most switches are: a press on
+ * an AppBar entry unmounts the conversation and mounts a peer in one commit. Measured at 1280x720 on
+ * the build before this assertion (a window above the 480 px fold, so `.app-bar-more-trigger` is
+ * `display: none`): the conversation's `SurfaceView` was mounted with no restore target named, its
+ * declaration asked that `display: none` trigger for focus - a no-op - and focus fell to `<body>`
+ * before the peer surface's heading claimed it. The way back was a class-name lookup
+ * (`document.querySelector(".composer-textarea")`) rather than the field's own ref, so renaming the
+ * class would have dropped the keyboard player on `<body>` with nothing to notice it.
+ *
+ * What this pins is the pair: the conversation names where it goes back to, and the shell moves focus
+ * there on a return. Both readings are recorded, so a run says which element the player was left on.
+ */
+test("gate 4: a surface switch and back lands focus on the composer", async ({ page }) => {
+  await mountShell(page);
+  const activeReading = async () =>
+    page.evaluate(() => {
+      const node = document.activeElement as HTMLElement | null;
+      return node === null
+        ? "(none)"
+        : `${node.tagName.toLowerCase()}${node.id === "" ? "" : `#${node.id}`}${
+            node.className === "" ? "" : `.${node.className.toString().trim().split(/\s+/u).join(".")}`
+          }`;
+    });
+
+  await openSurface(page, SURFACES[1]!);
+  record("gate-4-switch-away", `after pressing ${SURFACES[1]!.label}: activeElement ${await activeReading()}`);
+
+  await (await revealSurfaceEntry(page, "Chat")).click();
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
+  record("gate-4-switch-back", `after pressing Chat: activeElement ${await activeReading()}`);
   await expect(page.locator(".composer-textarea")).toBeFocused();
 });
 

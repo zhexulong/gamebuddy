@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 /**
  * The single contextual panel this profile can open (design/26 §4.2). The open
@@ -55,11 +55,17 @@ function markSwitch(surface: string, stage: "start" | "done"): void {
  * back with the same surface open (design/26 §7.2, design/104 §2). The shell owns
  * this one behaviour for every surface; the entries themselves are its surface
  * switcher.
+ *
+ * `returnFocusTo` is where a return to the conversation lands: the conversation's own field, which
+ * the mount hands down (`Composer`'s ref, through `ChatSurface`). It is a ref rather than a selector
+ * because the place is the product's to name - the shell used to reach it by the class the composer
+ * renders, so renaming that class would have silently dropped the keyboard player on `<body>`.
  */
-export function useSurfaceRoute(): Readonly<{
+export function useSurfaceRoute(options: Readonly<{ returnFocusTo?: RefObject<HTMLElement | null> }> = {}): Readonly<{
   shownSurface: string;
   openPanelOf: (panel: string, entryRef: React.RefObject<HTMLButtonElement | null>) => () => void;
 }> {
+  const returnFocusTo = options.returnFocusTo;
   // The open contextual panel, as the URL states it. A refresh with
   // `#…&panel=game` comes back with the drawer already open.
   const [openPanel, setOpenPanel] = useState<string | null>(() => readPanelFromUrl());
@@ -102,17 +108,16 @@ export function useSurfaceRoute(): Readonly<{
   // Returning to the conversation puts the player back where they type. A
   // surface's own landing place is its heading (`SurfaceView`), which is right
   // for a peer surface a keyboard user is stepping into; the conversation's
-  // landing place is the composer's field, and `Composer` owns that field, so the
-  // shell reaches it by the class the composer renders - the same handle the
-  // mounted gates use. Only a return moves focus; the first paint does not.
+  // landing place is the composer's field, so the mount hands this hook the field
+  // itself. Only a return moves focus; the first paint does not.
   const previousSurfaceRef = useRef<string>(shownSurface);
   useEffect(() => {
     const changed = previousSurfaceRef.current !== shownSurface;
     const returned = shownSurface === CHAT_PANEL && changed;
     previousSurfaceRef.current = shownSurface;
     if (changed) markSwitch(shownSurface, "done");
-    if (returned) document.querySelector<HTMLTextAreaElement>(".composer-textarea")?.focus();
-  }, [shownSurface]);
+    if (returned) returnFocusTo?.current?.focus();
+  }, [shownSurface, returnFocusTo]);
 
   // Selecting a surface is one history entry (design/104 §2). The entries are the
   // shell's surface switcher, so all of them share this one behaviour.

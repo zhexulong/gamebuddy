@@ -25,6 +25,11 @@
  */
 
 import { TavernProblemError, TavernProtocolError } from "./reference-pipeline-api";
+// The appearance union is the application's, not this wire's: it is imported as a TYPE so this module keeps its
+// runtime closure (nothing is emitted for it), and the guard below re-spells the three members the way this module
+// re-spells every other frozen union. The authority is the Host contract's `TavernAppearanceChoiceV1Schema`, and a
+// test in this package holds the guard to the members that schema declares.
+import type { AppearanceChoice } from "./appearance";
 
 const TAVERN_BROWSER_API_VERSION = 1 as const;
 const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
@@ -96,6 +101,8 @@ type TavernBrowserOperationV1 = Readonly<{
     | "settings.delivery.update"
     | "settings.game-prompt.read"
     | "settings.game-prompt.update"
+    | "settings.appearance.read"
+    | "settings.appearance.update"
     | "settings.connection.read"
     | "settings.connection.create"
     | "settings.connection.test"
@@ -155,6 +162,8 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.settings.delivery.update"
     | "tavern.operation.settings.game-prompt.read"
     | "tavern.operation.settings.game-prompt.update"
+    | "tavern.operation.settings.appearance.read"
+    | "tavern.operation.settings.appearance.update"
     | "tavern.operation.settings.connection.read"
     | "tavern.operation.settings.connection.create"
     | "tavern.operation.settings.connection.test"
@@ -285,6 +294,17 @@ export type ChatExportV1 = Readonly<{
 }>;
 /** `chat.export`'s own query: the exact Chat the browser's list handed out. */
 export type ChatExportQueryV1 = Readonly<{ chatHandle: string }>;
+/**
+ * `profile.backup.export`: the whole profile as one archive, or a refusal that names the
+ * authorities the Host could not read.
+ *
+ * `document` is the archive itself, so the download saves the Host's own bytes. A refusal carries
+ * ids rather than a sentence: the Settings panel turns each id into the player's language, and the
+ * surface must say WHICH authority is unreadable rather than "the backup failed".
+ */
+export type ProfileBackupExportV1 =
+  | Readonly<{ status: "saved"; fileName: string; document: string }>
+  | Readonly<{ status: "refused"; unreadable: readonly string[] }>;
 
 /** Metadata-only companion library entry: opaque handle plus display name. */
 export type CompanionListEntryV1 = Readonly<{
@@ -685,6 +705,24 @@ export type TavernDeliveryPreferenceCommandV1 = Readonly<{
 }>;
 
 /**
+ * Mirrors the Host's TavernAppearancePreferenceV1: which appearance this browser paints itself in.
+ *
+ * The client carries all three choices, `system` included, and resolves nothing: which colours an
+ * appearance paints and what `system` means live in `appearance.ts`, which is the one place that
+ * decides what the attribute on `<html>` becomes.
+ */
+export type TavernAppearancePreferenceV1 = Readonly<{
+  revision: number;
+  appearance: AppearanceChoice;
+}>;
+
+/** Mirrors the Host's TavernAppearancePreferenceCommandV1. */
+export type TavernAppearancePreferenceCommandV1 = Readonly<{
+  expectedRevision: number;
+  appearance: AppearanceChoice;
+}>;
+
+/**
  * The largest prompt addition the Game companion accepts, in characters.
  *
  * One number, three readers: the textarea's own `maxLength`, the command validator that
@@ -961,6 +999,12 @@ export type TavernConnectionProviderV1 = Readonly<{
   label: string;
   setupFields: readonly TavernConnectionSetupFieldV1[];
   allowedPlayerModels: readonly TavernConnectionModelV1[];
+  /**
+   * Ids the Host documents for this entry's endpoint, offered as suggestions. Not availability: no
+   * probe read them, and the endpoint's own listing stays the only served ids the panel shows. Absent
+   * when the Host has no suggestion for the entry.
+   */
+  suggestedModelIds?: readonly string[];
   escapeHatch: boolean;
   environmentManaged: boolean;
 }>;
@@ -1135,6 +1179,8 @@ const OPERATION_IDS = [
   "settings.delivery.update",
   "settings.game-prompt.read",
   "settings.game-prompt.update",
+  "settings.appearance.read",
+  "settings.appearance.update",
   "settings.connection.read",
   "settings.connection.create",
   "settings.connection.test",
@@ -1206,6 +1252,8 @@ const MANAGEMENT_LABEL_KEYS = [
   "tavern.operation.settings.delivery.update",
   "tavern.operation.settings.game-prompt.read",
   "tavern.operation.settings.game-prompt.update",
+  "tavern.operation.settings.appearance.read",
+  "tavern.operation.settings.appearance.update",
   "tavern.operation.settings.connection.read",
   "tavern.operation.settings.connection.create",
   "tavern.operation.settings.connection.test",
@@ -1478,6 +1526,8 @@ const DELIVERY_PREFERENCE_KEYS = ["revision", "paced"] as const;
 const DELIVERY_PREFERENCE_COMMAND_KEYS = ["expectedRevision", "paced"] as const;
 const GAME_PROMPT_ADDITION_KEYS = ["revision", "addition"] as const;
 const GAME_PROMPT_ADDITION_COMMAND_KEYS = ["expectedRevision", "addition"] as const;
+const APPEARANCE_PREFERENCE_KEYS = ["revision", "appearance"] as const;
+const APPEARANCE_PREFERENCE_COMMAND_KEYS = ["expectedRevision", "appearance"] as const;
 const VOICE_PREFERENCE_KEYS = [
   "revision",
   "disclosureVersion",
@@ -1527,6 +1577,19 @@ const CONNECTION_PROVIDER_KEYS = [
   "label",
   "setupFields",
   "allowedPlayerModels",
+  "escapeHatch",
+  "environmentManaged",
+] as const;
+// `suggestedModelIds` is `Type.Optional` in the Host contract, and this mirror is strict -
+// hasExactKeys compares lengths - so "optional" is written as "exactly one of these two shapes"
+// (the same rule `SNAPSHOT_KEYS_WITH_VOICE` follows). A projection that carries the field is read as
+// publishing suggestions; one that omits it as publishing none.
+const CONNECTION_PROVIDER_KEYS_WITH_SUGGESTIONS = [
+  "providerId",
+  "label",
+  "setupFields",
+  "allowedPlayerModels",
+  "suggestedModelIds",
   "escapeHatch",
   "environmentManaged",
 ] as const;
@@ -1921,6 +1984,13 @@ const CHAT_EXPORT_DISPOSITION_CLASSES = ["accepted_typed", "dropped_unsupported"
 // Mirrors the contract's own `CHAT_EXPORT_JSONL_MAX_LENGTH`: 256 bubbles of at most 4 000 bytes plus their JSON.
 const CHAT_EXPORT_JSONL_MAX_LENGTH = 1_048_576;
 const CHAT_EXPORT_HASH_PATTERN = /^[0-9a-f]{64}$/;
+const PROFILE_BACKUP_SAVED_KEYS = ["status", "fileName", "document"] as const;
+const PROFILE_BACKUP_REFUSED_KEYS = ["status", "unreadable"] as const;
+// Mirrors the contract's own authority-id and file-name shapes. No list of authority ids crosses
+// this mirror: the set is the Host's own declaration, and a copy here would be a second spelling
+// of it that agrees today and disagrees the week a member is added.
+const PROFILE_BACKUP_AUTHORITY_ID_PATTERN = /^[a-z][a-z0-9-]*$/;
+const PROFILE_BACKUP_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 function isCompanionList(value: unknown): value is CompanionListV1 {
   if (!isRecord(value) || !hasExactKeys(value, COMPANION_LIST_KEYS)) return false;
@@ -2408,6 +2478,33 @@ function isChatExport(value: unknown): value is ChatExportV1 {
   );
 }
 
+/**
+ * The two shapes `profile.backup.export` can answer. The union is exact in both directions: a Host
+ * that grows a third status is not silently accepted as a saved archive, and a refusal whose
+ * `unreadable` list is empty is not a refusal any surface can name.
+ */
+function isProfileBackupExport(value: unknown): value is ProfileBackupExportV1 {
+  if (!isRecord(value)) return false;
+  if (value.status === "saved")
+    return (
+      hasExactKeys(value, PROFILE_BACKUP_SAVED_KEYS) &&
+      typeof value.fileName === "string" &&
+      PROFILE_BACKUP_FILE_NAME_PATTERN.test(value.fileName) &&
+      isLengthBoundedString(value.fileName, 1, 128) &&
+      typeof value.document === "string" &&
+      value.document.length > 0
+    );
+  if (value.status !== "refused" || !hasExactKeys(value, PROFILE_BACKUP_REFUSED_KEYS)) return false;
+  return (
+    Array.isArray(value.unreadable) &&
+    value.unreadable.length > 0 &&
+    value.unreadable.length <= 16 &&
+    value.unreadable.every(
+      (id) => typeof id === "string" && id.length <= 64 && PROFILE_BACKUP_AUTHORITY_ID_PATTERN.test(id),
+    )
+  );
+}
+
 function isSelection(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -2831,6 +2928,31 @@ function isGamePromptAdditionCommand(value: unknown): value is TavernGamePromptA
   );
 }
 
+export function validateAppearancePreference(value: unknown): TavernAppearancePreferenceV1 {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, APPEARANCE_PREFERENCE_KEYS) ||
+    !isNonNegativeSafeInteger(value.revision) ||
+    !isAppearanceChoice(value.appearance)
+  )
+    throw new TavernProtocolError();
+  return value as TavernAppearancePreferenceV1;
+}
+
+function isAppearancePreferenceCommand(value: unknown): value is TavernAppearancePreferenceCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, APPEARANCE_PREFERENCE_COMMAND_KEYS) &&
+    isNonNegativeSafeInteger(value.expectedRevision) &&
+    isAppearanceChoice(value.appearance)
+  );
+}
+
+/** The three appearances, exactly - a fourth value is a protocol fault, never a silently accepted string. */
+function isAppearanceChoice(value: unknown): value is AppearanceChoice {
+  return value === "system" || value === "light" || value === "dark";
+}
+
 // The companion language is the player's own BCP-47 tag: the shape is bounded and the
 // set is open. Mirrors the Host's COMPANION_LOCALE_PATTERN (settings/player-preference-store.ts),
 // spelled as a literal because this module is deliberately dependency-free; a test in
@@ -2888,7 +3010,7 @@ function isConnectionModel(value: unknown): value is TavernConnectionModelV1 {
 function isConnectionProvider(value: unknown): value is TavernConnectionProviderV1 {
   return (
     isRecord(value) &&
-    hasExactKeys(value, CONNECTION_PROVIDER_KEYS) &&
+    (hasExactKeys(value, CONNECTION_PROVIDER_KEYS) || hasExactKeys(value, CONNECTION_PROVIDER_KEYS_WITH_SUGGESTIONS)) &&
     isLengthBoundedString(value.providerId, 1, 64) &&
     isLengthBoundedString(value.label, 1, 128) &&
     Array.isArray(value.setupFields) &&
@@ -2898,8 +3020,23 @@ function isConnectionProvider(value: unknown): value is TavernConnectionProvider
     Array.isArray(value.allowedPlayerModels) &&
     value.allowedPlayerModels.length <= 32 &&
     value.allowedPlayerModels.every(isConnectionModel) &&
+    isSuggestedModelIds(value.suggestedModelIds) &&
     typeof value.escapeHatch === "boolean" &&
     typeof value.environmentManaged === "boolean"
+  );
+}
+
+/**
+ * The provider's documented suggestions, when it publishes any: absent and empty are the same fact
+ * (no suggestion for this entry), and a published list is bounded by the same ceiling and charset the
+ * endpoint's own listing is.
+ */
+function isSuggestedModelIds(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.length <= CONNECTION_MODEL_LISTING_LIMIT &&
+      value.every((id) => typeof id === "string" && id.length <= 128 && MODEL_ID_PATTERN.test(id)))
   );
 }
 
@@ -3250,6 +3387,11 @@ export function validateChatExport(value: unknown): ChatExportV1 {
   return value;
 }
 
+export function validateProfileBackupExport(value: unknown): ProfileBackupExportV1 {
+  if (!isProfileBackupExport(value)) throw new TavernProtocolError();
+  return value;
+}
+
 export function validateStCardImportStageResult(value: unknown): StCardImportStageResultV1 {
   if (!isStCardImportStageResult(value)) throw new TavernProtocolError();
   return value;
@@ -3391,6 +3533,8 @@ export type ManagementPipelineApi = Readonly<{
    * list handed out, as the interchange's own SillyTavern chat file (browser session; no CSRF header).
    */
   exportChat(command: ChatExportQueryV1): Promise<ChatExportV1>;
+  /** The whole profile as one archive, or the refusal that names what could not be read. */
+  exportProfileBackup(): Promise<ProfileBackupExportV1>;
   /** PUT /api/tavern/v1/chat/title with Content-Type and x-csrf-token. */
   renameChatTitle(command: RenameChatTitleCommandV1, csrfToken: string): Promise<ChatTitleV1>;
   /**
@@ -3468,6 +3612,17 @@ export type ManagementPipelineApi = Readonly<{
     command: TavernGamePromptAdditionCommandV1,
     csrfToken: string,
   ): Promise<TavernGamePromptAdditionV1>;
+  /**
+   * GET /api/tavern/v1/settings/appearance (browser session; no CSRF header): which appearance this
+   * browser paints itself in. `system` is a stored choice, not an absence, so the client substitutes
+   * nothing.
+   */
+  readAppearancePreference(): Promise<TavernAppearancePreferenceV1>;
+  /** PUT /api/tavern/v1/settings/appearance with browser-session CSRF protection. */
+  updateAppearancePreference(
+    command: TavernAppearancePreferenceCommandV1,
+    csrfToken: string,
+  ): Promise<TavernAppearancePreferenceV1>;
   /** GET /api/tavern/v1/settings/voice-preference (browser session; no CSRF header). */
   readVoicePreference(): Promise<TavernVoicePreferenceV1>;
   /** GET /api/tavern/v1/settings/voice-devices (browser-session read). */
@@ -3725,6 +3880,9 @@ export function createManagementPipelineApi(
       const params = new URLSearchParams({ chatHandle: command.chatHandle });
       return exchange(fetchLike, "GET", `/api/tavern/v1/chat/export?${params.toString()}`, 200, validateChatExport);
     },
+    async exportProfileBackup(): Promise<ProfileBackupExportV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/profile/backup/export", 200, validateProfileBackupExport);
+    },
     async renameChatTitle(command: RenameChatTitleCommandV1, csrfToken: string): Promise<ChatTitleV1> {
       if (!isRenameChatTitleCommand(command)) throw new TavernProtocolError();
       if (!isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
@@ -3920,6 +4078,25 @@ export function createManagementPipelineApi(
         "/api/tavern/v1/settings/game-prompt",
         200,
         validateGamePromptAddition,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
+      return result;
+    },
+    async readAppearancePreference(): Promise<TavernAppearancePreferenceV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/settings/appearance", 200, validateAppearancePreference);
+    },
+    async updateAppearancePreference(
+      command: TavernAppearancePreferenceCommandV1,
+      csrfToken: string,
+    ): Promise<TavernAppearancePreferenceV1> {
+      if (!isAppearancePreferenceCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      const result = await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/settings/appearance",
+        200,
+        validateAppearancePreference,
         { "Content-Type": "application/json", "x-csrf-token": csrfToken },
         command,
       );

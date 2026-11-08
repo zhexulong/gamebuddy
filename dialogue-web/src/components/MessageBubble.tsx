@@ -864,6 +864,10 @@ export const MessageBubble = memo(function MessageBubble({
             the same sanitised Markdown renderer reads a person's words exactly as
             it reads the companion's, so the identical beat cannot render two ways.
 
+            The speaker travels with the text because the grammar scopes one construct to
+            one side: the leading prosody tag is the voice channel, and the voice layer
+            performs her speech only, so a player's parenthetical stays text.
+
             While this row is being rewritten the bubble GIVES WAY to the editor: the words then
             stand on screen once, in the field, because the editor takes the bubble's own place in
             the flow. The owner ruled it (audit 2026-10-19): the row kept rendering the bubble and
@@ -876,6 +880,7 @@ export const MessageBubble = memo(function MessageBubble({
             text={message.text}
             trailingHtml={CARET_MARKUP}
             lang={languageTag}
+            speaker={isPlayer ? "player" : "companion"}
           />
         )}
         {/* One strip under the bubble for everything a companion message can do

@@ -1,4 +1,5 @@
 import { type ReactElement, useEffect, useState } from "react";
+import { type AppearanceChoice, isAppearanceChoice } from "../appearance";
 import { problemTextWithCode } from "../composed-problem-view";
 import { type Locale, messages, recordLabel } from "../i18n";
 import { memoryNotebookLabels } from "./memory-notebook-labels";
@@ -17,6 +18,7 @@ import {
   type TavernVoicePreferenceV1,
 } from "../management-pipeline-api";
 import type { ChatModelRoute } from "../chat-model-route";
+import { connectionModelOptions } from "./connection-model-options";
 import { useChoiceDraft, useDraft, useDraftOverAuthority, useOpenDraft, type DraftField } from "./surface-drafts";
 
 /**
@@ -106,6 +108,17 @@ export type LanguageView =
   | Readonly<{ kind: "unavailable" }>
   | Readonly<{ kind: "error" }>
   | Readonly<{ kind: "ready"; locale: string | null; pending: boolean }>;
+
+/**
+ * Appearance state. The same Host record and the same one revision: the panel adopts what the store
+ * holds and writes through it, and the shell paints what the write came back with, so the control and
+ * the page can never disagree about which appearance is in force.
+ */
+export type AppearanceView =
+  | Readonly<{ kind: "loading" }>
+  | Readonly<{ kind: "unavailable" }>
+  | Readonly<{ kind: "error" }>
+  | Readonly<{ kind: "ready"; appearance: AppearanceChoice; pending: boolean }>;
 
 /**
  * The languages the panel suggests for the companion. Suggestions only: the companion
@@ -450,27 +463,12 @@ export function ConnectionSettingsPanel({
   // provider is named. A default here is a claim that the product already has a channel, and it
   // does not.
   const selected = providers.find((entry) => entry.providerId === providerId.value);
-  // What one provider's endpoints told us they serve, at their last probe: the only authority on
-  // which models exist there.
-  const servedModelsFor = (providerId: string | undefined): readonly string[] => [
-    ...new Set(
-      connectionView.state.connections
-        .filter((row) => row.providerId === providerId && row.modelIds !== null)
-        .flatMap((row) => row.modelIds ?? []),
-    ),
-  ];
-  const servedModels = servedModelsFor(selected?.providerId);
   /**
-   * The catalog's curated ids for this provider: `allowedPlayerModels`, which the Host has published
-   * on the projection since the field existed and which nothing read until now.
-   *
-   * Kept as a SEPARATE list from `servedModels` rather than merged into one datalist, because they
-   * are two different claims and a player can tell them apart in the labels: `servedModels` is what
-   * this endpoint answered when it was last probed, and a catalog id is a suggestion that the
-   * endpoint may well refuse. Merging them would make one list say both things, and the one that
-   * matters - what the endpoint actually serves - would lose.
+   * What this provider's model field offers: what its endpoints served, what this Host states, and what
+   * it documents as a starting point. One function answers it for both the field and the select's
+   * pre-fill, so the two can never disagree about which ids exist (see `connectionModelOptions`).
    */
-  const catalogModels = selected?.allowedPlayerModels ?? [];
+  const modelOptions = connectionModelOptions(selected, connectionView.state.connections);
   /**
    * Who supplies the selected entry's credential, as two facts that must never be
    * merged into one sentence.
@@ -598,7 +596,12 @@ export function ConnectionSettingsPanel({
               apiKeyRequired.type(true);
               // The only default worth pre-filling is one the endpoint itself served. Our curated
               // ids are suggestions: naming one silently would be claiming it exists.
-              modelId.type(servedModelsFor(nextProviderId)[0] ?? "");
+              modelId.type(
+                connectionModelOptions(
+                  providers.find((entry) => entry.providerId === nextProviderId),
+                  connectionView.state.connections,
+                ).served[0] ?? "",
+              );
             }}
           >
             {/*
@@ -740,31 +743,45 @@ export function ConnectionSettingsPanel({
                  * not run: an id guessed for `api.deepseek.com` only made the endpoint's honest
                  * `not_found` look like a broken key. A player types any id the endpoint serves.
                  */}
-                {servedModels.map((id) => (
+                {modelOptions.served.map((id) => (
                   <option key={`served-${id}`} value={id} label={labels.connectionModelServed} />
                 ))}
                 {/*
-                 * The catalog's suggestions, labelled as suggestions. An id can appear in both lists,
-                 * and when it does the endpoint's own answer is the one already rendered above.
+                 * The catalog's stated models, labelled as suggestions. An id appears in exactly one
+                 * of these lists (see `connectionModelOptions`), so a served id is never shown here.
                  */}
-                {catalogModels
-                  .filter((entry) => !servedModels.includes(entry.modelId))
-                  .map((entry) => (
-                    <option
-                      key={`catalog-${entry.modelId}`}
-                      value={entry.modelId}
-                      label={labels.connectionModelCatalog}
-                    />
-                  ))}
+                {modelOptions.catalog.map((id) => (
+                  <option key={`catalog-${id}`} value={id} label={labels.connectionModelCatalog} />
+                ))}
+                {/*
+                 * The endpoint's documented ids: the only list a first run has, because a probe needs
+                 * a saved connection and saving needs a model id.
+                 */}
+                {modelOptions.suggested.map((id) => (
+                  <option key={`suggested-${id}`} value={id} label={labels.connectionModelCatalog} />
+                ))}
               </datalist>
-              {servedModels.length > 0 && (
-                <p className="field-hint" data-connection-served-count>
-                  {`${servedModels.length} ${labels.connectionModelsServed}`}
+              {/*
+               * Both halves of the list state their own count, so the field never looks empty without
+               * saying why. The served count is printed at zero too: 0 is a fact about this endpoint,
+               * and the sentence below it names the only ordinary reason for it.
+               */}
+              <p className="field-hint" data-connection-served-count data-served={modelOptions.served.length}>
+                {`${modelOptions.served.length} ${labels.connectionModelsServed}`}
+              </p>
+              {!modelOptions.probed && (
+                <p className="field-hint" data-connection-not-probed>
+                  {labels.connectionModelNotProbed}
                 </p>
               )}
-              {catalogModels.length > 0 && (
+              {modelOptions.suggested.length > 0 && (
+                <p className="field-hint" data-connection-suggested-count>
+                  {`${modelOptions.suggested.length} ${labels.connectionModelsSuggested}`}
+                </p>
+              )}
+              {modelOptions.catalog.length > 0 && (
                 <p className="field-hint" data-connection-catalog-count>
-                  {`${catalogModels.length} ${labels.connectionModelsCatalog}`}
+                  {`${modelOptions.catalog.length} ${labels.connectionModelsCatalog}`}
                 </p>
               )}
               <p className="field-hint">{labels.connectionModelSuggestionsHint}</p>
@@ -1108,6 +1125,46 @@ export function LanguageSettingsPanel({
         </select>
         <p className="management-settings-hint">{labels.languageUiHint}</p>
       </div>
+    </section>
+  );
+}
+
+export function AppearanceSettingsPanel({
+  appearanceView,
+  labels,
+  onSelectAppearance,
+}: Readonly<{
+  appearanceView: AppearanceView;
+  labels: ReturnType<typeof messages>;
+  onSelectAppearance: (appearance: AppearanceChoice) => void;
+}>): ReactElement {
+  return (
+    <section className="management-settings-section" aria-label={labels.appearanceSettings} data-appearance-settings>
+      <h2>{labels.appearanceSettings}</h2>
+      <p>{labels.appearanceHint}</p>
+      {appearanceView.kind === "loading" && <p>{labels.loading}</p>}
+      {appearanceView.kind === "unavailable" && <p>{labels.appearanceUnavailable}</p>}
+      {appearanceView.kind === "error" && <p>{labels.failure}</p>}
+      {appearanceView.kind === "ready" && (
+        <div className="voice-device-selector">
+          <label htmlFor="ui-appearance">{labels.appearanceField}</label>
+          <select
+            id="ui-appearance"
+            className="form-select"
+            value={appearanceView.appearance}
+            disabled={appearanceView.pending}
+            data-appearance-value={appearanceView.appearance}
+            onChange={(event) => {
+              const next = event.target.value;
+              if (isAppearanceChoice(next)) onSelectAppearance(next);
+            }}
+          >
+            <option value="system">{labels.appearanceSystem}</option>
+            <option value="light">{labels.appearanceLight}</option>
+            <option value="dark">{labels.appearanceDark}</option>
+          </select>
+        </div>
+      )}
     </section>
   );
 }

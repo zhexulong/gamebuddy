@@ -38,6 +38,7 @@ import { type KeyboardEvent as ReactKeyboardEvent, type ReactElement, useEffect,
 import type { Locale, Messages } from "../i18n";
 import { problemTextWithCode } from "../composed-problem-view";
 import { useArmedConfirmation } from "./armed-confirmation";
+import type { AppearanceChoice } from "../appearance";
 import { ContextDrawer } from "./ContextDrawer";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { openingVariantName } from "./opening-variant-labels";
@@ -52,15 +53,17 @@ import {
   TavernProblemError,
   TavernProtocolError,
   type ChatExportV1,
+  type TavernAppearancePreferenceV1,
   type TavernConnectionStateV1,
   type TavernConnectionThinkingLevelV1,
   type TavernConnectionProviderV1,
   type TavernGamePromptAdditionV1,
   type TavernModelProfilesV1,
   type TavernVoiceDevicesV1,
-  type WorldInfoStateV1,
 } from "../management-pipeline-api";
 import {
+  AppearanceSettingsPanel,
+  type AppearanceView,
   companionLocaleForUiLocale,
   ConnectionSettingsPanel,
   type ConnectionForm,
@@ -1280,15 +1283,6 @@ export function MemorySurfacePanel({
 }
 
 /**
- * The exact World Info revision one mount shows, plus the selection generation
- * its bind CAS must carry.
- */
-export type WorldInfoSurfaceSource = Readonly<{
-  worldInfo: WorldInfoStateV1 | null;
-  selectionGeneration: number;
-}>;
-
-/**
  * The player's own addition to the Game companion's instructions.
  *
  * `record` is what the Host has stored (and its revision is the CAS every write carries);
@@ -1376,6 +1370,77 @@ function GamePromptAdditionPanel({
 }
 
 /**
+ * The whole-profile backup: one button that saves every durable authority the Host declares.
+ *
+ * The file is the Host's own archive - the browser never re-serialises it - and the notice names
+ * the file it saved. A refusal names the authority the Host could not read, because "the backup
+ * failed" leaves a player with a button that does not work and no way to tell whether their chats,
+ * their companions or their Memory is the unreadable one. The id is the Host's own declaration
+ * (`PROFILE_BACKUP_AUTHORITIES`); a translated table here would be a second list that omits the
+ * next authority the Host adds.
+ */
+function ProfileBackupPanel({ api, labels }: Readonly<{ api: ManagementPipelineApi; labels: Messages }>): ReactElement {
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<Readonly<{ ok: boolean; text: string }> | null>(null);
+  const exportBackup = (): void => {
+    if (busy) return;
+    setBusy(true);
+    setNotice(null);
+    void (async () => {
+      try {
+        const exported = await api.exportProfileBackup();
+        if (exported.status === "refused") {
+          setNotice({
+            ok: false,
+            text: labels.profileBackupUnreadable.replace("{{authority}}", exported.unreadable.join(", ")),
+          });
+          return;
+        }
+        // The Host's own bytes, exactly as the card and transcript exports save them: one object
+        // URL, one click on an anchor carrying the Host's filename.
+        const url = URL.createObjectURL(new Blob([exported.document], { type: "application/json" }));
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = exported.fileName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+        setNotice({ ok: true, text: labels.profileBackupSaved.replace("{{file}}", exported.fileName) });
+      } catch {
+        // A transport failure, or a body this build does not recognise: either way no file was
+        // saved, and the player is told that rather than left with a silent button.
+        setNotice({ ok: false, text: labels.profileBackupFailed });
+      } finally {
+        setBusy(false);
+      }
+    })();
+  };
+  return (
+    <section className="management-settings-section" aria-label={labels.profileBackupTitle} data-profile-backup-section>
+      <h3>{labels.profileBackupTitle}</h3>
+      <p className="management-settings-hint">{labels.profileBackupHint}</p>
+      <div className="composer-actions">
+        <button
+          type="button"
+          className="small-button"
+          data-profile-backup-export
+          disabled={busy}
+          onClick={exportBackup}
+        >
+          {busy ? labels.profileBackupBusy : labels.profileBackupExport}
+        </button>
+      </div>
+      {notice !== null && (
+        <p role="status" data-profile-backup-notice className={notice.ok ? "success-banner" : "error-banner"}>
+          {notice.text}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/**
  * The Settings panel: the connection records, the companion language, the voice
  * consent/devices and the two model profiles - the four field groups the
  * management surface shows, over the same routes.
@@ -1411,6 +1476,7 @@ export function SettingsSurfacePanel({
   labels,
   uiLocale,
   onSelectUiLocale,
+  onSelectAppearance,
   onNotice,
 }: Readonly<{
   api: ManagementPipelineApi;
@@ -1418,9 +1484,11 @@ export function SettingsSurfacePanel({
   labels: Messages;
   uiLocale: Locale;
   onSelectUiLocale: (locale: Locale) => void;
+  onSelectAppearance: (appearance: AppearanceChoice) => void;
   onNotice?: (notice: ManagementSurfaceNotice) => void;
 }>): ReactElement {
   const [languageView, setLanguageView] = useState<LanguageView>({ kind: "loading" });
+  const [appearanceView, setAppearanceView] = useState<AppearanceView>({ kind: "loading" });
   const [voiceView, setVoiceView] = useState<VoiceView>({ kind: "loading" });
   const [connectionView, setConnectionView] = useState<ConnectionView>({ kind: "loading" });
   /**
@@ -1571,6 +1639,16 @@ export function SettingsSurfacePanel({
       } catch {
         if (active) setPromptAdditionView({ kind: "unavailable" });
       }
+      // The appearance's own read: the shell already applied it at mount, and this read is what the
+      // select shows and what its write CASes on.
+      try {
+        const record: TavernAppearancePreferenceV1 = await api.readAppearancePreference();
+        if (!active) return;
+        settingsRevisionRef.current = record.revision;
+        setAppearanceView({ kind: "ready", appearance: record.appearance, pending: false });
+      } catch {
+        if (active) setAppearanceView({ kind: "unavailable" });
+      }
     })();
     return () => {
       active = false;
@@ -1618,6 +1696,38 @@ export function SettingsSurfacePanel({
     if (languageView.kind === "ready" && languageView.locale === null) {
       mutateCompanionLanguage(companionLocaleForUiLocale(locale));
     }
+  };
+
+  /**
+   * Writes the appearance. The validated reply is the Host's read-back, and the shell paints what it
+   * came back with: the page never adopts a choice the durable record did not accept.
+   */
+  const mutateAppearance = (appearance: AppearanceChoice): void => {
+    if (appearanceView.kind !== "ready" || appearanceView.pending) return;
+    if (appearance === appearanceView.appearance) return;
+    setAppearanceView({ ...appearanceView, pending: true });
+    void (async () => {
+      try {
+        const written = await api.updateAppearancePreference(
+          { expectedRevision: settingsRevisionRef.current, appearance },
+          csrfToken,
+        );
+        settingsRevisionRef.current = written.revision;
+        setAppearanceView({ kind: "ready", appearance: written.appearance, pending: false });
+        onSelectAppearance(written.appearance);
+      } catch (error) {
+        // A rejection can still hide a committed change, so re-read the authority before reporting.
+        try {
+          const record = await api.readAppearancePreference();
+          settingsRevisionRef.current = record.revision;
+          setAppearanceView({ kind: "ready", appearance: record.appearance, pending: false });
+          onSelectAppearance(record.appearance);
+        } catch {
+          setAppearanceView({ kind: "error" });
+        }
+        report({ kind: "failure", text: problemTextWithCode(labels.failure, error, labels) });
+      }
+    })();
   };
 
   const mutateVoice = (
@@ -1872,6 +1982,7 @@ export function SettingsSurfacePanel({
         onSelectLanguage={mutateCompanionLanguage}
         onSelectUiLanguage={selectUiLocale}
       />
+      <AppearanceSettingsPanel appearanceView={appearanceView} labels={labels} onSelectAppearance={mutateAppearance} />
       {modelProfilesView.kind === "ready" && (
         // Rendered only when the mounted profile published the model-profile
         // routes; a profile without them never shows an editor it cannot serve.
@@ -1902,6 +2013,7 @@ export function SettingsSurfacePanel({
         onSelectDevice={(deviceId) => mutateVoice("setOutputDevice", deviceId)}
         onSelectPersona={(persona) => mutateVoice("setPersona", persona)}
       />
+      <ProfileBackupPanel api={api} labels={labels} />
     </>
   );
 }

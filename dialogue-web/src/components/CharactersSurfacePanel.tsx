@@ -10,11 +10,11 @@ import {
   type WorldInfoContentV1,
   type WorldInfoStateV1,
 } from "../management-pipeline-api";
+import type { WorldInfoBindingSource } from "../world-info-binding-source";
 import { useArmedConfirmation } from "./armed-confirmation";
 import { CharactersPanel } from "./CharactersPanel";
 import type { InspectedCompanion } from "./CompanionInspectorDrawer";
 import { type CharacterLabels, characterLabels } from "./character-domain-labels";
-import type { WorldInfoSurfaceSource } from "./management-surface-panels";
 import { useRecordDraft } from "./surface-drafts";
 
 /**
@@ -60,7 +60,7 @@ export function CharactersSurfacePanel({
   api: ManagementPipelineApi;
   csrfToken: string;
   locale: Locale;
-  read: () => Promise<WorldInfoSurfaceSource>;
+  read: () => Promise<WorldInfoBindingSource>;
   /** The picture digest each companion was last handed, and the upload that teaches it one. */
   avatarDigests: Readonly<Record<string, string>>;
   onAvatarUpdated: (handle: string, digest: string) => void;
@@ -890,6 +890,17 @@ type WorldBookView =
   | Readonly<{ kind: "loading" }>
   | Readonly<{ kind: "error" }>
   | Readonly<{ kind: "unavailable" }>
+  /**
+   * The selection the shell shows and the selection the World Info read names are different, so there is no
+   * pair this panel may act on. It is not `unavailable` (the mount does declare a `world-info.read`) and not
+   * an error (nothing failed): it is `selection_generation_conflict`, and the panel sends nothing until the
+   * shell has adopted the selection the read named.
+   */
+  | Readonly<{
+      kind: "selection_generation_conflict";
+      mountedSelectionGeneration: number;
+      liveSelectionGeneration: number;
+    }>
   | Readonly<{ kind: "ready"; worldInfo: WorldInfoStateV1 }>;
 
 /** The one outcome line the panel reports, so two operations never print two notices. */
@@ -1021,7 +1032,7 @@ function CharacterWorldBookPanel({
   api: ManagementPipelineApi;
   csrfToken: string;
   locale: Locale;
-  read: () => Promise<WorldInfoSurfaceSource>;
+  read: () => Promise<WorldInfoBindingSource>;
 }): ReactElement | null {
   const labels = characterLabels(locale);
   // The sentence for a refusal is the product catalogue's, the same vocabulary the Chat view
@@ -1055,6 +1066,15 @@ function CharacterWorldBookPanel({
   const readOnce = useCallback(async (): Promise<WorldBookView> => {
     try {
       const source = await read();
+      if (source.kind === "selection_generation_conflict") {
+        // The generation and the revision came from one read, and that read named a selection the shell is
+        // not showing. Neither side is preferred: nothing is sent, and the panel says so.
+        return {
+          kind: "selection_generation_conflict",
+          mountedSelectionGeneration: source.mountedSelectionGeneration,
+          liveSelectionGeneration: source.liveSelectionGeneration,
+        };
+      }
       setGeneration(source.selectionGeneration);
       return source.worldInfo === null ? { kind: "unavailable" } : { kind: "ready", worldInfo: source.worldInfo };
     } catch {
@@ -1327,6 +1347,28 @@ function CharacterWorldBookPanel({
           type="button"
           className="small-button"
           data-world-book-retry
+          onClick={() => {
+            setView({ kind: "loading" });
+            void (async () => setView(await readOnce()))();
+          }}
+        >
+          {problemLabels.problemRetryRead}
+        </button>
+      </section>
+    );
+  }
+  if (view.kind === "selection_generation_conflict") {
+    return (
+      <section aria-label={labels.worldBookTitle} data-world-book>
+        <h3>{labels.worldBookTitle}</h3>
+        <p className="management-settings-hint">{labels.worldBookHint}</p>
+        <p data-world-book-selection-conflict={`${view.mountedSelectionGeneration}->${view.liveSelectionGeneration}`}>
+          {labels.worldBookSelectionConflict}
+        </p>
+        <button
+          type="button"
+          className="small-button"
+          data-world-book-selection-conflict-read
           onClick={() => {
             setView({ kind: "loading" });
             void (async () => setView(await readOnce()))();

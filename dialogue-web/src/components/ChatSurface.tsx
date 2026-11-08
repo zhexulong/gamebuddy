@@ -1,4 +1,5 @@
 import { MessagesSquare } from "lucide-react";
+import type { RefObject } from "react";
 import type { ChatModelRoute } from "../chat-model-route";
 import type { Messages } from "../i18n";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
@@ -58,6 +59,8 @@ export function ChatSurface({
   voice,
   settingsAction,
   draftActions,
+  composerFieldRef,
+  restoreFocusTo,
 }: {
   transcript: readonly BrowserMessageV1[];
   preview: Readonly<{ turnHandle: string; text: string }> | null;
@@ -144,9 +147,24 @@ export function ChatSurface({
   voice?: VoiceSurfaceStateV1 | null;
   settingsAction: ComposerSettingsAction;
   draftActions: ComposerDraftActions;
+  /**
+   * The composer's field, when the shell also focuses it: returning to the conversation lands where
+   * the player types (`SurfaceView`'s documented promise), and the shell owns that move because it is
+   * the only thing that knows the difference between a return and the first paint. Handing it the
+   * node is one spelling of that place - a class-name lookup in the shell was the second.
+   */
+  composerFieldRef?: RefObject<HTMLTextAreaElement | null>;
+  /** Where focus returns when this surface is replaced: the AppBar entry that selects it. */
+  restoreFocusTo: RefObject<HTMLElement | null>;
 }) {
   return (
-    <SurfaceView title={labels.chatPanel} testId="chat-surface" icon={MessagesSquare} className="surface-conversation">
+    <SurfaceView
+      title={labels.chatPanel}
+      testId="chat-surface"
+      icon={MessagesSquare}
+      className="surface-conversation"
+      restoreFocusTo={restoreFocusTo}
+    >
       <Timeline
         transcript={transcript}
         preview={preview}
@@ -219,6 +237,7 @@ export function ChatSurface({
         voice={voice}
         settingsAction={settingsAction}
         draftActions={draftActions}
+        fieldRef={composerFieldRef}
       />
     </SurfaceView>
   );

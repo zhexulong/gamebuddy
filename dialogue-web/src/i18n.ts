@@ -336,6 +336,13 @@ const en = {
   languageUiField: "Interface language",
   languageUiHint: "The language of this management interface. It does not change what your companion speaks.",
   languageUnavailable: "The companion language preference is unavailable.",
+  appearanceSettings: "Appearance",
+  appearanceHint: "How this window is drawn.",
+  appearanceField: "Appearance",
+  appearanceSystem: "Follow the system",
+  appearanceLight: "Light",
+  appearanceDark: "Dark",
+  appearanceUnavailable: "The appearance preference is unavailable.",
   voiceSettingsUnavailable: "Voice settings are unavailable.",
 
   connectionSettings: "Connection and model",
@@ -398,6 +405,14 @@ const en = {
   connectionModelSuggestionsHint:
     "Type the model id your endpoint serves. Testing the connection is what proves it does.",
   connectionModelsServed: "models served by this endpoint",
+  // The count above is 0 for one reason only, and it is the ordinary first-run reason: no probe has
+  // been run for this entry yet. Saying which reason it is, is the difference between an empty field
+  // the player can act on and one that looks broken.
+  connectionModelNotProbed:
+    "This endpoint has not been asked which models it serves yet. Save the connection, then test it: the list comes from the endpoint's own answer.",
+  // Ids documented for this endpoint by its own provider, offered so a first run has a starting
+  // point. Not availability: nothing here was read from the endpoint, and its own answer wins.
+  connectionModelsSuggested: "suggested ids for this endpoint; not yet confirmed by it",
   // The catalog's own suggestions. They are a starting point, not a claim about the endpoint: a
   // model id the catalog knows may not be served by the endpoint the player configured, and the
   // probe is what settles that.
@@ -1067,6 +1082,18 @@ const en = {
   chatExportSaved: "Saved {{file}}.",
   chatExportFailed: "The chat could not be exported.",
   chatExportDropped: "Not in the file: {{fields}}.",
+  // The whole-profile backup: one archive of everything the Host declares durable. The hint names
+  // what is NOT in it, because a player who reads "backup" and finds their game saves missing would
+  // be right to feel misled. A refusal names the authority by the Host's own id: the set of ids is
+  // the Host's declaration, and a table of translated names here would silently omit the next one.
+  profileBackupTitle: "Back up your profile",
+  profileBackupHint:
+    "One file with your chats, companions, world info, memory and settings. Your game installation, game saves and model credentials are not in it.",
+  profileBackupExport: "Save backup file",
+  profileBackupBusy: "Saving…",
+  profileBackupSaved: "Saved {{file}}.",
+  profileBackupUnreadable: "No backup was saved: {{authority}} could not be read.",
+  profileBackupFailed: "The backup could not be produced.",
   chatRetentionArchiveConfirmYes: "Archive",
   chatRetentionTrashConfirm: "Move this chat to the trash? It leaves the active list. This cannot be undone.",
   chatRetentionTrashConfirmYes: "Move to trash",
@@ -1389,6 +1416,13 @@ const zh: Messages = {
   languageUiField: "界面语言",
   languageUiHint: "本管理界面使用的语言，不会改变伴侣说话的语言。",
   languageUnavailable: "伴侣语言偏好不可用。",
+  appearanceSettings: "外观",
+  appearanceHint: "这个窗口的配色。",
+  appearanceField: "外观",
+  appearanceSystem: "跟随系统",
+  appearanceLight: "浅色",
+  appearanceDark: "深色",
+  appearanceUnavailable: "外观偏好不可用。",
   voiceSettingsUnavailable: "语音设置不可用。",
 
   connectionSettings: "连接与模型",
@@ -1424,6 +1458,8 @@ const zh: Messages = {
   connectionModelServed: "该端点提供",
   connectionModelSuggestionsHint: "请输入该端点提供的模型 ID。测试连接即可确认它确实提供。",
   connectionModelsServed: "个模型由该端点提供",
+  connectionModelNotProbed: "尚未向该端点询问它提供哪些模型。请保存连接并测试：列表来自端点自己的回答。",
+  connectionModelsSuggested: "个建议的模型 ID，该端点尚未确认",
   connectionModelCatalog: "GameBuddy 的建议，最终以端点为准",
   connectionModelsCatalog: "GameBuddy 目录里的建议",
   connectionModelOffered: "可用模型",
@@ -1933,6 +1969,13 @@ const zh: Messages = {
   chatExportSaved: "已保存 {{file}}。",
   chatExportFailed: "无法导出这个会话。",
   chatExportDropped: "文件中不包含：{{fields}}。",
+  profileBackupTitle: "备份你的档案",
+  profileBackupHint: "一个文件，包含会话、角色、世界书、记忆和设置。不包含游戏安装、游戏存档和模型凭据。",
+  profileBackupExport: "保存备份文件",
+  profileBackupBusy: "正在保存…",
+  profileBackupSaved: "已保存 {{file}}。",
+  profileBackupUnreadable: "未生成备份：{{authority}} 无法读取。",
+  profileBackupFailed: "无法生成备份。",
   chatRetentionArchiveConfirmYes: "归档",
   chatRetentionTrashConfirm: "将此会话移入回收站？它将离开活动列表，此操作不可撤销。",
   chatRetentionTrashConfirmYes: "移入回收站",

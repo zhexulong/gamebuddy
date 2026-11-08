@@ -137,12 +137,12 @@ const ESCAPE_HATCH = {
 };
 
 /**
- * The operator's own gateway, as an operator who opted in still sees it: a
- * developer path, labelled as one, and still not preselected.
+ * The operator's own gateway, as an operator who opted in still sees it: reachable only through the
+ * switch, and still not preselected.
  */
 const OPERATOR = {
   providerId: "cpa-oai",
-  label: "Operator gateway (developer only)",
+  label: "Operator gateway",
   setupFields: [],
   allowedPlayerModels: [],
   escapeHatch: false,

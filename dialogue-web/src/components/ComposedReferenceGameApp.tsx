@@ -30,6 +30,7 @@ import {
   pendingSubmission,
   ReferencePipelineSessionError,
 } from "../reference-pipeline-session";
+import { type WorldInfoBindingSource, worldInfoBindingSource } from "../world-info-binding-source";
 import { AppBar, type AppBarProps } from "./AppBar";
 import { CharactersSurface } from "./CharactersSurface";
 import { ChatSurface } from "./ChatSurface";
@@ -38,7 +39,7 @@ import { ContextDrawer } from "./ContextDrawer";
 import { newIdempotencyKey, type ReadyView } from "./composed-reference-game-view";
 import { GameSurface } from "./GameSurface";
 import { MemorySurface } from "./MemorySurface";
-import { createManagementPipelineApi, type WorldInfoSurfaceSource } from "./management-surface-panels";
+import { createManagementPipelineApi } from "./management-surface-panels";
 import { ProblemView } from "./ProblemView";
 import { SettingsSurface } from "./SettingsSurface";
 import { SkipLink } from "./SkipLink";
@@ -47,6 +48,7 @@ import { SurfaceDrafts } from "./surface-drafts";
 import { turnFailureText } from "./turn-failure-text";
 import { markTurn, observeTurnEvent } from "./turn-timings";
 import { useArrivalReread } from "./use-arrival-reread";
+import { useAppearance } from "./use-appearance";
 import {
   type ComposedPreviewV1,
   TERMINAL_TURN_STATES,
@@ -227,6 +229,11 @@ export function ComposedReferenceGameApp() {
   const settingsEntryRef = useRef<HTMLButtonElement>(null);
   const memoryEntryRef = useRef<HTMLButtonElement>(null);
   const modelPopoutEntryRef = useRef<HTMLButtonElement>(null);
+  /**
+   * The composer's field, owned here because two things need the same node: the conversation mounts
+   * it (`Composer`'s `fieldRef`) and a return to the conversation focuses it (`useSurfaceRoute`).
+   */
+  const composerFieldRef = useRef<HTMLTextAreaElement>(null);
   // Every management surface - Characters, Chats, Settings and Memory - runs on
   // the one management pipeline client the management shell uses, on this
   // shell's own origin: the composed root serves those routes through the one
@@ -253,7 +260,11 @@ export function ComposedReferenceGameApp() {
     applyDocumentLocale(localeRef.current);
   }, []);
 
-  const { shownSurface, openPanelOf } = useSurfaceRoute();
+  // The appearance lives on the page, not on one panel: it is read and applied at mount, so a
+  // player who chose the light appearance never sees the dark one while the conversation loads.
+  const appearance = useAppearance(managementPipelineApiRef.current);
+
+  const { shownSurface, openPanelOf } = useSurfaceRoute({ returnFocusTo: composerFieldRef });
 
   const bootstrap = useComposedBootstrap(localeRef, setPreview);
   const {
@@ -1297,17 +1308,18 @@ export function ComposedReferenceGameApp() {
    * /world-info`, so the state, the revision and the items beside it come from one
    * read and can never describe two different moments. `null` therefore means
    * exactly one thing - this mount declares no `world-info.read` - and never "the
-   * items happened to be missing". Its own bind's compare-and-swap carries the
-   * composed snapshot's selection generation, which is the only fact `bind` needs
-   * that the projection does not carry.
+   * items happened to be missing".
+   *
+   * The generation a bind CASes on is decided HERE, from the same read, and never
+   * from the view alone: the root that answers the revision also states which
+   * selection it belongs to, so a Chat switched elsewhere is a refused pair rather
+   * than a new revision under the old generation (see `worldInfoBindingSource`).
    */
-  const readProductWorldInfo = useCallback(async (): Promise<WorldInfoSurfaceSource> => {
+  const readProductWorldInfo = useCallback(async (): Promise<WorldInfoBindingSource> => {
     const current = viewRef.current;
+    const mounted = current.kind === "ready" ? (current.session.snapshot.selection?.generation ?? null) : null;
     const root = await composedApiRef.current.readState();
-    return {
-      worldInfo: root.chat.chat?.worldInfo ?? null,
-      selectionGeneration: current.kind === "ready" ? (current.session.snapshot.selection?.generation ?? 0) : 0,
-    };
+    return worldInfoBindingSource(root, mounted);
   }, []);
 
   /**
@@ -1598,6 +1610,8 @@ export function ComposedReferenceGameApp() {
                     onClick: () => setModelPopoutOpen(true),
                     ref: modelPopoutEntryRef,
                   }}
+                  composerFieldRef={composerFieldRef}
+                  restoreFocusTo={chatEntryRef}
                   draftActions={{
                     onSave: () => void handleDraftMutation("save"),
                     onDiscard: () => void handleDraftMutation("discard"),
@@ -1660,6 +1674,7 @@ export function ComposedReferenceGameApp() {
                   labels={labels()}
                   uiLocale={view.locale}
                   onSelectUiLocale={handleUiLocale}
+                  onSelectAppearance={appearance.choose}
                   restoreFocusTo={settingsEntryRef}
                 />
               )}

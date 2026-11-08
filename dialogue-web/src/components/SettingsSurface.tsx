@@ -1,5 +1,6 @@
 import { Settings } from "lucide-react";
 import type { RefObject } from "react";
+import type { AppearanceChoice } from "../appearance";
 import type { Locale, Messages } from "../i18n";
 import type { ManagementPipelineApi } from "../management-pipeline-api";
 import { SettingsSurfacePanel } from "./management-surface-panels";
@@ -20,6 +21,7 @@ export function SettingsSurface({
   labels,
   uiLocale,
   onSelectUiLocale,
+  onSelectAppearance,
   restoreFocusTo,
 }: {
   api: ManagementPipelineApi;
@@ -27,6 +29,7 @@ export function SettingsSurface({
   labels: Messages;
   uiLocale: Locale;
   onSelectUiLocale: (locale: Locale) => void;
+  onSelectAppearance: (appearance: AppearanceChoice) => void;
   restoreFocusTo: RefObject<HTMLElement | null>;
 }) {
   return (
@@ -43,6 +46,7 @@ export function SettingsSurface({
         labels={labels}
         uiLocale={uiLocale}
         onSelectUiLocale={onSelectUiLocale}
+        onSelectAppearance={onSelectAppearance}
       />
     </SurfaceView>
   );

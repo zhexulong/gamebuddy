@@ -16,18 +16,22 @@
  * measured number, the floor, and the files that carry the group - so the next reader
  * knows whether to write a test or to move the floor deliberately, in a diff.
  *
- * The denominator is the source tree, not the measurement: every module under `src` is
+ * The denominator is the source tree, not the measurement: every product module under `src` is
  * in the population, and a module no journey reached scores 0 (its report entry is
  * generated from an empty V8 block, which is the same "lines that could execute"
  * denominator the real entries use). That is what makes the gate rise when a journey is
  * deleted and fall when a module is added - the two directions a percentage over
- * measured-files-only cannot see.
+ * measured-files-only cannot see. A colocated unit test (`*.test.ts` beside its source, under `src/`)
+ * is not a product module: the browser cannot load it, so no journey can reach it, and counting
+ * it
+ * would make the number a function of how many unit tests exist. It is excluded, and the
+ * exclusion is printed (`excluded=N test file(s)`) rather than left silent.
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import v8toIstanbul from "v8-to-istanbul";
-import { GROUP_ORDER, classify } from "./frontend-coverage-groups.mjs";
+import { GROUP_ORDER, classify, groupOf, shapeOf, sourcePopulation } from "./frontend-coverage-groups.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const PACKAGE_ROOT = resolve(HERE, "..");
@@ -120,7 +124,13 @@ async function measure(absolutePath, source, functionSets) {
 /** The whole report: per-group totals, per-module rows, and the journeys that reached each module. */
 export async function buildReport() {
   const srcDirectory = join(PACKAGE_ROOT, "src");
-  const groups = classify(srcDirectory);
+  const population = sourcePopulation(srcDirectory);
+  const groups = classify(srcDirectory, population.modules);
+  // Classified from the same file walk that excluded them, so the printed numbers cannot
+  // describe a different tree than the one the denominator was built from.
+  const excludedGroups = new Map(
+    population.excluded.map((module) => [module, groupOf(shapeOf(join(srcDirectory, module)))]),
+  );
   const workers = readWorkers();
   const shape = runShape(workers);
   const measured = new Map();
@@ -166,9 +176,13 @@ export async function buildReport() {
       covered,
       pct: lines === 0 ? null : Number(((covered / lines) * 100).toFixed(2)),
       unreached: members.filter((row) => row.covered === 0).map((row) => row.module),
+      excludedTestFiles: [...excludedGroups]
+        .filter(([, excludedGroup]) => excludedGroup === group)
+        .map(([module]) => module),
     };
   }
   report.measuredModules = report.modules.filter((row) => row.measured).length;
+  report.excludedTestFileCount = population.excluded.length;
   report.run = { journeys: shape.journeys.size, expected: shape.expected, missing: shape.missing };
   return report;
 }
@@ -257,9 +271,12 @@ export function renderReport(report, floors, breaches) {
     const reading = totals.pct === null ? "no executable lines" : `${totals.pct}% (${totals.covered}/${totals.lines})`;
     lines.push(
       `frontend_coverage group=${group} modules=${totals.modules} lines=${totals.lines} ` +
-        `covered=${totals.covered} pct=${totals.pct ?? "n/a"} floor=${floor}%`,
+        `covered=${totals.covered} pct=${totals.pct ?? "n/a"} floor=${floor}% ` +
+        `excluded=${totals.excludedTestFiles.length} test file(s)`,
     );
     lines.push(`  ${reading} over ${totals.modules} module(s), floor ${floor}%`);
+    if (totals.excludedTestFiles.length > 0)
+      lines.push(`  excluded test file(s), not product code: ${totals.excludedTestFiles.join(", ")}`);
     if (totals.unreached.length > 0) lines.push(`  unreached: ${totals.unreached.join(", ")}`);
   }
   // The breach lines are the VERDICT, so they are printed only when the verdict is being
@@ -317,6 +334,7 @@ export function reportOutcome({ report, floors, breaches }) {
   process.stdout.write(`${renderReport(report, floors, applied ? breaches : [])}\n`);
   process.stdout.write(
     `frontend_coverage measured=${report.measuredModules}/${report.modules.length} modules ` +
+      `excluded=${report.excludedTestFileCount} test file(s) ` +
       `journeys=${report.run.journeys}/${report.run.expected} verdict=${verdict} ` +
       `summary=${relative(PACKAGE_ROOT, SUMMARY_FILE).split(sep).join("/")}\n`,
   );

@@ -3,7 +3,7 @@ import type { RefObject } from "react";
 import type { Locale, Messages } from "../i18n";
 import type { ManagementPipelineApi } from "../management-pipeline-api";
 import { CharactersSurfacePanel } from "./CharactersSurfacePanel";
-import type { WorldInfoSurfaceSource } from "./management-surface-panels";
+import type { WorldInfoBindingSource } from "../world-info-binding-source";
 import { SurfaceView } from "./SurfaceView";
 
 /**
@@ -28,7 +28,7 @@ export function CharactersSurface({
   csrfToken: string;
   labels: Messages;
   locale: Locale;
-  read: () => Promise<WorldInfoSurfaceSource>;
+  read: () => Promise<WorldInfoBindingSource>;
   /**
    * The picture digest each companion was last handed, keyed by handle: the roster rows' avatar
    * reload key. It belongs to the shell, not to this surface, because an upload here must also be

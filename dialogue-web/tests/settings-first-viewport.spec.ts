@@ -164,20 +164,26 @@ async function stubSettingsRoutes(page: Page, connections: readonly unknown[] = 
   );
 }
 
-/** Settings, on a fresh install, at one viewport, with its region scrolled to the top. */
-async function mountSettings(page: Page, viewport: Readonly<{ width: number; height: number }>): Promise<void> {
+/** Settings, at one viewport and one form, with its region scrolled to the top. */
+async function mountSettings(
+  page: Page,
+  viewport: Readonly<{ width: number; height: number }>,
+  form: "widest" | "landing",
+): Promise<void> {
   await page.setViewportSize(viewport);
   await stubSettingsRoutes(page);
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=settings`);
   const surface = page.getByTestId("settings-surface");
   // The connection group renders only once its read resolves.
   await expect(surface.locator("#connection-provider")).toBeVisible();
-  // The widest form the Host can publish, chosen rather than assumed: the landing
-  // selection is the entry with no field at all, so the fields under test only exist
-  // once the escape hatch is picked.
-  const form = surface.locator("[data-connection-form]");
-  await form.locator("#connection-provider").selectOption(ESCAPE_HATCH.providerId);
-  await expect(form.locator("#connection-api-key-required")).toBeVisible();
+  if (form === "widest") {
+    // The widest form the Host can publish, chosen rather than assumed: the landing
+    // selection is the entry with no field at all, so the fields under test only exist
+    // once the escape hatch is picked.
+    const connectionForm = surface.locator("[data-connection-form]");
+    await connectionForm.locator("#connection-provider").selectOption(ESCAPE_HATCH.providerId);
+    await expect(connectionForm.locator("#connection-api-key-required")).toBeVisible();
+  }
   // The first viewport is the landing view, so the region's own scroll is reset
   // to its top rather than trusting whatever the browser restored.
   await surface.locator(".surface-content").evaluate((content) => {
@@ -211,30 +217,47 @@ const PRIMARY_CONTROLS = [
   },
 ] as const;
 
+/**
+ * Where each primary control lands, read in the window the player actually has.
+ *
+ * One reading for both viewports the describe below asserts: the rect is the rect, and a second copy
+ * of this measurement in the 400 px test is a second place the selector could drift.
+ */
+async function readPrimaryControls(page: Page) {
+  return await page.evaluate((controls) => {
+    const surface = document.querySelector<HTMLElement>('[data-testid="settings-surface"]');
+    if (surface === null) throw new Error("the Settings surface is not mounted");
+    const content = surface.querySelector<HTMLElement>(".surface-content");
+    return controls.map((entry) => {
+      const node = surface.querySelector<HTMLElement>(entry.selector);
+      if (node === null) throw new Error(`${entry.surface} is missing its ${entry.control} control`);
+      const rect = node.getBoundingClientRect();
+      return {
+        surface: entry.surface,
+        control: entry.control,
+        label: (node.textContent ?? "").trim(),
+        enabled: !(node as HTMLButtonElement).disabled,
+        top: Math.round(rect.top),
+        bottom: Math.round(rect.bottom),
+        height: Math.round(rect.height),
+        viewportHeight: window.innerHeight,
+        // The region's own scroll, so "inside the first viewport" cannot be a scrolled-to position.
+        scrollerScrollTop: content === null ? null : content.scrollTop,
+        // Whether the region scrolls at all: what a control below the fold still owes the player.
+        scrollsIn: content !== null && content.scrollHeight > content.clientHeight,
+        // The whole control, not a visible sliver: a control 16 of whose 44 px
+        // are on screen is one the player cannot aim at.
+        fullyInside: rect.top >= 0 && rect.bottom <= window.innerHeight,
+      };
+    });
+  }, PRIMARY_CONTROLS);
+}
+
 test.describe("the primary save control of every settings surface is inside the first viewport", () => {
   test("at 1440x900, against the widest connection form the Host can publish", async ({ page }) => {
-    await mountSettings(page, { width: 1440, height: 900 });
+    await mountSettings(page, { width: 1440, height: 900 }, "widest");
 
-    const readings = await page.evaluate((controls) => {
-      const surface = document.querySelector<HTMLElement>('[data-testid="settings-surface"]');
-      if (surface === null) throw new Error("the Settings surface is not mounted");
-      return controls.map((entry) => {
-        const node = surface.querySelector<HTMLElement>(entry.selector);
-        if (node === null) throw new Error(`${entry.surface} is missing its ${entry.control} control`);
-        const rect = node.getBoundingClientRect();
-        return {
-          surface: entry.surface,
-          control: entry.control,
-          top: Math.round(rect.top),
-          bottom: Math.round(rect.bottom),
-          height: Math.round(rect.height),
-          viewportHeight: window.innerHeight,
-          // The whole control, not a visible sliver: a control 16 of whose 44 px
-          // are on screen is one the player cannot aim at.
-          fullyInside: rect.top >= 0 && rect.bottom <= window.innerHeight,
-        };
-      });
-    }, PRIMARY_CONTROLS);
+    const readings = await readPrimaryControls(page);
 
     console.log(`[settings-first-viewport] ${JSON.stringify(readings)}`);
 
@@ -250,33 +273,51 @@ test.describe("the primary save control of every settings surface is inside the 
     }
   });
 
-  test("at 400x800 the control is below the fold, and that is stated rather than asserted away", async ({ page }) => {
-    await mountSettings(page, { width: 400, height: 800 });
-
-    const reading = await page.evaluate((controls) => {
-      const surface = document.querySelector<HTMLElement>('[data-testid="settings-surface"]');
-      if (surface === null) throw new Error("the Settings surface is not mounted");
-      const node = surface.querySelector<HTMLElement>(controls[0]!.selector);
-      if (node === null) throw new Error(`${controls[0]!.surface} is missing its ${controls[0]!.control} control`);
-      const rect = node.getBoundingClientRect();
-      const content = surface.querySelector<HTMLElement>(".surface-content");
-      return {
-        top: Math.round(rect.top),
-        bottom: Math.round(rect.bottom),
-        viewportHeight: window.innerHeight,
-        scrollsIn: content !== null && content.scrollHeight > content.clientHeight,
-      };
-    }, PRIMARY_CONTROLS);
-
-    console.log(`[settings-first-viewport-400] ${JSON.stringify(reading)}`);
+  test("at 400x800 the widest form's control is below the fold, and that is stated rather than asserted away", async ({ page }) => {
+    await mountSettings(page, { width: 400, height: 800 }, "widest");
+    const reading = (await readPrimaryControls(page))[0]!;
+    console.log(`[settings-first-viewport-400-widest] ${JSON.stringify(reading)}`);
 
     // A 400 px column cannot hold a six-row form and its save control at 800 px,
     // and pretending otherwise would mean shrinking controls or hiding fields.
     // What the narrow view owes is that the control is REACHABLE: the region
     // scrolls, and the control is inside the scrollable content rather than
-    // clipped or overlaid.
-    expect(reading.bottom, "the save control sits below the 400x800 fold, as measured").toBeGreaterThan(reading.viewportHeight);
+    // clipped or overlaid. The landing view - the state a fresh player actually
+    // meets - is asserted inside the window by the test below.
+    expect(reading.bottom, "the widest form's save control sits below the 400x800 fold, as measured").toBeGreaterThan(
+      reading.viewportHeight,
+    );
     expect(reading.scrollsIn, "the region scrolls, so the control below the fold is reachable").toBe(true);
+  });
+
+  /**
+   * The state a fresh player lands in: nothing chosen, so the form renders no field.
+   *
+   * This is the 400x800 reading that was missing. The widest form's control is 291 px below the fold
+   * at this window (measured: top 1091 against 800), and the test above states that as a decision
+   * about six stacked field rows rather than a defect. What nobody had measured is the viewport the
+   * player is actually handed on a first open - where the same control must be inside the window
+   * with the region at its top, because that is where they are being asked to bring a connection.
+   */
+  test("at 400x800, a fresh open hands the player its save control inside the window", async ({ page }) => {
+    await mountSettings(page, { width: 400, height: 800 }, "landing");
+    const readings = await readPrimaryControls(page);
+    console.log(`[settings-first-viewport-400-landing] ${JSON.stringify(readings)}`);
+
+    for (const reading of readings) {
+      expect(reading.label, `${reading.surface}: the landing form's save control is the one measured`).toBe(
+        "Save connection",
+      );
+      expect(reading.scrollerScrollTop, "the region is at its top when this is measured").toBe(0);
+      expect(
+        reading.fullyInside,
+        `${reading.surface}: "${reading.control}" must be fully inside the 400x800 window on a fresh open - ` +
+          `it reads top ${reading.top}, bottom ${reading.bottom}, viewport height ${reading.viewportHeight}`,
+      ).toBe(true);
+      expect(reading.height, `${reading.surface}: "${reading.control}" keeps the 44 px touch floor`).toBeGreaterThanOrEqual(
+        44,
+      );
+    }
   });
 });
 
@@ -414,7 +455,7 @@ test.describe("the saved connection row's own next action is inside the first vi
 
 test.describe("nothing configured yet is not a fault", () => {
   test("the sentence that says so carries no warning or danger chrome", async ({ page }) => {
-    await mountSettings(page, { width: 1440, height: 900 });
+    await mountSettings(page, { width: 1440, height: 900 }, "widest");
 
     const reading = await page.evaluate(() => {
       const surface = document.querySelector<HTMLElement>('[data-testid="settings-surface"]');

@@ -1,4 +1,8 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "./frontend-coverage";
+import { COMPANION_REPLY_GRAMMAR, replyConstruct } from "../src/components/companion-reply-grammar";
 
 /**
  * The conversation surface's presentation contract, mounted.
@@ -54,8 +58,10 @@ import { expect, test, type Page } from "./frontend-coverage";
 
 type ChatProbe = {
   setTranscript(texts: readonly string[]): void;
+  setConversation(entries: readonly Readonly<{ role: "player" | "companion"; text: string }>[]): void;
   setPreview(text: string | null): void;
   bubbleHtml(handle: string): string | null;
+  bubbleText(handle: string): string | null;
   narrationStyle(
     handle: string,
   ): { color: string; expectedColor: string; disabledColor: string; fontStyle: string } | null;
@@ -322,4 +328,155 @@ test("a code block and a quote carry the card tone and the glass hairline", asyn
   // The prose beside them is the bubble itself, not a card: the two blocks are
   // told apart from the paragraph, not painted the same as everything.
   expect(blocks.prose?.background).toBe("rgba(0, 0, 0, 0)");
+});
+
+// --- the shipped card's own lines ---------------------------------------------------
+
+/**
+ * The reviewed card the product actually ships, and the lines it teaches with.
+ *
+ * The card is the artefact that owns the companion's voice, so its own `first_mes` and
+ * `mes_example` are the only corpus that cannot be wrong about what a reply looks like:
+ * every line here was authored, reviewed and shipped as a turn this companion says or
+ * receives. A renderer that consumes a construct out of those lines - drops a
+ * parenthetical, or repaints it as a different construct - is a renderer that disagrees
+ * with the voice it is drawing.
+ *
+ * Population, derived from the file: the gate reads the card on disk rather than a
+ * transcription of it, so a line added to the card is judged the day it lands, and the
+ * failure names the line.
+ */
+const CARD_PATH = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "assets",
+  "tavern",
+  "presets",
+  "default-companion",
+  "card.json",
+);
+
+type CardTurn = Readonly<{ label: string; role: "player" | "companion"; text: string }>;
+
+function shippedCardTurns(): CardTurn[] {
+  const card = JSON.parse(readFileSync(CARD_PATH, "utf8")) as {
+    data: { first_mes: string; alternate_greetings?: string[]; mes_example: string };
+  };
+  const data = card.data;
+  const turns: CardTurn[] = [{ label: "first_mes", role: "companion", text: data.first_mes }];
+  for (const [index, greeting] of (data.alternate_greetings ?? []).entries())
+    turns.push({ label: `alternate_greetings[${index}]`, role: "companion", text: greeting });
+  for (const [index, scene] of data.mes_example.split("<START>").entries()) {
+    const player = scene.split("{{user}}:")[1]?.split("{{char}}:")[0]?.trim();
+    const companion = scene.split("{{char}}:")[1]?.trim();
+    if (player !== undefined && player.length > 0)
+      turns.push({ label: `mes_example[${index}].player`, role: "player", text: player });
+    if (companion !== undefined && companion.length > 0)
+      turns.push({ label: `mes_example[${index}].companion`, role: "companion", text: companion });
+  }
+  return turns;
+}
+
+/**
+ * Every word the card wrote reaches the player.
+ *
+ * The failure this catches, measured on the shipped card: `（站在田埂上看着远山没动静）`
+ * is a bracketed stage direction the card demonstrates as the player's own input, and the
+ * renderer consumed its parentheses as the leading prosody tag - the treatment for a tone
+ * the VOICE layer performs rather than speaks. A player's own action, or their note, was
+ * repainted as a direction for the companion's tone, and the syntax the card used to write
+ * it was deleted from the bubble.
+ *
+ * It is a comparison of what the player can READ against what the card wrote, not of the
+ * markup: a construct the renderer is entitled to consume (`*beat*` delimiters, and the
+ * parentheses of a leading prosody tag in the companion's own reply) is not asserted here,
+ * because the card's authored lines use neither.
+ */
+test("every word of the shipped card's own lines reaches the player", async ({ page }) => {
+  await openProbe(page);
+  const turns = shippedCardTurns();
+  expect(turns.length, "the card's authored lines are this gate's population").toBeGreaterThan(20);
+  await page.evaluate(
+    (entries) => window.chatProbe.setConversation(entries),
+    turns.map(({ role, text }) => ({ role, text })),
+  );
+
+  for (const [index, turn] of turns.entries()) {
+    const shown = await page.evaluate((handle) => window.chatProbe.bubbleText(handle), `h${index}`);
+    expect(shown, `${turn.label} (${turn.role}): the card's own words reach the player`).toBe(turn.text);
+  }
+});
+
+// --- the reply grammar ----------------------------------------------------------------
+
+/**
+ * One declaration, two halves, and this is the seam where they are held together.
+ *
+ * `companion-reply-grammar.ts` declares what a reply may be made of. The renderer's
+ * sanitizer allowlist IS that declaration's tag union, so the forward direction is a
+ * property of the construction; what the assertions below prove is that the construction
+ * still holds and that each declared construct reaches the player as the treatment the
+ * declaration promises. The failure each one catches is a real drift that shipped: the
+ * shipped card forbade every parenthesis while the renderer painted a leading one, and the
+ * card's own `mes_example` demonstrated the construct its text banned.
+ *
+ * Population: the declaration itself, so a construct added there is judged the day it
+ * lands, and a construct that stops being painted fails by name.
+ */
+test("every construct the reply grammar declares is one the bubble draws", async ({ page }) => {
+  await openProbe(page);
+  expect(COMPANION_REPLY_GRAMMAR.length, "the grammar's constructs are this gate's population").toBeGreaterThan(8);
+
+  for (const construct of COMPANION_REPLY_GRAMMAR) {
+    await setTranscript(page, [construct.sample]);
+    const html = await bubbleHtml(page, "h0");
+    switch (construct.paint) {
+      case "speech":
+        expect(html, `${construct.id}: the words are drawn as a prose block`).toContain("<p>");
+        expect(html, `${construct.id}: the words themselves are drawn`).toContain(construct.sample);
+        break;
+      case "action-beat":
+        // Painted as the narration element, and its delimiters are consumed: a beat left
+        // as literal asterisks is the renderer not drawing what the grammar declares.
+        expect(html, `${construct.id}: the beat is drawn as an element`).toContain("<em");
+        expect(html, `${construct.id}: the beat's delimiters are consumed, not printed`).not.toContain("*");
+        break;
+      case "prosody-badge":
+        expect(html, `${construct.id}: the tag is drawn as the badge plate`).toContain("data-mood-tag");
+        break;
+      case "shape":
+        for (const tag of construct.tags)
+          expect(html, `${construct.id}: the declared <${tag}> element is drawn`).toContain(`<${tag}`);
+        break;
+    }
+  }
+
+  // The grammar's `speaker` is a paint rule too, not a comment: the one construct scoped to
+  // the companion's reply must not appear on the player's. This is the direction that
+  // failed on the shipped card's `（站在田埂上看着远山没动静）`.
+  const prosody = replyConstruct("prosody-tag");
+  await page.evaluate(() => window.chatProbe.setConversation([{ role: "player", text: "（轻声）种子出芽了。" }]));
+  expect(
+    await bubbleHtml(page, "h0"),
+    `${prosody.id}: a player's parenthetical is their own stage direction, not a direction for her tone`,
+  ).not.toContain("data-mood-tag");
+
+  // And the shapes the grammar deliberately does NOT declare keep only their words. The
+  // four below are the GFM constructs a reply could plausibly write; the allowlist is the
+  // declaration's own tag union and drops everything else, so there is no second list here
+  // that could drift - this pins the intent for the four, not the whole population.
+  const undeclared = [
+    { id: "table", sample: "| a | b |\n| - | - |\n| 1 | 2 |" },
+    { id: "heading", sample: "# 标题" },
+    { id: "link", sample: "[文字](https://example.com)" },
+    { id: "image", sample: "![图](https://example.com/x.png)" },
+  ];
+  for (const shape of undeclared) {
+    await setTranscript(page, [shape.sample]);
+    const html = await bubbleHtml(page, "h0");
+    for (const tag of ["table", "th", "td", "h1", "a", "img"]) {
+      expect(html, `${shape.id}: <${tag}> is not a construct of a reply, so it is not painted`).not.toContain(`<${tag}`);
+    }
+  }
 });

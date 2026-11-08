@@ -21,9 +21,9 @@
  *    opens on an empty choice instead of a preselected entry. That removes the DEFAULT contradiction
  *    by construction - which is why the first test below is an assertion about the catalogue rather
  *    than about the form.
- *  - the entry is still reachable on the one path that remains: the explicit developer switch, whose
- *    label says so (`Operator gateway (developer only)`). There the form still renders no field, and
- *    before this change it still ended in a submit. That is the state the second test drives.
+ *  - the entry is still reachable on the one path that remains: the explicit developer switch. There
+ *    the form still renders no field, and before this change it still ended in a submit. That is the
+ *    state the second test drives.
  *
  * The rule: a control that writes must correspond to something the player configured. The value of
  * an environment-managed entry comes from the environment, so there is no player input to persist and

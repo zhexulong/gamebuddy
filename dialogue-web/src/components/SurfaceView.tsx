@@ -13,7 +13,9 @@ import { useEffect, useRef, type ReactNode, type RefObject } from "react";
  *
  * What the keyboard path still needs: selecting a surface moves focus to its
  * heading (so a keyboard user lands inside the surface they chose), and returning
- * to the conversation moves focus back to where the player types.
+ * to the conversation moves focus back to where the player types - which the
+ * conversation states by naming its own field (`restoreFocusTo`), because a
+ * surface cannot put focus on something that its own unmount has already removed.
  *
  * It owns chrome only: the caller owns the heading text, the icon, the surface
  * body, and whether this surface is the selected one at all.
@@ -27,7 +29,14 @@ export type SurfaceViewProps = Readonly<{
   icon: LucideIcon;
   /** Extra class on the region, for a surface that styles its own layout. */
   className?: string;
-  /** Where focus returns when this surface is replaced; the conversation points it at the composer. */
+  /**
+   * Where focus returns when this surface is replaced: the control that selected it.
+   *
+   * The conversation names its own AppBar entry like every peer, and it cannot name its composer: a
+   * passive cleanup runs after the commit that removed the surface's nodes, so the field is already
+   * detached when this fires (measured, see the cleanup below). The composer landing on the way BACK is
+   * the shell's move, through the field's own ref (`useSurfaceRoute`).
+   */
   restoreFocusTo?: RefObject<HTMLElement | null>;
   children: ReactNode;
 }>;
@@ -38,10 +47,22 @@ export function SurfaceView({ title, testId, icon: Icon, className, restoreFocus
   useEffect(() => {
     headingRef.current?.focus();
     return () => {
-      // A folded nav entry lives inside the `More` disclosure, which is `display: none` while closed - and `focus()` on
-      // a node that is not rendered does nothing, so the focus fell to `document.body` and a keyboard or screen-reader
-      // user restarted from the top of the page. Handing it back asks whether the target can actually take focus first,
-      // and falls back to the control that owns the folded group, which is on screen.
+      // A caller that wants a keyboard landing place names one, and this hands it back.
+      //
+      // Two targets can be named and still not be focusable, and neither is a reason to look for a
+      // third place to put the focus:
+      //
+      //  - a folded nav entry lives inside the `More` disclosure, which is `display: none` while it is
+      //    closed, and `focus()` on a node that is not rendered does nothing;
+      //  - a target inside the surface being replaced is already gone by the time this cleanup runs - a
+      //    passive cleanup runs after the commit that removed those nodes (measured: the conversation's
+      //    own textarea is no longer in the document here, so `isConnected` is false).
+      //
+      // So the one fallback is the control that owns the folded group, which is on screen exactly while
+      // an entry is folded into it. When the bar has no fold open (`> 480 px`, `style.css`), that trigger
+      // is itself `display: none` and this hands focus to nothing: the incoming surface's own mount focus
+      // takes over, which is the documented behaviour of a surface switch. That is the refusal, and it is
+      // stated here rather than papered over with a second lookup.
       const target = restoreFocusTo?.current;
       if (target !== null && target !== undefined && target.isConnected && target.offsetParent !== null) {
         target.focus();

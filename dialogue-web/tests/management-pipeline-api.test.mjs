@@ -11,6 +11,7 @@ import {
   createManagementPipelineApi,
   validateMemoryMutationCommand,
   validateMemoryRead,
+  validateAppearancePreference,
   validateModelProfileUpdateCommand,
   validateModelProfiles,
   validateSetWorldInfoBindingCommand,
@@ -878,4 +879,175 @@ test("problem-code-surface.3: no management surface flattens a caught problem", 
     [],
     "a surface that reports a failure must name the reason it caught",
   );
+});
+
+/**
+ * A cold start needs a starting point, and it must be marked as one.
+ *
+ * Measured first run before this: the model field's only population was `modelIds` - what an
+ * endpoint answered at its last probe - and the probe needs a saved connection whose own save
+ * already requires a model id. So the field could not be filled by the thing that fills it, and a
+ * player picked `DeepSeek`, saw zero options and typed `deepseek-chat` blind.
+ *
+ * `suggestedModelIds` closes that, and these cases hold the two properties that keep it honest:
+ * a suggestion never appears as served, and an id appears in exactly one of the three lists.
+ */
+function provider(overrides = {}) {
+  return {
+    providerId: "deepseek",
+    label: "DeepSeek",
+    setupFields: ["apiKey", "modelId"],
+    allowedPlayerModels: [],
+    suggestedModelIds: ["deepseek-chat", "deepseek-reasoner"],
+    escapeHatch: false,
+    environmentManaged: false,
+    ...overrides,
+  };
+}
+
+function connectionRowWithListing(overrides = {}) {
+  return connectionRow({ readiness: "ready", ...overrides });
+}
+
+test("the mirror reads a provider with suggestions, and with none at all", async () => {
+  const { validateConnectionState } = await import("../src/management-pipeline-api.ts");
+  const state = (entry) => ({ apiVersion: 1, revision: 1, active: null, connections: [], providers: [entry] });
+  // Both shapes are legal: the field is additive, and a projection that omits it publishes no
+  // suggestion. A mirror that demanded it would take the whole settings surface down against a Host
+  // that has none, which is the drift the mirror's own optional-key rule exists for.
+  assert.doesNotThrow(() => validateConnectionState(state(provider())));
+  const withoutSuggestions = provider();
+  delete withoutSuggestions.suggestedModelIds;
+  assert.doesNotThrow(() => validateConnectionState(state(withoutSuggestions)));
+  assert.doesNotThrow(() => validateConnectionState(state(provider({ suggestedModelIds: [] }))));
+  // ...and what it does accept is a bounded list of ids this product would accept as a model id.
+  for (const suggestedModelIds of [
+    ["with space"],
+    [""],
+    [7],
+    "not-a-list",
+    Array.from({ length: 33 }, (_unused, index) => `model-${index}`),
+  ])
+    assert.throws(
+      () => validateConnectionState(state(provider({ suggestedModelIds }))),
+      `expected ${JSON.stringify(suggestedModelIds)} to be refused`,
+    );
+});
+
+test("the model field offers the endpoint's answer, the Host's stated models, and a documented start", async () => {
+  const { connectionModelOptions } = await import("../src/components/connection-model-options.ts");
+
+  // Cold start: nothing probed, nothing stated, and the two documented ids are the whole list - with
+  // `probed` false so the panel can say why the served count is zero.
+  const cold = connectionModelOptions(provider(), []);
+  assert.deepEqual(cold.served, []);
+  assert.deepEqual(cold.catalog, []);
+  assert.deepEqual(cold.suggested, ["deepseek-chat", "deepseek-reasoner"]);
+  assert.equal(cold.probed, false);
+
+  // A probe that read one of them moves it up: an id is offered once, as served, and is no longer a
+  // suggestion - one id may not carry two contradictory labels.
+  const probed = connectionModelOptions(provider(), [
+    connectionRowWithListing({ modelIds: ["deepseek-chat", "deepseek-v3"], modelId: "deepseek-v3" }),
+  ]);
+  assert.deepEqual(probed.served, ["deepseek-chat", "deepseek-v3"]);
+  assert.deepEqual(probed.suggested, ["deepseek-reasoner"]);
+  assert.equal(probed.probed, true);
+
+  // What the Host states about its own endpoint outranks a suggestion of the same id, and an entry
+  // without suggestions still offers its stated models.
+  const stated = connectionModelOptions(provider({ suggestedModelIds: ["deepseek-chat"] }), []);
+  assert.deepEqual(stated.suggested, ["deepseek-chat"]);
+  const both = provider({
+    suggestedModelIds: ["deepseek-v4.1-flash"],
+    allowedPlayerModels: [
+      {
+        modelId: "deepseek-v4.1-flash",
+        modelLabel: "DeepSeek V4.1 Flash",
+        allowedThinkingLevels: ["low", "high", "max"],
+        defaultThinkingLevel: "high",
+      },
+    ],
+  });
+  assert.deepEqual(connectionModelOptions(both, []).catalog, ["deepseek-v4.1-flash"]);
+  assert.deepEqual(connectionModelOptions(both, []).suggested, []);
+
+  // Another provider's rows are not this field's population, and no provider chosen is no list.
+  assert.deepEqual(
+    connectionModelOptions(provider(), [connectionRow({ providerId: "openai", modelIds: ["gpt-4o"] })]).served,
+    [],
+  );
+  const none = connectionModelOptions(undefined, [connectionRowWithListing({ modelIds: ["deepseek-chat"] })]);
+  assert.deepEqual([none.served, none.catalog, none.suggested], [[], [], []]);
+  assert.equal(none.probed, false);
+});
+
+/**
+ * The appearance mirror against the contract that produces it.
+ *
+ * `src/management-pipeline-api.ts` is deliberately dependency-free, so it re-spells every frozen
+ * union locally instead of importing it. That is a second spelling of one fact, and the only thing
+ * that keeps the two agreeing is a test that pushes the SAME values through both sides and compares
+ * the verdicts. The failure this prevents is the one a closed union invites: a fourth appearance the
+ * Host refuses reaches the control, the player picks it, and the write is refused after the fact -
+ * or, worse, the client accepts a value the Host rejects and `data-theme` selects no token root at
+ * all, so the page keeps its old colours while the control claims the choice was saved.
+ */
+test("the appearance mirror accepts exactly the values the Host contract accepts", async () => {
+  const { TavernBrowserValidatorsV1 } = await import("../../host/src/tavern/browser-contract/index.ts");
+  const hostRead = TavernBrowserValidatorsV1.TavernAppearancePreferenceV1Schema;
+
+  const candidates = ["system", "light", "dark", "sepia", "Light", "DARK", "", "dark ", null, undefined, 0, true];
+  const agreed = [];
+  for (const appearance of candidates) {
+    const value = { revision: 7, appearance };
+    let mirrorAccepts = true;
+    try {
+      validateAppearancePreference(value);
+    } catch {
+      mirrorAccepts = false;
+    }
+    assert.equal(
+      mirrorAccepts,
+      hostRead.Check(value),
+      `the two sides disagree about ${JSON.stringify(appearance)}: a value one accepts and the other refuses is a ` +
+        "control that offers a choice the Host will not store",
+    );
+    if (mirrorAccepts) agreed.push(appearance);
+  }
+  assert.deepEqual(agreed, ["system", "light", "dark"], `examined ${candidates.length} value(s)`);
+
+  // Strictness is part of the agreement: an extra member and a negative revision are refused on both sides.
+  const extras = [
+    { revision: 7, appearance: "light", extra: true },
+    { revision: -1, appearance: "light" },
+    { appearance: "light" },
+  ];
+  for (const value of extras) {
+    assert.equal(hostRead.Check(value), false, `${JSON.stringify(value)} is refused by the contract`);
+    assert.throws(() => validateAppearancePreference(value), TavernProtocolError);
+  }
+});
+
+/**
+ * The write path's own half: a command the contract would refuse must never leave the browser.
+ *
+ * Asserted through the client rather than through its private guard, because the defect is "a fetch
+ * was sent for a value the Host refuses", and only the client can be seen sending one.
+ */
+test("the appearance client refuses a fourth appearance before it sends a write", async () => {
+  const sent = [];
+  const api = createManagementPipelineApi(async (path, init) => {
+    sent.push({ path, method: init?.method ?? "GET" });
+    return { ok: true, status: 200, async json() { return { revision: 1, appearance: "light" }; } };
+  });
+  await assert.rejects(api.updateAppearancePreference({ expectedRevision: 0, appearance: "sepia" }, HANDLE), TavernProtocolError);
+  assert.deepEqual(sent, [], "nothing reached the network");
+
+  // A legal command is one PUT carrying the session's CSRF header, and its reply is the read-back.
+  const written = await api.updateAppearancePreference({ expectedRevision: 0, appearance: "light" }, HANDLE);
+  assert.deepEqual(written, { revision: 1, appearance: "light" });
+  assert.deepEqual(sent, [
+    { path: "/api/tavern/v1/settings/appearance", method: "PUT" },
+  ]);
 });

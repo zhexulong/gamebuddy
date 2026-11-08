@@ -1,5 +1,14 @@
 import { FileText, LoaderCircle, Mic, MicOff, SendHorizontal, SlidersHorizontal, Square } from "lucide-react";
-import { type ChangeEvent, type KeyboardEvent, type Ref, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  type KeyboardEvent,
+  type Ref,
+  type RefObject,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { Messages } from "../i18n";
 
 /** Voice surface narrow state from the additive optional snapshot field. */
@@ -79,6 +88,7 @@ export function Composer({
   voice,
   draftActions,
   settingsAction,
+  fieldRef,
 }: {
   value: string;
   onChange: (text: string) => void;
@@ -119,8 +129,16 @@ export function Composer({
   draftActions?: ComposerDraftActions;
   /** Present when this surface has model settings to open. */
   settingsAction?: ComposerSettingsAction;
+  /**
+   * The field's own ref, when the surface that mounts it also needs the node - the conversation's
+   * landing place is this field (`ChatSurface`), and the surface shell moves focus to it when the
+   * player returns. It is the same node `Composer` measures for its own height, so it is the same
+   * ref rather than a second lookup by class.
+   */
+  fieldRef?: RefObject<HTMLTextAreaElement | null>;
 }) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const ownFieldRef = useRef<HTMLTextAreaElement>(null);
+  const textareaRef = fieldRef ?? ownFieldRef;
   const placeholder = useCompactComposer() ? labels.typeMessagePlaceholderCompact : labels.typeMessagePlaceholder;
 
   // The row exists while there is something for it to do: a durable draft to
