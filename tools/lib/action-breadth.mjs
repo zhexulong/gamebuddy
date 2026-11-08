@@ -459,11 +459,14 @@ function deriveVerdict({
   if (excludedAttempted.length > 0) return `narrow:excluded_action_attempted:${excludedAttempted.join(",")}`;
   if (concentration !== null && concentration.share > ACTION_BREADTH_CONCENTRATION_SHARE)
     return `narrow:concentrated_on:${concentration.actionId}`;
+  // A dimension this run could not measure must not be outvoted by one it could: without a census the baseline
+  // comparison has no denominator, so "fewer families than the best run" is an artefact of the fixture rather than a
+  // reading about the companion. The family comparison is still printed beside the verdict, as context.
+  if (censusAbsent) return "not_measured:no_snapshot_census";
   if (scenarioBaseline !== null && belowBaseline({ attemptedCount, addressableCount, familyCount, scenarioBaseline }))
     return `narrow:below_baseline:${scenarioBaseline.label}`;
   if (published.size === 0) return "not_measured:published_action_population_empty";
   if (staleExclusions.length > 0) return `not_measured:excluded_action_not_published:${staleExclusions.join(",")}`;
-  if (censusAbsent) return "not_measured:no_snapshot_census";
   if (censusFamiliesAbsent.length > 0) return `not_measured:census_family_absent:${censusFamiliesAbsent.join(",")}`;
   if (outsidePopulation.length > 0) return `not_measured:attempted_outside_population:${outsidePopulation.join(",")}`;
   if (outsideAddressable.length > 0) return `not_measured:action_outside_addressable:${outsideAddressable.join(",")}`;
