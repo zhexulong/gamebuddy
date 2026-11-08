@@ -853,13 +853,31 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       for (const listener of this.#diagnosticListeners)
         listener({ stage: "mod_refusal_received", reasonCode: message.payload.reasonCode });
     }
-    // A query response is a solicited recovery result. Its only consumer is
+    // A QUERY RESPONSE is a solicited recovery result. Its only consumer is
     // the caller (the reconnect supervisor), which then routes it through the
     // coordinator's normal receipt admission. Never race that authority with
     // an unsolicited fact listener or mutable adapter receipt state for the
     // same exact frame.
     const isSolicitedReceiptQueryResponse =
       pending?.type === "execution_receipt_query" && message.type === "execution_receipt";
+    // AN `execution_receipt` THAT ANSWERS A PENDING REQUEST IS AN ANSWER, NOT A FACT.
+    //
+    // The fact stream is the UNSOLICITED push: the Mod publishes every receipt it mints
+    // (`ExecutionManager.AddTrace` -> `ModEntry.PublishReceipt` -> `BridgeSession.TryCreateReceiptEvent`,
+    // correlated to the receipt's own requestId) so a consumer learns about work it did not ask for - a held park
+    // resolving, a body settling ticks later, a lifecycle transition. The SAME receipt also travels back as the
+    // response to the `execution_request` that asked for it (and to a `cancel_request`, and again to a replay of
+    // a settled request), correlated to that envelope. Both frames are byte-identical, so a consumer listening for
+    // facts counted one execution's terminal TWICE: measured 2026-11-09 in two live slices - one `feed_animal`
+    // execution published `succeeded/hay_placed_in_trough` twice and one `pet_farm_animal` execution published
+    // `rejected/farm_animal_already_petted_today` twice, while a `collect_animal_product` execution published one.
+    //
+    // Which layer knows the difference: only this one. The Mod cannot suppress the duplicate, because the answer
+    // to a replayed request is legitimately re-sent and the fact is what a consumer that never asked depends on.
+    // The pending-request set decides it - the same source `isSolicitedReceiptQueryResponse` reads - and NOT a
+    // property of the payload: a pushed fact is correlated to the receipt's requestId, which is never a correlation
+    // this client is waiting on.
+    const isSolicitedReceiptAnswer = pending !== undefined && message.type === "execution_receipt";
     const isSolicitedNavigationResponse =
       pending?.type === "navigation_read_request" && message.type === "navigation_read_result";
     const isSolicitedObserveSceneResponse =
@@ -1004,7 +1022,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       this.#latestReasonCode = message.payload.reasonCode;
     }
     if (
-      !isSolicitedReceiptQueryResponse &&
+      !isSolicitedReceiptAnswer &&
       ((message.type === "snapshot" && snapshotAdmitted) ||
         message.type === "execution_receipt" ||
         message.type === "semantic_event" ||

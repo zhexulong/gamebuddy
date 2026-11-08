@@ -1149,26 +1149,40 @@ test("local Stardew bridge delivers one exact-correlated terminal receipt across
         }
         if (request.type !== "execution_request") continue;
         receivedExecutionRequest = request;
-        // Deliberately emit one response only, with the request's correlation
-        // and request identity; this fixture never emits a wrong or duplicate receipt.
-        terminalReceiptsWritten++;
+        // The REAL Mod's frame sequence for one execution, byte-identical on both channels: the fact funnel pushes the
+        // receipt correlated to its own requestId (`ExecutionManager.AddTrace` -> `ModEntry.PublishReceipt` ->
+        // `BridgeSession.TryCreateReceiptEvent`), and the dispatch answers the request correlated to this envelope
+        // (`BridgeSession.TryExecute`). Measured 2026-11-09: counting both made one execution look like two terminals.
+        const receiptPayload = {
+          executionId: "execution_receipt_01",
+          requestId: request.payload.requestId,
+          actionId: request.payload.action,
+          state: "succeeded" as const,
+          reasonCode: "completed",
+          revision: 7,
+          evidence: { fixture: "protocol_shaped_named_pipe_peer" },
+        };
+        terminalReceiptsWritten += 2;
         socket.write(
           frame({
             protocolVersion: 1,
-            messageId: "mod_execution_receipt_01",
+            messageId: "mod_execution_receipt_fact_01",
+            correlationId: request.payload.requestId,
+            timestampMs: Date.now(),
+            scope,
+            type: "execution_receipt",
+            payload: receiptPayload,
+          }),
+        );
+        socket.write(
+          frame({
+            protocolVersion: 1,
+            messageId: "mod_execution_receipt_answer_01",
             correlationId: request.correlationId,
             timestampMs: Date.now(),
             scope,
             type: "execution_receipt",
-            payload: {
-              executionId: "execution_receipt_01",
-              requestId: request.payload.requestId,
-              actionId: request.payload.action,
-              state: "succeeded",
-              reasonCode: "completed",
-              revision: 7,
-              evidence: { fixture: "protocol_shaped_named_pipe_peer" },
-            },
+            payload: receiptPayload,
           }),
         );
       }
@@ -1199,10 +1213,9 @@ test("local Stardew bridge delivers one exact-correlated terminal receipt across
       deadlineMs: Date.now() + 10_000,
     });
 
-    assert.equal(terminalReceiptsWritten, 1);
+    assert.equal(terminalReceiptsWritten, 2, "the peer wrote the fact and the answer, exactly as the Mod does");
     assert.equal(receivedExecutionRequest?.protocolVersion, 1);
     assert.deepEqual(receivedExecutionRequest?.scope, scope);
-    assert.equal(receivedExecutionRequest?.correlationId, facts[0]?.correlationId);
     assert.equal(receivedExecutionRequest?.payload.requestId, "request_receipt_01");
     assert.equal(receivedExecutionRequest?.payload.idempotencyKey, "idempotency_receipt_01");
     assert.equal(receivedExecutionRequest?.payload.action, "move_to_tile");
@@ -1212,11 +1225,104 @@ test("local Stardew bridge delivers one exact-correlated terminal receipt across
     assert.equal(receipt.requestId, "request_receipt_01");
     assert.equal(receipt.executionId, "execution_receipt_01");
     assert.equal(receipt.state, "succeeded");
-    assert.equal(facts.length, 1);
+    // ONE EXECUTION, ONE TERMINAL: the pushed fact is the fact-stream delivery, and the answer that carried the same
+    // bytes to this caller is an answer. Counting it again made a live `feed_animal` report two
+    // `succeeded/hay_placed_in_trough` terminals for one execution.
+    assert.equal(facts.length, 1, "a receipt answering a pending request is an answer, not a fact");
+    assert.equal(facts[0]?.correlationId, "request_receipt_01", "the fact is the push, correlated to its requestId");
     assert.equal(facts[0]?.payload.requestId, receipt.requestId);
     assert.equal(facts[0]?.payload.executionId, receipt.executionId);
+    assert.deepEqual(facts[0]?.payload, receipt);
     assert.equal(diagnostics, 0);
     assert.equal(closes, 0);
+    client.close();
+  } finally {
+    peer?.destroy();
+    await close(server);
+  }
+});
+
+test("local Stardew bridge delivers an unsolicited terminal receipt as a fact", async () => {
+  // The other half of the same classification: a terminal the Mod produces WITHOUT anyone waiting for it - a held
+  // park resolving, a body settling ticks after its dispatch answered, a lifecycle transition - reaches fact
+  // listeners exactly once. Suppressing receipts by shape or by "already saw its execution" would blind this
+  // channel; the only thing excluded is a frame that answers a request this client is currently waiting on.
+  const pipeName = `gamebuddy_unsolicited_receipt_${process.pid}_${Date.now()}`;
+  let peer: Socket | undefined;
+  const server = createServer((socket: Socket) => {
+    peer = socket;
+    let buffer = Buffer.alloc(0);
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      while (buffer.byteLength >= 4) {
+        const length = buffer.readInt32LE(0);
+        if (buffer.byteLength < 4 + length) return;
+        const request = JSON.parse(buffer.subarray(4, 4 + length).toString("utf8")) as BridgeMessage;
+        buffer = buffer.subarray(4 + length);
+        if (request.type !== "hello") continue;
+        socket.write(
+          frame({
+            ...request,
+            messageId: "mod_hello_unsolicited_receipt",
+            type: "hello_ack",
+            payload: {
+              sessionId: "session_unsolicited_receipt",
+              capabilities: ["move_to_tile"],
+              catalogRevision: 1,
+              policyIdentity: mockPolicyIdentity,
+              enabledActionIds: ["move_to_tile"],
+              presentationLocale: "en-US",
+              registrations: [
+                {
+                  actionId: "move_to_tile",
+                  familyId: "movement_navigation",
+                  identityVersion: 1,
+                  lifecycle: "published",
+                  kind: "execution",
+                },
+              ],
+              runtimeRole: "native_local_fixture",
+              launchGeneration: null,
+            },
+          }),
+        );
+        socket.write(
+          frame({
+            protocolVersion: 1,
+            messageId: "mod_execution_receipt_unsolicited_01",
+            correlationId: "request_parked_expiry_01",
+            timestampMs: Date.now(),
+            scope,
+            type: "execution_receipt",
+            payload: {
+              executionId: "execution_parked_expiry_01",
+              requestId: "request_parked_expiry_01",
+              actionId: "move_to_tile",
+              state: "rejected",
+              reasonCode: "waiting_for_body:body_owned_by_activity",
+              revision: 9,
+              evidence: { detail: "held_ms=1840" },
+            },
+          }),
+        );
+      }
+    });
+  });
+  await new Promise<void>((resolvePromise, reject) =>
+    server.listen(`\\\\.\\pipe\\${pipeName}`, () => resolvePromise()).once("error", reject),
+  );
+  try {
+    const client = await LocalStardewBridgeClient.connect(scope, pipeName, token, testAdapter);
+    const facts: Extract<BridgeMessage, { type: "execution_receipt" }>[] = [];
+    client.onFact((fact) => {
+      if (fact.type === "execution_receipt") facts.push(fact);
+    });
+    for (let attempt = 0; attempt < 200 && facts.length === 0; attempt++) {
+      await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 5));
+    }
+    assert.equal(facts.length, 1, "a receipt nobody asked for is a fact, and it arrives exactly once");
+    assert.equal(facts[0]?.payload.executionId, "execution_parked_expiry_01");
+    assert.equal(facts[0]?.payload.reasonCode, "waiting_for_body:body_owned_by_activity");
     client.close();
   } finally {
     peer?.destroy();

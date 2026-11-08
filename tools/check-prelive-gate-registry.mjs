@@ -150,6 +150,15 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:workflow-expressions",
   },
   {
+    path: "tools/audit-airp-scorecard.mjs",
+    reason:
+      "arguments: needs one finished run's result.json and the Pi session files under its own runtime-root, so no rung " +
+      "before a launch can run it; measured 2026-11-07 on round39: `first visible text 861 s`, `plans preceded by a " +
+      "stated intent 8 of 30`, `executions timed 124 of 124` - every metric the artifact cannot support is printed as " +
+      "not_measured with its reason instead of being estimated",
+    runsIn: "on-demand",
+  },
+  {
     path: "tools/audit-long-session-metrics.mjs",
     reason:
       "arguments: needs one finished run's result.json (--result) and reads its session transcript, so no rung before a " +
@@ -505,6 +514,16 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-stardew-execution-receipt-field-parity.mjs",
     reason: "elsewhere: static receipt-field parity gate, runs on every push in the CI gates job",
     runsIn: "pnpm audit:stardew-execution-receipt-field-parity",
+  },
+  {
+    path: "tools/check-stardew-execution-terminal-uniqueness.mjs",
+    reason:
+      "arguments: requires `--artifact <path>` pointing at one FINISHED run's receipt reading (the frames its fact" +
+      " listeners emitted, and the answers its caller received), so there is nothing to compare before a run exists;" +
+      " measured 2026-11-08 on a recorded run it examines 159 terminal frames and reports `duplicated: 0`, because the" +
+      " Mod publishes each receipt once and the duplicate this gate exists for was the client counting the answer" +
+      " beside the push",
+    runsIn: "pnpm check:stardew-execution-terminal-uniqueness",
   },
   {
     path: "tools/check-stardew-fixture-scenario-wiring.mjs",
