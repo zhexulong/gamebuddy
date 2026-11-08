@@ -260,8 +260,21 @@ public sealed record BridgeSoilTile(int X, int Y, bool HoeDirt);
 /// claim names instead of guessing it from an id. A tool the Mod's one mapping has no word for reports
 /// `unknown` rather than the nearest-looking guess.
 /// </para>
+///
+/// <para>
+/// <see cref="UpgradeLevel"/> is ABSENT on the wire for a tool that cannot be upgraded, and that is the whole reason
+/// it is nullable. The engine gives a non-upgradable tool `-1` rather than `0` (measured on Stardew Valley 1.6.15,
+/// build 24356: `new MilkPail().UpgradeLevel == -1` and `new Shears().UpgradeLevel == -1`, while Axe, Hoe, Pickaxe
+/// and WateringCan are `0`), and the Host reads a level as an upgrade tier: a negative one is not a tier. Absent
+/// therefore means "this tool does not upgrade" and never "unknown" - sending the engine's sentinel instead closed
+/// the bridge with `invalid_snapshot:toolSlots` on the collection lane, whose pack carries a Milk Pail.
+/// </para>
 /// </summary>
-public sealed record BridgeToolSlot(int Slot, string Label, int UpgradeLevel, string Category);
+public sealed record BridgeToolSlot(
+    int Slot,
+    string Label,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? UpgradeLevel,
+    string Category);
 
 public sealed record BridgeWateringCanFact(int Slot, string QualifiedItemId, string Label, int Water, int Max);
 

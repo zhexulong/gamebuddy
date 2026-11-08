@@ -206,6 +206,12 @@ public sealed class SnapshotLoopbackExportTests
                 new ChestItem("(O)388", 99),
             });
             sample.world.PlaceVillager("Abigail", x: 3, y: 4, friendship: null);
+            // A REAL pack, because `toolSlots` is the family the collection lane closed the bridge on: the engine gives
+            // a tool that cannot be upgraded `-1` (measured on Stardew Valley 1.6.15 build 24356), the Host reads a
+            // level as an upgrade tier, and the wire contract says an absent level means "this tool does not upgrade".
+            // An Axe at level 0 beside it keeps both forms in the sample, so the Host accepts the pair rather than one.
+            sample.world.PutToolInPackSlot(0, typeof(StardewValley.Tools.Axe), "(T)Axe", upgradeLevel: 0);
+            sample.world.PutToolInPackSlot(1, typeof(StardewValley.Tools.MilkPail), "(T)MilkPail", upgradeLevel: -1);
             sample.world.StandAt(2, 2);
             return sample;
         }
@@ -223,6 +229,7 @@ public sealed class SnapshotLoopbackExportTests
                          ("grassTargets", "DiscoverGrassTargets"),
                          ("chests", "DiscoverChestStates"),
                          ("npcRelationshipTargets", "DiscoverNpcRelationshipTargets"),
+                         ("toolSlots", "DiscoverToolSlots"),
                      })
             {
                 object discovered = this.world.DiscoverFamily(discovery);

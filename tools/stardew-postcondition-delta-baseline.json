@@ -1,0 +1,22 @@
+{
+  "schema": "gamebuddy-stardew-postcondition-delta-baseline/v1",
+  "reason": "Write actions that declare a postcondition and for which NO layer names a reading of the member it is about, measured on this tree. Recorded debt, not an accepted value: each action's succeeded evidence carries neither a `<member>_before`/`<member>_after` pair with the after side read off the object graph nor an `expected`/`actual` assertion, and the Host's completion-evidence contract for it requires no such key. The fix is the delta (or `postcondition_delta_unavailable:<member>:<why>`) in the action's own succeeded evidence, or the pair in its Host contract where the action is a host composite. Every entry expires in both directions: the gate refuses any unrecorded action of this shape by name, and an entry whose action gains a reading is `stale_postcondition_delta_debt` until it is deleted.",
+  "entries": [
+    "answer_dialogue",
+    "clear_cask",
+    "dismiss_modal",
+    "dress_mannequin",
+    "enter_mine",
+    "express_emote",
+    "load_building_chest",
+    "mount_transport",
+    "navigate_to_destination",
+    "respond_level_up",
+    "select_mine_elevator_floor",
+    "send_multiplayer_chat",
+    "set_sign_display",
+    "sleep",
+    "toggle_tool_light",
+    "use_mine_ladder"
+  ]
+}

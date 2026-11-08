@@ -73,6 +73,8 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativeLocalInteractNpcWithItemFixture", "InitializeNativeLocalJodiHarvestDeliverFixture",
         "InitializeNativeLocalStrawberryCovenantFixture",
         "InitializeNativeLocalPlaySessionFixture", "InitializeNativeLocalNpcRelationshipFixture",
+        // The play-session world's animal Given: the coop it places and the one adult animal inside it.
+        "InstallNativeLocalPlaySessionAnimalGiven", "TryFindNativeLocalPlaySessionAnimalSite",
         "InitializeNativeLocalPetFixture", "InitializeNativeLocalMoveStallProbeFixture",
         // The declared hand: the fixture config's one free-text Given, placed after the scenario's own Given so no
         // scenario initializer can clear it. Both halves live here for the same reason every other initializer does.

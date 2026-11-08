@@ -34,9 +34,19 @@
  * `live_action_working_save_present:<path>` before any mutation, carrying the save's own mtime, game id and calendar so
  * a reader can see which world it is instead of taking "dirty" on faith.
  *
- * AND AN EMPTY TARGET FAMILY IS NAMED WHERE IT IS READ. The count is only knowable from the first snapshot, so the
- * family is checked there — before the executor is invoked — and an empty family is
- * `live_action_target_family_empty:<family>:<scenario>`, never a run with no target and no receipt.
+ * AND THE TARGET QUESTION IS ANSWERED BY NAME, FROM ONE OBSERVATION. Four outcomes are four different facts, and a
+ * run that cannot tell them apart costs a whole game launch to re-learn: `live_action_action_not_advertised:<action>`
+ * (this world never published the action), `live_action_family_absent:<family>` (it did, and the snapshot does not
+ * carry the family at all), `live_action_family_empty:<family>` (the family is there with no rows), and
+ * `live_action_target_chosen:<targetId>` (there is a row, and this run carries it forward). Measured 2026-11-09:
+ * `--action feed_animal` refused `native_snapshot_not_actionable` with `target.count: null` and could not say whether
+ * the fixture had armed a trough, because the target question was never asked. The snapshot revision travels beside
+ * every one of them.
+ *
+ * AND THE FIRST OBSERVATION IS TAKEN WHEN THE WORLD CAN ACT. The bridge opens while the fixture's own `warpFarmer`
+ * fade is still in flight, so the snapshot that arrives first reports `actionable: false` — the same fact every
+ * native-local runner already waits out (`waitForActionable`, measured on the geode and pet-farm-animal lanes at
+ * ~300 ms). A transition in flight is not a world that cannot act, and it must not be mistaken for a missing family.
  * *
  * HELD-STATE PERTURBATION (`--held <tool>`). `integrations/stardew/tests/.../HeldStatePerturbationTests.cs` states the
  * rule this repeats: with the wrong thing in hand an action must still END IN AN ANSWER — it selects what it needs and
@@ -54,6 +64,14 @@
  *
  * The two flags are mutually exclusive (`live_action_held_conflict`): one puts a tool there through an action, the other
  * declares a fixture Given, and a run that asked for both would have no single hand to report.
+ *
+ * AND THE RUN IS JUDGED ON THE RECEIPT ITS EXECUTOR NAMED. A runner may dispatch the same action twice on purpose:
+ * `pet_farm_animal` re-attempts its own pet from a fresh observation to prove the engine refuses the second one BY NAME,
+ * and that refusal is a FALSIFIER, not a vote. Judging "the last terminal for this action" therefore read a passing run
+ * as `blocked` / `receipt_state:rejected` (measured 2026-11-09). The executor's own reason code says which execution the
+ * run was, so the terminal carrying it is the answer; a run whose executor names something no terminal carries is
+ * `no_terminal_receipt_matching_executor:<reason>` beside `terminals:<reason:state,...>`, and every terminal is printed
+ * in the block either way so a reader sees the probe next to the execution it was judged on.
  *
  * THE TEARDOWN IS MEASURED, NOT ASSUMED. The game is stopped by the EXACT pid the launcher created, and the survivors are
  * read back until the budget is spent; a process that is still alive is the run's ending
@@ -81,7 +99,10 @@
  *   invalid_held_item:<value>                             not a qualified item id (`(O)72`, `(H)0`, ...)
  *
  * ENDINGS that are blocked rather than passed, because the world or the process would otherwise be left dirty:
- *   live_action_target_family_empty:<family>:<scenario>   the armed world published no target this action can name
+ *   live_action_action_not_advertised:<action>            this world never published the action under test
+ *   live_action_family_absent:<family>                    it did, and the snapshot carries no such family
+ *   live_action_family_empty:<family>                     the family is published with no rows in it
+ *   live_action_world_not_actionable:<action>             a target exists, and the actor still cannot act
  *   live_action_held_item_not_in_hand:<id>                the fixture declared a hand the world did not show
  *   live_action_process_still_running:<pids>              a Stardew process this run started is still alive
  *   live_action_fixture_not_restored / live_action_working_save_not_restored   the unwind could not finish
@@ -110,6 +131,7 @@ import {
   connectNativeLocalClient,
   observeFresh,
   TERMINAL_STATES,
+  waitForActionable,
   waitForFreshSnapshot,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { parseReceiptFields } from "./lib/stardew-receipt-evidence.mjs";
@@ -323,6 +345,64 @@ export function targetRows(snapshot, field) {
     x: Number.isInteger(row?.x) ? row.x : null,
     y: Number.isInteger(row?.y) ? row.y : null,
   }));
+}
+
+/**
+ * Which of four outcomes one snapshot is, by NAME.
+ *
+ * The four are different facts and each one sends a reader somewhere else: the action is not advertised here (the
+ * fixture armed a world this Mod does not publish the action for), it is advertised and the snapshot does not carry
+ * the family at all (the capability was published with no discovery behind it), it carries the family with no rows
+ * (the family ran and found nothing), or there is a row to name. A single "no target" answer served none of them —
+ * measured 2026-11-09 on `feed_animal`, where `target.count: null` was read as every one of the first three.
+ *
+ * Pure over the snapshot so every branch can be pinned without a game.
+ */
+export function describeTargetOutcome(snapshot, { action, targetField, policy = "nearest" }) {
+  const revision = Number.isInteger(snapshot?.revision) ? snapshot.revision : null;
+  const actionAdvertised = Array.isArray(snapshot?.capabilities) && snapshot.capabilities.includes(action);
+  if (!actionAdvertised)
+    return { code: `live_action_action_not_advertised:${action}`, ok: false, revision, rows: [], chosen: null };
+  if (targetField !== null && !Array.isArray(snapshot?.[targetField]))
+    return { code: `live_action_family_absent:${targetField}`, ok: false, revision, rows: [], chosen: null };
+  const rows = targetField === null ? [] : targetRows(snapshot, targetField);
+  if (targetField !== null && rows.length === 0)
+    return { code: `live_action_family_empty:${targetField}`, ok: false, revision, rows, chosen: null };
+  const chosen = chooseTargetRow(rows, policy, snapshot?.tile);
+  return {
+    code: `live_action_target_chosen:${chosen?.targetId ?? "(no-target)"}`,
+    ok: true,
+    revision,
+    rows,
+    chosen,
+  };
+}
+
+/**
+ * The one observation this run makes before the executor: wait for a world that can act, then name what it offers.
+ *
+ * The wait is the part every other native-local runner already has, and its absence here was the whole of the 2026-11-09
+ * `feed_animal` refusal: the fixture warps the actor into the barn, `nativeLocalPlayerFixtureInitialized` becomes true
+ * inside the warp's own `OnWarped`, the bridge opens, and the first snapshot therefore reads `actionable: false` while
+ * a fade is still running. A world that never settles still fails closed, and it fails closed with the target question
+ * answered beside it — which is what tells a reader whether the fixture armed anything at all.
+ */
+export async function observeForTarget(client, { plan, timeoutMs }) {
+  const first = await observeFresh(client);
+  let snapshot = first;
+  try {
+    snapshot = await waitForActionable(client, first, timeoutMs);
+  } catch (error) {
+    if (!(error instanceof Error) || !/^native_snapshot_not_actionable/u.test(error.message)) throw error;
+  }
+  return {
+    snapshot,
+    outcome: describeTargetOutcome(snapshot, {
+      action: plan.action,
+      targetField: plan.targetField,
+      policy: plan.target,
+    }),
+  };
 }
 
 /**
@@ -886,12 +966,67 @@ function bound(text, limit) {
   return text.length <= limit ? text : `${text.slice(0, limit)}…`;
 }
 
+/**
+ * Every blocker a run has to clear, from the executor's verdict, the receipt it named, and the ending.
+ *
+ * Exported because the LIST is the verdict: "the action passed" is `blockers.length === 0`, and a caller that cannot
+ * drive a live game still has to be able to ask whether a run the executor called passed would read as blocked.
+ */
+export function describeBlockers({ action, executorState, executorReason, receipts, held, perturbation, ending }) {
+  const blockers = [];
+  if (executorState !== "passed") blockers.push(`executor_state:${executorState}`);
+  if (held !== null && perturbation?.answer?.ok !== true)
+    blockers.push(`held_perturbation:${perturbation?.answer?.answer ?? "no_answer"}`);
+  const judged = judgedReceipt({ receipts, action, executorReason });
+  if (judged.mismatch !== null)
+    blockers.push(judged.mismatch, `terminals:${judged.seen.length === 0 ? "(none)" : judged.seen.join(",")}`);
+  else if (judged.receipt === null) blockers.push("no_terminal_receipt");
+  else if (judged.receipt.state !== "succeeded" && judged.receipt.state !== "partially_succeeded")
+    blockers.push(`receipt_state:${judged.receipt.state}`);
+  if (ending !== null && ending !== undefined) blockers.push(ending);
+  return blockers;
+}
+
 function terminalReceiptFor(receipts, actionId) {
-  const matching = receipts.filter(
+  const matching = terminalReceiptsFor(receipts, actionId);
+  return matching.length === 0 ? null : matching[matching.length - 1];
+}
+
+/** Every terminal one action minted, in arrival order. */
+export function terminalReceiptsFor(receipts, actionId) {
+  return receipts.filter(
     (receipt) =>
       receipt?.actionId === actionId && TERMINAL_STATES.has(receipt.state) && typeof receipt.requestId === "string",
   );
-  return matching.length === 0 ? null : matching[matching.length - 1];
+}
+
+/**
+ * The terminal receipt this run is JUDGED on: the one the executor itself named.
+ *
+ * A runner may dispatch the same action twice on purpose. `pet_farm_animal` re-attempts its own pet from a fresh
+ * observation to prove the engine refuses the second one BY NAME, so "the last terminal for this action" is the probe,
+ * not the action - measured 2026-11-09, where a passing run read `blocked` / `receipt_state:rejected` because the
+ * deliberate refusal had arrived last. The executor's reason code is the one statement of WHICH execution this run was,
+ * so a terminal carrying it is the answer.
+ *
+ * A run whose executor names something no terminal carries fails closed and says so with the candidates it did see:
+ * "there were no terminals" and "none of them is the answer I was given" are different facts. When nothing named a
+ * reason at all (a failure before or during the action), the last terminal is used, exactly as before.
+ */
+export function judgedReceipt({ receipts, action, executorReason }) {
+  const terminals = terminalReceiptsFor(receipts, action);
+  const seen = terminals.map((receipt) => `${String(receipt.reasonCode)}:${String(receipt.state)}`);
+  if (typeof executorReason !== "string" || executorReason.length === 0)
+    return {
+      receipt: terminals.length === 0 ? null : terminals[terminals.length - 1],
+      terminals,
+      seen,
+      mismatch: null,
+    };
+  const matching = terminals.filter((receipt) => receipt.reasonCode === executorReason);
+  if (matching.length === 0)
+    return { receipt: null, terminals, seen, mismatch: `no_terminal_receipt_matching_executor:${executorReason}` };
+  return { receipt: matching[matching.length - 1], terminals, seen, mismatch: null };
 }
 
 function summarizeReceipt(receipt) {
@@ -962,8 +1097,10 @@ export function buildBlock({
   restore,
   startedAt,
   blockers = [],
+  executorReason = "",
 }) {
-  const actionReceipt = summarizeReceipt(terminalReceiptFor(receipts, plan.action));
+  const judged = judgedReceipt({ receipts, action: plan.action, executorReason });
+  const actionReceipt = summarizeReceipt(judged.receipt);
   const chosen = target?.chosen ?? null;
   const receiptTarget = actionReceipt?.target ?? null;
   return {
@@ -997,6 +1134,9 @@ export function buildBlock({
     heldItem,
     evidence: actionReceipt?.evidence ?? null,
     receipt: actionReceipt,
+    // EVERY terminal this action minted, so a reader sees the probe a runner dispatched on purpose beside the execution
+    // the run was judged on.
+    terminals: judged.terminals.map((receipt) => summarizeReceipt(receipt)),
     reread: snapshotProjection(reread, plan.targetField),
     perturbation,
     executor: { runnerFile: plan.executor.runnerFile, export: plan.executor.export, shape: plan.executor.shape },
@@ -1217,7 +1357,8 @@ export async function runOneAction({ plan, session, config }) {
     }
   }
 
-  const snapshotBefore = await observeFresh(session.client, { actionable: true });
+  const observed = await observeForTarget(session.client, { plan, timeoutMs: plan.terminalTimeoutMs });
+  const snapshotBefore = observed.snapshot;
   const heldBefore = describeHeldState(snapshotBefore);
   // The declared hand is a fixture Given, so the FIRST snapshot is what decides whether it was honoured. The Mod's own
   // initializer can refuse (`fixture_held_item_unknown`, `_no_room`) without the config saying anything, and a world that
@@ -1228,18 +1369,29 @@ export async function runOneAction({ plan, session, config }) {
       declared: plan.heldItem,
       observed: heldBefore,
     });
-  let target = null;
-  if (plan.targetField !== null) {
-    const rows = targetRows(snapshotBefore, plan.targetField);
-    // The family's population exists only here, so this is where it is judged — before the executor is invoked, so the
-    // run cannot spend an action on a world with nothing to name. Both halves of the answer are named: the family the
-    // snapshot did not publish, and the fixture scenario that was supposed to arm it.
-    if (rows.length === 0)
-      throw refusal(
-        `live_action_target_family_empty:${plan.targetField}:${plan.scenario.length === 0 ? "(ordinary-world)" : plan.scenario}`,
-      );
-    target = { rows, chosen: chooseTargetRow(rows, plan.target, snapshotBefore.tile) };
-  }
+  // The target question is answered here, before the executor is invoked, so the run cannot spend an action on a world
+  // with nothing to name. The refusal is one of three NAMED facts (see `describeTargetOutcome`), never a bare "no
+  // target", and the snapshot revision travels with it.
+  if (!observed.outcome.ok)
+    throw refusal(observed.outcome.code, undefined, {
+      revision: observed.outcome.revision,
+      actionable: snapshotBefore.actionable === true,
+      activeExecution: snapshotBefore.activeExecution ?? null,
+      family: plan.targetField,
+      rows: observed.outcome.rows.length,
+    });
+  // A target this run can name, on an actor that still cannot act: the transition the wait above gave up on is the
+  // run's ending, named, rather than an action spent against a world mid-fade.
+  if (snapshotBefore.actionable !== true || snapshotBefore.activeExecution != null)
+    throw refusal(`live_action_world_not_actionable:${plan.action}`, undefined, {
+      revision: observed.outcome.revision,
+      target: observed.outcome.chosen?.targetId ?? null,
+      activeExecution: snapshotBefore.activeExecution ?? null,
+    });
+  const target = plan.targetField === null ? null : { rows: observed.outcome.rows, chosen: observed.outcome.chosen };
+  process.stderr.write(
+    `[live-action] ${observed.outcome.code} revision=${String(observed.outcome.revision)} location=${String(snapshotBefore.location)}\n`,
+  );
 
   const executorResult = await plan.executor.invoke(session.client, receipts, config);
 
@@ -1386,19 +1538,21 @@ export async function runLiveAction(plan) {
     return { block, failure, executorResult };
   }
 
-  const actionReceipt = terminalReceiptFor(receipts, plan.action);
   const executorState = typeof executorResult?.state === "string" ? executorResult.state : "blocked";
+  const executorReason = typeof executorResult?.reasonCode === "string" ? executorResult.reasonCode : "";
   // Stepwise, and every absence is a NAMED blocker rather than a silent pass: an executor that reports success the
   // Mod never minted a receipt for is the one thing this tool must not call a pass.
-  const blockers = [];
-  if (executorState !== "passed") blockers.push(`executor_state:${executorState}`);
-  if (plan.held !== null && perturbation?.answer?.ok !== true)
-    blockers.push(`held_perturbation:${perturbation?.answer?.answer ?? "no_answer"}`);
-  if (actionReceipt === null) blockers.push("no_terminal_receipt");
-  else if (actionReceipt.state !== "succeeded" && actionReceipt.state !== "partially_succeeded")
-    blockers.push(`receipt_state:${actionReceipt.state}`);
-  if (ending !== null) blockers.push(ending);
+  const blockers = describeBlockers({
+    action: plan.action,
+    executorState,
+    executorReason,
+    receipts,
+    held: plan.held,
+    perturbation,
+    ending,
+  });
   const passed = blockers.length === 0;
+  const judged = judgedReceipt({ receipts, action: plan.action, executorReason });
   const block = buildBlock({
     plan,
     verdict: passed ? "passed" : "blocked",
@@ -1406,7 +1560,7 @@ export async function runLiveAction(plan) {
       ending ??
       (typeof executorResult?.reasonCode === "string" && executorResult.reasonCode.length > 0
         ? executorResult.reasonCode
-        : (actionReceipt?.reasonCode ?? "no_terminal_receipt")),
+        : (judged.receipt?.reasonCode ?? "no_terminal_receipt")),
     target,
     held,
     heldItem,
@@ -1416,6 +1570,7 @@ export async function runLiveAction(plan) {
     restore,
     startedAt,
     blockers,
+    executorReason,
   });
   return { block, failure: null, executorResult };
 }

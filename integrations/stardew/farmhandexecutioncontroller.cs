@@ -4140,13 +4140,30 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return result;
     }
 
+    /// <summary>
+    /// Every tool in the pack, with an upgrade level ONLY for the tools that upgrade.
+    ///
+    /// <para>
+    /// `Tool.UpgradeLevel` is `-1` by CONSTRUCTION for a tool that cannot be upgraded — measured on Stardew Valley
+    /// 1.6.15 (build 24356): `new MilkPail().UpgradeLevel == -1` and `new Shears().UpgradeLevel == -1`, while Axe, Hoe,
+    /// Pickaxe and WateringCan are `0`. The wire contract's own rule (`host/src/protocol-target-facts.ts`,
+    /// `isToolSlotFact`) reads a level as an upgrade tier, refuses a negative one and closes the bridge with
+    /// `invalid_snapshot:toolSlots`, and states that an ABSENT level means "this tool does not upgrade". So the
+    /// producer speaks that form rather than sending the engine's sentinel: measured 2026-11-09, `collect_animal_product`
+    /// could not read a single snapshot because its fixture stocks the pack with a Milk Pail.
+    /// </para>
+    /// </summary>
     private static IReadOnlyList<BridgeToolSlot> DiscoverToolSlots(IList<Item?> items)
     {
         List<BridgeToolSlot> slots = new();
         for (int slot = 0; slot < items.Count; slot++)
         {
             if (items[slot] is not Tool tool) continue;
-            slots.Add(new BridgeToolSlot(slot, DescribeTool(tool) ?? "tool", tool.UpgradeLevel, ToolCategory(tool) ?? "unknown"));
+            slots.Add(new BridgeToolSlot(
+                slot,
+                DescribeTool(tool) ?? "tool",
+                tool.UpgradeLevel >= 0 ? tool.UpgradeLevel : null,
+                ToolCategory(tool) ?? "unknown"));
         }
 
         return slots;

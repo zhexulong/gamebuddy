@@ -1454,7 +1454,13 @@
             "harvestTargets",
             "petBowlTargets",
             "slimeHutchTroughTargets",
-            "baitCrabPotTargets"
+            "baitCrabPotTargets",
+            "animalDoorTargets",
+            "buildingChestTargets",
+            "fishPondTargets",
+            "obeliskTargets",
+            "harvestWhereabouts",
+            "wateringWhereabouts"
           ],
           "description": "The WIRE FIELD NAME of the discovery family this row explains, from the closed set of families that report exclusions (`ExclusionReportingCapabilities` in farmhandexecutioncontroller.cs). One array still attributes every row to the list whose emptiness it explains, and a row cannot name a list nobody publishes. `tools/check-stardew-discovery-exclusions.mjs` compares this enum with the Mod's declaration by name."
         },
@@ -1475,8 +1481,7 @@
         "count": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 1000,
-          "description": "How many subjects this family's filter took for this reason. A COUNT, never an identity: the subject the filter removed is by definition not addressable. At least one, because a zero-count exclusion is not an exclusion."
+          "description": "How many subjects this family's filter took for this reason. A COUNT, never an identity: the subject the filter removed is by definition not addressable. At least one, because a zero-count exclusion is not an exclusion. No upper bound: `harvestWhereabouts` and `wateringWhereabouts` count a whole crop population across every loaded location, which is thousands on a large farm."
         }
       }
     },
@@ -1517,6 +1522,11 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 128
+        },
+        "upgradeLevel": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The upgrade tier of a tool that upgrades. ABSENT for a tool that cannot be upgraded: the engine gives those -1 (MilkPail, Shears) and a level is a tier, not a sentinel. Absent means \"this tool does not upgrade\", never \"unknown\"."
         },
         "category": {
           "enum": [

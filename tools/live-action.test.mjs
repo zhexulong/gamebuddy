@@ -51,8 +51,11 @@ import {
   describeHeldState,
   describePlan,
   describeRecovery,
+  describeTargetOutcome,
+  describeBlockers,
   EXECUTOR_CALL_SHAPES,
   heldToolCategories,
+  judgedReceipt,
   parseLiveActionArguments,
   planLiveAction,
   planRecovery,
@@ -822,12 +825,15 @@ test("one action runs end to end over a stub bridge: perturbation, executor, rec
   assert.ok(outcome.snapshotReread.revision > outcome.snapshotBefore.revision);
 });
 
-test("an empty target family is refused at the first observation, naming the family and the armed scenario", async () => {
+test("an empty target family is refused at the first observation, naming the family it read", async () => {
   const { plan, config } = await planForStub({ held: null });
   const session = stubBridgeSession({ pets: [] });
   const error = await refusalOfAsync(() => runOneAction({ plan, session, config }));
 
-  assert.equal(error?.message, "live_action_target_family_empty:petTargets:native_pet_animal_v1");
+  assert.equal(error?.message, "live_action_family_empty:petTargets");
+  // The revision the answer was read at travels beside it, so a reader can tell which world said this.
+  assert.equal(error?.detail?.revision, 10);
+  assert.equal(error?.detail?.rows, 0);
   // The whole point: the executor never ran, so there is no action and no receipt to mistake for a measurement.
   assert.deepEqual(session.executed, []);
   assert.deepEqual(session.receipts, []);
@@ -857,6 +863,72 @@ test("an empty target family is refused at the first observation, naming the fam
     chosen: null,
     matchesReceipt: null,
   });
+});
+
+test("a family the snapshot never published is refused as ABSENT, never as an empty family", async () => {
+  const { plan, config } = await planForStub({ held: null });
+  const session = stubBridgeSession({ publishFamily: false });
+  const error = await refusalOfAsync(() => runOneAction({ plan, session, config }));
+
+  // Measured 2026-11-09: `feed_animal` refused `native_snapshot_not_actionable` with `count: null` and a reader could
+  // not tell "the fixture armed no trough" from "the family is empty" from "the action is not here at all". These
+  // three tests exist so that those three answers can never be one answer again.
+  assert.equal(error?.message, "live_action_family_absent:petTargets");
+  assert.equal(error?.detail?.revision, 10);
+  assert.deepEqual(session.executed, []);
+});
+
+test("an action this world does not advertise is refused by name before any target is looked at", async () => {
+  const { plan, config } = await planForStub({ held: null });
+  const session = stubBridgeSession({ capabilities: ["cancel_active_execution", "inspect_self", "equip_tool"] });
+  const error = await refusalOfAsync(() => runOneAction({ plan, session, config }));
+
+  assert.equal(error?.message, "live_action_action_not_advertised:pet_animal");
+  assert.deepEqual(session.executed, []);
+});
+
+test("one target question, four named answers, and only the fourth is a target", () => {
+  const snapshot = (rows) => ({
+    revision: 7,
+    tile: { x: 5, y: 5 },
+    actionable: true,
+    activeExecution: null,
+    capabilities: ["inspect_self", "pet_animal"],
+    petTargets: rows,
+  });
+  const pet = { targetId: "pet_0123456789abcdef", x: 6, y: 5 };
+
+  assert.equal(
+    describeTargetOutcome(
+      { ...snapshot([]), capabilities: ["inspect_self"] },
+      { action: "pet_animal", targetField: "petTargets" },
+    ).code,
+    "live_action_action_not_advertised:pet_animal",
+  );
+  assert.equal(
+    describeTargetOutcome(
+      { revision: 7, capabilities: ["pet_animal"] },
+      { action: "pet_animal", targetField: "petTargets" },
+    ).code,
+    "live_action_family_absent:petTargets",
+  );
+  assert.equal(
+    describeTargetOutcome(snapshot([]), { action: "pet_animal", targetField: "petTargets" }).code,
+    "live_action_family_empty:petTargets",
+  );
+  // The fourth answer is the only one that carries a target, and the target's opaque id is in its name.
+  assert.deepEqual(describeTargetOutcome(snapshot([pet]), { action: "pet_animal", targetField: "petTargets" }), {
+    code: "live_action_target_chosen:pet_0123456789abcdef",
+    ok: true,
+    revision: 7,
+    rows: [{ targetId: "pet_0123456789abcdef", x: 6, y: 5 }],
+    chosen: { targetId: "pet_0123456789abcdef", x: 6, y: 5 },
+  });
+  // An action with no declared target family has nothing to be absent or empty: it is chosen with no target.
+  assert.equal(
+    describeTargetOutcome(snapshot([]), { action: "pet_animal", targetField: null }).code,
+    "live_action_target_chosen:(no-target)",
+  );
 });
 
 test("a process the run started that is still alive is a blocked ending naming the pid", async () => {
@@ -1006,6 +1078,116 @@ test("a fixture release whose child refused is reported as a failed restore, not
   });
 });
 
+test("a passing run whose own runner also proves a refusal is judged on the execution its executor named, not on the probe", () => {
+  // `pet_farm_animal` dispatches its pet, then dispatches the SAME action again to prove the engine answers
+  // `farm_animal_already_petted_today`. Both are terminal receipts for the action, and the probe arrives LAST - which is
+  // how a passing run used to read as `blocked` / `receipt_state:rejected` (measured 2026-11-09).
+  const receipts = [
+    {
+      requestId: "req_pet",
+      executionId: "exec_1",
+      actionId: "pet_farm_animal",
+      state: "succeeded",
+      reasonCode: "farm_animal_petted",
+      revision: 6,
+      evidence: { detail: "target=farm_animal_682cd525200ce0ec;animal=2021983916" },
+    },
+    {
+      requestId: "req_pet_second",
+      executionId: "exec_2",
+      actionId: "pet_farm_animal",
+      state: "rejected",
+      reasonCode: "farm_animal_already_petted_today",
+      revision: 7,
+      evidence: { detail: "target=farm_animal_682cd525200ce0ec;animal=2021983916" },
+    },
+  ];
+
+  const judged = judgedReceipt({ receipts, action: "pet_farm_animal", executorReason: "farm_animal_petted" });
+  assert.equal(judged.receipt?.reasonCode, "farm_animal_petted", "the executor named this execution");
+  assert.equal(judged.mismatch, null);
+  assert.deepEqual(judged.seen, ["farm_animal_petted:succeeded", "farm_animal_already_petted_today:rejected"]);
+
+  // The verdict the tool computes, not just the receipt it picks: a passing run stays passed.
+  assert.deepEqual(
+    describeBlockers({
+      action: "pet_farm_animal",
+      executorState: "passed",
+      executorReason: "farm_animal_petted",
+      receipts,
+      held: null,
+      perturbation: null,
+      ending: null,
+    }),
+    [],
+  );
+
+  // The opposite direction still fails closed: an executor naming an execution no receipt carries reports BOTH facts -
+  // that nothing matched, and every terminal it did see.
+  assert.deepEqual(
+    describeBlockers({
+      action: "pet_farm_animal",
+      executorState: "passed",
+      executorReason: "pet_never_happened",
+      receipts,
+      held: null,
+      perturbation: null,
+      ending: null,
+    }),
+    [
+      "no_terminal_receipt_matching_executor:pet_never_happened",
+      "terminals:farm_animal_petted:succeeded,farm_animal_already_petted_today:rejected",
+    ],
+  );
+  // ... and "no receipt at all" is a different fact from "none of these is THE receipt".
+  assert.deepEqual(
+    describeBlockers({
+      action: "pet_farm_animal",
+      executorState: "passed",
+      executorReason: "farm_animal_petted",
+      receipts: [],
+      held: null,
+      perturbation: null,
+      ending: null,
+    }),
+    ["no_terminal_receipt_matching_executor:farm_animal_petted", "terminals:(none)"],
+  );
+
+  // The BLOCK prints the judged receipt and every terminal, so the probe is visible beside the execution it was judged
+  // against instead of replacing it.
+  const block = buildBlock({
+    plan: {
+      action: "pet_farm_animal",
+      scenario: "native_pet_farm_animal_v1",
+      actions: [],
+      saveName: "S",
+      backupName: "B",
+      targetField: null,
+      target: "nearest",
+      executor: {
+        runnerFile: "run-stardew-native-local-player-pet-farm-animal-smoke.mjs",
+        export: "runPetFarmAnimalSmoke",
+        shape: "receipts-second",
+      },
+    },
+    verdict: "passed",
+    reasonCode: "farm_animal_petted",
+    target: null,
+    held: { before: null, after: null },
+    receipts,
+    reread: null,
+    perturbation: null,
+    restore: { fixtureRestored: true, saveRestored: true, process: { stillRunning: [] } },
+    startedAt: Date.now(),
+    executorReason: "farm_animal_petted",
+  });
+  assert.equal(block.receipt?.reasonCode, "farm_animal_petted");
+  assert.deepEqual(
+    block.terminals.map((entry) => entry.reasonCode),
+    ["farm_animal_petted", "farm_animal_already_petted_today"],
+  );
+});
+
 async function planForStub({ held = "axe", heldItem = null } = {}) {
   const plan = await withFixtureRoot((root) =>
     planLiveAction(
@@ -1058,7 +1240,13 @@ function stubClientConfig(plan) {
  * the case this suite has to be able to arrange without a game. `executed` is the call log, so "the executor never ran"
  * is asserted rather than inferred from a missing receipt.
  */
-function stubBridgeSession({ holding = null, holdingItem = null, pets = null }) {
+function stubBridgeSession({
+  holding = null,
+  holdingItem = null,
+  pets = null,
+  publishFamily = true,
+  capabilities = ["cancel_active_execution", "inspect_self", "pet_animal", "equip_tool"],
+}) {
   const pet = {
     targetId: "pet_0123456789abcdef",
     x: 6,
@@ -1082,11 +1270,13 @@ function stubBridgeSession({ holding = null, holdingItem = null, pets = null }) 
     tile: { x: 5, y: 5 },
     actionable: true,
     activeExecution: null,
-    capabilities: ["cancel_active_execution", "inspect_self", "pet_animal", "equip_tool"],
+    capabilities: [...capabilities],
     currentTool,
     currentToolSlot: ownSlot,
     currentToolSlotItem: currentItem,
-    petTargets: petTargets.map((row) => ({ ...row })),
+    // `publishFamily: false` is the snapshot that does not carry the family at all - a different fact from an empty
+    // one, and the one this suite could not previously arrange without a game.
+    ...(publishFamily ? { petTargets: petTargets.map((row) => ({ ...row })) } : {}),
   });
   const receipts = [];
   const client = {

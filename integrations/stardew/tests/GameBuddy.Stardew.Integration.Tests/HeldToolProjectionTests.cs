@@ -1,8 +1,10 @@
 using System.Reflection;
 using System.Runtime.Serialization;
+using System.Text.Json;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
+using GameBuddy.Stardew.Core.Protocol;
 using Netcode;
 using StardewValley;
 using StardewValley.Tools;
@@ -35,6 +37,72 @@ namespace GameBuddy.Stardew.Integration.Tests;
 // MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
 public sealed class HeldToolProjectionTests
 {
+    [Fact]
+    public void AToolThatCannotBeUpgradedIsPublishedWithoutALevelRatherThanWithTheEngineSentinel()
+    {
+        // Measured on Stardew Valley 1.6.15 (build 24356): a tool that cannot be upgraded carries `-1` by CONSTRUCTION
+        // (`new MilkPail().UpgradeLevel == -1`, `new Shears().UpgradeLevel == -1`) while Axe, Hoe, Pickaxe and
+        // WateringCan carry `0`. A level is an upgrade TIER, so the Host's `isToolSlotFact` refuses a negative one and
+        // the bridge closes with `invalid_snapshot:toolSlots` - which is exactly what `collect_animal_product` did on
+        // its first snapshot (measured 2026-11-09), because its fixture stocks the pack with a Milk Pail.
+        //
+        // The population is the PACK, never a list of tools named here: the assertion walks the same inventory the
+        // projection walks and derives each expectation from that tool's own engine value, so a tool added tomorrow
+        // is judged by the same rule instead of escaping it.
+        IList<Item?> items = new List<Item?>
+        {
+            Axe(upgradeLevel: 2), MilkPail(), Shears(), null, Pickaxe(upgradeLevel: 0), Wand(),
+        };
+
+        IReadOnlyList<BridgeToolSlot> slots = ToolSlots(items);
+
+        int upgradable = 0;
+        int sentinelLevel = 0;
+        for (int slot = 0; slot < items.Count; slot++)
+        {
+            if (items[slot] is not Tool tool)
+                continue;
+            BridgeToolSlot[] matching = slots.Where(entry => entry.Slot == slot).ToArray();
+            matching.Should().ContainSingle($"pack slot {slot} holds a tool, so it must be published once");
+            BridgeToolSlot published = matching[0];
+            if (tool.UpgradeLevel < 0)
+            {
+                // The engine's sentinel is NOT a tier: it must not travel, and it must not be clamped to 0 either -
+                // `0` is a real, different fact (the basic tool).
+                published.UpgradeLevel.Should().BeNull(
+                    $"{published.Label} carries engine level {tool.UpgradeLevel}, which means it does not upgrade, so no level may be published for it");
+                sentinelLevel++;
+            }
+            else
+            {
+                published.UpgradeLevel.Should().Be(
+                    tool.UpgradeLevel,
+                    $"{published.Label} carries engine level {tool.UpgradeLevel}, and that is the tier a claim pins");
+                upgradable++;
+            }
+        }
+
+        // A population with only one kind would prove only one branch, which is how the defect survived: every live
+        // pack that reached this projection held nothing but upgradable tools.
+        upgradable.Should().BeGreaterThan(0, "the sample pack must contain a tool that upgrades");
+        sentinelLevel.Should().BeGreaterThan(0, "the sample pack must contain a tool that cannot upgrade");
+
+        // The WIRE form is the claim the Host reads: the key is ABSENT, not null and not -1. Serialised through the
+        // options the real envelope writer uses, so this is the bytes the bridge sends.
+        JsonElement wire = JsonSerializer.SerializeToElement(ToolSlots(items), BridgeProtocol.JsonOptions);
+        foreach (JsonElement row in wire.EnumerateArray())
+        {
+            string label = row.GetProperty("label").GetString()!;
+            int slot = row.GetProperty("slot").GetInt32();
+            int engineLevel = ((Tool)items[slot]!).UpgradeLevel;
+            if (engineLevel < 0)
+                row.TryGetProperty("upgradeLevel", out JsonElement forbidden).Should().BeFalse(
+                    $"{label} cannot upgrade, so the wire row must carry no upgradeLevel; it carried {forbidden}");
+            else
+                row.GetProperty("upgradeLevel").GetInt32().Should().Be(engineLevel, $"{label} must publish its tier");
+        }
+    }
+
     [Fact]
     public void EveryToolSlotIsPublishedWithItsIdentityAndUpgradeLevel()
     {
@@ -148,6 +216,11 @@ public sealed class HeldToolProjectionTests
 
     /// <summary>A scythe is a MeleeWeapon whose own id says so, never the type alone.</summary>
     private static MeleeWeapon Scythe() => SeedTool<MeleeWeapon>("(W)47", 0);
+
+    /// <summary>A tool that cannot be upgraded: the engine constructs it at level `-1`, and this seeds exactly that.</summary>
+    private static MilkPail MilkPail() => SeedTool<MilkPail>("(T)MilkPail", -1);
+
+    private static Shears Shears() => SeedTool<Shears>("(T)Shears", -1);
 
     /// <summary>The word `toggle_tool_light` gave the lantern: a claim now names it.</summary>
     private static Lantern Lantern() => SeedTool<Lantern>("(T)Lantern", 0);

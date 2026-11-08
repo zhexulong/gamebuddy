@@ -13,10 +13,6 @@
       "reason": "the headless sample world does not construct this family"
     },
     {
-      "field": "toolSlots",
-      "reason": "the headless sample world does not construct this family"
-    },
-    {
       "field": "wateringCanFacts",
       "reason": "the headless sample world does not construct this family"
     },
@@ -375,6 +371,19 @@
         "qualifiedItemId": "(O)2",
         "displayName": "(O)2",
         "health": 3
+      }
+    ],
+    "toolSlots": [
+      {
+        "slot": 0,
+        "label": "(T)Axe",
+        "upgradeLevel": 0,
+        "category": "axe"
+      },
+      {
+        "slot": 1,
+        "label": "(T)MilkPail",
+        "category": "milk_pail"
       }
     ],
     "treeChopSourceTargets": [

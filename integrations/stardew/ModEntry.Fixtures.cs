@@ -3744,6 +3744,13 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         }
         // The count is a budget, not a literal: the fixture refuses only when it planted NOTHING, because the\n        // world is then missing the family the crops task needs. It used to demand exactly four, which was true\n        // only while the budget happened to divide to four - measured 2026-10-28, after trees and forage began\n        // taking their share, the division produced three and this refused a world that had every prop it needed.\n        if (plantedCrops <= 0)\n            throw new InvalidOperationException("fixture_native_local_play_session_crop_count_missing");
 
+        // THE ANIMAL HALF OF THE DAY. `tend_the_animals` names three farm-animal actions and this world had no animal
+        // at all (measured 2026-11-09), so a play session could never reach one. One coop, one animal, placed where the
+        // crossroads can walk to its door - and one animal rather than a stocked house, because
+        // `DiscoverFarmAnimalPetTargets` filters the engine's own `wasPet` marker and "the animal I touched left the
+        // family" is only unambiguous when the family holds exactly one member.
+        InstallNativeLocalPlaySessionAnimalGiven(player, farm, startTile, requiredReachable);
+
         if (standingTile is null)
             throw new InvalidOperationException("fixture_native_local_play_session_standing_tile_missing");
 

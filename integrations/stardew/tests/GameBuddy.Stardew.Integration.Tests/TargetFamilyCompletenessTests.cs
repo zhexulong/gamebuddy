@@ -1422,6 +1422,7 @@ public sealed class TargetFamilyCompletenessTests
             object?[] arguments = method.GetParameters()
                 .Select(parameter => parameter.ParameterType == typeof(Farmer)
                     ? (object?)this.Actor
+                    : parameter.ParameterType == typeof(IList<Item?>) ? this.Actor.Items
                     : new DiscoveryExclusionRecorder())
                 .ToArray();
             return method.Invoke(method.IsStatic ? null : executions, arguments)!;
