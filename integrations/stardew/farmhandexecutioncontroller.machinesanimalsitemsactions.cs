@@ -698,6 +698,34 @@ internal sealed partial class ExecutionManager
         location.animals.Values.FirstOrDefault(candidate =>
             string.Equals(BuildAnimalProductTargetId(location, slot, candidate, tool), expectedTargetId, StringComparison.Ordinal));
 
+    /// <summary>
+    /// The held-item branches of `Pet.checkAction` (Pet.cs:619-664) whose effect is NOT the pet the caller asked
+    /// for, as ONE predicate so the request path and the execution body cannot disagree about when `checkAction`
+    /// really pets.
+    ///
+    /// <para>
+    /// There used to be a blanket `if (Game1.player.CurrentItem is not null) hands_not_empty` here, and it was
+    /// FALSE: `Pet.checkAction` refuses nothing. It reads `Items[CurrentToolIndex]` for exactly two branches - a
+    /// `Hat` is taken out of the pack and moved onto the pet (Pet.cs:621-641) and `(O)ButterflyPowder` opens a
+    /// question dialogue (:642-645) - and then falls through to the petting body (:646-664) either way. Measured
+    /// 2026-11-08 with a `(O)72` in hand: the native seam petted the cat and returned true, while the Mod refused
+    /// `hands_not_empty` with no evidence at all - telling the caller to empty a hand the game never required it to
+    /// empty, and costing the companion a turn to comply.
+    /// </para>
+    /// <para>
+    /// So the refusal names the two branches that DO exist, each for its own reason: a pet must never consume an
+    /// item the caller did not name (the same ruling `farm_animal_cracker_would_be_consumed` follows one action
+    /// over), and it must never open a modal it would then have to own and settle.
+    /// </para>
+    /// </summary>
+    private static (string Code, string Detail)? PetHeldItemRefusal(Farmer who, string expectedTargetId)
+    {
+        string detail = $"target={expectedTargetId};hand_item={who.CurrentItem?.QualifiedItemId ?? "none"}";
+        if (who.CurrentItem is StardewValley.Objects.Hat) return ("pet_held_hat_would_be_taken", detail);
+        if (who.CurrentItem?.QualifiedItemId == "(O)ButterflyPowder") return ("pet_held_butterfly_powder_opens_dialogue", detail);
+        return null;
+    }
+
     /// <summary>Experimental native pet interaction. The native Pet.checkAction path owns daily petting and friendship mutation.</summary>
     public LocalExecutionReceipt RequestLocalPetAnimal(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
@@ -733,8 +761,8 @@ internal sealed partial class ExecutionManager
         Pet? pet = ResolvePetTarget(location, expectedTargetId);
         if (pet is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pet_target_gone", $"target={expectedTargetId}");
-        if (Game1.player.CurrentItem is not null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "hands_not_empty", null);
+        if (PetHeldItemRefusal(Game1.player, expectedTargetId) is { } heldRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, heldRefusal.Code, heldRefusal.Detail);
         // Out of the native Chebyshev-1 radius, walk in rather than refuse -- the
         // same 5.2 ruling the tool family follows. This used to be a bare distance
         // check with no pathfinding, so a pet published inside the radius-6 discovery
@@ -763,8 +791,8 @@ internal sealed partial class ExecutionManager
         Pet? pet = ResolvePetTarget(location, expectedTargetId);
         if (pet is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pet_target_gone", $"target={expectedTargetId}");
-        if (Game1.player.CurrentItem is not null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "hands_not_empty", null);
+        if (PetHeldItemRefusal(Game1.player, expectedTargetId) is { } heldRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, heldRefusal.Code, heldRefusal.Detail);
         // Range is measured against the pet's current tile, which is what
         // interaction actually requires. Checking the requested coordinate would
         // accept a stale position and reject a pet that had walked into reach.

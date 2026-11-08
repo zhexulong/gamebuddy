@@ -415,6 +415,15 @@ public sealed class TargetFamilyCompletenessTests
             {
                 ["Default"] = new StardewValley.GameData.LocationContexts.LocationContextData(),
             };
+            // `Pet.GetPetData` -> `Pet.TryGetData` -> `Game1.petData.TryGetValue` (Pet.cs:265) with no null guard, so a
+            // process without a save leaves every pet read throwing. One `Dog` row is enough for the projections: the
+            // behaviour list is empty, which is `GetCurrentPetBehavior() == null` and therefore the `Stationary: true`
+            // the discovery publishes for a pet that is not walking. `GiftChance` stays at its type default (0), so the
+            // native petting body's drop roll never fires and no item type registry is read.
+            Game1.petData ??= new Dictionary<string, StardewValley.GameData.Pets.PetData>(StringComparer.Ordinal)
+            {
+                ["Dog"] = new StardewValley.GameData.Pets.PetData(),
+            };
 
             var farm = new GameLocation();
             var map = new xTile.Map();
@@ -614,6 +623,137 @@ public sealed class TargetFamilyCompletenessTests
             chest.TileLocation = new Vector2(x, y);
             foreach (ChestItem item in items) chest.Items.Add(Item(item.QualifiedItemId, item.Stack));
             this.Farm.objects[new Vector2(x, y)] = chest;
+        }
+
+        /// <summary>
+        /// Puts the actor's HAND on a pack slot, which is what `CurrentItem` reads.
+        ///
+        /// <para>
+        /// The selected slot is the whole of "what the actor is holding": `Farmer.CurrentItem` is
+        /// `Items[CurrentToolIndex]`, so a pack that carries an item while the hand points at an empty slot is an
+        /// actor with EMPTY HANDS and every handler that guards on `CurrentItem` will happily proceed. A perturbation
+        /// that only wrote the pack would therefore test nothing at all.
+        /// </para>
+        /// </summary>
+        internal void HoldPackSlot(int slot) => SetInstanceField(this.Actor, "currentToolIndex", new NetInt(slot));
+
+        /// <summary>An empty hand, which is the starting condition every fixture that does not perturb the hand needs.</summary>
+        internal void EmptyHands() => this.HoldPackSlot(-1);
+
+        /// <summary>
+        /// A Pet in the farm's characters, built the way every other native object in this world is: an uninitialized
+        /// instance whose NetFields are supplied, because `Pet`'s own constructor loads `Data/Pets`.
+        ///
+        /// <para>
+        /// The two fields `pet_animal`'s own resolution reads are supplied exactly: the tile the pet stands on and the
+        /// `petId` its opaque target id hashes. `lastPetDay` stays empty, which is the engine's own reading of "not
+        /// petted today" and the state discovery publishes.
+        /// </para>
+        /// </summary>
+        internal StardewValley.Characters.Pet PlacePet(int x, int y, string petType)
+        {
+            var pet = (StardewValley.Characters.Pet)FormatterServices.GetUninitializedObject(typeof(StardewValley.Characters.Pet));
+            SeedMissingNetFields(pet);
+            SetInstanceField(pet, "position", new NetPosition());
+            SetInstanceField(pet, "currentLocationRef", new NetLocationRef());
+            var sprite = (FarmerSprite)FormatterServices.GetUninitializedObject(typeof(FarmerSprite));
+            SetInstanceField(sprite, "spriteWidth", new NetInt(16));
+            SetInstanceField(sprite, "spriteHeight", new NetInt(32));
+            SetInstanceField(sprite, "tempSpriteHeight", -1);
+            SetInstanceField(pet, "sprite", new NetRef<AnimatedSprite> { Value = sprite });
+            pet.petId.Value = Guid.NewGuid();
+            // `NetLongDictionary` declares no parameterless constructor, so `SeedMissingNetFields` skips it and the
+            // pet would carry a NULL day map - which `ResolvePetTarget` dereferences before anything else. Built
+            // through its real constructor, because this type's own initializers are the thing that must run.
+            SetInstanceField(pet, "lastPetDay", new NetLongDictionary<int, NetInt>());
+            pet.petType.Value = petType;
+            pet.Name = petType;
+            pet.homeLocationName.Value = this.Farm.NameOrUniqueName;
+            pet.Position = new Vector2(x * 64 + 8, y * 64);
+            this.Farm.addCharacter(pet);
+            pet.currentLocation = this.Farm;
+            // `NetMutex` lives in `StardewValley.Network`, not `Netcode`, so `SeedMissingNetFields` skips it and the pet
+            // would carry a NULL mutex - which `Pet.checkAction` dereferences on every petting.
+            var mutex = new StardewValley.Network.NetMutex();
+            SetInstanceField(pet, "mutex", mutex);
+            // `NetMutex.RequestLock` takes its FAST path when the caller already owns the lock (NetMutex.cs:46-49) and
+            // otherwise fires a multiplayer lock REQUEST whose handler (:34-41) needs a master-game connection this
+            // process does not have. The actor holding the pet's own lock is the single-player state - one player, so
+            // there is nobody to ask - and it is also the state that makes `Pet.checkAction`'s friendship mutation run
+            // INLINE, which is what a test can observe. `owner` is private, so it is reached the way every other
+            // NetField here is.
+            ((NetLong)typeof(StardewValley.Network.NetMutex)
+                .GetField("owner", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .GetValue(mutex)!).Value = this.Actor.UniqueMultiplayerID;
+            return pet;
+        }
+
+        /// <summary>
+        /// The opaque id `DiscoverPetTargets` publishes for this pet, read from the SAME function `pet_animal` resolves
+        /// it with (`BuildPetTargetId`) rather than re-derived here: a second copy of the hash would agree with itself
+        /// while the handler disagreed with both.
+        /// </summary>
+        internal string PetTargetId(StardewValley.Characters.Pet pet)
+        {
+            MethodInfo build = typeof(ExecutionManager)
+                .GetMethod("BuildPetTargetId", BindingFlags.NonPublic | BindingFlags.Static)!;
+            return (string)build.Invoke(null, new object?[] { this.Farm, (int)pet.Tile.X, (int)pet.Tile.Y, pet })!;
+        }
+
+        /// <summary>
+        /// Puts an item the action did not ask for into a free pack slot and closes the actor's HAND on it.
+        ///
+        /// <para>
+        /// Free slot FIRST, then the hand: `Farmer.CurrentItem` is `Items[CurrentToolIndex]`, so a hand pointing at a
+        /// slot the pack does not have is an empty hand and every `CurrentItem is not null` guard would sail past a
+        /// perturbation that never existed. The slot is chosen from the pack's own occupancy, never written at an index
+        /// the current population happens to leave free.
+        /// </para>
+        /// </summary>
+        internal void HoldAnUnrequestedItem(string qualifiedItemId)
+        {
+            int slot = this.FreeSlot();
+            this.PutInPackSlot(slot, qualifiedItemId, 1);
+            this.HoldPackSlot(slot);
+        }
+
+        /// <summary>
+        /// A real `StardewValley.Objects.Hat` in the actor's hand - the ONE held item `Pet.checkAction` takes out of the
+        /// pack and puts on the animal (Pet.cs:621-641), so it is the case where "the action did not ask for it" has a
+        /// native consequence to refuse.
+        ///
+        /// <para>
+        /// Uninitialized plus seeded NetFields, like every other engine object here: `Hat`'s constructor loads
+        /// `Data/hats`. `ItemId` is written BEFORE `_qualifiedItemId` for the reason `PutToolInPackSlot` records.
+        /// </para>
+        /// </summary>
+        internal StardewValley.Objects.Hat HoldUnrequestedHat()
+        {
+            var hat = (StardewValley.Objects.Hat)FormatterServices.GetUninitializedObject(typeof(StardewValley.Objects.Hat));
+            SeedMissingNetFields(hat);
+            typeof(Item)
+                .GetField("<NetFields>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(hat, new NetFields("Item"));
+            typeof(Item).GetProperty("ItemId", BindingFlags.Instance | BindingFlags.Public)!.SetValue(hat, "1");
+            typeof(Item)
+                .GetField("_qualifiedItemId", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!
+                .SetValue(hat, "(H)1");
+            int slot = this.FreeSlot();
+            while (this.Actor.Items.Count <= slot) this.Actor.Items.Add(null!);
+            this.Actor.Items[slot] = hat;
+            this.HoldPackSlot(slot);
+            return hat;
+        }
+
+        /// <summary>The first pack slot nothing occupies, or the end of a full pack.</summary>
+        private int FreeSlot()
+        {
+            for (int candidate = 0; candidate < this.Actor.Items.Count; candidate++)
+            {
+                if (this.Actor.Items[candidate] is null) return candidate;
+            }
+
+            return this.Actor.Items.Count;
         }
 
         internal void PlaceVillager(string name, int x, int y, Friendship? friendship)
@@ -992,6 +1132,14 @@ public sealed class TargetFamilyCompletenessTests
                     this.PlaceEmptyHoeDirt(x: 3, y: 2);
                     this.StandAt(2, 2);
                     break;
+                case "petTargets":
+                    // The pet stands beside the actor, which is where `pet_animal`'s own Chebyshev-1 admission reads it:
+                    // `DiscoverPetTargets` bounds at radius 6 and the interaction at radius 1, so a pet at radius 1 is
+                    // the state both halves agree on and no approach leg is needed to reach it.
+                    this.PlacePet(x: 2, y: 3, "Dog");
+                    this.EmptyHands();
+                    this.StandAt(2, 2);
+                    break;
                 default:
                     throw new InvalidOperationException(
                         $"{family} has no populate rule: a family this file claims to drive must say how the world builds it");
@@ -1036,6 +1184,7 @@ public sealed class TargetFamilyCompletenessTests
             "bushTargets" => "DiscoverBushTargets",
             "fruitTreeTargets" => "DiscoverFruitTreeTargets",
             "treeSaplingTargets" => "DiscoverTreeSaplingTargets",
+            "petTargets" => "DiscoverPetTargets",
             _ => throw new InvalidOperationException($"{family} has no discovery method declared"),
         };
 

@@ -77,7 +77,7 @@ public sealed class TargetFamilyRoundTripTests
     /// in <see cref="Undriven"/> or <see cref="UndrivenPairs"/> with the concrete native surface each one needs.
     /// </para>
     /// </summary>
-    private static readonly IReadOnlyDictionary<string, string> DrivenFamilies = new Dictionary<string, string>(StringComparer.Ordinal)
+    internal static readonly IReadOnlyDictionary<string, string> DrivenFamilies = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["chest_store"] = "chests",
         ["npc_relationship"] = "npcRelationshipTargets",
@@ -110,7 +110,7 @@ public sealed class TargetFamilyRoundTripTests
     /// drives `chests`, and `chest_retrieve` cannot": both name the same family, and the family is genuinely driven.
     /// Collapsing them would either lose the passing pair or park a harness gap in `KnownDrift` as a product defect.
     /// </summary>
-    private static readonly IReadOnlyDictionary<string, string> UndrivenPairs = new Dictionary<string, string>(StringComparer.Ordinal)
+    internal static readonly IReadOnlyDictionary<string, string> UndrivenPairs = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["chest_retrieve"] = "the `chests` row publishes the container's CONTENTS and moving one out reads the item type-definition registry (Data/Objects), which this process never loads; `chest_store` drives the same family because storing needs no registry read",
         ["interact_npc_with_item"] = "the `npcRelationshipTargets` row publishes no pack slot and no item, and this action declares both; a gift driver would have to place the item itself, which is a driver owed rather than a world that cannot exist",
@@ -123,7 +123,7 @@ public sealed class TargetFamilyRoundTripTests
     /// carries - something a reader could falsify by teaching the harness. "Not implemented yet" is not a blocker and
     /// does not belong here: that is a driver owed, not a world that cannot exist.
     /// </summary>
-    private static readonly IReadOnlyDictionary<string, string> Undriven = new Dictionary<string, string>(StringComparer.Ordinal)
+    internal static readonly IReadOnlyDictionary<string, string> Undriven = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["animalDoorTargets"] = "a Building whose Data/Buildings row declares an animal door; the asset is not loaded here",
         ["animalProductTargets"] = "a FarmAnimal with produce data from Data/FarmAnimals; the asset is not loaded here",
