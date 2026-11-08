@@ -314,6 +314,7 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   "check-live-run-silence.mjs",
   "check-stardew-fixture-action-coverage.mjs",
   "check-stardew-native-notice-coverage.mjs",
+  "check-stardew-postcondition-delta.mjs",
 ]);
 
 /** How long a gate's default run may take before it is reported as having printed nothing. */

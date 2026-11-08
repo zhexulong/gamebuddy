@@ -99,7 +99,9 @@ export const EXEMPTIONS = Object.freeze([
     reason:
       "arguments: requires `--result <bundle>/result.json` from one FINISHED live run and, for the concentration, the" +
       " flat trace in that run's directory, so there is nothing to measure before a run exists; measured 2026-11-07 on" +
-      " round39 it reports `attempted 15 of 95` and `narrow:below_baseline:round38`. Its verdict is also published in" +
+      " round39 it reports `narrow:below_baseline:round38` on the family ratchet, and no `attempted of addressable`" +
+      " number at all - that bundle predates `snapshotCensus`, so the reading is `not_measured:no_snapshot_census`" +
+      " wherever the families do not already decide it. Its verdict is also published in" +
       " every bundle by the runner's own `action_breadth` clause, which is what keeps a narrow run visible without" +
       " anyone remembering to run this entry",
     runsIn: "on-demand",

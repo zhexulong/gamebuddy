@@ -90,6 +90,11 @@ export const L0_GATES = Object.freeze([
   // row, the runner entry and the fixture scenario must already agree, so a hand edit that moves two of the four
   // names the half-write here instead of surfacing as a symptom three gates away.
   "tools/check-stardew-action-promotion.mjs",
+  // The physical half of the same question: the promotion gate refuses a postcondition that names no engine fact, and
+  // this one asks whether anything is ever MEASURED - the succeeded receipt must carry a before/after of the declared
+  // member, in the Mod's handler or in the Host's completion-evidence contract. It reads the real handler source and
+  // the real Host switch, so it costs a file read rather than a live run.
+  "tools/check-stardew-postcondition-delta.mjs",
   "tools/check-stardew-promotion-parity.mjs",
   "integrations/stardew/action-development/tests/action-source-projection-drift.test.mjs",
   "integrations/stardew/action-development/tests/action-projection-parity-drift.test.mjs",
