@@ -369,7 +369,29 @@ function createBodyProgramTools(
             //
             // And the cap is deliberately NOT lowered: `program-status-wait.ts` records that answering instantly put the
             // model in an 84-call loop (round4, 459 s) because "it did not finish" is not something a caller can act on.
-            if (!accepted) return planDetails({ accepted, nodeCount: nodes.length, programId, submitted: code });
+            // What the compiler refused, beside what it kept. A permissive compile is fine; a permissive answer is not:
+            // round39 submission 28 wrote six statements, two of them (`pickup_item`) were refused a node for a missing
+            // required argument, and the answer said `{accepted: true, nodeCount: 5}` with nothing else, so the companion
+            // planned around an item it never picked up.
+            const refused = Object.freeze({
+              droppedCount: compiled.rejectedCount,
+              dropped: compiled.rejected.map((rejection) =>
+                Object.freeze({
+                  call: rejection.call,
+                  actionId: rejection.actionId,
+                  reasonCode: rejection.reasonCode,
+                  ...(rejection.missingArguments === undefined ? {} : { missingArguments: rejection.missingArguments }),
+                }),
+              ),
+            });
+            if (!accepted)
+              return planDetails({
+                accepted,
+                nodeCount: nodes.length,
+                programId,
+                submitted: code,
+                ...refused,
+              });
             // Recorded the moment the Mod accepts it: this is the identity a STOP has to name, and nothing else in the
             // Host knows which program is currently in the world.
             lastAcceptedProgramId = programId;
@@ -387,6 +409,7 @@ function createBodyProgramTools(
                 settled: answer.settled,
                 remaining: answer.remaining,
                 nodes: answer.nodes,
+                ...refused,
                 ...beside,
               });
             /**
@@ -465,10 +488,13 @@ function createBodyProgramTools(
           "Read what a plan step must supply for one action, or for every plannable action of one family: the argument names with their types and, where the Mod declares a closed set, its values, plus the resource the action claims and the output facts a later step can bind. Read-only, so it changes nothing; ask it when you are unsure what builder.<actionId> takes instead of guessing and being refused. It also answers equipment: `toolRequirement` is the tool the surface declares the action needs (`category`, the surface's own `upgradeRequirement` word and the upgrade-level range that satisfies it) or `tool_requirement_undeclared` when the surface says nothing about a tool for it, and `toolSlotMeaning` says what a `slot` argument holds. A tool step is `builder.equipFor(<actionId>, <target>)` - pass the target you are about to act on and it writes the equip step and answers the slot to name, or refuses by name when only the Mod's handler knows the tool.",
         parameters: planShapeParameters(),
         execute: async (_toolCallId, params) => {
-          const shape = planShape(readPlanActions(connection), readPlanShapeRequest(params));
+          const request = readPlanShapeRequest(params);
+          const shape = planShape(readPlanActions(connection), request);
           if (!shape.ok)
             return planDetails({
               reasonCode: shape.reasonCode,
+              // What the caller actually sent, so a wrong parameter name is one turn to fix instead of nine guesses.
+              received: request.received,
               ...(shape.legalActionIds === undefined ? {} : { legalActionIds: shape.legalActionIds }),
               ...(shape.legalFamilies === undefined ? {} : { legalFamilies: shape.legalFamilies }),
             });
@@ -571,15 +597,25 @@ function readPlanScriptRequest(value: unknown): PlanScriptRequest {
  * The shape selector, bounded to the surface's own id grammar: a selector is echoed in the reason code and lands in the
  * run trace, so it may not carry arbitrary text.
  */
-function readPlanShapeRequest(value: unknown): Readonly<{ actionId?: string; family?: string }> {
+function readPlanShapeRequest(
+  value: unknown,
+): Readonly<{ actionIds?: readonly string[]; family?: string; received: readonly string[] }> {
   if (!isRecord(value)) throw new Error("invalid_body_program_tool_arguments");
-  const actionId = value.actionId;
+  const received = Object.freeze(Object.keys(value));
+  // A caller that names one action writes `actionId`; the tool's own schema says `actionIds`. Measured on a live run:
+  // nine calls sent `{actionId: "sleep"}` and every one was refused with a bare `plan_shape_selector_invalid`, because
+  // this reader and `PlanShapeRequest` disagreed by a plural and TypeScript could not see it (every field optional, so
+  // `{actionId}` is assignable to `{actionIds?}`). Accept both spellings; the answer keeps one shape.
+  const named = value.actionIds === undefined ? value.actionId : value.actionIds;
+  const list = named === undefined ? undefined : Object.freeze(Array.isArray(named) ? [...named] : [named]);
   const family = value.family;
-  if (actionId !== undefined && !isPlanSelector(actionId)) throw new Error("invalid_body_program_tool_arguments");
+  if (list !== undefined && (list.length === 0 || !list.every(isPlanSelector)))
+    throw new Error(`invalid_body_program_tool_arguments:received=${received.join("+") || "none"}`);
   if (family !== undefined && !isPlanSelector(family)) throw new Error("invalid_body_program_tool_arguments");
   return Object.freeze({
-    ...(actionId === undefined ? {} : { actionId }),
+    ...(list === undefined ? {} : { actionIds: list }),
     ...(family === undefined ? {} : { family }),
+    received,
   });
 }
 
@@ -600,7 +636,7 @@ function planDetails(details: Readonly<Record<string, unknown>>) {
  * when the two drift, so this list cannot quietly become a half-truth.
  */
 const PLAN_TARGET_FAMILIES: readonly string[] = Object.freeze(
-  `doorTargets forageTargets itemTargets refillWateringCanTargets fixedInteractionPoints cropTargets petBowlTargets slimeHutchTroughTargets bushTargets fruitTreeTargets shakeTreeTargets pedestalTargets fenceGateTargets harvestTargets seedTargets fertilizerTargets woodFenceTargets woodFenceResultTargets crabPotTargets crabPotResultTargets crabPotCollectTargets baitCrabPotTargets baitCrabPotResultTargets debrisTargets rockSourceTargets clearHoeDirtTargets artifactSpotTargets artifactSpotResultTargets treeChopSourceTargets treeChopResultTargets treeStumpTargets treeSaplingTargets weedTargets grassTargets caskTargets mannequinTargets signTargets siloTargets scytheCropTargets machineTargets npcRelationshipTargets petTargets animalProductTargets feedTroughTargets chests foodTargets shippingBinTargets craftingRecipeTargets cookingRecipeTargets cookingStationTargets shopTargets mineElevatorFloorTargets minecartTargets raftTargets horseTargets mineEntranceTargets animalDoorTargets fishPondTargets worldObjectTargets farmBuildingTargets dailyQuestTargets specialOrderTargets museumRewardTargets colorTargets tailoringTargets wearableTargets warpItemTargets mailboxTargets buildingChestTargets obeliskTargets`.split(
+  `doorTargets forageTargets itemTargets refillWateringCanTargets fixedInteractionPoints cropTargets petBowlTargets slimeHutchTroughTargets bushTargets fruitTreeTargets shakeTreeTargets pedestalTargets fenceGateTargets harvestTargets seedTargets fertilizerTargets woodFenceTargets woodFenceResultTargets crabPotTargets crabPotResultTargets crabPotCollectTargets baitCrabPotTargets baitCrabPotResultTargets debrisTargets rockSourceTargets clearHoeDirtTargets artifactSpotTargets artifactSpotResultTargets treeChopSourceTargets treeChopResultTargets treeStumpTargets treeSaplingTargets weedTargets grassTargets caskTargets mannequinTargets signTargets siloTargets scytheCropTargets machineTargets npcRelationshipTargets petTargets animalProductTargets feedTroughTargets chests foodTargets shippingBinTargets craftingRecipeTargets cookingRecipeTargets cookingStationTargets shopTargets mineElevatorFloorTargets minecartTargets raftTargets horseTargets mineEntranceTargets animalDoorTargets fishPondTargets worldObjectTargets farmBuildingTargets dailyQuestTargets specialOrderTargets museumRewardTargets colorTargets tailoringTargets wearableTargets warpItemTargets mailboxTargets buildingChestTargets obeliskTargets farmAnimalPetTargets`.split(
     " ",
   ),
 );

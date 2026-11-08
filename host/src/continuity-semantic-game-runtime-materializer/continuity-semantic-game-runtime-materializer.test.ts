@@ -1277,7 +1277,24 @@ test("the plan tool hands its compiled program to the one submission path a mode
   assert.match(source, /requiredArguments: compiled\.requirement\.requiredArguments,/u);
   // The shape of one action (or one family) stays reachable as a read-only tool instead of 95 schemas in every context.
   assert.match(source, /name: "stardew_plan_shape",/u);
-  assert.match(source, /const shape = planShape\(readPlanActions\(connection\), readPlanShapeRequest\(params\)\);/u);
+  // A permissive compile is fine; a permissive answer is not. Measured on a live run: six statements, two refused
+  // for a missing required argument, and the answer said `{accepted: true, nodeCount: 5}` with nothing else, so the
+  // companion planned around an item it never picked up. Both answer branches must carry what was refused.
+  assert.match(source, /droppedCount: compiled\.rejectedCount,/u);
+  assert.match(source, /dropped: compiled\.rejected\.map\(/u);
+  assert.equal(
+    [...source.matchAll(/\.\.\.refused,/gu)].length,
+    2,
+    "both the accepted and the refused answer branch must spread the refusal summary",
+  );
+  // A caller that names one action writes `actionId`; the schema says `actionIds`. The reader accepts both.
+  assert.match(source, /value\.actionIds === undefined \? value\.actionId : value\.actionIds/u);
+  // The property, not the sentence: the tool reads its request once and hands that request to `planShape`. Written
+  // this way it survives a second local (measured: the reader is now stored so its `received` keys can be echoed).
+  assert.match(
+    source,
+    /readPlanShapeRequest\(params\)[\s\S]{0,200}planShape\(readPlanActions\(connection\), request\);/u,
+  );
   // Every outcome answers the same two questions; a refusal adds the compiler's own reason name, unchanged.
   assert.match(
     source,
