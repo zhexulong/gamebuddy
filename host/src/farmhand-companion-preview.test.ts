@@ -159,7 +159,7 @@ function dependencies(
       captureEvidence?.(evidence);
       return {
         attachVoiceStopper: () => events.push("bind-stop"),
-        attachStopSystemNoticePresenter: () => events.push("bind-stop-system-notice"),
+        attachSystemNoticePresenter: () => events.push("bind-stop-system-notice"),
         acceptInitialFacts: () => events.push("initial-facts"),
         close: () => events.push("host-close"),
       } as never;
@@ -637,7 +637,7 @@ test("relaunch is single-flight; a concurrent explicit relaunch fails closed", a
     createHost: () =>
       ({
         attachVoiceStopper: () => events.push("bind-stop"),
-        attachStopSystemNoticePresenter: () => events.push("bind-stop-system-notice"),
+        attachSystemNoticePresenter: () => events.push("bind-stop-system-notice"),
         acceptInitialFacts: () => events.push("initial-facts"),
         close: () => events.push("host-close"),
       }) as never,

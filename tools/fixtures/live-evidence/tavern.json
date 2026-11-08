@@ -1,0 +1,36 @@
+{
+  "schema": "gamebuddy_release_live_evidence/v1",
+  "surface": "tavern",
+  "capturedAt": "2026-11-07T17:30:18Z",
+  "pinnedSha": "7bf67202b5ef1c8f45b92acaa157e67bfb819ef2",
+  "verdict": "not_measured",
+  "reason": "provider_credential_absent: no report of the four Tavern gates exists anywhere on this machine, and each needs a real embedded-provider turn",
+  "readings": [
+    {
+      "id": "tavern.management_operation_evidence",
+      "result": "not_measured",
+      "detail": "tools/run-tavern-management-operation-evidence.mjs drives the mounted management composition and three real embedded provider turns; no tavern-ui-outcomes.json exists here to read instead"
+    },
+    {
+      "id": "tavern.operation_evidence_mapping",
+      "result": "not_measured",
+      "detail": "tools/record-tavern-ui-operation-evidence.mjs maps the outcomes file above, so it has no input until that surface is measured"
+    },
+    {
+      "id": "tavern.release_live_gate",
+      "result": "not_measured",
+      "detail": "tools/run-tavern-release-live-gate.mjs exits 2 unless its verdict is passed (run-tavern-release-live-gate.mjs:1031), and the verdict rests on the three provider turns above; no tavern-release-live-gate.json exists here"
+    },
+    {
+      "id": "tavern.frontend_criteria",
+      "result": "not_measured",
+      "detail": "tools/run-tavern-frontend-conformance.mjs judges the mounted journey corpus and fails a skipped credential journey unless --allow-credentialless is passed; no tavern-frontend-conformance.json exists here"
+    }
+  ],
+  "scope": [
+    "dialogue-web/src",
+    "dialogue-web/tests",
+    "host/src/tavern",
+    "tools/run-tavern-"
+  ]
+}

@@ -18,6 +18,7 @@ import {
   createBodyProgramJournalFallback,
   executionsFromJournalEvents,
 } from "../../lib/stardew-body-program-journal.mjs";
+import { programNodeOutcomes } from "./program-node-outcomes.mjs";
 
 const RUNNER_SOURCE = readFileSync(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
 
@@ -124,9 +125,20 @@ test("a dead bridge is answered from the journal, and the run is not scored as h
   const written = writeJournalOnDisk(programId);
   const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes", {
     executionsFromJournalEvents,
+    programNodeOutcomes,
   });
   const records = await readProgramOutcomes({
-    submissions: [{ programId, accepted: true }],
+    // The candidate as the Host submitted it: the two nodes it wrote, which is the population an outcome answers for.
+    submissions: [
+      {
+        programId,
+        accepted: true,
+        nodes: [
+          { nodeId: "n01", actionId: "harvest_crop", arguments: {} },
+          { nodeId: "n02", actionId: "harvest_crop", arguments: {} },
+        ],
+      },
+    ],
     statusQuery: async () => {
       throw new Error("bridge_not_authenticated");
     },
@@ -143,9 +155,11 @@ test("a dead bridge is answered from the journal, and the run is not scored as h
     { nodeId: "n01", nodeAttempt: 1, cursor: 3, atMs: 1200, settledAtMs: 1450 },
     { nodeId: "n02", nodeAttempt: 1, cursor: 5, atMs: 1500, settledAtMs: 1700 },
   ]);
+  // A node that succeeded has nothing to explain, and `BodyProgramJournalPersistence.cs:221` forbids a reason code on
+  // that state - so the rows carry the action and the state, and NO `reasonCode` key at all.
   assert.deepEqual(records[0].nodeOutcomes, [
-    { nodeId: "n01", state: "succeeded" },
-    { nodeId: "n02", state: "succeeded" },
+    { nodeId: "n01", actionId: "harvest_crop", state: "succeeded" },
+    { nodeId: "n02", actionId: "harvest_crop", state: "succeeded" },
   ]);
   assert.equal(records[0].accepted, true);
   assert.match(
@@ -193,6 +207,7 @@ test("a working bridge answers, and the journal is never opened", async () => {
   });
   const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes", {
     executionsFromJournalEvents,
+    programNodeOutcomes,
   });
   const records = await readProgramOutcomes({
     submissions: [{ programId, accepted: true }],
@@ -217,6 +232,79 @@ test("a working bridge answers, and the journal is never opened", async () => {
   assert.equal(journalReads, 0, "a bridge that answers must cost no journal read at all");
 });
 
+test("a journal-sourced node outcome carries the same reason, action and tile the settlement digest does", async () => {
+  // The other half of the same defect: the bundle's `nodeOutcomes` rows said `{ nodeId, state }` and nothing else, so a
+  // program the Mod refused and one it lost were the same two words. The journal on disk holds WHY
+  // (`rejectionCode`, `failureCode`) and the candidate the Host submitted holds WHICH action and WHERE - and the two
+  // are joined on `nodeId`, never on position.
+  const programId = "plan_16_a93f3dbf3576006d";
+  const dataPath = mkdtempSync(join(tmpdir(), "gb-outcome-reasons-"));
+  const scope = {
+    saveId: "451844707",
+    worldId: "-7866265671321385885",
+    playerId: "-7866265671321385885",
+    companionId: "companion_native_local",
+  };
+  const path = bodyProgramJournalPath({ dataPath, scope });
+  assert.ok(path !== null, "the store's path must be derivable from a complete scope");
+  mkdirSync(join(path, ".."), { recursive: true });
+  const document = journalWith(programId);
+  document.programs[0].state = 3;
+  document.programs[0].nodes = [
+    // A veto: the journal REQUIRES a rejection code on this state (`BodyProgramJournalPersistence.cs:209`).
+    { nodeId: "n01", state: 9, nodeAttempt: 1, admissionAttempt: 1, rejectionCode: "policy_denied", failureCode: null },
+    // An unknown outcome: the same file FORBIDS a reason code here (`:241`) and carries `recoveryDiagnostic` instead.
+    { nodeId: "n02", state: 8, nodeAttempt: 1, admissionAttempt: 1, recoveryDiagnostic: "execution_uncertain" },
+    // A dispatched failure may name why - and only why (`:229`).
+    { nodeId: "n03", state: 6, nodeAttempt: 1, admissionAttempt: 1, failureCode: "no_native_path" },
+  ];
+  writeFileSync(path, JSON.stringify(document));
+  const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes", {
+    executionsFromJournalEvents,
+    programNodeOutcomes,
+  });
+  const records = await readProgramOutcomes({
+    submissions: [
+      {
+        programId,
+        accepted: true,
+        nodes: [
+          {
+            nodeId: "n01",
+            actionId: "till_soil",
+            arguments: {
+              x: { type: "integer", canonicalValue: "12" },
+              y: { type: "integer", canonicalValue: "8" },
+            },
+          },
+          { nodeId: "n02", actionId: "plant_seed", arguments: {} },
+          { nodeId: "n03", actionId: "harvest_crop", arguments: {} },
+          // Never reached the journal at all: it reads `unknown` rather than being dropped or guessed.
+          { nodeId: "n04", actionId: "water_crop", arguments: {} },
+        ],
+      },
+    ],
+    statusQuery: async () => {
+      throw new Error("bridge_not_authenticated");
+    },
+    eventsQuery: async () => {
+      throw new Error("bridge_not_authenticated");
+    },
+    journal: createBodyProgramJournalFallback({ dataPath, scope }),
+  });
+  assert.equal(records[0].source, "journal");
+  assert.deepEqual(records[0].nodeOutcomes, [
+    { nodeId: "n01", actionId: "till_soil", state: "rejected", reasonCode: "policy_denied", tile: { x: 12, y: 8 } },
+    { nodeId: "n02", actionId: "plant_seed", state: "recovery_required" },
+    { nodeId: "n03", actionId: "harvest_crop", state: "failed", reasonCode: "no_native_path" },
+    { nodeId: "n04", actionId: "water_crop", state: "unknown" },
+  ]);
+  // The falsifier for the same rule: a node that names no reason gets NO `reasonCode` key at all - not null, not a
+  // placeholder - so a reader can tell "the Mod did not say" from "the Mod said this".
+  assert.equal(Object.hasOwn(records[0].nodeOutcomes[1], "reasonCode"), false);
+  assert.equal(Object.hasOwn(records[0].nodeOutcomes[3], "reasonCode"), false);
+});
+
 test("a failed bridge read the journal cannot answer stays unobserved, with its reason", async () => {
   // The other side of the fallback: a journal that is absent, or that does not hold this program, must not turn a
   // failed read into a measured empty execution. `dispatched: null` stays null and the reason stays named.
@@ -224,6 +312,7 @@ test("a failed bridge read the journal cannot answer stays unobserved, with its 
   const written = writeJournalOnDisk("plan_different_program");
   const readProgramOutcomes = extractRunnerFunction(RUNNER_SOURCE, "readProgramOutcomes", {
     executionsFromJournalEvents,
+    programNodeOutcomes,
   });
   const records = await readProgramOutcomes({
     submissions: [{ programId, accepted: true }],

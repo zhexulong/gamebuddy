@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The release contract: one version grammar and one record path, shared by the installer that writes the record and the
+    launcher that reads it.
+
+    It is a project rather than a linked source file because the test project references BOTH executables, and a linked file
+    would define the same internal type twice - which the compiler reports as CS0433 and a reader misreads as a name clash
+    instead of what it is: two authorities for one fact. A single assembly makes the duplication impossible.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>GameBuddy.Release.Contract</AssemblyName>
+    <RootNamespace>GameBuddy.Release</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="GameBuddy.Desktop" />
+    <InternalsVisibleTo Include="GameBuddy.Setup" />
+    <InternalsVisibleTo Include="GameBuddy.Desktop.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "what": "The best action breadth each live scenario has shown, and the published actions a farm fixture cannot reach.",
+  "howRead": "tools/audit-action-breadth.mjs --result <bundle>; measured against the Mod's own registration table through tools/lib/stardew-published-action-registry.mjs",
+  "why": [
+    "A count of executions cannot tell a varied day from 124 repetitions of three safe actions. `round39` reported",
+    "`executionTrace: { ok: true, rows: 124 }` and completed, having attempted 15 of the 95 published actions,",
+    "and nothing in its artifact said so. This file is the ratchet that makes the next such run visible: a run below",
+    "the recorded best is `narrow:below_baseline:<label>`."
+  ],
+  "baselines": {
+    "multiday_routine": {
+      "label": "round38",
+      "attempted": 24,
+      "families": 11,
+      "publishedAtRecord": 95,
+      "executions": 379,
+      "bundle": "tools/_multiday_routine-round38.result.json",
+      "recordedOn": "2026-11-07",
+      "measured": "24 distinct actions in 11 families over 379 executions, largest single action 22% (break_rock) - the widest multiday day on this machine out of the 172 multiday bundles that carry an attempted list"
+    }
+  },
+  "exclusions": [
+    {
+      "actionId": "select_mine_elevator_floor",
+      "reason": "elevator-floor action: the floor set is not a client-supplied range, it is what `MineElevatorMenu` displays (integrations/stardew/src/Core/Models/BridgeProtocolModels.cs:483-497), so a fixture that has never descended a mine publishes no floor to select and the current floor is a native no-op"
+    },
+    {
+      "actionId": "send_multiplayer_chat",
+      "reason": "multiplayer-only: the one social act that is not about an NPC in front of the actor, sent to the whole lobby through `Multiplayer.sendChatMessage` (integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs:586-589); a native-local farm fixture has one farmhand and no peer to reach"
+    },
+    {
+      "actionId": "use_raft",
+      "reason": "needs a Raft in a tool slot (integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs:285, `ToolResource(\"raft\", ...)`) and open water beside it; the native-local fixture's player starts with no raft and no farm day places one"
+    },
+    {
+      "actionId": "ride_bus",
+      "reason": "targets the Bus Stop ticket machine of the current location (integrations/stardew/src/Core/Protocol/BridgeProtocol.cs:2094-2096) and drives `BusStop.checkAction+answerDialogue` (FarmhandActionDefinitions.cs:272-283); the bus is out of order until the Vault repair, which a fixture that starts a fresh farm has not done"
+    }
+  ]
+}

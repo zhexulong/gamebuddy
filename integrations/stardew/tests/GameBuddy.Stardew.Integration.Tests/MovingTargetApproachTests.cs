@@ -49,11 +49,14 @@ public sealed class MovingTargetApproachTests
         // pet that could actually be petted on arrival.
         body.Should().Contain("ResolvePetTarget(location, expectedTargetId)");
         int resolve = body.IndexOf("ResolvePetTarget(location, expectedTargetId)", StringComparison.Ordinal);
-        int hands = body.IndexOf("\"hands_not_empty\"", StringComparison.Ordinal);
+        int hands = body.IndexOf("PetHeldItemRefusal(Game1.player, expectedTargetId)", StringComparison.Ordinal);
         int geometry = body.IndexOf("IsTileWithinChebyshevRadius", StringComparison.Ordinal);
         int approach = body.IndexOf("TryBeginToolApproach", StringComparison.Ordinal);
         resolve.Should().BeLessThan(geometry, "the pet must resolve before the geometry decision");
-        hands.Should().BeLessThan(geometry, "an empty-handed precondition must hold before deciding to walk");
+        hands.Should().BeGreaterThanOrEqualTo(
+            0,
+            "the two held-item branches `Pet.checkAction` really has are decided before the walk is committed");
+        hands.Should().BeLessThan(geometry, "the preconditions must hold before deciding to walk");
         geometry.Should().BeLessThan(approach, "the approach is the out-of-range branch");
 
         body.Should().NotContain("\"target_out_of_range\"",

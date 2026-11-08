@@ -86,7 +86,7 @@ internal static class TargetRoundTripProbe
         /// </summary>
         string UnreadableRefusal = "");
 
-    internal static Outcome Run(TargetFamilyWorld world, string actionId, string family, bool corruptIdentity = false)
+    internal static Outcome Run(TargetFamilyWorld world, string actionId, string family, bool corruptIdentity = false, string? heldQualifiedItemId = null)
     {
         IReadOnlyList<object> rows;
         try
@@ -109,6 +109,11 @@ internal static class TargetRoundTripProbe
 
         ExecutionManager executions = world.NewExecutionManager(actionId);
         IFarmhandActionHandler handler = HandlerFor(group, executions);
+        // The PERTURBATION, applied after the world is built and before the first request: the actor's hand closes on
+        // something the action never asked for. Applied here rather than by each caller so every (action, family) pair
+        // in the population is perturbed through the one code path, and so the unperturbed behaviour stays reachable
+        // by leaving the argument null.
+        if (heldQualifiedItemId is not null) world.HoldAnUnrequestedItem(heldQualifiedItemId);
 
         var refusals = new List<string>();
         var preTarget = new List<string>();

@@ -12,15 +12,24 @@ import {
 import type { CompanionTurnOutcome, WorldFact } from "./event-pump.js";
 import type { IntegrationEventSource, IntegrationLifecycleEvent } from "./integration-launcher.js";
 import { NativeNoticeLedger } from "./native-notice-fact.js";
-import { classifyProviderFailure, type ProviderFailureClass } from "./provider-failure-classification.js";
 import type {
   CompanionTextPort,
   GameCompanionTextExpression,
   HostPresentationAdmissionProvider,
 } from "./presentation.js";
 import type { ExecutionReceipt, Snapshot } from "./protocol.js";
+import {
+  boundProviderFailureLine,
+  classifyProviderFailure,
+  type ProviderFailureClass,
+} from "./provider-failure-classification.js";
 import { formatSnapshotHud } from "./snapshot-hud.js";
-import { resolveStopSystemNotice, type StopSystemNotice } from "./system-notices.js";
+import {
+  resolveProviderFailureSystemNotice,
+  resolveProviderWaitSystemNotice,
+  resolveStopSystemNotice,
+  type SystemNotice,
+} from "./system-notices.js";
 import { deliverFinalVoiceInput, type FinalVoiceInput } from "./voice.js";
 
 export type FinalVoiceSource = Readonly<{ onFinalTranscript(listener: (input: FinalVoiceInput) => void): () => void }>;
@@ -431,7 +440,34 @@ export class CompanionHostService {
    */
   #snapshotArrivedAfterBatch = 0;
   #stopVoice: ((reasonCode: string) => Promise<unknown>) | undefined;
-  #presentStopSystemNotice: ((notice: StopSystemNotice, noticeId: string) => Promise<void>) | undefined;
+  /**
+   * The Host-owned line channel a player-facing surface installs, and the locale its
+   * registered copy is written in.
+   *
+   * It carries the STOP confirmations and the provider-wait status lines - never companion
+   * dialogue: a status line must be distinguishable from speech in the artifact, so this is
+   * a different request on the wire (`system_notice_request`), not a `companion_text` piece.
+   */
+  #presentSystemNotice: ((notice: SystemNotice, noticeId: string) => Promise<void>) | undefined;
+  #systemNoticeLocale = "en-US";
+  /**
+   * Whether this session has told the player it is connected and waiting for the provider.
+   *
+   * MEASURED 2026-11-06: a 48-minute Game run put nothing in front of the player for 709
+   * seconds. The run's first act is to ask the model for a plan, so the first thing that
+   * can go wrong is invisible by construction - the player watches an idle game and cannot
+   * tell "she is thinking" from "the endpoint refused us". Said once, before the first
+   * request, because saying it again is not progress.
+   */
+  #providerWaitAnnounced = false;
+  /**
+   * The provider failure classes whose own words the player has already been shown.
+   *
+   * Bounded per distinct class until the provider answers again, because pi retries a
+   * refusal three times under us and each of those retries is the same fact. Cleared by a
+   * turn that succeeds, so a later, separate outage is news rather than suppression.
+   */
+  readonly #announcedProviderFailures = new Set<ProviderFailureClass>();
   #activePiBatch: Readonly<{ sourceEventId: string; batchId: string }> | undefined;
   readonly #settledStops = new Map<
     string,
@@ -544,13 +580,14 @@ export class CompanionHostService {
     this.#stopVoice = stopVoice;
   }
 
-  /** Preview composition may mount only this fixed-copy, game-thread notice capability. */
-  public attachStopSystemNoticePresenter(
-    presenter: (notice: StopSystemNotice, noticeId: string) => Promise<void>,
+  /** A player-facing surface installs only this fixed-copy, game-thread notice capability. */
+  public attachSystemNoticePresenter(
+    presenter: (notice: SystemNotice, noticeId: string) => Promise<void>,
+    locale: string,
   ): void {
-    if (this.#closed || this.#presentStopSystemNotice !== undefined)
-      throw new Error("stop_system_notice_authority_unavailable");
-    this.#presentStopSystemNotice = presenter;
+    if (this.#closed || this.#presentSystemNotice !== undefined) throw new Error("system_notice_authority_unavailable");
+    this.#presentSystemNotice = presenter;
+    this.#systemNoticeLocale = locale;
   }
 
   /** Authenticated control ingress retains its source event through Pi consumption. */
@@ -675,10 +712,10 @@ export class CompanionHostService {
       // settled, the same Host session may accept a fresh player turn. A newer
       // STOP advances the epoch, so this older settlement cannot reopen it.
       if (interruption.openIfCurrentEpoch(admission.epoch) !== undefined) this.#integrationAdmissionOpen = true;
-      if (input.locale !== undefined && this.#presentStopSystemNotice !== undefined) {
+      if (input.locale !== undefined && this.#presentSystemNotice !== undefined) {
         // Cancellation settles before optional native-chat delivery. A slow or
         // failed display may not delay its receipt, proof, or control response.
-        void this.#presentStopSystemNotice(resolveStopSystemNotice(outcome, input.locale), admission.stopId).catch(
+        void this.#presentSystemNotice(resolveStopSystemNotice(outcome, input.locale), admission.stopId).catch(
           () => undefined,
         );
       }
@@ -859,6 +896,22 @@ export class CompanionHostService {
   public acceptInitialFacts(facts: readonly WorldFact[]): void {
     this.#attached = true;
     for (const fact of facts) this.acceptIntegrationFact(fact);
+  }
+
+  /**
+   * A fact the Host itself mints about the companion's own work, onto the same pump every other fact uses.
+   *
+   * The one producer today is the settled-plan digest (`program-settlement-digest.ts`): the per-node terminal ledger of
+   * a plan the Mod's journal has stopped. It travels here rather than through `acceptIntegrationFact` because that route
+   * is the ADAPTER's ingress - it gates on the integration admission switch and on receipt identity, none of which is a
+   * question about a fact the Host observed by reading the journal itself.
+   */
+  public acceptHostMintedFact(fact: WorldFact): void {
+    if (this.#closed) return;
+    this.loop.pump.enqueueFact(fact);
+    // A held fact (`isSettledPlanDigest`) does not set `hasPendingDelivery` on its own, so this flush delivers it with
+    // whatever else is queued and starts no turn of its own.
+    void this.flushSoon().catch(() => undefined);
   }
 
   private acceptIntegrationFact(fact: WorldFact): void {
@@ -1189,6 +1242,9 @@ export class CompanionHostService {
       // Host-owned cancellation fence for scheduled and retry flushes.
       if (!this.#closed && this.#integrationAdmissionOpen) {
         this.#restateWorldSnapshot();
+        // Before the request, never after: this is the moment the wait begins, and the only
+        // moment the Host knows the bridge is up and the model has been asked for nothing yet.
+        this.#announceProviderWait();
         // The loop reports how the delivered turn ended (or nothing when there was nothing to deliver).
         // Retained so a caller that awaits player input can report it instead of guessing from silence.
         const outcome = await this.#flushTurn();
@@ -1202,6 +1258,8 @@ export class CompanionHostService {
       this.#retryDelayMs = this.#baseRetryDelayMs;
       // The provider answered, so the last recorded environment failure no longer describes the session.
       this.#lastProviderFailure = undefined;
+      // ...and the next refusal of a class already announced is news again rather than a repeat.
+      this.#announcedProviderFailures.clear();
     } catch (error) {
       // EventPump restored the exact batch. Two kinds of failure arrive here and they do not deserve the same answer.
       //
@@ -1219,8 +1277,10 @@ export class CompanionHostService {
       const providerFailure = classifyProviderFailure(error instanceof Error ? error.message : String(error));
       // An empty completion is neither of those two: `#flushTurn` owns its own bound and its own ending, so this layer
       // must not start the unbounded ladder under it. Everything else keeps the answers above.
-      if (providerFailure !== undefined) this.#lastProviderFailure = providerFailure;
-      else if (this.#runTermination === undefined) this.scheduleRetry();
+      if (providerFailure !== undefined) {
+        this.#lastProviderFailure = providerFailure;
+        this.#presentProviderFailure(providerFailure, error);
+      } else if (this.#runTermination === undefined) this.scheduleRetry();
       // Callers that await explicit player input receive the failure, while
       // bridge callbacks catch it at their boundary.
       throw error;
@@ -1251,6 +1311,51 @@ export class CompanionHostService {
         void this.flushSoon().catch(() => undefined);
       }
     }
+  }
+
+  /**
+   * Tells the player the run is up and the model has not answered yet.
+   *
+   * <p>
+   * Placed immediately BEFORE the first provider request, because that is the moment the wait begins. It is said
+   * once: repeating it is not progress, and a status line that keeps reappearing reads as a companion stalling.
+   * </p>
+   * <p>
+   * The run's own log carries the same instant (`PROVIDER_WAIT`), because a later reader has to be able to date the
+   * wait even when no surface installed a notice presenter - the artifact must not depend on who was watching.
+   * </p>
+   */
+  #announceProviderWait(): void {
+    if (this.#providerWaitAnnounced) return;
+    this.#providerWaitAnnounced = true;
+    process.stderr.write(`PROVIDER_WAIT ${JSON.stringify({ atMs: Date.now(), locale: this.#systemNoticeLocale })}\n`);
+    if (this.#presentSystemNotice === undefined) return;
+    void this.#presentSystemNotice(resolveProviderWaitSystemNotice(this.#systemNoticeLocale), randomUUID()).catch(
+      () => undefined,
+    );
+  }
+
+  /**
+   * Shows one provider refusal in the provider's OWN words, at most once per class until the provider answers again.
+   *
+   * <p>
+   * The class is already recorded (`#lastProviderFailure`), but a class is not something the player can act on:
+   * `429 ... retry shortly (after 30 s)` and `Request timed out.` are both "she is not answering" from the bubble's
+   * point of view, and the words are the difference between waiting a minute and checking a credential. Bounded and
+   * single-line by `boundProviderFailureLine`; pi retries a refusal three times under this layer, so the same class
+   * is said once rather than once per retry.
+   * </p>
+   */
+  #presentProviderFailure(providerFailure: ProviderFailureClass, error: unknown): void {
+    if (this.#closed || this.#announcedProviderFailures.has(providerFailure)) return;
+    this.#announcedProviderFailures.add(providerFailure);
+    const line = boundProviderFailureLine(error instanceof Error ? error.message : String(error));
+    process.stderr.write(`PROVIDER_FAILURE ${JSON.stringify({ atMs: Date.now(), class: providerFailure })}\n`);
+    if (line === undefined || this.#presentSystemNotice === undefined) return;
+    void this.#presentSystemNotice(
+      resolveProviderFailureSystemNotice(this.#systemNoticeLocale, line),
+      randomUUID(),
+    ).catch(() => undefined);
   }
 
   /**

@@ -11,7 +11,7 @@
 // ratchets already apply — while a TRACKED path that has gone missing still
 // fails, which is the defect this gate exists for.
 import { execFileSync } from "node:child_process";
-import { readdirSync, statSync, existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +28,8 @@ const KNOWN_LEADERS = [
 ];
 const PATHISH =
   /(?:^|\s)(?:"?)((?:tools|host|dialogue-web|packages|integrations|fixtures|scripts|\.github)\/[^\s"'`|&;<>()]+)/g;
+/** Extensions that only ever name repository content, so an ignore rule on one of them is never a build output. */
+const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".json", ".css"]);
 
 function collectScripts(pkgRoot) {
   const pkgPath = join(pkgRoot, "package.json");
@@ -36,22 +38,20 @@ function collectScripts(pkgRoot) {
   return Object.entries(pkg.scripts || {}).map(([name, cmd]) => ({ name, cmd, pkgRoot }));
 }
 
-/** The repo-relative, POSIX-separated form of one resolved reference. */
-function repoRelative(ref) {
-  return relative(root, resolve(root, ref.replace(/["'`]$/, "")))
+/** The repo-relative, POSIX-separated form of one reference, resolved from the package that declares it. */
+function repoRelative(ref, base = root) {
+  return relative(root, resolve(base, ref.replace(/["'`]$/, "")))
     .split("\\")
     .join("/");
 }
 
 /** Whether git ignores this path, i.e. it is a build output rather than repository content. */
-function isBuildOutput(ref) {
-  // A directory pattern in .gitignore (`dist/`) only matches a path that exists as a directory: git answers
-  // "not ignored" for `host/dist` when the build has not run, and "ignored" for the same path once it has.
-  // That made this gate pass on a developer's machine (artifacts present) and fail on a fresh checkout
-  // (`.:build:player-distribution -> host/dist`), which reads as a phantom script entry rather than as a
-  // build output. Asking about the directory form as well makes the answer independent of the artifact.
-  const candidates = [repoRelative(ref), `${repoRelative(ref)}/`];
-  for (const candidate of candidates) {
+function isBuildOutput(ref, base = root) {
+  const relativePath = repoRelative(ref, base);
+  const dot = relativePath.lastIndexOf(".");
+  const extension = dot < 0 ? "" : relativePath.slice(dot).toLowerCase();
+  if (SOURCE_EXTENSIONS.has(extension)) return false;
+  for (const candidate of [relativePath, `${relativePath}/`]) {
     try {
       execFileSync("git", ["check-ignore", "--quiet", "--no-index", candidate], {
         cwd: root,
@@ -67,14 +67,35 @@ function isBuildOutput(ref) {
   return false;
 }
 
-function resolveRef(rootDir, ref) {
-  // 去掉尾部引号/分号/重定向残留
+/**
+ * The tracked paths in `HEAD`, which is the population this gate is about.
+ *
+ * It used to ask the filesystem (`statSync`), and that made it lie in the one direction that matters: a script
+ * naming a file that exists only in the developer's worktree - a submodule checkout, an ignored build, a file that
+ * was never committed - passed here and failed on a clean checkout. Measured 2026-11-07: CI reported
+ * `.:test:stardew-wire-agreement -> host/src/plan-compiler-binding-agreement.test.ts` while this gate printed
+ * `419 paths all exists` on the machine where an earlier `git add` had left the file's fate ambiguous. A check
+ * whose boundary is the disk cannot answer a question about the commit.
+ */
+function trackedPaths() {
+  const listing = execFileSync("git", ["ls-tree", "-r", "--name-only", "-z", "HEAD"], {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  return new Set(listing.split("\0").filter(Boolean));
+}
+
+const TRACKED = trackedPaths();
+
+function resolveRef(ref, base = root) {
   const clean = ref.replace(/["'`]$/, "");
-  if (/[*?[\]]/.test(clean)) return null; // glob，跳过
-  const full = resolve(rootDir, clean);
-  const st = statSync(full, { throwIfNoEntry: false });
-  if (!st) return null; // 不存在
-  return full;
+  if (/[*?[\]]/.test(clean)) return null; // glob, skipped
+  // A path is a script entry when the commit holds it. The worktree is not asked: a file that exists only here is
+  // exactly the defect this gate exists to name. `base` is the package that declared the script, because a package's
+  // own scripts name paths relative to itself (`scripts/build-test-artifact.mjs` from `host/`).
+  return TRACKED.has(repoRelative(clean, base)) ? clean : null;
 }
 
 const problems = [];
@@ -92,9 +113,9 @@ for (const dir of [
     for (const m of cmd.matchAll(PATHISH)) {
       const ref = m[1];
       if (!KNOWN_LEADERS.some((k) => ref.startsWith(k))) continue;
-      const found = resolveRef(pkgRoot || root, ref);
+      const found = resolveRef(ref, pkgRoot ?? root);
       if (found) checked.push(ref);
-      else if (isBuildOutput(ref)) checked.push(ref);
+      else if (isBuildOutput(ref, pkgRoot ?? root)) checked.push(ref);
       else problems.push({ script: `${dir || "."}:${name}`, ref });
     }
   }

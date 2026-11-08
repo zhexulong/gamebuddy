@@ -11,6 +11,8 @@ import {
 } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
+import { probeTestArtifactLockOwner } from "./test-artifact-lock.mjs";
+
 const hostRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultLockPath = resolve(hostRoot, ".test-artifact.lock");
 const LOCK_VERSION = 1;
@@ -44,6 +46,35 @@ function parseLockBytes(bytes) {
     if (error?.message === "host_test_artifact_lock_malformed") throw error;
     throw failure("host_test_artifact_lock_malformed", error);
   }
+}
+
+/**
+ * The two conditions that make a lock safe to move aside, and the only two. `malformed` is a record this command cannot
+ * read at all. `owner-absent` is a READABLE record whose owner the shared liveness probe has proven gone.
+ *
+ * A pid that does not exist is a fact the machine can check, so a lock naming one is repaired instead of refused: this
+ * is how `unverified:win32` records - Windows carries no start identity - were stranded, with every build refusing
+ * until an operator deleted the file by hand. The probe is `probeTestArtifactLockOwner` and not a second spelling of
+ * it: it answers "dead" only for a missing pid (or, on Linux, a start time that proves reuse) and answers
+ * "alive"/"unknown" for a live, inaccessible or unexplained one. Everything but "dead" still meets
+ * `host_test_artifact_lock_valid`, because a live pid this command cannot tie to its record may be an owner mid-write.
+ */
+export const LOCK_REPAIR_REASONS = Object.freeze({
+  malformed: "malformed",
+  ownerAbsent: "owner-absent",
+});
+
+export async function classifyRepairableLock(bytes, { processProbe }) {
+  let record;
+  try {
+    record = parseLockBytes(bytes);
+  } catch (error) {
+    if (error?.message === "host_test_artifact_lock_malformed") return { reason: LOCK_REPAIR_REASONS.malformed };
+    throw error;
+  }
+  const ownerState = await processProbe(record);
+  if (ownerState !== "dead") throw failure("host_test_artifact_lock_valid");
+  return { reason: LOCK_REPAIR_REASONS.ownerAbsent, record, ownerState };
 }
 
 function sha256(bytes) {
@@ -131,9 +162,9 @@ async function restoreIfAbsent(quarantinePath, lockPath, { linkFile = link, lsta
 }
 
 /**
- * Move one malformed test-artifact lock into a same-directory quarantine.
- * This is intentionally separate from ordinary lock acquisition: callers must
- * opt into the operator repair with --quarantine-malformed at the CLI.
+ * Move one unownable test-artifact lock into a same-directory quarantine: either a malformed record, or a readable one
+ * whose recorded owner pid no longer exists. This is intentionally separate from ordinary lock acquisition - which
+ * reclaims a proven-dead owner itself - because a caller has to opt in at the CLI with --quarantine-malformed.
  */
 export async function quarantineMalformedTestArtifactLock(lockPath = defaultLockPath, options = {}) {
   const {
@@ -144,6 +175,7 @@ export async function quarantineMalformedTestArtifactLock(lockPath = defaultLock
     openFile = open,
     linkFile = link,
     unlinkFile = unlink,
+    processProbe = probeTestArtifactLockOwner,
     now = () => new Date(),
   } = options;
   const { absolutePath, entry } = await assertSafeLockPath(lockPath, { lstatFile, realpathFile });
@@ -152,18 +184,11 @@ export async function quarantineMalformedTestArtifactLock(lockPath = defaultLock
   if (fileIdentity(entry) !== fileIdentity(afterRead) || !afterRead.isFile()) {
     throw failure("host_test_artifact_lock_repair_race");
   }
-  // A valid owner record is never eligible for this command, regardless of
-  // process liveness. Ordinary acquisition remains the only reclaim path.
-  let malformed = false;
-  try {
-    parseLockBytes(originalBytes);
-  } catch (error) {
-    if (error?.message === "host_test_artifact_lock_malformed") malformed = true;
-    else throw error;
-  }
-  if (!malformed) throw failure("host_test_artifact_lock_valid");
+  // A lock is repaired for exactly two reasons, and neither of them is "the owner looks busy": a record that cannot be
+  // read, and a record whose owner pid is proven gone. A live pid stays refused whatever its identity says.
+  const verdict = await classifyRepairableLock(originalBytes, { processProbe });
 
-  const quarantinePath = `${absolutePath}.malformed-quarantine-${randomUUID()}`;
+  const quarantinePath = `${absolutePath}.${verdict.reason}-quarantine-${randomUUID()}`;
   const reportPath = `${quarantinePath}.recovery-report.json`;
   await renameFile(absolutePath, quarantinePath);
 
@@ -204,7 +229,7 @@ export async function quarantineMalformedTestArtifactLock(lockPath = defaultLock
   const relativePath = (value) => relative(hostRoot, value) || ".";
   const payload = {
     schemaVersion: 1,
-    status: "quarantined-malformed",
+    status: `quarantined-${verdict.reason}`,
     repairedAt: now().toISOString(),
     lockPath: relativePath(absolutePath),
     quarantinePath: relativePath(quarantinePath),
@@ -213,7 +238,15 @@ export async function quarantineMalformedTestArtifactLock(lockPath = defaultLock
       identity: fileIdentity(entry),
       byteLength: originalBytes.byteLength,
       sha256: sha256(originalBytes),
-      malformed: true,
+      reason: verdict.reason,
+      owner:
+        verdict.record === undefined
+          ? null
+          : {
+              pid: verdict.record.pid,
+              processStartIdentity: verdict.record.processStartIdentity,
+              pidState: verdict.ownerState,
+            },
     },
     quarantine: {
       identity: fileIdentity(quarantineEntry),
@@ -253,11 +286,12 @@ export async function main(argv = process.argv.slice(2)) {
   const args = parseArguments(argv);
   if (args.help) {
     console.log("Usage: node scripts/repair-test-artifact-lock.mjs --quarantine-malformed [--lock-path PATH]");
+    console.log("  --quarantine-malformed  move aside a malformed record, or one whose recorded owner pid is gone");
     return 0;
   }
   if (!args.quarantineMalformed) throw failure("host_test_artifact_lock_repair_requires_flag");
   const result = await quarantineMalformedTestArtifactLock(args.lockPath);
-  console.log(JSON.stringify({ quarantinePath: result.quarantinePath, reportPath: result.reportPath }));
+  console.log(JSON.stringify({ status: result.report.status, quarantinePath: result.quarantinePath, reportPath: result.reportPath }));
   return 0;
 }
 

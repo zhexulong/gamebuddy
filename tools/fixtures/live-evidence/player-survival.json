@@ -1,0 +1,59 @@
+{
+  "schema": "gamebuddy_release_live_evidence/v1",
+  "surface": "player-survival",
+  "verdict": "not_measured",
+  "pinnedSha": "35d025645d5eb8f6a29d6fb475eb5a0f48516c73",
+  "capturedAt": "2026-11-07T23:01:51+08:00",
+  "scope": [
+    "integrations/stardew",
+    "host/src/composed-reference-game-browser.ts",
+    "host/src/game-browser",
+    "host/src/stardew-production-lifecycle-coordinator.internal.ts"
+  ],
+  "source": {
+    "file": "tools/live-run/game/readings/gamebuddy-world-survival-readings-full.json",
+    "examined": 31,
+    "agreed": 31
+  },
+  "readings": [
+    {
+      "id": "player-survival.ordinary_close_leaves_the_world_running",
+      "result": "passed",
+      "reading": "contain_role ai_client => role_contained; world_host_pid alive, game_pid alive, new observation time 650 -> 700"
+    },
+    {
+      "id": "player-survival.ai_crash_leaves_the_world_running",
+      "result": "passed",
+      "reading": "the AI process was killed by exact PID (alive=false); world_host_pid and game_pid unchanged; new observation time 700 -> 750"
+    },
+    {
+      "id": "player-survival.controller_eof_leaves_the_world_running",
+      "result": "passed",
+      "reading": "guardian exited with code 1 within 5000ms; world_host_pid and game_pid unchanged; new observation time 750 -> 800"
+    },
+    {
+      "id": "player-survival.guardian_last_handle_leaves_the_world_running",
+      "result": "passed",
+      "reading": "the Guardian was ended by its exact PID (/PID, no /T), the bridge pipe still listened, both PIDs stayed alive, new observation time 600 -> 610"
+    },
+    {
+      "id": "player-survival.explicit_endgame_containment_ends_the_world",
+      "result": "passed",
+      "reading": "contain_role player_host was driven while alive_at_containment=true and pipe_present_at_containment=true; the world was gone 516ms later and 20 observation attempts answered ENOENT"
+    },
+    {
+      "id": "player-survival.authenticated_gameended_projection",
+      "result": "not_measured",
+      "reading": "the authoritative `gameended` projection after an authenticated `game_endgame` was not observed on this run; only the containment half is measured"
+    }
+  ],
+  "notProven": [
+    "the `gameended` projection after an authenticated `game_endgame`: the containment half is measured, the product projection back to Desktop/browser is not",
+    "deploying the Mod through a store-managed install: the gate loaded the Mod from a copy of the shared fixture tree"
+  ],
+  "reason": "authenticated_gameended_projection_unmeasured: the containment half of explicit endgame is measured on a real world, but the authoritative gameended projection after an authenticated game_endgame was not observed on this run",
+  "instrument": [
+    "tools/live-run/game/stardew-world-survival-live.mjs",
+    "tools/lib/windows-process-tree.mjs"
+  ]
+}

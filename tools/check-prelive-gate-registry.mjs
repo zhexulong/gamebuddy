@@ -95,6 +95,16 @@ export const REASON_CLASSES = Object.freeze({
  */
 export const EXEMPTIONS = Object.freeze([
   {
+    path: "tools/audit-action-breadth.mjs",
+    reason:
+      "arguments: requires `--result <bundle>/result.json` from one FINISHED live run and, for the concentration, the" +
+      " flat trace in that run's directory, so there is nothing to measure before a run exists; measured 2026-11-07 on" +
+      " round39 it reports `attempted 15 of 95` and `narrow:below_baseline:round38`. Its verdict is also published in" +
+      " every bundle by the runner's own `action_breadth` clause, which is what keeps a narrow run visible without" +
+      " anyone remembering to run this entry",
+    runsIn: "on-demand",
+  },
+  {
     path: "tools/audit-chat-live-run.mjs",
     reason:
       "arguments: requires `--audit <chat-run-dir>` pointing at an existing Chat live-run directory (same entry as " +
@@ -105,6 +115,28 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/audit-gate-red-proofs.mjs",
     reason: "elsewhere: static gate-red-proof audit, runs on every push in the CI gates job",
     runsIn: "pnpm audit:gate-red-proofs",
+  },
+  {
+    path: "tools/check-release-generation-self-contained.mjs",
+    reason:
+      "elsewhere: reads the generation `host/dist/current.json` points at and the modules `production-artifact.config.json` " +
+      "declares; runs in the CI `gates` job, where it reports `not_measured` when no generation is on disk, and in " +
+      "`release-windows.yml` immediately after the generation is assembled, which is the only place one exists",
+    runsIn: "pnpm check:release-generation-self-contained",
+  },
+  {
+    path: "tools/check-vendored-bundle-leaks.mjs",
+    reason:
+      "elsewhere: reads every `dist` under `vendor/`, i.e. bundles a submodule builds; runs in the CI `gates` job " +
+      "after `pnpm build:magic-context`, so it needs an install and a vendor build the rungs before launch do not have",
+    runsIn: "pnpm check:vendored-bundle-leaks",
+  },
+  {
+    path: "tools/check-workflow-expressions.mjs",
+    reason:
+      "elsewhere: reads `.github/workflows/*.yml`; runs in the CI `gates` job, and a prelive rung that examined them " +
+      "would be checking the same files twice on a machine that has no workflows of its own",
+    runsIn: "pnpm check:workflow-expressions",
   },
   {
     path: "tools/audit-long-session-metrics.mjs",
@@ -403,6 +435,15 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "on-demand",
   },
   {
+    path: "tools/check-release-live-evidence.mjs",
+    reason:
+      "elsewhere: runs in the protected release lane, where the evidence it reads is the release claim - " +
+      "release-windows.yml invokes it by path on tag pushes (not every push, which is why runsIn names that workflow " +
+      "rather than a pnpm script). prelive would be the wrong home for it: the ladder asks whether a live run can " +
+      "start, and this gate asks whether the last committed live evidence still describes this tree",
+    runsIn: "ci:.github/workflows/release-windows.yml",
+  },
+  {
     path: "tools/check-scope-references.mjs",
     reason: "debt: measured 4 findings (3 out_of_scope_reference, 1 read_before_declaration) at HEAD",
     runsIn: "pnpm check:scope-references",
@@ -416,11 +457,6 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-spec-reachability.mjs",
     reason: "elsewhere: derives which tools/ suites a checkout runs, and runs on every push in the CI gates job",
     runsIn: "pnpm check:spec-reachability",
-  },
-  {
-    path: "tools/check-stardew-action-promotion.mjs",
-    reason: "elsewhere: static promotion gate over the action surface, runs on every push in the CI gates job",
-    runsIn: "pnpm check:stardew-action-promotion",
   },
   {
     path: "tools/check-stardew-actor-admissibility.mjs",

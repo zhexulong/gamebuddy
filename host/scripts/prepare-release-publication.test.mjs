@@ -117,3 +117,74 @@ test("an unsigned release is never published, even with a valid manifest", async
     "publication_requires_signature",
   );
 });
+
+test("an unsigned artifact is published when the lane allows it and the manifest says it is unsigned", async () => {
+  const fixture = await assembledRelease({
+    overrides: { configuration: "Debug", signature: { required: false, scheme: "none", thumbprint: null } },
+  });
+  const publication = await preparePublication({
+    manifestPath: fixture.manifestPath,
+    tag: "v0.1.0",
+    generationOutputRoot: fixture.root,
+    verifySignature: signed,
+    platform: "win32",
+    allowUnsigned: true,
+  });
+  assert.equal(publication.unsigned, true);
+  // The first line a player reads has to say it, or the download implies a signature it does not have.
+  assert.match(publication.body, /This build is not code-signed/u);
+  // And the notes must not name a signature scheme for an artifact that has no signature: that line contradicted the
+  // warning above it.
+  assert.match(publication.body, /- Signature: none/u);
+  assert.doesNotMatch(publication.body, /authenticode\+timestamp/u);
+});
+
+test("a manifest claiming a signature it does not carry is refused by the manifest gate, not by policy", async () => {
+  // `required: true` with a Debug configuration is a contradiction, and the manifest gate owns it - the publication step
+  // never sees a manifest it has not already validated.
+  const fixture = await assembledRelease({
+    overrides: { configuration: "Debug", signature: { required: true, scheme: "none", thumbprint: null } },
+  });
+  await assert.rejects(
+    preparePublication({
+      manifestPath: fixture.manifestPath,
+      tag: "v0.1.0",
+      generationOutputRoot: fixture.root,
+      verifySignature: signed,
+      allowUnsigned: true,
+    }),
+    /release_manifest_invalid:configuration_claim_mismatch:Debug!=Release/u,
+  );
+});
+
+test("allowing unsigned does not publish a Release artifact, which cannot exist unsigned", async () => {
+  // Release is the configuration whose own MSBuild target refuses to produce an unsigned image, so a Release manifest
+  // without a signature is a contradiction rather than a policy choice - refused before the policy is consulted.
+  const fixture = await assembledRelease({
+    overrides: { configuration: "Release", signature: { required: false, scheme: "none", thumbprint: null } },
+  });
+  await assert.rejects(
+    preparePublication({
+      manifestPath: fixture.manifestPath,
+      tag: "v0.1.0",
+      generationOutputRoot: fixture.root,
+      verifySignature: signed,
+      allowUnsigned: true,
+    }),
+    /release_manifest_invalid:configuration_claim_mismatch:Release!=Debug/u,
+  );
+});
+
+test("a signed release is unaffected by the unsigned policy", async () => {
+  const fixture = await assembledRelease();
+  const publication = await preparePublication({
+    manifestPath: fixture.manifestPath,
+    tag: "v0.1.0",
+    generationOutputRoot: fixture.root,
+    verifySignature: signed,
+    platform: "win32",
+    allowUnsigned: true,
+  });
+  assert.equal(publication.unsigned, false);
+  assert.doesNotMatch(publication.body, /not code-signed/u);
+});

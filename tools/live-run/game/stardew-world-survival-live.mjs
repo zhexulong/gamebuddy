@@ -49,12 +49,14 @@
  * reading is only worth its method.
  *
  * Does NOT prove: the `gameended` projection itself. Reading 6 drives the containment half of explicit endgame
- * (`containPlayerHost`), which is the half that terminates the world; the authenticated `game_endgame`
- * operation that produces the projection needs a full desktop-composition activation (browser admission, Pi,
- * an AI provider credential) and cannot be minted by a harness. The readings JSON carries that boundary in
- * `notProven` so a green run cannot be read as covering the whole endgame. It also runs against the prepared
- * native-local fixture save and a Mod deployed in the fixture root, so it says nothing about mod deployment
- * into a store-managed install.
+ * (`containPlayerHost`), which is the half that terminates the world. The other half is not a credential: the
+ * authenticated `game_endgame` route needs no Pi runtime and no AI provider (endgame tears no attachment down
+ * when there is none - coordinator :2056-2061). What it does need is a Guardian endpoint that answers
+ * `arm_attempt`/`launch_role`/`contain_role` for the private `GameBuddy.HostGuardian.<bootstrapId>` session,
+ * and its only implementation is the native Desktop supervisor; the readings JSON carries that boundary in
+ * `notProven` (see `gamebuddy-endgame-entry-chain.json` for the chain, cited line by line). It also runs
+ * against the prepared native-local fixture save and a Mod deployed in the fixture root, so it says nothing
+ * about mod deployment into a store-managed install.
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -115,13 +117,16 @@ const ATTACHED_OBSERVATION_MAX_AGE_MS = 10_000;
 /**
  * What this gate cannot speak to, named where a reader of its JSON will see it.
  *
- * The `gameended` projection is the product's own authenticated `game_endgame` operation, and it needs a full
- * desktop-composition activation - browser admission, a Pi runtime and an AI provider credential. A harness
- * cannot mint one, so reading 6 proves the containment that terminates the world, not the projection that
- * follows it. A gate that stayed silent about this would be read as covering the whole endgame.
+ * The `gameended` projection is produced by the product's own authenticated `game_endgame` operation, but not by
+ * a credential: the operation reaches its result only after `containedRuntimeTeardown.settle(owner)`, and that
+ * teardown is built over a DesktopGuardianSession whose Guardian endpoint exists only in the native Desktop
+ * supervisor. Reading 6 proves the containment that terminates the world (the public guardian control channel),
+ * not the projection that follows it. A gate that stayed silent about this would be read as covering the whole
+ * endgame.
  */
 const NOT_PROVEN = Object.freeze([
-  "the `gameended` projection: explicit endgame's authenticated `game_endgame` operation needs a full desktop-composition activation (browser admission, a Pi runtime and an AI provider credential), which a harness cannot mint",
+  "the `gameended` projection: the authenticated `game_endgame` operation is reachable over real HTTP ingress with no AI provider credential, but its result is minted only after containedRuntimeTeardown.settle(owner), and that teardown is built over a DesktopGuardianSession whose Guardian endpoint exists only in the native Desktop supervisor; reading 6 proves the containment half (`contain_role player_host` over the public guardian control channel), not the projection",
+  "the desktop/browser read of that outcome: the state projection has no `gameended` member, so what a browser reads after an endgame is instance status plus actionAuthority, and no live run has yet held a session that could reach the operation",
   "mod deployment into a store-managed install: this gate loads the Mod from a copy of the shared fixture tree",
 ]);
 
@@ -996,8 +1001,9 @@ async function endgameContainmentSession(plan) {
     );
     note(
       "[C] the `gameended` projection is NOT reached by this reading: it is minted by the authenticated " +
-        "`game_endgame` operation, which needs a full desktop-composition activation (browser admission, a Pi " +
-        "runtime and an AI provider credential). What is proven here is the containment that ends the world.",
+        "`game_endgame` operation only after containedRuntimeTeardown.settle(owner), whose Guardian endpoint lives " +
+        "in the native Desktop supervisor - not behind a Pi runtime or a provider credential. What is proven here " +
+        "is the containment that ends the world.",
     );
     await session.contain("ai_client");
   } finally {

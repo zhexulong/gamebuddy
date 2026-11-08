@@ -1,0 +1,24 @@
+{
+  "schema": "gamebuddy_release_live_evidence/v1",
+  "surface": "memory",
+  "capturedAt": "2026-11-07T17:30:18Z",
+  "pinnedSha": "7bf67202b5ef1c8f45b92acaa157e67bfb819ef2",
+  "verdict": "not_measured",
+  "reason": "provider_credential_absent: CPA_OAI_API_KEY is not set, so the historian fold never ran and blocked() wrote no report",
+  "readings": [
+    {
+      "id": "memory.fold_seals_chapter",
+      "result": "not_measured",
+      "detail": "the fold is a real provider turn through the embedded runtime; the gate refuses before compiling the fixture when the credential is absent (measured at this commit: exit 3, verdict blocked, reason credential_absent)"
+    },
+    {
+      "id": "memory.historian_rubric",
+      "result": "not_measured",
+      "detail": "the rubric is judged on the compartments the fold wrote, so it has no subject until the fold above is measured"
+    }
+  ],
+  "scope": [
+    "vendor/magic-context",
+    "host/src/continuity-semantic-"
+  ]
+}

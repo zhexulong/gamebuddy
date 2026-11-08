@@ -3,7 +3,12 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
 
-import { readDurableLiveEvidence, validatePromotionSources } from "./check-stardew-action-promotion.mjs";
+import {
+  findPlaceholderWritePostconditions,
+  readDurableLiveEvidence,
+  readWritePostconditionBaseline,
+  validatePromotionSources,
+} from "./check-stardew-action-promotion.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "./stardew-action-gate-descriptors.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -29,7 +34,24 @@ const sources = await Object.fromEntries(
 
 // The durable recorded runs, read the same way the CLI's `main()` reads them: the
 // lag check is only worth its failure message if it is driven by the real stores.
+//
+// red-proof: inject  reverting rotate_furniture's postcondition to the generic
+//   `native_action_postcondition` while no baseline entry records it ->
+//   `write_postcondition_placeholder:rotate_furniture:handler_reads=rotation+rotations`
+//   (tools/check-stardew-action-promotion.test.mjs)
 const evidence = await readDurableLiveEvidence({ root });
+
+// The write-postcondition rule's two inputs, read the way the CLI reads them: the
+// generated surface and the recorded debt. A suite that supplied its own copies
+// would prove the rule against a tree that does not exist.
+const surfaceSource = await readFile(
+  resolve(root, "integrations/stardew/action-development/contracts/generated/action-surface.v1.json"),
+  "utf8",
+);
+const surface = JSON.parse(surfaceSource);
+const writePostconditionBaseline = readWritePostconditionBaseline(
+  await readFile(resolve(root, "tools/stardew-write-postcondition-baseline.json"), "utf8"),
+);
 
 /**
  * Flip one live registration back to `experimental` in the catalog text - the real
@@ -47,7 +69,13 @@ function flipToExperimental(source, actionId) {
 }
 
 function failuresFor(mutated) {
-  return validatePromotionSources({ ...sources, promotionEvidence: evidence.receipts, ...mutated }).failures;
+  return validatePromotionSources({
+    ...sources,
+    promotionEvidence: evidence.receipts,
+    surface,
+    writePostconditionBaseline,
+    ...mutated,
+  }).failures;
 }
 
 test("promotion checker accepts the Mod-owned registration projection", () => {
@@ -297,4 +325,122 @@ test("an unreadable evidence store is a failure, not an empty pass", async () =>
     problems.some((problem) => problem.startsWith("live_evidence_directory_unreadable:")),
     JSON.stringify(problems),
   );
+});
+
+//
+// A WRITE ACTION'S POSTCONDITION MUST NAME WHAT WAS RE-READ
+//
+// Until this, a write action could declare `native_action_postcondition` - a name that
+// names nothing - and promotion never asked which engine member a handler re-reads to
+// prove the effect happened. The cases below are the two ways the rule can be false: a
+// placeholder the baseline does not record, and a baseline entry that outlived its own
+// action. The engine member a finding names comes from the observation-gap report's
+// section H reader (`handlerFieldReads`), imported by the gate rather than re-derived.
+//
+function surfaceWith(actionId, postconditionName) {
+  const mutated = JSON.parse(surfaceSource);
+  const action = mutated.actions.find((entry) => entry.actionId === actionId);
+  assert.ok(action !== undefined, `the surface must carry ${actionId}`);
+  action.postcondition = { name: postconditionName };
+  return mutated;
+}
+
+test("the real tree's write postconditions pass, and the population is every write action", () => {
+  const report = findPlaceholderWritePostconditions({
+    surface: JSON.parse(surfaceSource),
+    baseline: writePostconditionBaseline,
+  });
+  assert.deepEqual(report.findings, [], JSON.stringify(report.findings));
+  const writeActions = JSON.parse(surfaceSource).actions.filter((action) => action.effect === "write");
+  assert.equal(report.checked, writeActions.length, "every write action is examined, read-only ones are not");
+  assert.ok(report.checked > 90, `the population must be the whole write surface, measured ${report.checked}`);
+  assert.equal(report.specific + report.placeholders, report.checked, "the two kinds partition the population");
+  assert.ok(report.placeholders > 0, "the recorded debt is what this tree actually carries");
+});
+
+test("a placeholder the baseline does not record is refused by name, with the member the handler reads", () => {
+  // rotate_furniture names `furniture_rotated` today, so reverting it to the generic
+  // name is the real regression: a specific claim replaced by one that names nothing.
+  const report = findPlaceholderWritePostconditions({
+    surface: surfaceWith("rotate_furniture", "native_action_postcondition"),
+    baseline: writePostconditionBaseline,
+    engineFacts: (actionId) => (actionId === "rotate_furniture" ? ["rotation", "rotations"] : []),
+  });
+  assert.deepEqual(
+    report.findings.filter((finding) => finding.startsWith("write_postcondition_placeholder:")),
+    ["write_postcondition_placeholder:rotate_furniture:handler_reads=rotation+rotations"],
+    JSON.stringify(report.findings),
+  );
+});
+
+test("a recorded placeholder passes, and an entry whose action names a member again is stale", () => {
+  const recorded = writePostconditionBaseline.entries.find((entry) => entry === "till_soil");
+  assert.equal(recorded, "till_soil", "till_soil is the measured placeholder this case uses");
+  const recordedSurface = JSON.parse(surfaceSource);
+  assert.deepEqual(
+    findPlaceholderWritePostconditions({ surface: recordedSurface, baseline: writePostconditionBaseline }).findings,
+    [],
+  );
+  // The other direction: give the action a specific name and keep its debt entry.
+  assert.deepEqual(
+    findPlaceholderWritePostconditions({
+      surface: surfaceWith("till_soil", "soil_tilled"),
+      baseline: writePostconditionBaseline,
+    }).findings,
+    ["stale_write_postcondition_debt:till_soil"],
+  );
+});
+
+test("a baseline entry for an action the surface no longer carries is stale, not silently dropped", () => {
+  const report = findPlaceholderWritePostconditions({
+    surface: surfaceWith("move_to_tile", "target_reached"),
+    baseline: {
+      reason: writePostconditionBaseline.reason,
+      entries: [...writePostconditionBaseline.entries, "an_action_that_left_the_surface"],
+    },
+  });
+  assert.ok(report.findings.includes("stale_write_postcondition_debt:move_to_tile"), JSON.stringify(report.findings));
+  assert.ok(
+    report.findings.includes("write_postcondition_debt_unknown_action:an_action_that_left_the_surface"),
+    JSON.stringify(report.findings),
+  );
+});
+
+test("an unreadable or unreasoned baseline is a finding, never an empty pass", () => {
+  assert.equal(readWritePostconditionBaseline("{not json").problem, "write_postcondition_baseline_malformed");
+  assert.equal(
+    readWritePostconditionBaseline(JSON.stringify({ schema: "other/v1", entries: [] })).problem,
+    "write_postcondition_baseline_schema_mismatch",
+  );
+  assert.equal(
+    readWritePostconditionBaseline(
+      JSON.stringify({ schema: "gamebuddy-stardew-write-postcondition-baseline/v1", entries: ["a"] }),
+    ).problem,
+    "write_postcondition_baseline_unreasoned",
+  );
+  assert.equal(
+    readWritePostconditionBaseline(
+      JSON.stringify({
+        schema: "gamebuddy-stardew-write-postcondition-baseline/v1",
+        reason: "because",
+        entries: ["a", "a"],
+      }),
+    ).problem,
+    "write_postcondition_baseline_duplicates",
+  );
+});
+
+test("the promotion gate refuses to run the postcondition check without its inputs", () => {
+  const missingSurface = validatePromotionSources({
+    ...sources,
+    promotionEvidence: evidence.receipts,
+    surface: undefined,
+  }).failures;
+  assert.ok(missingSurface.includes("action_surface_not_supplied"), JSON.stringify(missingSurface));
+  const missingBaseline = validatePromotionSources({
+    ...sources,
+    promotionEvidence: evidence.receipts,
+    writePostconditionBaseline: undefined,
+  }).failures;
+  assert.ok(missingBaseline.includes("write_postcondition_baseline_not_supplied"), JSON.stringify(missingBaseline));
 });

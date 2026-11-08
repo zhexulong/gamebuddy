@@ -128,6 +128,44 @@ test("the journal path is the store's own path, derived from the documented data
   );
 });
 
+test("a journal node names its own state and the reason the file holds, and an unnameable state stays unnameable", () => {
+  // The file is the only place a reason survives a dead bridge: `rejectionCode` on a veto, `failureCode` on a
+  // dispatched failure, `hint` beside it. A durable state this build cannot name must NOT be guessed at - a null state
+  // is a row the projection reads as `unknown`, which is the truth, rather than an invented name.
+  const programId = "plan_16_reasons";
+  const program = harvestedProgram(programId);
+  program.state = 3;
+  program.nodes = [
+    {
+      nodeId: "n01",
+      state: 9,
+      nodeAttempt: 1,
+      admissionAttempt: 1,
+      rejectionCode: "policy_denied",
+      failureCode: null,
+      hint: null,
+    },
+    {
+      nodeId: "n02",
+      state: 6,
+      nodeAttempt: 1,
+      admissionAttempt: 1,
+      rejectionCode: null,
+      failureCode: "no_native_path",
+      hint: "closest=49,14",
+    },
+    { nodeId: "n03", state: 42, nodeAttempt: 1, admissionAttempt: 1 },
+  ];
+  const outcome = createBodyProgramJournalFallback(writeJournal(journalDocument({ programs: [program] }))).outcomeFor(
+    programId,
+  );
+  assert.deepEqual(outcome.journalNodes, [
+    { nodeId: "n01", state: "rejected", rejectionCode: "policy_denied", failureCode: null, hint: null },
+    { nodeId: "n02", state: "failed", rejectionCode: null, failureCode: "no_native_path", hint: "closest=49,14" },
+    { nodeId: "n03", state: null, rejectionCode: null, failureCode: null, hint: null },
+  ]);
+});
+
 test("a journal on disk proves the executions a dead bridge could not report", () => {
   const programId = "plan_16_a93f3dbf3576006d";
   const written = writeJournal(
@@ -141,10 +179,22 @@ test("a journal on disk proves the executions a dead bridge could not report", (
     { nodeId: "n02", nodeAttempt: 1, cursor: 5, atMs: 1500, settledAtMs: 1700 },
   ]);
   assert.deepEqual(
-    outcome.nodeOutcomes,
+    outcome.journalNodes,
     [
-      { nodeId: "n01", state: "succeeded" },
-      { nodeId: "n02", state: "succeeded" },
+      {
+        nodeId: "n01",
+        state: "succeeded",
+        rejectionCode: null,
+        failureCode: null,
+        hint: null,
+      },
+      {
+        nodeId: "n02",
+        state: "succeeded",
+        rejectionCode: null,
+        failureCode: null,
+        hint: null,
+      },
     ],
     "the durable numeric enum is named in the same vocabulary the bridge uses",
   );

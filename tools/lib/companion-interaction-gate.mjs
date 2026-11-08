@@ -39,7 +39,7 @@
  */
 
 /** The schema every population-level assessment is tagged with, so a reader knows which shape it holds. */
-export const SPOKEN_UTTERANCE_SCHEMA = "gamebuddy_spoken_utterance_assessment/v1";
+const SPOKEN_UTTERANCE_SCHEMA = "gamebuddy_spoken_utterance_assessment/v1";
 
 /** How many findings a result carries: the count below is unbounded, the list is not. */
 const PUBLISHED_FINDING_LIMIT = 20;

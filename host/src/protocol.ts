@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { isForEachLoopDocument, type PlanForEachLoop } from "./body-program-for-each.js";
 import {
   hasExactKeys,
   hasExactKeysOrOptional,
@@ -1510,7 +1511,18 @@ export type CompanionPresentationRequest = Readonly<{
 
 export type SystemNoticeRequest = Readonly<{
   noticeId: string;
-  key: "system.stop.active_turn_cancelled" | "system.stop.queued_turn_cancelled" | "system.stop.no_active_turn";
+  /**
+   * One of the Host-authored lines the game thread knows how to draw. The Mod validates the
+   * copy under every key, so this union and `BridgeSession.IsValidSystemNoticeCopy` are the
+   * same set: `system.provider.unavailable` is the one member whose text carries third-party
+   * bytes, and it is accepted only behind its registered sentence.
+   */
+  key:
+    | "system.stop.active_turn_cancelled"
+    | "system.stop.queued_turn_cancelled"
+    | "system.stop.no_active_turn"
+    | "system.provider.waiting"
+    | "system.provider.unavailable";
   text: string;
   locale: string;
 }>;
@@ -1591,10 +1603,17 @@ export type ActionRegistration = Readonly<{
 
 /** Typed destination selector accepted by the C# Body Program wire contract. */
 type BodyProgramDestinationSelector = Readonly<{ kind: "label"; label: string } | { kind: "ref"; ref: string }>;
-/** Exact Host runtime value. Scalar kinds retain canonicalValue; destination_selector retains its typed object payload. */
+/**
+ * Exact Host runtime value. Scalar kinds retain canonicalValue; destination_selector retains its typed object payload.
+ *
+ * `loop` is the one DECLARATIVE kind: the `for_each` plan form carried whole, because expansion happens on the game
+ * thread against live state and a pre-resolved row list would be the observation-bound behaviour the form exists to
+ * remove. Its grammar is owned by `body-program-for-each.ts`, the same module the plan compiler writes it with.
+ */
 type BodyProgramRuntimeValue =
   | Readonly<{ type: "integer" | "string" | "boolean"; canonicalValue: string }>
-  | Readonly<{ type: "destination_selector"; destination: BodyProgramDestinationSelector }>;
+  | Readonly<{ type: "destination_selector"; destination: BodyProgramDestinationSelector }>
+  | (Readonly<{ type: "loop" }> & PlanForEachLoop);
 type BodyProgramFactReference = Readonly<{ nodeId: string; factName: string }>;
 type BodyProgramNode = Readonly<{
   nodeId: string;
@@ -4327,6 +4346,15 @@ function isBodyProgramRuntimeValue(value: unknown): boolean {
   if (!isRecord(value) || typeof value.type !== "string") return false;
   if (value.type === "destination_selector")
     return hasExactKeys(value, ["type", "destination"]) && isBodyProgramDestinationSelector(value.destination);
+  // THE LOOP FORM IS A DECLARATIVE ARGUMENT, DISCRIMINATED BY `type` LIKE EVERY OTHER ONE, so it can never be mistaken for
+  // a `{ type: "string", canonicalValue }` holding the same JSON. Its grammar is read from the one module the plan
+  // compiler writes it with (`body-program-for-each.ts`), so the producer and the validator cannot drift apart.
+  //
+  // WHAT THIS ACCEPTANCE DOES NOT SAY. The Mod's own reader does not know this kind, and that is deliberate: a form the
+  // Mod cannot expand must not look executable at the wire boundary. `plan_work` answers
+  // `for_each_execution_unavailable` for exactly the nodes whose action id the attached Mod does not publish, so no
+  // program carrying a loop is ever sent. This validator describes what the Host can COMPILE and READ BACK.
+  if (value.type === "loop") return isForEachLoopDocument(value);
   return (
     (value.type === "integer" || value.type === "string" || value.type === "boolean") &&
     hasExactKeys(value, ["type", "canonicalValue"]) &&
@@ -4557,7 +4585,13 @@ function isBodyProgramNodeState(value: unknown): boolean {
     value === "failed" ||
     value === "cancelled" ||
     value === "recovery_required" ||
-    value === "rejected"
+    value === "rejected" ||
+    // The two states the Mod's journal settles a node in when its dependency never came good (`skipped_dependency`) or
+    // when it was dispatched and its outcome can never be known (`abandoned`). Both are terminal, both are named in
+    // `NODE_STATES_SETTLED` above, and until they had wire names the Mod folded them into `recovery_required` - a
+    // measured run's bundle then read 31 recovery nodes against a journal that held none.
+    value === "skipped_dependency" ||
+    value === "abandoned"
   );
 }
 function hasUniqueKeys(value: Record<string, unknown>): boolean {

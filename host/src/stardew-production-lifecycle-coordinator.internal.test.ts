@@ -23,7 +23,12 @@ import {
   type ComposedReferenceGameBrowserLifecycleActivationAdmission,
   type ComposedReferenceGameBrowserReadContext,
 } from "./composed-reference-game-browser.js";
-import { composeGameProfile, GameBrowserFixtureV1, GameBrowserValidatorsV1 } from "./game-browser-contract/index.js";
+import {
+  composeGameProfile,
+  GameBrowserValidatorsV1,
+  type GameBrowserStateV1,
+  type GameLaunchCommandV1,
+} from "./game-browser-contract/index.js";
 import { createGameBrowserStateProvider } from "./game-browser/game-browser-state-provider.js";
 import { composeReferenceGameBrowserProfile } from "./composed-browser-contract/index.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
@@ -42,6 +47,7 @@ import {
   isResumeAttachDeferredError,
   type StardewContainedRuntimeTeardown,
   type StardewGameSessionCreationAuthority,
+  type StardewProductionLifecycleCoordinator,
 } from "./stardew-production-lifecycle-coordinator.internal.js";
 import { STARDEW_GAME_WORLD_CREATION_SLOT_MISSING } from "./stardew-owned-farmhand-game-world-creation-seam.internal.js";
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
@@ -123,17 +129,33 @@ const tavernProfile = composeTavernProfile({
   navigationItemIds: ["chat"],
 });
 
-const gameProfileWithDiscovery = composeGameProfile({
+/**
+ * The game surface this file's fixtures serve, declaring every operation the
+ * composed wire mounts onto the coordinator's own seams. The profile is the
+ * mount contract: the composed handler refuses a composition that declares an
+ * operation with no callback behind it, and a callback behind no declaration,
+ * so a route this file drives over real HTTP has to be named here first.
+ */
+const gameProfile = composeGameProfile({
   profileId: "gamebuddy.game.preview",
   releaseTier: "game_preview",
   operationIds: [
     "game.state.read",
+    "game.prerequisites.setup",
+    "game.launch",
+    "game.stop",
+    "game.resume",
+    "game.resume.cancel",
+    "game.reopen",
+    "game.disconnect",
+    "game.endgame",
     "game.installation.discovery.read",
     "game.installation.discovery.confirm",
     "game.installation.discovery.retry",
     "game.installation.discovery.cancel",
     "game.installation.discovery.manual_picker",
-    "game.endgame",
+    "game.stardew.cabins.read",
+    "game.stardew.cabins.confirm",
   ],
   navigationItemIds: ["game"],
 });
@@ -255,16 +277,6 @@ test.after(async () => {
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
-
-function stateForGame(context: ComposedReferenceGameBrowserReadContext) {
-  const base = GameBrowserFixtureV1.state();
-  return {
-    ...base,
-    build: { ...base.build, profileId: gameProfileWithDiscovery.profileId },
-    csrfToken: context.csrfToken,
-    browserSession: { expiresAtMs: context.browserSessionExpiresAtMs },
-  };
-}
 
 function stateForChat(context: ComposedReferenceGameBrowserReadContext) {
   const base = TavernBrowserFixtureV1.snapshot();
@@ -400,40 +412,83 @@ type DiscoveryBrowserHandler = NonNullable<
   Parameters<typeof createComposedReferenceGameBrowserRequestHandler>[0]["gameDiscovery"]
 >;
 
+/**
+ * The composed wire with the Host's own lifecycle mounted on it.
+ *
+ * Every game route this file drives is wired to `coordinator.activationOwner`, and
+ * `game.state.read` to the product's own state provider over the coordinator's
+ * readers - so a request either reaches the real coordinator or is refused by the
+ * composed handler before it. Called without a coordinator it serves a Tavern-only
+ * profile: that broker exists to mint an admission from a DIFFERENT browser session,
+ * and a second game surface on the same fixture would advertise a lifecycle it does
+ * not own.
+ */
 async function createAdmissionBroker(
+  coordinator?: StardewProductionLifecycleCoordinator,
   gameDiscovery?: DiscoveryBrowserHandler,
-  activate?: (admission: ComposedReferenceGameBrowserLifecycleActivationAdmission) => Promise<unknown>,
 ) {
+  // Bound together so the mount below narrows on ONE value: a broker has either the whole
+  // host-owned game surface or none of it, which is exactly what the composed handler's
+  // mismount guard refuses to see half of.
+  const gameSurface =
+    coordinator === undefined
+      ? undefined
+      : Object.freeze({
+          coordinator,
+          stateProvider: createGameBrowserStateProvider(
+            gameProfile,
+            coordinator.lifecycleReader,
+            coordinator.attachmentReader,
+            coordinator.launchReadinessReader,
+            coordinator.actionAuthorityReader,
+            coordinator.installationReader,
+            coordinator.worldBindingReader,
+          ),
+        });
   const handler = createComposedReferenceGameBrowserRequestHandler({
-    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithDiscovery }),
+    profile:
+      gameSurface === undefined
+        ? composeReferenceGameBrowserProfile({ tavernProfile })
+        : composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
     bootstrapToken,
     async readChat(context) {
       return stateForChat(context);
     },
-    async readGame(context) {
-      return stateForGame(context);
-    },
-    ...(activate === undefined
+    ...(gameSurface === undefined
       ? {}
       : {
-          // The composed wire's activation seam, mounted onto the coordinator's own
-          // activation owner exactly as the production provider mounts it. The owner's
-          // private snapshot is discarded, as the browser callback requires.
+          readGame: (context: ComposedReferenceGameBrowserReadContext) => gameSurface.stateProvider.readState(context),
+          // The composed wire's own seams, mounted onto the coordinator's activation
+          // owner exactly as the production provider mounts them. The owner's private
+          // snapshot is discarded, as the browser callback requires.
           gameActivate: async (admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<void> => {
-            await activate(admission);
+            await gameSurface.coordinator.activationOwner.activate(admission);
+          },
+          gameSetup: gameSurface.coordinator.activationOwner.setupPlayerHost,
+          gameLaunch: async (
+            admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+            command: GameLaunchCommandV1,
+          ): Promise<void> => {
+            await gameSurface.coordinator.activationOwner.launchPlayerHost(admission, command);
+          },
+          gameStop: gameSurface.coordinator.activationOwner.stopGame,
+          gameResume: gameSurface.coordinator.activationOwner.resume,
+          gameResumeCancel: gameSurface.coordinator.activationOwner.cancelResume,
+          gameReopen: gameSurface.coordinator.activationOwner.reopenActionAuthority,
+          gameDisconnect: gameSurface.coordinator.activationOwner.disconnectGame,
+          gameEndgame: gameSurface.coordinator.activationOwner.endgameGame,
+          stardewCabins: Object.freeze({
+            read: gameSurface.coordinator.activationOwner.readCabinChoices,
+            confirm: gameSurface.coordinator.activationOwner.confirmCabinChoice,
+          }),
+          gameDiscovery: gameDiscovery ?? {
+            read: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }),
+            confirm: async () => ({ apiVersion: 1, status: "registered" }),
+            retry: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }),
+            cancel: async () => ({ apiVersion: 1, status: "cancelled" }),
+            manualPicker: async () => ({ apiVersion: 1, status: "cancelled" }),
           },
         }),
-    gameDiscovery: gameDiscovery ?? {
-      read: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }),
-      confirm: async () => ({ apiVersion: 1, status: "registered" }),
-      retry: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }),
-      cancel: async () => ({ apiVersion: 1, status: "cancelled" }),
-      manualPicker: async () => ({ apiVersion: 1, status: "cancelled" }),
-    },
-    // The profile declares game.endgame, so the handler options must mount it or
-    // the mismount guard rejects the composition. The coordinator-level endgame
-    // behaviour is exercised through the activation owner, not through here.
-    gameEndgame: async () => ({ apiVersion: 1, status: "unavailable" }),
   });
   const server = createServer((request, response) =>
     handler.handle(request, response, `http://127.0.0.1:${(server.address() as { port: number }).port}`),
@@ -809,9 +864,7 @@ async function createFixture(
         });
       }),
   });
-  const broker = await createAdmissionBroker(input.discoveryBrowserHandlers, (admission) =>
-    coordinator.activationOwner.activate(admission),
-  );
+  const broker = await createAdmissionBroker(coordinator, input.discoveryBrowserHandlers);
   coordinator.activationOwner.bindBrowserAdmissionIssuer(broker.handler.lifecycleActivationIssuer);
   return {
     runtimeRoot,
@@ -1437,7 +1490,7 @@ test("a staged but not yet launched attempt projects nothing running instead of 
         ownership: "none",
       });
       const state = await createGameBrowserStateProvider(
-        gameProfileWithDiscovery,
+        gameProfile,
         fixture.coordinator.lifecycleReader,
         fixture.coordinator.attachmentReader,
         fixture.coordinator.launchReadinessReader,
@@ -5991,6 +6044,377 @@ test("a stale attachment epoch cannot mutate the live world, and every stale ver
   }
 });
 
+/**
+ * A command key that `game_browser_api/v1` accepts: exactly 22 canonical base64url
+ * characters. A key that is not canonical is refused by the command schema before any
+ * seam runs, so a boundary test holding one would be reading the validator instead of
+ * the lifecycle.
+ */
+function wireIdempotencyKey(prefix: string): string {
+  return `${prefix}${"A".repeat(22 - prefix.length)}`;
+}
+
+test("a stale attachment epoch sent through the real browser ingress is refused by name at the wire and mutates nothing", async () => {
+  // The coordinator-level matrix above proves the guards answer a stale epoch. It cannot
+  // prove the PLAYER's own path reaches them: it hands the activation owner a command
+  // object, so the transport, the bootstrap/CSRF/origin admission, the command schema and
+  // the problem-code projection are all absent. This drives the same stale identities
+  // through the composed request handler over a real loopback socket, so every refusal
+  // below is the Host answering a real POST.
+  //
+  // Faces, stated so neither is mistaken for the other:
+  // - HERE: the browser wire. Each row asserts the status and problem code the player would
+  //   see, the side-effect counters that would move if the refusal had not held, and that
+  //   the live attachment is still the one the reconnect minted.
+  // - NOT HERE: an Agent action. `game_browser_api/v1` declares no action operation at all:
+  //   an action is the Agent's own tool call inside the attached runtime, and a browser
+  //   cannot send one. `game.action` is therefore read below as the absent route it is, not
+  //   as a guarded one - there is no epoch check on that path to inject.
+  const containmentCalls: string[] = [];
+  const durableStoreCalls: string[] = [];
+  const unreachableStoreMember = (member: string) => async (): Promise<never> => {
+    durableStoreCalls.push(member);
+    throw new Error(`stardew_durable_store_unreachable:${member}`);
+  };
+  const fixture = await createFixture({
+    overrides: {
+      worldBindingResolver: async () => ({
+        gameSessionId: "session-abc",
+        integrationId: "stardew",
+        bindingRef: "opaque-world-ref",
+        status: "registered" as const,
+        revision: 1,
+      }),
+      containedRuntimeTeardown: Object.freeze({
+        containPlayerHost: async () => {
+          containmentCalls.push("contain_player_host");
+        },
+        containAiClient: async () => {
+          containmentCalls.push("contain_ai_client");
+        },
+        settle: async () => {
+          containmentCalls.push("settle");
+        },
+        recover: async () => {
+          throw new Error("stardew_contained_recovery_drive_unavailable");
+        },
+        finalizeRecovered: async () => {
+          throw new Error("stardew_contained_recovery_drive_unavailable");
+        },
+        finalizeRecoveredAiSettled: async () => {
+          throw new Error("stardew_contained_recovery_drive_unavailable");
+        },
+        close: async () => {
+          containmentCalls.push("close");
+        },
+      }),
+      gameSessionCreationAuthority: Object.freeze({
+        createGameSessionMetadata: unreachableStoreMember("createGameSessionMetadata"),
+        registerGameSessionWorldBinding: unreachableStoreMember("registerGameSessionWorldBinding"),
+        completeGameSessionBinding: unreachableStoreMember("completeGameSessionBinding"),
+        failGameSessionCreation: unreachableStoreMember("failGameSessionCreation"),
+        markGameSessionWorldBindingTerminal: unreachableStoreMember("markGameSessionWorldBindingTerminal"),
+        readGameSessionWorldBindingSlotHolder: unreachableStoreMember("readGameSessionWorldBindingSlotHolder"),
+        releaseGameSessionWorldBindingSlot: unreachableStoreMember("releaseGameSessionWorldBindingSlot"),
+      }),
+    },
+  });
+  try {
+    const { origin, cookie, csrfToken } = fixture.broker;
+    const base = `${origin}/api/composed-reference-game/v1`;
+    const readHeaders = Object.freeze({ origin, cookie });
+    const commandHeaders = Object.freeze({
+      origin,
+      cookie,
+      "x-csrf-token": csrfToken,
+      "content-type": "application/json",
+    });
+    const post = async (path: string, body: unknown): Promise<Response> =>
+      await fetch(`${base}${path}`, { method: "POST", headers: commandHeaders, body: JSON.stringify(body) });
+    const readGameState = async (): Promise<GameBrowserStateV1> => {
+      const response = await fetch(`${base}/game`, { headers: readHeaders });
+      assert.equal(response.status, 200, "the live attachment is still readable after every refusal");
+      return (await response.json()) as GameBrowserStateV1;
+    };
+
+    // Generation 1: the whole attach runs on the wire - activation, prerequisites, launch,
+    // the cabin read and the confirmation that actually spawns the AI client, connects the
+    // bridge and enters the runtime.
+    await withWindowsPlatform(async () => {
+      const activated = await fetch(`${base}/lifecycle/activate`, {
+        method: "POST",
+        headers: commandHeaders,
+      });
+      assert.equal(activated.status, 204);
+      await publishSignedPlayerHostSession(
+        fixture.runtimeRoot,
+        "player-generation-1",
+        availableCabins,
+        Date.now() + 5 * 60_000,
+      );
+      assert.equal(
+        (await post("/game/prerequisites/setup", { apiVersion: 1, idempotencyKey: wireIdempotencyKey("wire-setup") }))
+          .status,
+        204,
+      );
+      assert.equal(
+        (
+          await post("/game/launch", {
+            apiVersion: 1,
+            idempotencyKey: wireIdempotencyKey("wire-launch"),
+            expectedInstanceGeneration: 1,
+          })
+        ).status,
+        204,
+      );
+    });
+    const cabins = await fetch(`${base}/game/stardew/cabins`, { headers: readHeaders });
+    assert.equal(cabins.status, 200);
+    const choices = (await cabins.json()) as Readonly<{ choices: readonly Readonly<{ choiceHandle: string }>[] }>;
+    const confirmation = post("/game/stardew/cabins/confirm", {
+      apiVersion: 1,
+      idempotencyKey: wireIdempotencyKey("wire-confirm"),
+      choiceHandle: choices.choices[0]!.choiceHandle,
+      confirmed: true,
+    });
+    await publishAttachmentAdmission(
+      fixture.runtimeRoot,
+      await waitForAttachmentRequest(fixture.runtimeRoot),
+      availableCabins[0]!,
+    );
+    assert.equal((await confirmation).status, 200);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "attached",
+      generation: 1,
+      connectionStatus: "connected_idle",
+    });
+
+    // The epoch advance is the product's own reconnect driven through the same wire, not a
+    // fabricated number: the clean disconnect tears generation 1 down and the resume mints
+    // generation 2 over the same registered world binding.
+    assert.equal(
+      (
+        await post("/game/disconnect", {
+          apiVersion: 1,
+          idempotencyKey: wireIdempotencyKey("wire-disconnect"),
+          expectedAttachmentGeneration: 1,
+        })
+      ).status,
+      204,
+    );
+    const resumed = await post("/game/resume", {
+      apiVersion: 1,
+      idempotencyKey: wireIdempotencyKey("wire-resume"),
+      expectedAttachmentGeneration: 2,
+      gameSessionId: "session-abc",
+    });
+    assert.equal(resumed.status, 200);
+    assert.deepEqual(await resumed.json(), { apiVersion: 1, status: "attached" });
+    const liveAttachment = fixture.coordinator.attachmentReader.readAttachmentView();
+    assert.deepEqual(liveAttachment, { status: "attached", generation: 2, connectionStatus: "connected_idle" });
+    const liveState = await readGameState();
+    assert.equal(liveState.game.attachment.generation, 2);
+    assert.equal(liveState.game.connectionStatus, "connected_idle");
+    assert.equal(liveState.game.actionAuthority, "paused");
+
+    // Without these, the matrix below would be asserting against an epoch that a fresh
+    // attachment never minted.
+    const before = Object.freeze({
+      stops: fixture.gameStopCalls.length,
+      aiKills: [...fixture.aiKillCalls],
+      playerKills: [...fixture.playerKillCalls],
+      bridgeCloses: [...fixture.bridgeCloseCalls],
+      bridgeConnects: fixture.bridgeConnectCalls.length,
+      aiSpawns: fixture.spawnCalls.length,
+      playerSpawns: fixture.playerSpawnCalls.length,
+      enters: fixture.gameRuntimeFacadeEnterCalls(),
+      ingresses: fixture.gameRuntimeIngressActivationCalls(),
+      voiceStoppers: fixture.gameRuntimeVoiceStopperAttachCalls(),
+      taskCancels: fixture.gameRuntimeTaskCancelCalls(),
+      lifecycleOrder: [...fixture.lifecycleOrder],
+    });
+    assert.equal(before.bridgeConnects, 2);
+    assert.equal(before.aiSpawns, 2);
+    assert.equal(before.enters, 2);
+    const registrationBefore = await readStardewInstallationRegistration(fixture.runtimeRoot);
+    assert.notEqual(
+      registrationBefore?.activeAttempt ?? null,
+      null,
+      "the live attempt is bound before the matrix runs",
+    );
+
+    // A controller issued against generation 1 now sends every mutation it can, on the same
+    // authenticated browser session, over the same socket the live controller uses.
+    const staleGeneration = 1 as const;
+    const rows = Object.freeze([
+      {
+        name: "game.stop",
+        path: "/game/stop",
+        body: {
+          apiVersion: 1,
+          idempotencyKey: wireIdempotencyKey("stale-stop"),
+          expectedAttachmentGeneration: staleGeneration,
+        },
+        status: 409,
+        code: "game_attachment_conflict",
+      },
+      {
+        name: "game.endgame",
+        path: "/game/endgame",
+        body: {
+          apiVersion: 1,
+          idempotencyKey: wireIdempotencyKey("stale-endgame"),
+          expectedAttachmentGeneration: staleGeneration,
+          confirm: true as const,
+        },
+        status: 409,
+        code: "game_attachment_conflict",
+      },
+      {
+        name: "game.disconnect",
+        path: "/game/disconnect",
+        body: {
+          apiVersion: 1,
+          idempotencyKey: wireIdempotencyKey("stale-disconnect"),
+          expectedAttachmentGeneration: staleGeneration,
+        },
+        status: 409,
+        code: "game_attachment_conflict",
+      },
+      {
+        name: "game.reopen",
+        path: "/game/reopen",
+        body: {
+          apiVersion: 1,
+          idempotencyKey: wireIdempotencyKey("stale-reopen"),
+          expectedAttachmentGeneration: staleGeneration,
+        },
+        status: 409,
+        code: "game_attachment_conflict",
+      },
+      {
+        // Not the epoch's own word: a live healthy attachment is refused before the
+        // generation is even read, so the code names the fact that decides it. What the
+        // row proves is that no reconnect was started on top of the live one.
+        name: "game.resume",
+        path: "/game/resume",
+        body: {
+          apiVersion: 1,
+          idempotencyKey: wireIdempotencyKey("stale-resume"),
+          expectedAttachmentGeneration: staleGeneration,
+          gameSessionId: "session-abc",
+        },
+        status: 409,
+        code: "game_runtime_unavailable",
+      },
+      {
+        // No in-flight reconnect exists under this identity, so the cancel has nothing it
+        // may terminate.
+        name: "game.resume.cancel",
+        path: "/game/resume/cancel",
+        body: {
+          apiVersion: 1,
+          idempotencyKey: wireIdempotencyKey("stale-cancel"),
+          expectedAttachmentGeneration: staleGeneration,
+        },
+        status: 409,
+        code: "game_unavailable",
+      },
+      {
+        // The absent route, read as absent: `game_browser_api/v1` publishes no action
+        // operation, so there is no stale-epoch action request a browser can send.
+        name: "game.action (not a declared operation)",
+        path: "/game/action",
+        body: {
+          apiVersion: 1,
+          idempotencyKey: wireIdempotencyKey("stale-action"),
+          expectedAttachmentGeneration: staleGeneration,
+        },
+        status: 404,
+        code: "not_found",
+      },
+    ]);
+
+    // Every row is sent and its answer collected FIRST, so a guard that stops answering names
+    // the row that drifted instead of hiding the rest behind the first failure.
+    const refusals: string[] = [];
+    for (const row of rows) {
+      const response = await post(row.path, row.body);
+      // The problem DTO is read as text first, so a request that was ACCEPTED instead of
+      // refused (or answered with an empty body) names its own row in the diff below
+      // rather than throwing out of the collector and hiding which verb drifted.
+      const body = await response.text();
+      let code: string;
+      try {
+        const parsed = JSON.parse(body) as { code?: unknown };
+        code = typeof parsed.code === "string" ? parsed.code : `<no code: ${body}>`;
+      } catch {
+        code = `<unparsed ${body.length}-byte body>`;
+      }
+      refusals.push(`${row.name}: ${response.status} ${code}`);
+    }
+    assert.deepEqual(
+      refusals,
+      rows.map((row) => `${row.name}: ${row.status} ${row.code}`),
+      "every stale-epoch request is refused by name on the real wire",
+    );
+
+    for (const row of rows) {
+      const detail = `${row.name} had a side effect on the live epoch`;
+      // Re-read the live attachment after EVERY row: a refusal that also moved the epoch or
+      // the action authority would otherwise pass on the refusal alone.
+      assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), liveAttachment, detail);
+      assert.deepEqual(
+        fixture.coordinator.actionAuthorityReader.readActionAuthorityView(),
+        { status: "paused" },
+        detail,
+      );
+      const state = await readGameState();
+      assert.equal(state.game.attachment.generation, 2, detail);
+      assert.equal(state.game.connectionStatus, "connected_idle", detail);
+      assert.equal(state.game.actionAuthority, "paused", detail);
+      assert.equal(fixture.gameStopCalls.length, before.stops, detail);
+      assert.deepEqual(fixture.aiKillCalls, before.aiKills, detail);
+      assert.deepEqual(fixture.playerKillCalls, before.playerKills, detail);
+      assert.deepEqual(fixture.bridgeCloseCalls, before.bridgeCloses, detail);
+      assert.equal(fixture.bridgeConnectCalls.length, before.bridgeConnects, detail);
+      assert.equal(fixture.spawnCalls.length, before.aiSpawns, detail);
+      assert.equal(fixture.playerSpawnCalls.length, before.playerSpawns, detail);
+      assert.equal(fixture.gameRuntimeFacadeEnterCalls(), before.enters, detail);
+      assert.equal(fixture.gameRuntimeIngressActivationCalls(), before.ingresses, detail);
+      assert.equal(fixture.gameRuntimeVoiceStopperAttachCalls(), before.voiceStoppers, detail);
+      assert.equal(fixture.gameRuntimeTaskCancelCalls(), before.taskCancels, detail);
+      assert.deepEqual(fixture.lifecycleOrder, before.lifecycleOrder, detail);
+      // Containment/settlement is how a stale endgame would really end the live world.
+      assert.deepEqual(containmentCalls, [], `${detail} (contained-runtime containment/settle)`);
+      // The durable half: no store write was reached by a refused request.
+      assert.deepEqual(durableStoreCalls, [], `${detail} (durable store write)`);
+      assert.deepEqual(
+        await readStardewInstallationRegistration(fixture.runtimeRoot),
+        registrationBefore,
+        `${detail} (the bound attempt pointer endgame releases)`,
+      );
+    }
+
+    // The last reading: the same route, the same session, the same socket - only the epoch
+    // differs. A stale epoch was refused; the live one reopens what the resume paused.
+    const reopened = await post("/game/reopen", {
+      apiVersion: 1,
+      idempotencyKey: wireIdempotencyKey("live-reopen"),
+      expectedAttachmentGeneration: 2,
+    });
+    assert.equal(reopened.status, 200);
+    assert.deepEqual(await reopened.json(), { apiVersion: 1, status: "reopened" });
+    const afterReopen = await readGameState();
+    assert.equal(afterReopen.game.attachment.generation, 2);
+    assert.equal(afterReopen.game.actionAuthority, "active");
+    assert.deepEqual(await readStardewInstallationRegistration(fixture.runtimeRoot), registrationBefore);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
 test("slice 2: every resume mints a fresh generation — consecutive resume cycles each truly attach", async () => {
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
     overrides: {
@@ -6742,7 +7166,12 @@ test("game.create enforces the single-activation mutual exclusion for live attac
       /stardew_game_create_in_progress/,
     );
     assert.deepEqual(resumeBlocked.sessions(), []);
-    assert.deepEqual(await resuming, { apiVersion: 1, status: "unavailable" });
+    // The named session resolves to no resumable world, so this attempt is refused by
+    // name rather than reporting the `unavailable` a session-LESS command gets. This
+    // assertion still expected the older outcome: when the coordinator began refusing
+    // the named-absent session by name, every sibling assertion was updated and this one
+    // was missed, so the test failed while the refusal itself was correct.
+    await assert.rejects(() => resuming, /stardew_game_resume_session_unavailable/);
   } finally {
     await resumeFixture.coordinator.close();
     await resumeFixture.broker.close();

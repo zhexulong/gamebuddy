@@ -4,6 +4,7 @@ import { resolveCompanionLocale, type CompanionLocale } from "../settings/player
 import {
   compilePlanScript,
   legalPlanActionIds,
+  PLAN_FORM_ACTION_IDS,
   PLAN_TOOL_SLOT_MEANING,
   planActionsFromRegistrations,
   planProgramId,
@@ -12,6 +13,7 @@ import {
   type PlanScriptRequest,
   type PublishedPlanAction,
 } from "../body-program-script.js";
+import { planFormExecutionUnavailableReason } from "../body-program-for-each.js";
 import { Type } from "typebox";
 import {
   createStableGameRuntimeBindingIdentity,
@@ -28,6 +30,7 @@ import { CompanionLoop, type CompanionTurnVolatileContext } from "../companion-l
 import {
   createFarmhandCompanionPresentationPort,
   createFarmhandPresentationEpochAdmission,
+  createFarmhandSystemNoticePresenter,
   type FarmhandPresentationBridge,
 } from "../farmhand-companion-presentation.js";
 import { createGameOperationalGateEvidenceProjection } from "../game-operational-gate-evidence.js";
@@ -76,9 +79,12 @@ import {
   planBatchAnswer,
   programStatusProgress,
   waitForTerminalProgramStatus,
+  type PlanAnswerNode,
   type PlanBatchAnswer,
   type ProgramStatusProgress,
 } from "../program-status-wait.js";
+import { createProgramSettlementReporter, watchProgramSettlement } from "../program-settlement-digest.js";
+import type { WorldFact } from "../event-pump.js";
 import { createGameRuntimeAttachment } from "./game-runtime-attachment.js";
 import {
   type GameRuntimeMaterializer,
@@ -104,6 +110,18 @@ let lastAcceptedProgramId: string | null = null;
 /** The program's two readers: they answer only for a program a submission recorded. */
 const programReaderToolNames = Object.freeze(["stardew_action_program_status", "stardew_action_program_events"]);
 
+/** The wire's own maximum page size, so the settled-stamp read reaches a program's tail in the fewest pages. */
+const SETTLED_DIGEST_EVENT_PAGE_SIZE = 32;
+
+/**
+ * How many event pages the settled-stamp read may walk.
+ *
+ * Four pages is 128 events: a 16-node plan writes one `accepted` plus a challenge, an admission, a dispatch and a
+ * terminal per node - about 65 - so the tail of every plan `plan_work` can produce is reachable. The bound exists so a
+ * journal that answers pages forever cannot hold the digest's composition open.
+ */
+const MAX_SETTLED_DIGEST_EVENT_PAGES = 4;
+
 /**
  * Companion presentation locale used when no frontend-set language preference
  * has been injected yet. Existing callers predate the Tavern language
@@ -122,6 +140,7 @@ function createBodyProgramTools(
   retainedPolicyIdentity: FarmhandPolicyIdentity,
   revealReaders: () => void,
   runTrace: RunTrace,
+  announceSettledFact: (fact: WorldFact) => void,
 ): readonly ToolDefinition[] {
   const withPort = async <TResult>(
     request: Record<string, unknown>,
@@ -148,6 +167,63 @@ function createBodyProgramTools(
     validateResult: (value: Record<string, unknown>) => string | null,
     call: (port: BodyProgramPort) => Promise<TResult>,
   ) => toolResult(await withPort(request, validateRequest, validateResult, call), null);
+  /**
+   * The settled-plan ledger. One per runtime, never global: the exactly-once claim is about what THIS session did
+   * (`createProgramSettlementReporter`).
+   */
+  const settlement = createProgramSettlementReporter(announceSettledFact);
+
+  /**
+   * The Mod's own stamp of the moment it closed this program's journal, or `null` when it cannot be read.
+   *
+   * The Mod stamps every journal event with `atMs` (`BodyProgramJournalEvent.AtMs`: the moment it appended the event,
+   * on its own monotonic clock), and the LAST event it appended for a program is the one that settled it - there is no
+   * program-level settlement event, only `node_completed`/`node_skipped`/`node_settled`/`stopped`/`abandoned`. The
+   * reader is a cursor page, so reaching the tail means walking it; the walk is bounded because a 16-node plan writes
+   * about 65 events. Past the bound the stamp is `null` rather than the newest one seen: "the newest I could read" is
+   * not when the program settled, and a Host clock would measure the bridge instead of the game.
+   */
+  const readProgramSettledAtMs = async (programId: string): Promise<number | null> => {
+    let cursor = 0;
+    for (let page = 0; page < MAX_SETTLED_DIGEST_EVENT_PAGES; page += 1) {
+      const request = { programId, cursor, pageSize: SETTLED_DIGEST_EVENT_PAGE_SIZE };
+      const read = await withPort(request, validateEventsRequest, validateBodyProgramEventsResult, (port) =>
+        port.events(request),
+      );
+      if (read.code !== "found" || read.events.length === 0) return null;
+      const last = read.events[read.events.length - 1];
+      if (last === undefined) return null;
+      if (read.events.length < SETTLED_DIGEST_EVENT_PAGE_SIZE) return last.atMs;
+      cursor = read.nextCursor;
+    }
+    return null;
+  };
+
+  /**
+   * Follow one submitted program to its terminal state, so the digest arrives without the companion asking.
+   *
+   * NOT awaited: `plan_work` must return as soon as the Mod accepts, because the control points that make a body
+   * program interruptible (`program_stop`, steering) live in the turn such a wait would hold. This watch is the
+   * background half - the Mod's later terminal states become ONE fact on the pump, and a session whose port drained
+   * ends it (`stillWatching`), so nothing polls a runtime that is gone.
+   */
+  const startSettlementWatch = (programId: string, nodes: readonly PlanAnswerNode[]): void => {
+    void watchProgramSettlement({
+      read: async () => {
+        const record = bodyProgramConsumers.get(consumer);
+        if (record === undefined || !record.available) throw new Error("action_program_runtime_unavailable");
+        const result = await record.port.status({ programId });
+        programStatusProgress.observe(result);
+        return result;
+      },
+      onSettled: async (status) => {
+        const settledAtMs = await readProgramSettledAtMs(programId).catch(() => null);
+        settlement.report({ programId, settledAtMs, compiled: nodes, status, nowMs: Date.now() });
+      },
+      stillWatching: () => bodyProgramConsumers.get(consumer)?.available === true,
+    }).catch(() => undefined);
+  };
+
   // ONE submission path. The raw program tool and the routine tool both hand their candidate here,
   // so a routine can never reach the Mod by a route a model-authored program cannot.
   const submitProgram = async (request: BodyProgramCandidateRequest) => {
@@ -159,7 +235,10 @@ function createBodyProgramTools(
     // Only a recorded program gives the readers anything to answer; a rejected candidate leaves none.
     const details: unknown = result.details;
     const code = isRecord(details) ? details.code : undefined;
-    if (code === "accepted" || code === "idempotent") revealReaders();
+    if (code === "accepted" || code === "idempotent") {
+      revealReaders();
+      startSettlementWatch(request.programId, request.nodes);
+    }
     return result;
   };
   /**
@@ -271,6 +350,22 @@ function createBodyProgramTools(
           }
           const nodes = compiled.program.nodes;
           const programId = planProgramId(compiled.snapshotRevision, nodes);
+          // A HOST PLAN FORM THE ATTACHED MOD DOES NOT PUBLISH CANNOT BE EXECUTED, and naming that is the difference between
+          // an answer and a silent success. Submitted anyway, the program is refused whole by the preflight, so every step
+          // the caller wrote beside the loop is lost and the reason names a policy refusal instead of the one thing that has
+          // to change. Answered HERE, the caller is told which nodes cannot run, in which order, and that nothing was sent.
+          const unavailable = planFormNodesOutsideCatalogue(nodes, actions);
+          if (unavailable.length > 0) {
+            span.end({ reasonCode: unavailable[0]!.reasonCode, programId });
+            return planDetails({
+              accepted: false,
+              nodeCount: nodes.length,
+              reasonCode: unavailable[0]!.reasonCode,
+              programId,
+              submitted: NOT_SUBMITTED,
+              unavailable,
+            });
+          }
           try {
             const submitted = await submitProgram({ programId, nodes });
             const code = submitted.details.code;
@@ -293,7 +388,29 @@ function createBodyProgramTools(
             //
             // And the cap is deliberately NOT lowered: `program-status-wait.ts` records that answering instantly put the
             // model in an 84-call loop (round4, 459 s) because "it did not finish" is not something a caller can act on.
-            if (!accepted) return planDetails({ accepted, nodeCount: nodes.length, programId, submitted: code });
+            // What the compiler refused, beside what it kept. A permissive compile is fine; a permissive answer is not:
+            // round39 submission 28 wrote six statements, two of them (`pickup_item`) were refused a node for a missing
+            // required argument, and the answer said `{accepted: true, nodeCount: 5}` with nothing else, so the companion
+            // planned around an item it never picked up.
+            const refused = Object.freeze({
+              droppedCount: compiled.rejectedCount,
+              dropped: compiled.rejected.map((rejection) =>
+                Object.freeze({
+                  call: rejection.call,
+                  actionId: rejection.actionId,
+                  reasonCode: rejection.reasonCode,
+                  ...(rejection.missingArguments === undefined ? {} : { missingArguments: rejection.missingArguments }),
+                }),
+              ),
+            });
+            if (!accepted)
+              return planDetails({
+                accepted,
+                nodeCount: nodes.length,
+                programId,
+                submitted: code,
+                ...refused,
+              });
             // Recorded the moment the Mod accepts it: this is the identity a STOP has to name, and nothing else in the
             // Host knows which program is currently in the world.
             lastAcceptedProgramId = programId;
@@ -311,6 +428,7 @@ function createBodyProgramTools(
                 settled: answer.settled,
                 remaining: answer.remaining,
                 nodes: answer.nodes,
+                ...refused,
                 ...beside,
               });
             /**
@@ -389,10 +507,13 @@ function createBodyProgramTools(
           "Read what a plan step must supply for one action, or for every plannable action of one family: the argument names with their types and, where the Mod declares a closed set, its values, plus the resource the action claims and the output facts a later step can bind. Read-only, so it changes nothing; ask it when you are unsure what builder.<actionId> takes instead of guessing and being refused. It also answers equipment: `toolRequirement` is the tool the surface declares the action needs (`category`, the surface's own `upgradeRequirement` word and the upgrade-level range that satisfies it) or `tool_requirement_undeclared` when the surface says nothing about a tool for it, and `toolSlotMeaning` says what a `slot` argument holds. A tool step is `builder.equipFor(<actionId>, <target>)` - pass the target you are about to act on and it writes the equip step and answers the slot to name, or refuses by name when only the Mod's handler knows the tool.",
         parameters: planShapeParameters(),
         execute: async (_toolCallId, params) => {
-          const shape = planShape(readPlanActions(connection), readPlanShapeRequest(params));
+          const request = readPlanShapeRequest(params);
+          const shape = planShape(readPlanActions(connection), request);
           if (!shape.ok)
             return planDetails({
               reasonCode: shape.reasonCode,
+              // What the caller actually sent, so a wrong parameter name is one turn to fix instead of nine guesses.
+              received: request.received,
               ...(shape.legalActionIds === undefined ? {} : { legalActionIds: shape.legalActionIds }),
               ...(shape.legalFamilies === undefined ? {} : { legalFamilies: shape.legalFamilies }),
             });
@@ -479,6 +600,39 @@ function readPlanActions(connection: GameConnection): readonly PublishedPlanActi
   return planActionsFromRegistrations(state?.catalogRegistrations ?? []);
 }
 
+/**
+ * The word the plan answer uses when a compiled program was never sent to the Mod.
+ *
+ * `accepted: false` alone cannot tell "the Mod refused it" from "the Host did not send it", and those two need different
+ * corrections - one is about the world, the other about a form this Host can compile but the attached Mod cannot run.
+ */
+const NOT_SUBMITTED = "not_submitted";
+
+/**
+ * The nodes of a compiled plan whose action id is a Host plan FORM the attached Mod does not publish, in node order.
+ *
+ * Derived from `PLAN_FORM_ACTION_IDS` and the Mod's OWN catalogue, never from a list of "things that do not work yet":
+ * the day the Mod publishes `for_each`, this answers empty and the loop is submitted like any other node. The reason code
+ * is derived from the action id too (`for_each` -> `for_each_execution_unavailable`), so a second form needs no edit here.
+ */
+function planFormNodesOutsideCatalogue(
+  nodes: readonly Readonly<{ actionId: string }>[],
+  actions: readonly PublishedPlanAction[],
+): readonly Readonly<{ index: number; actionId: string; reasonCode: string }>[] {
+  const published = new Set(actions.map((action) => action.actionId));
+  const unavailable: Readonly<{ index: number; actionId: string; reasonCode: string }>[] = [];
+  for (const [index, node] of nodes.entries())
+    if (PLAN_FORM_ACTION_IDS.includes(node.actionId) && !published.has(node.actionId))
+      unavailable.push(
+        Object.freeze({
+          index,
+          actionId: node.actionId,
+          reasonCode: planFormExecutionUnavailableReason(node.actionId),
+        }),
+      );
+  return Object.freeze(unavailable);
+}
+
 /** The current Mod snapshot: a plan script reads the world as the Mod last published it. */
 function readLiveSnapshot(connection: GameConnection): Snapshot | null {
   const state = (connection as { state?: { snapshot?: Snapshot | null } }).state;
@@ -495,15 +649,25 @@ function readPlanScriptRequest(value: unknown): PlanScriptRequest {
  * The shape selector, bounded to the surface's own id grammar: a selector is echoed in the reason code and lands in the
  * run trace, so it may not carry arbitrary text.
  */
-function readPlanShapeRequest(value: unknown): Readonly<{ actionId?: string; family?: string }> {
+function readPlanShapeRequest(
+  value: unknown,
+): Readonly<{ actionIds?: readonly string[]; family?: string; received: readonly string[] }> {
   if (!isRecord(value)) throw new Error("invalid_body_program_tool_arguments");
-  const actionId = value.actionId;
+  const received = Object.freeze(Object.keys(value));
+  // A caller that names one action writes `actionId`; the tool's own schema says `actionIds`. Measured on a live run:
+  // nine calls sent `{actionId: "sleep"}` and every one was refused with a bare `plan_shape_selector_invalid`, because
+  // this reader and `PlanShapeRequest` disagreed by a plural and TypeScript could not see it (every field optional, so
+  // `{actionId}` is assignable to `{actionIds?}`). Accept both spellings; the answer keeps one shape.
+  const named = value.actionIds === undefined ? value.actionId : value.actionIds;
+  const list = named === undefined ? undefined : Object.freeze(Array.isArray(named) ? [...named] : [named]);
   const family = value.family;
-  if (actionId !== undefined && !isPlanSelector(actionId)) throw new Error("invalid_body_program_tool_arguments");
+  if (list !== undefined && (list.length === 0 || !list.every(isPlanSelector)))
+    throw new Error(`invalid_body_program_tool_arguments:received=${received.join("+") || "none"}`);
   if (family !== undefined && !isPlanSelector(family)) throw new Error("invalid_body_program_tool_arguments");
   return Object.freeze({
-    ...(actionId === undefined ? {} : { actionId }),
+    ...(list === undefined ? {} : { actionIds: list }),
     ...(family === undefined ? {} : { family }),
+    received,
   });
 }
 
@@ -524,7 +688,7 @@ function planDetails(details: Readonly<Record<string, unknown>>) {
  * when the two drift, so this list cannot quietly become a half-truth.
  */
 const PLAN_TARGET_FAMILIES: readonly string[] = Object.freeze(
-  `doorTargets forageTargets itemTargets refillWateringCanTargets fixedInteractionPoints cropTargets petBowlTargets slimeHutchTroughTargets bushTargets fruitTreeTargets shakeTreeTargets pedestalTargets fenceGateTargets harvestTargets seedTargets fertilizerTargets woodFenceTargets woodFenceResultTargets crabPotTargets crabPotResultTargets crabPotCollectTargets baitCrabPotTargets baitCrabPotResultTargets debrisTargets rockSourceTargets clearHoeDirtTargets artifactSpotTargets artifactSpotResultTargets treeChopSourceTargets treeChopResultTargets treeStumpTargets treeSaplingTargets weedTargets grassTargets caskTargets mannequinTargets signTargets siloTargets scytheCropTargets machineTargets npcRelationshipTargets petTargets animalProductTargets feedTroughTargets chests foodTargets shippingBinTargets craftingRecipeTargets cookingRecipeTargets cookingStationTargets shopTargets mineElevatorFloorTargets minecartTargets raftTargets horseTargets mineEntranceTargets animalDoorTargets fishPondTargets worldObjectTargets farmBuildingTargets dailyQuestTargets specialOrderTargets museumRewardTargets colorTargets tailoringTargets wearableTargets warpItemTargets mailboxTargets buildingChestTargets obeliskTargets`.split(
+  `doorTargets forageTargets itemTargets refillWateringCanTargets fixedInteractionPoints cropTargets petBowlTargets slimeHutchTroughTargets bushTargets fruitTreeTargets shakeTreeTargets pedestalTargets fenceGateTargets harvestTargets seedTargets fertilizerTargets woodFenceTargets woodFenceResultTargets crabPotTargets crabPotResultTargets crabPotCollectTargets baitCrabPotTargets baitCrabPotResultTargets debrisTargets rockSourceTargets clearHoeDirtTargets artifactSpotTargets artifactSpotResultTargets treeChopSourceTargets treeChopResultTargets treeStumpTargets treeSaplingTargets weedTargets grassTargets caskTargets mannequinTargets signTargets siloTargets scytheCropTargets machineTargets npcRelationshipTargets petTargets animalProductTargets feedTroughTargets chests foodTargets shippingBinTargets craftingRecipeTargets cookingRecipeTargets cookingStationTargets shopTargets mineElevatorFloorTargets minecartTargets raftTargets horseTargets mineEntranceTargets animalDoorTargets fishPondTargets worldObjectTargets farmBuildingTargets dailyQuestTargets specialOrderTargets museumRewardTargets colorTargets tailoringTargets wearableTargets warpItemTargets mailboxTargets buildingChestTargets obeliskTargets farmAnimalPetTargets`.split(
     " ",
   ),
 );
@@ -1042,6 +1206,10 @@ export function createHostGameRuntimeMaterializer(
         // Resolve exactly once for this construction; closures and adapter tools
         // share this same object while live state remains freshly read per call.
         let revealProgramReaders = (): void => {};
+        // The settled digest's route onto the pump. Assigned the moment the Host service exists - the tools are built
+        // first and cannot see it - and a fact that arrives before then (it cannot: nothing has been submitted) is
+        // dropped by the no-op rather than queued somewhere else.
+        let announceHostFact: (fact: WorldFact) => void = () => {};
         const fixedTools = bodyProgramMounted
           ? createBodyProgramTools(
               bodyProgramConsumer,
@@ -1050,9 +1218,13 @@ export function createHostGameRuntimeMaterializer(
               retainedPolicyIdentity,
               () => revealProgramReaders(),
               runTrace,
+              (fact) => announceHostFact(fact),
             )
           : Object.freeze([]);
         const recovery = readStardewRecoveryBindingContext(recoveryContext);
+        // Resolved once, because two things need the SAME answer: the runtime's presentation profile and the locale of
+        // the Host's own status lines. Two reads could disagree after a Settings change between them.
+        const companionLocale = options.companionLocale ?? (await resolveCompanionLocale(execution.runtimeRoot));
         let constructed: Readonly<{
           runtime: RuntimeSession;
           turnTracker: GameTurnLineageTracker;
@@ -1069,7 +1241,7 @@ export function createHostGameRuntimeMaterializer(
             permit.gameSessionId,
             options.gameOperationalGateNonceSha256,
             options.gameVoicePresentation,
-            options.companionLocale ?? (await resolveCompanionLocale(execution.runtimeRoot)),
+            companionLocale,
             options.onCompanionTextPresented,
             fixedTools,
             Object.freeze({
@@ -1169,6 +1341,9 @@ export function createHostGameRuntimeMaterializer(
                   );
                 }),
         );
+        // The settled digest rides the pump from here on. `host` is the only layer that owns it, which is why the
+        // tools' sink was left unbound until this line.
+        announceHostFact = (fact) => host.acceptHostMintedFact(fact);
         const operationalGateEvidence =
           options.gameOperationalGateNonceSha256 === undefined
             ? undefined
@@ -1203,6 +1378,12 @@ export function createHostGameRuntimeMaterializer(
           );
         }
         if (gameVoicePayload !== undefined) host.attachVoiceStopper(gameVoicePayload.stopVoice);
+        // The player-facing STATUS lane. A Game run's only other outward line is her own voice
+        // (`presentNativeAssistantContent`), which needs a turn that exists and says something she means - so a run
+        // waiting on the provider had no way to say anything at all. This is the same narrow notice capability Preview
+        // mounts, addressed to the same authenticated presentation bridge, and it is a different request on the wire
+        // (`system_notice_request`), never a `companion_text` piece.
+        host.attachSystemNoticePresenter(createFarmhandSystemNoticePresenter(ports.presentation), companionLocale);
         let ingressActivated = false;
         const activateIngress = (): void => {
           if (ingressActivated) return;

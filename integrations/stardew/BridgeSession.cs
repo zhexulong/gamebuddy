@@ -1299,8 +1299,25 @@ string? bodyProgramUnavailableReason = null,
             "system.stop.active_turn_cancelled" => request.Text == (simplifiedChinesePreview ? "已停止生成。" : "Generation stopped."),
             "system.stop.queued_turn_cancelled" => request.Text == (simplifiedChinesePreview ? "已停止生成。" : "Generation stopped."),
             "system.stop.no_active_turn" => request.Text == (simplifiedChinesePreview ? "当前没有正在生成的回复。" : "No reply is currently being generated."),
+            "system.provider.waiting" => request.Text == (simplifiedChinesePreview ? "已连上游戏，正在等待模型服务…" : "Connected. Waiting for the provider…"),
+            // The one key whose copy the Mod cannot know in advance: the tail is the provider's own words, which
+            // the Host bounds and redacts before it ever reaches the wire. What the game thread still refuses is
+            // everything that made the other keys checkable: an unregistered sentence, a foreign locale, an empty
+            // or over-long body, and any control character - so a "line" can never become two lines or a terminal
+            // control sequence in a chat every farmhand reads.
+            "system.provider.unavailable" => IsRegisteredProviderLine(
+                request.Text,
+                simplifiedChinesePreview ? "模型服务暂时用不了：" : "The provider can't answer: "),
             _ => false,
         };
+    }
+
+    private static bool IsRegisteredProviderLine(string text, string prefix)
+    {
+        if (!text.StartsWith(prefix, StringComparison.Ordinal) || text.Length == prefix.Length) return false;
+        for (int index = prefix.Length; index < text.Length; index++)
+            if (char.IsControl(text[index])) return false;
+        return true;
     }
 
     internal bool TryCancel(long generation, BridgeEnvelope<BridgeCancelRequest>? envelope, out BridgeEnvelope<BridgeReceipt>? response, out string reasonCode)
@@ -1609,6 +1626,22 @@ string? bodyProgramUnavailableReason = null,
         BodyProgramState.Quarantined => "quarantined",
         _ => "recovery_required",
     };
+    /// <summary>
+    /// The wire name of one durable node state - EVERY state the journal can settle a node in.
+    ///
+    /// <para>
+    /// `BodyProgramNodeState` has eleven values and this switch used to name nine: `SkippedDependency` (10) and
+    /// `Abandoned` (11) fell through a `_ => "recovery_required"` arm, so both arrived at the Host wearing the name of a
+    /// state that means "the outcome could not be determined". Measured 2026-11-08: 30 skipped and 1 abandoned node in
+    /// the Mod's own journal, 31 `recovery_required` in the run's bundle, and no way to tell either fact from the other.
+    /// </para>
+    /// <para>
+    /// The default arm therefore FAILS CLOSED and names the state it could not name
+    /// (`body_program_node_state_unmapped:&lt;value&gt;`), which `BridgeProtocol.IsBodyProgramNodeState` refuses: a
+    /// projection that ever meets a new enum value publishes a frame rather than a lie. A default arm that relabels an
+    /// unknown state as a meaningful one is the defect this replaces, not the pattern to copy.
+    /// </para>
+    /// </summary>
     private static string ToWire(BodyProgramNodeState state) => state switch
     {
         BodyProgramNodeState.Pending => "pending",
@@ -1620,7 +1653,9 @@ string? bodyProgramUnavailableReason = null,
         BodyProgramNodeState.Cancelled => "cancelled",
         BodyProgramNodeState.RecoveryRequired => "recovery_required",
         BodyProgramNodeState.Rejected => "rejected",
-        _ => "recovery_required",
+        BodyProgramNodeState.SkippedDependency => "skipped_dependency",
+        BodyProgramNodeState.Abandoned => "abandoned",
+        _ => $"body_program_node_state_unmapped:{(int)state}",
     };
     private static BridgeBodyProgramSubmitVerification ToBridgeVerification(BodyProgramVerificationReport report) => new(
         report.Accepted,
@@ -1631,7 +1666,18 @@ string? bodyProgramUnavailableReason = null,
             diagnostic.NodeId is not null && BridgeProtocol.IsOpaqueId(diagnostic.NodeId) ? diagnostic.NodeId : null,
             diagnostic.Path,
             diagnostic.WireMessage)).ToArray());
-    private static BridgeBodyProgramStatusSnapshot? ToBridgeSnapshot(BodyProgramStatusSnapshot? snapshot) => snapshot is null
+    /// <summary>
+    /// The ONE projection of a program's node states onto the wire, used by submit, status and stop alike.
+    ///
+    /// <para>
+    /// `internal` rather than `private` so the projection can be driven directly by a test: the alternative is a fake
+    /// game-thread session behind a pipe, and a test that can only reach this through a whole session cannot say which
+    /// layer turned a state into a word. Every durable <see cref="BodyProgramNodeState"/> value that can be settled has
+    /// its own wire name here; a value with no arm is reported as `body_program_node_state_unmapped:<state>` rather than
+    /// borrowing a name that already means something else.
+    /// </para>
+    /// </summary>
+    internal static BridgeBodyProgramStatusSnapshot? ToBridgeSnapshot(BodyProgramStatusSnapshot? snapshot) => snapshot is null
         ? null
         : new BridgeBodyProgramStatusSnapshot(
             snapshot.ProgramId,
@@ -1684,3 +1730,5 @@ internal sealed record BridgeSystemNoticeRequest(string NoticeId, string Key, st
 internal sealed record BridgeSystemNoticeReceipt(string NoticeId, long Revision);
 internal sealed record BridgePlayerControlReceipt(string ControlId, string SourceEventId, string Status);
 internal sealed record BridgeLifecycle(string State, string ReasonCode);
+
+
