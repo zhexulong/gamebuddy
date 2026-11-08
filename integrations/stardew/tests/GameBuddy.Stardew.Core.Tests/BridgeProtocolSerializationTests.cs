@@ -1125,6 +1125,41 @@ public sealed class BridgeBodyProgramProtocolTests
         reason.Should().Be("invalid_body_program_result");
     }
 
+    /// <summary>
+    /// The two node states the wire had no name for, and why they need one.
+    ///
+    /// <para>
+    /// <see cref="BodyProgramNodeState"/> has eleven durable values and the projection named nine: `SkippedDependency`
+    /// (10) and `Abandoned` (11) had no arm, so `BridgeSession.ToWire` sent both through its catch-all as
+    /// `recovery_required` - a state that means something else entirely. Measured 2026-11-08 on one run: the Mod's own
+    /// durable journal held 30 `skipped_dependency` nodes, 1 `abandoned` and ZERO `recovery_required`, while the run's
+    /// bundle recorded 31 `recovery_required`. The 31 were a vocabulary collapse, not a condition.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("skipped_dependency", 0, 0)]
+    [InlineData("abandoned", 0, 0)]
+    public void BodyProgramNodeStateNamesTheJournalSettlesNodesInAreAdmittedOnTheWire(string wireState, int nodeAttempt, int admissionAttempt)
+    {
+        string snapshot = "{\"code\":\"found\",\"snapshot\":{\"programId\":\"program_1\",\"state\":\"failed\",\"catalogRevision\":7,\"stopEpoch\":2,\"eventHighWater\":11,\"nodes\":[{\"nodeId\":\"second\",\"state\":\"" + wireState + "\",\"nodeAttempt\":" + nodeAttempt + ",\"admissionAttempt\":" + admissionAttempt + "}]}}";
+
+        BridgeProtocol.TryDeserializeBodyProgramStatusResult(ResultEnvelope("program_status_result", snapshot), out BridgeEnvelope<BridgeBodyProgramStatusResult>? envelope, out string reason).Should().BeTrue(reason);
+        envelope!.Payload.Snapshot!.Nodes[0].State.Should().Be(wireState);
+    }
+
+    /// <summary>
+    /// An unmapped state's own name must never be admitted as a state, or the fail-closed name would travel as a
+    /// condition and be read by whoever sees it next.
+    /// </summary>
+    [Fact]
+    public void TheUnmappedStateNameIsNotAdmittedAsAWireState()
+    {
+        const string snapshot = "{\"code\":\"found\",\"snapshot\":{\"programId\":\"program_1\",\"state\":\"failed\",\"catalogRevision\":7,\"stopEpoch\":2,\"eventHighWater\":11,\"nodes\":[{\"nodeId\":\"second\",\"state\":\"body_program_node_state_unmapped:99\",\"nodeAttempt\":0,\"admissionAttempt\":0}]}}";
+
+        BridgeProtocol.TryDeserializeBodyProgramStatusResult(ResultEnvelope("program_status_result", snapshot), out _, out string reason).Should().BeFalse();
+        reason.Should().Be("invalid_body_program_result");
+    }
+
     [Fact]
     public void ResultProjectionIncludesStatusHighWaterAndEventContinuationFields()
     {
