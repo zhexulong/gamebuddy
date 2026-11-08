@@ -78,6 +78,33 @@ const snapshot = (revision: number): WorldFact => ({
   payload: { revision, zone: "alpha" },
 });
 
+/** The provider's own words for a saturated cell, in the shape pi's `formatProviderError` produces. */
+const SATURATED_CELL =
+  '429: {"type":"server_error","message":"Upstream request failed: [prefill_cap_refused] the cell is at capacity; retry shortly (after 30 s)"}';
+
+/**
+ * A Host whose provider answers however `next` says.
+ *
+ * `flushes` is counted SEPARATELY from the notices a player sees, because the whole defect was that the first number
+ * could be non-zero while the second was zero for twelve minutes.
+ */
+function providerLoop(next: () => "ok" | "rate_limited" | "credential_rejected", order: string[]) {
+  let flushes = 0;
+  return {
+    pump: { pendingCount: 0, enqueueFact() {}, enqueuePlayerInput() {} },
+    async flush() {
+      flushes += 1;
+      order.push("provider.request");
+      const mode = next();
+      if (mode === "rate_limited") throw new Error(SATURATED_CELL);
+      if (mode === "credential_rejected") throw new Error("401: Incorrect API key provided.");
+    },
+    get flushes() {
+      return flushes;
+    },
+  };
+}
+
 test("Stardew authenticated typed player input and stop facts map to Host ingress", async () => {
   const adapter = eventHarness();
   const harness = fakeLoop();
@@ -145,9 +172,9 @@ test("authenticated Stardew STOP presents fixed locale-aware system copy after c
   );
   const notices: unknown[] = [];
   service.attachVoiceStopper(async () => undefined);
-  service.attachStopSystemNoticePresenter(async (notice, noticeId) => {
+  service.attachSystemNoticePresenter(async (notice, noticeId) => {
     notices.push({ notice, noticeId });
-  });
+  }, "zh-CN");
   adapter.emit({
     source: "stardew_mod",
     kind: "semantic_event",
@@ -195,9 +222,9 @@ test("STOP presents the active outcome and isolates a failed native notice prese
 
   const active = createService();
   const activeNotices: unknown[] = [];
-  active.attachStopSystemNoticePresenter(async (notice, noticeId) => {
+  active.attachSystemNoticePresenter(async (notice, noticeId) => {
     activeNotices.push({ notice, noticeId });
-  });
+  }, "en-US");
   active.beginPlayerBatch("source_active_notice", "batch_active_notice");
   const activeStop = active.stopAll({
     stopId: "stop_active_notice",
@@ -221,9 +248,9 @@ test("STOP presents the active outcome and isolates a failed native notice prese
   active.close();
 
   const idle = createService();
-  idle.attachStopSystemNoticePresenter(async () => {
+  idle.attachSystemNoticePresenter(async () => {
     throw new Error("native_notice_unavailable");
-  });
+  }, "en-US");
   const idleStop = idle.stopAll({
     stopId: "stop_idle_notice",
     sourceEventId: "source_idle_notice",
@@ -364,6 +391,76 @@ test("Host service schedules a second turn for a triggering fact received during
   await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 10));
   assert.equal(facts.length, 2);
   assert.equal(flushes, 2);
+  service.close();
+});
+
+test("a provider wait is legible: the run says it is waiting before its first request, then the provider's own words", async () => {
+  const adapter = eventHarness();
+  const order: string[] = [];
+  const harness = providerLoop(() => "rate_limited", order);
+  const service = new CompanionHostService(harness as never, adapter.events);
+  const notices: { key: string; locale: string; text: string }[] = [];
+  service.attachSystemNoticePresenter(async (notice) => {
+    notices.push({ key: notice.key, locale: notice.locale, text: notice.text });
+    order.push(`notice:${notice.key}`);
+  }, "zh-CN");
+  adapter.emit(snapshot(7));
+  await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 20));
+
+  // The ORDER is the claim: the player is told the run is waiting BEFORE the request that may hang, and told the
+  // provider's own words when it refuses. Reversed, the line would arrive after a wait it never described.
+  assert.deepEqual(order, ["notice:system.provider.waiting", "provider.request", "notice:system.provider.unavailable"]);
+  assert.deepEqual(notices, [
+    { key: "system.provider.waiting", locale: "zh-CN", text: "已连上游戏，正在等待模型服务…" },
+    {
+      key: "system.provider.unavailable",
+      locale: "zh-CN",
+      text: `模型服务暂时用不了：${SATURATED_CELL}`,
+    },
+  ]);
+  // Unchanged: the class is still the machine-readable fact a verdict reads.
+  assert.equal(service.lastProviderFailure, "rate_limited");
+  service.close();
+});
+
+test("a repeated provider failure is said once, a different class is its own line, and a later outage is news again", async () => {
+  const adapter = eventHarness();
+  const order: string[] = [];
+  let next: "ok" | "rate_limited" | "credential_rejected" = "rate_limited";
+  const harness = providerLoop(() => next, order);
+  const service = new CompanionHostService(harness as never, adapter.events);
+  const texts: string[] = [];
+  service.attachSystemNoticePresenter(async (notice) => {
+    texts.push(notice.text);
+  }, "en-US");
+  const attempt = async (mode: "ok" | "rate_limited" | "credential_rejected") => {
+    next = mode;
+    adapter.emit(snapshot(7));
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 20));
+  };
+
+  await attempt("rate_limited");
+  assert.equal(service.lastProviderFailure, "rate_limited");
+  // pi retries a refusal three times beneath this layer; every retry is the same fact, so the same class is said once.
+  await attempt("rate_limited");
+  await attempt("rate_limited");
+  assert.deepEqual(texts, ["Connected. Waiting for the provider…", `The provider can't answer: ${SATURATED_CELL}`]);
+
+  // A DIFFERENT cause is different news: the player's next move depends on which one it was.
+  await attempt("credential_rejected");
+  assert.equal(service.lastProviderFailure, "credential_rejected");
+  assert.equal(texts.at(-1), "The provider can't answer: 401: Incorrect API key provided.");
+
+  // A turn that succeeded retires the announcement, so a later, separate outage is reported rather than suppressed.
+  await attempt("ok");
+  assert.equal(service.lastProviderFailure, undefined);
+  await attempt("rate_limited");
+  assert.deepEqual(
+    texts.slice(-1),
+    [`The provider can't answer: ${SATURATED_CELL}`],
+    "an outage after a good turn is news",
+  );
+  assert.equal(harness.flushes, 6, "the bound is on what is SAID, never on how often the provider is asked");
   service.close();
 });
 

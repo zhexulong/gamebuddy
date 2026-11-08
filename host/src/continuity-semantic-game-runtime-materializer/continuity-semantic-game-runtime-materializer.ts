@@ -28,6 +28,7 @@ import { CompanionLoop, type CompanionTurnVolatileContext } from "../companion-l
 import {
   createFarmhandCompanionPresentationPort,
   createFarmhandPresentationEpochAdmission,
+  createFarmhandSystemNoticePresenter,
   type FarmhandPresentationBridge,
 } from "../farmhand-companion-presentation.js";
 import { createGameOperationalGateEvidenceProjection } from "../game-operational-gate-evidence.js";
@@ -1170,6 +1171,9 @@ export function createHostGameRuntimeMaterializer(
             )
           : Object.freeze([]);
         const recovery = readStardewRecoveryBindingContext(recoveryContext);
+        // Resolved once, because two things need the SAME answer: the runtime's presentation profile and the locale of
+        // the Host's own status lines. Two reads could disagree after a Settings change between them.
+        const companionLocale = options.companionLocale ?? (await resolveCompanionLocale(execution.runtimeRoot));
         let constructed: Readonly<{
           runtime: RuntimeSession;
           turnTracker: GameTurnLineageTracker;
@@ -1186,7 +1190,7 @@ export function createHostGameRuntimeMaterializer(
             permit.gameSessionId,
             options.gameOperationalGateNonceSha256,
             options.gameVoicePresentation,
-            options.companionLocale ?? (await resolveCompanionLocale(execution.runtimeRoot)),
+            companionLocale,
             options.onCompanionTextPresented,
             fixedTools,
             Object.freeze({
@@ -1323,6 +1327,12 @@ export function createHostGameRuntimeMaterializer(
           );
         }
         if (gameVoicePayload !== undefined) host.attachVoiceStopper(gameVoicePayload.stopVoice);
+        // The player-facing STATUS lane. A Game run's only other outward line is her own voice
+        // (`presentNativeAssistantContent`), which needs a turn that exists and says something she means - so a run
+        // waiting on the provider had no way to say anything at all. This is the same narrow notice capability Preview
+        // mounts, addressed to the same authenticated presentation bridge, and it is a different request on the wire
+        // (`system_notice_request`), never a `companion_text` piece.
+        host.attachSystemNoticePresenter(createFarmhandSystemNoticePresenter(ports.presentation), companionLocale);
         let ingressActivated = false;
         const activateIngress = (): void => {
           if (ingressActivated) return;

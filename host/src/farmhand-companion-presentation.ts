@@ -2,7 +2,7 @@ import type { CompanionInterruption, InterruptionSnapshot } from "./companion-in
 import { stripInlineAudioTags } from "./companion-speech-dehydration.js";
 import type { CompanionTextPort, GameCompanionTextExpression, PresentationCommitAdmission } from "./presentation.js";
 import { RUN_SPAN_NAMES, type RunTrace } from "./run-trace.js";
-import type { StopSystemNotice } from "./system-notices.js";
+import type { SystemNotice } from "./system-notices.js";
 
 /** Adapter-owned narrow surface needed for Farmhand native text presentation. */
 export type FarmhandPresentationBridge = Readonly<{
@@ -62,7 +62,7 @@ export function stripMagicContextSelfTag(text: string): string {
  */
 export function createFarmhandSystemNoticePresenter(
   bridge: FarmhandPresentationBridge,
-): (notice: StopSystemNotice, noticeId: string) => Promise<void> {
+): (notice: SystemNotice, noticeId: string) => Promise<void> {
   return async (notice, noticeId) => {
     await bridge.presentSystemNotice({
       noticeId,

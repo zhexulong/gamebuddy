@@ -1299,8 +1299,25 @@ string? bodyProgramUnavailableReason = null,
             "system.stop.active_turn_cancelled" => request.Text == (simplifiedChinesePreview ? "已停止生成。" : "Generation stopped."),
             "system.stop.queued_turn_cancelled" => request.Text == (simplifiedChinesePreview ? "已停止生成。" : "Generation stopped."),
             "system.stop.no_active_turn" => request.Text == (simplifiedChinesePreview ? "当前没有正在生成的回复。" : "No reply is currently being generated."),
+            "system.provider.waiting" => request.Text == (simplifiedChinesePreview ? "已连上游戏，正在等待模型服务…" : "Connected. Waiting for the provider…"),
+            // The one key whose copy the Mod cannot know in advance: the tail is the provider's own words, which
+            // the Host bounds and redacts before it ever reaches the wire. What the game thread still refuses is
+            // everything that made the other keys checkable: an unregistered sentence, a foreign locale, an empty
+            // or over-long body, and any control character - so a "line" can never become two lines or a terminal
+            // control sequence in a chat every farmhand reads.
+            "system.provider.unavailable" => IsRegisteredProviderLine(
+                request.Text,
+                simplifiedChinesePreview ? "模型服务暂时用不了：" : "The provider can't answer: "),
             _ => false,
         };
+    }
+
+    private static bool IsRegisteredProviderLine(string text, string prefix)
+    {
+        if (!text.StartsWith(prefix, StringComparison.Ordinal) || text.Length == prefix.Length) return false;
+        for (int index = prefix.Length; index < text.Length; index++)
+            if (char.IsControl(text[index])) return false;
+        return true;
     }
 
     internal bool TryCancel(long generation, BridgeEnvelope<BridgeCancelRequest>? envelope, out BridgeEnvelope<BridgeReceipt>? response, out string reasonCode)
@@ -1713,3 +1730,5 @@ internal sealed record BridgeSystemNoticeRequest(string NoticeId, string Key, st
 internal sealed record BridgeSystemNoticeReceipt(string NoticeId, long Revision);
 internal sealed record BridgePlayerControlReceipt(string ControlId, string SourceEventId, string Status);
 internal sealed record BridgeLifecycle(string State, string ReasonCode);
+
+

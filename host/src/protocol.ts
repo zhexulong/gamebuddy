@@ -1510,7 +1510,18 @@ export type CompanionPresentationRequest = Readonly<{
 
 export type SystemNoticeRequest = Readonly<{
   noticeId: string;
-  key: "system.stop.active_turn_cancelled" | "system.stop.queued_turn_cancelled" | "system.stop.no_active_turn";
+  /**
+   * One of the Host-authored lines the game thread knows how to draw. The Mod validates the
+   * copy under every key, so this union and `BridgeSession.IsValidSystemNoticeCopy` are the
+   * same set: `system.provider.unavailable` is the one member whose text carries third-party
+   * bytes, and it is accepted only behind its registered sentence.
+   */
+  key:
+    | "system.stop.active_turn_cancelled"
+    | "system.stop.queued_turn_cancelled"
+    | "system.stop.no_active_turn"
+    | "system.provider.waiting"
+    | "system.provider.unavailable";
   text: string;
   locale: string;
 }>;

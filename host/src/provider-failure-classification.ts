@@ -120,6 +120,65 @@ export function classifyProviderFailure(errorMessage: unknown): ProviderFailureC
   return "endpoint_unreachable";
 }
 
+/**
+ * How much of a provider's own text a player-facing line may carry.
+ *
+ * Sized so the registered sentence it is appended to stays inside the wire's own bound
+ * (`protocol/bridge-v1.schema.json` `systemNoticeRequest.text.maxLength`, 256) in both
+ * languages. A tail that would not fit is cut, and the cut is marked, rather than the
+ * whole line being dropped: the player has still been told that the provider refused.
+ */
+export const PROVIDER_FAILURE_LINE_MAX_LENGTH = 180;
+
+/**
+ * Shapes that must never reach a game chat, redacted in place.
+ *
+ * The in-game notice is drawn by the Mod's native chat, which every farmhand reads, so a
+ * gateway that echoes a key prefix or a bearer token into its error body would publish the
+ * player's credential to the co-op session. This is the one place that text is prepared
+ * for a surface, so it is the one place the redaction lives.
+ */
+const CREDENTIAL_SHAPED: readonly (readonly [RegExp, string])[] = Object.freeze([
+  [/\bsk-[A-Za-z0-9_-]{8,}/gu, "<redacted>"],
+  [/\bbearer\s+[A-Za-z0-9._~+/=-]{8,}/giu, "bearer <redacted>"],
+  [/\b(?:api[_-]?key|access[_-]?token|token|secret)\s*[:=]\s*\S+/giu, "<redacted>"],
+] as const);
+
+/**
+ * The provider's own words as ONE bounded line a player can be shown, or `undefined`.
+ *
+ * <p>
+ * `classifyProviderFailure` answers WHY the request was refused, as one of five causes; a
+ * player told only the cause cannot act on it ("retry shortly" and "your key was refused"
+ * are the same class of nothing). So the words themselves are published - bounded, which
+ * is the part that matters:
+ * </p>
+ * <ul>
+ *   <li>one line: every control character, including the newlines a JSON body carries,
+ *       becomes a space, so nothing can draw a second line or reset the terminal;</li>
+ *   <li>credential-shaped runs are redacted, because native chat is read by every farmhand
+ *       in a co-op world;</li>
+ *   <li>bounded to `PROVIDER_FAILURE_LINE_MAX_LENGTH`, with the cut marked.</li>
+ * </ul>
+ * <p>
+ * This does not replace the classification and does not change `lastProviderFailure`: the
+ * class stays the machine-readable fact, and this is only its words.
+ * </p>
+ */
+export function boundProviderFailureLine(errorMessage: unknown): string | undefined {
+  if (typeof errorMessage !== "string") return undefined;
+  let line = errorMessage
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  for (const [pattern, replacement] of CREDENTIAL_SHAPED) line = line.replace(pattern, replacement);
+  line = line.trim();
+  if (line.length === 0) return undefined;
+  return line.length <= PROVIDER_FAILURE_LINE_MAX_LENGTH
+    ? line
+    : `${line.slice(0, PROVIDER_FAILURE_LINE_MAX_LENGTH - 1).trimEnd()}…`;
+}
+
 function leadingProviderStatus(errorMessage: string): number | undefined {
   const match = LEADING_PROVIDER_STATUS.exec(errorMessage);
   if (match === null) return undefined;

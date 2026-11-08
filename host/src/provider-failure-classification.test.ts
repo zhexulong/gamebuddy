@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { classifyProviderFailure, type ProviderFailureClass } from "./provider-failure-classification.js";
+import {
+  boundProviderFailureLine,
+  classifyProviderFailure,
+  type ProviderFailureClass,
+} from "./provider-failure-classification.js";
 
 /**
  * The five classes, derived from the exact strings Pi produces.
@@ -104,5 +108,42 @@ test("a message the provider never supplied classifies as nothing rather than as
   // observer passes `undefined` and the surface must say nothing about a cause.
   for (const absent of [undefined, null, "", 42, {}]) {
     assert.equal(classifyProviderFailure(absent), undefined, String(absent));
+  }
+});
+
+/**
+ * The line a player may be shown, as opposed to the class they are told.
+ *
+ * Right-BICEP: these are the Error and Boundary cases, and every one of them is a way the raw
+ * refusal would have damaged the surface it is written to.
+ */
+test("the provider's own words reach a surface as exactly one bounded line", () => {
+  const raw = '429: {"type":"server_error",\n"message":"the cell is at capacity"}\u001b[2J\u0007';
+  const line = boundProviderFailureLine(raw);
+  assert.equal(line, '429: {"type":"server_error", "message":"the cell is at capacity"} [2J');
+  assert.doesNotMatch(line!, /[\u0000-\u001f\u007f-\u009f]/u, "a control character must never reach a chat line");
+});
+
+test("a credential-shaped run in the provider's body is redacted, because native chat is read by every farmhand", () => {
+  const keyEcho = boundProviderFailureLine(
+    '401: {"error":{"message":"Incorrect API key provided: sk-proj-AbCdEf123456"}}',
+  );
+  assert.doesNotMatch(keyEcho!, /sk-proj-AbCdEf123456/u, "the echoed key must not be drawn");
+  assert.match(keyEcho!, /<redacted>/u);
+
+  const bearer = boundProviderFailureLine("upstream said: Authorization: Bearer abcdefghijklmnop");
+  assert.doesNotMatch(bearer!, /abcdefghijklmnop/u);
+  assert.match(bearer!, /bearer <redacted>/u);
+});
+
+test("an over-long refusal is cut and the cut is marked, rather than dropped", () => {
+  const long = boundProviderFailureLine(`429: ${"x".repeat(400)}`);
+  assert.equal(long!.length, 180);
+  assert.match(long!, /…$/u, "the reader must be able to see that the provider said more");
+});
+
+test("a refusal with nothing in it produces no line at all", () => {
+  for (const empty of [undefined, null, "", "   ", "\n\t"]) {
+    assert.equal(boundProviderFailureLine(empty), undefined, JSON.stringify(empty));
   }
 });
