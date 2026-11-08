@@ -23,7 +23,12 @@ import { watchRollover } from "../../lib/multiday-loop.mjs";
 import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mjs";
 import { killedReasonCode } from "../../lib/live-run-teardown.mjs";
 import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
-import { actionBreadthClause, measureActionBreadth } from "../../lib/action-breadth.mjs";
+import {
+  actionBreadthClause,
+  buildSnapshotCensus,
+  measureActionBreadth,
+  readActionBreadthSurface,
+} from "../../lib/action-breadth.mjs";
 import { executionsFromJournalEvents } from "../../lib/stardew-body-program-journal.mjs";
 import { programNodeOutcomes } from "./program-node-outcomes.mjs";
 import {
@@ -1593,6 +1598,10 @@ test("the assembly logs a tool-timing disagreement by name", async () => {
       // and hands it to its own clause, so a test of the builder supplies the real implementations.
       measureActionBreadth,
       actionBreadthClause,
+      readActionBreadthSurface,
+      buildSnapshotCensus,
+      snapshotFamilyRows: new Map(),
+      snapshotCensusSamples: 0,
       NON_ACCOMPLISHMENT_ACTIONS: new Set(),
       phaseTimings: { runStartedAtMs: 1, marks: {} },
       lastObservedSnapshot: null,
@@ -2818,6 +2827,10 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
       // and hands it to its own clause, so a test of the builder supplies the real implementations.
       measureActionBreadth,
       actionBreadthClause,
+      readActionBreadthSurface,
+      buildSnapshotCensus,
+      snapshotFamilyRows: new Map(),
+      snapshotCensusSamples: 0,
       NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
       phaseTimings: { runStartedAtMs: 1, marks: {} },
       lastObservedSnapshot: null,
@@ -2920,6 +2933,10 @@ test("a run whose work all went through programs publishes a non-empty attempted
       // and hands it to its own clause, so a test of the builder supplies the real implementations.
       measureActionBreadth,
       actionBreadthClause,
+      readActionBreadthSurface,
+      buildSnapshotCensus,
+      snapshotFamilyRows: new Map(),
+      snapshotCensusSamples: 0,
       NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
       phaseTimings: { runStartedAtMs: 1, marks: {} },
       lastObservedSnapshot: null,
@@ -3018,6 +3035,10 @@ test("an error that escapes the run still publishes the work it had already reco
       // and hands it to its own clause, so a test of the builder supplies the real implementations.
       measureActionBreadth,
       actionBreadthClause,
+      readActionBreadthSurface,
+      buildSnapshotCensus,
+      snapshotFamilyRows: new Map(),
+      snapshotCensusSamples: 0,
       NON_ACCOMPLISHMENT_ACTIONS: new Set(["equip_tool"]),
       phaseTimings: { runStartedAtMs: 1, marks: {} },
       lastObservedSnapshot: null,
@@ -3217,6 +3238,10 @@ test("a run interrupted from outside publishes its own verdict, with the evidenc
         // and hands it to its own clause, so a test of the builder supplies the real implementations.
         measureActionBreadth,
         actionBreadthClause,
+        readActionBreadthSurface,
+        buildSnapshotCensus,
+        snapshotFamilyRows: new Map(),
+        snapshotCensusSamples: 0,
         NON_ACCOMPLISHMENT_ACTIONS: new Set(["equip_tool"]),
         phaseTimings: { runStartedAtMs: 1_700_000_000_000, marks: {} },
         lastObservedSnapshot: null,
@@ -3665,9 +3690,15 @@ function builderGlobals(overrides = {}) {
   return {
     executedActionIds,
     // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once and
-    // hands it to its own clause, so a test of the builder supplies the real implementations.
+    // hands it to its own clause, so a test of the builder supplies the real implementations. The surface and the
+    // census builder are real too - the denominator of a run is its OWN published census, and a double here would let
+    // a test pass against a world the runner could never produce.
     measureActionBreadth,
     actionBreadthClause,
+    readActionBreadthSurface,
+    buildSnapshotCensus,
+    snapshotFamilyRows: new Map(),
+    snapshotCensusSamples: 0,
     NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
     phaseTimings: { runStartedAtMs: 1, marks: {} },
     lastObservedSnapshot: null,
@@ -3897,12 +3928,16 @@ test("an unproven task is not a pass: the arm names the criterion it could not d
   );
 });
 
-test("a run that used a handful of the published actions fails its own `action_breadth` clause", async () => {
+test("a run that used a handful of the addressable actions fails its own `action_breadth` clause", async () => {
   // MEASURED 2026-11-07 (`round39`): `executionTrace: { ok: true, rows: 124 }`, 124 executions all `succeeded`-shaped,
-  // a `completed` session, and 15 of the 95 published actions attempted - four fifths of the surface never touched,
-  // and nothing in the artifact said so. The clause exists so that shape is in the run's OWN verdict. The reading is
-  // the real one (the real catalog and the real `tools/action-breadth-baseline.json`): three actions in three families
-  // over twelve executions cannot meet a ratchet recorded at 24 actions in 11 families.
+  // a `completed` session, and 15 distinct actions attempted - most of the surface it was given never touched, and
+  // nothing in the artifact said so. The clause exists so that shape is in the run's OWN verdict.
+  //
+  // The denominator is the run's OWN census: the families its snapshots carried rows for. This fixture's world shows
+  // weeds and a harvestable crop, so `cut_weeds` and `harvest_crop` are target-bound-addressable and `move_to_tile`
+  // needs no row at all - everything else in the catalog is world this run never had, and is not charged to it. The
+  // reading is the real one (the real catalog and the real `tools/action-breadth-baseline.json`): three actions in
+  // three families over twelve executions cannot meet a ratchet recorded at 24 attempts in 11 families.
   const programId = "plan_breadth";
   const nodeIds = ["n1", "n2", "n3"];
   const programOutcomes = Object.freeze([
@@ -3942,6 +3977,12 @@ test("a run that used a handful of the published actions fails its own `action_b
           ],
         },
       ],
+      // Two target families seen with rows, over two snapshots this run read.
+      snapshotFamilyRows: new Map([
+        ["weedTargets", 16],
+        ["harvestTargets", 3],
+      ]),
+      snapshotCensusSamples: 2,
     }),
   );
   // Every OTHER clause of round38's run satisfied: the breadth clause alone has to be what stops this run.
@@ -3957,7 +3998,25 @@ test("a run that used a handful of the published actions fails its own `action_b
   assert.equal(blocked.failure.reasonCode, blocked.reasonCode, "the failure dump and the result tell one story");
   assert.equal(blocked.actionBreadth.attempted, 3);
   assert.equal(blocked.actionBreadth.families, 3);
-  assert.ok(blocked.actionBreadth.published > blocked.actionBreadth.attempted, "measured against a real population");
+  assert.ok(blocked.actionBreadth.published > blocked.actionBreadth.attempted, "the catalog stays visible as context");
+  assert.ok(
+    blocked.actionBreadth.addressable > 0 && blocked.actionBreadth.addressable < blocked.actionBreadth.published,
+    "and the denominator is the world this run was given, not the catalog it could never use",
+  );
+  assert.equal(blocked.actionBreadth.addressableTargetBound, 2, "weeds and crops: the two families the census carried");
+  assert.equal(
+    blocked.snapshotCensus.source,
+    "runner_observations",
+    "the world the reading was measured against is published with the result",
+  );
+  assert.deepEqual(
+    blocked.snapshotCensus.families.filter((entry) => entry.rows > 0),
+    [
+      { family: "harvestTargets", rows: 3 },
+      { family: "weedTargets", rows: 16 },
+    ],
+    "and it names every target family, so an empty one can be told from an unobserved one",
+  );
   assert.equal(
     blocked.actionBreadth.verdict,
     blocked.reasonCode,

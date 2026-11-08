@@ -119,7 +119,13 @@ import { assessIdentityProfile } from "../core/content-gate.mjs";
 import { explainAuthorityIdentityMismatch } from "../core/authority-identity.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
 import { buildFailureSnapshot, buildReproPlan, classifyFailure } from "../../lib/failure-dump.mjs";
-import { actionBreadthClause, measureActionBreadth } from "../../lib/action-breadth.mjs";
+import {
+  actionBreadthClause,
+  addSnapshotToCensus,
+  buildSnapshotCensus,
+  measureActionBreadth,
+  readActionBreadthSurface,
+} from "../../lib/action-breadth.mjs";
 import { writeEvidenceBundle } from "../../lib/evidence-bundle.mjs";
 import { installLiveRunInterrupt, killedReasonCode } from "../../lib/live-run-teardown.mjs";
 // Program executions are a second kind of execution, written beside the request frames and merged back at read time.
@@ -587,9 +593,23 @@ let advertisedSampleMaxSize = 0;
 // :896-904). These are declared as hoisted function declarations so the sampler below can use them.
 let lastObservedSnapshot = null;
 let lastObservedPose = null;
+// The families this run's OWN snapshots published, with the largest row count seen for each, and how many snapshots
+// that census rests on. Kept while the run is live for the same reason the last snapshot is: after teardown the bridge
+// has cleared its state, and a family that was empty cannot be told from one nobody looked at.
+//
+// This is the denominator of the run's `action_breadth` clause. A target-bound action is only constructible while its
+// `*Targets` family has a row in the snapshot, and one `FixtureScenario` string arms one world - so dividing attempted
+// actions by the 95 published ones charged the companion for the fixture's world (measured: `round39` attempted 15 of
+// the 40 its own observations made addressable, and the gate called that 15 of 95).
+const snapshotFamilyRows = new Map();
+let snapshotCensusSamples = 0;
 function rememberObservation() {
   const snapshot = client?.state?.snapshot;
-  if (snapshot !== null && snapshot !== undefined) lastObservedSnapshot = Object.freeze({ ...snapshot });
+  if (snapshot !== null && snapshot !== undefined) {
+    lastObservedSnapshot = Object.freeze({ ...snapshot });
+    snapshotCensusSamples += 1;
+    addSnapshotToCensus(snapshotFamilyRows, snapshot);
+  }
   return lastObservedSnapshot;
 }
 function rememberPose(observation) {
@@ -5232,10 +5252,17 @@ async function buildRunResult({
   // which has no rung clauses at all, still publishes the reading it has.
   const dispatched = summarizeDispatchedActions(actionTrace, programOutcomes, programSubmissions);
   // Coverage is not the same question as volume. Measured 2026-11-07 (`round39`): 124 executions, `ok: true` trace,
-  // and 15 of 95 published actions attempted with a quarter of them cutting weeds - a run whose execution count read
-  // as a working companion while four fifths of the surface was never touched. The population is the Mod's own
-  // registration table (`lib/action-breadth.mjs`), the ratchet is `tools/action-breadth-baseline.json`, and the
-  // verdict names what is missing rather than counting what was done.
+  // and 15 distinct actions attempted with a quarter of the executions cutting weeds - a run whose execution count read
+  // as a working companion while the surface it was given went mostly untouched. The denominator is what this run COULD
+  // address: the families its own snapshots published (`snapshotCensus`, built from `snapshotFamilyRows`), joined to
+  // actions through `lib/action-breadth.mjs`; the catalog is published beside it as context only. The ratchet is
+  // `tools/action-breadth-baseline.json`, and the verdict names what is missing rather than counting what was done.
+  const breadthSurface = await readActionBreadthSurface();
+  const snapshotCensus = buildSnapshotCensus({
+    surface: breadthSurface,
+    rows: snapshotFamilyRows,
+    snapshots: snapshotCensusSamples,
+  });
   const actionBreadth = await measureActionBreadth({
     scenario: SCENARIO,
     attempted: dispatched.attempted,
@@ -5248,6 +5275,10 @@ async function buildRunResult({
     // journal event cannot be counted twice here while the manifest counts it once.
     programRows,
     programSubmissions,
+    // The world this run was given, as the run itself read it. Absent samples (a run that ended before its first
+    // observation) make the reading `not_measured:no_snapshot_census`, never a fall back to the catalog.
+    census: snapshotCensus,
+    surface: breadthSurface,
   });
   if (String(actionBreadth.verdict).startsWith("narrow:"))
     console.error(
@@ -5255,6 +5286,7 @@ async function buildRunResult({
       JSON.stringify({
         verdict: actionBreadth.verdict,
         attempted: actionBreadth.attempted,
+        addressable: actionBreadth.addressable,
         published: actionBreadth.published,
         families: actionBreadth.families,
       }),
@@ -5376,11 +5408,16 @@ async function buildRunResult({
     // trace, so "it did nothing" and "the artifact forgot" can never be the same answer.
     attemptedActionIds: dispatched.attempted,
     succeededActionIds: dispatched.succeeded,
-    // HOW MUCH OF THE SURFACE those executions covered: attempted/succeeded against the published population, the
-    // families they fell in, and the concentration the largest single action held. `round39` published 124 executions
-    // and a completed session while attempting 15 of 95 actions, and nothing in its artifact could say so; a narrow
-    // run is now visible in its own bundle rather than in a report nobody opened.
+    // HOW MUCH OF THE SURFACE THOSE EXECUTIONS COVERED: attempted/succeeded against the actions this run could
+    // address, the families they fell in, and the concentration the largest single action held. `round39` published
+    // 124 executions and a completed session while addressing a small part of the world it was given, and nothing in
+    // its artifact could say so; a narrow run is now visible in its own bundle rather than in a report nobody opened.
     actionBreadth,
+    // The world the reading above was measured against: the families this run's own snapshots published, one entry per
+    // target family in the catalog - `rows: 0` included, so an empty family and an unobserved one stay different
+    // answers. Published rather than kept inside the reading, because it is the run's account of its own surface and a
+    // reader has to be able to check the denominator without this process.
+    snapshotCensus,
     // Per-tool-call wall clock attributed by OWNER: `delegate` (a nested agent), the planning tools, a program
     // submission, a program read, or a flat dispatch - one category per tool actually called. `invariant` is the
     // agreement between `flat_dispatch.calls` and `executionTrace.flat`, and it is the ONLY thing published when that
@@ -5582,9 +5619,12 @@ async function writeRunBundle({
     // run doing real work read as if nothing happened.
     executionTrace: result.executionTrace,
     // The same breadth reading the result carries, in the bundle: which actions those executions WERE, against the
-    // published population, so a run that repeated three safe actions cannot read as a varied day from its evidence
-    // package alone. Copied from `result.actionBreadth` rather than measured again here - one derivation per run.
+    // surface this run could address, so a run that repeated three safe actions cannot read as a varied day from its
+    // evidence package alone. Copied from `result.actionBreadth` rather than measured again here - one derivation per
+    // run - and its denominator travels beside it, so a reader can check the addressable number without the process
+    // that produced it.
     actionBreadth: result.actionBreadth,
+    snapshotCensus: result.snapshotCensus,
     // Two files, one record: a reader merges them (execution-trace.mjs) instead of reading the flat file alone and
     // concluding the run dispatched nothing.
     runTrace: runTraceRecordAtAssembly(),

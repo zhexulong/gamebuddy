@@ -1,23 +1,35 @@
 /**
- * How much of the published action surface one run actually used.
+ * How much of the action surface one run COULD address did it actually use.
  *
  * WHY THIS EXISTS. Measured 2026-11-07 on `round39`: the bundle reported `executionTrace: { ok: true, rows: 124 }`
  * and a session verdict of `completed`, and the run was judged on its other clauses. Those 124 executions were 15
- * distinct actions out of the 95 the Mod publishes, and one action (`cut_weeds`, 32 executions) held a quarter of
- * them. Nothing in the artifact said so, so "the actions are fine" was measured only over the few safe repeats the
- * model had degenerated to. A count of executions cannot tell a varied day from 124 repetitions of the three
- * actions that cannot go wrong; the count has to be read against the COVERAGE it was achieved over.
+ * distinct actions, one (`cut_weeds`, 32 executions) held a quarter of them - and nothing in the artifact said so.
+ *
+ * THE DENOMINATOR WAS THE SECOND DEFECT. The first version of this reading divided by the 95 actions the Mod
+ * publishes. All 95 are dispatchable, but a target-bound action is only constructible while its `*Targets` family is
+ * non-empty in the snapshot, and the snapshot is the player's own location within Chebyshev radius 6
+ * (`farmhandexecutioncontroller.cs:29`, `:2329-2360`). `ModConfig.NativeLocalPlayerFixture.FixtureScenario` is ONE
+ * string arming ONE world (`ModConfig.cs:156`, `:187-245`), so a run's real surface is a fraction of the catalog:
+ * measured on `round38`'s own observations, 36 of the 78 target-bound actions ever had a row. Charging a run for the
+ * other 59 charges it for the fixture's world, which is the same class of lie as calling 124 executions "varied".
  *
  * THREE MEASUREMENTS, each answering a question the others cannot:
- *   - coverage: attempted and succeeded, against the PUBLISHED population. The population comes from
- *     `stardew-published-action-registry.mjs`, which parses the Mod's own registration table - a list written here
- *     would be a second spelling of the catalog and would fail open the first time an action is published.
- *   - families: the distinct Mod action families among the attempts, so "15 actions" cannot hide that every one of
- *     them was farming.
+ *   - addressable: what this run could have addressed at all. The families the run's OWN snapshots published with at
+ *     least one row (`census`), joined to actions through the discovery audit's `TARGET_FIELD` map, plus the actions
+ *     that name no snapshot family at all because their target is the actor's own body, tile or menu. The catalog
+ *     population stays visible beside it as context, never as the denominator.
+ *   - coverage: attempted and succeeded against that addressable set, and the families they fell in, so "15 actions"
+ *     cannot hide that every one of them was farming.
  *   - concentration: the largest single action's share of the run's EXECUTIONS. Coverage can read acceptably while
  *     the day was one action repeated, which is exactly the shape round39 had.
  *
- * THE RATCHET. `tools/action-breadth-baseline.json` records the best breadth each scenario has shown, plus the
+ * THE CENSUS IS THE RUN'S OWN. `buildSnapshotCensus` is fed the snapshots the runner read while the game was live, so
+ * the denominator of a run and the world that run was given are the same fact. A bundle that publishes no census
+ * cannot be judged: `not_measured:no_snapshot_census`, never a fallback to the catalog and never a guess. The census
+ * names every target family, including the ones it saw zero rows of, so "this family was empty" and "nobody looked"
+ * stay different answers - `census_family_absent:<family>` is the drift between the census and the catalog.
+ *
+ * THE RATCHET. `tools/action-breadth-baseline.json` records the best coverage each scenario has shown, plus the
  * actions a fixture cannot reach with the reason each one cannot. A run below the recorded best is
  * `narrow:below_baseline:<label>`; an action that was excluded and then attempted anyway is
  * `narrow:excluded_action_attempted:<actionId>`, because a carve-out that has silently stopped being true makes
@@ -31,6 +43,10 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// The one declaration of which snapshot family each action's targets are published under. Read from the discovery
+// audit rather than copied: a second spelling would go stale the first time a target-bearing action is published, and
+// this join is the whole addressable denominator.
+import { TARGET_FIELD } from "../audit-stardew-discovery-channels.mjs";
 import {
   readAllPublishedExecutionStardewActionIds,
   readStardewActionFamilies,
@@ -57,12 +73,21 @@ export const ACTION_BREADTH_RICH = "rich";
 /** An action the family table does not name. REPORTED, never dropped: a silent skip would shrink the denominator. */
 export const UNMAPPED_FAMILY = "unmapped";
 
+/** Who produced a census. Published with it, so a reader knows whose observation the denominator rests on. */
+export const SNAPSHOT_CENSUS_SOURCE = "runner_observations";
+
 function fail(code) {
   throw new Error(`action_breadth_${code}`);
 }
 
+/** `PetTargets` -> `petTargets`: the snapshot key one action's targets are published under, or null when it has none. */
+function snapshotTargetField(field) {
+  return typeof field === "string" && field.length > 0 ? `${field[0].toLowerCase()}${field.slice(1)}` : null;
+}
+
 /**
- * The population a run is measured against: every published, non-experimental Mod registration, with its family.
+ * The population a run is measured against: every published, non-experimental Mod registration, with its family and
+ * the snapshot family its targets come from.
  *
  * All published execution actions, including the ones the descriptor gate exempts: an exemption from a descriptor
  * contract is not an exemption from being dispatchable, and leaving `navigate_to_destination` out would let a
@@ -73,16 +98,127 @@ export async function readActionBreadthSurface() {
   if (!Array.isArray(actionIds) || actionIds.length === 0) fail("published_action_population_empty");
   const familyOf = readStardewActionFamilies();
   const families = new Map(actionIds.map((actionId) => [actionId, familyOf.get(actionId) ?? UNMAPPED_FAMILY]));
+  const targetFieldOf = new Map();
+  for (const actionId of actionIds) {
+    const field = snapshotTargetField(TARGET_FIELD[actionId]);
+    if (field !== null) targetFieldOf.set(actionId, field);
+  }
   return Object.freeze({
     actionIds,
     families,
     familyCount: new Set(families.values()).size,
+    // An action absent from this map names no snapshot family: its target is the actor's own body, tile or a menu
+    // (the discovery audit's `NON_SNAPSHOT_TARGET_ACTIONS`), so no row count can gate it.
+    targetFieldOf,
+    targetFields: Object.freeze([...new Set(targetFieldOf.values())].sort()),
+  });
+}
+
+/**
+ * The families one snapshot publishes rows for, accumulated into `rows` (`family -> largest row count seen`).
+ *
+ * Every non-empty array the snapshot carries is counted, without a list of names: the census is a fact about the
+ * snapshot, and narrowing it here to today's target families would hide a family a later action starts reading.
+ * `buildSnapshotCensus` is what filters to the families the catalog can join through.
+ */
+export function addSnapshotToCensus(rows, snapshot) {
+  if (snapshot === null || typeof snapshot !== "object") return rows;
+  for (const [family, value] of Object.entries(snapshot))
+    if (Array.isArray(value) && value.length > 0) rows.set(family, Math.max(rows.get(family) ?? 0, value.length));
+  return rows;
+}
+
+/**
+ * The census a bundle publishes: one entry per target family in the catalog, with the rows the run's snapshots
+ * carried for it - `0` included.
+ *
+ * The zeroes are the point. A census that listed only the families it saw rows for could not be told apart from one
+ * that never looked at a family, so an empty world and an unobserved one would read the same, and a later target
+ * family added to the catalog would silently vanish from the denominator instead of being reported as drift.
+ */
+export function buildSnapshotCensus({ surface, rows, snapshots }) {
+  const observed = rows instanceof Map ? rows : new Map(Object.entries(rows ?? {}));
+  return Object.freeze({
+    source: SNAPSHOT_CENSUS_SOURCE,
+    snapshots: Number.isInteger(snapshots) && snapshots > 0 ? snapshots : 0,
+    families: Object.freeze(
+      surface.targetFields.map((family) => Object.freeze({ family, rows: observed.get(family) ?? 0 })),
+    ),
+  });
+}
+
+/**
+ * A published census, read back and validated, or null when the bundle carries none this tree can judge.
+ *
+ * Null covers absent, empty and shapeless alike: each means "this run published no census", which is the one thing
+ * the caller must be told, and a second reason code for a malformed census would only be a distinction the reader
+ * cannot act on differently.
+ */
+function normalizeCensus(census) {
+  if (census === null || typeof census !== "object" || Array.isArray(census)) return null;
+  if (!Number.isInteger(census.snapshots) || census.snapshots <= 0) return null;
+  if (!Array.isArray(census.families)) return null;
+  const families = census.families.filter(
+    (entry) =>
+      typeof entry?.family === "string" && entry.family.length > 0 && Number.isInteger(entry.rows) && entry.rows >= 0,
+  );
+  if (families.length === 0) return null;
+  return Object.freeze({
+    source: typeof census.source === "string" && census.source.length > 0 ? census.source : "unlabeled",
+    snapshots: census.snapshots,
+    families: Object.freeze(families.map((entry) => Object.freeze({ family: entry.family, rows: entry.rows }))),
+  });
+}
+
+/**
+ * The addressable set of one run: what it could have done, given the world its snapshots showed it.
+ *
+ * Target-bound actions need a row in their family; actions that name no family need nothing, because their target is
+ * the actor itself. Declared exclusions are subtracted last, and only the ones that were still addressable are
+ * reported, so an expired carve-out cannot quietly shrink the denominator.
+ */
+export function deriveAddressable({ surface, census, exclusions = [] }) {
+  const normalized = normalizeCensus(census);
+  if (normalized === null) return null;
+  const rows = new Map(normalized.families.map((entry) => [entry.family, entry.rows]));
+  const excluded = new Set(exclusions);
+  const targetBound = [];
+  const targetless = [];
+  for (const actionId of surface.actionIds) {
+    const field = surface.targetFieldOf.get(actionId);
+    if (field === undefined) targetless.push(actionId);
+    else if ((rows.get(field) ?? 0) > 0) targetBound.push(actionId);
+  }
+  const addressable = Object.freeze([...targetBound, ...targetless].filter((actionId) => !excluded.has(actionId)));
+  const families = Object.freeze(
+    [...new Set(targetBound.map((actionId) => surface.targetFieldOf.get(actionId)))].sort().map((family) =>
+      Object.freeze({
+        family,
+        rows: rows.get(family) ?? 0,
+        actionIds: Object.freeze(targetBound.filter((actionId) => surface.targetFieldOf.get(actionId) === family)),
+      }),
+    ),
+  );
+  return Object.freeze({
+    actionIds: addressable,
+    targetBound: Object.freeze(targetBound.filter((actionId) => !excluded.has(actionId))),
+    targetless: Object.freeze(targetless.filter((actionId) => !excluded.has(actionId))),
+    // An exclusion that WOULD have been addressable: the ones a reader has to be able to weigh against the surface.
+    excludedAddressable: Object.freeze([...targetBound, ...targetless].filter((actionId) => excluded.has(actionId))),
+    families,
+    // Every target family the catalog names but the census does not: drift between this tree's catalog and the
+    // census the run published (an older runner, a renamed family), named member by member.
+    censusFamiliesAbsent: Object.freeze(surface.targetFields.filter((family) => !rows.has(family))),
   });
 }
 
 /**
  * The ratchet, read and validated. A baseline file that cannot be trusted is REFUSED rather than defaulted: a
  * missing exemption reason would otherwise become a smaller denominator nobody can audit.
+ *
+ * `addressable` is nullable on purpose: the entry recorded before this denominator existed measured 24 actions in 11
+ * families against the catalog, and its bundle publishes no census, so the width of ITS world is not a gated number.
+ * Recording it anyway would put an ungated denominator into the ratchet every later run is compared against.
  */
 export async function readActionBreadthBaseline({ path = ACTION_BREADTH_BASELINE_PATH } = {}) {
   let parsed;
@@ -98,6 +234,10 @@ export async function readActionBreadthBaseline({ path = ACTION_BREADTH_BASELINE
     if (typeof entry?.label !== "string" || entry.label.length === 0) fail(`baseline_label_missing:${scenario}`);
     if (!Number.isInteger(entry?.attempted) || entry.attempted <= 0) fail(`baseline_attempted_invalid:${scenario}`);
     if (!Number.isInteger(entry?.families) || entry.families <= 0) fail(`baseline_families_invalid:${scenario}`);
+    if (entry?.addressable !== null && entry?.addressable !== undefined) {
+      if (!Number.isInteger(entry.addressable) || entry.addressable < entry.attempted)
+        fail(`baseline_addressable_invalid:${scenario}`);
+    }
   }
   const exclusions = parsed?.exclusions ?? [];
   if (!Array.isArray(exclusions)) fail("baseline_exclusions_not_a_list");
@@ -149,13 +289,15 @@ export function actionExecutionCounts({ actionRows = null, programRows = [], pro
 }
 
 /**
- * The whole reading: coverage, families, concentration, the ratchet, and the one verdict they add up to.
+ * The whole reading: the census, the addressable set, coverage, families, concentration, the ratchet, and the one
+ * verdict they add up to.
  *
  * `attempted` / `succeeded` are the run's OWN published lists rather than a second derivation here, so the artifact
- * and this reading cannot disagree about which actions the run used. `executions` is the run's declared execution
- * count (`executionTrace.rows`), and `actionRows` / `programRows` are the two halves of that trace when the caller
- * holds them; a caller that has only the result file passes `actionRows: null`, and the flat executions are then
- * reported as unattributed instead of being silently left out of the concentration.
+ * and this reading cannot disagree about which actions the run used. `census` is the run's own published snapshot
+ * census; without it the addressable set is null and no coverage verdict can be reached. `executions` is the run's
+ * declared execution count (`executionTrace.rows`), and `actionRows` / `programRows` are the two halves of that trace
+ * when the caller holds them; a caller that has only the result file passes `actionRows: null`, and the flat
+ * executions are then reported as unattributed instead of being silently left out of the concentration.
  */
 export async function measureActionBreadth({
   scenario = null,
@@ -165,6 +307,7 @@ export async function measureActionBreadth({
   actionRows = null,
   programRows = [],
   programSubmissions = [],
+  census = null,
   surface = null,
   baseline = null,
 } = {}) {
@@ -203,6 +346,19 @@ export async function measureActionBreadth({
   const excludedAttempted = Object.freeze(attemptedIds.filter((actionId) => exclusions.has(actionId)));
   // An exemption whose action left the catalog is an exemption nobody can act on, so it is named rather than kept.
   const staleExclusions = Object.freeze([...exclusions.keys()].filter((actionId) => !published.has(actionId)));
+  const resolvedCensus = normalizeCensus(census);
+  const addressable = deriveAddressable({
+    surface: resolvedSurface,
+    census: resolvedCensus,
+    exclusions: [...exclusions.keys()].filter((actionId) => published.has(actionId)),
+  });
+  const addressableSet = addressable === null ? null : new Set(addressable.actionIds);
+  // The coherence check this denominator rests on: everything the run DISPATCHED had to have been addressable, or
+  // the census missed a family the run really used and the coverage it would produce is against the wrong world.
+  const outsideAddressable =
+    addressableSet === null
+      ? Object.freeze([])
+      : Object.freeze(attemptedIds.filter((actionId) => !addressableSet.has(actionId)));
   const scenarioBaseline = scenario === null ? null : (resolvedBaseline.baselines[scenario] ?? null);
   const perAction = Object.freeze(
     [...new Set([...counts.keys(), ...attemptedIds])]
@@ -213,19 +369,25 @@ export async function measureActionBreadth({
           executions: counts.get(actionId) ?? 0,
           succeeded: succeededSet.has(actionId),
           excluded: exclusions.has(actionId),
+          addressable: addressableSet === null ? null : addressableSet.has(actionId),
         }),
       )
       .sort((left, right) => right.executions - left.executions || left.actionId.localeCompare(right.actionId)),
   );
+  const addressableCount = addressable === null ? null : addressable.actionIds.length;
   const verdict = deriveVerdict({
     published,
     attemptedCount: attemptedIds.length,
+    addressableCount,
     familyCount: familyNames.length,
     total,
     concentration,
     excludedAttempted,
     staleExclusions,
+    censusAbsent: resolvedCensus === null,
+    censusFamiliesAbsent: addressable === null ? Object.freeze([]) : addressable.censusFamiliesAbsent,
     outsidePopulation,
+    outsideAddressable,
     scenario,
     scenarioBaseline,
   });
@@ -235,6 +397,19 @@ export async function measureActionBreadth({
     succeeded: succeededSet.size,
     published: published.size,
     judged: published.size - [...exclusions.keys()].filter((actionId) => published.has(actionId)).length,
+    // What the run COULD address, and how that number was reached: the census it published, the target-bound actions
+    // its families made constructible, and the actions that need no family at all.
+    census: resolvedCensus,
+    addressable: addressableCount,
+    addressableTargetBound: addressable === null ? null : addressable.targetBound.length,
+    addressableTargetless: addressable === null ? null : addressable.targetless.length,
+    addressableFamilies: addressable === null ? null : addressable.families,
+    addressableExcluded: addressable === null ? null : addressable.excludedAddressable,
+    censusFamiliesAbsent: addressable === null ? null : addressable.censusFamiliesAbsent,
+    // Coverage of the world this run was given; the catalog coverage stays beside it as context, never as the
+    // denominator (it is the number that charged the companion for the fixture's world).
+    coverage: addressableCount === null || addressableCount === 0 ? null : attemptedIds.length / addressableCount,
+    catalogCoverage: published.size === 0 ? null : attemptedIds.length / published.size,
     families: familyNames.length,
     publishedFamilies: resolvedSurface.familyCount,
     familyNames,
@@ -250,6 +425,7 @@ export async function measureActionBreadth({
     excludedAttempted,
     staleExclusions,
     outsidePopulation,
+    outsideAddressable,
     perAction,
     verdict,
   });
@@ -259,17 +435,23 @@ export async function measureActionBreadth({
  * The verdict, in the order a reader should be told about it.
  *
  * Every `narrow:` arm is decided BEFORE the measurement gaps, because a run that was both narrow and unmeasurable in
- * some corner is narrow: the gap explains a missing number, not a missing variety.
+ * some corner is narrow: the gap explains a missing number, not a missing variety. The one exception is coverage
+ * itself: without a census there is no addressable set, so `below_baseline` is decided on the families alone and the
+ * missing denominator is reported as `not_measured:no_snapshot_census` instead of a coverage nobody could compute.
  */
 function deriveVerdict({
   published,
   attemptedCount,
+  addressableCount,
   familyCount,
   total,
   concentration,
   excludedAttempted,
   staleExclusions,
+  censusAbsent,
+  censusFamiliesAbsent,
   outsidePopulation,
+  outsideAddressable,
   scenario,
   scenarioBaseline,
 }) {
@@ -277,39 +459,67 @@ function deriveVerdict({
   if (excludedAttempted.length > 0) return `narrow:excluded_action_attempted:${excludedAttempted.join(",")}`;
   if (concentration !== null && concentration.share > ACTION_BREADTH_CONCENTRATION_SHARE)
     return `narrow:concentrated_on:${concentration.actionId}`;
-  if (
-    scenarioBaseline !== null &&
-    (attemptedCount < scenarioBaseline.attempted || familyCount < scenarioBaseline.families)
-  )
+  if (scenarioBaseline !== null && belowBaseline({ attemptedCount, addressableCount, familyCount, scenarioBaseline }))
     return `narrow:below_baseline:${scenarioBaseline.label}`;
   if (published.size === 0) return "not_measured:published_action_population_empty";
   if (staleExclusions.length > 0) return `not_measured:excluded_action_not_published:${staleExclusions.join(",")}`;
+  if (censusAbsent) return "not_measured:no_snapshot_census";
+  if (censusFamiliesAbsent.length > 0) return `not_measured:census_family_absent:${censusFamiliesAbsent.join(",")}`;
   if (outsidePopulation.length > 0) return `not_measured:attempted_outside_population:${outsidePopulation.join(",")}`;
+  if (outsideAddressable.length > 0) return `not_measured:action_outside_addressable:${outsideAddressable.join(",")}`;
   if (scenarioBaseline === null) return `not_measured:no_baseline_for_scenario:${scenario ?? "none"}`;
   return ACTION_BREADTH_RICH;
+}
+
+/**
+ * Whether this run is below the recorded best.
+ *
+ * Coverage is compared by cross-multiplication so two runs in two differently-armed worlds are compared as fractions
+ * rather than as counts: a fixture that arms nine actions and a run that attempts five of them is not below a run that
+ * attempted 24 of 51. A baseline entry with no `addressable` (recorded before this denominator existed) contributes
+ * only its family dimension - the one number it measured against the same surface every reader can see.
+ */
+function belowBaseline({ attemptedCount, addressableCount, familyCount, scenarioBaseline }) {
+  if (familyCount < scenarioBaseline.families) return true;
+  const baselineAddressable = scenarioBaseline.addressable ?? null;
+  if (baselineAddressable === null || addressableCount === null || addressableCount === 0) return false;
+  return attemptedCount * baselineAddressable < scenarioBaseline.attempted * addressableCount;
 }
 
 /**
  * The run's `action_breadth` clause: narrow is a failed clause, unmeasurable is not.
  *
  * A measurement this tree could not take is our gap, and charging it to the companion would be the same mistake as a
- * gate that cannot judge and fails anyway - so `not_measured:` passes and stays visible in the published verdict.
+ * gate that cannot judge and fails anyway - so `not_measured:` passes and stays visible in the published verdict. It
+ * is never `rich`: a bundle with no census can be a passed run, never a measured one.
  */
 export function actionBreadthClause(breadth) {
   const verdict = typeof breadth?.verdict === "string" ? breadth.verdict : "not_measured:action_breadth_unreadable";
   return Object.freeze({ id: "action_breadth", passed: !verdict.startsWith("narrow:"), reasonCode: verdict });
 }
 
-/** The reading as lines a terminal or a run log can carry, one fact per line, population first. */
+/** The reading as lines a terminal or a run log can carry, one fact per line, population and census first. */
 export function formatActionBreadth(breadth) {
   const share =
     breadth.concentration === null
       ? `not_judged (${breadth.concentrationReason ?? "no_concentration_reading"})`
       : `${breadth.concentration.actionId} ${breadth.concentration.executions} (${(breadth.concentration.share * 100).toFixed(1)}%)`;
-  const coverage = breadth.published === 0 ? 0 : (breadth.attempted / breadth.published) * 100;
+  const percent = (value) => `${(value * 100).toFixed(1)}%`;
+  const census = breadth.census ?? null;
+  const withRows = census === null ? 0 : census.families.filter((entry) => entry.rows > 0).length;
+  const coverage =
+    breadth.addressable === null || breadth.addressable === 0
+      ? `attempted ${String(breadth.attempted)} of ${String(breadth.published)} published (${percent(breadth.catalogCoverage ?? 0)})`
+      : `attempted ${String(breadth.attempted)} of ${String(breadth.addressable)} addressable (${percent(breadth.coverage ?? 0)}); succeeded ${String(breadth.succeeded)} of ${String(breadth.addressable)}; catalog ${String(breadth.attempted)} of ${String(breadth.published)} (${percent(breadth.catalogCoverage ?? 0)})`;
   return Object.freeze([
     `action_breadth: population ${String(breadth.published)} published, ${String(breadth.judged)} judged (${String(breadth.published - breadth.judged)} excluded)`,
-    `action_breadth: attempted ${String(breadth.attempted)} of ${String(breadth.published)} (${coverage.toFixed(1)}%); succeeded ${String(breadth.succeeded)} of ${String(breadth.published)}`,
+    census === null
+      ? "action_breadth: census none published - the addressable surface cannot be measured"
+      : `action_breadth: census ${String(census.snapshots)} snapshots from ${census.source}, ${String(withRows)} of ${String(census.families.length)} target families with rows`,
+    breadth.addressable === null
+      ? "action_breadth: addressable not_measured (no snapshot census)"
+      : `action_breadth: addressable ${String(breadth.addressable)} of ${String(breadth.published)} published (target-bound ${String(breadth.addressableTargetBound)}, targetless ${String(breadth.addressableTargetless)})`,
+    `action_breadth: ${coverage}`,
     `action_breadth: families ${String(breadth.families)} of ${String(breadth.publishedFamilies)}${breadth.familyNames.length === 0 ? "" : ` ${breadth.familyNames.join(",")}`}`,
     `action_breadth: executions ${String(breadth.executions)} (${String(breadth.attributedExecutions)} attributed); concentration ${share}`,
     `action_breadth: verdict ${breadth.verdict}`,

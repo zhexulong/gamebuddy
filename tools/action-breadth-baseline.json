@@ -1,23 +1,34 @@
 {
   "schemaVersion": 1,
-  "what": "The best action breadth each live scenario has shown, and the published actions a farm fixture cannot reach.",
-  "howRead": "tools/audit-action-breadth.mjs --result <bundle>; measured against the Mod's own registration table through tools/lib/stardew-published-action-registry.mjs",
+  "what": "The best action coverage each live scenario has shown over the surface it could address, and the published actions a farm fixture cannot reach.",
+  "howRead": "tools/audit-action-breadth.mjs --result <bundle>; attempted actions against the run's own published `snapshotCensus` (the families its snapshots carried a row for), joined to actions through tools/lib/stardew-published-action-registry.mjs and TARGET_FIELD",
   "why": [
     "A count of executions cannot tell a varied day from 124 repetitions of three safe actions. `round39` reported",
-    "`executionTrace: { ok: true, rows: 124 }` and completed, having attempted 15 of the 95 published actions,",
-    "and nothing in its artifact said so. This file is the ratchet that makes the next such run visible: a run below",
-    "the recorded best is `narrow:below_baseline:<label>`."
+    "`executionTrace: { ok: true, rows: 124 }` and completed, having addressed a small part of the world it was",
+    "given, and nothing in its artifact said so. This file is the ratchet that makes the next such run visible: a",
+    "run below the recorded best is `narrow:below_baseline:<label>`.",
+    "THE DENOMINATOR. Coverage is `attempted / addressable`, never `attempted / 95`: a target-bound action is only",
+    "constructible while its `*Targets` family has a row in the snapshot, one `FixtureScenario` arms one world, and",
+    "the first version of this ratchet therefore charged the companion for the fixture's world. `addressable` is what",
+    "the run's own census allowed, so a different fixture scenario cannot make the ratchet lie.",
+    "WHAT IS NOT HERE. `addressable` is null on the entry below on purpose: `round38`'s bundle publishes no census,",
+    "so its addressable width is not a number this gate ever measured, and the ratchet every later run is compared",
+    "against must not rest on a figure derived outside the gate. Its attempted count (24) and family count (11) were",
+    "measured against the catalog and are kept as context; only the family count is compared until a census-bearing",
+    "run records an addressable width."
   ],
   "baselines": {
     "multiday_routine": {
       "label": "round38",
       "attempted": 24,
+      "addressable": null,
       "families": 11,
       "publishedAtRecord": 95,
       "executions": 379,
       "bundle": "tools/_multiday_routine-round38.result.json",
       "recordedOn": "2026-11-07",
-      "measured": "24 distinct actions in 11 families over 379 executions, largest single action 22% (break_rock) - the widest multiday day on this machine out of the 172 multiday bundles that carry an attempted list"
+      "measured": "24 distinct actions in 11 families over 379 executions, largest single action 22% (break_rock) - the widest multiday day on this machine out of the 172 multiday bundles that carry an attempted list",
+      "addressableNotRecorded": "this bundle predates `snapshotCensus`, so the gate measures it as not_measured:no_snapshot_census and records no width for it; the first census-bearing multiday run sets `addressable` here"
     }
   },
   "exclusions": [
