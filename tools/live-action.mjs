@@ -128,8 +128,11 @@ const RECLAIM_ATTEMPTS = 20;
 const RECLAIM_POLL_MS = 250;
 
 export const USAGE = `usage: node tools/live-action.mjs --action <actionId> [options]
+       node tools/live-action.mjs --recover [--dry-run]   # clear a dead run's fixture transaction
 
   --action <id>              one published or experimental action id (the subject is the argument)
+  --recover                  take back the fixture transaction a dead run left behind, and its leftover
+                             working save. Takes no action; refuses while a Stardew process is running
   --held <tool>              fill the actor's hand first, through the published ${HELD_ACTION} action;
                              an ordinary item id is refused: this fixture cannot put one in the hand
   --target nearest|first     which published target row this run is pointed at (default: nearest)
@@ -164,7 +167,7 @@ function refusal(code, cause, detail) {
 /** A qualified item id (`(O)72`, `(H)0`, ...): something the hand cannot be filled with here. */
 const QUALIFIED_ITEM_ID = /^\([A-Z]{1,3}\)[A-Za-z0-9_]+$/u;
 
-const FLAGS = Object.freeze(["--help", "-h", "--keep-log", "--dry-run"]);
+const FLAGS = Object.freeze(["--help", "-h", "--keep-log", "--dry-run", "--recover"]);
 const VALUE_FLAGS = Object.freeze([
   "--action",
   "--held",
@@ -185,6 +188,7 @@ export function parseLiveActionArguments(argv) {
     help: false,
     keepLog: false,
     dryRun: false,
+    recover: false,
     action: null,
     held: null,
     target: "nearest",
@@ -206,6 +210,7 @@ export function parseLiveActionArguments(argv) {
       seen.add(token);
       if (token === "-h" || token === "--help") options.help = true;
       else if (token === "--keep-log") options.keepLog = true;
+      else if (token === "--recover") options.recover = true;
       else options.dryRun = true;
       continue;
     }
@@ -257,6 +262,12 @@ export function parseLiveActionArguments(argv) {
     }
   }
   if (options.help) return Object.freeze(options);
+  // Recovery is a different job — it takes back a transaction rather than starting one — so it stands alone instead of
+  // quietly ignoring an action the caller also asked for.
+  if (options.recover) {
+    if (options.action !== null) throw refusal("recover_takes_no_action");
+    return Object.freeze(options);
+  }
   if (options.action === null) throw refusal("missing_action");
   if (!/^[a-z][a-z0-9_]{1,63}$/u.test(options.action)) throw refusal(`invalid_action:${options.action}`);
   return Object.freeze(options);
@@ -722,6 +733,131 @@ export function describePlan(plan) {
     windowMode: plan.windowMode,
     timeoutSeconds: plan.timeoutSeconds,
   };
+}
+
+/**
+ * The fixture transaction a dead run left behind, described without touching anything.
+ *
+ * Recovery exists because this tool can STRAND an operator: a run killed between prepare and teardown leaves the lock and
+ * its backup in the root, and from then on every slice refuses `live_action_transaction_live:<backup>:<owner>` — the
+ * operator is told a fact and sent to read four modules to learn how to clear it (measured 2026-11-08: the refusing run's
+ * own transaction survived its teardown, and the restore entry had no help text and needed five arguments).
+ *
+ * The lock is the authority for WHICH transaction to take back: `backupName` is recorded there by the run that opened it,
+ * so recovery never guesses. The save slot is not required — a transaction can be released without naming a world, and
+ * demanding one would block the case this exists for.
+ */
+export async function planRecovery(options, { env = process.env, roots = null } = {}) {
+  const resolvedRoots = roots ?? resolveStardewFixtureRoots({ env });
+  const fixtureRoot = requireAbsolute(
+    options.fixtureRoot ?? resolvedRoots.fixturesRoot,
+    "live_action_fixture_root_invalid",
+  );
+  const modsPath = requireAbsolute(options.modsPath ?? join(fixtureRoot, "mods"), "live_action_mods_path_invalid");
+  const releaseDir = requireAbsolute(
+    options.releaseDir ?? join(REPO, DEFAULT_RELEASE_DIR),
+    "live_action_release_dir_invalid",
+  );
+  const stardewSaveRoot = gameStardewSaveRoot({ appData: env.APPDATA });
+  let saveName = options.saveName;
+  let bindingProblem = null;
+  if (saveName === null) {
+    try {
+      saveName = singleBinding(fixtureRoot).binding.observedSaveSlot;
+    } catch (error) {
+      bindingProblem = String(error?.message ?? error).slice(0, 200);
+    }
+  }
+  return Object.freeze({
+    fixtureRoot,
+    modsPath,
+    releaseDir,
+    stardewSaveRoot,
+    saveName,
+    bindingProblem,
+    transaction: readFixtureTransaction(fixtureRoot),
+    workingSave: saveName === null ? null : describeSaveAt({ directory: join(stardewSaveRoot, saveName), saveName }),
+  });
+}
+
+/** What `--recover --dry-run` prints: which transaction and which save recovery would take back. */
+export function describeRecovery(recovery) {
+  return {
+    state: recovery.transaction === null ? "clear" : "recoverable",
+    fixtureRoot: recovery.fixtureRoot,
+    modsPath: recovery.modsPath,
+    releaseDir: recovery.releaseDir,
+    backupName: recovery.transaction?.backupName ?? null,
+    ownerId: recovery.transaction?.ownerId ?? null,
+    workingSave: recovery.workingSave,
+    bindingProblem: recovery.bindingProblem,
+    note:
+      recovery.transaction === null
+        ? "no fixture transaction is live in this root"
+        : "a dead run left this transaction behind; --recover releases it through the same restore the teardown uses",
+  };
+}
+
+/**
+ * Take back what a dead run left: its fixture transaction, and the working save its slice was copied into.
+ *
+ * Both steps go through the SAME paths the teardown uses (`release` is `releaseFixture`, `runHarness` is
+ * `runFixtureSaveHarness`), so recovery cannot succeed in a way the teardown would not, and it cannot claim a restore the
+ * teardown would call a failure. A Stardew process is refused first: the save harness will not touch files under a
+ * running game, and a transaction whose owner is mid-run is not dead.
+ */
+export async function recoverFixture(
+  recovery,
+  { release = releaseFixture, runHarness = runFixtureSaveHarness, listPids = listStardewProcessIds } = {},
+) {
+  const runningPids = listPids();
+  if (runningPids.length > 0) throw refusal(`live_action_game_already_running:${runningPids.join(",")}`);
+  const facts = {
+    state: "clear",
+    fixtureRestored: false,
+    saveRestored: false,
+    backupName: recovery.transaction?.backupName ?? null,
+    ownerId: recovery.transaction?.ownerId ?? null,
+    workingSavePath: recovery.workingSave?.path ?? null,
+    problems: [],
+  };
+  if (recovery.workingSave?.present === true && recovery.saveName !== null) {
+    try {
+      runHarness({
+        plan: {
+          fixtureRoot: recovery.fixtureRoot,
+          saveName: recovery.saveName,
+          stardewSaveRoot: recovery.stardewSaveRoot,
+        },
+        cleanup: true,
+      });
+      facts.saveRestored = true;
+    } catch (error) {
+      facts.problems.push(String(error?.message ?? error).slice(0, 300));
+    }
+  }
+  if (recovery.transaction !== null) {
+    if (recovery.transaction.backupName === null)
+      facts.problems.push(`live_action_recovery_backup_unnamed:${recovery.fixtureRoot}`);
+    else {
+      try {
+        release({
+          fixtureRoot: recovery.fixtureRoot,
+          modsPath: recovery.modsPath,
+          releaseDir: recovery.releaseDir,
+          backupName: recovery.transaction.backupName,
+        });
+        facts.fixtureRestored = true;
+      } catch (error) {
+        facts.problems.push(String(error?.message ?? error).slice(0, 300));
+      }
+    }
+  }
+  // The state is the outcome, never an intention: a step that refused makes this blocked, and a root with nothing to take
+  // back says so instead of reporting a recovery that never had to happen.
+  if (facts.problems.length > 0) facts.state = "blocked";
+  else if (recovery.transaction !== null) facts.state = "recovered";
+  return Object.freeze(facts);
 }
 
 function bound(text, limit) {
@@ -1277,6 +1413,33 @@ function printRefusal({ action, error, startedAt }) {
   process.exitCode = 2;
 }
 
+/**
+ * The recovery mode: one block, no launch, no kill. Split out of `main` so the argument/plan exits and this one stay
+ * legible, and so "recovery never starts anything" is checkable by reading one function.
+ */
+async function runRecovery(options, startedAt) {
+  let recovery;
+  try {
+    recovery = await planRecovery(options);
+  } catch (error) {
+    printRefusal({ action: null, error, startedAt });
+    return;
+  }
+  if (options.dryRun) {
+    printBlock(describeRecovery(recovery));
+    return;
+  }
+  let facts;
+  try {
+    facts = await recoverFixture(recovery);
+  } catch (error) {
+    printRefusal({ action: null, error, startedAt });
+    return;
+  }
+  printBlock(facts);
+  if (facts.problems.length > 0) process.exitCode = 2;
+}
+
 async function main(argv) {
   const startedAt = Date.now();
   let options;
@@ -1289,6 +1452,10 @@ async function main(argv) {
   }
   if (options.help) {
     process.stdout.write(`${USAGE}\n`);
+    return;
+  }
+  if (options.recover) {
+    await runRecovery(options, startedAt);
     return;
   }
   let plan;

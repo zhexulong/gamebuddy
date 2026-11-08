@@ -33,12 +33,15 @@ import {
   describeHeldAnswer,
   describeHeldState,
   describePlan,
+  describeRecovery,
   EXECUTOR_CALL_SHAPES,
   heldToolCategories,
   parseLiveActionArguments,
   planLiveAction,
+  planRecovery,
   readFixtureTransaction,
   reclaimGame,
+  recoverFixture,
   refusalNote,
   resolveActionExecutor,
   restoreEnding,
@@ -197,6 +200,92 @@ test("the CLI refuses by name, and a refusal is the code a caller branches on", 
     assert.ok(error !== null, `${argv.join(" ") || "(no arguments)"} must be refused`);
     assert.equal(error.message, code);
   }
+});
+
+test("--recover is its own mode: no action, no game, and an action it cannot honour is refused", () => {
+  const recovery = parseLiveActionArguments(["--recover"]);
+  assert.equal(recovery.recover, true);
+  assert.equal(recovery.action, null);
+  assert.equal(recovery.dryRun, false);
+  assert.equal(parseLiveActionArguments(["--recover", "--dry-run"]).dryRun, true);
+  const error = refusalOf(() => parseLiveActionArguments(["--recover", "--action", "pet_animal"]));
+  assert.equal(error?.message, "recover_takes_no_action");
+  assert.equal(parseLiveActionArguments(["--help"]).recover, false, "one mode does not imply the other");
+});
+
+test("recovery names the transaction a dead run left and releases it through the teardown's own restore", async () => {
+  const lock = {
+    version: 1,
+    backupName: "native-local-pet-animal-fixture-backup",
+    ownerId: "owner-dead-run",
+    startedAtUnixMs: 1,
+  };
+  await withSaveRoot(async ({ saveRoot, env }) => {
+    mkdirSync(join(saveRoot, SLOT), { recursive: true });
+    writeFileSync(join(saveRoot, SLOT, SLOT), saveXml("777123"));
+    await withFixtureRoot(
+      async (root) => {
+        const options = parseLiveActionArguments(["--recover", "--fixture-root", root]);
+        const recovery = await planRecovery(options, { env });
+        // The lock is the authority for WHICH transaction: the backup name and the dead owner are read from it.
+        assert.deepEqual({ ...recovery.transaction }, { backupName: lock.backupName, ownerId: lock.ownerId });
+        assert.equal(recovery.workingSave.path, join(saveRoot, SLOT));
+        const described = describeRecovery(recovery);
+        assert.equal(described.state, "recoverable");
+        assert.equal(described.backupName, lock.backupName);
+        assert.equal(described.ownerId, "owner-dead-run");
+        // Describing it touched nothing.
+        assert.equal(existsSync(join(root, ".stardew-native-local-player-fixture.lock", "transaction.json")), true);
+
+        const calls = [];
+        const facts = await recoverFixture(recovery, {
+          listPids: () => [],
+          release: (plan) => calls.push(`release:${plan.backupName}`),
+          runHarness: ({ cleanup }) => calls.push(`harness:${String(cleanup)}`),
+        });
+        assert.deepEqual(
+          calls,
+          ["harness:true", `release:${lock.backupName}`],
+          "the working save goes first, then the transaction",
+        );
+        assert.equal(facts.state, "recovered");
+        assert.equal(facts.saveRestored, true);
+        assert.equal(facts.fixtureRestored, true);
+        assert.equal(facts.ownerId, "owner-dead-run");
+        assert.deepEqual(facts.problems, []);
+      },
+      { lock },
+    );
+  });
+});
+
+test("recovery refuses under a running game, and a restore that refused is a blocked recovery", async () => {
+  const recovery = {
+    fixtureRoot: "E:/tmp/root",
+    modsPath: "E:/tmp/root/mods",
+    releaseDir: "E:/tmp/release",
+    stardewSaveRoot: "E:/tmp/saves",
+    saveName: SLOT,
+    bindingProblem: null,
+    transaction: { backupName: "native-local-pet-animal-fixture-backup", ownerId: "owner-dead-run" },
+    workingSave: { path: "E:/tmp/saves/slot", present: true },
+  };
+  const running = await refusalOfAsync(() =>
+    recoverFixture(recovery, { listPids: () => [10040], release: () => {}, runHarness: () => {} }),
+  );
+  assert.equal(running?.message, "live_action_game_already_running:10040");
+
+  const facts = await recoverFixture(recovery, {
+    listPids: () => [],
+    runHarness: () => {},
+    release: () => {
+      throw new Error("live_action_fixture_restore_failed:1:restore_refused:owner_mismatch");
+    },
+  });
+  assert.equal(facts.fixtureRestored, false);
+  assert.equal(facts.saveRestored, true);
+  assert.equal(facts.state, "blocked", "a release that refused is never reported as a recovery");
+  assert.match(facts.problems.join("\n"), /live_action_fixture_restore_failed:1/u);
 });
 
 test("the held vocabulary is the surface's own enum, and an ordinary item id is refused as not-yet-measurable", async () => {
