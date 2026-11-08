@@ -236,3 +236,6 @@ integrations/stardew/action-development/tests/.tmp-*
 /tools/.soft-suite.tmp.*
 # Release-owned scratch: the release pipeline re-creates it, so a checkout should not carry it.
 /host/.release-owned-scratch/
+
+# Crash and diagnostic reports the harness writes at the repo root (one per failed child, hundreds per day).
+/report.*.json
