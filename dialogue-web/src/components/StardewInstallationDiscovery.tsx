@@ -275,19 +275,9 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
    * one is how that state is left.
    */
   const showsCandidates = state !== "cancelled";
-  /**
-   * Copies the launch option into the player's clipboard.
-   *
-   * The clipboard belongs to the browser, not to the Host: a Host-side copy would need a
-   * desktop session the Host may not have (a headless run measured `clip.exe` exiting 1), so
-   * the write happens here through the platform's own async clipboard API. A refusal is
-   * reported rather than swallowed, and the string stays selectable either way.
-   */
-  const copyLaunchOption = async (value: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-    } catch {}
-  };
+  // The Steam launch option's copy handler was here, with an empty `catch`: nothing rendered a control for it,
+  // so the swallow belonged to dead code. The clipboard is the browser's, not the Host's, so a control that
+  // copies again reports a refusal through this panel's notice rather than through an empty catch.
   return (
     <section className="game-installation-panel" aria-label={labels.gameInstallationAria} data-state={state}>
       {/* The section's own title, at the level of its sibling panels' (`SurfaceModelSettings`,

@@ -3147,6 +3147,25 @@
     color: var(--text-secondary);
   }
 
+  /* The same chip as `.installation-source` beside it, because both answer "which of these
+     two identical-looking folders is the one that works": the loader is the player's to
+     install, so a missing one has to read as a state rather than as another decoration. The
+     chip is painted from the wire value the row already carries, and a Host that said nothing
+     renders no chip at all (see `installationModLoaderLabel`). */
+  .installation-mod-loader {
+    padding: 1px 6px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    background-color: var(--surface-panel);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-xs);
+  }
+
+  .installation-mod-loader[data-mod-loader="missing"] {
+    color: var(--warning);
+    border-color: var(--warning);
+  }
+
   .installation-candidate .game-action {
     margin-left: auto;
   }

@@ -109,19 +109,6 @@ export const EXEMPT_NAMES = Object.freeze([
       "styled by nothing because it is one word in the row's existing line, and read by " +
       '`data-testid="chat-select-pending"`',
   }),
-  Object.freeze({
-    className: "installation-steam-option",
-    reason:
-      "a grouping div whose three children each carry their own declared class (`section-subtitle`, " +
-      "`game-subpanel-note`, `game-action`); the panel gives them the flow, so the wrapper needs no rule",
-  }),
-  Object.freeze({
-    className: "installation-steam-option-value",
-    reason:
-      "the `<code>` and its copy button inside it are styled by their own declared rules, and the row is a " +
-      "block: the wrapper exists so a future rule can align them, which is the definition of a name kept for " +
-      "a state the product does not have yet",
-  }),
 ]);
 
 /**
