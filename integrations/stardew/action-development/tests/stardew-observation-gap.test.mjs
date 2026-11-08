@@ -548,6 +548,85 @@ public sealed record BridgeWorldObjectTarget(string TargetId, string Location, i
   );
 });
 
+const HAND_SWAP = `internal sealed partial class FarmhandExecutionController
+{
+    public LocalExecutionReceipt RequestLocalTalkToNpc(string requestId)
+    {
+        return this.ExecuteTalkToNpc(requestId);
+    }
+
+    private LocalExecutionReceipt ExecuteTalkToNpc(string requestId)
+    {
+        int previousSlot = Game1.player.CurrentToolIndex;
+        Game1.player.CurrentToolIndex = FindEmptyHandSlot(Game1.player);
+        Game1.player.CurrentToolIndex = previousSlot;
+        return null;
+    }
+}
+`;
+
+const HAND_SWAP_HANDLER = `internal sealed class FixtureActionHandler
+{
+    private LocalExecutionReceipt? Resolve(FarmhandActionRequest request) => request.ActionId switch
+    {
+        "talk_to_npc" => this.executions.RequestLocalTalkToNpc(request.RequestId),
+        _ => null,
+    };
+}
+`;
+
+/** The published slot the hand-swapping handlers mutate, beside the one family the fixture Mod discovers. */
+const HAND_MODELS = `
+public sealed record BridgeSnapshot(
+    IReadOnlyList<BridgeWorldObjectTarget>? WorldObjectTargets = null,
+    int? CurrentToolSlot = null
+);
+
+public sealed record BridgeWorldObjectTarget(string TargetId, string Location, int X, int Y);
+`;
+
+/**
+ * D - one member, published under a different name.
+ *
+ * Nineteen handlers select the tool slot the native call needs and put it back, and `Farmer.CurrentToolIndex` is
+ * published as the top-level `currentToolSlot`. Seventeen of them carried a baseline entry each, all saying that name
+ * matching could not see the pair; the declared alias replaces the list. Both directions are asserted, because a
+ * mapping that excuses everything is worse than the seventeen entries: a slot the snapshot does not publish is still a
+ * finding, and the row vocabulary alone still cannot see the alias.
+ */
+test("the actor's active tool slot is carried by `currentToolSlot`, so a hand swap is observable", () => {
+  const sources = [
+    ...fixture([DISCOVER_OBJECTS_ONLY]),
+    ...fixture([HAND_SWAP_HANDLER], "integrations/stardew/Handlers/FixtureActionHandler.cs"),
+    ...fixture([HAND_SWAP]),
+  ];
+  const published = publishedSnapshotSurface(HAND_MODELS);
+  assert.deepEqual(
+    postconditionMutationCoverage({ sources, vocabulary: published.vocabulary, fields: published.fields }).map(
+      (mutation) => [mutation.id, mutation.published],
+    ),
+    [["talk_to_npc:CurrentToolIndex", true]],
+  );
+
+  const withoutSnapshotFields = publishedSnapshotSurface(HAND_MODELS.replace("    int? CurrentToolSlot = null\n", ""));
+  assert.deepEqual(
+    postconditionMutationCoverage({ sources, vocabulary: withoutSnapshotFields.vocabulary }).map(
+      (mutation) => mutation.published,
+    ),
+    [false],
+    "the slot is a top-level snapshot field, which the row vocabulary does not carry",
+  );
+
+  const unpublishedSlot = publishedSnapshotSurface(HAND_MODELS.replace("CurrentToolSlot", "SomeOtherSlot"));
+  assert.deepEqual(
+    postconditionMutationCoverage({ sources, vocabulary: unpublishedSlot.vocabulary, fields: unpublishedSlot.fields }).map(
+      (mutation) => mutation.published,
+    ),
+    [false],
+    "a member no snapshot field publishes is still a gap",
+  );
+});
+
 test("reconcile() appends the observation sections and leaves the three-way envelope alone without them", () => {
   const base = {
     selectorArtifact: { selectors: [], implementations: 0, source: { member: "GameLocation.performAction" } },
@@ -585,7 +664,7 @@ test("reconcile() appends the observation sections and leaves the three-way enve
   assert.deepEqual(withObservation.counts.selectorRows, without.counts.selectorRows);
   assert.ok(
     withObservation.nonGuarantees.includes(
-      "postcondition_mutation_matching_is_by_property_name_and_is_a_ratchet_not_a_hard_red",
+      "postcondition_mutation_matching_is_by_member_name_plus_one_declared_alias_and_is_a_ratchet_not_a_hard_red",
     ),
   );
 });
@@ -608,7 +687,7 @@ test("the human summary names each section and every ungranted gap, on the same 
   assert.match(text, /on-demand delivery is not a gap/);
   assert.match(
     text,
-    /G quadrants\s+0 local, 0 map-fixed \(0 untargeted\), 0 actor-owned, 1 undeclared: 0 map-fixed family\/action pair\(s\) with no per-turn line, 0 baselined with a reason, 0 ungranted/,
+    /G quadrants\s+0 local, 0 map-fixed \(0 untargeted\), 0 actor-owned, 1 undeclared \(WorldObjectTargets\): 0 map-fixed family\/action pair\(s\) with no per-turn line, 0 baselined with a reason, 0 ungranted/,
   );
   assert.match(text, /collection_never_read:furniture:/);
   assert.match(text, /ungranted observation gap\(s\)/);
@@ -658,27 +737,34 @@ test("the real tree is measured, and every red it reports is named", () => {
   assert.ok(report.consumption.withoutConsumer.includes("PendingLevelUpChoices"));
   assert.deepEqual(report.consumption.unclassified, []);
 
-  // G - quadrants, measured on the real tree. Every family is classified from its own discovery, so the population is
-  // 82 (not a list here): 55 actor-bounded, 11 map-fixed, 14 the actor's own state, 2 with no discovery at all.
+  // G - quadrants, measured on the real tree. Every family is classified from its own discovery, or - for the three
+  // `record BridgeSnapshot(...)` assembles by hand - from the declaration in `UNDISCOVERED_FAMILY_QUADRANTS`, so the
+  // population is 83 (not a list here): 55 actor-bounded, 12 map-fixed, 16 the actor's own state, 0 with no answer.
   //
   // Re-measured 2026-11-07. The two quadrant exemptions that used to excuse `MineElevatorFloorTargets` and
   // `ShopTargets` are gone, and correctly so: both are read every turn now (`row.hud`, asserted below), so the gap they
   // excused is closed and `red`/`baselined` are 0. What moved with them: those two families left the actor-bounded
   // half, and `RefillWateringCanTargets` and `FixedInteractionPoints` entered the map-fixed half, which is why the four
   // numbers that are not `hud` moved together.
+  //
+  // Re-measured 2026-11-08: `Warps` was published with no `Discover*` to read, so the section called it undeclared
+  // while the code plainly builds it from the current location's whole warp table; it is `map_fixed` now. The two
+  // `actor_owned` arrivals are `PendingLevelUpChoices` (the actor's own unspent milestones) and `DiscoveryExclusions`
+  // (the last radar pass's withheld counts, rows with no tile and no target id).
   assert.deepEqual(report.quadrant.counts, {
     local: 55,
-    mapFixed: 11,
-    actorOwned: 14,
-    undeclared: 2,
-    mapFixedUntargeted: 6,
+    mapFixed: 12,
+    actorOwned: 16,
+    undeclared: 0,
+    mapFixedUntargeted: 7,
     red: 0,
     baselined: 0,
     ungranted: 0,
   });
-  assert.equal(report.quadrant.population, 82);
-  assert.deepEqual(report.quadrant.undeclared, ["Warps", "PendingLevelUpChoices"]);
+  assert.equal(report.quadrant.population, 83);
+  assert.deepEqual(report.quadrant.undeclared, []);
   assert.deepEqual(report.quadrant.mapFixed, [
+    "Warps",
     "DoorTargets",
     "RefillWateringCanTargets",
     "VillagerWhereabouts",
@@ -707,6 +793,16 @@ test("the real tree is measured, and every red it reports is named", () => {
   assert.deepEqual(
     report.quadrant.rows.filter((row) => row.quadrant === "map_fixed" && row.targeted && !row.hud).map((row) => row.family),
     [],
+  );
+  // The three families no `Discover*` publishes are classified by a declaration that names the code deciding them.
+  // Nothing is left undeclared: a fourth family arriving without either has to be read and classified, not absorbed.
+  assert.deepEqual(
+    report.quadrant.rows.filter((row) => row.declared).map((row) => [row.family, row.quadrant]),
+    [
+      ["Warps", "map_fixed"],
+      ["PendingLevelUpChoices", "actor_owned"],
+      ["DiscoveryExclusions", "actor_owned"],
+    ],
   );
 });
 
@@ -1057,18 +1153,63 @@ test("a radius-bounded or actor-owned family is never reported by the quadrant r
   assert.match(report.rows[2].evidence[0], /no location and no map read/u);
 });
 
-test("a family nothing discovers is undeclared rather than guessed", () => {
-  const report = observationQuadrants({
-    families: [{ name: "Warps", row: "BridgeWarp" }],
+test("a family nothing discovers is classified by its declaration, and a family with neither stays undeclared", () => {
+  const declared = observationQuadrants({
+    families: [
+      { name: "Warps", row: "BridgeWarp" },
+      { name: "DiscoveryExclusions", row: "BridgeDiscoveryExclusion" },
+    ],
     discoveries: [],
     bodies: new Map(),
     hudFields: new Set(),
-    targetField: { travel: "Warps" },
+    targetField: {},
   });
-  assert.equal(report.rows[0].quadrant, "undeclared");
-  assert.deepEqual(report.findings, [], "no evidence is not evidence of a quadrant error");
-  assert.deepEqual(report.rows[0].evidence, []);
+  // Two families `record BridgeSnapshot(...)` assembles by hand: the warp table at the call site and the exclusion
+  // recorder's counts. Neither has a `Discover*`, so the derivation has no body - and the declaration says where the
+  // quadrant IS decidable instead of letting the report say less than the tree does.
+  assert.deepEqual(
+    declared.rows.map((row) => [row.family, row.quadrant, row.declared]),
+    [
+      ["Warps", "map_fixed", true],
+      ["DiscoveryExclusions", "actor_owned", true],
+    ],
+  );
+  assert.match(declared.rows[0].evidence[0], /farmhandexecutioncontroller\.cs:2366/u);
+  assert.match(declared.rows[1].evidence[0], /DiscoveryExclusionReasons\.cs:159/u);
+  assert.deepEqual(declared.findings, [], "a declared quadrant is not a quadrant error");
+
+  const unclassified = observationQuadrants({
+    families: [{ name: "PackedItems", row: "BridgeItemTarget" }],
+    discoveries: [],
+    bodies: new Map(),
+    hudFields: new Set(),
+    targetField: { travel: "PackedItems" },
+  });
+  assert.equal(unclassified.rows[0].quadrant, "undeclared");
+  assert.equal(unclassified.rows[0].declared, false);
+  assert.deepEqual(unclassified.findings, [], "no evidence is not evidence of a quadrant error");
+  assert.deepEqual(unclassified.rows[0].evidence, []);
+
+  // A declaration is only a fallback: a family that gains its own discovery is classified by that body again, so the
+  // declared text cannot outlive the fact it described.
+  const discovered = observationQuadrants({
+    families: [{ name: "Warps", row: "BridgeWarp" }],
+    discoveries: parseDiscoveries(fixture([DISCOVERED_WARPS])),
+    bodies: modMethodBodies(fixture([DISCOVERED_WARPS])),
+    hudFields: new Set(),
+    targetField: {},
+  });
+  assert.equal(discovered.rows[0].quadrant, "local");
+  assert.equal(discovered.rows[0].declared, false, "the declaration is dead text once a Discover* exists");
 });
+
+const DISCOVERED_WARPS = `    private static IReadOnlyList<BridgeWarp> DiscoverWarps(Farmer player)
+    {
+        return player.currentLocation.warps
+            .Where(warp => Utility.tileWithinRadiusOfPlayer(warp.X, warp.Y, TargetDiscoveryRadius, player))
+            .Select(warp => new BridgeWarp(warp.X, warp.Y, warp.TargetName, warp.TargetX, warp.TargetY, true))
+            .ToArray();
+    }`;
 
 const MAP_FIXED_OBJECTS = `
     private static IReadOnlyList<BridgeWorldObjectTarget> DiscoverWorldObjectTargets(Farmer player)

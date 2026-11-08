@@ -1244,13 +1244,13 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
     result.counts.observationBaselineEntries = observation.baseline.entries;
     result.nonGuarantees = Object.freeze([
       ...result.nonGuarantees,
-      "postcondition_mutation_matching_is_by_property_name_and_is_a_ratchet_not_a_hard_red",
+      "postcondition_mutation_matching_is_by_member_name_plus_one_declared_alias_and_is_a_ratchet_not_a_hard_red",
       "postcondition_mutations_are_read_one_call_hop_deep_from_the_request_method",
       "native_mutator_calls_that_write_a_whole_collection_are_not_named_mutations",
       "publication_gates_are_read_from_the_BridgeSnapshot_call_site_and_cross_checked_against_the_Discover_row_type",
       "families_delivered_only_by_a_solicited_observe_are_not_a_consumption_gap_and_the_advisory_count_is_not_a_backlog",
       "quadrant_is_derived_from_the_discovery_body_and_a_three_deep_call_closure_of_the_Mods_own_methods",
-      "quadrant_also_has_documented_evidence_only_for_families_some_Discover_publishes",
+      "quadrant_evidence_for_a_family_no_Discover_publishes_is_a_declaration_at_its_build_site_not_a_derivation",
       "field_level_reads_are_extracted_from_if_while_switch_and_return_expressions_through_a_fixed_engine_type_vocabulary_and_are_a_ratchet_not_a_hard_red",
       "field_level_presence_reads_are_named_by_the_call_that_is_null_tested_not_by_a_resolved_return_type",
       "field_level_row_fields_come_from_the_wire_schema_and_are_cross_checked_against_the_Mod_record",
@@ -1670,11 +1670,24 @@ export function tileChannelCoverage({ sources, decompiled, channels = TILE_CHANN
   return { rows, findings };
 }
 
-/** The snapshot families the Mod publishes, and the property names their rows carry. */
+/**
+ * The snapshot families the Mod publishes, the property names their rows carry, and the snapshot's OWN field names.
+ *
+ * `vocabulary` is the row properties (what a `Bridge*Target` record declares); `fields` is every parameter of
+ * `record BridgeSnapshot(...)`, rows and scalars alike, from the same `snapshotParameterOrder` the publication-gating
+ * section resolves gates with. The postcondition section needs both: a handler that swaps the actor's hand mutates
+ * `Farmer.CurrentToolIndex`, which the snapshot publishes as the top-level `CurrentToolSlot` - a scalar no row
+ * declares, so a row-only vocabulary called a published fact unobservable.
+ */
 export function publishedSnapshotSurface(models) {
   const families = [];
   for (const match of models.matchAll(/IReadOnlyList<(Bridge\w+)>\??\s+(\w+)/gu))
     families.push({ row: match[1], field: match[2] });
+  const fields = new Set(
+    snapshotParameterOrder(models)
+      .map((parameter) => parameter.name?.toLowerCase())
+      .filter(Boolean),
+  );
   const vocabulary = new Set();
   for (const row of new Set(families.map((entry) => entry.row))) {
     const index = models.indexOf(`record ${row}(`);
@@ -1694,7 +1707,7 @@ export function publishedSnapshotSurface(models) {
       if (name) vocabulary.add(name[1].toLowerCase());
     }
   }
-  return { families, vocabulary };
+  return { families, vocabulary, fields };
 }
 
 /** The target arguments an action surface entry can carry. */
@@ -1757,14 +1770,33 @@ export function handlerDispatch(sources) {
 }
 
 /**
- * The engine members each action handler ASSIGNS, and whether any published row carries them.
+ * The engine members a published snapshot field carries under a different name.
+ *
+ * `Farmer.CurrentToolIndex` is published as the top-level `currentToolSlot` (`BridgeProtocolModels.cs:841-849`: "The
+ * farmer's ACTIVE tool slot (`Farmer.CurrentToolIndex`) and what that slot holds"), so a handler that selects a slot
+ * and puts it back mutates a fact the snapshot DOES carry, and name matching alone cannot see it. Seventeen handlers
+ * were excused by baseline entries that all said the same sentence about this one pair; the pair is declared here
+ * instead, so those entries are gone and the next handler that swaps the hand needs no entry at all.
+ */
+const PUBLISHED_MEMBER_ALIASES = Object.freeze({ currenttoolindex: "currenttoolslot" });
+
+/** Whether a published snapshot field carries the engine member `member`, under its own name or a declared one. */
+function isPublishedMember(member, vocabulary, fields) {
+  const name = member.toLowerCase();
+  if (vocabulary.has(name) || fields.has(name)) return true;
+  const alias = PUBLISHED_MEMBER_ALIASES[name];
+  return alias !== undefined && (vocabulary.has(alias) || fields.has(alias));
+}
+
+/**
+ * The engine members each action handler ASSIGNS, and whether any published snapshot field carries them.
  *
  * `this.<field>` is the controller's own bookkeeping, not engine state, so it is not a mutation of
  * the world; `.Value` is the net wrapper, so the member is the wrapper's name. The body scanned is
  * the request method plus the `Execute*` methods it calls - the Mod's own convention for "the body
  * that touches the world" - which is one hop deep and no deeper (stated in the non-guarantees).
  */
-export function postconditionMutationCoverage({ sources, vocabulary, dispatch = handlerDispatch(sources) }) {
+export function postconditionMutationCoverage({ sources, vocabulary, fields = new Set(), dispatch = handlerDispatch(sources) }) {
   const mutations = new Map();
   for (const [actionId, request] of dispatch) {
     const body = methodBody(sources, request);
@@ -1794,7 +1826,7 @@ export function postconditionMutationCoverage({ sources, vocabulary, dispatch = 
       member: entry.member,
       count: entry.count,
       receivers: [...entry.receivers].sort(),
-      published: vocabulary.has(entry.member.toLowerCase()),
+      published: isPublishedMember(entry.member, vocabulary, fields),
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -2294,8 +2326,10 @@ export function loadConsumptionSources({
  *   actor_owned  the discovery reads no location and no map content at all - the actor's pack, its body
  *                slots, the quest log, the content catalogs. There is no quadrant to get wrong, so the red
  *                rule does not touch it; naming it map_fixed would be a false claim about the world.
- *   undeclared   the family has no `Discover*` at all (two do: `Warps` and `PendingLevelUpChoices`), so the
- *                derivation has no evidence and says so instead of guessing.
+ *   undeclared   the family has neither a `Discover*` nor a declaration in `UNDISCOVERED_FAMILY_QUADRANTS`, so the
+ *                derivation has no evidence and says so (by name, in the summary) instead of guessing. Three families
+ *                had none when this section was written - `Warps`, `PendingLevelUpChoices` and `DiscoveryExclusions` -
+ *                and each is now declared there; a fourth arriving without either is the case this class is for.
  *
  * THE RED RULE is the quadrant error itself: `map_fixed` AND an action targets a row from it AND no line of
  * the per-turn block reads it. That is a family the model must spend an observe on, about a fact that does not
@@ -2318,6 +2352,47 @@ const QUADRANT_ORIGIN_LOOP = /for\s*\(\s*(?:int\s+)?[A-Za-z_]\w*\s*=\s*0\s*;/u;
 /** A read of the map the actor stands on. */
 const QUADRANT_LOCATION =
   /\blocation\s*(?:\?|!)?\s*\.\s*[A-Za-z_]|\bdoesTileHaveProperty\s*\(|\bGame1\s*\.\s*locations\b/u;
+
+/**
+ * The published families no `Discover*` produces, and the quadrant the code that BUILDS them decides.
+ *
+ * `parseDiscoveries` only matches `IReadOnlyList<Bridge*>` methods named `Discover*`, so a family assembled at the
+ * snapshot call site (or by a `Describe*` helper, or by a recorder) reaches this section with no body to read, and
+ * saying `undeclared` about a family whose quadrant is plainly visible one call away is a report that knows less
+ * than the tree does. Three families are in that position, and each one is declared with the site that decides it
+ * rather than with a guess:
+ *
+ *   Warps                  `record BridgeSnapshot` reads `player.currentLocation?.warps` - the current location's
+ *                          whole warp table. A location's exits are MAP topology: they sit at fixed tiles of the
+ *                          map they belong to and do not move when the actor walks away. `map_fixed`.
+ *   PendingLevelUpChoices  `DescribePendingLevelUpChoices` walks `player.newLevels` and reads `player.professions`:
+ *                          the actor's own unspent milestones, no location and no map content. `actor_owned`.
+ *   DiscoveryExclusions    `DiscoveryExclusionRecorder.Publish` emits `(family, reason, count)` rows about what the
+ *                          LAST radar pass withheld. It reads no location and no map: the counts move with the
+ *                          actor's radius, but they aggregate rows no caller can name (there is no tile and no
+ *                          target id in a row), so there is no addressable row and no quadrant to get wrong.
+ *                          `actor_owned`, and NOT `local`: `local` claims rows the actor can walk to.
+ *
+ * A declaration is used ONLY where the derivation found no `Discover*` evidence, so a family that gains one is
+ * classified by its own body again and the declaration becomes dead text rather than a stale answer.
+ */
+export const UNDISCOVERED_FAMILY_QUADRANTS = Object.freeze({
+  Warps: Object.freeze({
+    quadrant: "map_fixed",
+    evidence:
+      "built at integrations/stardew/farmhandexecutioncontroller.cs:2366 from `player.currentLocation?.warps`, the current location's whole warp table, so its rows are where the MAP's exits are",
+  }),
+  PendingLevelUpChoices: Object.freeze({
+    quadrant: "actor_owned",
+    evidence:
+      "built at integrations/stardew/farmhandexecutioncontroller.cs:2684 by `DescribePendingLevelUpChoices`, which walks `player.newLevels` and reads `player.professions`: the actor's own unspent milestones, no location and no map read",
+  }),
+  DiscoveryExclusions: Object.freeze({
+    quadrant: "actor_owned",
+    evidence:
+      "built at integrations/stardew/src/Core/Policy/DiscoveryExclusionReasons.cs:159 by `DiscoveryExclusionRecorder.Publish`, which counts what the last radar pass withheld: (family, reason, count) rows with no tile and no target id, so no action can name one and no location or map content is read",
+  }),
+});
 
 /** C# keywords followed by `(` that are not calls into the Mod's own methods. */
 const CSHARP_KEYWORDS = new Set([
@@ -2427,33 +2502,41 @@ export function quadrantRow({ family, row, discoveries, bodies, hudFields, targe
     ...discoveryQuadrantEvidence(discovery.body, bodies),
   }));
   const key = family[0].toLowerCase() + family.slice(1);
+  const declared = evidence.length === 0 ? UNDISCOVERED_FAMILY_QUADRANTS[family] : undefined;
   const quadrant =
-    evidence.length === 0
-      ? "undeclared"
-      : evidence.some((entry) => entry.mapFixed.length > 0)
-        ? "map_fixed"
-        : evidence.some((entry) => entry.radius.length > 0)
-          ? "local"
-          : evidence.some((entry) => entry.location.length > 0)
-            ? "map_fixed"
-            : "actor_owned";
+    declared !== undefined
+      ? declared.quadrant
+      : evidence.length === 0
+        ? "undeclared"
+        : evidence.some((entry) => entry.mapFixed.length > 0)
+          ? "map_fixed"
+          : evidence.some((entry) => entry.radius.length > 0)
+            ? "local"
+            : evidence.some((entry) => entry.location.length > 0)
+              ? "map_fixed"
+              : "actor_owned";
+  const evidenceLines =
+    declared !== undefined
+      ? [declared.evidence]
+      : evidence.map((entry) => {
+          const found = [
+            ...entry.mapFixed.map((part) => `map-fixed: ${part}`),
+            ...entry.radius.map((part) => `actor-bounded: ${part}`),
+            ...entry.location.map((part) => `location-wide: ${part}`),
+          ];
+          return `${entry.discovery}: ${
+            found.length > 0 ? found.join("; ") : "no location and no map read (the actor's own state)"
+          }`;
+        });
   return {
     family,
     key,
     quadrant,
+    declared: declared !== undefined,
     targeted: Object.values(targetField).includes(family),
     hud: hudFields.has(key),
     discoveries: owned.map((discovery) => discovery.name),
-    evidence: evidence.map((entry) => {
-      const found = [
-        ...entry.mapFixed.map((part) => `map-fixed: ${part}`),
-        ...entry.radius.map((part) => `actor-bounded: ${part}`),
-        ...entry.location.map((part) => `location-wide: ${part}`),
-      ];
-      return `${entry.discovery}: ${
-        found.length > 0 ? found.join("; ") : "no location and no map read (the actor's own state)"
-      }`;
-    }),
+    evidence: evidenceLines,
   };
 }
 
@@ -2936,14 +3019,19 @@ export function observeActionGaps({
 
   // D - postcondition observability
   const dispatch = handlerDispatch(sources);
-  const mutations = postconditionMutationCoverage({ sources, vocabulary: published.vocabulary, dispatch });
+  const mutations = postconditionMutationCoverage({
+    sources,
+    vocabulary: published.vocabulary,
+    fields: published.fields,
+    dispatch,
+  });
   for (const mutation of mutations)
     if (!mutation.published && !excused("mutation", mutation.id))
       findings.push({
         code: `mutation_not_observable:${mutation.id}`,
         kind: "mutation",
         id: mutation.id,
-        detail: `${mutation.actionId} assigns \`${mutation.receivers[0]}.${mutation.member}\`, and no published snapshot row carries \`${mutation.member}\``,
+        detail: `${mutation.actionId} assigns \`${mutation.receivers[0]}.${mutation.member}\`, and no published snapshot field carries \`${mutation.member}\``,
       });
   for (const id of ratified.entries.keys()) {
     if (!id.startsWith("mutation:")) continue;
@@ -3261,8 +3349,13 @@ export function writeObservationSummary(observation, write = (text) => process.s
     "    on-demand delivery is not a gap: the per-turn projection cap and the 'projected or explained' inventory are the delivery-policy authority, so the advisory count is not a to-do list and rising is not a regression by itself\n",
   );
   const quadrant = observation.quadrant.counts;
+  // The names, not only the count: a summary that says "3 undeclared" sends the reader to the artifact to find out
+  // WHICH three, and a family nobody classified is exactly the fact this line exists to surface.
+  const undeclared = observation.quadrant.undeclared;
   write(
-    `  G quadrants         ${quadrant.local} local, ${quadrant.mapFixed} map-fixed (${quadrant.mapFixedUntargeted} untargeted), ${quadrant.actorOwned} actor-owned, ${quadrant.undeclared} undeclared: ${quadrant.red} map-fixed family/action pair(s) with no per-turn line, ${quadrant.baselined} baselined with a reason, ${quadrant.ungranted} ungranted\n`,
+    `  G quadrants         ${quadrant.local} local, ${quadrant.mapFixed} map-fixed (${quadrant.mapFixedUntargeted} untargeted), ${quadrant.actorOwned} actor-owned, ${quadrant.undeclared} undeclared${
+      undeclared.length > 0 ? ` (${undeclared.join(", ")})` : ""
+    }: ${quadrant.red} map-fixed family/action pair(s) with no per-turn line, ${quadrant.baselined} baselined with a reason, ${quadrant.ungranted} ungranted\n`,
   );
   write(
     "    a map-fixed family an action targets and no HUD line reads is a quadrant error: the model spends an observe on a fact that does not move, in the one place a line could have said it\n",
