@@ -165,3 +165,9 @@ WorldCreationDecisionTests.cs	mod-assembly	Options, StardewValley, WorldCreation
 WorldInterruptionTests.cs	mod-assembly	Xna, ActorDispositionKind
 WorldMapProjectionTests.cs	mod-assembly	Navigation, DerivedDestinationSet, NavigationBindingContext, NavigationDestination, NavigationSourceNode
 WorldModelTests.cs	mod-assembly	ActorDispositionKind, ActorWorldFacts
+ApproachRingAgreementTests.cs	mod-assembly	GameBuddy.Stardew.Navigation, ExecutionManager, NavigationTransitionLeg (and StardewValley, Netcode, Microsoft.Xna, Vector2, Game1, Farmer from the game)
+DayBoundaryQuestionTests.cs	game	StardewValley, DialogueBox
+SoilTilePublicationTests.cs	game	StardewValley, Game1, GameLocation, Farmer, Netcode, Microsoft.Xna, xTile
+WateringWhereaboutsFreshnessTests.cs	game	WhereaboutsWorld (StardewValley, GameLocation, Farmer, Netcode, Microsoft.Xna)
+WhereaboutsWorld.cs	game	StardewValley, Game1, GameLocation, Farmer, Netcode, Microsoft.Xna
+CharacterBlockedWalkTests.cs	mod-assembly	FarmhandExecutionJournal, RefusalLayerKind, RefusalLayerToken, StardewBodyController
