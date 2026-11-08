@@ -306,13 +306,15 @@ async function withHelloAck<T>(
               payload: {
                 code: "found",
                 snapshot: {
-                  programId: request.payload.programId,
+                  programId: request.payload.programId ?? "program_01",
                   state: "active",
                   catalogRevision: 1,
                   stopEpoch: 0,
                   eventHighWater: 0,
                   nodes: [],
                 },
+                programs: null,
+                programCount: 1,
               },
             }),
           );
@@ -457,6 +459,10 @@ test("S4c body-program admission expires with its factory callback and rejects f
                   eventHighWater: 0,
                   nodes: [],
                 },
+                // An addressed query answers one program and no page: the two paths are distinguishable, not one of them
+                // being an empty list.
+                programs: null,
+                programCount: 1,
               });
               return Object.freeze({ session: Object.freeze({ dispose: () => undefined }) });
             },
@@ -884,7 +890,7 @@ test("a plan answers each node's own state by index, so a refusal cannot be read
     outcome: "active",
     states: [],
   };
-  let scriptNodes: readonly Readonly<{ nodeId: string }>[] = [];
+  let scriptNodes: readonly Readonly<{ nodeId: string; actionId: string }>[] = [];
   let submitCode = "accepted";
   const modSnapshot = (programId: string) => ({
     programId,
@@ -898,6 +904,8 @@ test("a plan answers each node's own state by index, so a refusal cannot be read
         const row = program.states[index] as Readonly<{ state: string; code?: string }>;
         return {
           nodeId: node.nodeId,
+          // The wire now names each node's action: it is what lets a reader that lost its `programId` still say what it did.
+          actionId: node.actionId,
           state: row.state,
           nodeAttempt: 1,
           admissionAttempt: 1,
@@ -1054,7 +1062,12 @@ test("a plan answers each node's own state by index, so a refusal cannot be read
             ...request,
             messageId: "mod_plan_answer_status",
             type: "program_status_result",
-            payload: { code: "found", snapshot: modSnapshot(request.payload.programId) },
+            payload: {
+              code: "found",
+              snapshot: modSnapshot(request.payload.programId ?? "program_01"),
+              programs: null,
+              programCount: 1,
+            },
           }),
         );
         return true;
@@ -1844,12 +1857,15 @@ test("an expired wait reports whether the plan moved, through the real status to
                 nodes: [
                   {
                     nodeId: "node_06",
+                    actionId: "move_to_tile",
                     state: statusReads === 1 ? "running" : "succeeded",
                     nodeAttempt: 1,
                     admissionAttempt: 1,
                   },
                 ],
               },
+              programs: null,
+              programCount: 1,
             },
           }),
         );
@@ -1980,12 +1996,38 @@ test(
                       stopEpoch: 0,
                       eventHighWater: 1,
                       nodes: [
-                        { nodeId: "node_a", state: "succeeded", nodeAttempt: 1, admissionAttempt: 1 },
-                        { nodeId: "node_b", state: "running", nodeAttempt: 1, admissionAttempt: 1 },
-                        { nodeId: "node_c", state: "pending", nodeAttempt: 0, admissionAttempt: 0 },
-                        { nodeId: "node_d", state: "pending", nodeAttempt: 0, admissionAttempt: 0 },
+                        {
+                          nodeId: "node_a",
+                          actionId: "till_soil",
+                          state: "succeeded",
+                          nodeAttempt: 1,
+                          admissionAttempt: 1,
+                        },
+                        {
+                          nodeId: "node_b",
+                          actionId: "till_soil",
+                          state: "running",
+                          nodeAttempt: 1,
+                          admissionAttempt: 1,
+                        },
+                        {
+                          nodeId: "node_c",
+                          actionId: "till_soil",
+                          state: "pending",
+                          nodeAttempt: 0,
+                          admissionAttempt: 0,
+                        },
+                        {
+                          nodeId: "node_d",
+                          actionId: "till_soil",
+                          state: "pending",
+                          nodeAttempt: 0,
+                          admissionAttempt: 0,
+                        },
                       ],
                     },
+                    programs: null,
+                    programCount: 1,
                   },
                 },
           ),
@@ -2093,6 +2135,8 @@ test("attested fixed closure drains the held request before revocation", async (
                 eventHighWater: 0,
                 nodes: [],
               },
+              programs: null,
+              programCount: 1,
             },
           }),
         );
@@ -2911,6 +2955,8 @@ test("invalidated execution receipt immediately closes launcher-owned preview an
                     eventHighWater: 0,
                     nodes: [],
                   },
+                  programs: null,
+                  programCount: 1,
                 });
                 const statusFramesBeforeInvalidation = requests.filter(
                   (request) => request.type === "program_status",

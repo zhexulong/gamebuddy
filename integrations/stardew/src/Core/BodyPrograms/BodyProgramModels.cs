@@ -232,6 +232,29 @@ public sealed record BodyProgramJournalNode(string NodeId, BodyProgramNodeState 
     string? Hint = null);
 public sealed record RuntimeFact(string ProgramId, string NodeId, int NodeAttempt, string FactName, IReadOnlyDictionary<string, BodyProgramCanonicalValue> Values);
 public sealed record BodyProgramJournalProgram(VerifiedBodyProgram Program, BodyProgramState State, long StopEpoch, IReadOnlyList<BodyProgramJournalNode> Nodes, IReadOnlyList<RuntimeFact> Facts);
+
+/// <summary>
+/// One node's own work, kept BESIDE the durable journal node rather than inside it: the action it runs and the tile it
+/// addressed.
+///
+/// <para>
+/// Third instance of the same defect class as <see cref="BodyProgramJournalNode.FailureCode"/> and
+/// <see cref="BodyProgramJournalNode.Hint"/>: the journal held the fact and the projection dropped it. Measured
+/// 2026-11-08, a 48-minute run forked afterwards and asked what it had done answered "15 plan submissions, 0 tiles
+/// tilled" against 143 submissions and ~20 tilled tiles. The action ids were in this journal the whole time; the only
+/// program identity the model ever received was a `programId` inside an unprotected `plan_work` tool result, which a
+/// context fold removes.
+/// </para>
+/// <para>
+/// A SEPARATE row rather than three more fields on <see cref="BodyProgramJournalNode"/>: neither fact is journal state. The
+/// action id lives on the program's compiled descriptor and the tile is a bounded reading of the canonical arguments the
+/// Mod bound at admission, so copying them into the durable record would be a second spelling of facts the journal already
+/// holds - and the persisted document would grow fields no writer ever sets.
+/// </para>
+/// </summary>
+/// <param name="X">The tile's x, or null when this node's arguments name no tile. X and Y travel together or not at all.</param>
+/// <param name="Y">The tile's y, beside <see cref="X"/>.</param>
+public sealed record BodyProgramNodeWork(string NodeId, string ActionId, int? X, int? Y);
 /// <summary>
 /// Addressed event projection. CatalogRevision is persisted at the event, never guessed by an adapter.
 ///
@@ -247,9 +270,26 @@ public sealed record BodyProgramJournalProgram(VerifiedBodyProgram Program, Body
 public sealed record BodyProgramJournalEvent(long Cursor, string ProgramId, string Kind, long CatalogRevision, string? NodeId, int? NodeAttempt, long AtMs);
 public sealed record BodyProgramJournalState(int SchemaVersion, BridgeScope Scope, BodyProgramPolicyIdentity PolicyIdentity, long EventHighWater,
     IReadOnlyList<BodyProgramJournalProgram> Programs, IReadOnlyList<BodyProgramJournalEvent> Events);
-public sealed record BodyProgramStatusSnapshot(string ProgramId, BodyProgramState State, long CatalogRevision, long StopEpoch, long EventHighWater, IReadOnlyList<BodyProgramJournalNode> Nodes);
+/// <summary>
+/// One program as the journal reports it: its durable node records in <see cref="Nodes"/>, and one <see cref="Work"/> row per
+/// node in the SAME order carrying what the durable record cannot say - which action the node runs, and which tile it
+/// addressed.
+/// </summary>
+public sealed record BodyProgramStatusSnapshot(string ProgramId, BodyProgramState State, long CatalogRevision, long StopEpoch, long EventHighWater, IReadOnlyList<BodyProgramJournalNode> Nodes, IReadOnlyList<BodyProgramNodeWork> Work);
 public enum BodyProgramQueryCode { Found, NotFound, InvalidInput }
-public sealed record BodyProgramStatusResult(BodyProgramQueryCode Code, BodyProgramStatusSnapshot? Snapshot);
+
+/// <summary>
+/// One `program_status` answer: by id (<see cref="Snapshot"/>) or, when the caller named no id, the journal's newest
+/// programs (<see cref="Programs"/>).
+///
+/// <para>
+/// <see cref="ProgramCount"/> is the journal's TOTAL program count on both paths, so a bounded page can be reported as
+/// "read 8 of 143" instead of reading as an empty history. An absent id is not a second source of truth: it is the same
+/// journal answering the only question a caller can still ask after a context fold, when it holds no id to name.
+/// </para>
+/// </summary>
+public sealed record BodyProgramStatusResult(BodyProgramQueryCode Code, BodyProgramStatusSnapshot? Snapshot,
+    IReadOnlyList<BodyProgramStatusSnapshot>? Programs = null, int ProgramCount = 0);
 public sealed record BodyProgramEventsResult(string ProgramId, BodyProgramQueryCode Code, IReadOnlyList<BodyProgramJournalEvent> Events, long NextCursor, long HighWater);
 
 public sealed record NodeAdmissionChallenge(string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt, long StopEpoch, long CatalogRevision,
@@ -291,6 +331,16 @@ internal static class BodyProgramValidation
     /// </para>
     /// </summary>
     internal const int MaximumNodes = 256;
+    /// <summary>
+    /// How many programs a no-id `program_status` answers with, newest first.
+    ///
+    /// <para>
+    /// A transport bound, not a product one: the answer names recent programs so a reader can pick an id out of it, and
+    /// the journal's own total travels beside it as `programCount`, so a truncated page is visible rather than looking
+    /// like a short history.
+    /// </para>
+    /// </summary>
+    internal const int MaximumRecentPrograms = 8;
     /// <summary>
     /// The largest a node's actionable hint may be.
     ///

@@ -142,6 +142,10 @@ test("every subject answers through the tool and names the family it read", asyn
   const connection = integration({ ...snapshot, capabilities }, { count: 0 }, { registrations, capabilities });
   const filters: Record<string, unknown> = { chests: "iron", inventory: "iron", npcs: "abi" };
   for (const subject of LOOKUP_SUBJECTS) {
+    // `my_work` is the one subject that does not read a snapshot family at all: it reads the Mod's Body Program journal
+    // through a port this fixture does not carry, so its source is `BodyProgramJournal` and its revision is null by design.
+    // It has its own file (`game-lookup-my-work.test.ts`), which asserts exactly that.
+    if (subject === "my_work") continue;
     const { body } = await ask(connection, { subject, ...(subject in filters ? { query: filters[subject] } : {}) });
     assert.ok(typeof body.source?.family === "string", `${subject} must name its source family`);
     assert.equal(body.source.snapshotRevision, snapshot.revision, `${subject} must name the revision it describes`);

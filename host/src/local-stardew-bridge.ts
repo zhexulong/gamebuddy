@@ -592,12 +592,18 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     this.requireAuthenticated();
     const response = await this.request("program_status", request);
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
+    // An unaddressed query answers the journal's newest programs, so there is no requested id for a returned snapshot to
+    // match. An ADDRESSED one still must: the Mod answering about a program nobody asked for is the poison the check exists
+    // for, and "no id" would silently turn that check off if it were written as an optional comparison.
+    const addressed = request.programId;
     if (
       response.type !== "program_status_result" ||
-      (response.payload.snapshot !== null && response.payload.snapshot.programId !== request.programId)
+      (addressed !== undefined &&
+        response.payload.snapshot !== null &&
+        response.payload.snapshot.programId !== addressed)
     )
       return this.rejectBodyProgramProtocol(
-        `program_status:expected=program_status_result;got=${String(response.type)};requested=${request.programId};returned=${String(response.type === "program_status_result" ? response.payload.snapshot?.programId : "-")}`,
+        `program_status:expected=program_status_result;got=${String(response.type)};requested=${addressed ?? "-"};returned=${String(response.type === "program_status_result" ? response.payload.snapshot?.programId : "-")}`,
       );
     return response.payload;
   }

@@ -2041,6 +2041,8 @@ test("body program requests forward exact authenticated messages and retain mode
                   eventHighWater: 0,
                   nodes: [],
                 },
+                programs: null,
+                programCount: 1,
               }
             : bodyProgramRequest.type === "program_events"
               ? {

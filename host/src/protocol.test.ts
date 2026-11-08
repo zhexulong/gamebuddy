@@ -3106,6 +3106,7 @@ test("body-program status snapshot node arrays freeze at the C# MaximumNodes bou
       state: "pending",
       nodeAttempt: 1,
       admissionAttempt: 1,
+      actionId: "move_to_tile",
     })),
   });
   const atBound = snapshot(MAX_BODY_PROGRAM_NODES);
@@ -3113,7 +3114,13 @@ test("body-program status snapshot node arrays freeze at the C# MaximumNodes bou
 
   assert.equal(
     validateBridgeMessage(
-      newEnvelope("program_status_result", scope, { code: "found", snapshot: atBound }, "status_at", now),
+      newEnvelope(
+        "program_status_result",
+        scope,
+        { code: "found", snapshot: atBound, programs: null, programCount: 1 },
+        "status_at",
+        now,
+      ),
       scope,
       now,
     ),
@@ -3122,7 +3129,13 @@ test("body-program status snapshot node arrays freeze at the C# MaximumNodes bou
   );
   assert.equal(
     validateBridgeMessage(
-      newEnvelope("program_status_result", scope, { code: "found", snapshot: pastBound }, "status_past", now),
+      newEnvelope(
+        "program_status_result",
+        scope,
+        { code: "found", snapshot: pastBound, programs: null, programCount: 1 },
+        "status_past",
+        now,
+      ),
       scope,
       now,
     ),
@@ -3156,11 +3169,19 @@ test("body-program node status carries a failure code, and only as a code", () =
     catalogRevision: 1,
     stopEpoch: 0,
     eventHighWater: 0,
-    nodes: [{ nodeId: "node_01", state: "failed", nodeAttempt: 1, admissionAttempt: 1, ...node }],
+    nodes: [
+      { nodeId: "node_01", state: "failed", nodeAttempt: 1, admissionAttempt: 1, actionId: "till_soil", ...node },
+    ],
   });
   const verdict = (node: Record<string, unknown>) =>
     validateBridgeMessage(
-      newEnvelope("program_status_result", scope, { code: "found", snapshot: snapshot(node) }, "status_cause", now),
+      newEnvelope(
+        "program_status_result",
+        scope,
+        { code: "found", snapshot: snapshot(node), programs: null, programCount: 1 },
+        "status_cause",
+        now,
+      ),
       scope,
       now,
     );
@@ -3193,8 +3214,10 @@ test("body-program node states the journal settles nodes in are admitted, and an
             catalogRevision: 1,
             stopEpoch: 0,
             eventHighWater: 0,
-            nodes: [{ nodeId: "node_02", state: wire, nodeAttempt: 0, admissionAttempt: 0 }],
+            nodes: [{ nodeId: "node_02", state: wire, nodeAttempt: 0, admissionAttempt: 0, actionId: "till_soil" }],
           },
+          programs: null,
+          programCount: 1,
         },
         "status_state",
         now,
@@ -3215,7 +3238,7 @@ test("body-program node attempt counters align to the C# Int32 wire fields", () 
     catalogRevision: 1,
     stopEpoch: 0,
     eventHighWater: 0,
-    nodes: [{ nodeId: "node_01", state: "running", nodeAttempt, admissionAttempt }],
+    nodes: [{ nodeId: "node_01", state: "running", nodeAttempt, admissionAttempt, actionId: "move_to_tile" }],
   });
   const eventResult = (nodeAttempt: number | null) => ({
     programId: "program_01",
@@ -3239,7 +3262,7 @@ test("body-program node attempt counters align to the C# Int32 wire fields", () 
       newEnvelope(
         "program_status_result",
         scope,
-        { code: "found", snapshot: snapshot(2_147_483_647, 2_147_483_647) },
+        { code: "found", snapshot: snapshot(2_147_483_647, 2_147_483_647), programs: null, programCount: 1 },
         "int32_max_status",
         now,
       ),
@@ -3253,7 +3276,7 @@ test("body-program node attempt counters align to the C# Int32 wire fields", () 
       newEnvelope(
         "program_status_result",
         scope,
-        { code: "found", snapshot: snapshot(2_147_483_648, 1) },
+        { code: "found", snapshot: snapshot(2_147_483_648, 1), programs: null, programCount: 1 },
         "int32_over_node_status",
         now,
       ),
@@ -3267,7 +3290,7 @@ test("body-program node attempt counters align to the C# Int32 wire fields", () 
       newEnvelope(
         "program_status_result",
         scope,
-        { code: "found", snapshot: snapshot(1, 2_147_483_648) },
+        { code: "found", snapshot: snapshot(1, 2_147_483_648), programs: null, programCount: 1 },
         "int32_over_admission_status",
         now,
       ),

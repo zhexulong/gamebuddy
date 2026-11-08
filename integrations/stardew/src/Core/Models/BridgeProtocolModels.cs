@@ -1328,7 +1328,24 @@ string? FailureCode = null,
 /// `{"failureCode":"no_native_path"}`; the one fact that would have ended the loop, the closest reachable tile, was
 /// computed and dropped. Bounded and omitted when null, so the wire shape only grows for a node that has one.
 /// </para>
-string? Hint = null
+string? Hint = null,
+/// <summary>
+/// The action this node runs, from the journal's own <see cref="VerifiedBodyProgramNode.ActionId"/>.
+///
+/// <para>
+/// The wire dropped it, so a reader could see that node 3 of a program `failed` but never what node 3 WAS - and the only
+/// program identity the model was ever handed was a `programId` in an unprotected tool result. Carried verbatim; the Mod
+/// never renames an action id on the way out.
+/// </para>
+/// </summary>
+string? ActionId = null,
+/// <summary>
+/// The tile this node addressed, read from the canonical arguments the Mod bound at admission, or null when they name no
+/// tile. Travels with <see cref="Y"/> or not at all: one half of a coordinate is not a coordinate.
+/// </summary>
+int? X = null,
+/// <summary>The tile's y, beside <see cref="X"/>.</summary>
+int? Y = null
 );
 
 public sealed record BridgeBodyProgramStatusSnapshot(
@@ -1348,7 +1365,14 @@ public sealed record BridgeBodyProgramSubmitResult(
 
 public sealed record BridgeBodyProgramStatusResult(
     string Code,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BridgeBodyProgramStatusSnapshot? Snapshot
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] BridgeBodyProgramStatusSnapshot? Snapshot,
+    /// <summary>
+    /// The journal's newest programs, newest first, when the query named no id. Null on an addressed query, so the two
+    /// paths are distinguishable rather than one being an empty list.
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyList<BridgeBodyProgramStatusSnapshot>? Programs = null,
+    /// <summary>The journal's total program count, so a bounded page reads as "8 of 143" rather than as a short history.</summary>
+    int ProgramCount = 0
 );
 
 /// <summary>
@@ -1378,8 +1402,15 @@ public sealed record BridgeBodyProgramEventsResult(
     long HighWater
 );
 
-/// <summary>Inbound Body Program status query. Carries only the program identity.</summary>
-public sealed record BridgeBodyProgramStatusRequest(string ProgramId);
+/// <summary>
+/// Inbound Body Program status query: one program by id, or - with no `programId` at all - the journal's newest programs.
+///
+/// <para>
+/// An absent id is a request for the SAME journal, not for a different source: it is the only question a caller can still
+/// ask after a context fold has removed the `programId` it was once handed.
+/// </para>
+/// </summary>
+public sealed record BridgeBodyProgramStatusRequest(string? ProgramId);
 
 /// <summary>
 /// Inbound Body Program stop request: which program, and the STOP epoch that fences it.

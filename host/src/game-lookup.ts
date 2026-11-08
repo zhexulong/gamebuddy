@@ -1,5 +1,5 @@
 import { SNAPSHOT_KEYS } from "./protocol.js";
-import type { Snapshot } from "./protocol.js";
+import type { BodyProgramStatusResult, Snapshot } from "./protocol.js";
 
 /**
  * Answers to questions the companion can already ask of the state it holds.
@@ -49,6 +49,8 @@ export const LOOKUP_SUBJECTS = Object.freeze([
   "inventory",
   "npcs",
   "calendar",
+  // Derived from the Mod's journal rather than from the snapshot the other subjects read; see `myWork`.
+  "my_work",
 ] as const);
 
 type LookupSubject = (typeof LOOKUP_SUBJECTS)[number];
@@ -459,6 +461,218 @@ function familyRows(snapshot: Snapshot, family: string, query: string): LookupAn
   };
 }
 
+/**
+ * `my_work`: what this companion has actually done, answered from the Mod's Body Program journal with no id.
+ *
+ * <p>
+ * This subject exists because of what a context fold leaves behind. A 48-minute run was forked afterwards and asked what
+ * it had done; it answered "15 plan submissions, 0 tiles tilled" against 143 submissions and ~20 tilled tiles. Nothing in
+ * that answer was a hallucination - it was the size of what remained. The only place a `programId` was ever handed to the
+ * model is the `stardew_plan_work` answer, an unprotected tool result, and a fold drops those; the durable record sat in
+ * the Mod's journal the whole time but could be read only by a program id. So this answer depends on NOTHING that lives
+ * in the transcript: it is built from one query of the Mod's journal (an absent `programId` asks for the newest programs),
+ * which is why it reads the same before a fold and after any number of them.
+ * </p>
+ * <p>
+ * The three properties that make it usable are the ones a fold puts under pressure: it names no id it was not given (the
+ * journal supplies the ids), it carries no field that changes between two reads without a new program (no clock, no "now",
+ * no reason code), and every list is bounded with its omissions counted. `population` prints "programs read N of M" so a
+ * journal bounded by the transport reads as truncated rather than as short.
+ * </p>
+ */
+
+/** Programs named before `omitted` starts counting. Matches the transport page, so the answer never claims more than it read. */
+export const MAX_MY_WORK_PROGRAMS = 8;
+
+/**
+ * "You asked for a day boundary and the journal has none".
+ *
+ * One spelling, because it is the same fact wherever it is reached from: a caller that scopes this by day must be told that
+ * the scope does not exist rather than handed the whole journal under a heading it did not earn.
+ */
+const NO_DAY_BOUNDARY: LookupUnknown = Object.freeze({
+  source: NOT_LOOKED,
+  unknown: "the Body Program journal records no day boundary, so this cannot be scoped to one",
+  missingField: "BodyProgramJournal.program.day",
+});
+
+/** No journal to read: a named absence, never an empty history. */
+export function journalUnavailable(reason: string, missingField = "BodyProgramJournal"): LookupUnknown {
+  return { source: NOT_LOOKED, unknown: reason, missingField };
+}
+
+/**
+ * Node states, grouped into the buckets the answer prints, in the order it prints them.
+ *
+ * The population is the wire's own closed vocabulary - every state `BodyProgramNodeStatus.state` can hold has an arm - so a
+ * state added to the Mod cannot arrive uncounted. `unsettled` is the four states that mean "not finished": pending, awaiting
+ * admission, admitted and running.
+ */
+const MY_WORK_NODE_BUCKETS: readonly (readonly [string, readonly string[]])[] = Object.freeze([
+  ["succeeded", ["succeeded"]],
+  ["failed", ["failed"]],
+  ["cancelled", ["cancelled"]],
+  ["rejected", ["rejected"]],
+  ["skipped", ["skipped_dependency"]],
+  ["abandoned", ["abandoned"]],
+  ["recoveryRequired", ["recovery_required"]],
+  ["unsettled", ["pending", "awaiting_host_admission", "host_admitted", "running"]],
+]);
+
+/**
+ * The states in which the Mod had already dispatched the node into the game.
+ *
+ * This is the number a summary should use for "actions I ran": `host_admitted` means the Host approved it but nothing has
+ * happened yet, and a rejected node was never dispatched at all - counting either as an execution is how a run reports work
+ * it did not do.
+ */
+const MY_WORK_DISPATCHED: ReadonlySet<string> = new Set([
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "recovery_required",
+  "abandoned",
+]);
+
+const MY_WORK_PROGRAM_STATES = Object.freeze({
+  settled: new Set(["succeeded", "failed", "cancelled"]),
+  running: new Set(["active"]),
+  recoveryRequired: new Set(["recovery_required", "quarantined"]),
+});
+
+/**
+ * The journal as this answer reads it: the programs the Mod listed, and the journal's own total beside them.
+ *
+ * `programCount` is not `programs.length`: the page is bounded by the transport, and the difference between the two is
+ * exactly what "read N of M" is for.
+ */
+export type MyWorkJournal = Readonly<{
+  programs: readonly Readonly<{
+    programId: string;
+    state: string;
+    nodes: readonly Readonly<{ actionId: string; state: string; x: number | null; y: number | null }>[];
+  }>[];
+  programCount: number;
+}>;
+
+export type MyWorkRequest = Readonly<{ since?: string | undefined; programLimit?: number | undefined }>;
+
+/**
+ * The answer, from one journal page. Pure: two calls on one payload answer the same bytes, which is the property the
+ * fold-survival test asserts.
+ */
+export function myWork(journal: MyWorkJournal, request: MyWorkRequest = {}): LookupAnswer | LookupUnknown {
+  // A DAY BOUNDARY IS NOT IN THIS JOURNAL, and this is where saying so is cheaper than guessing.
+  //
+  // Programs and events carry the Mod's monotonic `atMs` and nothing else about time: no day, no season, no year. Scoping
+  // by `day_3` would mean attributing programs to a day nobody recorded, and an answer that quietly reported the whole
+  // journal under a "since" heading would be wrong in the one direction a summary must never be wrong.
+  if (typeof request.since === "string" && request.since.trim().length > 0) return NO_DAY_BOUNDARY;
+  const nodes = journal.programs.flatMap((program) => program.nodes);
+  const counted = (states: ReadonlySet<string>): number => nodes.filter((node) => states.has(node.state)).length;
+  const programsIn = (states: ReadonlySet<string>): number =>
+    journal.programs.filter((program) => states.has(program.state)).length;
+
+  const nodeTotals: Record<string, number> = {};
+  for (const [bucket, states] of MY_WORK_NODE_BUCKETS) nodeTotals[bucket] = counted(new Set(states));
+
+  const byAction = new Map<string, { actionId: string; succeeded: number; failed: number; rejected: number }>();
+  for (const node of nodes) {
+    const row = byAction.get(node.actionId) ?? { actionId: node.actionId, succeeded: 0, failed: 0, rejected: 0 };
+    if (node.state === "succeeded") row.succeeded += 1;
+    else if (node.state === "failed") row.failed += 1;
+    else if (node.state === "rejected") row.rejected += 1;
+    byAction.set(node.actionId, row);
+  }
+  // Count first, then name: two runs over one journal answer the same bytes, and the order is stated rather than implied.
+  const actionRows = [...byAction.values()].sort((left, right) => {
+    const leftTotal = left.succeeded + left.failed + left.rejected;
+    const rightTotal = right.succeeded + right.failed + right.rejected;
+    return rightTotal !== leftTotal ? rightTotal - leftTotal : left.actionId.localeCompare(right.actionId);
+  });
+  const boundedActions = bound(actionRows);
+
+  // Tiles come from the SUCCEEDED nodes that carry one, and only from those: `x`/`y` is the tile the Mod bound at
+  // admission, so a node that failed on its way there addressed no tile. A succeeded node without a coordinate pair is
+  // counted as `unproven` rather than dropped - the two numbers together are the population.
+  const tiles = new Set<string>();
+  let unproven = 0;
+  for (const node of nodes) {
+    if (node.state !== "succeeded") continue;
+    if (node.x === null || node.y === null) unproven += 1;
+    else tiles.add(`${String(node.x)},${String(node.y)}`);
+  }
+  const tileRows = [...tiles]
+    .map((key) => key.split(",").map(Number))
+    .map(([x, y]) => ({ x: x as number, y: y as number }))
+    .sort((left, right) => (left.y !== right.y ? left.y - right.y : left.x - right.x));
+  const boundedTiles = bound(tileRows);
+
+  const limit = Math.max(1, request.programLimit ?? MAX_MY_WORK_PROGRAMS);
+  const programRows = journal.programs.slice(0, limit).map((program) => ({
+    programId: program.programId,
+    state: program.state,
+  }));
+
+  return {
+    subject: "my_work",
+    // The family is the journal, and the revision is null because none of this came from a snapshot: reporting the last
+    // observed revision here would invite a reader to compare two things that were never in the same frame.
+    source: Object.freeze({ family: "BodyProgramJournal", snapshotRevision: null }),
+    answer: {
+      totals: {
+        programs: {
+          submitted: journal.programCount,
+          read: journal.programs.length,
+          settled: programsIn(MY_WORK_PROGRAM_STATES.settled),
+          running: programsIn(MY_WORK_PROGRAM_STATES.running),
+          recoveryRequired: programsIn(MY_WORK_PROGRAM_STATES.recoveryRequired),
+        },
+        nodes: nodeTotals,
+        executions: nodes.filter((node) => MY_WORK_DISPATCHED.has(node.state)).length,
+      },
+      byAction: { rows: boundedActions.rows, omitted: boundedActions.omitted },
+      tiles: { rows: boundedTiles.rows, unproven, omitted: boundedTiles.omitted },
+      programs: { rows: programRows, omitted: journal.programs.length - programRows.length },
+      population: `programs read ${String(journal.programs.length)} of ${String(journal.programCount)}`,
+    },
+  };
+}
+
+/**
+ * `my_work` from the Mod's answer, or a named refusal when the journal published no page.
+ *
+ * The two refusals stay distinct because they need different corrections: `programs: null` means the caller asked about one
+ * program (`found` with a snapshot, or `not_found`), and there is simply nothing to summarise.
+ */
+export function myWorkFromJournal(
+  result: BodyProgramStatusResult,
+  request: MyWorkRequest = {},
+): LookupAnswer | LookupUnknown {
+  if (result.programs === null)
+    return journalUnavailable(
+      `the journal answered no recent-program page:${result.code}`,
+      "BodyProgramJournal.programs",
+    );
+  return myWork(
+    {
+      programs: result.programs.map((program) => ({
+        programId: program.programId,
+        state: program.state,
+        nodes: program.nodes.map((node) => ({
+          actionId: node.actionId,
+          state: node.state,
+          x: typeof node.x === "number" ? node.x : null,
+          y: typeof node.y === "number" ? node.y : null,
+        })),
+      })),
+      programCount: result.programCount,
+    },
+    request,
+  );
+}
+
 export function lookUp(
   snapshot: Snapshot,
   subject: string,
@@ -478,6 +692,10 @@ export function lookUp(
       return npcs(snapshot, query);
     case "calendar":
       return calendar(snapshot);
+    // `my_work` reads the Mod's journal through the bridge, never this snapshot. Reaching here means the session has no
+    // journal reader at all, which is a different answer from "you have done nothing".
+    case "my_work":
+      return journalUnavailable("this session has no Body Program journal reader");
     default: {
       // Any family the snapshot declares is answerable by name. The subjects above are shaped answers (five read a
       // family, `affordances` derives one from the whole surface); this is the door to the other ~100 rooms, and its

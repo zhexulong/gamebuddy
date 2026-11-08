@@ -793,7 +793,10 @@ string? bodyProgramUnavailableReason = null,
         return true;
     }
 
-    /// <summary>Authenticated read-only addressed snapshot from the Mod journal authority.</summary>
+    /// <summary>
+    /// Authenticated read-only query of the Mod journal authority: one program by id, or its newest programs when the
+    /// caller names none.
+    /// </summary>
     internal bool TryProgramStatus(long generation, BridgeEnvelope<BridgeBodyProgramStatusRequest>? envelope, out BridgeEnvelope<BridgeBodyProgramStatusResult>? response, out string reasonCode)
     {
         response = null;
@@ -802,7 +805,8 @@ string? bodyProgramUnavailableReason = null,
         if (this.bodyProgramAuthority is null) { reasonCode = this.bodyProgramUnavailableReason ?? "body_program_unavailable"; return false; }
         BodyProgramStatusResult result = this.bodyProgramAuthority.Status(envelope!.Payload.ProgramId);
         response = Reply("program_status_result", envelope.CorrelationId,
-            new BridgeBodyProgramStatusResult(ToWire(result.Code), ToBridgeSnapshot(result.Snapshot)));
+            new BridgeBodyProgramStatusResult(ToWire(result.Code), ToBridgeSnapshot(result.Snapshot),
+                result.Programs is { } programs ? programs.Select(program => ToBridgeSnapshot(program)!).ToArray() : null, result.ProgramCount));
         reasonCode = "accepted";
         return true;
     }
@@ -1685,7 +1689,22 @@ string? bodyProgramUnavailableReason = null,
             snapshot.CatalogRevision,
             snapshot.StopEpoch,
             snapshot.EventHighWater,
-            snapshot.Nodes.Select(node => new BridgeBodyProgramNodeStatus(node.NodeId, ToWire(node.State), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint)).ToArray());
+            snapshot.Nodes.Select(node => NodeStatus(snapshot, node)).ToArray());
+    /// <summary>
+    /// One node on the wire: its durable state plus the <see cref="BodyProgramNodeWork"/> row the authority projected beside
+    /// it.
+    ///
+    /// <para>
+    /// The two lists are built from one program in one expression (`SnapshotFor`), so a missing row is a broken invariant
+    /// rather than a state some journal can reach - and it fails here, loudly, instead of quietly publishing a node with no
+    /// action.
+    /// </para>
+    /// </summary>
+    private static BridgeBodyProgramNodeStatus NodeStatus(BodyProgramStatusSnapshot snapshot, BodyProgramJournalNode node)
+    {
+        BodyProgramNodeWork work = snapshot.Work.Single(candidate => candidate.NodeId == node.NodeId);
+        return new BridgeBodyProgramNodeStatus(node.NodeId, ToWire(node.State), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, work.ActionId, work.X, work.Y);
+    }
     private static BridgeBodyProgramEvent ToBridgeEvent(BodyProgramJournalEvent @event) => new(
         @event.Cursor, @event.ProgramId, @event.Kind, @event.CatalogRevision, @event.NodeId, @event.NodeAttempt, @event.AtMs);
 

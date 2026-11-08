@@ -1096,6 +1096,11 @@ public sealed class BridgeBodyProgramProtocolTests
             new BodyProgramJournalNode("first", BodyProgramNodeState.Failed, 3, 4, null, null, FailureCode: "door_out_of_range"),
             new BodyProgramJournalNode("second", BodyProgramNodeState.Rejected, 3, 4, null, null, RejectionCode: "policy_denied"),
             new BodyProgramJournalNode("third", BodyProgramNodeState.Succeeded, 3, 4, null, null),
+        }, new[]
+        {
+            new BodyProgramNodeWork("first", "till_soil", 3, 4),
+            new BodyProgramNodeWork("second", "plant_seed", null, null),
+            new BodyProgramNodeWork("third", "water_crop", 3, 4),
         });
 
         BridgeBodyProgramStatusResult projected = BridgeProtocol.ProjectBodyProgramStatusResult(new BodyProgramStatusResult(BodyProgramQueryCode.Found, snapshot));
@@ -1141,7 +1146,7 @@ public sealed class BridgeBodyProgramProtocolTests
     [InlineData("abandoned", 0, 0)]
     public void BodyProgramNodeStateNamesTheJournalSettlesNodesInAreAdmittedOnTheWire(string wireState, int nodeAttempt, int admissionAttempt)
     {
-        string snapshot = "{\"code\":\"found\",\"snapshot\":{\"programId\":\"program_1\",\"state\":\"failed\",\"catalogRevision\":7,\"stopEpoch\":2,\"eventHighWater\":11,\"nodes\":[{\"nodeId\":\"second\",\"state\":\"" + wireState + "\",\"nodeAttempt\":" + nodeAttempt + ",\"admissionAttempt\":" + admissionAttempt + "}]}}";
+        string snapshot = "{\"code\":\"found\",\"snapshot\":{\"programId\":\"program_1\",\"state\":\"failed\",\"catalogRevision\":7,\"stopEpoch\":2,\"eventHighWater\":11,\"nodes\":[{\"nodeId\":\"second\",\"actionId\":\"till_soil\",\"state\":\"" + wireState + "\",\"nodeAttempt\":" + nodeAttempt + ",\"admissionAttempt\":" + admissionAttempt + "}]},\"programs\":null,\"programCount\":1}";
 
         BridgeProtocol.TryDeserializeBodyProgramStatusResult(ResultEnvelope("program_status_result", snapshot), out BridgeEnvelope<BridgeBodyProgramStatusResult>? envelope, out string reason).Should().BeTrue(reason);
         envelope!.Payload.Snapshot!.Nodes[0].State.Should().Be(wireState);
@@ -1154,7 +1159,7 @@ public sealed class BridgeBodyProgramProtocolTests
     [Fact]
     public void TheUnmappedStateNameIsNotAdmittedAsAWireState()
     {
-        const string snapshot = "{\"code\":\"found\",\"snapshot\":{\"programId\":\"program_1\",\"state\":\"failed\",\"catalogRevision\":7,\"stopEpoch\":2,\"eventHighWater\":11,\"nodes\":[{\"nodeId\":\"second\",\"state\":\"body_program_node_state_unmapped:99\",\"nodeAttempt\":0,\"admissionAttempt\":0}]}}";
+        const string snapshot = "{\"code\":\"found\",\"snapshot\":{\"programId\":\"program_1\",\"state\":\"failed\",\"catalogRevision\":7,\"stopEpoch\":2,\"eventHighWater\":11,\"nodes\":[{\"nodeId\":\"second\",\"actionId\":\"till_soil\",\"state\":\"body_program_node_state_unmapped:99\",\"nodeAttempt\":0,\"admissionAttempt\":0}]},\"programs\":null,\"programCount\":1}";
 
         BridgeProtocol.TryDeserializeBodyProgramStatusResult(ResultEnvelope("program_status_result", snapshot), out _, out string reason).Should().BeFalse();
         reason.Should().Be("invalid_body_program_result");
@@ -1164,7 +1169,8 @@ public sealed class BridgeBodyProgramProtocolTests
     public void ResultProjectionIncludesStatusHighWaterAndEventContinuationFields()
     {
         var snapshot = new BodyProgramStatusSnapshot("program_1", BodyProgramState.Active, 7, 2, 11,
-            new[] { new BodyProgramJournalNode("first", BodyProgramNodeState.Running, 3, 4, null, null) });
+            new[] { new BodyProgramJournalNode("first", BodyProgramNodeState.Running, 3, 4, null, null) },
+            new[] { new BodyProgramNodeWork("first", "move_to_tile", 9, 9) });
         var result = BridgeProtocol.ProjectBodyProgramEventsResult(new BodyProgramEventsResult("program_1", BodyProgramQueryCode.Found,
             new[] { new BodyProgramJournalEvent(9, "program_1", "native_dispatch", 7, "first", 3, 1200) }, 9, 11));
         BridgeProtocol.TrySerialize(result, out string json, out _).Should().BeTrue();
@@ -1182,7 +1188,7 @@ public sealed class BridgeBodyProgramProtocolTests
     [Fact]
     public void BodyProgramNodeAttemptsRejectValuesBeyondCoreInt32()
     {
-        const string snapshot = "{\"code\":\"found\",\"snapshot\":{\"programId\":\"program_1\",\"state\":\"active\",\"catalogRevision\":7,\"stopEpoch\":2,\"eventHighWater\":11,\"nodes\":[{\"nodeId\":\"first\",\"state\":\"running\",\"nodeAttempt\":2147483648,\"admissionAttempt\":4}]}}";
+        const string snapshot = "{\"code\":\"found\",\"snapshot\":{\"programId\":\"program_1\",\"state\":\"active\",\"catalogRevision\":7,\"stopEpoch\":2,\"eventHighWater\":11,\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"move_to_tile\",\"state\":\"running\",\"nodeAttempt\":2147483648,\"admissionAttempt\":4}]},\"programs\":null,\"programCount\":1}";
         BridgeProtocol.TryDeserializeBodyProgramStatusResult(ResultEnvelope("program_status_result", snapshot), out _, out string reason).Should().BeFalse();
         reason.Should().Be("invalid_body_program_result");
         const string events = "{\"programId\":\"program_1\",\"code\":\"found\",\"events\":[{\"cursor\":9,\"programId\":\"program_1\",\"kind\":\"native_dispatch\",\"catalogRevision\":7,\"nodeId\":\"first\",\"nodeAttempt\":2147483648,\"atMs\":1200}],\"nextCursor\":9,\"highWater\":11}";
@@ -1393,7 +1399,8 @@ public sealed class BridgeBodyProgramProtocolTests
     public void ProjectBodyProgramResults_SerializesValidCoreResults()
     {
         var snapshot = new BodyProgramStatusSnapshot("program_1", BodyProgramState.Active, 7, 2, 11,
-            new[] { new BodyProgramJournalNode("first", BodyProgramNodeState.Running, 3, 4, null, null) });
+            new[] { new BodyProgramJournalNode("first", BodyProgramNodeState.Running, 3, 4, null, null) },
+            new[] { new BodyProgramNodeWork("first", "move_to_tile", 9, 9) });
         BodyProgramVerificationReport verification = new(true, 7, null, Array.Empty<BodyProgramDiagnostic>());
         BridgeBodyProgramSubmitResult submit = BridgeProtocol.ProjectBodyProgramSubmitResult(new BodyProgramSubmitResult(BodyProgramSubmitCode.Accepted, verification, snapshot));
         BridgeBodyProgramStatusResult status = BridgeProtocol.ProjectBodyProgramStatusResult(new BodyProgramStatusResult(BodyProgramQueryCode.Found, snapshot));
@@ -1499,8 +1506,25 @@ public sealed class BridgeBodyProgramProtocolTests
         envelope!.Payload.ProgramId.Should().Be("program_1");
     }
 
+    /// <summary>
+    /// A query with NO program id asks for the journal's newest programs, and is not a malformed request.
+    ///
+    /// <para>
+    /// It is the only question a caller can still ask after a context fold removed the `programId` it was once handed, so
+    /// refusing it would leave a reader that cannot name a program with no way to learn what it did - which is exactly the
+    /// measured failure (fifteen plan submissions reported against an actual 143).
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AnUnaddressedStatusQueryAsksForTheJournalsNewestPrograms()
+    {
+        BridgeProtocol.TryDeserializeBodyProgramStatusRequest(ResultEnvelope("program_status", "{}"), out BridgeEnvelope<BridgeBodyProgramStatusRequest>? envelope, out string reason).Should().BeTrue(reason);
+
+        reason.Should().Be("accepted");
+        envelope!.Payload.ProgramId.Should().BeNull("absent is the page, present is the addressed read");
+    }
+
     [Theory]
-    [InlineData("{}")]
     [InlineData("{\"programId\":1}")]
     [InlineData("{\"programId\":null}")]
     [InlineData("{\"programId\":\"\"}")]

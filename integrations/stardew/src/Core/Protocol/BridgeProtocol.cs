@@ -614,10 +614,12 @@ public static class BridgeProtocol
         JsonDocument parsedDocument = document ?? throw new InvalidOperationException("Inbound body program status parser returned no document.");
         using (parsedDocument)
         {
-            if (!HasExactProperties(payload, "programId")
-                || !payload.TryGetProperty("programId", out JsonElement programId)
-                || programId.ValueKind != JsonValueKind.String
-                || !IsOpaqueId(programId.GetString()))
+            // An ABSENT programId is the journal's newest-program answer, not a malformed query. It is the one question a
+            // caller can still ask after a context fold removed the id it was once handed, and refusing it would leave a
+            // reader that cannot name a program with no way to learn anything about its own work.
+            bool addressed = payload.TryGetProperty("programId", out JsonElement programId);
+            if (!HasExactProperties(payload, addressed ? new[] { "programId" } : Array.Empty<string>())
+                || (addressed && (programId.ValueKind != JsonValueKind.String || !IsOpaqueId(programId.GetString()))))
             {
                 reasonCode = "invalid_body_program_request";
                 return false;
@@ -726,10 +728,12 @@ public static class BridgeProtocol
     {
         envelope = null;
         if (!TryReadBodyProgramResultEnvelope(json, expectedType, out JsonDocument? document, out JsonElement payload, out reasonCode)
-            || !HasExactProperties(payload, "code", "snapshot")
+            || !HasExactProperties(payload, "code", "snapshot", "programs", "programCount")
             || !IsBodyProgramQueryCode(payload.GetProperty("code"))
             || !TryReadNullableBodyProgramSnapshot(payload.GetProperty("snapshot"), out BridgeBodyProgramStatusSnapshot? snapshot)
-            || !IsValidBodyProgramStatusResult(new BridgeBodyProgramStatusResult(payload.GetProperty("code").GetString()!, snapshot)))
+            || !TryReadRecentPrograms(payload.GetProperty("programs"), out IReadOnlyList<BridgeBodyProgramStatusSnapshot>? programs)
+            || !payload.GetProperty("programCount").TryGetInt32(out int programCount)
+            || !IsValidBodyProgramStatusResult(new BridgeBodyProgramStatusResult(payload.GetProperty("code").GetString()!, snapshot, programs, programCount)))
         {
             reasonCode = "invalid_body_program_result";
             document?.Dispose();
@@ -740,10 +744,30 @@ public static class BridgeProtocol
             JsonElement root = document!.RootElement;
             envelope = new BridgeEnvelope<BridgeBodyProgramStatusResult>(Version, root.GetProperty("messageId").GetString()!, root.GetProperty("correlationId").GetString()!,
                 root.GetProperty("timestampMs").GetInt64(), ReadScope(root.GetProperty("scope")), expectedType,
-                new BridgeBodyProgramStatusResult(payload.GetProperty("code").GetString()!, snapshot));
+                new BridgeBodyProgramStatusResult(payload.GetProperty("code").GetString()!, snapshot, programs, programCount));
             reasonCode = "accepted";
             return true;
         }
+    }
+
+    /// <summary>
+    /// The newest-programs page: null when the query named an id, or a bounded array of program snapshots.
+    ///
+    /// <para>
+    /// A page that claims more entries than <see cref="BodyProgramValidation.MaximumRecentPrograms"/> is refused rather than
+    /// truncated, exactly as the node list is: the bound belongs to the producer, and a reader that silently cut it would
+    /// be reporting a history it did not read.
+    /// </para>
+    /// </summary>
+    private static bool TryReadRecentPrograms(JsonElement value, out IReadOnlyList<BridgeBodyProgramStatusSnapshot>? programs)
+    {
+        programs = null;
+        if (value.ValueKind == JsonValueKind.Null) return true;
+        if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() > BodyProgramValidation.MaximumRecentPrograms) return false;
+        foreach (JsonElement entry in value.EnumerateArray())
+            if (!TryReadNullableBodyProgramSnapshot(entry, out BridgeBodyProgramStatusSnapshot? listed) || listed is null) return false;
+        programs = JsonSerializer.Deserialize<IReadOnlyList<BridgeBodyProgramStatusSnapshot>>(value.GetRawText(), JsonOptions);
+        return programs is not null;
     }
 
     public static bool TryDeserializeBodyProgramEventsResult(string json, out BridgeEnvelope<BridgeBodyProgramEventsResult>? envelope, out string reasonCode)
@@ -882,9 +906,27 @@ public static class BridgeProtocol
             _ => false,
         });
 
+    /// <summary>
+    /// One query answer: exactly one of the two paths, and a total that cannot claim fewer programs than it listed.
+    ///
+    /// <para>
+    /// `found` means "this journal answered": either one addressed snapshot, or the newest-programs page. Requiring exactly
+    /// one of them keeps "the program does not exist" (`not_found`) distinguishable from "the journal has nothing to
+    /// list", which is a `found` answer with an EMPTY page - two different statements that an empty list alone would
+    /// collapse into one.
+    /// </para>
+    /// </summary>
     private static bool IsValidBodyProgramStatusResult(BridgeBodyProgramStatusResult? result) => result is not null
         && IsBodyProgramQueryCode(result.Code)
-        && (result.Code == "found" ? IsValidBodyProgramStatusSnapshot(result.Snapshot) : result.Snapshot is null);
+        && IsJavaScriptSafeInteger(result.ProgramCount)
+        && (result.Code == "found"
+            ? (result.Snapshot is null) != (result.Programs is null)
+              && (result.Snapshot is null
+                  ? result.Programs!.Count <= BodyProgramValidation.MaximumRecentPrograms
+                    && result.Programs.All(program => IsValidBodyProgramStatusSnapshot(program) && program.ProgramId.Length > 0)
+                    && result.ProgramCount >= result.Programs.Count
+                  : IsValidBodyProgramStatusSnapshot(result.Snapshot))
+            : result.Snapshot is null && result.Programs is null && result.ProgramCount == 0);
 
     private static bool IsValidBodyProgramEventsResult(BridgeBodyProgramEventsResult? result) => result is not null
         && IsOpaqueId(result.ProgramId)
@@ -935,9 +977,13 @@ public static class BridgeProtocol
 
     private static bool IsValidBodyProgramNodeStatus(BridgeBodyProgramNodeStatus? node) => node is not null
         && IsOpaqueId(node.NodeId)
+        && (node.ActionId is null || BodyProgramValidation.IsIdentifier(node.ActionId))
         && IsBodyProgramNodeState(node.State)
 && IsJavaScriptSafeInteger(node.NodeAttempt)
          && IsJavaScriptSafeInteger(node.AdmissionAttempt)
+         // X and Y are one coordinate: half of one is not a coordinate, so they travel together or not at all.
+         && (node.X is null) == (node.Y is null)
+         && (node.X is null || (IsJavaScriptSafeInteger(node.X.Value) && IsJavaScriptSafeInteger(node.Y!.Value)))
          && (node.RejectionCode is null || IsReasonCode(node.RejectionCode))
          && (node.FailureCode is null || IsReasonCode(node.FailureCode))
          // A hint is not a reason code (`closest=49,14;closest_distance=1` is outside that grammar), so it carries the
@@ -967,11 +1013,33 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         && (value.GetProperty("nodeId").ValueKind == JsonValueKind.Null || ReadOpaqueString(value.GetProperty("nodeId"), out _))
         && value.GetProperty("path").ValueKind == JsonValueKind.String && value.GetProperty("message").ValueKind == JsonValueKind.String;
 
-    private static bool IsValidBodyProgramNodeStatus(JsonElement value) => HasExactPropertiesOrOptional(value, new[] { "nodeId", "state", "nodeAttempt", "admissionAttempt" }, new[] { "rejectionCode", "failureCode", "hint" })
+    private static bool IsValidBodyProgramNodeStatus(JsonElement value) => HasExactPropertiesOrOptional(value, new[] { "nodeId", "state", "nodeAttempt", "admissionAttempt" }, new[] { "rejectionCode", "failureCode", "hint", "actionId", "x", "y" })
          && ReadOpaqueString(value.GetProperty("nodeId"), out _) && IsBodyProgramNodeState(value.GetProperty("state"))
          && value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) && attempt >= 0 && value.GetProperty("admissionAttempt").TryGetInt32(out int admission) && admission >= 0
+         && IsAbsentNullOrIdentifier(value, "actionId")
+         && IsAbsentNullOrCoordinatePair(value)
          && IsAbsentNullOrReasonCode(value, "rejectionCode") && IsAbsentNullOrReasonCode(value, "failureCode")
          && IsAbsentNullOrBoundedHint(value, "hint");
+
+    /// <summary>
+    /// An optional action id: absent, JSON null, or a program identifier in the journal's own grammar.
+    /// </summary>
+    private static bool IsAbsentNullOrIdentifier(JsonElement value, string name) =>
+        !value.TryGetProperty(name, out JsonElement property)
+        || property.ValueKind == JsonValueKind.Null
+        || (property.ValueKind == JsonValueKind.String && BodyProgramValidation.IsIdentifier(property.GetString()));
+
+    /// <summary>
+    /// The optional tile: both keys absent or null, or both present as non-negative int32. One half alone is refused here
+    /// for the same reason the typed validator refuses it - a lone `x` would be a coordinate nobody can act on.
+    /// </summary>
+    private static bool IsAbsentNullOrCoordinatePair(JsonElement value)
+    {
+        bool hasX = value.TryGetProperty("x", out JsonElement x) && x.ValueKind != JsonValueKind.Null;
+        bool hasY = value.TryGetProperty("y", out JsonElement y) && y.ValueKind != JsonValueKind.Null;
+        if (hasX != hasY) return false;
+        return !hasX || (x.TryGetInt32(out int tileX) && tileX >= 0 && y.TryGetInt32(out int tileY) && tileY >= 0);
+    }
 
     /// <summary>
     /// An optional node-status cause code: absent, JSON null (the serializer omits nulls, but an explicit null comes from
@@ -1074,7 +1142,8 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         new(result.Code.ToWireValue(), new BridgeBodyProgramSubmitVerification(result.Verification.Accepted, result.Verification.CatalogRevision, result.Verification.Diagnostics.Select(ProjectDiagnostic).ToArray()), result.Snapshot is null ? null : ProjectBodyProgramStatusSnapshot(result.Snapshot));
 
     public static BridgeBodyProgramStatusResult ProjectBodyProgramStatusResult(BodyProgramStatusResult result) =>
-        new(result.Code.ToWireValue(), result.Snapshot is null ? null : ProjectBodyProgramStatusSnapshot(result.Snapshot));
+        new(result.Code.ToWireValue(), result.Snapshot is null ? null : ProjectBodyProgramStatusSnapshot(result.Snapshot),
+            result.Programs is null ? null : result.Programs.Select(ProjectBodyProgramStatusSnapshot).ToArray(), result.ProgramCount);
 
     public static BridgeBodyProgramEventsResult ProjectBodyProgramEventsResult(BodyProgramEventsResult result) =>
         new(result.ProgramId, result.Code.ToWireValue(), result.Events.Select(@event => new BridgeBodyProgramEvent(
@@ -1086,7 +1155,11 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
 
     private static BridgeBodyProgramStatusSnapshot ProjectBodyProgramStatusSnapshot(BodyProgramStatusSnapshot snapshot) =>
         new(snapshot.ProgramId, snapshot.State.ToWireValue(), snapshot.CatalogRevision, snapshot.StopEpoch, snapshot.EventHighWater,
-            snapshot.Nodes.Select(node => new BridgeBodyProgramNodeStatus(node.NodeId, node.State.ToWireValue(), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode)).ToArray());
+            snapshot.Nodes.Select(node =>
+            {
+                BodyProgramNodeWork work = snapshot.Work.Single(candidate => candidate.NodeId == node.NodeId);
+                return new BridgeBodyProgramNodeStatus(node.NodeId, node.State.ToWireValue(), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, work.ActionId, work.X, work.Y);
+            }).ToArray());
 
     private static bool TryReadBodyProgramCandidate(JsonElement value, out ActionProgramCandidate? candidate)
     {

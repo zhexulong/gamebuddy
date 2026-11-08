@@ -1636,7 +1636,7 @@ const MAX_NATIVE_NOTICE_CHARS = 512;
 /** Frozen per-node binding-map bound, aligned with the existing C# Core verifier bound of 4. */
 export const MAX_BODY_PROGRAM_BINDINGS_PER_NODE = 4;
 export type BodyProgramCandidateRequest = Readonly<{ programId: string; nodes: readonly BodyProgramNode[] }>;
-export type BodyProgramStatusRequest = Readonly<{ programId: string }>;
+export type BodyProgramStatusRequest = Readonly<{ programId?: string }>;
 
 /**
  * A stop, fenced by the caller's STOP epoch.
@@ -1681,8 +1681,22 @@ type BodyProgramNodeStatus = Readonly<{
    * on a node whose evidence is deliberately absent (ADR-006). `closest=49,14;closest_distance=1` is the shape.
    */
   hint?: string | null;
+  /**
+   * The action this node runs, from the journal's own compiled descriptor.
+   *
+   * REQUIRED, unlike every other addition here, because the whole point of it is that a reader that has lost its
+   * `programId` can still say what it did: a frame without it is one this Host refuses rather than one it reports as
+   * "an action that is not named".
+   */
+  actionId: string;
+  /**
+   * The tile this node addressed, read from the canonical arguments the Mod bound at admission. `x` and `y` travel
+   * together, and both are null for a node whose arguments name no tile - which is a fact, not a missing value.
+   */
+  x?: number | null;
+  y?: number | null;
 }>;
-type BodyProgramStatusSnapshot = Readonly<{
+export type BodyProgramStatusSnapshot = Readonly<{
   programId: string;
   state: string;
   catalogRevision: number;
@@ -1695,9 +1709,18 @@ export type BodyProgramSubmitResult = Readonly<{
   verification: BodyProgramVerification;
   snapshot: BodyProgramStatusSnapshot | null;
 }>;
+/**
+ * One query answer: by id (`snapshot`) or, when the caller named no id, the journal's newest programs (`programs`).
+ *
+ * `programCount` is the journal's TOTAL on both paths, so a bounded page can be reported as "read 8 of 143" instead of
+ * reading as a short history. Exactly one of the two paths is populated on a `found` answer; both are null when the query
+ * did not succeed.
+ */
 export type BodyProgramStatusResult = Readonly<{
   code: "found" | "not_found" | "invalid_input";
   snapshot: BodyProgramStatusSnapshot | null;
+  programs: readonly BodyProgramStatusSnapshot[] | null;
+  programCount: number;
 }>;
 /**
  * What a stop answers: the controller's own vocabulary, verbatim.
@@ -4455,16 +4478,31 @@ function validateBodyProgramStopResult(payload: Record<string, unknown>): string
   return payload.code === "succeeded" ? null : "invalid_body_program_stop_result";
 }
 
+export const MAX_BODY_PROGRAM_RECENT_PROGRAMS = 8;
 export function validateBodyProgramStatusResult(value: Record<string, unknown>): string | null {
-  if (!hasExactKeys(value, ["code", "snapshot"]) || !isBodyProgramQueryCode(value.code))
+  if (
+    !hasExactKeys(value, ["code", "snapshot", "programs", "programCount"]) ||
+    !isBodyProgramQueryCode(value.code) ||
+    !isNonNegativeSafeInteger(value.programCount)
+  )
     return "invalid_body_program_result";
-  return value.code === "found"
-    ? isBodyProgramStatusSnapshot(value.snapshot)
-      ? null
-      : "invalid_body_program_result"
-    : value.snapshot === null
-      ? null
-      : "invalid_body_program_result";
+  if (value.snapshot !== null && !isBodyProgramStatusSnapshot(value.snapshot)) return "invalid_body_program_result";
+  if (value.programs !== null) {
+    if (
+      !Array.isArray(value.programs) ||
+      value.programs.length > MAX_BODY_PROGRAM_RECENT_PROGRAMS ||
+      !value.programs.every(isBodyProgramStatusSnapshot) ||
+      // A page cannot be longer than the journal it came from. The two numbers are printed side by side, so a page that
+      // outgrew its own total would be a contradiction the reader cannot resolve.
+      value.programs.length > (value.programCount as number)
+    )
+      return "invalid_body_program_result";
+  }
+  if (value.code !== "found")
+    return value.snapshot === null && value.programs === null ? null : "invalid_body_program_result";
+  // A `found` answer is exactly one of the two paths. "The program does not exist" is `not_found`; "the journal has
+  // nothing to list" is `found` with an EMPTY page. Collapsing those into one empty list would lose one of them.
+  return (value.snapshot === null) !== (value.programs === null) ? null : "invalid_body_program_result";
 }
 export function validateBodyProgramEventsResult(value: Record<string, unknown>): string | null {
   if (
@@ -4547,14 +4585,20 @@ function isBodyProgramStatusSnapshot(value: unknown): boolean {
 function isBodyProgramNodeStatus(value: unknown): boolean {
   return (
     isRecord(value) &&
-    // The exact set is asserted as before, plus the TWO optional keys the Mod may add. A node without either must still
-    // validate, so the allowance is "these keys, and possibly these of them" rather than a loosened shape.
+    // The exact set is asserted as before, plus the keys the Mod may add. `actionId` is in the REQUIRED half: every node
+    // the Mod publishes names its action, and a frame that dropped it would be exactly the defect this projection exists
+    // to end. `x`/`y` stay optional because a node that names no tile has none - a null, not an absence.
     hasExactKeysOrOptional(
       value,
-      ["nodeId", "state", "nodeAttempt", "admissionAttempt"],
-      ["rejectionCode", "failureCode", "hint"],
+      ["nodeId", "state", "nodeAttempt", "admissionAttempt", "actionId"],
+      ["rejectionCode", "failureCode", "hint", "x", "y"],
     ) &&
     isOpaqueId(value.nodeId) &&
+    isOpaqueId(value.actionId) &&
+    isCoordinateOrAbsent(value.x) &&
+    isCoordinateOrAbsent(value.y) &&
+    // One half of a coordinate is not a coordinate: the two travel together or not at all.
+    isAbsentCoordinate(value.x) === isAbsentCoordinate(value.y) &&
     (value.rejectionCode === undefined || value.rejectionCode === null || isReasonCode(value.rejectionCode)) &&
     (value.failureCode === undefined || value.failureCode === null || isReasonCode(value.failureCode)) &&
     // A hint is not a reason code - `closest=49,14;closest_distance=1` is outside that grammar - so it carries its own
@@ -4564,6 +4608,12 @@ function isBodyProgramNodeStatus(value: unknown): boolean {
     isNonNegativeInt32(value.nodeAttempt) &&
     isNonNegativeInt32(value.admissionAttempt)
   );
+}
+function isAbsentCoordinate(value: unknown): boolean {
+  return value === undefined || value === null;
+}
+function isCoordinateOrAbsent(value: unknown): boolean {
+  return isAbsentCoordinate(value) || isNonNegativeInt32(value);
 }
 function isBodyProgramState(value: unknown): boolean {
   return (

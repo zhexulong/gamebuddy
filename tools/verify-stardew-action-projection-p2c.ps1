@@ -31,7 +31,6 @@ $P2OwnedPaths = @(
     "integrations/stardew/ModConfig.cs",
     "integrations/stardew/BridgeSession.cs",
     "integrations/stardew/ExecutionManager.cs",
-    "integrations/stardew/Handlers/ActionPreconditionGuard.cs",
     "integrations/stardew/Handlers/FarmingActionHandler.cs",
     "integrations/stardew/Handlers/GatheringActionHandler.cs",
     "integrations/stardew/Handlers/MovementActionHandler.cs",

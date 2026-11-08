@@ -1728,6 +1728,108 @@ public sealed class BodyProgramAuthorityTests
          return root.ToJsonString();
      }
 
+    /// <summary>
+    /// The durable journal stays the ONE authority when the caller can no longer name a program.
+    ///
+    /// <para>
+    /// Measured 2026-11-08: a 48-minute run forked afterwards and asked what it had done answered "15 plan submissions, 0
+    /// tiles tilled" against 143 submissions and ~20 tilled tiles. Nothing it could still reach named a program - a context
+    /// fold had removed the only `programId` it was ever handed - so a query that can only be addressed was a query the
+    /// reader could not ask. An absent id answers from the same journal, newest first, with the total beside it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AStatusQueryWithoutAProgramIdAnswersTheJournalsNewestProgramsNewestFirst()
+    {
+        var authority = Open();
+        foreach (string programId in new[] { "oldest", "middle", "newest" })
+            authority.Submit(Program(programId)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        BodyProgramStatusResult unaddressed = authority.Status(null);
+
+        unaddressed.Code.Should().Be(BodyProgramQueryCode.Found);
+        unaddressed.Snapshot.Should().BeNull("the two paths are distinguishable, not one being an empty page");
+        unaddressed.Programs!.Select(program => program.ProgramId).Should().Equal("newest", "middle", "oldest");
+        unaddressed.ProgramCount.Should().Be(3, "a bounded page must be reportable as 'read N of M'");
+    }
+
+    /// <summary>
+    /// Every property of the journal's node model has a stated projection decision, so a field added later cannot be
+    /// silently dropped.
+    ///
+    /// <para>
+    /// This is the gate for the defect class that produced this change: `ActionId` sat in the journal while
+    /// `BridgeBodyProgramNodeStatus` published only the node's state, so a reader could see that node 3 `failed` and never
+    /// what node 3 WAS. The population is `VerifiedBodyProgramNode` itself, not a list here; adding a property to that
+    /// model makes this test fail until someone decides what the wire does with it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryJournalNodePropertyHasAStatedProjectionDecision()
+    {
+        var decisions = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["NodeId"] = "projected as nodeId",
+            ["ActionId"] = "projected as actionId",
+            ["CanonicalArguments"] = "projected as x/y when both are integer tile arguments; both absent otherwise",
+            ["DependsOn"] = "not projected: the graph is the Mod's own and a caller re-reads it from its own script",
+            ["Bindings"] = "not projected: a binding is the Mod's internal fact plumbing, never a caller's input",
+            ["DerivedResourceClaims"] = "not projected: claims are ownership the Mod enforces, never a caller's input",
+        };
+
+        typeof(VerifiedBodyProgramNode).GetProperties().Select(property => property.Name).Should()
+            .BeEquivalentTo(decisions.Keys,
+                "every field the journal's node model carries needs a decision here; an unlisted one is a fact the status projection silently drops");
+    }
+
+    /// <summary>
+    /// The action id and the addressed tile reach the wire, and a node that names no tile says so on BOTH halves.
+    /// </summary>
+    [Fact]
+    public void TheWireProjectionCarriesEveryNodesActionIdAndAddressedTile()
+    {
+        var authority = Open(catalog: TileCatalog());
+        authority.Submit(TileProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        // The tile is read from the arguments the Mod BOUND at admission, so a node that never reached one has no tile to
+        // report - which is the truth, not a missing projection.
+        authority.TryCreateAdmissionChallenge("tiles").IsSuccess.Should().BeTrue();
+
+        BodyProgramStatusSnapshot snapshot = authority.Status("tiles").Snapshot!;
+        BridgeBodyProgramStatusSnapshot projected = BridgeProtocol.ProjectBodyProgramStatusResult(
+            new BodyProgramStatusResult(BodyProgramQueryCode.Found, snapshot)).Snapshot!;
+        BridgeBodyProgramNodeStatus tiled = projected.Nodes.Single();
+        tiled.ActionId.Should().Be("till_soil");
+        tiled.X.Should().Be(12);
+        tiled.Y.Should().Be(34);
+
+        // An action whose arguments name no tile (`move_to_tile` here takes a `tile` object) must not invent a coordinate:
+        // the reader reports that node as `unproven` rather than acting on a guessed one.
+        var untiled = Open();
+        untiled.Submit(Program("untiled")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        untiled.TryCreateAdmissionChallenge("untiled").IsSuccess.Should().BeTrue();
+        BridgeBodyProgramNodeStatus tillable = BridgeProtocol.ProjectBodyProgramStatusResult(
+            new BodyProgramStatusResult(BodyProgramQueryCode.Found, untiled.Status("untiled").Snapshot!)).Snapshot!.Nodes.Single();
+        tillable.ActionId.Should().Be("move_to_tile");
+        tillable.X.Should().BeNull();
+        tillable.Y.Should().BeNull();
+    }
+
+    private static BodyProgramActionCatalog TileCatalog() => new(7, new[]
+    {
+        new BodyProgramActionDescriptor("till_soil", 1,
+            new[] { new BodyProgramArgumentDescriptor("x", BodyProgramArgumentKind.Integer), new BodyProgramArgumentDescriptor("y", BodyProgramArgumentKind.Integer) },
+            Array.Empty<BodyProgramFactDescriptor>(),
+            new[] { new BodyProgramResourceTemplateClaim("actor", BodyProgramResourceTemplateValue.ScopePlayer) }),
+    });
+    private static ActionProgramCandidate TileProgram() => new("tiles", new[]
+    {
+        new ActionProgramCandidateNode("first", "till_soil", new Dictionary<string, BodyProgramRuntimeValue>(StringComparer.Ordinal)
+        {
+            ["x"] = new("integer", "12"),
+            ["y"] = new("integer", "34"),
+        }, Array.Empty<string>(), Bindings()),
+    });
+
      private static BodyProgramActionCatalog ArrivalCatalog() => new(7, new[]
     {
         new BodyProgramActionDescriptor("move_to_tile", 1, new[] { new BodyProgramArgumentDescriptor("tile", BodyProgramArgumentKind.Integer) }, new[] { new BodyProgramFactDescriptor("arrival", BodyProgramArgumentKind.DestinationArrival) }, new[] { new BodyProgramResourceTemplateClaim("actor", BodyProgramResourceTemplateValue.ScopePlayer) }),

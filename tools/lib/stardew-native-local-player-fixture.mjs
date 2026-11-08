@@ -73,7 +73,7 @@ async function validateNativeLocalPlayerFixturePreparationInternal(options) {
   const context = resolveContext(options);
   assertBackupName(options.backupName);
   assertObservedSaveSlot(options.saveName);
-  const actions = fixtureActions(options.action);
+  const actions = fixtureActionSet(options);
   await assertSafeContext(context);
   if (await exists(join(context.root, options.backupName)))
     throw new Error("native_local_fixture_backup_already_exists");
@@ -147,7 +147,7 @@ async function prepareNativeLocalPlayerFixtureInternal(options) {
   const context = resolveContext(options);
   assertBackupName(options.backupName);
   assertObservedSaveSlot(options.saveName);
-  const actions = fixtureActions(options.action);
+  const actions = fixtureActionSet(options);
   await assertSafeContext(context);
   if (await exists(join(context.root, options.backupName)))
     throw new Error("native_local_fixture_backup_already_exists");
@@ -217,7 +217,7 @@ async function bootstrapNativeLocalPlayerFixtureInternal(options) {
   const context = resolveContext(options);
   await assertSafeContext(context);
   assertFixtureLogicalName(options.logicalSaveName);
-  const actions = fixtureActions(options.action);
+  const actions = fixtureActionSet(options);
   if (await exists(join(context.root, options.backupName)))
     throw new Error("native_local_fixture_backup_already_exists");
   await beginTransaction(context, options.backupName);
@@ -267,7 +267,7 @@ export async function verifyNativeLocalPlayerFixture(options) {
   const context = resolveContext(options);
   await assertSafeContext(context);
   assertObservedSaveSlot(options.saveName);
-  const actions = fixtureActions(options.action);
+  const actions = fixtureActionSet(options);
   const config = await readJson(context.configPath);
   const fixture = config.NativeLocalPlayerFixture;
   if (
@@ -432,6 +432,26 @@ export function assertSaveCalendarConsistent(saveXml) {
     );
   return Object.freeze({ dayOfMonth, daysPlayed, season });
 }
+
+/**
+ * The action set one fixture preparation publishes: the declared set, plus anything the caller adds.
+ *
+ * `extraActions` exists for ONE caller, `tools/live-action.mjs`. A hand can only be filled on the wire by a
+ * published action, so a held-state perturbation publishes `equip_tool` beside the action under test instead of
+ * teaching every scenario a second way to place an item. Nothing else widens a fixture, and the scenario is still
+ * selected by `action` alone (`fixtureScenario(actions, action)`), so a widened set can only add a capability the
+ * caller then invokes itself.
+ */
+export function fixtureActionSet({ action, extraActions = [] } = {}) {
+  const declared = fixtureActions(action);
+  if (!Array.isArray(extraActions)) throw new Error("invalid_native_local_fixture_extra_actions");
+  if (extraActions.length === 0) return declared;
+  for (const extra of extraActions)
+    if (typeof extra !== "string" || !/^[a-z][a-z0-9_]{0,63}$/u.test(extra))
+      throw new Error("invalid_native_local_fixture_extra_actions");
+  return Object.freeze([...new Set([...declared, ...extraActions])]);
+}
+
 export function fixtureActions(action) {
   // The scene-reachable probe is a direct observation read: the fixture only
   // publishes the read-only observe_scene capability so the runner can pull a

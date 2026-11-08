@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Text.Json;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
@@ -231,12 +232,32 @@ public sealed class OpenBodyProgramJournalAuthority
         return new(BodyProgramSubmitCode.Accepted, verification, SnapshotFor(this.state.Programs.Single(p => p.Program.ProgramId == program.Program.ProgramId)));
     }
 
-    public BodyProgramStatusResult Status(string programId)
+    /// <summary>
+    /// One program by id, or - when the caller names no id - the newest programs in this journal, newest first.
+    ///
+    /// <para>
+    /// THE JOURNAL STAYS THE ONE AUTHORITY on both paths. An absent id is not a second source of truth or a Host-side
+    /// copy of this journal: it is the same authority answering the question a caller can still ask after a context fold,
+    /// when it no longer holds any `programId` to name. That is the whole reason this overload exists - measured
+    /// 2026-11-08, a 48-minute run that answered "15 plan submissions" against 143 real ones because nothing it could
+    /// still reach named a program.
+    /// </para>
+    /// <para>
+    /// The page is bounded by <see cref="BodyProgramValidation.MaximumRecentPrograms" /> and travels with the journal's
+    /// own total (<see cref="BodyProgramStatusResult.ProgramCount" />), so a bounded read cannot be mistaken for a short
+    /// history.
+    /// </para>
+    /// </summary>
+    public BodyProgramStatusResult Status(string? programId)
     {
         this.ThrowIfLifecycleUnavailable();
+        if (programId is null)
+            return new(BodyProgramQueryCode.Found, null,
+                Array.AsReadOnly(this.state.Programs.Reverse().Take(BodyProgramValidation.MaximumRecentPrograms).Select(SnapshotFor).ToArray()),
+                this.state.Programs.Count);
         if (!BodyProgramValidation.IsIdentifier(programId)) return new(BodyProgramQueryCode.InvalidInput, null);
         BodyProgramJournalProgram? program = this.state.Programs.SingleOrDefault(item => item.Program.ProgramId == programId);
-        return program is null ? new(BodyProgramQueryCode.NotFound, null) : new(BodyProgramQueryCode.Found, SnapshotFor(program));
+        return program is null ? new(BodyProgramQueryCode.NotFound, null) : new(BodyProgramQueryCode.Found, SnapshotFor(program), null, this.state.Programs.Count);
     }
 
     public BodyProgramEventsResult Events(string programId, long cursor, int pageSize)
@@ -947,7 +968,32 @@ public sealed class OpenBodyProgramJournalAuthority
         }
         return action.OutputFacts.All(output => names.Contains(output.Name));
     }
-    private BodyProgramStatusSnapshot SnapshotFor(BodyProgramJournalProgram program) => new(program.Program.ProgramId, program.State, program.Program.CatalogRevision, program.StopEpoch, this.state.EventHighWater, Array.AsReadOnly(program.Nodes.ToArray()));
+    private BodyProgramStatusSnapshot SnapshotFor(BodyProgramJournalProgram program) => new(program.Program.ProgramId, program.State, program.Program.CatalogRevision, program.StopEpoch, this.state.EventHighWater,
+        Array.AsReadOnly(program.Nodes.ToArray()),
+        Array.AsReadOnly(program.Nodes.Select(node => WorkFor(program, node)).ToArray()));
+    /// <summary>
+    /// What the journal cannot say about a node: the action it runs, and the tile its canonical bound arguments address.
+    ///
+    /// <para>
+    /// The tile is READ from the arguments the Mod itself bound at admission, never derived from an action's name and never
+    /// reconstructed from a receipt's prose. An action whose arguments name no tile answers null on BOTH halves - the wire
+    /// rule is that X and Y travel together - and a reader reports that node as `unproven` rather than guessing a
+    /// coordinate.
+    /// </para>
+    /// </summary>
+    private static BodyProgramNodeWork WorkFor(BodyProgramJournalProgram program, BodyProgramJournalNode node)
+    {
+        int? x = TileArgument(node.CanonicalBoundArguments, "x");
+        int? y = TileArgument(node.CanonicalBoundArguments, "y");
+        bool tile = x is not null && y is not null;
+        return new(node.NodeId, program.Program.Nodes.Single(descriptor => descriptor.NodeId == node.NodeId).ActionId,
+            tile ? x : null, tile ? y : null);
+    }
+    private static int? TileArgument(IReadOnlyDictionary<string, BodyProgramCanonicalValue>? arguments, string name) =>
+        arguments is not null && arguments.TryGetValue(name, out BodyProgramCanonicalValue? value) && value.CanonicalValue is { } canonical
+        && int.TryParse(canonical, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) && parsed >= 0
+            ? parsed
+            : null;
     private static NodeAdmissionChallenge Challenge(BodyProgramJournalProgram program, BodyProgramJournalNode node, VerifiedBodyProgramNode descriptor, BodyProgramPolicyIdentity policy, IReadOnlyDictionary<string, BodyProgramCanonicalValue> materialized) => new(program.Program.ProgramId, node.NodeId, node.NodeAttempt, node.AdmissionAttempt, program.StopEpoch, program.Program.CatalogRevision, policy, descriptor.ActionId, materialized, descriptor.DerivedResourceClaims, node.DerivedDeadlineMs ?? throw new InvalidOperationException("admission challenge without derived deadline"));
     private static bool IsTerminal(BodyProgramNodeState state) => state is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.Abandoned;
       private static bool HasExecutableWork(BodyProgramJournalProgram program)

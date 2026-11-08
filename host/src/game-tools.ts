@@ -13,13 +13,21 @@ import {
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
 import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js";
-import { LOOKUP_SUBJECTS, type AffordanceAction, lookUp, noSnapshot } from "./game-lookup.js";
+import {
+  LOOKUP_SUBJECTS,
+  type AffordanceAction,
+  journalUnavailable,
+  lookUp,
+  myWorkFromJournal,
+  noSnapshot,
+} from "./game-lookup.js";
 import { describeBodyHoldRefusal } from "./stardew-action-remedy.js";
 import { boundObservedSnapshot } from "./stardew-observation-budget.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import { RUN_SPAN_NAMES, type RunTrace, describeTraceFailure } from "./run-trace.js";
 import {
   type ActionRegistrationDescriptor,
+  type BodyProgramStatusResult,
   type ExecutionReceipt,
   type ExecutionRequest,
   TOOL_SELECTOR_VALUES,
@@ -112,6 +120,15 @@ function callerRequestIds(params: unknown): Readonly<{ requestId?: string; idemp
 }
 
 type NavigationActionId = "inspect_world_map" | "find_destination";
+/**
+ * The Mod's Body Program journal, read through the bridge.
+ *
+ * Narrow on purpose, and duck-typed the way `navigationRead` is: `stardew_look_up` is a read-only question, and the only
+ * thing it needs from the journal is one bounded page of it.
+ */
+type ProgramJournalReadIntegration = {
+  programStatus(request: Readonly<{ programId?: string }>): Promise<BodyProgramStatusResult>;
+};
 type NavigationReadIntegration = StardewBridgeConnection & {
   navigationRead(
     request: Readonly<{
@@ -237,22 +254,61 @@ export function createStardewObservationTools(
           : [{ actionId: entry.actionId, targetFamily: entry.descriptor.targetFamily }],
     );
   };
+  /**
+   * One answer shape for every lookup path: the payload, whether anything was read, and the revision the answer describes.
+   *
+   * `snapshotRevision` is read from the answer's own `source`, so an answer that names no snapshot (`my_work` reads the
+   * journal, `noSnapshot` reads nothing) cannot inherit a revision from the session's last observation.
+   */
+  const lookupResult = (
+    answer: Readonly<{ source: Readonly<{ snapshotRevision: number | null }> }>,
+    available: boolean,
+  ) => ({
+    content: [{ type: "text" as const, text: JSON.stringify(answer) }],
+    details: { answer, available, snapshotRevision: answer.source.snapshotRevision },
+  });
   const lookup = defineTool({
     name: "stardew_look_up",
     label: "Look Up Stardew",
     description:
-      "Answer a question about the Stardew state this session already holds, without asking the Mod again. Subjects: affordances (WHAT CAN BE DONE HERE, NOW: one group per kind of target already in the snapshot, each naming the `family` it counts, the `action` every consumer would use, and the nearest target's id and tile; `count` is how many of that kind are in view, and the action's own preconditions still apply), crops (tiles that need water or are ready to harvest, per location), chests (which chest holds an item), inventory (items held), npcs (where a villager is), calendar (day, time, weather). Every answer names `source.family` and the `source.snapshotRevision` it describes; `source.family: null` means the snapshot does not carry that fact - that is not an empty world, and `missingField` names what the Mod would have to publish. Lists are bounded and report `omitted`. This never refreshes the world: call stardew_observe first if it may have moved.",
+      "Answer a question about the Stardew state this session already holds, without asking the Mod again. Subjects: my_work (WHAT HAVE I ACTUALLY DONE: totals of programs submitted/settled/running, of nodes by terminal state and of `executions` - the actions that really reached the game; `byAction` with succeeded/failed/rejected per action; the distinct `tiles` your succeeded receipts addressed, with `unproven` for those that named none; and the newest `programs` ids with their state, so one can be passed to stardew_action_program_status. It needs no id and reads the Mod's durable journal, so it answers the same after any number of context folds and with no prior tool result in scope; `population` says \"programs read N of M\" when the journal is longer than one answer. `since` is NOT available: the journal records no day boundary, and the answer says so rather than guessing), affordances (WHAT CAN BE DONE HERE, NOW: one group per kind of target already in the snapshot, each naming the `family` it counts, the `action` every consumer would use, and the nearest target's id and tile; `count` is how many of that kind are in view, and the action's own preconditions still apply), crops (tiles that need water or are ready to harvest, per location), chests (which chest holds an item), inventory (items held), npcs (where a villager is), calendar (day, time, weather). Every answer names `source.family` and the `source.snapshotRevision` it describes; `source.family: null` means the snapshot does not carry that fact - that is not an empty world, and `missingField` names what the Mod would have to publish. Lists are bounded and report `omitted`. This never refreshes the world: call stardew_observe first if it may have moved.",
     parameters: Type.Object(
       {
         // The subject vocabulary is the module's own table, so a subject cannot be advertised here and refused there.
         subject: literalUnionSchema(LOOKUP_SUBJECTS.map((subject) => Type.Literal(subject))),
         query: Type.Optional(Type.String({ minLength: 0, maxLength: 64 })),
+        // Accepted so a caller that asks for a day scope is TOLD the journal has none, instead of silently getting the
+        // whole journal under a heading it did not earn.
+        since: Type.Optional(Type.String({ minLength: 1, maxLength: 32 })),
       },
       { additionalProperties: false },
     ),
     execute: async (_toolCallId, params) => {
-      const asked = params as Readonly<{ subject?: unknown; query?: unknown }>;
+      const asked = params as Readonly<{ subject?: unknown; query?: unknown; since?: unknown }>;
       const state = integration.state;
+      const since = typeof asked.since === "string" ? asked.since : undefined;
+      // `my_work` is answered from the Mod's journal, not from the snapshot in `state`, so it is resolved before the
+      // snapshot check: the whole point of the subject is that it works when the world has moved on or was never observed,
+      // and that it depends on nothing the transcript holds.
+      if (String(asked.subject) === "my_work") {
+        const reader = (integration as Partial<ProgramJournalReadIntegration>).programStatus;
+        if (typeof reader !== "function")
+          return lookupResult(journalUnavailable("this session has no Body Program journal reader"), state.connected);
+        let journal: BodyProgramStatusResult;
+        try {
+          // No program id: the journal's own newest-programs page. The Mod remains the one authority, and this is the same
+          // query `stardew_action_program_status` makes, asked the only way a reader without an id can ask it.
+          journal = await (integration as unknown as ProgramJournalReadIntegration).programStatus({});
+        } catch (error) {
+          return lookupResult(
+            journalUnavailable(
+              `the Body Program journal could not be read: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+            state.connected,
+          );
+        }
+        return lookupResult(myWorkFromJournal(journal, { since }), state.connected);
+      }
       const snapshot = state.connected ? state.snapshot : null;
       const answer =
         snapshot === null
@@ -263,10 +319,7 @@ export function createStardewObservationTools(
               typeof asked.query === "string" ? asked.query : "",
               affordanceSurface(),
             );
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(answer) }],
-        details: { answer, available: snapshot !== null, snapshotRevision: snapshot?.revision ?? null },
-      };
+      return lookupResult(answer, snapshot !== null);
     },
   });
   const execution = defineTool({

@@ -28,7 +28,11 @@ public sealed class BodyProgramNodeStateWireTests
         new("program_1", nodeId, 1, "request_1", "idempotency_1", "execution_1");
 
     private static BodyProgramStatusSnapshot Snapshot(params BodyProgramJournalNode[] nodes) =>
-        new("program_1", BodyProgramState.Failed, 7, 2, 11, nodes);
+        new("program_1", BodyProgramState.Failed, 7, 2, 11, nodes,
+            // One `Work` row per node, because that is the shape the authority builds: the wire projection JOINS this list
+            // by node id, so an empty one here would assert a snapshot the authority never produces - and would leave the
+            // actionId/tile assertions below unable to tell a build fix from a projection that stopped carrying them.
+            nodes.Select(node => new BodyProgramNodeWork(node.NodeId, "till_soil", 4, 7)).ToArray());
 
     [Fact]
     public void AProgramWhoseMiddleNodeWasADependencySkipNamesThatStateInsteadOfFoldingItIntoRecoveryRequired()
@@ -44,6 +48,11 @@ public sealed class BodyProgramNodeStateWireTests
 
         projected.Nodes.Select(node => node.State).Should().Equal("succeeded", "skipped_dependency", "succeeded");
         projected.Nodes.Should().NotContain(node => node.State == "recovery_required");
+        // The other half of what a reader needs: WHICH action each node ran, and the tile it addressed. A state without
+        // those is the "15 plan submissions, 0 tiles tilled" answer this projection exists to stop.
+        projected.Nodes.Select(node => node.ActionId).Should().Equal("till_soil", "till_soil", "till_soil");
+        projected.Nodes.Select(node => node.X).Should().Equal(4, 4, 4);
+        projected.Nodes.Select(node => node.Y).Should().Equal(7, 7, 7);
     }
 
     [Fact]

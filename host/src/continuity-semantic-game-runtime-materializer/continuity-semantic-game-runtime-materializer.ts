@@ -466,6 +466,9 @@ function createBodyProgramTools(
               const reading: BodyProgramStatusResult = Object.freeze({
                 code: recorded === null ? "not_found" : "found",
                 snapshot: recorded,
+                // Not a journal page: this is the submit's own echo, so there is nothing to list and nothing counted.
+                programs: null,
+                programCount: 0,
               });
               return answerOf(planBatchAnswer(nodes, recorded, programStatusProgress.observe(reading)?.nodes ?? []));
             }
