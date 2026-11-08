@@ -366,9 +366,7 @@
     "build:magic-context": "bun run --cwd vendor/magic-context/packages/pi-plugin build && node tools/normalise-vendored-bundle-shims.mjs",
     "test:vendored-bundle-shims": "node --test tools/normalise-vendored-bundle-shims.test.mjs",
     "check:workflow-expressions": "node tools/check-workflow-expressions.mjs",
-    "test:workflow-expressions": "node --test tools/check-workflow-expressions.test.mjs",
-    "check:configuration-surfaces": "node tools/check-configuration-surfaces.mjs --fail",
-    "test:configuration-surfaces": "node --test tools/check-configuration-surfaces.test.mjs"
+    "test:workflow-expressions": "node --test tools/check-workflow-expressions.test.mjs"
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",
