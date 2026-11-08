@@ -44,13 +44,16 @@
  * `equip_tool` action, so `--held` drives that action first (its own gate runner; the accepted words are `equip_tool`'s
  * own argument enum from the generated action surface) and the fixture publishes it beside the action under test.
  *
- * WHAT CANNOT BE HELD, measured rather than assumed. `equip_tool` selects TOOLS only, and no published action puts an
- * ordinary object in the hand; the fixture cannot either — `NativeLocalPlayerFixtureConfig` (ModConfig.cs) has no item
- * field, so every item-in-hand Given is hardcoded per scenario in C# (`(O)388` for a Sign, `(H)0` for a Mannequin) and
- * `InitializeNativeLocalPetFixture` actively clears the selected slot. The case this slice exists for — an ordinary item
- * held while `pet_animal` runs, where the real native branches are a hat moved onto the pet and butterfly powder opening
- * a dialogue — is therefore NOT MEASURABLE YET, and it says so: an item id is refused as
- * `live_action_held_item_unsupported:<id>` rather than as a bad argument. Nothing here may report it as measured.
+ * THE DECLARED HAND (`--held-item <qualifiedItemId>`) is the other half, and it is a FIXTURE Given rather than an action:
+ * `NativeLocalPlayerFixture.HeldItemQualifiedId` makes the Mod mint the id into a free slot and select it before bridge
+ * attachment, which is the only way a run can start with an ORDINARY item in hand — `equip_tool` selects tools only. That
+ * is the world the old blanket `hands_not_empty` guard refused: `Pet.checkAction` branches only on a `Hat` and on
+ * `(O)ButterflyPowder` and pets through everything else. Because the Mod's own initializer can refuse (`_unknown`,
+ * `_no_room`), the tool does not take the config's word for it: the FIRST snapshot is checked for the declared id and a
+ * world that disagrees is `live_action_held_item_not_in_hand:<id>` rather than a receipt that describes some other hand.
+ *
+ * The two flags are mutually exclusive (`live_action_held_conflict`): one puts a tool there through an action, the other
+ * declares a fixture Given, and a run that asked for both would have no single hand to report.
  *
  * THE TEARDOWN IS MEASURED, NOT ASSUMED. The game is stopped by the EXACT pid the launcher created, and the survivors are
  * read back until the budget is spent; a process that is still alive is the run's ending
@@ -71,13 +74,15 @@
  *   live_action_binding_missing / _binding_ambiguous      the observed save slot cannot be derived from the root
  *   live_action_template_missing:<path>                   the read-only save template the working save is copied from
  *   live_action_no_fixture_scenario:<action>              no fixture scenario arms this action
- *   live_action_held_item_unsupported:<id>                an ordinary item cannot be put in the hand by this fixture
+ *   live_action_held_conflict                             `--held` and `--held-item` name two different hands
  *   live_action_fixture_root_invalid / _mods_path_invalid / _release_dir_invalid / _game_path_invalid
  *   target_policy_unavailable:<action>                    `--target` was given for an action with no declared target
  *   invalid_held_selector:<value>                         not a tool category `equip_tool` can select
+ *   invalid_held_item:<value>                             not a qualified item id (`(O)72`, `(H)0`, ...)
  *
  * ENDINGS that are blocked rather than passed, because the world or the process would otherwise be left dirty:
  *   live_action_target_family_empty:<family>:<scenario>   the armed world published no target this action can name
+ *   live_action_held_item_not_in_hand:<id>                the fixture declared a hand the world did not show
  *   live_action_process_still_running:<pids>              a Stardew process this run started is still alive
  *   live_action_fixture_not_restored / live_action_working_save_not_restored   the unwind could not finish
  */
@@ -133,8 +138,9 @@ export const USAGE = `usage: node tools/live-action.mjs --action <actionId> [opt
   --action <id>              one published or experimental action id (the subject is the argument)
   --recover                  take back the fixture transaction a dead run left behind, and its leftover
                              working save. Takes no action; refuses while a Stardew process is running
-  --held <tool>              fill the actor's hand first, through the published ${HELD_ACTION} action;
-                             an ordinary item id is refused: this fixture cannot put one in the hand
+  --held <tool>              fill the actor's hand first, through the published ${HELD_ACTION} action
+  --held-item <itemId>       declare a hand the fixture mints before attachment, e.g. (O)72;
+                             refused together with --held (one hand per run)
   --target nearest|first     which published target row this run is pointed at (default: nearest)
   --keep-log                 keep this run's SMAPI console log even when the run passes
   --dry-run                  resolve everything and refuse; print the plan; never spawn the game
@@ -171,6 +177,7 @@ const FLAGS = Object.freeze(["--help", "-h", "--keep-log", "--dry-run", "--recov
 const VALUE_FLAGS = Object.freeze([
   "--action",
   "--held",
+  "--held-item",
   "--target",
   "--fixture-root",
   "--mods-path",
@@ -191,6 +198,7 @@ export function parseLiveActionArguments(argv) {
     recover: false,
     action: null,
     held: null,
+    heldItem: null,
     target: "nearest",
     targetRequested: false,
     fixtureRoot: null,
@@ -227,6 +235,10 @@ export function parseLiveActionArguments(argv) {
       case "--held":
         options.held = value;
         break;
+      case "--held-item":
+        if (!QUALIFIED_ITEM_ID.test(value)) throw refusal(`invalid_held_item:${value}`);
+        options.heldItem = value;
+        break;
       case "--target":
         if (!TARGET_POLICIES.includes(value)) throw refusal(`invalid_target_policy:${value}`);
         options.target = value;
@@ -262,6 +274,9 @@ export function parseLiveActionArguments(argv) {
     }
   }
   if (options.help) return Object.freeze(options);
+  // One hand per run: `--held` puts a tool there through an action, `--held-item` declares a fixture Given. A run that
+  // asked for both would have two answers to "what was in the hand" and only one slot to put them in.
+  if (options.held !== null && options.heldItem !== null) throw refusal("live_action_held_conflict");
   // Recovery is a different job — it takes back a transaction rather than starting one — so it stands alone instead of
   // quietly ignoring an action the caller also asked for.
   if (options.recover) {
@@ -413,13 +428,14 @@ export function describeExercise(plan) {
   const save = plan.workingSave;
   const template = plan.template;
   const held = plan.held === null ? "none" : `tool:${plan.held} (via ${HELD_ACTION})`;
+  const heldItem = plan.heldItem === null ? null : `item:${plan.heldItem} (fixture HeldItemQualifiedId)`;
   const working = save.present ? `present mtime=${String(save.mtime)}` : "absent";
   return [
     "exercising",
     `action=${plan.action}`,
     `family=${plan.targetField ?? "none"}`,
     "targets=counted-at-attach",
-    `held=${held}`,
+    `held=${heldItem ?? held}`,
     `scenario=${plan.scenario.length === 0 ? "(ordinary-world)" : plan.scenario}`,
     `save=${save.path}(${working})`,
     `template=${template.path}(mtime=${String(template.mtime)}, gameId=${String(template.gameId)}, farm=${String(template.farmName)}, ${describeCalendar(template.calendar)})`,
@@ -429,14 +445,14 @@ export function describeExercise(plan) {
 /**
  * The sentence a refusal block owes for the codes whose meaning is "not measured, and here is why".
  *
- * `live_action_held_item_unsupported` is the one that matters: the item-in-hand slice is blocked on a fixture field, and
- * a bare code invites reading its absence as a pass.
+ * A bare code invites the next reader to read its absence as a pass, and these three are exactly the cases where nothing
+ * was exercised: a declared hand the world did not show, and a leftover world the launch never touched.
  */
 export function refusalNote(reasonCode) {
-  if (reasonCode.startsWith("live_action_held_item_unsupported:"))
-    return "not measured: NativeLocalPlayerFixtureConfig has no item field, so this fixture cannot put an ordinary item in the actor's hand; a tool category through equip_tool is the only hand this tool can fill";
+  if (reasonCode.startsWith("live_action_held_item_not_in_hand:"))
+    return "not measured: the fixture declared this hand and the first snapshot does not show it in the selected slot, so no action ran. The Mod refuses a hand it cannot mint by name (`fixture_held_item_unknown`, `fixture_held_item_no_room`) — read its log for that code before looking anywhere else";
   if (reasonCode.startsWith("live_action_working_save_present:"))
-    return "not measured: an earlier run left this working save behind, and the game would load that world instead of the fixture's. Nothing was mutated and no game was launched. Clear it with tools/prepare-stardew-action-fixture.ps1 ... -Cleanup (which refuses while a game is running), or remove the directory named above";
+    return "not measured: an earlier run left this working save behind, and the game would load that world instead of the fixture's. Nothing was mutated and no game was launched. Clear it with `node tools/live-action.mjs --recover` (which refuses while a game is running)";
   return undefined;
 }
 
@@ -645,9 +661,9 @@ export async function planLiveAction(options, { env = process.env, roots = null,
   }
 
   if (options.held !== null && !heldToolCategories({ surfacePath }).includes(options.held)) {
-    // An ordinary item in hand is the case this tool exists for and cannot yet produce, so it says exactly that
-    // instead of calling a legitimate ask a bad argument.
-    if (QUALIFIED_ITEM_ID.test(options.held)) throw refusal(`live_action_held_item_unsupported:${options.held}`);
+    // A qualified item id here is a different flag's job, and saying so is the whole point of naming it: `--held-item`
+    // declares the hand as a fixture Given, while `--held` can only drive `equip_tool`, which selects tools.
+    if (QUALIFIED_ITEM_ID.test(options.held)) throw refusal(`invalid_held_selector:${options.held}:use_--held-item`);
     throw refusal(`invalid_held_selector:${options.held}`);
   }
   // A held tool can only be put in the hand by the published `equip_tool` action, so the fixture publishes it beside
@@ -690,6 +706,7 @@ export async function planLiveAction(options, { env = process.env, roots = null,
     actions,
     heldExtra,
     held: options.held,
+    heldItem: options.heldItem,
     heldRunnerFile,
     target: options.target,
     targetField,
@@ -716,6 +733,10 @@ export function describePlan(plan) {
             dispatchedBy: plan.heldRunnerFile,
             widensFixture: plan.heldExtra.length > 0,
           },
+    heldItem:
+      plan.heldItem === null
+        ? null
+        : { qualifiedItemId: plan.heldItem, appliedBy: "NativeLocalPlayerFixture.HeldItemQualifiedId" },
     target: { policy: plan.target, field: plan.targetField },
     executor: { runnerFile: plan.executor.runnerFile, export: plan.executor.export, shape: plan.executor.shape },
     fixtureRoot: plan.fixtureRoot,
@@ -934,6 +955,7 @@ export function buildBlock({
   detail,
   target,
   held,
+  heldItem = null,
   receipts,
   reread,
   perturbation,
@@ -970,6 +992,9 @@ export function buildBlock({
     targetId: actionReceipt?.target ?? null,
     tile: actionReceipt?.tile ?? chosenTile(chosen),
     held,
+    // The declared hand, as the WORLD showed it: `inHandBefore` is the fixture's Given verified against the first
+    // snapshot, and `inHandAfter` is the same id against the engine's re-read.
+    heldItem,
     evidence: actionReceipt?.evidence ?? null,
     receipt: actionReceipt,
     reread: snapshotProjection(reread, plan.targetField),
@@ -1194,6 +1219,15 @@ export async function runOneAction({ plan, session, config }) {
 
   const snapshotBefore = await observeFresh(session.client, { actionable: true });
   const heldBefore = describeHeldState(snapshotBefore);
+  // The declared hand is a fixture Given, so the FIRST snapshot is what decides whether it was honoured. The Mod's own
+  // initializer can refuse (`fixture_held_item_unknown`, `_no_room`) without the config saying anything, and a world that
+  // disagrees would otherwise produce a receipt describing a hand nobody declared. Nothing has been executed yet, so this
+  // refusal costs one observation.
+  if (plan.heldItem !== null && heldBefore.item !== plan.heldItem)
+    throw refusal(`live_action_held_item_not_in_hand:${plan.heldItem}`, undefined, {
+      declared: plan.heldItem,
+      observed: heldBefore,
+    });
   let target = null;
   if (plan.targetField !== null) {
     const rows = targetRows(snapshotBefore, plan.targetField);
@@ -1221,7 +1255,16 @@ export async function runOneAction({ plan, session, config }) {
       heldAfter: describeHeldState(snapshotReread),
     });
   }
-  return { snapshotBefore, snapshotReread, heldBefore, target, executorResult, perturbation };
+  const heldItem =
+    plan.heldItem === null
+      ? null
+      : {
+          qualifiedItemId: plan.heldItem,
+          slotBefore: heldBefore.slot,
+          inHandBefore: heldBefore.item === plan.heldItem,
+          inHandAfter: describeHeldState(snapshotReread).item === plan.heldItem,
+        };
+  return { snapshotBefore, snapshotReread, heldBefore, heldItem, target, executorResult, perturbation };
 }
 
 /**
@@ -1245,6 +1288,7 @@ export async function runLiveAction(plan) {
   let snapshotBefore = null;
   let snapshotReread = null;
   let heldBefore = null;
+  let heldItem = null;
   let target = null;
   let perturbation = null;
   let executorResult = null;
@@ -1268,6 +1312,9 @@ export async function runLiveAction(plan) {
       extraActions: plan.heldExtra,
       binding: plan.binding,
       stardewSaveRoot: plan.stardewSaveRoot,
+      // The declared hand: the Mod mints this id into a free slot and selects it before bridge attachment, and the
+      // fixture reads the written config back to prove the field travelled.
+      heldItemQualifiedId: plan.heldItem ?? "",
     };
     await validateNativeLocalPlayerFixturePreparation(fixtureOptions);
     await prepareNativeLocalPlayerFixture(fixtureOptions);
@@ -1307,6 +1354,7 @@ export async function runLiveAction(plan) {
     snapshotBefore = outcome.snapshotBefore;
     snapshotReread = outcome.snapshotReread;
     heldBefore = outcome.heldBefore;
+    heldItem = outcome.heldItem;
     target = outcome.target;
     executorResult = outcome.executorResult;
     perturbation = outcome.perturbation;
@@ -1328,6 +1376,7 @@ export async function runLiveAction(plan) {
       ...(failure?.detail === undefined ? {} : { detail: failure.detail }),
       target,
       held,
+      heldItem,
       receipts,
       reread: snapshotReread ?? snapshotBefore,
       perturbation,
@@ -1360,6 +1409,7 @@ export async function runLiveAction(plan) {
         : (actionReceipt?.reasonCode ?? "no_terminal_receipt")),
     target,
     held,
+    heldItem,
     receipts,
     reread: snapshotReread,
     perturbation,

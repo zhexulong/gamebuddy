@@ -176,6 +176,7 @@ async function prepareNativeLocalPlayerFixtureInternal(options) {
       options.binding,
       options.action,
       await readExperimentalActionIds(options),
+      options.heldItemQualifiedId ?? "",
     );
     // Opt-in evidence-only probe block. It is written only when the caller
     // supplies it, so ordinary action runs keep an unchanged config shape.
@@ -278,6 +279,11 @@ export async function verifyNativeLocalPlayerFixture(options) {
     !Number.isInteger(fixture.TimeoutSeconds) ||
     fixture.FixtureScenario !== fixtureScenario(actions, options.action)
   )
+    throw new Error("native_local_fixture_config_invalid");
+  // A declared hand is one of the fixture's Givens, so the written config is read back and compared: a caller that named
+  // `(O)72` and got a world with an empty hand would have no way to tell a Mod refusal from a config that never carried
+  // the field. Absent on both sides is the ordinary case and passes.
+  if (fixture.HeldItemQualifiedId !== (options.heldItemQualifiedId ?? ""))
     throw new Error("native_local_fixture_config_invalid");
   if (
     config.Portfolio?.Enable === true ||
@@ -1224,7 +1230,7 @@ function configureNativeLocalPlayerBootstrap(
   result.PresentationLocale = companionLocale;
   return result;
 }
-function configureNativeLocalPlayer(
+export function configureNativeLocalPlayer(
   config,
   observedSaveSlot,
   timeoutSeconds,
@@ -1232,6 +1238,7 @@ function configureNativeLocalPlayer(
   binding,
   action,
   experimentalActionIds,
+  heldItemQualifiedId = "",
 ) {
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
     throw new Error("invalid_native_local_fixture_timeout");
@@ -1257,6 +1264,11 @@ function configureNativeLocalPlayer(
     ObservedSaveSlot: observedSaveSlot,
     TimeoutSeconds: timeoutSeconds,
     FixtureScenario: fixtureScenario(actions, action),
+    // The one hand a scenario cannot state for itself. Empty means "this scenario declares no hand", which is what every
+    // scenario before this field meant; the Mod mints the declared id into a free slot and selects it
+    // (`ModEntry.Fixtures.cs`, ApplyNativeLocalPlayerFixtureHeldItem), refusing by name when the id is unknown or the
+    // pack has no room.
+    HeldItemQualifiedId: heldItemQualifiedId,
   };
   result.Portfolio = { ...(result.Portfolio ?? {}), Enable: false };
   result.HostAutomation = { ...(result.HostAutomation ?? {}), Enable: false };

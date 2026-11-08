@@ -24,7 +24,10 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writ
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-
+import {
+  configureNativeLocalPlayer,
+  verifyNativeLocalPlayerFixture,
+} from "./lib/stardew-native-local-player-fixture.mjs";
 import { GATE_EXEMPT_PUBLISHED_ACTIONS } from "./lib/stardew-published-action-registry.mjs";
 import {
   buildBlock,
@@ -288,20 +291,17 @@ test("recovery refuses under a running game, and a restore that refused is a blo
   assert.match(facts.problems.join("\n"), /live_action_fixture_restore_failed:1/u);
 });
 
-test("the held vocabulary is the surface's own enum, and an ordinary item id is refused as not-yet-measurable", async () => {
+test("the held vocabulary is the surface's own enum, and an ordinary item id is pointed at its own flag", async () => {
   const categories = heldToolCategories();
   assert.ok(categories.length >= 10, `equip_tool publishes ${categories.length} tool categories`);
   assert.ok(categories.includes("axe") && categories.includes("hoe") && categories.includes("watering_can"));
   for (const category of categories) assert.match(category, /^[a-z][a-z0-9_]{0,31}$/u);
 
   await withFixtureRoot(async (root) => {
-    // The item-in-hand slice is blocked on a fixture field, not on the caller: the code says so, and the note that
-    // travels with it names the missing authority so nobody reads the absence as a pass.
+    // An item id through `--held` is not a bad argument: it is the OTHER flag's job, and the code says which one.
     const item = parseLiveActionArguments(["--action", "pet_animal", "--held", "(O)72", "--fixture-root", root]);
     const itemError = await refusalOfAsync(() => planLiveAction(item, { env: PLAN_ENV }));
-    assert.equal(itemError?.message, "live_action_held_item_unsupported:(O)72");
-    assert.match(refusalNote(itemError.message), /NativeLocalPlayerFixtureConfig has no item field/u);
-    assert.match(refusalNote(itemError.message), /not measured/u);
+    assert.equal(itemError?.message, "invalid_held_selector:(O)72:use_--held-item");
 
     // Anything else is still an argument fact.
     const nonsense = parseLiveActionArguments(["--action", "pet_animal", "--held", "wat", "--fixture-root", root]);
@@ -314,9 +314,149 @@ test("the held vocabulary is the surface's own enum, and an ordinary item id is 
       { env: PLAN_ENV },
     );
     assert.equal(tool.held, "axe");
+    assert.equal(tool.heldItem, null);
     assert.equal(tool.heldRunnerFile, "run-stardew-native-local-player-equip-tool-smoke.mjs");
     assert.deepEqual(tool.heldExtra, ["equip_tool"]);
+
+    // The declared hand is a FIXTURE Given: it must not widen the action set with equip_tool, and it must reach the
+    // config the harness writes under exactly the field the Mod reads.
+    const declared = await planLiveAction(
+      parseLiveActionArguments(["--action", "pet_animal", "--held-item", "(O)72", "--fixture-root", root]),
+      { env: PLAN_ENV },
+    );
+    assert.equal(declared.heldItem, "(O)72");
+    assert.equal(declared.held, null);
+    assert.deepEqual(declared.heldExtra, [], "a declared hand needs no action: the fixture mints it");
+    assert.deepEqual(declared.actions, ["pet_animal"]);
+    assert.equal(declared.scenario, "native_pet_animal_v1");
+    assert.deepEqual(describePlan(declared).heldItem, {
+      qualifiedItemId: "(O)72",
+      appliedBy: "NativeLocalPlayerFixture.HeldItemQualifiedId",
+    });
+    assert.match(describeExercise(declared), /held=item:\(O\)72 \(fixture HeldItemQualifiedId\)/u);
   });
+});
+
+test("the declared hand reaches the written config, and a config that lost it is refused on the read-back", () => {
+  const binding = {
+    version: 1,
+    logicalSaveName: "GameBuddyFixtureTest",
+    observedSaveSlot: SLOT,
+    saveId: "123456789",
+    worldId: "123456789",
+    playerId: "123456789",
+    companionId: "companion_native_local",
+  };
+  const withHand = configureNativeLocalPlayer(null, SLOT, 180, ["pet_animal"], binding, "pet_animal", [], "(O)72");
+  assert.equal(withHand.NativeLocalPlayerFixture.HeldItemQualifiedId, "(O)72");
+  assert.equal(withHand.NativeLocalPlayerFixture.FixtureScenario, "native_pet_animal_v1");
+  // Every run that declares no hand keeps the empty statement the Mod reads as "this scenario declares none".
+  const plain = configureNativeLocalPlayer(null, SLOT, 180, ["pet_animal"], binding, "pet_animal", []);
+  assert.equal(plain.NativeLocalPlayerFixture.HeldItemQualifiedId, "");
+  // A run that replaces a config that had a hand must not inherit it: the field is the fixture's, not the file's.
+  const inherited = configureNativeLocalPlayer(withHand, SLOT, 180, ["pet_animal"], binding, "pet_animal", []);
+  assert.equal(inherited.NativeLocalPlayerFixture.HeldItemQualifiedId, "");
+});
+
+test("a config that lost the declared hand is refused when the fixture reads it back", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gamebuddy-live-action-verify-"));
+  try {
+    const modsPath = join(root, "mods");
+    const releaseDir = join(root, "release");
+    const modRoot = join(modsPath, "GameBuddy");
+    mkdirSync(modRoot, { recursive: true });
+    mkdirSync(releaseDir, { recursive: true });
+    for (const name of [
+      "GameBuddy.Stardew.dll",
+      "GameBuddy.Stardew.Core.dll",
+      "manifest.json",
+      "GameBuddy.Stardew.deps.json",
+    ])
+      writeFileSync(join(modRoot, name), "");
+    const binding = {
+      version: 1,
+      logicalSaveName: "GameBuddyFixtureTest",
+      observedSaveSlot: SLOT,
+      saveId: "123456789",
+      worldId: "123456789",
+      playerId: "123456789",
+      companionId: "companion_native_local",
+    };
+    writeFileSync(
+      join(modRoot, "config.json"),
+      JSON.stringify(configureNativeLocalPlayer(null, SLOT, 180, ["pet_animal"], binding, "pet_animal", [], "(O)72")),
+    );
+    const options = {
+      root,
+      modsPath,
+      releaseDir,
+      saveName: SLOT,
+      action: "pet_animal",
+      heldItemQualifiedId: "(O)72",
+    };
+    const verified = await verifyNativeLocalPlayerFixture(options);
+    assert.equal(verified.state, "verified");
+    // A writer that forgot the field would leave a world with the wrong hand, and nothing downstream could tell: the
+    // read-back is the only place the loss is visible, so it refuses instead of verifying.
+    const lost = await refusalOfAsync(() => verifyNativeLocalPlayerFixture({ ...options, heldItemQualifiedId: "" }));
+    assert.equal(lost?.message, "native_local_fixture_config_invalid");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the two held flags name one hand each, and both together are refused by name", () => {
+  const error = refusalOf(() =>
+    parseLiveActionArguments(["--action", "pet_animal", "--held", "axe", "--held-item", "(O)72"]),
+  );
+  assert.equal(error?.message, "live_action_held_conflict");
+  const malformed = refusalOf(() => parseLiveActionArguments(["--action", "pet_animal", "--held-item", "72"]));
+  assert.equal(malformed?.message, "invalid_held_item:72");
+  assert.equal(parseLiveActionArguments(["--action", "pet_animal", "--held-item", "(H)0"]).heldItem, "(H)0");
+});
+
+test("a declared hand the world does not show is refused before the action, and the hand is reported by id", async () => {
+  // The world disagrees: the fixture named `(O)72` and the selected slot holds something else (here: nothing).
+  const { plan, config } = await planForStub({ held: null, heldItem: "(O)72" });
+  const wrong = stubBridgeSession({ holding: null, holdingItem: null });
+  const error = await refusalOfAsync(() => runOneAction({ plan, session: wrong, config }));
+  assert.equal(error?.message, "live_action_held_item_not_in_hand:(O)72");
+  assert.deepEqual(error.detail, {
+    declared: "(O)72",
+    observed: { tool: null, slot: 0, item: null },
+  });
+  assert.deepEqual(wrong.executed, [], "nothing may be executed against a hand nobody declared");
+  assert.match(refusalNote(error.message), /not measured/u);
+
+  // The world agrees: the hand is the declared id, and it is still there after the action.
+  const agreeing = stubBridgeSession({ holding: null, holdingItem: "(O)72" });
+  const outcome = await runOneAction({ plan, session: agreeing, config });
+  assert.deepEqual(outcome.heldItem, {
+    qualifiedItemId: "(O)72",
+    slotBefore: 2,
+    inHandBefore: true,
+    inHandAfter: true,
+  });
+  assert.deepEqual(agreeing.executed, ["pet_animal"], "no equip_tool: a declared hand needs no action");
+
+  const block = buildBlock({
+    plan,
+    verdict: "passed",
+    reasonCode: outcome.executorResult.reasonCode,
+    target: outcome.target,
+    held: { before: outcome.heldBefore, after: describeHeldState(outcome.snapshotReread) },
+    heldItem: outcome.heldItem,
+    receipts: agreeing.receipts,
+    reread: outcome.snapshotReread,
+    perturbation: null,
+    restore: { fixtureRestored: true, saveRestored: true, process: { stillRunning: [] } },
+    startedAt: Date.now(),
+  });
+  process.stdout.write(
+    `live_action_held_item_block: ${JSON.stringify({ held: block.held, heldItem: block.heldItem })}\n`,
+  );
+  assert.equal(block.held.before.item, "(O)72");
+  assert.equal(block.held.after.item, "(O)72");
 });
 
 test("a leftover working save refuses the launch before any fixture mutation, naming its mtime and identity", async () => {
@@ -852,13 +992,14 @@ test("a fixture release whose child refused is reported as a failed restore, not
   });
 });
 
-async function planForStub({ held = "axe" } = {}) {
+async function planForStub({ held = "axe", heldItem = null } = {}) {
   const plan = await withFixtureRoot((root) =>
     planLiveAction(
       parseLiveActionArguments([
         "--action",
         "pet_animal",
         ...(held === null ? [] : ["--held", held]),
+        ...(heldItem === null ? [] : ["--held-item", heldItem]),
         "--fixture-root",
         root,
       ]),
@@ -903,7 +1044,7 @@ function stubClientConfig(plan) {
  * the case this suite has to be able to arrange without a game. `executed` is the call log, so "the executor never ran"
  * is asserted rather than inferred from a missing receipt.
  */
-function stubBridgeSession({ holding, pets = null }) {
+function stubBridgeSession({ holding = null, holdingItem = null, pets = null }) {
   const pet = {
     targetId: "pet_0123456789abcdef",
     x: 6,
@@ -914,7 +1055,11 @@ function stubBridgeSession({ holding, pets = null }) {
     stationary: true,
   };
   let revision = 10;
+  // `holding` is what the projection calls a TOOL (`currentTool`, e.g. `(T)Axe`); `holdingItem` is the qualified id of
+  // whatever occupies the selected slot, which for an ordinary item is the item and `currentTool` is null.
   let currentTool = holding;
+  let currentItem = holdingItem ?? holding;
+  let ownSlot = currentItem === null ? 0 : 2;
   let petTargets = pets === null ? [pet] : [...pets];
   const executed = [];
   const snapshot = () => ({
@@ -925,8 +1070,8 @@ function stubBridgeSession({ holding, pets = null }) {
     activeExecution: null,
     capabilities: ["cancel_active_execution", "inspect_self", "pet_animal", "equip_tool"],
     currentTool,
-    currentToolSlot: currentTool === null ? 0 : 2,
-    currentToolSlotItem: currentTool,
+    currentToolSlot: ownSlot,
+    currentToolSlotItem: currentItem,
     petTargets: petTargets.map((row) => ({ ...row })),
   });
   const receipts = [];
@@ -958,8 +1103,11 @@ function stubBridgeSession({ holding, pets = null }) {
               },
             }),
       };
-      if (request.action === "equip_tool") currentTool = "(T)Axe";
-      else petTargets = [];
+      if (request.action === "equip_tool") {
+        currentTool = "(T)Axe";
+        currentItem = "(T)Axe";
+        ownSlot = 2;
+      } else petTargets = [];
       receipts.push(terminal);
       return { requestId: request.requestId, executionId, state: "accepted" };
     },
