@@ -183,3 +183,67 @@ test("verify fails on valid descriptor version drift and cleans temporary output
     await rm(root, { recursive: true, force: true });
   }
 });
+
+/**
+ * The three cases that make the new authority testable.
+ *
+ * Measured 2026-11-08: `check:sbom` failed on a tree where nothing in the repository had changed - the worktree
+ * `pnpm-lock.yaml` had been rewritten by another lane's install, and the generator hashed the disk copy while the
+ * artifact is about the commit. These assert both halves: verify reads the committed input, and write refuses to
+ * freeze an uncommitted one.
+ */
+test("write refuses a lockfile that is not the committed one", async () => {
+  const root = await fixture();
+  try {
+    await assert.rejects(
+      generateSbom({
+        root,
+        output: path.join(root, "out.json"),
+        run: () => JSON.stringify(inventory),
+        committed: async () => Buffer.from("different lockfile\n"),
+      }),
+      /sbom_lockfile_dirty/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("verify reads the committed lockfile, so a worktree edit cannot make the artifact unverifiable", async () => {
+  const root = await fixture();
+  try {
+    const output = path.join(root, "third_party", "sbom-node.json");
+    const run = () => JSON.stringify(inventory);
+    const committed = async () => lockBytes;
+    await generateSbom({ root, output, run, committed });
+    // The disk copy moves; the commit does not.
+    await writeFile(path.join(root, "pnpm-lock.yaml"), Buffer.from("fixture lockfile, rewritten by an install\n"));
+    await verifySbom({
+      root,
+      output,
+      generate: ({ root: r, output: o }) => generateSbom({ root: r, output: o, run, mode: "verify", committed }),
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("verify fails closed when no committed lockfile can be read", async () => {
+  const root = await fixture();
+  try {
+    const output = path.join(root, "third_party", "sbom-node.json");
+    const run = () => JSON.stringify(inventory);
+    await generateSbom({ root, output, run, committed: async () => lockBytes });
+    await assert.rejects(
+      verifySbom({
+        root,
+        output,
+        generate: ({ root: r, output: o }) =>
+          generateSbom({ root: r, output: o, run, mode: "verify", committed: async () => null }),
+      }),
+      /sbom_lockfile_unavailable/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

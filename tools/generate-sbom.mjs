@@ -1,5 +1,14 @@
 #!/usr/bin/env node
-/** Generate and verify the deliberately narrow, descriptor-bound Node dependency inventory. */
+/** Generate and verify the deliberately narrow, descriptor-bound Node dependency inventory.
+ *
+ * WHICH LOCKFILE (measured 2026-11-08): this artifact is committed, so the input it describes is the committed
+ * `pnpm-lock.yaml` - `git show HEAD:pnpm-lock.yaml` - not whatever the worktree happens to hold. `check:sbom` failed on a
+ * tree where nothing in the repository had changed, because another lane's install had rewritten the worktree lockfile
+ * (its HEAD copy still hashed to the recorded `4337739e…`). So: VERIFY hashes the committed copy and fails closed with
+ * `sbom_lockfile_unavailable` when there is none; WRITE refuses a worktree copy that differs from HEAD with
+ * `sbom_lockfile_dirty`, because publishing would freeze an input nobody reviewed. The inventory command still reads
+ * the worktree, which is why a dirty tree can legitimately produce a different component set - reported as drift.
+ */
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
@@ -162,10 +171,21 @@ async function runPnpmLicenses({ cwd }) {
     })
   ).stdout;
 }
-async function hashLockfile(root, read = readFile) {
-  return createHash("sha256")
-    .update(await read(resolve(root, LOCKFILE)))
-    .digest("hex");
+function sha256OfBytes(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+/** The lockfile as the repository has it, or `null` where there is no repository or no HEAD to ask. */
+async function readCommittedLockfile(root) {
+  try {
+    const { stdout } = await execFileAsync("git", ["show", `HEAD:${LOCKFILE}`], {
+      cwd: root,
+      encoding: "buffer",
+      maxBuffer: MAX_BUFFER,
+    });
+    return Buffer.from(stdout);
+  } catch {
+    return null;
+  }
 }
 export async function publishWithoutOverwrite(output, content) {
   const temporary = `${output}.tmp-${process.pid}`;
@@ -188,13 +208,25 @@ export async function generateSbom({
   read = readFile,
   mkdirImpl = mkdir,
   publish = publishWithoutOverwrite,
+  mode = "write",
+  committed = readCommittedLockfile,
 } = {}) {
   const rootPath = resolve(root);
   const outputPath = resolve(output);
   if (outputPath === rootPath || relative(rootPath, outputPath).startsWith(".."))
     throw invalidInput("SBOM output must be inside the repository root");
   const policy = await loadPolicy(rootPath, policyPath, read);
-  const lockfileSha256 = await hashLockfile(rootPath, read);
+  const onDisk = Buffer.from(await read(resolve(rootPath, LOCKFILE)));
+  const inCommit = await committed(rootPath);
+  if (mode === "verify" && inCommit === null)
+    throw invalidInput(
+      `sbom_lockfile_unavailable: no HEAD:${LOCKFILE} to verify against; this artifact is about a commit`,
+    );
+  if (mode === "write" && inCommit !== null && !inCommit.equals(onDisk))
+    throw invalidInput(
+      `sbom_lockfile_dirty: ${LOCKFILE} differs from HEAD; commit it first - an SBOM may not freeze an uncommitted input`,
+    );
+  const lockfileSha256 = sha256OfBytes(mode === "verify" ? inCommit : onDisk);
   let inventory;
   try {
     inventory = JSON.parse(await run({ cwd: rootPath, command: [...LICENSE_COMMAND] }));
@@ -230,7 +262,7 @@ export async function verifySbom({
   if (dirname(temporaryOutput) !== dirname(outputPath))
     throw invalidInput("SBOM verification temporary output escapes destination directory");
   try {
-    await generate({ root: rootPath, output: temporaryOutput, policyPath });
+    await generate({ root: rootPath, output: temporaryOutput, policyPath, mode: "verify" });
     const [expected, actual] = await Promise.all([read(outputPath), read(temporaryOutput)]);
     if (!Buffer.from(expected).equals(Buffer.from(actual)))
       throw invalidInput("SBOM output drifted; regenerate and review third_party/sbom-node.json");
