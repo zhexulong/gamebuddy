@@ -435,6 +435,55 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
   });
 
   /**
+   * A candidate that carries the contract's optional `modLoader` is still a candidate.
+   *
+   * Measured 2026-11-08, in the live run `frontend-l`: the Host answered `resolved` with one candidate, and the panel
+   * showed "无法读取游戏安装搜索结果。" (`dataState: "result-unavailable"`, `candidateRows: 0`). The browser's mirror
+   * validated candidates by whole key SETS - one list without `location`, one with it - so the moment the Host sent the
+   * optional `modLoader` the contract has always declared, neither list matched,
+   * `invalid_stardew_installation_candidate` was thrown, the panel caught a code it does not recognise, and the player
+   * was told the search could not be read.
+   *
+   * This case stubs the route with the Host's real shape, which is why it catches that: the earlier cases built rows
+   * with no optional member at all, so the mirror and the fixture agreed with each other and disagreed with the product.
+   */
+  test("a candidate carrying the optional mod loader renders as a row, not as an unreadable search", async ({ page }) => {
+    const withLoader = (id: string, modLoader: "present" | "missing", location?: string) => ({
+      candidateId: id,
+      source: "steam-vdf",
+      label: "Stardew Valley",
+      hint: "Detected installation (path hidden)",
+      status: "admission_required",
+      modLoader,
+      ...(location === undefined ? {} : { location }),
+    });
+    await page.route(BOOTSTRAP_ROUTE, (route) => route.fulfill(jsonOk(root)));
+    await mountGameDrawerRoutes(page);
+    await page.route(DRAFT_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })));
+    await page.route(
+      DISCOVERY_ROUTE,
+      (route) =>
+        route.fulfill(
+          jsonOk({
+            apiVersion: 1,
+            candidates: [withLoader(candidateId, "present", "D: · Steam"), withLoader(candidateStatusId, "missing")],
+            diagnostics: [],
+          }),
+        ),
+    );
+
+    await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+    await openGameDrawer(page);
+
+    // The panel read the reply the Host actually sends, so both rows are there and neither is a failure.
+    await expect(panel(page)).toHaveAttribute("data-state", "candidates");
+    await expect(panel(page).locator(".installation-candidate")).toHaveCount(2);
+    // And the fact the Host reported reaches the player: which folder can load the companion Mod.
+    await expect(panel(page).locator('[data-mod-loader="present"]')).toHaveCount(1);
+    await expect(panel(page).locator('[data-mod-loader="missing"]')).toHaveCount(1);
+  });
+
+  /**
    * A scan the player did not ask for may not lock the folder picker.
    *
    * The component's own contract says the picker is offered in every state, because it

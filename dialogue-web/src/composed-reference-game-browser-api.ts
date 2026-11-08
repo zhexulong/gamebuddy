@@ -73,20 +73,33 @@ const CABIN_CHOICES_KEYS = ["apiVersion", "choices"] as const;
 const CABIN_CHOICE_KEYS = ["displayLabel", "availability", "choiceHandle", "expiresAtMs"] as const;
 const CABIN_CONFIRMATION_KEYS = ["apiVersion", "status"] as const;
 const INSTALLATION_DISCOVERY_KEYS = ["apiVersion", "candidates", "diagnostics"] as const;
-const INSTALLATION_CANDIDATE_KEYS = ["candidateId", "source", "label", "hint", "status"] as const;
 /**
- * The same shape carrying `location`, which the contract declares `Type.Optional`:
- * the drive and library folder's own name, so two installations of the same game can
- * be told apart without publishing a path.
+ * A candidate's required members, and the members the contract declares `Type.Optional`.
+ *
+ * Enumerating whole key SETS is what this used to do (one list for "with location", one without), and on 2026-11-08
+ * that broke the panel for real: the Host started sending the optional `modLoader` the contract has always declared,
+ * the key set matched neither list, so `invalid_stardew_installation_candidate` was thrown, the panel caught a code it
+ * does not recognise, and the player was shown "cannot read the installation search result" while the Host's own answer
+ * was `resolved` with one candidate. A member declared optional by the contract must be validated on its own, never as
+ * part of a combination, or every new optional member needs 2^n new lists - and the one that is forgotten is silent.
  */
-const INSTALLATION_CANDIDATE_KEYS_WITH_LOCATION = [
-  "candidateId",
-  "source",
-  "label",
-  "hint",
-  "location",
-  "status",
-] as const;
+const INSTALLATION_CANDIDATE_REQUIRED_KEYS = ["candidateId", "source", "label", "hint", "status"] as const;
+const INSTALLATION_CANDIDATE_OPTIONAL_KEYS = ["location", "modLoader"] as const;
+const INSTALLATION_CANDIDATE_ALLOWED_KEYS: ReadonlySet<string> = new Set([
+  ...INSTALLATION_CANDIDATE_REQUIRED_KEYS,
+  ...INSTALLATION_CANDIDATE_OPTIONAL_KEYS,
+]);
+/**
+ * Every required member present, and nothing outside the required-plus-optional set. Optional members are checked
+ * individually below (`location` as a bounded label, `modLoader` as one of its two literals).
+ */
+function hasInstallationCandidateKeys(value: Record<string, unknown>): boolean {
+  const own = Object.keys(value);
+  return (
+    INSTALLATION_CANDIDATE_REQUIRED_KEYS.every((key) => own.includes(key)) &&
+    own.every((key) => INSTALLATION_CANDIDATE_ALLOWED_KEYS.has(key))
+  );
+}
 const INSTALLATION_DIAGNOSTICS_MAX = 32;
 
 /**
@@ -680,10 +693,7 @@ function validateStardewInstallationDiscovery(value: unknown): StardewInstallati
   for (const candidate of value.candidates) {
     if (
       !isRecord(candidate) ||
-      !(
-        hasExactKeys(candidate, INSTALLATION_CANDIDATE_KEYS) ||
-        hasExactKeys(candidate, INSTALLATION_CANDIDATE_KEYS_WITH_LOCATION)
-      ) ||
+      !hasInstallationCandidateKeys(candidate) ||
       !isInstallationCandidateId(candidate.candidateId) ||
       !isBoundedString(candidate.source, 1, 64) ||
       !isBoundedString(candidate.label, 1, 256) ||
