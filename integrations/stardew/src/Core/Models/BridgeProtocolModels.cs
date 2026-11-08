@@ -874,6 +874,9 @@ public sealed record BridgeSnapshot(
     // neighbourhood, so without this count a patch larger than the bound is indistinguishable from a complete one.
     // Defaulted and LAST for the same reason as its siblings above: the positional list is already closed.
     int? SoilTilesOmitted = null,
+    // The same statement for the building family: `farmBuildingTargets` is capped at eight `built` rows, so a farm with
+    // more buildings than the bound used to answer "eight" whether it had eight or eighty.
+    int? FarmBuildingTargetsOmitted = null,
     // What discovery WITHHELD, and why: the sibling of the truncation counts above. `soilTilesOmitted` states "the cap
     // took rows"; this states "the filter took rows, and here is the reason". Without it a family's empty list answers
     // "there is a tree here but you cannot chop it" and "there is no tree here" with the same `[]`, and the companion

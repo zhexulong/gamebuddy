@@ -372,6 +372,12 @@ export type Snapshot = Readonly<{
    */
   soilTilesOmitted?: number | null;
   /**
+   * The farm buildings the Mod's cap left out of `farmBuildingTargets`, so a farm with more buildings than the bound
+   * says so instead of reading as exactly the bound. Null when the family itself was not measured
+   * (`build_farm_building` not advertised).
+   */
+  farmBuildingTargetsOmitted?: number | null;
+  /**
    * What discovery WITHHELD, and why - the sibling of the truncation counts above.
    *
    * <p>
@@ -1985,6 +1991,7 @@ export const SNAPSHOT_KEYS = [
   "fixedInteractionPointsOmitted",
   "soilTiles",
   "soilTilesOmitted",
+  "farmBuildingTargetsOmitted",
   "discoveryExclusions",
   "discoveryExclusionsOmitted",
   "toolSlots",
@@ -4121,6 +4128,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     !isNonNegativeSafeInteger(value.soilTilesOmitted)
   )
     return "invalid_snapshot:soilTilesOmitted";
+  // The same count for the building family, whose cap is eight `built` rows.
+  if (
+    value.farmBuildingTargetsOmitted !== undefined &&
+    value.farmBuildingTargetsOmitted !== null &&
+    !isNonNegativeSafeInteger(value.farmBuildingTargetsOmitted)
+  )
+    return "invalid_snapshot:farmBuildingTargetsOmitted";
   // The same count for the exclusion register: it says how many distinct (family, reason) rows the Mod's cap left
   // out, and without it a bounded register reads as a complete one.
   if (

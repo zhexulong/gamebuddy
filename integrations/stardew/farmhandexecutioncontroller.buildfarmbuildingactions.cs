@@ -431,8 +431,9 @@ internal sealed partial class ExecutionManager
     /// Nothing is synthesized: a type the game does not declare, a site that is not free, or a
     /// building that is not there is not advertised.
     /// </summary>
-    internal static IReadOnlyList<BridgeFarmBuildingTarget> DiscoverBuildFarmBuildingTargets(Farmer player)
+    internal static IReadOnlyList<BridgeFarmBuildingTarget> DiscoverBuildFarmBuildingTargets(Farmer player, out int omitted)
     {
+        omitted = 0;
         GameLocation? location = player.currentLocation;
         if (location is null || !location.IsBuildableLocation() || Game1.buildingData is null)
             return Array.Empty<BridgeFarmBuildingTarget>();
@@ -479,7 +480,13 @@ internal sealed partial class ExecutionManager
             .ToList();
         foreach (Building building in standing)
         {
-            if (builtCount >= BuildFarmBuildingTargetLimit) break;
+            if (builtCount >= BuildFarmBuildingTargetLimit)
+            {
+                // The cap is a published bound, so what it took is published too: `building.occupiesTile` rows a caller
+                // cannot see are the difference between "this farm has eight buildings" and "this farm has more".
+                omitted += 1;
+                continue;
+            }
             // The countdown is a PUBLISHED FIELD of the `built` row, not a filter: a building still being built is a
             // building standing on the farm, and `Building.dayUpdate` only ever decrements this while it is above zero
             // (Building.cs:1582-1590), so a negative value names no state the engine can produce.

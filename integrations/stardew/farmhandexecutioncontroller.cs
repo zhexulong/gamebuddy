@@ -2355,6 +2355,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         IReadOnlyList<BridgeSoilTile>? soilTiles = advertisedCapabilities.Contains("till_soil", StringComparer.Ordinal)
             ? DiscoverSoilTiles(player, out soilTilesOmitted)
             : null;
+        // The farm-building family, with the count its cap left out. Declared here rather than at the initializer
+        // because an `out` variable defined inside a ternary is only assigned on the branch that runs.
+        int farmBuildingTargetsOmitted = 0;
+        IReadOnlyList<BridgeFarmBuildingTarget>? farmBuildingTargets =
+            advertisedCapabilities.Contains("build_farm_building", StringComparer.Ordinal)
+                ? DiscoverBuildFarmBuildingTargets(player, out farmBuildingTargetsOmitted)
+                : null;
         // Whether any family that reports exclusions was measured at all. Null means NOT MEASURED (no such family was
         // advertised); an empty array means measured and nothing withheld. A world with one tapped tree and a world
         // with no tree must not answer the same thing, and neither must "not measured" and "nothing withheld".
@@ -2497,8 +2504,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // advertised, because both name the same body-slot targets.
             WearableTargets: advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal) ? DiscoverWearableTargets(player) : null,
             // The farm-building commission sites and the buildings already standing, only while the
-            // action is itself advertised.
-            FarmBuildingTargets: advertisedCapabilities.Contains("build_farm_building", StringComparer.Ordinal) ? DiscoverBuildFarmBuildingTargets(player) : null,
+            // action is itself advertised. The `out` count is hoisted above the initializer because a ternary that
+            // DEFINES the variable only assigns it on the branch that runs.
+            FarmBuildingTargets: farmBuildingTargets,
             BuildingChestTargets: advertisedCapabilities.Contains("load_building_chest", StringComparer.Ordinal) || advertisedCapabilities.Contains("collect_building_chest_output", StringComparer.Ordinal) ? DiscoverBuildingChestTargets(player, discoveryExclusions) : null,
             // The world-object lane's single shared projection: placement candidates, removable and
             // non-removable objects, breakable containers, placed furniture and empty pedestals,
@@ -2531,7 +2539,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // count of what the cap left out rides beside the list, so truncation is stated.
             FixedInteractionPoints: DiscoverFixedInteractionPoints(player, out int fixedInteractionPointsOmitted),
             FixedInteractionPointsOmitted: fixedInteractionPointsOmitted,
-            SoilTilesOmitted: soilTiles is null ? null : soilTilesOmitted
+            SoilTilesOmitted: soilTiles is null ? null : soilTilesOmitted,
+            // The cap on `farmBuildingTargets` is 8 `built` rows; the count of what it left out rides beside the
+            // family for the same reason `soilTilesOmitted` does. A farm with more buildings than the bound answered
+            // "eight" whether it had eight or eighty.
+            FarmBuildingTargetsOmitted: farmBuildingTargets is null ? null : farmBuildingTargetsOmitted
         );
         // The rows are read AFTER every family above has walked the world and recorded into the same recorder, so this
         // is one publication of one measurement rather than a second pass over the map.
