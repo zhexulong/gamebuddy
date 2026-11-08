@@ -1,0 +1,450 @@
+import { hasOnlyKeys, isNonNegativeSafeInteger, isOpaqueId, isRecord } from "./protocol-target-facts.js";
+
+/**
+ * The `for_each` loop form, in one place, so the compiler that WRITES it and the wire validator that READS it back can
+ * never disagree about its grammar.
+ *
+ * <p>
+ * WHY THE FORM EXISTS. Measured from the plan scripts themselves: a "clear and plant a 3x20 patch" task ran 54 plan
+ * batches and produced `till_soil` on 22 distinct tiles inside a 10x8 box (28% density), `plant_seed` on 13 tiles inside
+ * 18x5 (14%), and no `water_crop` at all. The cause is the vocabulary rather than the planning: every node names ONE
+ * published `targetId`, and published soil/crop targets are bounded to Chebyshev 6, so a 20-tile row never fits one
+ * observation and the only behaviour left is reacting to the few tiles in view.
+ * </p>
+ * <p>
+ * WHAT THIS FILE DOES NOT DO. It does not expand anything. Expansion happens on the game thread against live state, and
+ * `FarmhandForEachRules` (Mod) is the authority for "does this row belong to this loop, and what happens to it". This
+ * file only decides whether a caller's declaration is a loop this product could ever run, and it answers WHY when it is
+ * not - a loop silently narrowed to the tiles in view is the defect the form was built to remove.
+ * </p>
+ * <p>
+ * THE AREA IS A SOURCE, NOT A PRIVILEGED FORM. "Every dry crop on the farm" is a family source and "every tree with
+ * health left" is a family source with a field predicate; neither is a rectangle. One loop semantic covers all three.
+ * </p>
+ */
+
+/** One scalar a `where` predicate or a `do` argument may carry. */
+export type PlanForEachScalar = string | number | boolean;
+
+/** A repeating position guard: `every: 3, offset: 1` claims local index 1, 4, 7 ... */
+export type PlanForEachStride = Readonly<{ every: number; offset: number }>;
+
+/**
+ * One predicate over a row. TWO SPELLINGS AND NO MORE: a FIELD test, or a POSITION guard on `col`/`row`.
+ *
+ * Position is the operator the whole form exists for. Trellis crops grow into impassable tiles, so a real farm leaves a
+ * walkable column between trellis columns and plants a filler crop between trellis rows; those decisions depend on the
+ * row's POSITION, never on what the tile contains, so a dispatch keyed on the row's kind cannot represent them.
+ */
+export type PlanForEachPredicate = Readonly<{
+  col?: PlanForEachStride;
+  row?: PlanForEachStride;
+  field?: string;
+  eq?: PlanForEachScalar;
+  ne?: PlanForEachScalar;
+  lt?: PlanForEachScalar;
+  lte?: PlanForEachScalar;
+  gt?: PlanForEachScalar;
+  gte?: PlanForEachScalar;
+  in?: readonly PlanForEachScalar[];
+}>;
+
+export type PlanForEachArea = Readonly<{ x: number; y: number; w: number; h: number }>;
+
+/** Where a loop reads its rows from: one rectangle, one published family, or one subject the Mod classifies. */
+export type PlanForEachSource =
+  | Readonly<{ area: PlanForEachArea }>
+  | Readonly<{ family: string }>
+  | Readonly<{ query: Readonly<{ subject: string; only?: string }> }>;
+
+/**
+ * What a matching row gets: a published action with its arguments, or `null` for "leave this row alone".
+ *
+ * `null` is a STATEMENT - "this column is a path" - and the Mod's pass counts it apart from a row no predicate claimed,
+ * because a deliberate path and a forgotten tile are different mistakes.
+ */
+export type PlanForEachEffect = Readonly<{ action: string }> & Readonly<Record<string, PlanForEachScalar>>;
+
+/**
+ * One more rule of the same pass: an optional predicate list and what a matching row gets.
+ *
+ * WHY A PASS HAS MORE THAN ONE RULE. A 3x20 intercropped patch is ONE intent and not three: hops on columns 0, 3, 6...,
+ * coffee on 1, 4, 7..., and column 2, 5, 8... deliberately a path. Three separate passes would report every tile a pass
+ * did not claim as `no_rule_matched` twice over, and a tile two rules claim would be worked twice; one pass with ordered
+ * rules decides each row exactly once, by the FIRST rule that claims it.
+ */
+export type PlanForEachRule = Readonly<{ where?: readonly PlanForEachPredicate[]; do: PlanForEachEffect | null }>;
+
+export type PlanForEachLoop = Readonly<{
+  source: PlanForEachSource;
+  where?: readonly PlanForEachPredicate[];
+  do: PlanForEachEffect | null;
+  /** The rules tried after this one, in the order the caller wrote them. */
+  then?: readonly PlanForEachRule[];
+}>;
+
+/** The three row sources. */
+export const PLAN_FOR_EACH_SOURCES: readonly string[] = Object.freeze(["area", "family", "query"]);
+
+/** The two axes a repeating position guard claims. */
+export const PLAN_FOR_EACH_AXES: readonly string[] = Object.freeze(["col", "row"]);
+
+/** The comparisons a field predicate offers. `in` is the only one that takes a list. */
+export const PLAN_FOR_EACH_COMPARISONS: readonly string[] = Object.freeze(["eq", "ne", "lt", "lte", "gt", "gte", "in"]);
+
+/**
+ * The token that means "whatever action the Mod's own classifier names for this row's kind".
+ *
+ * It is a REFERENCE and not a mapping the caller supplies: the classifier that names a kind is the only thing that can
+ * say which action clears it, so the table lives beside the classifier and a caller may not restate it. Mirrors
+ * `FarmhandForEachEffect.ByKindAction`; it is accepted here because the Host cannot resolve a Mod-classified action
+ * against its own vocabulary.
+ */
+export const PLAN_FOR_EACH_BY_KIND_ACTION = "by_kind";
+
+/**
+ * How many rows one loop may address.
+ *
+ * A per-INTENT bound, not a view radius: the point of the form is that a 3x20 row is bigger than the 13x13 an
+ * observation carries. Over the bound the answer names the count and the rectangle it covered - never a truncated table
+ * that reads as a finished pass. Mirrors `FarmhandForEachSource.MaximumRows`, and the two numbers are asserted equal
+ * against the Mod's own constant rather than restated silently.
+ */
+export const MAX_FOR_EACH_ROWS = 64;
+
+/** How many predicates one loop may carry: a conjunction long enough to be a rule, short enough to be read. */
+export const MAX_FOR_EACH_PREDICATES = 8;
+
+/** How many rules one pass may carry, this loop's own included. */
+export const MAX_FOR_EACH_RULES = 8;
+
+/** How many values one `in` list may carry. */
+export const MAX_FOR_EACH_VALUES = 8;
+
+/** How many arguments one `do` effect may name. */
+export const MAX_FOR_EACH_EFFECT_ARGUMENTS = 16;
+
+/** How deep the nesting scan walks before it stops looking: a loop is refused, never walked to exhaustion. */
+const MAX_FOR_EACH_SCAN_DEPTH = 6;
+
+/**
+ * Why a declaration is not a loop this product could run, or the loop itself.
+ *
+ * `code` is the grammar's own name for the mistake and `detail` says WHICH row of the declaration broke it, so the
+ * caller's refusal names the thing to fix instead of the whole document it already wrote.
+ */
+export type PlanForEachRejection = Readonly<{ ok: false; code: string; detail: string }>;
+
+export type PlanForEachReading = Readonly<{ ok: true; loop: PlanForEachLoop }> | PlanForEachRejection;
+
+function rejected(code: string, detail = ""): PlanForEachRejection {
+  return Object.freeze({ ok: false as const, code, detail });
+}
+
+/**
+ * Reads one `builder.for_each({ source, where, do })` argument.
+ *
+ * `actionIds` is the plannable vocabulary the `do` action is checked against, or `null` when the caller cannot supply
+ * one (the wire validator reads the same document back without a catalogue and must not invent the check).
+ */
+export function readForEachLoop(value: unknown, actionIds: readonly string[] | null): PlanForEachReading {
+  if (!isRecord(value)) return rejected("loop_invalid", "not_an_object");
+  // ONE LEVEL IS WHAT THIS BUYS, and nesting is refused BY NAME rather than flattened: a loop inside a loop would either
+  // multiply the row bound silently or expand against the outer row's tile, and both are a plan nobody wrote.
+  if (namesNestedLoop(value, 0)) return rejected("nested_loop_unsupported");
+  const unknownKey = Object.keys(value).find((key) => !["source", "where", "do", "then"].includes(key));
+  if (unknownKey !== undefined) return rejected("loop_invalid", `unknown:${unknownKey}`);
+  const source = readSource(value.source);
+  if (!source.ok) return source;
+  const where = readWhere(value.where);
+  if (!where.ok) return where;
+  const effect = readEffect(value.do, actionIds);
+  if (!effect.ok) return effect;
+  const alternates = readAlternates(value.then, actionIds);
+  if (!alternates.ok) return alternates;
+  const loop: PlanForEachLoop = Object.freeze({
+    source: source.source,
+    ...(where.predicates === undefined ? {} : { where: where.predicates }),
+    do: effect.effect,
+    ...(alternates.rules === undefined ? {} : { then: alternates.rules }),
+  });
+  return Object.freeze({ ok: true as const, loop });
+}
+
+type AlternatesReading = Readonly<{ ok: true; rules: readonly PlanForEachRule[] | undefined }> | PlanForEachRejection;
+
+/** The rules a pass tries after its own, in the order the caller wrote them. */
+function readAlternates(value: unknown, actionIds: readonly string[] | null): AlternatesReading {
+  if (value === undefined) return Object.freeze({ ok: true as const, rules: undefined });
+  if (!Array.isArray(value)) return rejected("loop_then_invalid", "not_an_array");
+  if (value.length + 1 > MAX_FOR_EACH_RULES)
+    return rejected("loop_then_invalid", `too_many:${String(value.length + 1)}`);
+  const rules: PlanForEachRule[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (!isRecord(entry)) return rejected("loop_then_invalid", `rule[${String(index)}]:not_an_object`);
+    const unknownKey = Object.keys(entry).find((key) => !["where", "do"].includes(key));
+    if (unknownKey !== undefined) return rejected("loop_then_invalid", `rule[${String(index)}]:unknown:${unknownKey}`);
+    if (!Object.hasOwn(entry, "do")) return rejected("loop_then_invalid", `rule[${String(index)}]:missing_do`);
+    const where = readWhere(entry.where);
+    if (!where.ok) return where;
+    const effect = readEffect(entry.do, actionIds);
+    if (!effect.ok) return effect;
+    rules.push(
+      Object.freeze({
+        ...(where.predicates === undefined ? {} : { where: where.predicates }),
+        do: effect.effect,
+      }),
+    );
+  }
+  return Object.freeze({ ok: true as const, rules: Object.freeze(rules) });
+}
+
+/** Whether the declaration names the same form again anywhere inside it. */
+function namesNestedLoop(value: unknown, depth: number): boolean {
+  if (depth > MAX_FOR_EACH_SCAN_DEPTH) return false;
+  if (Array.isArray(value)) return value.some((entry) => namesNestedLoop(entry, depth + 1));
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(([key, entry]) => key === "for_each" || namesNestedLoop(entry, depth + 1));
+}
+
+type SourceReading = Readonly<{ ok: true; source: PlanForEachSource }> | PlanForEachRejection;
+
+function readSource(value: unknown): SourceReading {
+  // A loop with no source is refused rather than defaulting to the actor's own tile: "the tile I am standing on" is not
+  // a rectangle, and a plan that quietly ran over one tile while the caller meant a patch is the measured defect.
+  if (value === undefined || value === null) return rejected("loop_source_invalid", "missing");
+  if (!isRecord(value)) return rejected("loop_source_invalid", "not_an_object");
+  const kinds = PLAN_FOR_EACH_SOURCES.filter((kind) => Object.hasOwn(value, kind));
+  if (kinds.length === 0) return rejected("loop_source_invalid", "missing");
+  if (kinds.length > 1) return rejected("loop_source_invalid", `ambiguous:${kinds.join(",")}`);
+  const unknownKey = Object.keys(value).find((key) => !PLAN_FOR_EACH_SOURCES.includes(key));
+  if (unknownKey !== undefined) return rejected("loop_source_invalid", `unknown:${unknownKey}`);
+  const kind = kinds[0]!;
+  if (kind === "area") return readArea(value.area);
+  if (kind === "family") {
+    const family = value.family;
+    if (typeof family !== "string" || family.length < 1 || family.length > 64)
+      return rejected("loop_source_invalid", "family");
+    return Object.freeze({ ok: true as const, source: Object.freeze({ family }) });
+  }
+  return readQuery(value.query);
+}
+
+function readArea(value: unknown): SourceReading {
+  if (!isRecord(value)) return rejected("loop_source_invalid", "area");
+  const { x, y, w, h } = value;
+  if (
+    !isNonNegativeSafeInteger(x) ||
+    !isNonNegativeSafeInteger(y) ||
+    !isNonNegativeSafeInteger(w) ||
+    !isNonNegativeSafeInteger(h) ||
+    !hasOnlyKeys(value, ["x", "y", "w", "h"])
+  )
+    return rejected("loop_source_invalid", "area");
+  // An extent of zero addresses no row, which is a loop that can never do anything - refused rather than run.
+  if (w < 1 || h < 1) return rejected("loop_source_invalid", "area");
+  const rows = w * h;
+  if (rows > MAX_FOR_EACH_ROWS) return rejected("loop_too_large", `${String(rows)}:${String(MAX_FOR_EACH_ROWS)}`);
+  return Object.freeze({
+    ok: true as const,
+    source: Object.freeze({ area: Object.freeze({ x, y, w, h }) }),
+  });
+}
+
+function readQuery(value: unknown): SourceReading {
+  if (!isRecord(value)) return rejected("loop_source_invalid", "query");
+  const subject = value.subject;
+  const only = value.only;
+  if (typeof subject !== "string" || subject.length < 1 || subject.length > 64)
+    return rejected("loop_source_invalid", "query");
+  if (only !== undefined && (typeof only !== "string" || only.length < 1 || only.length > 64))
+    return rejected("loop_source_invalid", "query");
+  if (!hasOnlyKeys(value, only === undefined ? ["subject"] : ["subject", "only"]))
+    return rejected("loop_source_invalid", "query");
+  return Object.freeze({
+    ok: true as const,
+    source: Object.freeze({
+      query: Object.freeze({ subject, ...(only === undefined ? {} : { only }) }),
+    }),
+  });
+}
+
+type WhereReading =
+  | Readonly<{ ok: true; predicates: readonly PlanForEachPredicate[] | undefined }>
+  | PlanForEachRejection;
+
+function readWhere(value: unknown): WhereReading {
+  // An absent predicate list is not an error: the caller may genuinely mean "every row of this source".
+  if (value === undefined) return Object.freeze({ ok: true as const, predicates: undefined });
+  if (!Array.isArray(value)) return rejected("loop_where_invalid", "not_an_array");
+  if (value.length > MAX_FOR_EACH_PREDICATES) return rejected("loop_where_invalid", `too_many:${String(value.length)}`);
+  const predicates: PlanForEachPredicate[] = [];
+  for (const [index, entry] of value.entries()) {
+    const predicate = readPredicate(entry, `predicate[${String(index)}]`);
+    if (!predicate.ok) return predicate;
+    predicates.push(predicate.predicate);
+  }
+  return Object.freeze({ ok: true as const, predicates: Object.freeze(predicates) });
+}
+
+type PredicateReading = Readonly<{ ok: true; predicate: PlanForEachPredicate }> | PlanForEachRejection;
+
+function readPredicate(value: unknown, at: string): PredicateReading {
+  if (!isRecord(value)) return rejected("loop_where_invalid", `${at}:not_an_object`);
+  const axes = PLAN_FOR_EACH_AXES.filter((axis) => Object.hasOwn(value, axis));
+  if (axes.length > 0) {
+    // A predicate that guards a position AND tests a field is two predicates, and a caller who meant two should write
+    // two: folding them would hide the second from the refusal that names it.
+    if (axes.length > 1 || Object.hasOwn(value, "field")) return rejected("loop_where_invalid", `${at}:ambiguous`);
+    const axis = axes[0]!;
+    const stride = readStride(value[axis], `${at}.${axis}`);
+    if (!stride.ok) return stride;
+    return Object.freeze({
+      ok: true as const,
+      predicate: axis === "col" ? Object.freeze({ col: stride.stride }) : Object.freeze({ row: stride.stride }),
+    });
+  }
+  const field = value.field;
+  if (typeof field !== "string" || field.length < 1 || field.length > 64)
+    return rejected("loop_where_invalid", `${at}:missing_field`);
+  const comparisons = PLAN_FOR_EACH_COMPARISONS.filter((comparison) => Object.hasOwn(value, comparison));
+  if (comparisons.length !== 1)
+    return rejected("loop_where_invalid", `${at}:${field}:one_of:${PLAN_FOR_EACH_COMPARISONS.join(",")}`);
+  const comparison = comparisons[0]!;
+  const unknownKey = Object.keys(value).find((key) => key !== "field" && !PLAN_FOR_EACH_COMPARISONS.includes(key));
+  if (unknownKey !== undefined) return rejected("loop_where_invalid", `${at}:${field}:unknown:${unknownKey}`);
+  if (comparison === "in") {
+    const list = value.in;
+    if (!Array.isArray(list) || list.length < 1 || list.length > MAX_FOR_EACH_VALUES)
+      return rejected("loop_where_invalid", `${at}:${field}:in`);
+    const values: PlanForEachScalar[] = [];
+    for (const [index, entry] of list.entries()) {
+      const scalar = readScalar(entry, `${at}.${field}.in[${String(index)}]`);
+      if (!scalar.ok) return scalar;
+      values.push(scalar.value);
+    }
+    return Object.freeze({
+      ok: true as const,
+      predicate: Object.freeze({ field, in: Object.freeze(values) }),
+    });
+  }
+  const scalar = readScalar(value[comparison], `${at}.${field}.${comparison}`);
+  if (!scalar.ok) return scalar;
+  switch (comparison) {
+    case "eq":
+      return Object.freeze({ ok: true as const, predicate: Object.freeze({ field, eq: scalar.value }) });
+    case "ne":
+      return Object.freeze({ ok: true as const, predicate: Object.freeze({ field, ne: scalar.value }) });
+    case "lt":
+      return Object.freeze({ ok: true as const, predicate: Object.freeze({ field, lt: scalar.value }) });
+    case "lte":
+      return Object.freeze({ ok: true as const, predicate: Object.freeze({ field, lte: scalar.value }) });
+    case "gt":
+      return Object.freeze({ ok: true as const, predicate: Object.freeze({ field, gt: scalar.value }) });
+    default:
+      return Object.freeze({ ok: true as const, predicate: Object.freeze({ field, gte: scalar.value }) });
+  }
+}
+
+type StrideReading = Readonly<{ ok: true; stride: PlanForEachStride }> | PlanForEachRejection;
+
+function readStride(value: unknown, at: string): StrideReading {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["every", "offset"]))
+    return rejected("loop_where_invalid", `${at}:expected:every,offset`);
+  const every = value.every;
+  const offset = value.offset;
+  // An offset at or past the stride claims no index at all, and a guard that can never match is indistinguishable from a
+  // tile nobody thought about - so it is refused rather than silently dead.
+  if (!isNonNegativeSafeInteger(every) || !isNonNegativeSafeInteger(offset) || every < 1 || offset >= every)
+    return rejected("loop_where_invalid", `${at}:never_claims`);
+  return Object.freeze({ ok: true as const, stride: Object.freeze({ every, offset }) });
+}
+
+type ScalarReading = Readonly<{ ok: true; value: PlanForEachScalar }> | PlanForEachRejection;
+
+function readScalar(value: unknown, at: string): ScalarReading {
+  if (typeof value === "string")
+    return value.length >= 1 && value.length <= 128
+      ? Object.freeze({ ok: true as const, value })
+      : rejected("loop_value_invalid", at);
+  if (typeof value === "boolean") return Object.freeze({ ok: true as const, value });
+  // A non-integral number would reach the Mod as a `float` on a wire whose every argument is an integer, a string or a
+  // flag, so it is refused where the caller can still see what it wrote.
+  if (typeof value === "number" && Number.isSafeInteger(value)) return Object.freeze({ ok: true as const, value });
+  return rejected("loop_value_invalid", at);
+}
+
+type EffectReading = Readonly<{ ok: true; effect: PlanForEachEffect | null }> | PlanForEachRejection;
+
+function readEffect(value: unknown, actionIds: readonly string[] | null): EffectReading {
+  if (value === undefined || value === null) return Object.freeze({ ok: true as const, effect: null });
+  if (!isRecord(value)) return rejected("loop_do_invalid", "not_an_object");
+  const action = value.action;
+  if (typeof action !== "string" || action.length === 0) return rejected("loop_do_invalid", "missing_action");
+  if (action !== PLAN_FOR_EACH_BY_KIND_ACTION && actionIds !== null && !actionIds.includes(action))
+    return rejected("unknown_action", action);
+  const arguments_: Record<string, PlanForEachScalar> = { action };
+  let named = 0;
+  for (const [name, entry] of Object.entries(value)) {
+    if (name === "action") continue;
+    named += 1;
+    if (named > MAX_FOR_EACH_EFFECT_ARGUMENTS) return rejected("loop_do_invalid", `${action}:too_many_arguments`);
+    if (!isOpaqueId(name)) return rejected("loop_do_invalid", `${action}.${name}`);
+    const scalar = readScalar(entry, `${action}.${name}`);
+    if (!scalar.ok) return scalar;
+    arguments_[name] = scalar.value;
+  }
+  return Object.freeze({ ok: true as const, effect: Object.freeze(arguments_) as PlanForEachEffect });
+}
+
+/**
+ * The code that names a plan form the attached Mod cannot execute, derived from the form's own action id.
+ *
+ * One spelling: the answer that refuses the submission and the description the companion reads both take it from here, so
+ * a caller cannot be told one word and be refused with another.
+ */
+export function planFormExecutionUnavailableReason(actionId: string): string {
+  return `${actionId}_execution_unavailable`;
+}
+
+/**
+ * The ordered rules of one pass: this loop's own predicate and effect first, then the alternates in order.
+ *
+ * FIRST MATCH WINS, and this is the ONE spelling of "what a pass tries": the writer that composes several `for_each` calls
+ * over one source and the reader that expands the pass enumerate the rules through it, so they cannot disagree.
+ */
+export function forEachRules(loop: PlanForEachLoop): readonly PlanForEachRule[] {
+  return Object.freeze([
+    Object.freeze({ ...(loop.where === undefined ? {} : { where: loop.where }), do: loop.do }),
+    ...(loop.then ?? []),
+  ]);
+}
+
+/** This pass with one more rule at the end, in the order the caller wrote it. */
+export function withForEachRule(loop: PlanForEachLoop, rule: PlanForEachRule): PlanForEachLoop {
+  return Object.freeze({ ...loop, then: Object.freeze([...(loop.then ?? []), rule]) });
+}
+
+/**
+ * Whether two loops read their rows from the same source - which is what makes them rules of ONE pass rather than two.
+ *
+ * Compared on the canonical source document both loops were read into, so two spellings of the same rectangle can never
+ * be read as two passes over it.
+ */
+export function sameForEachSource(left: PlanForEachLoop, right: PlanForEachLoop): boolean {
+  return JSON.stringify(left.source) === JSON.stringify(right.source);
+}
+
+/**
+ * Whether a value read off the wire is a well-formed loop document.
+ *
+ * The wire tags the argument `type: "loop"` like every other runtime value; the tag is a WIRE fact and not part of the
+ * loop's own grammar, so it is removed before the one reader runs and the caller's `builder.for_each({...})` argument and
+ * the wire value are read by the same code.
+ */
+export function isForEachLoopDocument(value: unknown): boolean {
+  if (!isRecord(value) || value.type !== "loop") return false;
+  const { type, ...document } = value;
+  void type;
+  return readForEachLoop(document, null).ok;
+}

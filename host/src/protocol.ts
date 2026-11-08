@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { isForEachLoopDocument, type PlanForEachLoop } from "./body-program-for-each.js";
 import {
   hasExactKeys,
   hasExactKeysOrOptional,
@@ -1602,10 +1603,17 @@ export type ActionRegistration = Readonly<{
 
 /** Typed destination selector accepted by the C# Body Program wire contract. */
 type BodyProgramDestinationSelector = Readonly<{ kind: "label"; label: string } | { kind: "ref"; ref: string }>;
-/** Exact Host runtime value. Scalar kinds retain canonicalValue; destination_selector retains its typed object payload. */
+/**
+ * Exact Host runtime value. Scalar kinds retain canonicalValue; destination_selector retains its typed object payload.
+ *
+ * `loop` is the one DECLARATIVE kind: the `for_each` plan form carried whole, because expansion happens on the game
+ * thread against live state and a pre-resolved row list would be the observation-bound behaviour the form exists to
+ * remove. Its grammar is owned by `body-program-for-each.ts`, the same module the plan compiler writes it with.
+ */
 type BodyProgramRuntimeValue =
   | Readonly<{ type: "integer" | "string" | "boolean"; canonicalValue: string }>
-  | Readonly<{ type: "destination_selector"; destination: BodyProgramDestinationSelector }>;
+  | Readonly<{ type: "destination_selector"; destination: BodyProgramDestinationSelector }>
+  | (Readonly<{ type: "loop" }> & PlanForEachLoop);
 type BodyProgramFactReference = Readonly<{ nodeId: string; factName: string }>;
 type BodyProgramNode = Readonly<{
   nodeId: string;
@@ -4338,6 +4346,15 @@ function isBodyProgramRuntimeValue(value: unknown): boolean {
   if (!isRecord(value) || typeof value.type !== "string") return false;
   if (value.type === "destination_selector")
     return hasExactKeys(value, ["type", "destination"]) && isBodyProgramDestinationSelector(value.destination);
+  // THE LOOP FORM IS A DECLARATIVE ARGUMENT, DISCRIMINATED BY `type` LIKE EVERY OTHER ONE, so it can never be mistaken for
+  // a `{ type: "string", canonicalValue }` holding the same JSON. Its grammar is read from the one module the plan
+  // compiler writes it with (`body-program-for-each.ts`), so the producer and the validator cannot drift apart.
+  //
+  // WHAT THIS ACCEPTANCE DOES NOT SAY. The Mod's own reader does not know this kind, and that is deliberate: a form the
+  // Mod cannot expand must not look executable at the wire boundary. `plan_work` answers
+  // `for_each_execution_unavailable` for exactly the nodes whose action id the attached Mod does not publish, so no
+  // program carrying a loop is ever sent. This validator describes what the Host can COMPILE and READ BACK.
+  if (value.type === "loop") return isForEachLoopDocument(value);
   return (
     (value.type === "integer" || value.type === "string" || value.type === "boolean") &&
     hasExactKeys(value, ["type", "canonicalValue"]) &&
