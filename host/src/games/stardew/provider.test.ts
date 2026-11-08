@@ -66,6 +66,7 @@ function fakeCoordinator(
             displayPath: "C:\\\\Games\\\\Stardew Valley",
             location: null,
             status: "candidate" as const,
+            modLoader: "present" as const,
           },
           {
             candidateId: redactedCandidateId,
@@ -74,6 +75,7 @@ function fakeCoordinator(
             displayPath: "Detected installation (path hidden)",
             location: "C: · Steam",
             status: "admission_required" as const,
+            modLoader: "missing" as const,
           },
         ],
         diagnostics: ["no-candidates" as const],
@@ -174,6 +176,9 @@ test("stardew discovery mount delegates every nested callback to the same activa
         hint: null,
         location: null,
         status: "candidate",
+        // Published by the owner and, since 2026-11-08, actually projected. It used to be dropped here, which made the
+        // panel's mod-loader chip impossible to render (see the test below).
+        modLoader: "present",
       },
       {
         candidateId: "Q".repeat(42) + "A",
@@ -182,6 +187,7 @@ test("stardew discovery mount delegates every nested callback to the same activa
         hint: "Detected installation (path hidden)",
         location: "C: · Steam",
         status: "admission_required",
+        modLoader: "missing",
       },
     ],
     diagnostics: ["no-candidates"],
@@ -285,4 +291,35 @@ test("every operation the stardew projection declares is one the contract knows"
     `the projection declares operations the contract does not know, so calling one throws ` +
       `"Game operation is not declared by the contract":\n  + declared here, absent from the contract: [${unknown.join(", ")}]`,
   );
+});
+
+/**
+ * A discovery candidate reaches the player with every member its owner published.
+ *
+ * Measured 2026-11-08, from the live run's own artifacts: the installation panel rendered
+ * `《星露谷物语》（D: · steam） 通过 Steam 找到` with no mod-loader chip and `data-mod-loader` had zero hits, while
+ * `windows-stardew-installation-discovery/provider.ts` goes to real trouble to compute `modLoader` for every candidate
+ * (`modLoaderFor`, which answers `missing` rather than guessing when the folder cannot be read). The projection in
+ * `provider.ts` enumerated the fields by hand and simply omitted it, so the field reached nobody and the chip could
+ * never render - the "field accepted, never consumed" shape, invisible to every gate that reads the contract.
+ *
+ * The assertion names the member rather than counting it, and the guard in the projection derives its population from
+ * the owner's own object, so a member added later cannot disappear the same way.
+ */
+test("a discovery candidate reaches the player with the mod loader its owner published", async () => {
+  const { coordinator } = fakeCoordinator();
+  const projection = createStardewGamePresentationProjection(coordinator);
+  const discovery = projection.lifecycleActivationBindingSink.gameDiscovery;
+  assert.ok(discovery, "the projection must expose the installation discovery binding");
+
+  const result = await discovery.read({ csrfToken, browserSessionExpiresAtMs: 1_900_000_000_000 });
+
+  assert.deepEqual(
+    result.candidates.map((candidate) => candidate.modLoader),
+    ["present", "missing"],
+    "the mod loader the owner published must survive the projection; dropping it makes the panel's chip unrenderable",
+  );
+  // The redaction is still the projection's job, and it is the one member deliberately not copied verbatim.
+  assert.equal(result.candidates[1]?.hint, "Detected installation (path hidden)");
+  assert.equal(result.candidates[0]?.hint, null);
 });

@@ -39,6 +39,15 @@ export type InjectedStardewFolderPickerCapability = Readonly<{
  */
 const REDACTED_DISCOVERY_HINT = "Detected installation (path hidden)" as const;
 
+/**
+ * Members of the lifecycle owner's candidate that this projection does not copy verbatim.
+ *
+ * `displayPath` is the one, and it is not read here: it becomes `hint` after redaction, so the player never receives
+ * a filesystem path. Listed rather than skipped silently, because a guard below refuses to let any other member
+ * disappear the same way.
+ */
+const CANDIDATE_MEMBERS_MAPPED_ELSEWHERE = new Set(["displayPath"]);
+
 function projectDiscoveryReadResult(
   result: Awaited<ReturnType<StardewProductionLifecycleCoordinator["activationOwner"]["readInstallationDiscovery"]>>,
 ): GameDiscoveryReadResultV1 {
@@ -51,9 +60,28 @@ function projectDiscoveryReadResult(
       hint: candidate.displayPath === REDACTED_DISCOVERY_HINT ? REDACTED_DISCOVERY_HINT : null,
       location: candidate.location,
       status: candidate.status,
+      // Whether this folder can load the companion Mod. Measured 2026-11-08: this line was missing, so
+      // `installationModLoaderLabel` always received `undefined`, the panel's mod-loader chip could never render, and
+      // the field the discovery provider goes to trouble to compute (`modLoaderFor`) reached nobody. The live run
+      // showed it (`data-mod-loader` zero hits, candidate row reading only `《星露谷物语》（D: · steam） 通过 Steam 找到`).
+      modLoader: candidate.modLoader,
     })),
     diagnostics: [...result.diagnostics],
   };
+  // Population from the source, not a hand-written list: a member the owner publishes and this projection forgets is a
+  // field that silently never reaches the player, which is the defect the line above was.
+  const dropped = new Set<string>();
+  for (const [index, candidate] of result.candidates.entries()) {
+    const mirrored = projected.candidates[index];
+    if (mirrored === undefined) continue;
+    for (const member of Object.keys(candidate)) {
+      if (CANDIDATE_MEMBERS_MAPPED_ELSEWHERE.has(member)) continue;
+      if (!(member in mirrored)) dropped.add(member);
+    }
+  }
+  if (dropped.size > 0) {
+    throw new Error(`stardew_installation_discovery_projection_dropped:${[...dropped].sort().join(",")}`);
+  }
   if (!GameBrowserValidatorsV1.GameDiscoveryReadResultV1Schema.Check(projected)) {
     throw new Error("stardew_installation_discovery_projection_invalid");
   }
