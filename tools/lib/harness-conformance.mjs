@@ -304,6 +304,11 @@ export function checkExperimentalRunners({
  */
 const GATES_WITH_FALSIFIER = Object.freeze([
   "check-build-artifact-producers.mjs",
+  // Both print a one-entry `checks[]` verdict in their default run since 2026-11-09: they asserted a rule all along
+  // (every declared operation reaches a surface; every declared pair meets its minimum) and printed a table the harness
+  // could not tell apart from a report. Naming the rule is what makes the check read the gate instead of its prose.
+  "check-configuration-surfaces.mjs",
+  "check-contrast-tokens.mjs",
   "check-credential-export-isolation.mjs",
   "check-evidence-bundle.mjs",
   "check-fail-closed-forward-path.mjs",
@@ -635,6 +640,15 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   { gate: "check-refusal-informativeness.mjs", reason: "static source scan; falsifier in its test" },
   { gate: "check-stardew-mod-folder-name.mjs", reason: "static three-file scan; falsifier in its test" },
   { gate: "check-stardew-task-action-coverage.mjs", reason: "static artifact scan; falsifier in its test" },
+  {
+    gate: "check-stardew-execution-terminal-uniqueness.mjs",
+    reason:
+      "reads a caller-supplied run reading rather than the tree, so its falsifier supplies the run: " +
+      "tools/check-stardew-execution-terminal-uniqueness.test.mjs builds one artifact per defect - one request answered " +
+      "twice (duplicate_answer), the same terminal reaching the fact listeners twice (duplicate_fact, the measured " +
+      "2026-11-09 double), a legitimate replayed answer that must stay clean, a fact-stream artifact that records no " +
+      "answer channel, and a zero-frame artifact that must read not_measured instead of green",
+  },
   {
     gate: "check-prelive-gate-registry.mjs",
     reason:

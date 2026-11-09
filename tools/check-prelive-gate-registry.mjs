@@ -150,6 +150,15 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:workflow-expressions",
   },
   {
+    path: "tools/check-configuration-surfaces.mjs",
+    reason:
+      "elsewhere: reads the Type.Union of OperationId in host/src/tavern/browser-contract/index.ts and every .tsx/.ts in " +
+      "dialogue-web, and its default run is report-only (exit 0 unless --fail) - measured 2026-11-09: examined 58, " +
+      "violations 0. A rung that ran it without --fail would call it green whatever it found, and the contrast/persona " +
+      "rungs already read the same dialogue-web sources",
+    runsIn: "pnpm check:configuration-surfaces",
+  },
+  {
     path: "tools/audit-airp-scorecard.mjs",
     reason:
       "arguments: needs one finished run's result.json and the Pi session files under its own runtime-root, so no rung " +
