@@ -33,6 +33,10 @@
 //      `GameLocation.isTilePassable` (GameLocation.cs:2898), which reads only the map's Back and Buildings layers and
 //      reports a trellis crop as open ground. The two disagree on exactly the tile this field exists for, so the
 //      source that builds the field is read rather than trusted.
+//
+// red-proof: inject  deleting `bool? IsRaised` from a copy of `BridgeProtocolModels.cs`, so the crop row stops
+//   publishing a field `ContentDataQuery.CropRow` still projects -> `not_reachable:isRaised` and three
+//   `wire_extra:isRaised`, `blocked (4 finding(s))`, exit 1 (tools/check-stardew-crop-row-derivation.test.mjs)
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";

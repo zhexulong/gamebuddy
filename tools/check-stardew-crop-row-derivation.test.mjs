@@ -2,6 +2,10 @@
 //
 // The mutations run against the REAL sources, copied in memory and edited, so a passing suite proves the checker is
 // decisive: the field this change exists for, removed from the row, must be named as the finding.
+//
+// red-proof: inject  one shared field removed in memory (`bool? IsRaised` deleted from the row) -> the real checker's
+//   `not_reachable:isRaised` and three `wire_extra:isRaised`, verdict `blocked`, asserted by "one shared field
+//   removed" below (tools/check-stardew-crop-row-derivation.test.mjs)
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
