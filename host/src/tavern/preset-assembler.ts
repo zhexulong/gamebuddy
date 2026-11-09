@@ -30,6 +30,10 @@
  * `itemId`, the preset entry's own identity, which is what seeds §2.7's content-addressed draws.
  */
 import { evaluatePresetText, type MacroContext } from "./preset-macros.js";
+import { PRESET_MARKERS, type PresetMarkerKind } from "./preset-placement.js";
+
+/** The marker table is re-published here because this module is where a marker's MEANING is consumed (§2.5). */
+export { PRESET_MARKERS, type PresetMarkerKind };
 
 export type PresetSegment = {
   identifier: string;
@@ -50,30 +54,6 @@ export type PresetAssembly = {
   /** Every entry skipped because enabled === false. */
   disabled: readonly string[];
 };
-
-/** What a marker in a preset's `prompt_order` does: cut the prompt in two, or hold a slot's content. */
-type PresetMarkerKind = "cut" | "slot";
-
-/**
- * The marker table - the closed set of preset `identifier`s whose content this product supplies or whose
- * position it must honour. Exactly one entry cuts the prompt in two; the rest are slots.
- *
- * `chatHistory` emits nothing at all (A4 §2.3: it is the marker that says where the transcript goes), so it
- * is neither a slot nor counted as unfilled. Everything else is filled from `ctx.markers` and named in
- * `unfilled` when that source is absent - including `main` and `jailbreak`, which the preset itself may
- * textually fill (see the module comment).
- */
-export const PRESET_MARKERS = Object.freeze({
-  chatHistory: "cut",
-  worldInfoBefore: "slot",
-  worldInfoAfter: "slot",
-  charDescription: "slot",
-  charPersonality: "slot",
-  scenario: "slot",
-  dialogueExamples: "slot",
-  main: "slot",
-  jailbreak: "slot",
-} as const satisfies Readonly<Record<string, PresetMarkerKind>>);
 
 /** ST's own global default order id; the per-character orders (100001 = group default) do not apply here. */
 const DEFAULT_PROMPT_ORDER_CHARACTER_ID = 100000;
