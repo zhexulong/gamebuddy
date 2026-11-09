@@ -34,6 +34,8 @@ type SurfaceAction = Readonly<{
   argumentSchema?: Readonly<Record<string, { type: string; enum?: readonly string[]; description?: string }>>;
   outputFacts?: Readonly<Record<string, string>>;
   resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }>;
+  /** The snapshot family the action's targets come from, or the surface's silence - the plan compiler reads it too. */
+  targetFamily?: string;
   postcondition?: Readonly<{ name?: string }>;
 }>;
 
@@ -56,6 +58,10 @@ const REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action) =>
             argumentSchema: action.argumentSchema,
             outputFacts: action.outputFacts ?? {},
             ...(action.resourceTemplate === undefined ? {} : { resourceTemplate: action.resourceTemplate }),
+            // Carried because it is a declaration the compiler reads, not project decoration: which family a step's
+            // targets come from is what tells a piece of world (`soilTiles`, `machineTargets`) from a place to stand
+            // (`move_to_tile` declares none), and the consumer rule in `body-program-script.ts` is built on it.
+            ...(action.targetFamily === undefined ? {} : { targetFamily: action.targetFamily }),
           },
         }),
   }),
@@ -169,21 +175,28 @@ for (const crop of snapshot.cropTargets ?? []) {
 }
 `;
 
-test("a script's calls become one ordered program, chained in the order it wrote them", () => {
+test("a script's calls become one ordered program, ordered in the order it wrote them", () => {
   const nodes = nodesOf(
     compile(WATER_BY_DOOR, {
       enabledActionIds: ["move_to_tile", "water_crop"],
       cropTargets: [crop("crop_01", 11, 10), crop("crop_02", 12, 11)],
     }),
   );
+  // Nothing here consumes anything: a walk is a position (`move_to_tile` declares no target family) and each watering
+  // is aimed at a different row, so the plan is four steps of one body in the order the script wrote them.
   assert.deepEqual(
     nodes.map((node) => [node.nodeId, node.actionId, node.dependsOn]),
     [
       ["n01", "move_to_tile", []],
-      ["n02", "water_crop", ["n01"]],
-      ["n03", "move_to_tile", ["n02"]],
-      ["n04", "water_crop", ["n03"]],
+      ["n02", "water_crop", []],
+      ["n03", "move_to_tile", []],
+      ["n04", "water_crop", []],
     ],
+  );
+  assert.deepEqual(
+    nodes.map((node) => node.orderedAfter ?? []),
+    [[], ["n01"], ["n02"], ["n03"]],
+    "one at a time, in the order the script wrote them",
   );
   assert.deepEqual(nodes[1]!.arguments, {
     x: { type: "integer", canonicalValue: "11" },
@@ -191,6 +204,121 @@ test("a script's calls become one ordered program, chained in the order it wrote
     expectedTargetId: { type: "string", canonicalValue: "crop_01" },
   });
   assert.equal(nodes[1]!.bindings !== undefined && Object.keys(nodes[1]!.bindings).length, 0);
+});
+
+/**
+ * The nodes the Mod's failure closure would skip when `failedNodeId` fails, read off the edge it reads.
+ *
+ * `FailedDependents.Compute` (`OpenBodyProgramJournalAuthority.cs`) walks `dependsOn` and nothing else, so this is that
+ * closure over the graph the compiler emitted - the same graph `BodyProgramOrderedAfterTests.A3` drives through the real
+ * authority, where a failed `till_soil` skips its consuming neighbour and its ordering-only successor still runs. It is
+ * here because the Host's half of that fact is the EDGE: a skip count this file cannot produce is a count it must not
+ * claim, and the edges are what it does produce.
+ */
+function skipsOf(nodes: readonly PlanNode[], failedNodeId: string): readonly string[] {
+  const skipped = new Set<string>();
+  let added = true;
+  while (added) {
+    added = false;
+    for (const node of nodes)
+      if (!skipped.has(node.nodeId) && node.dependsOn.some((edge) => edge === failedNodeId || skipped.has(edge))) {
+        skipped.add(node.nodeId);
+        added = true;
+      }
+  }
+  return [...skipped];
+}
+
+/**
+ * C3: A BATCH OF INDEPENDENT STEPS IS ORDERED, NOT CHAINED.
+ *
+ * <p>
+ * Measured on the finished 293-node run: `succeeded 197, failed 26, skipped_dependency 58`, and `till_soil` alone was 64
+ * nodes - 30 succeeded, 5 failed, **29 skipped**. The tiles of a strip are independent, so one tile that failed has
+ * nothing to say about the next, and a fifth of that work died for the shape of the graph rather than for the world.
+ * </p>
+ * <p>
+ * The two edges and what each says (`BodyProgramOrderedAfterTests` A2/A3, written against the wire): `orderedAfter` -
+ * "it must be terminal first", the successor is never skipped; `dependsOn` - "I consume its fact", so its failure skips
+ * me and names it. This compiler spent `dependsOn` on ordering because it was the only relation there was.
+ * </p>
+ */
+test("a strip of independent steps is ordered, not chained, so one failed tile skips no other tile", () => {
+  const nodes = nodesOf(
+    compile("for (const tile of snapshot.soilTiles ?? []) { builder.till_soil({ x: tile.x, y: tile.y }); }", {
+      enabledActionIds: ["till_soil"],
+      soilTiles: [
+        { x: 60, y: 18 },
+        { x: 61, y: 18 },
+        { x: 62, y: 18 },
+        { x: 63, y: 18 },
+      ],
+    }),
+  );
+  assert.deepEqual(
+    nodes.map((node) => node.actionId),
+    ["till_soil", "till_soil", "till_soil", "till_soil"],
+  );
+  // Four tiles, four holes: no step reads a fact another one produces, so nothing is a consumer.
+  assert.deepEqual(
+    nodes.map((node) => node.dependsOn),
+    [[], [], [], []],
+  );
+  // One at a time, in the order the script wrote them - every published action claims `embodied_actor`, and one body
+  // performs one native mutation at a time.
+  assert.deepEqual(
+    nodes.map((node) => node.orderedAfter ?? []),
+    [[], ["n01"], ["n02"], ["n03"]],
+  );
+  assert.deepEqual(skipsOf(nodes, "n01"), [], "a tile that failed skips no other tile");
+  assert.deepEqual(skipsOf(nodes, "n03"), [], "and neither does one in the middle of the strip");
+});
+
+/**
+ * C3, in the shape that made the measurement: each tile of a strip is tilled and then planted, interleaved.
+ *
+ * The planting of a tile CONSUMES the tilling of that tile - there is no soil for a seed where tilling failed - while the
+ * next tile's tilling consumes nothing. One failure then costs exactly its own tile's second step.
+ */
+test("each tile's planting consumes that tile's tilling, and only that tile's", () => {
+  const nodes = nodesOf(
+    compile(
+      "for (const tile of snapshot.soilTiles ?? []) {\n" +
+        "  builder.till_soil({ x: tile.x, y: tile.y });\n" +
+        '  builder.plant_seed({ x: tile.x, y: tile.y, slot: 4, expectedQualifiedItemId: "472", expectedTargetId: `seed_${tile.x}` });\n' +
+        "}",
+      {
+        enabledActionIds: ["till_soil", "plant_seed"],
+        soilTiles: [
+          { x: 60, y: 18 },
+          { x: 61, y: 18 },
+          { x: 62, y: 18 },
+        ],
+      },
+    ),
+  );
+  assert.deepEqual(
+    nodes.map((node) => [node.nodeId, node.actionId, node.dependsOn]),
+    [
+      ["n01", "till_soil", []],
+      ["n02", "plant_seed", ["n01"]],
+      ["n03", "till_soil", []],
+      ["n04", "plant_seed", ["n03"]],
+      ["n05", "till_soil", []],
+      ["n06", "plant_seed", ["n05"]],
+    ],
+  );
+  // The tiles are separated by an ordering edge and by nothing else, so the chain of consumption is broken between them.
+  assert.deepEqual(
+    nodes.map((node) => node.orderedAfter ?? []),
+    [[], [], ["n02"], [], ["n04"], []],
+  );
+  assert.deepEqual(
+    skipsOf(nodes, "n01"),
+    ["n02"],
+    "the seed had no soil to go in; the other tiles are not its business",
+  );
+  assert.deepEqual(skipsOf(nodes, "n05"), ["n06"], "the last tile's failure costs the last tile's planting");
 });
 
 /**
@@ -206,8 +334,15 @@ test("a transition gets a walk to its own tile prepended, and its own node is ot
     nodes.map((node) => [node.nodeId, node.actionId, node.dependsOn]),
     [
       ["auto_walk_01", "move_to_tile", []],
-      ["n02", "enter_exit", ["auto_walk_01"]],
+      ["n02", "enter_exit", []],
     ],
+  );
+  // The walk is what makes the door reachable, and it is still only an ORDER: where the body stands is not a fact the
+  // door consumes (`move_to_tile` declares no target family), so a walk that failed lets the door run and be refused by
+  // name - `door_out_of_range` names what is wrong, where a skip names nothing.
+  assert.deepEqual(
+    nodes.map((node) => node.orderedAfter ?? []),
+    [[], ["auto_walk_01"]],
   );
   assert.deepEqual(nodes[0]!.arguments, {
     x: { type: "integer", canonicalValue: "3" },
@@ -229,8 +364,12 @@ test("a transition the script already walked to gets no second walk", () => {
     nodes.map((node) => [node.nodeId, node.actionId, node.dependsOn]),
     [
       ["n01", "move_to_tile", []],
-      ["n02", "enter_exit", ["n01"]],
+      ["n02", "enter_exit", []],
     ],
+  );
+  assert.deepEqual(
+    nodes.map((node) => node.orderedAfter ?? []),
+    [[], ["n01"]],
   );
 });
 
@@ -312,7 +451,10 @@ test("a plan with no transition is exactly the plan the script wrote", () => {
         y: { type: "integer", canonicalValue: "10" },
         expectedTargetId: { type: "string", canonicalValue: "crop_01" },
       },
-      dependsOn: ["n01"],
+      dependsOn: [],
+      // The walk is not a producer: the watering waits for the body to be there, and a walk that failed is answered by
+      // the watering's own refusal rather than by a skip.
+      orderedAfter: ["n01"],
       bindings: {},
     },
   ]);
@@ -321,10 +463,11 @@ test("a plan with no transition is exactly the plan the script wrote", () => {
 /**
  * ONE RULE, TWO READERS: the ordering requirement the Mod enforces, read on the Host side.
  *
- * `BodyProgramVerifier.ValidateResourceConflicts` (`OpenBodyProgramJournalAuthority.cs`) refuses any candidate holding
- * two nodes whose actions share a resource-claim key and which are not transitively ordered by `dependsOn`. The claims
- * below are the Mod's own, read out of the published surface artifact rather than written here, and the code asserted
- * is the one the Mod's diagnostic carries: `GameBuddy.Stardew.Core.Tests.BodyProgramControllerPumpTests.
+ * `BodyProgramGraphRules.UnorderedClaimPairs` (`OpenBodyProgramJournalAuthority.cs` refuses a candidate that cannot be
+ * ordered) refuses any candidate holding two nodes whose actions share a resource-claim key and which are not
+ * transitively ordered by EITHER relation. The claims below are the Mod's own, read out of the published surface
+ * artifact rather than written here, and the code asserted is the one the Mod's diagnostic carries:
+ * `GameBuddy.Stardew.Core.Tests.BodyProgramControllerPumpTests.
  * AStepThatSharesTheActorWithANeighbourItDoesNotDependOnIsRefusedByTheModelItself` drives the real verifier with the
  * same three-step candidate and reads two `resource_conflict:` codes off it.
  */
@@ -342,20 +485,21 @@ test("the Host reads the ordering conflict the Mod refuses, in the Mod's own cod
       .map((claim) => claim.key)
       .filter((key) => harvest.resourceClaims.some((other) => other.key === key)),
     ["embodied_actor"],
-    "two steps share the actor claim, so the Mod requires one of them to depend on the other",
+    "two steps share the actor claim, so the Mod requires one of them to be ordered against the other",
   );
-  const step = (nodeId: string, actionId: string, dependsOn: readonly string[] = []) => ({
-    nodeId,
-    actionId,
-    dependsOn,
-  });
+  const step = (
+    nodeId: string,
+    actionId: string,
+    dependsOn: readonly string[] = [],
+    orderedAfter: readonly string[] = [],
+  ) => ({ nodeId, actionId, dependsOn, orderedAfter });
 
   assert.deepEqual(
     planResourceConflictCodes([step("n001", walk.actionId), step("n002", harvest.actionId)], ACTIONS),
     [`resource_conflict:${harvest.actionId}`],
     "unordered, it is the code the Mod would answer",
   );
-  // The inverse, in both directions: ONE edge is all the Mod asks for ("order them with dependsOn").
+  // The inverse, in both directions: ONE edge is all the Mod asks for, whichever relation carries it.
   assert.deepEqual(
     planResourceConflictCodes([step("n001", walk.actionId), step("n002", harvest.actionId, ["n001"])], ACTIONS),
     [],
@@ -364,11 +508,26 @@ test("the Host reads the ordering conflict the Mod refuses, in the Mod's own cod
     planResourceConflictCodes([step("n001", walk.actionId, ["n002"]), step("n002", harvest.actionId)], ACTIONS),
     [],
   );
-  // TRANSITIVE, not direct: the Mod walks the edge closure, so a third step that reaches the first through the second
-  // is ordered without naming it.
+  // The ordering edge orders a pair exactly as the consumption edge does - which is what makes it legal to emit for two
+  // steps that do not consume each other. Without it in this reader, every plan of a strip would be refused by the
+  // compiler itself (`plan_resource_conflict:`) for the shape that stops the strip dying together.
+  assert.deepEqual(
+    planResourceConflictCodes([step("n001", walk.actionId), step("n002", harvest.actionId, [], ["n001"])], ACTIONS),
+    [],
+  );
+  assert.deepEqual(
+    planResourceConflictCodes([step("n001", walk.actionId, [], ["n002"]), step("n002", harvest.actionId)], ACTIONS),
+    [],
+  );
+  // TRANSITIVE, not direct, and through BOTH relations: the Mod walks the edge closure, so a third step that reaches the
+  // first through a consumption edge and an ordering edge is ordered without naming it.
   assert.deepEqual(
     planResourceConflictCodes(
-      [step("n001", walk.actionId), step("n002", harvest.actionId, ["n001"]), step("n003", walk.actionId, ["n002"])],
+      [
+        step("n001", walk.actionId),
+        step("n002", harvest.actionId, ["n001"]),
+        step("n003", walk.actionId, [], ["n002"]),
+      ],
       ACTIONS,
     ),
     [],
@@ -1120,6 +1279,9 @@ test("a refused builder call answers with the action id, its required argument n
       actionId: "cut_weeds",
       requiredArguments: required,
       resourceClaims: surfaceClaims("cut_weeds"),
+      // Which family its targets come from travels with the refusal, because the plan compiler reads it: it is the
+      // surface's statement that this step addresses a piece of world at its tile (`targetFamily` -> `weedTargets`).
+      targetFamily: "weedTargets",
     });
 
   // A closed set travels with the argument that declares it, so the refusal can name the values a guess must be one of.
@@ -1128,6 +1290,7 @@ test("a refused builder call answers with the action id, its required argument n
     actionId: "respond_level_up",
     requiredArguments: surfaceArguments("respond_level_up"),
     resourceClaims: surfaceClaims("respond_level_up"),
+    targetFamily: "pendingLevelUpChoices",
   });
   assert.deepEqual(choice?.requiredArguments.find((argument) => argument.name === "choice")?.enum, [
     "confirm",
@@ -1436,8 +1599,15 @@ for (const clump of snapshot.debrisTargets ?? []) {
     nodes.map((node) => [node.nodeId, node.actionId, node.dependsOn]),
     [
       ["n01", "equip_tool", []],
-      ["n02", "clear_debris", ["n01"]],
+      // Equipping is a tool in hand, not state at a tile (`equip_tool` declares `toolSlots` and takes no coordinates),
+      // so the step that needs the tool is ordered after it and not made its dependent: a tool the pack does not hold is
+      // refused by name at the step that wanted it.
+      ["n02", "clear_debris", []],
     ],
+  );
+  assert.deepEqual(
+    nodes.map((node) => node.orderedAfter ?? []),
+    [[], ["n01"]],
   );
   // The equip step carries a semantic category from equip_tool's own closed set, never the slot: the Mod resolves the
   // slot itself, so an index here would be a slot masquerading as a tool.
@@ -1969,9 +2139,14 @@ builder.harvest_crop({ x: 58, y: 14, expectedQualifiedItemId: "(O)24", expectedT
       missingArguments: ["expectedQualifiedItemId"],
     },
   ]);
-  // The accepted nodes keep the order the script wrote them in, and the plan is still one the Mod accepts.
+  // The accepted nodes keep the order the script wrote them in - every step waits for the one before it to be terminal,
+  // and none of them consumes another - and the plan is still one the Mod accepts.
   assert.deepEqual(
     result.program.nodes.map((node) => node.dependsOn),
+    [[], [], [], [], []],
+  );
+  assert.deepEqual(
+    result.program.nodes.map((node) => node.orderedAfter ?? []),
     [[], ["n01"], ["n02"], ["n03"], ["n04"]],
   );
   assert.equal(

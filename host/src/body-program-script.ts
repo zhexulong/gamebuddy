@@ -899,6 +899,7 @@ export function compilePlanScript(
     rejected: [],
     rejectedCount: 0,
     argumentOwners: planArgumentOwners(dependencies.actions),
+    worldTileByNode: new Map(),
   };
   const frozen = deepFreeze(structuredClone(snapshot));
   const sandbox = Object.freeze({
@@ -981,11 +982,12 @@ export function compilePlanScript(
     return refused("plan_snapshot_missing", scriptSource, null, undefined, undefined, state);
   // THE PROGRAM THIS COMPILER PRODUCES MUST SATISFY THE RULE THE MOD ENFORCES ON SUBMISSION.
   //
-  // `dependsOn` is the model's only relation and it does two jobs at once: it orders the nodes that touch a shared
-  // resource (`BodyProgramVerifier.ValidateResourceConflicts`) and it is the edge a failure propagates along
-  // (`FailedDependents.Compute`). Every published action claims `embodied_actor`, so a candidate holding two unordered
-  // steps is refused by the Mod with `resource_conflict:<actionId>` - "order them with dependsOn to group them in one
-  // program" - which is why this compiler writes one edge per call.
+  // The rule is about ORDER, and the graph now has two relations that both order: `dependsOn` ("I consume its fact",
+  // whose failure skips me) and `orderedAfter` ("be terminal first", which never skips me).
+  // `BodyProgramGraphRules.UnorderedClaimPairs` reads the UNION, and every published action claims `embodied_actor`, so
+  // two steps of one body that are ordered by neither are still refused with `resource_conflict:<actionId>` - "order
+  // them with dependsOn or orderedAfter to group them in one program" - which is why this compiler writes one ordering
+  // edge per call.
   //
   // Nothing below can fire while that is true, and that is the point: the compiler's own output is the one thing that
   // must never be a candidate the other side refuses. Written here, a future producer change that drops the edge is
@@ -1024,33 +1026,39 @@ export function compilePlanScript(
  * Content-addressed on purpose: the SAME plan sent twice in one world must be the same program, so the Mod
  * answers `idempotent` instead of running the work twice; two DIFFERENT plans read from the same snapshot must
  * not collide, or the second would be refused as the first one's duplicate and never run. The snapshot revision
- * keeps a plan in a later world a new program rather than a replay.
+ * keeps a plan in a later world a new program rather than a replay. The digest covers the whole node, its edges
+ * included: a plan whose steps are ordered differently - or whose second step consumes its neighbour's state instead
+ * of merely following it - is a different graph and therefore a different program.
  */
 export function planProgramId(snapshotRevision: number, nodes: readonly PlanNode[]): string {
   const digest = createHash("sha256").update(JSON.stringify(nodes)).digest("hex").slice(0, 16);
   return `plan_${snapshotRevision}_${digest}`;
 }
 
-/** The part of a candidate node the Mod's ordering rule reads. */
+/** The part of a candidate node the Mod's ordering rule reads: both relations, because the rule reads the union. */
 export type PlanOrderingNode = Readonly<{
   nodeId: string;
   actionId: string;
   dependsOn: readonly string[];
+  /** The ordering-only edge. Absent means none, exactly as an absent field on the wire does. */
+  orderedAfter?: readonly string[];
 }>;
 
 /**
  * THE ORDERING REQUIREMENT the Mod enforces on any two nodes that touch the same resource, in the Mod's own codes.
  *
- * `BodyProgramVerifier.ValidateResourceConflicts` (`OpenBodyProgramJournalAuthority.cs`) refuses a candidate in which
- * two nodes whose actions share a resource-claim key are not transitively ordered by `dependsOn`, and every published
- * action claims `embodied_actor`. So a candidate is a chain or it is refused - there is no way to say "run this after
- * that, but not because of it", which is the whole reason a compiled script writes one edge per call.
+ * `BodyProgramGraphRules.UnorderedClaimPairs` (`OpenBodyProgramJournalAuthority.cs` reads it from the wire candidate)
+ * refuses a candidate in which two nodes whose actions share a resource-claim key are not transitively ordered by
+ * EITHER relation, and every published action claims `embodied_actor`. So a candidate is a total order over its steps
+ * or it is refused - and which of the two relations carries that order is the compiler's choice, made per pair: the
+ * ordering edge for steps that merely happen in sequence, the consumption edge where the later one needs the earlier
+ * one's product.
  *
  * This is that rule as the Host reads it, from the same published claims (`resourceClaims` are projected from the
  * Mod's own `resourceTemplate`), so a caller is told by the side that compiled the plan rather than after a round trip
  * - and told the SAME code, `resource_conflict:<actionId>`, which is what the Mod's diagnostic carries. Two nodes, one
  * code each, because the Mod reports the pair once per node it cannot place: a candidate of three independent steps
- * answers two conflicts, both naming the second and third.
+ * with no edge between them answers two conflicts, both naming the second and third.
  */
 export function planResourceConflictCodes(
   nodes: readonly PlanOrderingNode[],
@@ -1059,12 +1067,14 @@ export function planResourceConflictCodes(
   const claimsOf = new Map(
     actions.map((action) => [action.actionId, action.resourceClaims.map((claim) => claim.key)] as const),
   );
-  const dependsOn = new Map(nodes.map((node) => [node.nodeId, node.dependsOn] as const));
-  const dependsTransitively = (from: string, target: string, seen: Set<string> = new Set()): boolean => {
+  const predecessors = new Map(
+    nodes.map((node) => [node.nodeId, [...node.dependsOn, ...(node.orderedAfter ?? [])]] as const),
+  );
+  const orderedTransitively = (from: string, target: string, seen: Set<string> = new Set()): boolean => {
     if (from === target) return true;
     if (seen.has(from)) return false;
     seen.add(from);
-    return (dependsOn.get(from) ?? []).some((dependency) => dependsTransitively(dependency, target, seen));
+    return (predecessors.get(from) ?? []).some((predecessor) => orderedTransitively(predecessor, target, seen));
   };
   const conflicts: string[] = [];
   for (let left = 0; left < nodes.length; left += 1)
@@ -1074,8 +1084,8 @@ export function planResourceConflictCodes(
       if (leftClaims === undefined || rightClaims === undefined) continue;
       if (!leftClaims.some((key) => rightClaims.includes(key))) continue;
       if (
-        dependsTransitively(nodes[left]!.nodeId, nodes[right]!.nodeId) ||
-        dependsTransitively(nodes[right]!.nodeId, nodes[left]!.nodeId)
+        orderedTransitively(nodes[left]!.nodeId, nodes[right]!.nodeId) ||
+        orderedTransitively(nodes[right]!.nodeId, nodes[left]!.nodeId)
       )
         continue;
       conflicts.push(`resource_conflict:${nodes[right]!.actionId}`);
@@ -1130,6 +1140,13 @@ type PlanScriptState = {
    * riddle - without a hand-written table in this file.
    */
   argumentOwners: ReadonlyMap<string, readonly string[]>;
+  /**
+   * The world tile each emitted node addresses, for the nodes whose target IS a piece of world (see `planWorldTileOf`).
+   *
+   * The consumer rule reads this rather than re-deriving it: a node's action is not on the node, so the fact has to be
+   * captured where the action is still in hand.
+   */
+  worldTileByNode: Map<string, string>;
 };
 
 /**
@@ -1660,18 +1677,87 @@ function emitPlanNode(
       refusePlan(`plan_cap_exceeded:${state.nodes.length + 2}`, state, requirement);
     state.nodes.push(approach);
   }
-  // The script's statement order IS the plan's order: "till this tile, then fertilise it" is two calls,
-  // and the second must not run before the first. That is one dependency edge per call, nothing more.
+  // TWO EDGES, TWO MEANINGS: THE ORDER A SCRIPT WROTE IS NOT A CHAIN OF CONSUMERS.
+  //
+  // `orderedAfter` says "do not start before this one is terminal, and do not skip me if it failed"; `dependsOn` says
+  // "I consume its fact, so if it failed I cannot run". The claim rule reads the union, so the script's statement order
+  // still has to survive as an edge - but spending `dependsOn` on it was the measured defect: on the finished 293-node
+  // run, `till_soil` alone was 64 nodes with 30 succeeded, 5 failed and **29 skipped**, because a strip of independent
+  // tiles was written as a chain. The tiles of a strip do not consume each other, so what the second one waits for is
+  // "that tile is done", not "that tile succeeded".
+  //
+  // WHAT COUNTS AS A CONSUMER, and why this is not a table of action pairs. The one fact this compiler holds about a
+  // step is the TILE it names: the canonical `x`/`y` pair the surface declares, which is the piece of world the step
+  // reads and writes. A later step aimed at the SAME tile is a step on state the earlier one was to create, and the
+  // cases are the product's own: `till_soil` then `plant_seed` on that tile (there is no soil for the seed where tilling
+  // failed), `plant_seed` then `water_crop`, `machine_load` then `machine_collect_output` (an output of a machine nothing
+  // was loaded into), `place_owned_object` then `rotate_furniture`. A step on a DIFFERENT tile consumes nothing of the
+  // earlier one, whatever the two actions are.
+  //
+  // Which also says what is NOT a consumer: the walk this compiler writes before a transition. Where the body stands is
+  // not state one step makes for another (`move_to_tile` declares no target family), so a walk that failed leaves the
+  // door to be attempted and refused by its own gate - `door_out_of_range` names what is wrong, where a skip names
+  // nothing.
+  //
+  // This is the same rule the Mod's own cases state from the other side: in `BodyProgramOrderedAfterTests.A3`, `b`
+  // consumes `a` and is skipped naming `a`, while `c` merely had to happen after `a` and runs. The producer a skip names
+  // is the nearest earlier step on that tile, which is the edge `program-status-wait.ts` `producersThatSkipped` joins on.
+  //
+  // The limit of the rule, stated rather than hidden: tile identity is coarser than data flow, so a step on a tile an
+  // earlier step only READ (`machine_inspect` of the machine a later step loads) is treated as a consumer and skipped
+  // with it. That errs toward leaving a tile alone after the step written on it failed; the direction it must never err
+  // in is acting as if a failed step had produced something.
+  const tile = planWorldTileOf(action, canonical);
+  const producer = tile === null ? undefined : planProducerOnTile(state, tile);
   const previous = state.nodes[state.nodes.length - 1]?.nodeId;
+  const nodeId = `n${String(state.nodes.length + 1).padStart(2, "0")}`;
+  if (tile !== null) state.worldTileByNode.set(nodeId, tile);
   state.nodes.push(
     Object.freeze({
-      nodeId: `n${String(state.nodes.length + 1).padStart(2, "0")}`,
+      nodeId,
       actionId: action.actionId,
       arguments: Object.freeze(canonical),
-      dependsOn: Object.freeze(previous === undefined ? [] : [previous]),
+      dependsOn: Object.freeze(producer === undefined ? [] : [producer]),
+      // Absent rather than `[]` when there is no ordering edge: absent is the empty edge on the wire, and the first
+      // node (or one that follows the very step it consumes) has nothing to wait for.
+      ...(previous === undefined || previous === producer ? {} : { orderedAfter: Object.freeze([previous]) }),
       bindings: Object.freeze({}),
     }),
   );
+}
+
+/**
+ * The tile of a PIECE OF WORLD a step addresses, or `null` when its coordinates are not state but a place to stand.
+ *
+ * The distinction is the surface's own, not this compiler's: `targetFamily` is where an action declares its targets come
+ * from (`soilTiles`, `machineTargets`, `chests`), and an action declaring none addresses no state at its coordinates -
+ * `move_to_tile`'s `x`/`y` is a place to stand, and nothing a later step can consume. That is the whole input of the
+ * consumer rule `emitPlanNode` applies.
+ */
+function planWorldTileOf(
+  action: PublishedPlanAction,
+  arguments_: Readonly<Record<string, PlanArgument>>,
+): string | null {
+  if (action.targetFamily === null) return null;
+  const x = arguments_.x;
+  const y = arguments_.y;
+  if (x?.type !== "integer" || y?.type !== "integer") return null;
+  // Keyed on the CANONICAL value, so two spellings of one coordinate are one tile.
+  return `${x.canonicalValue},${y.canonicalValue}`;
+}
+
+/**
+ * The nearest earlier step on this tile: the one whose state this step is written on top of.
+ *
+ * Nearest rather than all of them, so a node carries one edge and a skip names one producer - `till`, then `plant`, then
+ * `water` on one tile is a chain of consumption, not a node with three edges.
+ */
+function planProducerOnTile(state: PlanScriptState, tile: string): string | undefined {
+  for (let index = state.nodes.length - 1; index >= 0; index -= 1) {
+    const candidate = state.nodes[index]!.nodeId;
+    if (state.worldTileByNode.get(candidate) === tile) return candidate;
+  }
+  return undefined;
 }
 
 /**
@@ -1715,7 +1801,10 @@ function transitionApproachNode(
     nodeId: `${PLAN_INSERTED_NODE_PREFIX}${String(state.nodes.length + 1).padStart(2, "0")}`,
     actionId: MOVE_TO_TILE_ACTION_ID,
     arguments: Object.freeze({ x: walkX, y: walkY }),
-    dependsOn: Object.freeze(previous === undefined ? [] : [previous.nodeId]),
+    // A walk consumes nothing: where the body stands is not a piece of world state another step produced (`move_to_tile`
+    // declares no target family), so a failed walk orders the step after it rather than skipping it.
+    dependsOn: Object.freeze([]),
+    ...(previous === undefined ? {} : { orderedAfter: Object.freeze([previous.nodeId]) }),
     bindings: Object.freeze({}),
   });
 }
@@ -1769,7 +1858,9 @@ function emitForEachNode(value: unknown, actions: readonly PublishedPlanAction[]
       actionId: FOR_EACH_PLAN_ACTION_ID,
       // The wire tag is added HERE and nowhere else: the caller writes a loop, the node carries a runtime value.
       arguments: Object.freeze({ loop: Object.freeze({ type: "loop" as const, ...loop }) }),
-      dependsOn: Object.freeze(previous === undefined ? [] : [previous.nodeId]),
+      // A loop names no tile of its own - its rows are resolved on the game thread - so it consumes no earlier step.
+      dependsOn: Object.freeze([]),
+      ...(previous === undefined ? {} : { orderedAfter: Object.freeze([previous.nodeId]) }),
       bindings: Object.freeze({}),
     }),
   );

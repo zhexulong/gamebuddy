@@ -1768,7 +1768,13 @@ type BodyProgramNode = Readonly<{
   nodeId: string;
   actionId: string;
   arguments: Readonly<Record<string, BodyProgramRuntimeValue>>;
+  /** The CONSUMPTION edge: not startable until these succeeded, and skipped when one fails. */
   dependsOn: readonly string[];
+  /**
+   * The ORDERING edge: not startable until these are terminal, and never skipped. Absent means no such edge - the
+   * meaning the field has had since it reached the wire (`isBodyProgramNode` reads absent and empty alike).
+   */
+  orderedAfter?: readonly string[];
   bindings: Readonly<Record<string, BodyProgramFactReference>>;
 }>;
 /**
