@@ -77,32 +77,41 @@ const MIN_REASON_LENGTH = 40;
 export function lookupChannels(source) {
   const vocabulary = readStringArray(source, /export const LOOKUP_SUBJECTS = Object\.freeze\(\[([^\]]*)\]/u);
   const cases = new Map(
-    [...source.matchAll(/case "([a-z][a-z0-9_]*)":\s*return ([A-Za-z][A-Za-z0-9]*)\(/gu)].map((match) => [
+    [...source.matchAll(/case "([a-z][a-z0-9_]*)":\s*return ([A-Za-z][A-Za-z0-9_]*)\(([^)]*)\)/gu)].map((match) => [
       match[1],
-      match[2],
+      { fn: match[2], args: match[3] },
     ]),
   );
   const channels = new Map();
+  const nonSnapshot = new Map();
   const problems = [];
   for (const subject of vocabulary) {
-    const fn = cases.get(subject);
-    if (fn === undefined) {
+    const entry = cases.get(subject);
+    if (entry === undefined) {
       problems.push(`lookup_subject_without_case:${subject}`);
       continue;
     }
-    const body = functionBody(source, `function ${fn}(`);
+    const body = functionBody(source, `function ${entry.fn}(`);
     if (body === "") {
-      problems.push(`lookup_subject_without_body:${subject}(${fn})`);
+      problems.push(`lookup_subject_without_body:${subject}(${entry.fn})`);
       continue;
     }
     const fields = [...new Set([...body.matchAll(/snapshot\.([A-Za-z][A-Za-z0-9]*)/gu)].map((match) => match[1]))];
-    if (fields.length === 0) {
-      problems.push(`lookup_subject_reads_nothing:${subject}(${fn})`);
+    if (fields.length > 0) {
+      channels.set(subject, fields);
       continue;
     }
-    channels.set(subject, fields);
+    // A subject whose arm HANDS the snapshot to a function that then reads no family of it is the defect this check is
+    // for. A subject that reads a different source altogether is a channel of its own kind: `my_work` answers from the
+    // Mod's Body Program journal, so it has no snapshot family to read and reporting it as a gap would be asking it to
+    // become something it is not. Which of the two it is comes from the arm's own arguments, not from a list here.
+    if (/\bsnapshot\b/u.test(entry.args)) {
+      problems.push(`lookup_subject_reads_nothing:${subject}(${entry.fn})`);
+      continue;
+    }
+    nonSnapshot.set(subject, entry.fn);
   }
-  return { vocabulary, channels, problems, genericFamilyLookup: acceptsAnySnapshotFamily(source) };
+  return { vocabulary, channels, nonSnapshot, problems, genericFamilyLookup: acceptsAnySnapshotFamily(source) };
 }
 
 /**
@@ -322,6 +331,7 @@ export function auditConsumers({ surface, lookupSource, hudSource, modEntrySourc
     undeclared: reds.filter((pair) => !baselineById.has(pairId(pair))).length,
     opaque: opaqueOf(reds),
     lookupVocabulary: lookup.vocabulary,
+    lookupNonSnapshot: [...lookup.nonSnapshot.keys()],
     hudLines: hud.lines.length,
     sceneActions: scene.size,
   };
@@ -410,7 +420,10 @@ export function report(result, { list = false, write = (text) => process.stdout.
   );
   out(
     `observation_consumers: channels derived from ${result.lookupVocabulary.length} look_up subjects ` +
-      `[${result.lookupVocabulary.join(",")}], ${result.hudLines} HUD lines, ${result.sceneActions} scene affordance(s)`,
+      `[${result.lookupVocabulary.join(",")}], ${result.hudLines} HUD lines, ${result.sceneActions} scene affordance(s)` +
+      (result.lookupNonSnapshot.length === 0
+        ? ""
+        : `; read from a source other than the snapshot [${result.lookupNonSnapshot.join(",")}]`),
   );
   if (list)
     for (const pair of result.classified)

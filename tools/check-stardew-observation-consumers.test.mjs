@@ -65,10 +65,21 @@ function pairOf(result, id) {
 // ---------------------------------------------------------------------------------------------------------------
 
 test("every advertised look_up subject has a case, and every case answers from a family", () => {
-  const { vocabulary, channels, problems } = lookupChannels(TREE.lookupSource);
+  const { vocabulary, channels, nonSnapshot, problems } = lookupChannels(TREE.lookupSource);
   assert.ok(vocabulary.length > 0, "LOOKUP_SUBJECTS must be non-empty, or the channel is not measured");
   assert.deepEqual(problems, [], `a subject the tool advertises cannot be answered: ${problems.join(", ")}`);
-  for (const subject of vocabulary) assert.ok(channels.has(subject), `${subject} is advertised but answers nothing`);
+  // A channel is either a snapshot family (`channels`) or a source of its own (`nonSnapshot`, printed by the CLI) - and
+  // a subject that is neither is still the finding this assertion exists for.
+  for (const subject of vocabulary)
+    assert.ok(channels.has(subject) || nonSnapshot.has(subject), `${subject} is advertised but answers nothing`);
+  // Falsifier: an arm that HANDS the snapshot to a function which reads no family of it is still reported, so "reads a
+  // different source" cannot become a way to smuggle in a subject that answers nothing from the snapshot.
+  const synthetic = [
+    'export const LOOKUP_SUBJECTS = Object.freeze([\n  "hollow",\n] as const);',
+    'function hollow(snapshot) { return { subject: "hollow" }; }',
+    'export function lookUp() { switch (subject) { case "hollow": return hollow(snapshot); } }',
+  ].join("\n");
+  assert.deepEqual(lookupChannels(synthetic).problems, ["lookup_subject_reads_nothing:hollow(hollow)"]);
 });
 
 test("the State HUD declares at least one family, and every line it declares is read", () => {
