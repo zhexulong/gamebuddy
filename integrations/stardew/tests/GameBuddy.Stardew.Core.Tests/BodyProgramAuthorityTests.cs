@@ -1531,11 +1531,36 @@ public sealed class BodyProgramAuthorityTests
         authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
 
-        foreach (string code in new[] { "POLICY_DENIED", "policy-denied", "policy_denied_extra", " policy_denied", "policy_denied " })
+        foreach (string code in new[] { "POLICY_DENIED", "policy-denied", "policy_denied_extra", " policy_denied", "policy_denied ", "policy_denied:till_soil", "row_action_not_enabled:", "row_action_not_enabled:Till Soil" })
             authority.TryRejectAdmission(challenge, code).Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
 
         authority.Snapshot.Programs.Single().Nodes.Single().State.Should().Be(BodyProgramNodeState.AwaitingHostAdmission);
         authority.Snapshot.Events.Should().ContainSingle(@event => @event.Kind == "admission_challenge");
+    }
+
+    /// <summary>
+    /// A LOOP'S REFUSED ROW IS ONE SENTENCE, NOT A FREE-FORM CODE.
+    ///
+    /// <para>
+    /// The Host can distinguish WHICH row of a `for_each` the live policy does not offer, and `policy_denied` would throw
+    /// that away - the node would settle as a refusal nobody can act on. So the set admits exactly
+    /// `row_action_not_enabled:` plus an action identifier (the word the row gate already says at dispatch), and it
+    /// refuses the same shape with anything else appended. Without this the Host's row-named answer was unrepresentable:
+    /// `TryRejectAdmission` returned InvalidInput, the controller dropped the answer, and the node waited until its
+    /// deadline settled it as `deadline_expired` - a code that says nothing about the cause.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void RejectionCodeAdmitsExactlyOneRowNamedSentenceAndNothingFreeForm()
+    {
+        OpenBodyProgramJournalAuthority authority = Open();
+        authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!;
+
+        authority.TryRejectAdmission(challenge, "row_action_not_enabled:till_soil").IsSuccess.Should().BeTrue();
+        BodyProgramJournalNode node = authority.Snapshot.Programs.Single().Nodes.Single();
+        node.State.Should().Be(BodyProgramNodeState.Rejected);
+        node.RejectionCode.Should().Be("row_action_not_enabled:till_soil");
     }
 
     [Fact]

@@ -437,8 +437,33 @@ internal static class BodyProgramValidation
     internal static bool IsOpaqueTerminalProof(string? value) => value is { Length: >= 1 and <= 4096 } && !value.Any(char.IsControl);
     internal static bool IsOpaqueDiagnostic(string? value) => value is { Length: >= 1 and <= 4096 } && !value.Any(char.IsControl);
     internal static bool IsOpaquePolicyValue(string? value) => value is { Length: >= 1 and <= 4096 } && !value.Any(char.IsControl);
+    /// <summary>
+    /// The prefix of a rejection that names the loop ROW the live policy does not offer.
+    ///
+    /// <para>
+    /// One spelling, because two gates say this sentence: the row gate at dispatch
+    /// (<see cref="RouteReenteringBodyProgramExecutor"/>) and the Host's answer to one form's admission challenge. A
+    /// rejection that named only the form would blame the wrong node - the form is not what the policy judged - and a
+    /// rejection that said `policy_denied` would throw away the one part a caller can act on.
+    /// </para>
+    /// </summary>
+    internal const string RowActionNotEnabledPrefix = "row_action_not_enabled:";
+    /// <summary>
+    /// The rejection codes the Host may answer one node's admission with.
+    ///
+    /// <para>
+    /// The closed set is deliberate: a rejection is a durable veto against the node, so only words this product can
+    /// honour are admitted. `RowActionNotEnabledPrefix` widens it by exactly one SENTENCE rather than by a free-form
+    /// field - the prefix plus an action identifier the model already validates - because the Host can distinguish WHICH
+    /// row of a loop the policy does not offer, and `policy_denied` would settle that node as a refusal the caller cannot
+    /// act on. This is the ADR-006 amendment `FarmhandBodyProgramController` names where it declines to widen the set for
+    /// `admission_unavailable`: those causes are properties of the ATTACHMENT; this one is a property of the node.
+    /// </para>
+    /// </summary>
     internal static bool IsValidRejectionCode(string? value) => value is "policy_denied" or "deadline_expired" or "resource_conflict" or "catalog_stale"
-        or "schema_rejected" or "scope_mismatch" or "stop_epoch_closed" or "policy_identity_mismatch";
+        or "schema_rejected" or "scope_mismatch" or "stop_epoch_closed" or "policy_identity_mismatch"
+        || (value is not null && IsReasonCode(value) && value.StartsWith(RowActionNotEnabledPrefix, StringComparison.Ordinal)
+            && IsIdentifier(value[RowActionNotEnabledPrefix.Length..]));
     /// <summary>
     /// The one spelling of the reason-code grammar on this side of the boundary: lowercase ASCII, digits, and `_`/`:`/`-`.
     ///

@@ -496,7 +496,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         // the rows do not, because they are.
         if (!world.IsActionEnabled(actionId))
         {
-            reasonCode = $"row_action_not_enabled:{actionId}";
+            reasonCode = $"{BodyProgramValidation.RowActionNotEnabledPrefix}{actionId}";
             return false;
         }
         if (!TryBuildRowArguments(world, target, actionId, out IReadOnlyDictionary<string, BodyProgramCanonicalValue>? canonical, out reasonCode))
