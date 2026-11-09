@@ -2,25 +2,27 @@
  * The falsifier for `tools/check-frontend-reads-have-producers.mjs`: a fixture tree per case, driven through the gate's
  * own entry, so what is asserted is the gate's reading of a tree rather than a description of its source.
  *
- * red-proof: the presets read with the route removed from the Host - `frontend_reads_route_no_host_serves:
+ * red-proof: fixture  the presets read with the route removed from the Host - `frontend_reads_route_no_host_serves:
  *   /api/tavern/v1/presets  read at dialogue-web/src/preset-assembly-surface.ts:62` with `stub_only`, exit 1; the same
  *   fixture with the route declared -> no violation ("a read with no producer is named with the route and the file it
  *   is read from", and its served counterpart).
- * red-proof: a Playwright `page.route` stub for an otherwise unserved route -> still a violation, and the stub is named
+ * red-proof: fixture  a Playwright `page.route` stub for an otherwise unserved route -> still a violation, and the stub is named
  *   in `elsewhere` with `stub_only` true ("a Playwright stub is evidence of absence, not of presence").
- * red-proof: a route registered only inside `host/src/*.test.ts` -> still a violation ("a route a Host TEST serves is
+ * red-proof: fixture  a route registered only inside `host/src/*.test.ts` -> still a violation ("a route a Host TEST serves is
  *   not a route the Host serves").
- * red-proof: two shapes in one fixture - the served one passes, the unserved one is named, and the comment-only mention
+ * red-proof: fixture  two shapes in one fixture - the served one passes, the unserved one is named, and the comment-only mention
  *   is not counted as a read at all ("a route written in a comment is a description, not a read").
- * red-proof: an empty `dialogue-web/src` -> `frontend_route_population_empty`, exit 1 ("a comparison against nothing is
+ * red-proof: fixture  an empty `dialogue-web/src` -> `frontend_route_population_empty`, exit 1 ("a comparison against nothing is
  *   blocked, never green").
- * red-proof: a `host/src` with no registration position, and a `host/src` with no source at all -> `not_measured` with
+ * red-proof: fixture  a `host/src` with no registration position, and a `host/src` with no source at all -> `not_measured` with
  *   the reason named, never a pass ("a Host side that cannot be parsed is not measured, never passed").
- * red-proof: a closed-union read whose third member has no producer -> a violation naming
+ * red-proof: fixture  a closed-union read whose third member has no producer -> a violation naming
  *   `unserved member: /api/tavern/v1/chats/:chatHandle/trash` ("a union member with no producer is named on its own").
- * red-proof: a declared route nothing reads -> advisory only, status passed ("a host route nothing reads is advisory").
- * red-proof: running the gate from a foreign working directory -> the same population line, because the root is
- *   resolved from the module and not from the shell ("the gate does not depend on the caller's working directory").
+ *
+ * Two readings here are not falsifiers and do not wear the keyword: a declared route nothing reads is advisory only,
+ * status passed ("a host route nothing reads is advisory"), and a foreign working directory prints the same population
+ * line, because the root is resolved from the module and not from the shell ("the gate does not depend on the caller's
+ * working directory").
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";

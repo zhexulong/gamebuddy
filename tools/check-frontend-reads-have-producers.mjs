@@ -54,7 +54,7 @@
  * The last line is the JSON self-report `tools/lib/harness-conformance.mjs` reads, so this gate is registered as
  * self-verifying rather than excused.
  *
- * red-proof: the tree at HEAD `f383b9bb`, measured by this gate before the presets route landed - `examined 101
+ * red-proof: history  the tree at HEAD `f383b9bb`, measured by this gate before the presets route landed - `examined 101
  *   frontend route literal(s) and 76 host route(s)`, exit 1, three violations:
  *
  *     frontend_reads_route_no_host_serves: /api/tavern/v1/presets  read at
@@ -65,7 +65,7 @@
  *
  *   beside `/api/tavern/v1/settings/ui-language` (stub_only, one Playwright stub) and `/api/tavern/v1/world-info/export`
  *   (named nowhere else in the tree at all). The whole class, not one instance.
- * red-proof: the same read after those three routes landed in `host/src` - `examined 101 frontend route literal(s) and
+ * red-proof: history  the same read after those three routes landed in `host/src` - `examined 101 frontend route literal(s) and
  *   79 host route(s)`, `"violations":[]`, exit 0. Red before, green after, same command: the gate measured the tree
  *   rather than a list someone maintained.
  * red-proof: inject a read of a route only a spec stubs -> named as a violation with `stub_only` evidence, exit 1.
