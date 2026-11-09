@@ -317,9 +317,23 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   "check-live-run-failure-dump.mjs",
   "check-live-run-multiday-baseline.mjs",
   "check-live-run-silence.mjs",
+  // Prints `preset_macros examined N macros violations M status ...` on every run, which is the report the conformance
+  // suite reads; its falsifier is tools/check-preset-macros.test.mjs, which injects a module-level variable table (the
+  // two-calls-share-state violation) and a preset carrying an unimplemented macro.
+  "check-preset-macros.mjs",
+  // Prints a per-reading verdict (`import_to_export`, `export_to_reimport`, `source_to_reexport`) plus the population
+  // it examined, so its default run is the report the conformance suite reads.
+  "check-preset-round-trip.mjs",
   "check-stardew-fixture-action-coverage.mjs",
   "check-stardew-native-notice-coverage.mjs",
   "check-stardew-postcondition-delta.mjs",
+  // Prints a per-rule `checks[]` verdict - patch header vs diff, applies to the current submodule, extension
+  // point present after applying, patched file parses, extension point absent without the patch - so its default
+  // run is the report the conformance suite reads. Its falsifier is tools/check-vendor-patches-apply.test.mjs,
+  // which injects a changed context line into the shipped patch (git apply --check fails), a declared extension
+  // point its diff never adds, an extension point the pinned submodule already has, and a patch that only parses
+  // until it is applied.
+  "check-vendor-patches-apply.mjs",
 ]);
 
 /** How long a gate's default run may take before it is reported as having printed nothing. */
@@ -661,6 +675,15 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "drives three analyzer CLIs over the decompiled tree; its falsifier is " +
       "tools/check-stardew-observation-gap.test.mjs, which forces the skip, the failing step, a chain that exits 0 " +
       "without the observation summary, and asserts the --fail-on-ungranted arming itself",
+  },
+  {
+    gate: "check-stardew-crop-row-derivation.mjs",
+    reason:
+      "its falsifier is tools/check-stardew-crop-row-derivation.test.mjs, which drives the checker's own overrides against" +
+      " the real sources: a shared field removed from the Mod's crop row is named (`not_reachable:isRaised`), a Host layer" +
+      " naming a field the Mod does not publish is red, a schema that forgot a published field is red, a map-only" +
+      " passability answer is named, an exemption that has been overtaken is red, and a worker population of zero is" +
+      " blocked rather than green",
   },
   {
     gate: "check-stardew-discovery-exclusions.mjs",
