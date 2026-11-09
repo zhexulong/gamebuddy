@@ -159,8 +159,9 @@ export async function watchRollover(
     timeoutMs,
     pollIntervalMs = POLL_INTERVAL_MS,
     // How long an `event` hold may stand before it is a named stop rather than a world still loading. A day-start
-    // transition is the common case and clears in about two seconds.
-    eventWaitMs = 20_000,
+    // transition is the common case and clears in about two seconds; a SAVE can hold it for tens of seconds, so the
+    // bound is generous and the calendar (above) is what decides a crossing, not this clock.
+    eventWaitMs = 120_000,
     now = () => Date.now(),
     sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     // Asked first, every pass. A transport that died cannot support any claim about the night, so waiting out
@@ -231,7 +232,19 @@ export async function watchRollover(
     // waiting at all is asking a different question.
     const hold = classifyActorHold(snapshot);
     if (hold.reasonCode !== null) {
+      // AN EVENT HOLD DOES NOT OUTRANK THE CALENDAR.
+      //
+      // Measured 2026-11-09 (round40, second attempt): the companion slept at 21:40, the night advanced, and the watcher
+      // then spent its whole event budget watching the new day's own transition - `actor_held_by_cutscene:waited_ms=20124`
+      // - and reported the night as uncrossed, on a day record whose own terminal said `day_advanced`. A menu may hold
+      // the night because the harness must not close it; a cutscene has already let the world move, and the day moving
+      // IS the crossing. So for an event hold the calendar is consulted FIRST, and only a calendar that has not moved
+      // keeps the watcher waiting.
+      const calendarMoved = dayNow !== null && dayNow !== dayBefore;
       const waitable = hold.hold === "cutscene" && timeoutMs > 0;
+      if (calendarMoved && hold.hold === "cutscene") {
+        return Object.freeze({ crossed: true, reasonCode: null, menus, dayAfter: dayNow, snapshot });
+      }
       if (!waitable) return Object.freeze({ crossed: false, reasonCode: hold.reasonCode, menus });
       if (cutsceneSince === null) cutsceneSince = observedNow;
       const waitedMs = observedNow - cutsceneSince;

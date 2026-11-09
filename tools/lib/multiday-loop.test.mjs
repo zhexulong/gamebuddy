@@ -499,3 +499,25 @@ test("an event that never clears stops by name, with the time it was given", asy
   );
   assert.ok(Number(String(outcome.reasonCode).split("waited_ms=")[1]) >= 3000);
 });
+
+test("a cutscene cannot outrank a calendar that already moved", async () => {
+  // Measured 2026-11-09 (round40 second attempt): she slept at 21:40, the night advanced, and the watcher spent its whole
+  // event budget watching the NEW day's transition - `actor_held_by_cutscene:waited_ms=20124` - and reported the night
+  // uncrossed on a day record whose own terminal said `day_advanced`. A menu holds a night because the harness must not
+  // close it; a cutscene has already let the world move, and the day moving IS the crossing.
+  let clock = 0;
+  const advancing = { sleep: async () => {}, now: () => clock, pollIntervalMs: 0 };
+  const transitionAfterCrossing = {
+    async observe() {
+      clock += 500;
+      // The calendar has moved (6 -> 7) and the new day's own transition is still running.
+      return { actionable: false, actorDispositionKind: "event", actorDispositionDetail: "new_day", dayOfMonth: 7 };
+    },
+    async dismiss() {
+      return { receipt: null, reasonCode: null };
+    },
+  };
+  const outcome = await watchRollover(transitionAfterCrossing, { dayBefore: 6, timeoutMs: 600_000, ...advancing });
+  assert.equal(outcome.crossed, true, "the day moved, so the night was crossed - whatever is on screen now");
+  assert.equal(outcome.dayAfter, 7);
+});
