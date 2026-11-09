@@ -1074,6 +1074,52 @@ public sealed class TargetFamilyCompletenessTests
         }
 
         /// <summary>
+        /// A hoedirt tile whose crop has a real `Data/Crops` row WRITTEN BY THE TEST, because the five layout facts the
+        /// crop row now publishes are read through `Crop.GetData()` (Crop.cs:330) and a headless process has loaded no
+        /// content.
+        ///
+        /// <para>
+        /// <paramref name="raised"/> writes the row's `IsRaised` AND the crop's own <c>raisedSeeds</c>, in the order the
+        /// engine writes them (<c>Crop</c>'s constructor copies one from the other at Crop.cs:276): a trellis crop really
+        /// is both facts, and a fixture that wrote only one would be asking about a state the game cannot produce.
+        /// </para>
+        ///
+        /// <para>
+        /// <paramref name="dayOfCurrentPhase"/> above zero with <paramref name="fullyGrown"/> true is the state a crop is
+        /// in on the morning after it was picked and began regrowing: <c>fullyGrown</c> (it finished its phases) and
+        /// <c>readyForHarvest()</c> (it can be picked now, HoeDirt.cs:467) disagree, which is why the row carries both.
+        /// </para>
+        ///
+        /// <para>The seed id must be one no other fixture uses: `Game1.cropData` is a STATIC dictionary this process never
+        /// reloads, so a row written for a shared id would change what another case reads.</para>
+        /// </summary>
+        internal StardewValley.TerrainFeatures.HoeDirt PlaceCropWithData(
+            int x,
+            int y,
+            string seedId,
+            bool raised,
+            bool fullyGrown = false,
+            int dayOfCurrentPhase = 0)
+        {
+            var dirt = new StardewValley.TerrainFeatures.HoeDirt();
+            SetInstanceField(dirt, "state", new NetInt(0));
+            dirt.crop = NewCrop(seedIndex: seedId, phaseDaysLeft: 0, fullyGrown: fullyGrown);
+            SetInstanceField(dirt.crop, "raisedSeeds", new NetBool(raised));
+            SetInstanceField(dirt.crop, "dayOfCurrentPhase", new NetInt(dayOfCurrentPhase));
+            Game1.cropData![seedId] = new StardewValley.GameData.Crops.CropData
+            {
+                Seasons = new() { StardewValley.Season.Spring, StardewValley.Season.Summer },
+                DaysInPhase = new() { 1, 2, 3 },
+                RegrowDays = 3,
+                HarvestMethod = StardewValley.GameData.Crops.HarvestMethod.Grab,
+                IsRaised = raised,
+                NeedsWatering = true,
+            };
+            this.Farm.terrainFeatures[new Vector2(x, y)] = dirt;
+            return dirt;
+        }
+
+        /// <summary>
         /// A hoedirt tile carrying a crop that wants water, built from the two facts `DiscoverCropTargets` reads
         /// (`needsWatering()` / `isWatered()`), never from a hand-written row.
         /// </summary>

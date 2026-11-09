@@ -157,7 +157,7 @@ public sealed class ClearStepMoveTests
         source.Should().NotContain(".CurrentTool.");
 
         // And the arrival has exactly two outcomes, both named in code where the decision is made.
-        string arrival = MethodBody(source, "private void CompleteClearApproachArrival(");
+        string arrival = MethodBody(source, "void CompleteClearApproachArrival(");
         arrival.Should().Contain("ClearStepBlockedReasonCode");
         arrival.Should().Contain("AssessClearApproachArrival");
 
@@ -276,7 +276,7 @@ public sealed class ClearStepMoveTests
     /// A real headless farm corner with one corridor: a 16x16 map, a real <see cref="GameLocation"/>, a real
     /// <see cref="Farmer"/> with a real bounding box, and the <c>Game1</c> statics the engine's reads dereference.
     /// </summary>
-    private sealed class CorridorHarness : IDisposable
+    internal sealed class CorridorHarness : IDisposable
     {
         private readonly Game1? gameBefore;
         private readonly Farmer? playerBefore;
@@ -289,9 +289,23 @@ public sealed class ClearStepMoveTests
             this.worldStateBefore = typeof(Game1)
                 .GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
                 .GetValue(null);
+            // Every static this harness seeds is put back in Dispose, because a sibling test class that runs after
+            // this one reads the same game-wide tables: a seed left standing is a second authority over somebody
+            // else's world.
+            this.otherFarmersBefore = Game1.otherFarmers;
+            this.floorPathDataBefore = Game1.floorPathData;
+            this.floorPathItemLookupBefore = FloorPathItemLookupField().GetValue(null);
             this.Location = null!;
             this.Actor = null!;
         }
+
+        private readonly object? otherFarmersBefore;
+        private readonly object? floorPathDataBefore;
+        private readonly object? floorPathItemLookupBefore;
+
+        /// <summary>`Flooring`'s process-wide cache of `itemId -> flooring`, built lazily from `Game1.floorPathData`.</summary>
+        private static FieldInfo FloorPathItemLookupField() => typeof(StardewValley.TerrainFeatures.Flooring)
+            .GetField("_FloorPathItemLookup", BindingFlags.NonPublic | BindingFlags.Static)!;
 
         public GameLocation Location { get; private set; }
 
@@ -308,6 +322,33 @@ public sealed class ClearStepMoveTests
                 .SetValue(null, root);
             if (Game1.game1 is null)
                 Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
+            // The rest of the statics a native walkability question dereferences, seeded the way
+            // `TargetFamilyCompletenessTests.TargetFamilyWorld` seeds them (the established headless-world shape, and the
+            // only place that knows which of `Game1`'s startup assignments a collision test reads). Without them this world
+            // answered "may the planner step here" with a NullReferenceException whenever an earlier test had left the
+            // singleton in a different half-built state - which is exactly how a refusal test turns into a green one, or a
+            // path into a dead end, depending on what ran first.
+            Game1.random ??= new Random(1);
+            Game1.recentMultiplayerRandom ??= new Random(1);
+            Game1.hudMessages ??= new System.Collections.Generic.List<HUDMessage>();
+            if (Game1.game1!._locations is null) Game1.game1._locations = new System.Collections.Generic.List<GameLocation>();
+            Game1.locationContextData ??= new System.Collections.Generic.Dictionary<string, StardewValley.GameData.LocationContexts.LocationContextData>(StringComparer.Ordinal)
+            {
+                ["Default"] = new StardewValley.GameData.LocationContexts.LocationContextData(),
+            };
+            // `FarmerCollection.Any` reads `Game1.otherFarmers` with no null guard, and a native collision or path question
+            // about a tile holding an OBJECT walks it (`PathFindController.isPlayerPresent`, FarmerCollection.cs:30). An
+            // uninitialized `Game1` leaves it null, and so does a process where no session ever started, so the collision
+            // test answered every walkability question about an object tile with a NullReferenceException that the
+            // callees swallow into "nothing to say". Assigned rather than `??=`'d: a root left by an earlier harness can
+            // be non-null and still carry nothing, and one player is the whole population a headless world has.
+            Game1.otherFarmers = new NetRootDictionary<long, Farmer>();
+            // `Object.isPassable()` asks `Flooring.IsFloorPathItem`, which builds a PROCESS-WIDE lookup out of
+            // `Game1.floorPathData` (Flooring.cs:209-220) - empty in a process without a save, so the same question threw
+            // for the same reason. One empty table is the honest headless value: no flooring or path item is placed here,
+            // and both the table and the lookup it caches are restored in Dispose.
+            Game1.floorPathData = new System.Collections.Generic.Dictionary<string, StardewValley.GameData.FloorsAndPaths.FloorPathData>();
+            FloorPathItemLookupField().SetValue(null, null);
 
             GameLocation location = new();
             var map = new xTile.Map();
@@ -315,7 +356,14 @@ public sealed class ClearStepMoveTests
             map.AddLayer(new xTile.Layers.Layer("Buildings", map, new xTile.Dimensions.Size(16, 16), new xTile.Dimensions.Size(64, 64)));
             location.map = map;
             location.IsFarm = true;
-            SetField(location, "name", new NetString("ProbeFarm"));
+            // A NAME OF ITS OWN, and a place in `Game1.locations`. `Farmer.currentLocation` is a `NetLocationRef`, which
+            // CACHES the instance but re-resolves it BY NAME whenever its `_dirty` flag is set (NetLocationRef.cs:86-110),
+            // and `Game1.getLocationFromName` answers from `Game1.locations`. Two harnesses sharing the name `ProbeFarm`
+            // therefore exchanged worlds the moment any other test forced that re-resolve: this corridor's actor pointed at
+            // the other world, whose tiles are open, so the walled route became walkable and its blocker became invisible.
+            // Measured: the same binary answered `clear_step_blocked` and `clear_step_cleared` in different run orders.
+            SetField(location, "name", new NetString("ClearStepCorridor"));
+            Game1.game1!._locations!.Add(location);
 
             var sprite = (FarmerSprite)FormatterServices.GetUninitializedObject(typeof(FarmerSprite));
             SetField(sprite, "spriteWidth", new NetInt(16));
@@ -324,11 +372,18 @@ public sealed class ClearStepMoveTests
 
             var actor = (Farmer)FormatterServices.GetUninitializedObject(typeof(Farmer));
             SetField(actor, "position", new NetPosition());
+            // `Farmer.Halt()` clears this list unconditionally (Farmer.cs:306, :8125), and an uninitialized farmer never ran
+            // the field's own initializer - so every refusal the body controller reports threw before it could report.
+            SetField(actor, "movementDirections", new System.Collections.Generic.List<int>());
             SetField(actor, "currentLocationRef", new NetLocationRef());
             SetField(actor, "netMount", new NetRef<StardewValley.Characters.Horse>());
             SetField(actor, "sprite", new NetRef<AnimatedSprite> { Value = sprite });
             SetField(actor, "netStamina", new NetFloat(270f));
             SetField(actor, "usingTool", new NetBool(false));
+            // `Farmer.Halt()` asks `IsSitting()`, which is `isSitting.Value` (Farmer.cs:4697), and then `ShowSitting()`
+            // when it is true. An uninitialized farmer carries neither that NetBool nor the socket it would draw into, so
+            // the refusal path threw before it could report - the same headless-shape seeding as `movementDirections`.
+            SetField(actor, "isSitting", new NetBool(false));
             SetField(actor, "toolPower", new NetInt(0));
             // `TryStart` refuses a body it cannot move, and `Farmer.canMove` is a plain bool that defaults to false on
             // an uninitialized actor.
@@ -379,6 +434,67 @@ public sealed class ClearStepMoveTests
         public void PlaceRock(int x, int y) =>
             this.Location.resourceClumps.Add(new StardewValley.TerrainFeatures.ResourceClump(148, 1, 1, new Vector2(x, y)));
 
+        /// <summary>
+        /// A weed in the object layer, built from exactly the two facts `Object.IsWeeds()` reads
+        /// (`Category == -999 && Name.ContainsIgnoreCase("weeds")`, Object.cs:6117) because a process without a save has
+        /// no `Data/Objects` row to resolve `Name` or `QualifiedItemId` from.
+        /// </summary>
+        public void PlaceWeed(int x, int y)
+        {
+            var weed = new StardewValley.Object
+            {
+                Name = "Weeds",
+                Category = -999,
+                ItemId = "313",
+            };
+            typeof(Item)
+                .GetField("_qualifiedItemId", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)!
+                .SetValue(weed, "(O)313");
+            this.Location.objects[new Vector2(x, y)] = weed;
+        }
+
+        /// <summary>
+        /// A controller with no receipt capture and the PRODUCER's own id lookup - the seam the refusal formatter reads,
+        /// without a walk in front of it.
+        /// </summary>
+        public StardewBodyController BlindController() =>
+            new((_, _, _) => { }, ExecutionManager.PublishedBlockerTargetId);
+
+        /// <summary>The id `DiscoverWeedTargets` publishes for one tile, read from that discovery rather than rebuilt.</summary>
+        public string WeedTargetId(int x, int y) => ExecutionManager.PublishedBlockerTargetId(this.Actor, "weedTargets", x, y)!;
+
+        /// <summary>
+        /// The refusal the arrival re-plan answers, with the actor standing where the walk left it. The controller is
+        /// driven through its real arrival path rather than through its evidence formatter, so the receipt asserted on
+        /// is the receipt a caller receives.
+        /// </summary>
+        public (string ReasonCode, string? Evidence) Arrive((int X, int Y) blocker, int fromX, int fromY)
+        {
+            this.Actor.position.Set(new Vector2(fromX * 64 + 8, fromY * 64));
+            string? code = null;
+            string? evidence = null;
+            var controller = new StardewBodyController(
+                (_, reasonCode, reported) =>
+                {
+                    code = reasonCode;
+                    evidence = reported;
+                },
+                // The PRODUCER's own lookup, not a stand-in: the id in the receipt is whatever the family's discovery
+                // would have published, so a test that stubbed it would prove nothing about what a frame carries.
+                ExecutionManager.PublishedBlockerTargetId);
+            // The arrival reports through the controller's own `Stop`, which refuses to speak for a body it does not
+            // hold - a real arrival is reached from the walk that was started for it, so the harness gives the
+            // controller that same ownership instead of asserting on a state no caller can be in.
+            SetField(controller, "active", this.Specification());
+            controller.CompleteClearApproachArrival(
+                new StardewBodyController.ClearApproach(this.Specification(), blocker),
+                new Vector2(fromX, fromY),
+                this.Actor,
+                tick: 2);
+            code.Should().NotBeNull("the arrival re-plan always reports, so a silent arrival is a broken harness");
+            return (code!, evidence);
+        }
+
         public (string ReasonCode, string? Evidence) Refuse(int fromX, int fromY)
         {
             this.Actor.position.Set(new Vector2(fromX * 64 + 8, fromY * 64));
@@ -423,7 +539,13 @@ public sealed class ClearStepMoveTests
             typeof(Game1)
                 .GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
                 .SetValue(null, this.worldStateBefore);
+            Game1Static("otherFarmers").SetValue(null, this.otherFarmersBefore);
+            Game1Static("floorPathData").SetValue(null, this.floorPathDataBefore);
+            FloorPathItemLookupField().SetValue(null, this.floorPathItemLookupBefore);
+            Game1.game1?._locations?.Remove(this.Location);
             Game1.game1 = this.gameBefore!;
         }
+
+        private static FieldInfo Game1Static(string name) => typeof(Game1).GetField(name, BindingFlags.Public | BindingFlags.Static)!;
     }
 }

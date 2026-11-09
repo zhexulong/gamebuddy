@@ -57,4 +57,43 @@ public static class ClearingEvidence
         string kind = kindAt(blocker) ?? "unknown";
         return $"clear_step={kind}@{blocker.X},{blocker.Y};stand_at={approach.X},{approach.Y};remaining_clears={step.RemainingClears}";
     }
+
+    /// <summary>
+    /// The step's other half: WHAT stands there, the id the frame published for it, and which of our actions removes it.
+    ///
+    /// <para>
+    /// <see cref="DescribeFirstStep"/> names the tile and where to hit it from, in the clearing SEARCH's own words -
+    /// `rock`, `weed`, a price. That is enough to describe a cost and not enough to act: measured `round40` attempt 2,
+    /// one weed on a four-way route was the run's only failed action, and the refusal that ended it said
+    /// `clear_step=weed@40,9;stand_at=39,9` and nothing about which action swings at a weed. The Agent abandoned the
+    /// tile instead of clearing it.
+    /// </para>
+    /// <para>
+    /// <paramref name="occupant"/> is the engine's own name for the thing on the tile, so a caller reading it is reading
+    /// what the game calls it rather than what the costing table calls it - the two differ exactly where the caller
+    /// needs them to (a `quarry_boulder` is priced as a `rock`). <paramref name="targetId"/> is null when the frame the
+    /// caller's plan was compiled against carried no row for that tile, and that absence is stated as
+    /// <see cref="BlockerNotPublished"/> rather than filled with a rebuilt hash: an id only exists for what a frame
+    /// published, and an invented one would be an identity the caller can never satisfy.
+    /// </para>
+    /// <para>
+    /// The absence of a clearing action is stated too, and in the same shape: <c>no_published_action_clears:&lt;kind&gt;</c>,
+    /// so "nothing we have removes this" is one word a caller can branch on instead of a missing key it must guess at.
+    /// </para>
+    /// </summary>
+    public static string DescribeBlocker(string occupant, string? targetId, IReadOnlyList<string> clearingActions)
+    {
+        ArgumentNullException.ThrowIfNull(occupant);
+        ArgumentNullException.ThrowIfNull(clearingActions);
+        string clears = clearingActions.Count == 0
+            ? $"{NoPublishedActionClears}:{occupant}"
+            : string.Join(",", clearingActions);
+        return $"blocker_occupant={occupant};clears_with={clears};blocker_target={targetId ?? BlockerNotPublished}";
+    }
+
+    /// <summary>What the evidence says when the frame published no row for the blocker's tile.</summary>
+    public const string BlockerNotPublished = "blocker_not_published";
+
+    /// <summary>What the evidence says when no published action declares it can remove the occupant.</summary>
+    public const string NoPublishedActionClears = "no_published_action_clears";
 }

@@ -196,6 +196,19 @@ internal sealed partial class ExecutionManager
     internal const string NoReachableApproachReasonCode = "no_reachable_approach";
 
     /// <summary>
+    /// The same verdict under the name an action that just asked "is this ground farmable" calls it: the tile is
+    /// worth working, and there is nowhere legal to stand.
+    ///
+    /// <para>
+    /// Two names, one verdict, one predicate - the leg already says `no_reachable_approach:&lt;x&gt;:&lt;y&gt;`, which names the
+    /// PLACEMENT. `till_soil` has answered the placement already (the tile is farmable, the actor is simply not beside
+    /// it) and its remaining question is the standing tile, so a caller reading its refusal has to be told which of the
+    /// two failed. The suffix is the same `standable_neighbour` fact the evidence and the hint carry.
+    /// </para>
+    /// </summary>
+    internal const string NoStandingTileCodePrefix = "no_standing_tile";
+
+    /// <summary>
     /// The hollow ring: a tool swing's target tile must not be the tile the actor is standing on.
     ///
     /// <para>
@@ -288,18 +301,26 @@ internal sealed partial class ExecutionManager
         (int X, int Y) target,
         (int X, int Y) actor,
         Func<(int X, int Y), bool> isStandable,
-        System.Collections.Generic.IReadOnlyList<(int X, int Y)>? footprint = null)
+        System.Collections.Generic.IReadOnlyList<(int X, int Y)>? footprint = null,
+        string? reasonCodePrefix = null)
     {
         // The standable-neighbour fact is asked of the WHOLE footprint when there is one: a free tile on the south
         // face of a 2x2 clump is a standable neighbour the anchor's own ring never contains, and answering `none`
         // there would call a reachable placement unreachable.
         System.Collections.Generic.IReadOnlyList<(int X, int Y)> tiles = footprint ?? new[] { target };
-        bool anyStandable = ApproachTileSelector.Select(tiles, actor, isStandable, _ => true) is not null;
-        string neighbour = anyStandable ? "unreachable" : "none";
-        string evidence = $"target={target.X},{target.Y};actor={actor.X},{actor.Y};reach=1;approach=none;standable_neighbour={neighbour}";
+        // ONE enumeration answers both halves: how many tiles the actor could stand on (the count) and whether there
+        // are any at all (the word). Asking twice is how the two start disagreeing about the same ring.
+        int standableTiles = ApproachTileSelector.StandableCandidates(tiles, isStandable).Count;
+        string neighbour = standableTiles > 0 ? "unreachable" : "none";
+        string evidence = $"target={target.X},{target.Y};actor={actor.X},{actor.Y};reach=1;approach=none;standable_neighbour={neighbour};standable_tiles={standableTiles.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
         if (footprint is not null)
             evidence += $";footprint={footprint.Count}";
-        return ($"{NoReachableApproachReasonCode}:{target.X}:{target.Y}", evidence, $"no_approach;standable_neighbour={neighbour}");
+        // The placement's own name names the tile; a caller that has already answered the placement passes its own word
+        // and is answered with the neighbour fact instead (see NoStandingTileCodePrefix).
+        string code = reasonCodePrefix is null
+            ? $"{NoReachableApproachReasonCode}:{target.X}:{target.Y}"
+            : $"{reasonCodePrefix}:{neighbour}";
+        return (code, evidence, $"no_approach;standable_neighbour={neighbour}");
     }
 
     /// <summary>
