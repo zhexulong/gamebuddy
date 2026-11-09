@@ -17,6 +17,47 @@ namespace GameBuddy.Stardew;
 // ExecutionManager game-thread ledger, receipt store, snapshot, and cancel state.
 internal sealed partial class ExecutionManager
 {
+    /// <summary>The native click radius. <c>Game1.checkAction</c> gates the ordinary action path on
+    /// <c>tileWithinRadiusOfPlayer(grabTile, 1)</c> (Game1.cs:11509) and <c>shop_purchase</c> refuses with
+    /// <c>shop_counter_out_of_reach</c> at the same radius, so one constant names the reach every consumer enforces.</summary>
+    internal const int NativeInteractionRadius = 1;
+
+    /// <summary>The refusal a substituted approach reports when the body cannot act on the tile it was asked for.</summary>
+    internal const string ApproachOutOfReachReasonCode = "approach_out_of_reach";
+
+    /// <summary>
+    /// Whether a body on <paramref name="actor"/>'s tile can still ACT on <paramref name="requested"/>.
+    ///
+    /// <para>
+    /// Asked of the engine's own gate (<see cref="Utility.tileWithinRadiusOfPlayer"/>, Utility.cs:4100-4109 - Chebyshev,
+    /// reading <c>f.Tile</c>), never of a distance written here: the action that follows a move refuses at exactly this
+    /// radius, so a second spelling could publish "in range" for a body the next action then refuses. Measured
+    /// 2026-11-09: the move receipt claimed the requested tile while the body stood two tiles from the counter
+    /// <c>shop_purchase</c> then refused against.
+    /// </para>
+    /// </summary>
+    internal static bool IsWithinRangeOfRequest((int X, int Y) requested, Farmer actor) =>
+        actor is not null && Utility.tileWithinRadiusOfPlayer(requested.X, requested.Y, NativeInteractionRadius, actor);
+
+    /// <summary>
+    /// What a <c>target_reached</c> receipt says about WHERE the body is relative to the tile that was ASKED for.
+    ///
+    /// <para>
+    /// <c>reached=requested</c> is the only claim that the body is on the requested tile, and it is made only when it
+    /// is true. <c>reached=adjacent</c> is the substituted-approach case (or a directive that allowed adjacency) and
+    /// names all three facts, including whether the requested tile is still within the native interaction radius from
+    /// where the body stands. The old shape said <c>already_at_target=true</c> for the SUBSTITUTED tile while printing
+    /// <c>requested=</c>, which reads as "you are there" to a consumer computing reach from the request: four moves in
+    /// one run reported it and the shop action then refused <c>shop_counter_out_of_reach</c> naming both tiles.
+    /// </para>
+    /// </summary>
+    internal static string DescribeMoveArrival(
+        (int X, int Y) requested,
+        (int X, int Y) actor,
+        bool withinRangeOfRequest) =>
+        $"reached={(actor == requested ? "requested" : "adjacent")};requested={requested.X},{requested.Y};"
+        + $"actor={actor.X},{actor.Y};within_range_of_request={(withinRangeOfRequest ? "true" : "false")}";
+
     public LocalExecutionReceipt RequestLocalMove(string requestId, Vector2 targetTile, long? requestedDeadlineMs = null, bool allowAdjacentArrival = false)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
@@ -134,19 +175,36 @@ internal sealed partial class ExecutionManager
         //    player the farm was a maze. A satisfied arrival contract is success, and
         //    saying so moves no native state because nothing needs moving. The check
         //    is made AFTER substitution so the same rule covers the approached case.
+        (int X, int Y) requestedTile = ((int)targetTile.X, (int)targetTile.Y);
+        (int X, int Y) actorTile = ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y);
+        bool withinRangeOfRequest = IsWithinRangeOfRequest(requestedTile, Game1.player);
         if (StardewBodyController.IsArrivalDelta(
-            Math.Abs((int)Game1.player.Tile.X - (int)effectiveTarget.X),
-            Math.Abs((int)Game1.player.Tile.Y - (int)effectiveTarget.Y),
+            Math.Abs(actorTile.X - (int)effectiveTarget.X),
+            Math.Abs(actorTile.Y - (int)effectiveTarget.Y),
             adjacentArrival))
+        {
+            // 2a. The substitution exists to bring the body within INTERACTION RANGE of the requested tile. Where it
+            //     cannot - the body is not on the request and cannot act on it from where it stands - reporting
+            //     success would hand the failure to the NEXT action, which then refuses without saying why. The two
+            //     tiles and the measured verdict are the whole answer: the caller re-aims or chooses another counter.
+            if (approachSubstituted && !withinRangeOfRequest)
+            {
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    ApproachOutOfReachReasonCode,
+                    $"requested={FormatTile(targetTile)};actor={FormatTile(Game1.player.Tile)};approach={FormatTile(effectiveTarget)};reach={NativeInteractionRadius};within_range_of_request=false");
+            }
+
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Succeeded,
                 "target_reached",
-                (approachSubstituted
-                    ? $"already_at_target=true;tile={FormatTile(Game1.player.Tile)};target={FormatTile(effectiveTarget)};requested={FormatTile(targetTile)};adjacent_arrival=true"
-                    : $"already_at_target=true;tile={FormatTile(Game1.player.Tile)};target={FormatTile(targetTile)}")
+                DescribeMoveArrival(requestedTile, actorTile, withinRangeOfRequest)
                     + (stoodAsideFor.Refused ? $";stood_aside_for={stoodAsideFor.Format()}" : string.Empty));
+        }
 
         LocalMoveSpec specification = new(executionId, requestId, effectiveTarget, adjacentArrival, this.revision, this.tick + deadlineTicks, deadlineMs);
         // The controller emits its initial Running transition synchronously;
@@ -181,9 +239,13 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, startEvidence, hint: startHint);
         }
 
+        // The substituted leg is walked to the SUBSTITUTE with EXACT arrival (`adjacentArrival` was cleared above), so
+        // this receipt names the substitution rather than reprinting `adjacent_arrival=true`, which promised the
+        // opposite: a body one tile from the substitute satisfied it, and that is the tile the run measured at 4,19.
         string acceptedEvidence = approachSubstituted
-            ? $"route_revision={specification.RouteRevision};target={FormatTile(effectiveTarget)};requested={FormatTile(targetTile)};adjacent_arrival=true"
-            : $"route_revision={specification.RouteRevision};target={FormatTile(effectiveTarget)}";
+            ? $"route_revision={specification.RouteRevision};target={FormatTile(effectiveTarget)};requested={FormatTile(targetTile)};approach=substituted"
+            : $"route_revision={specification.RouteRevision};target={FormatTile(effectiveTarget)}"
+                + (adjacentArrival ? ";adjacent_arrival=true" : string.Empty);
         if (stoodAsideFor.Refused)
             acceptedEvidence += $";stood_aside_for={stoodAsideFor.Format()}";
         LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, acceptedEvidence);
