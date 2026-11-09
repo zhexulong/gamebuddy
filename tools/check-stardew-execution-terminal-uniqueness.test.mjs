@@ -5,9 +5,12 @@
  * Every pin is a HAND-BUILT artifact: the gate is a per-run verifier, so the suite supplies the run. Each case is the
  * defect the gate exists for, stated as the reading a real run would have produced.
  *
- * red-proof (one finding per channel rule, each seen red against the gate first):
- *   - `one request answered twice` -> duplicate_answer:<requestId>
- *   - `the same terminal reaching the fact listeners twice` -> duplicate_fact:<executionId>:<reasonCode>
+ * red-proof: inject  one request answered twice in a hand-built artifact -> `duplicate_answer:request_feed_01` and
+ *   `"duplicated":1`, exit 1, asserted at process level by `runGate` below
+ *   (tools/check-stardew-execution-terminal-uniqueness.test.mjs)
+ * red-proof: inject  one terminal twice on the fact channel -> `duplicate_fact:execution_feed_01:` +
+ *   `hay_placed_in_trough,hay_placed_in_trough`, exit 1, the pre-fix double this gate exists for
+ *   (tools/check-stardew-execution-terminal-uniqueness.test.mjs)
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";

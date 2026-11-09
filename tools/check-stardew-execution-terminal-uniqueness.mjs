@@ -43,9 +43,12 @@
  *
  * Exit 1 on any finding, 0 with a `*_skipped:` line when there is nothing to measure.
  *
- * red-proof (`node tools/check-stardew-execution-terminal-uniqueness.test.mjs`, each hand-built artifact seen red):
- *   - one request answered twice -> `duplicate_answer:<requestId>`
- *   - the same terminal reaching the fact listeners twice -> `duplicate_fact:<executionId>:<reasonCode>`
+ * red-proof: inject  one request's terminal duplicated on the answer channel of a two-channel artifact ->
+ *   `duplicate_answer:request_feed_01` with `"duplicated":1` and exit 1, while the same artifact unduplicated
+ *   passes (tools/check-stardew-execution-terminal-uniqueness.test.mjs)
+ * red-proof: inject  the same terminal reaching the fact listeners twice -> `duplicate_fact:execution_feed_01:` +
+ *   `hay_placed_in_trough,hay_placed_in_trough`, `"duplicated":1`, exit 1
+ *   (tools/check-stardew-execution-terminal-uniqueness.test.mjs)
  */
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
