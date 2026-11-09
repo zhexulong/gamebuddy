@@ -192,6 +192,17 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:configuration-surfaces",
   },
   {
+    path: "tools/check-frontend-reads-have-producers.mjs",
+    runsIn: "pnpm check:frontend-reads-have-producers",
+    reason:
+      "elsewhere: compares every `/api/` route literal in `dialogue-web/src` against the routes `host/src` registers in a " +
+      "descriptor `path:` or an exact `pathname ===`, so it judges two source trees that exist before any install or build. " +
+      "It exits 1 on a read with no producer, which makes a prelive rung a second copy of a gate the derived CI gates job " +
+      "already runs. Measured 2026-11-10 at HEAD f383b9bb: `examined 101 frontend route literal(s) and 76 host route(s)`, " +
+      "three reads with no producer - `/api/tavern/v1/presets` and `/api/tavern/v1/settings/ui-language` (stub_only: their " +
+      "only other mention was a Playwright stub) and `/api/tavern/v1/world-info/export` (named nowhere else at all).",
+  },
+  {
     path: "tools/audit-airp-scorecard.mjs",
     reason:
       "arguments: needs one finished run's result.json and the Pi session files under its own runtime-root, so no rung " +

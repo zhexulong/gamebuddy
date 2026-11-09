@@ -308,6 +308,14 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // (every declared operation reaches a surface; every declared pair meets its minimum) and printed a table the harness
   // could not tell apart from a report. Naming the rule is what makes the check read the gate instead of its prose.
   "check-configuration-surfaces.mjs",
+  // Prints `examined N frontend route literal(s) and M host route(s)` plus a one-entry `checks[]` verdict, so its
+  // default run is the report this suite reads. Its falsifier is tools/check-frontend-reads-have-producers.test.mjs,
+  // which plants a read with no producer (named with the route and the file:line it is read from), a route whose only
+  // other mention is a Playwright stub (still a violation, `stub_only`), a route registered only inside a Host
+  // `*.test.ts` (still a violation), a route written only in a comment (not a read), an empty `dialogue-web/src`
+  // (`frontend_route_population_empty`, exit 1), a Host side with no registration position and one with no source at
+  // all (`not_measured`, never passed), and a closed union whose third member has no producer (named on its own).
+  "check-frontend-reads-have-producers.mjs",
   "check-contrast-tokens.mjs",
   "check-credential-export-isolation.mjs",
   "check-evidence-bundle.mjs",

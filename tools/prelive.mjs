@@ -73,6 +73,10 @@ export const L0_GATES = Object.freeze([
   // complete, and this one asks whether the model can ASK about the family at all - a description that names a family
   // consumes it while a full `observe` stays the only way to read its values.
   "tools/check-stardew-observation-consumers.mjs",
+  // The crop row's own gate: every field the engine's `Data/Crops` answer projects must be reachable from a snapshot
+  // crop row or carry a stated reason, and the four copies of the row contract (Mod record, Host type, Host validator,
+  // schema) must name the same keys. Milliseconds, source-only.
+  "tools/check-stardew-crop-row-derivation.mjs",
   // The totality audit: 148 ms, and it asks whether each defect CLASS has a rule, deriving its
   // population from the declarations rather than a list. A gate nobody schedules is a gate that
   // cannot fail, which is why it is here rather than in a document.
@@ -98,6 +102,12 @@ export const L0_GATES = Object.freeze([
   "tools/check-stardew-promotion-parity.mjs",
   "integrations/stardew/action-development/tests/action-source-projection-drift.test.mjs",
   "integrations/stardew/action-development/tests/action-projection-parity-drift.test.mjs",
+  // The vendored patch set. `vendor/magic-context` is a pin we do not own, and the SillyTavern preset seam
+  // lives in it as a patch file: when upstream moves a line the patch stops applying and the seam is simply
+  // gone, with no compile error to notice it. Measured 1.0 s here (it copies the touched files into a temp
+  // `git init` and applies there, never into `vendor/`), so it runs on the ladder rather than in a document -
+  // the same reason the totality audit is in this rung.
+  "tools/check-vendor-patches-apply.mjs",
   "tools/check-prelive-gate-registry.mjs",
 ]);
 
