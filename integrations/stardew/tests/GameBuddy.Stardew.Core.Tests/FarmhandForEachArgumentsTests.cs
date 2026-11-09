@@ -1,0 +1,227 @@
+using System;
+using System.Collections.Generic;
+using FluentAssertions;
+using GameBuddy.Stardew.Core.BodyPrograms;
+using GameBuddy.Stardew.Core.Policy;
+using Xunit;
+
+namespace GameBuddy.Stardew.Core.Tests;
+
+/// <summary>
+/// The grammar of one `for_each` node, as the MOD reads it off an admitted node.
+///
+/// <para>
+/// WHY THE MOD PARSES THIS ITSELF. The Host's compiler already writes the loop document, but a program node can also be
+/// authored directly through `stardew_submit_action_program`, so the document a `for_each` node carries is untrusted input
+/// by the time it reaches the game thread. A reader that only handled the compiler's own output would refuse nothing and
+/// execute anything — including the two sources whose row sourcing does not exist yet, which is why those are refused BY
+/// NAME here rather than silently narrowed into an area.
+/// </para>
+/// <para>
+/// EVERY BOUND AND EVERY SPELLING COMES FROM THE MODEL, never from this file: `FarmhandForEachSource.AreaKind`,
+/// `FarmhandForEachStride.EveryOperator`, `FarmhandForEachEffect.ByKindAction`, `FarmhandForEachLoop.MaximumRules`,
+/// `FarmhandForEachRule.MaximumPredicates`, `FarmhandForEachPredicate.MaximumValues` and
+/// `FarmhandForEachEffect.MaximumArguments`. The bare numbers in this file's documents are the CALLER's values (a 3x20
+/// patch, every-3 columns); the limits are read from those constants so a bound that changes cannot leave a test behind.
+/// </para>
+/// </summary>
+public sealed class FarmhandForEachArgumentsTests
+{
+    /// <summary>The shape the Host's compiler writes, and the one the measured task needed: one 3x20 patch, one rule.</summary>
+    private const string TillThePatch =
+        "{\"source\":{\"area\":{\"x\":60,\"y\":18,\"w\":20,\"h\":3}},\"do\":{\"action\":\"till_soil\"}}";
+
+    private static IReadOnlyDictionary<string, BodyProgramCanonicalValue> Arguments(string document) =>
+        new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal)
+        {
+            [FarmhandForEachArguments.LoopArgument] = new(BodyProgramArgumentKind.String, document),
+        };
+
+    private static void Refused(string document, string expectedReasonCode)
+    {
+        FarmhandForEachArguments.TryParse(Arguments(document), out FarmhandForEachLoop? loop, out string reasonCode)
+            .Should()
+            .BeFalse($"'{document}' is not a loop this pass can run");
+        loop.Should().BeNull("a refusal produces no loop, so nothing downstream can run a half-read one");
+        reasonCode.Should().Be(expectedReasonCode, "the refusal names the part of the declaration to fix");
+    }
+
+    /// <summary>
+    /// The measured case: one rectangle, no observation, no per-tile coordinate, one action for every row.
+    /// </summary>
+    [Fact]
+    public void AnAreaLoopBecomesTheModelsOwnLoop()
+    {
+        FarmhandForEachArguments.TryParse(Arguments(TillThePatch), out FarmhandForEachLoop? loop, out string reasonCode)
+            .Should()
+            .BeTrue(reasonCode);
+
+        loop.Should().NotBeNull();
+        loop!.Source.Kind.Should().Be(FarmhandForEachSource.AreaKind);
+        loop.Source.X.Should().Be(60);
+        loop.Source.Y.Should().Be(18);
+        loop.Source.Width.Should().Be(20);
+        loop.Source.Height.Should().Be(3);
+        loop.Source.AreaRowCount.Should().Be(60, "three rows by twenty columns is one intent, not sixty");
+        loop.Where.Should().BeNull("an absent predicate list means every row of the source");
+        loop.Do!.Action.Should().Be("till_soil");
+        loop.Do.Arguments.Should().BeNull("the caller declared no argument, and absence is not an empty string");
+        loop.IsValid.Should().BeTrue("the parse answers only loops the model itself accepts");
+    }
+
+    /// <summary>
+    /// The intercropped patch: three rules of ONE pass, the first that claims a row deciding it.
+    /// </summary>
+    [Fact]
+    public void ThePredicatesAndTheLaterRulesArriveInTheOrderTheCallerWroteThem()
+    {
+        string document =
+            "{\"source\":{\"area\":{\"x\":60,\"y\":18,\"w\":20,\"h\":3}},"
+            + "\"where\":[{\"col\":{\"every\":3,\"offset\":0}}],"
+            + "\"do\":{\"action\":\"plant_seed\",\"slot\":0,\"expectedQualifiedItemId\":\"(O)472\"},"
+            + "\"then\":["
+            + "{\"where\":[{\"col\":{\"every\":3,\"offset\":1}}],\"do\":{\"action\":\"plant_seed\",\"slot\":0,\"expectedQualifiedItemId\":\"(O)473\"}},"
+            + "{\"where\":[{\"col\":{\"every\":3,\"offset\":2}}],\"do\":null}]}";
+
+        FarmhandForEachArguments.TryParse(Arguments(document), out FarmhandForEachLoop? loop, out string reasonCode)
+            .Should()
+            .BeTrue(reasonCode);
+
+        loop!.Rules.Should().HaveCount(3, "the loop's own rule is first, then the alternates in order");
+        loop.Rules[0].Where!.Should().ContainSingle();
+        loop.Rules[0].Where![0].Axis.Should().Be(FarmhandForEachPredicate.ColOperator);
+        loop.Rules[0].Where![0].Stride!.Every.Should().Be(3);
+        loop.Rules[0].Where![0].Stride!.Offset.Should().Be(0);
+        // A declared argument rides through as the caller's own scalar, spelled the way a wire scalar is spelled.
+        loop.Rules[0].Do!.Arguments!["slot"].Should().Be("0");
+        loop.Rules[0].Do!.Arguments!["expectedQualifiedItemId"].Should().Be("(O)472");
+        loop.Rules[2].Do.Should().BeNull("`do: null` is a STATEMENT - this column is a path - and not a forgotten row");
+    }
+
+    [Fact]
+    public void AFieldPredicateCarriesItsComparisonAndItsValue()
+    {
+        string document =
+            "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":2,\"h\":1}},"
+            + "\"where\":[{\"field\":\"kind\",\"eq\":\"weed\"},{\"field\":\"health\",\"gt\":0}],"
+            + "\"do\":{\"action\":\"cut_weeds\"}}";
+
+        FarmhandForEachArguments.TryParse(Arguments(document), out FarmhandForEachLoop? loop, out string reasonCode)
+            .Should()
+            .BeTrue(reasonCode);
+
+        loop!.Where.Should().HaveCount(2);
+        loop.Where![0].Field.Should().Be("kind");
+        loop.Where[0].Comparison.Should().Be(FarmhandForEachComparison.Eq);
+        loop.Where[0].Values[0].Text.Should().Be("weed");
+        loop.Where[1].Field.Should().Be("health");
+        loop.Where[1].Comparison.Should().Be(FarmhandForEachComparison.Gt);
+        loop.Where[1].Values[0].Number.Should().Be(0, "a JSON number is a number, not the word for one");
+    }
+
+    /// <summary>
+    /// THE TWO SOURCES WHOSE ROW SOURCING DOES NOT EXIST. Refused by name, never narrowed into the rectangle the caller
+    /// did not write: a loop quietly re-read as "the tiles I can see" is the measured defect this form exists to remove.
+    /// </summary>
+    [Theory]
+    [InlineData("{\"source\":{\"family\":\"cropTargets\"},\"do\":{\"action\":\"harvest_crop\"}}", "for_each_source_unavailable:family")]
+    [InlineData("{\"source\":{\"query\":{\"subject\":\"trees\"}},\"do\":{\"action\":\"chop_tree\"}}", "for_each_source_unavailable:query")]
+    public void AFamilyOrQuerySourceIsRefusedByName(string document, string expectedReasonCode) =>
+        Refused(document, expectedReasonCode);
+
+    /// <summary>A field the Mod would silently ignore is refused instead, so nothing can be smuggled past it.</summary>
+    [Fact]
+    public void AnUnknownTopLevelKeyIsRefusedByName() =>
+        Refused(
+            "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":{\"action\":\"till_soil\"},\"limit\":4}",
+            "for_each_unknown_key:limit");
+
+    /// <summary>The two `where` spellings and no more: a second operator word is the seed of a second semantics.</summary>
+    [Fact]
+    public void AnUnrecognisedPredicateOperatorIsRefusedByName() =>
+        Refused(
+            "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":2,\"h\":1}},\"where\":[{\"field\":\"kind\",\"ne\":\"weed\"}],\"do\":{\"action\":\"till_soil\"}}",
+            "for_each_where_unrecognised:ne");
+
+    /// <summary>A stride that claims no index is a rule that can never match, so it is refused rather than run dead.</summary>
+    [Fact]
+    public void AStrideThatClaimsNoIndexIsRefusedAsAWhereFault() =>
+        Refused(
+            "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":3,\"h\":1}},\"where\":[{\"col\":{\"every\":3,\"offset\":3}}],\"do\":{\"action\":\"till_soil\"}}",
+            "for_each_invalid:where");
+
+    [Fact]
+    public void MoreRulesThanTheBoundAreRefusedWithTheCount()
+    {
+        // `then` carries the bound's worth of rules, so the pass would have one MORE than the bound: the loop's own rule
+        // is one of them, and the refusal names the total the caller actually declared.
+        string[] rules = new string[FarmhandForEachLoop.MaximumRules];
+        for (int index = 0; index < rules.Length; index++) rules[index] = "{\"do\":{\"action\":\"till_soil\"}}";
+        Refused(
+            "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":{\"action\":\"till_soil\"},\"then\":[" + string.Join(",", rules) + "]}",
+            $"for_each_too_many_rules:{FarmhandForEachLoop.MaximumRules + 1}");
+    }
+
+    /// <summary>An extent past the per-intent bound says which part of the declaration failed, not a bare `invalid`.</summary>
+    [Fact]
+    public void AnAreaPastThePerIntentRowBoundIsRefusedAsASourceFault() =>
+        Refused(
+            $"{{\"source\":{{\"area\":{{\"x\":0,\"y\":0,\"w\":20,\"h\":4}}}},\"do\":{{\"action\":\"till_soil\"}}}}",
+            "for_each_invalid:source");
+
+    [Fact]
+    public void AnExtentOfZeroRowsIsRefusedAsASourceFault() =>
+        Refused("{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":0,\"h\":3}},\"do\":{\"action\":\"till_soil\"}}", "for_each_invalid:source");
+
+    [Fact]
+    public void AnEffectWithoutAnActionIsRefusedAsAnEffectFault() =>
+        Refused("{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":{\"slot\":0}}", "for_each_invalid:do");
+
+    [Fact]
+    public void ANodeWithoutTheLoopArgumentIsRefusedAsALoopFault()
+    {
+        IReadOnlyDictionary<string, BodyProgramCanonicalValue> arguments =
+            new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal);
+
+        FarmhandForEachArguments.TryParse(arguments, out FarmhandForEachLoop? loop, out string reasonCode).Should().BeFalse();
+        loop.Should().BeNull();
+        reasonCode.Should().Be("for_each_invalid:loop");
+    }
+
+    /// <summary>An argument the loop form does not declare cannot ride along inside the node either.</summary>
+    [Fact]
+    public void AnUnknownNodeArgumentIsRefusedByName()
+    {
+        var arguments = new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal)
+        {
+            [FarmhandForEachArguments.LoopArgument] = new(BodyProgramArgumentKind.String, TillThePatch),
+            ["repeat"] = new(BodyProgramArgumentKind.String, "3"),
+        };
+
+        FarmhandForEachArguments.TryParse(arguments, out _, out string reasonCode).Should().BeFalse();
+        reasonCode.Should().Be("for_each_unknown_key:repeat");
+    }
+
+    [Theory]
+    [InlineData("not json")]
+    [InlineData("[1,2,3]")]
+    [InlineData("")]
+    public void ADocumentThatIsNotAnObjectIsRefusedAsALoopFault(string document) => Refused(document, "for_each_invalid:loop");
+
+    /// <summary>
+    /// The by-kind reference is a REFERENCE the Mod resolves, not an action id the caller may restate: it must survive the
+    /// parse unchanged so the classifier beside the row reader is the only thing that names the action.
+    /// </summary>
+    [Fact]
+    public void TheByKindReferenceRidesThroughAsItselfForTheRowReaderToResolve()
+    {
+        FarmhandForEachArguments.TryParse(
+                Arguments("{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":2,\"h\":2}},\"do\":{\"action\":\"by_kind\"}}"),
+                out FarmhandForEachLoop? loop,
+                out string reasonCode)
+            .Should()
+            .BeTrue(reasonCode);
+
+        loop!.Do!.Action.Should().Be(FarmhandForEachEffect.ByKindAction);
+    }
+}

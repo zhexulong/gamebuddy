@@ -1198,6 +1198,14 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
                 || !property.Value.TryGetProperty("type", out JsonElement type)
                 || type.ValueKind != JsonValueKind.String || !IsBoundedString(type.GetString(), 64)) return false;
             string typeValue = type.GetString()!;
+            // THE LOOP FORM arrives tagged, and becomes the canonical string its argument declares at this boundary - the
+            // one place that knows the tag exists. See `FarmhandForEachArguments.TryCanonicalize`.
+            if (typeValue == "loop")
+            {
+                if (!FarmhandForEachArguments.TryCanonicalize(property.Value, out string? document)
+                    || !result.TryAdd(property.Name, new BodyProgramRuntimeValue("string", document))) return false;
+                continue;
+            }
             if (typeValue is not ("integer" or "string" or "boolean" or "destination_selector")) return false;
             if (typeValue == "destination_selector")
             {

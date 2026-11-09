@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   forEachRules,
+  MAX_FOR_EACH_LOOP_DOCUMENT_CHARS,
   MAX_FOR_EACH_ROWS,
+  MAX_FOR_EACH_RULES,
   type PlanForEachLoop,
   type PlanForEachRule,
   planFormExecutionUnavailableReason,
@@ -41,6 +43,8 @@ const SURFACE_PATH = resolve(
   "integrations/stardew/action-development/contracts/generated/action-surface.v1.json",
 );
 const MOD_RULES_PATH = resolve(repositoryRoot, "integrations/stardew/src/Core/Policy/FarmhandForEachRules.cs");
+/** The Mod's loop reader, where the document's wire bound is declared on that side. */
+const MOD_ARGUMENTS_PATH = resolve(repositoryRoot, "integrations/stardew/src/Core/Policy/FarmhandForEachArguments.cs");
 const MATERIALIZER_PATH = resolve(
   hostRoot,
   "src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
@@ -211,17 +215,17 @@ test("by_kind is accepted as a dispatch while an unpublished action id is not", 
 });
 
 /**
- * PROPERTY 3. The loop is a form the Host can compile and the attached Mod cannot execute, and the answer says so.
+ * PROPERTY 3, RE-ANCHORED. The form is hosted, so `for_each_execution_unavailable` no longer reaches the model - and the
+ * two facts that made it honest are still asserted.
  *
- * Three separate facts have to hold, and each one alone would let a silent success through:
- *   - the code is derived from the form's own id (`for_each` -> `for_each_execution_unavailable`), so a second form needs
- *     no edit and the two cannot drift;
- *   - the description the companion ALREADY holds names that code, because a caller refused with a word it was never told
- *     spends a turn discovering it;
- *   - the plan path answers it BEFORE submitting, because a program the Mod cannot run is refused whole by the preflight
- *     and takes the executable steps beside the loop with it.
+ * WHAT CHANGED. The Mod now PUBLISHES the form (`FarmhandPlanFormCatalog`, appended to the hello's registrations), so
+ * `planFormNodesOutsideCatalogue` derives an empty answer for `for_each` and the plan is submitted. The refusal code is
+ * still derived from the form's own id, and the gate that answers it is still positioned BEFORE the submit, because both
+ * remain the only honest answer for a form an older or different Mod does not publish. What must NOT survive is the
+ * description promising the caller an unexecutable loop: a description that teaches a refusal nobody will meet is the
+ * same defect in reverse.
  */
-test("a form the Mod cannot execute is named by code in the description and refused before submission", () => {
+test("a form the Mod now hosts is described by what it does, and an unpublished form is still refused before submission", () => {
   assert.deepEqual(PLAN_FORM_ACTION_IDS, [FOR_EACH_PLAN_ACTION_ID]);
   const code = planFormExecutionUnavailableReason(FOR_EACH_PLAN_ACTION_ID);
   assert.equal(code, "for_each_execution_unavailable");
@@ -230,9 +234,26 @@ test("a form the Mod cannot execute is named by code in the description and refu
     `${FOR_EACH_PLAN_ACTION_ID}_execution_unavailable`,
     "the code is derived from the id, never a second name for the same form",
   );
+
+  const description = planWorkDescription(ACTIONS);
+  assert.equal(
+    description.includes(code),
+    false,
+    `${code} is unreachable for this form now that the Mod publishes it, so the description must not teach it`,
+  );
+  assert.equal(description.includes("does not execute the loop yet"), false);
   assert.ok(
-    planWorkDescription(ACTIONS).includes(code),
-    `the description must name ${code}: a refusal the caller was never told about costs a turn to discover`,
+    description.includes("expanded by the Mod on the game thread"),
+    "the description must say what now happens: the Mod expands the loop itself",
+  );
+  assert.ok(
+    description.includes("for_each_source_unavailable:family") &&
+      description.includes("for_each_source_unavailable:query"),
+    "the two sources whose row sourcing does not exist are refusals that DO reach the model, so they are named",
+  );
+  assert.ok(
+    description.includes(String(MAX_FOR_EACH_LOOP_DOCUMENT_CHARS)),
+    "the document's wire bound is printed, so a caller can size a pass without discovering the limit by refusal",
   );
 
   const source = readFileSync(MATERIALIZER_PATH, "utf8");
@@ -243,6 +264,80 @@ test("a form the Mod cannot execute is named by code in the description and refu
   assert.ok(
     answered < submitted,
     "the answer must come BEFORE the submission: a program carrying an unexecutable node is refused whole by the preflight, which loses the executable steps beside it",
+  );
+});
+
+/**
+ * The document's length bound is ONE number, said on both sides of the bridge.
+ *
+ * A canonical string may occupy 512 characters on the wire (the Host's `isBodyCanonicalValue`, the Mod's
+ * `TryDecodeRuntimeValue`), and the compiler refuses an oversized loop with its own count so the pipe is never the thing
+ * that answers. This gate reads the Mod's constant instead of restating it: two numbers that agree today are a
+ * disagreement scheduled for later.
+ */
+test("the document bound the compiler enforces is the bound the Mod's own reader declares", () => {
+  const declared = /MaximumDocumentChars\s*=\s*(\d+)/u.exec(readFileSync(MOD_ARGUMENTS_PATH, "utf8"));
+  assert.ok(
+    declared !== null,
+    "the Mod's loop reader must still declare MaximumDocumentChars; this gate reads it from there",
+  );
+  assert.equal(MAX_FOR_EACH_LOOP_DOCUMENT_CHARS, Number(declared[1]));
+});
+
+/** A document the wire cannot carry is refused by the COMPILER, with its own length and the bound. */
+test("a loop document past the wire bound is refused with its own length", () => {
+  // Every part is legal on its own - names are opaque ids, values are under the scalar bound - and the DOCUMENT is still
+  // too long for the one canonical string it becomes. This is the only test that can catch that: the value bound says
+  // nothing about the sum.
+  const padding = "x".repeat(120);
+  const rule = `{ do: { action: "cut_weeds", note: "${padding}" } }`;
+  const then = Array.from({ length: MAX_FOR_EACH_RULES - 1 }, () => rule).join(", ");
+  const result = compile(
+    `builder.for_each({ source: { area: { x: 0, y: 0, w: 1, h: 1 } }, do: { action: "cut_weeds" }, then: [${then}] });`,
+  );
+  assert.equal(result.ok, false, "the script is refused: the document cannot cross the bridge");
+  const reasonCode = result.ok ? "" : result.reasonCode;
+  assert.match(
+    reasonCode,
+    new RegExp(
+      `^plan_script_for_each_loop_document_too_long:\\d+_of_${String(MAX_FOR_EACH_LOOP_DOCUMENT_CHARS)}$`,
+      "u",
+    ),
+    "the refusal carries the document's real length AND the bound to stay under",
+  );
+});
+
+/**
+ * THE LINK THAT WAS MISSING. The Host refuses a whole plan before submitting when a node's action id is a form the
+ * attached Mod does not publish, and that answer is derived from the Mod's own hello registrations - not from a Host list.
+ * This is the registration the Mod publishes (`FarmhandPlanFormCatalog`: published, execution, one `loop` argument of type
+ * `string`), so the form survives the plan vocabulary filter and the plan is submitted instead of answered.
+ *
+ * The Mesh case is the falsifier: an experimental form is NOT plannable, so this cannot pass by admitting everything.
+ */
+test("the plan vocabulary keeps the plan form the Mod publishes, so a loop is submitted rather than answered", () => {
+  const form = (lifecycle: string): ActionRegistration =>
+    Object.freeze({
+      actionId: "for_each",
+      familyId: "plan_forms",
+      identityVersion: 1,
+      lifecycle: lifecycle as ActionRegistration["lifecycle"],
+      kind: "execution",
+      descriptor: {
+        argumentSchema: { loop: { type: "string" } },
+        outputFacts: {},
+        resourceTemplate: { claims: [{ key: "embodied_actor", value: "ScopePlayer" }] },
+      },
+    } as ActionRegistration);
+
+  assert.deepEqual(
+    planActionsFromRegistrations([form("published")]).map((action) => action.actionId),
+    ["for_each"],
+    "a published execution form with a scalar argument is plannable, which is what keeps `for_each_execution_unavailable` from reaching the model",
+  );
+  assert.deepEqual(
+    planActionsFromRegistrations([form("experimental")]).map((action) => action.actionId),
+    [],
   );
 });
 

@@ -66,6 +66,23 @@ public sealed record FarmhandForEachPredicate(
 
     public const string RowOperator = "row";
 
+    // The wire words of the three field comparisons this pass accepts. They belong here, beside the type they name, so
+    // the reader that accepts a declaration and the model that decides a row cannot disagree about how one is spelled.
+    public const string EqOperator = "eq";
+
+    public const string LtOperator = "lt";
+
+    public const string GtOperator = "gt";
+
+    /// <summary>
+    /// How many values one `in` list may carry.
+    ///
+    /// The bound lives here rather than in the reader because it is a fact about the PREDICATE: a conjunction of eight
+    /// predicates over lists of eight values is a rule a person can still read. Mirrors `MAX_FOR_EACH_VALUES`
+    /// (`host/src/body-program-for-each.ts:144`), which is the compiler's half of the same bound.
+    /// </summary>
+    public const int MaximumValues = 8;
+
     /// <summary>The axis a position predicate claims (`col` / `row`), or null for a field predicate.</summary>
     public string? Axis { get; init; }
 
@@ -77,7 +94,7 @@ public sealed record FarmhandForEachPredicate(
 
     public bool IsValid => this.Field is null
         ? this.Axis is ColOperator or RowOperator && this.Stride is not null && this.Stride.IsValid
-        : this.Field.Length is >= 1 and <= 64 && this.Values.Count > 0;
+        : this.Field.Length is >= 1 and <= 64 && this.Values.Count is >= 1 and <= MaximumValues;
 }
 
 /// <summary>
@@ -128,6 +145,16 @@ public sealed record FarmhandForEachSource(
 /// <summary>What a matching row gets: a published action with its arguments, or null for "leave this row alone".</summary>
 public sealed record FarmhandForEachEffect(string Action, IReadOnlyDictionary<string, string>? Arguments = null)
 {
+    /// <summary>How long an action id may be, which is the longest published action id by a wide margin.</summary>
+    public const int MaximumActionLength = 128;
+
+    /// <summary>
+    /// How many arguments one `do` may name.
+    ///
+    /// A fact about the EFFECT, not about the reader: it is the same bound the compiler writes it against
+    /// (`MAX_FOR_EACH_EFFECT_ARGUMENTS`, `host/src/body-program-for-each.ts:147`).
+    /// </summary>
+    public const int MaximumArguments = 16;
     /// <summary>
     /// The token that means "whatever action the Mod's own classifier names for this row's kind".
     ///
@@ -136,7 +163,8 @@ public sealed record FarmhandForEachEffect(string Action, IReadOnlyDictionary<st
     /// </summary>
     public const string ByKindAction = "by_kind";
 
-    public bool IsValid => this.Action.Length is >= 1 and <= 128;
+    public bool IsValid => this.Action.Length is >= 1 and <= MaximumActionLength
+        && (this.Arguments is null || this.Arguments.Count <= MaximumArguments);
 }
 
 /// <summary>
@@ -151,8 +179,16 @@ public sealed record FarmhandForEachRule(
     IReadOnlyList<FarmhandForEachPredicate>? Where,
     FarmhandForEachEffect? Do)
 {
+    /// <summary>
+    /// How many predicates one rule's conjunction may carry: long enough to be a rule, short enough to be read.
+    ///
+    /// Mirrors `MAX_FOR_EACH_PREDICATES` (`host/src/body-program-for-each.ts:116`).
+    /// </summary>
+    public const int MaximumPredicates = 8;
+
     public bool IsValid =>
-        (this.Where is null || this.Where.All(predicate => predicate is not null && predicate.IsValid))
+        (this.Where is null || (this.Where.Count <= MaximumPredicates
+            && this.Where.All(predicate => predicate is not null && predicate.IsValid)))
         && (this.Do is null || this.Do.IsValid);
 }
 

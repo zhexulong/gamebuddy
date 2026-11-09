@@ -1055,7 +1055,10 @@ public sealed partial class ModEntry : Mod
             farmhandBodyProgramController = new FarmhandBodyProgramController(
                 bodyProgramAuthority,
                 state.BridgeSession,
-                new RouteReenteringBodyProgramExecutor(router, state.Executions))
+                new RouteReenteringBodyProgramExecutor(
+                    router,
+                    state.Executions,
+                    forEachWorld: programId => this.CreateFarmhandForEachWorld(state, programId)))
             {
                 // The world decides when a successor may be dispatched, and it answers PER ACTION: a predecessor often
                 // settles on the same frame its native animation starts, and re-entering the actor then is refused with
@@ -1135,6 +1138,34 @@ public sealed partial class ModEntry : Mod
         }
 
         return router;
+    }
+
+    /// <summary>
+    /// The farm as one `for_each` pass reads it, or null when the actor is not standing on a farm.
+    ///
+    /// <para>
+    /// Null is a REFUSAL the node reports (`for_each_world_unavailable`), never an empty pass: a pass over no rows would
+    /// answer a table with nothing in it, which reads as a finished patch.
+    /// </para>
+    /// <para>
+    /// STOP is read from the program's own journal state rather than from a captured flag: the authority is the one place
+    /// that knows whether this program was cancelled, so a pass cannot stop on a STOP addressed to something else. The
+    /// expansion consults it between two native effects and never during one, and on this thread a STOP cannot land
+    /// mid-pass at all - which is why the fence is a read of the authority rather than a race it hopes to win.
+    /// </para>
+    /// </summary>
+    private IFarmhandForEachWorld? CreateFarmhandForEachWorld(ScreenEmbodimentState state, string programId)
+    {
+        if (Game1.currentLocation is not Farm farm) return null;
+        IReadOnlyList<string> enabled = state.CapabilityPublication?.EnabledActionIds ?? Array.Empty<string>();
+        IReadOnlySet<string> enabledSet = enabled as IReadOnlySet<string> ?? new HashSet<string>(enabled, StringComparer.Ordinal);
+        OpenBodyProgramJournalAuthority? authority = state.BodyProgramAuthority;
+        return new FarmhandForEachFarmWorld(
+            farm,
+            enabledSet,
+            () => authority is not null && authority.Snapshot.Programs.Any(program =>
+                string.Equals(program.Program.ProgramId, programId, StringComparison.Ordinal)
+                && program.State == BodyProgramState.Cancelled));
     }
 
     private void OnUpdateTicked(object? sender, UpdateTickedEventArgs e)

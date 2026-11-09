@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import { createContext, runInContext } from "node:vm";
 import {
+  forEachDocumentLength,
   forEachRules,
+  MAX_FOR_EACH_LOOP_DOCUMENT_CHARS,
   MAX_FOR_EACH_ROWS,
+  PLAN_FOR_EACH_SOURCES,
   type PlanForEachLoop,
-  planFormExecutionUnavailableReason,
   readForEachLoop,
   sameForEachSource,
   withForEachRule,
@@ -195,6 +197,12 @@ export type CompiledPlan =
       rejected: readonly PlanCallRejection[];
       /** Every refusal, including the ones past `MAX_REPORTED_PLAN_REJECTIONS`. */
       rejectedCount: number;
+      /**
+       * Layout facts this plan's own nodes depend on that the snapshot it was compiled against does not carry, one per
+       * `layout_facts_absent:call <n>:<fact>`. Bounded; `layoutFactsAbsentCount` is the population.
+       */
+      layoutFactsAbsent: readonly string[];
+      layoutFactsAbsentCount: number;
     }>
   | Readonly<{
       ok: false;
@@ -729,7 +737,7 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     "builder.for_each({\n" +
     "  source: { area: { x: 60, y: 18, w: 20, h: 3 } },\n" +
     "  where: [{ col: { every: 3, offset: 0 } }],\n" +
-    '  do: { action: "plant_seed", slot: 0, expectedQualifiedItemId: "(O)472" }\n' +
+    '  do: { action: "till_soil" }\n' +
     "});\n" +
     "// Or a batch over a snapshot family:\n" +
     "for (const crop of snapshot.cropTargets) {\n" +
@@ -737,10 +745,23 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     "}\n" +
     'builder.for_each({ source, where, do }) is ONE loop over a collection of live world rows, expanded by the Mod on the game thread: `source` is exactly one of { area: { x, y, w, h } }, { family: "cropTargets" } or { query: { subject } }; `where` is a list of field tests ({ field: "kind", in: ["weed"] }, { field: "health", gt: 0 }) and/or position guards ({ col: { every: 3, offset: 0 } }, { row: { every: 2, offset: 1 } }); `do` is an action from the list above with its own arguments, or null for a row left deliberately alone (a path). Several for_each calls over the SAME source are the rules of that one pass, decided per row by the first rule that claims it - which is how an intercropped patch is one intent. The caller needs no observation first - no target id, no per-tile coordinate - because the rows are read live. A row no predicate claims is reported as no_rule_matched:<kind>@<x>,<y> rather than skipped, one loop addresses at most ' +
     String(MAX_FOR_EACH_ROWS) +
-    " rows, and a loop inside a loop is refused by name. The attached Mod does not execute the loop yet, so the call answers " +
-    planFormExecutionUnavailableReason(FOR_EACH_PLAN_ACTION_ID) +
-    " instead of pretending the patch was worked."
+    " rows, and a loop inside a loop is refused by name. The Mod EXECUTES the loop: each row is decided against the world as it is at that moment and dispatched through the same action path a single step takes, so the node's answer carries `succeeded`/`failed`/`refused`/`left_alone`/`not_matched`/`deferred` counts and ONE ROW PER TILE with its own action, state and reasonCode. A tile that is not on the farm (not_on_farm), a kind `by_kind` cannot resolve (no_action_for_kind:<kind>), an action the live policy disables (row_action_not_enabled:<actionId>) and an argument the action declares that the loop cannot supply (row_argument_missing:<name>) are each NAMED PER ROW rather than skipped - a skipped row reads as a cleared patch. Only { area } is expanded today: { family } and { query } are refused by name as " +
+    forEachSourcesUnavailableText() +
+    ", and one loop document may be at most " +
+    String(MAX_FOR_EACH_LOOP_DOCUMENT_CHARS) +
+    " characters - the wire's own bound on the string the loop travels in - so a longer one is refused by the compiler with its own count rather than by the bridge."
   );
+}
+
+/**
+ * The two row sources this Mod cannot read yet, refused BY NAME and printed in the description.
+ *
+ * The words come from `PLAN_FOR_EACH_SOURCES`, so the description cannot list a source the grammar does not have (or
+ * miss one it gains) - the reason code's spelling is the one `FarmhandForEachArguments` answers with.
+ */
+function forEachSourcesUnavailableText(): string {
+  const unavailable = PLAN_FOR_EACH_SOURCES.filter((source) => source !== "area");
+  return unavailable.map((source) => `for_each_source_unavailable:${source}`).join(", ");
 }
 
 /** One line per family, its members comma-separated, in the order the surface declared them. */
@@ -752,6 +773,83 @@ function planActionVocabularyText(actions: readonly PublishedPlanAction[]): stri
     else members.push(action.actionId);
   }
   return [...families].map(([familyId, actionIds]) => `${familyId}: ${actionIds.join(", ")}`).join("\n");
+}
+
+/**
+ * The layout facts a plan node's correctness depends on, per snapshot family the surface declares as the node's target
+ * family.
+ *
+ * <p>
+ * This is the ONE spelling of the list. It is keyed by the family the Mod itself declares (`FarmhandActionDefinitions.cs`:
+ * `water_crop` -> `cropTargets`), so a node is checked because the surface said where its targets come from, not because
+ * its action id appears here. `tools/check-stardew-crop-row-derivation.mjs` reads this table and requires every fact it
+ * names to be a field the Mod really publishes on that row, so the two cannot drift apart.
+ * </p>
+ *
+ * <p>
+ * The gap this list NAMES rather than closes: `plant_seed` addresses `seedTargets`, whose rows carry the held seed and
+ * the engine's planting admission (`canPlantThisSeedHere`) but nothing about the crop that seed becomes - so a planting
+ * plan's trellis risk is not in any snapshot today. It is absent from this table on purpose: an entry for it would fire
+ * on every planting node with a fact the row cannot carry, which is a banner, not a signal.
+ * </p>
+ */
+export const PLAN_LAYOUT_FACTS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  cropTargets: Object.freeze(["isRaised", "tileBlockedNow"]),
+});
+
+/** How many absent-fact warnings one answer carries. The COUNT travels beside it and is not bounded. */
+const MAX_REPORTED_LAYOUT_FACTS_ABSENT = 8;
+
+/** One node's tile: the arguments every tile-addressed action declares, or undefined for a loop with no single tile. */
+function nodeTile(node: PlanNode): Readonly<{ x: number; y: number }> | undefined {
+  const argument = (name: string): number | undefined => {
+    const declared = (node.arguments as Readonly<Record<string, { canonicalValue?: unknown }>>)[name];
+    if (declared === undefined || typeof declared.canonicalValue !== "string") return undefined;
+    const value = Number.parseInt(declared.canonicalValue, 10);
+    return Number.isSafeInteger(value) ? value : undefined;
+  };
+  const x = argument("x");
+  const y = argument("y");
+  return x === undefined || y === undefined ? undefined : { x, y };
+}
+
+/**
+ * The layout facts a compiled plan assumed but the snapshot it was compiled against does not carry.
+ *
+ * <p>
+ * One entry per (node, fact), spelled `layout_facts_absent:call <n>:<fact>` - the same `call` positional index the
+ * refusal list uses, so the companion reads back WHICH of its calls is blind. Nothing here refuses: the answer carries
+ * the plan and the warning together, because the receipt is where she learns, not the harness.
+ * </p>
+ */
+export function layoutFactsAbsent(
+  nodes: readonly PlanNode[],
+  actions: readonly PublishedPlanAction[],
+  snapshot: Snapshot,
+): Readonly<{ absent: readonly string[]; count: number }> {
+  const absent: string[] = [];
+  let count = 0;
+  nodes.forEach((node, index) => {
+    const family = actions.find((candidate) => candidate.actionId === node.actionId)?.targetFamily;
+    if (family === null || family === undefined) return;
+    const facts = PLAN_LAYOUT_FACTS[family];
+    if (facts === undefined) return;
+    const tile = nodeTile(node);
+    if (tile === undefined) return;
+    const rows = (snapshot as unknown as Readonly<Record<string, unknown>>)[family];
+    const row = Array.isArray(rows)
+      ? (rows as readonly Readonly<Record<string, unknown>>[]).find(
+          (candidate) => candidate.x === tile.x && candidate.y === tile.y,
+        )
+      : undefined;
+    for (const fact of facts) {
+      if (row !== undefined && row[fact] !== undefined) continue;
+      count += 1;
+      if (absent.length < MAX_REPORTED_LAYOUT_FACTS_ABSENT)
+        absent.push(`layout_facts_absent:call ${index + 1}:${fact}`);
+    }
+  });
+  return Object.freeze({ absent: Object.freeze(absent), count });
 }
 
 /**
@@ -867,6 +965,9 @@ export function compilePlanScript(
   // replayed and could not answer idempotency, so that is a refusal rather than a plan with a null revision.
   if (snapshotRevision === null)
     return refused("plan_snapshot_missing", scriptSource, null, undefined, undefined, state);
+  // What this plan assumed and the snapshot it read could not answer. Read from the SAME nodes that are about to be
+  // submitted, so the warning describes the plan rather than the script.
+  const layout = layoutFactsAbsent(state.nodes, dependencies.actions, snapshot);
   return Object.freeze({
     ok: true as const,
     scriptSource,
@@ -876,6 +977,8 @@ export function compilePlanScript(
     // the same sentence; `rejectedCount` is not. Narrowing happens here, once, and never decides whether the plan runs.
     rejected: Object.freeze(state.rejected.slice(0, MAX_REPORTED_PLAN_REJECTIONS)),
     rejectedCount: state.rejectedCount,
+    layoutFactsAbsent: layout.absent,
+    layoutFactsAbsentCount: layout.count,
   });
 }
 
@@ -909,9 +1012,7 @@ function refused(
     ...(requirement === undefined ? {} : { requirement }),
     ...(missingArguments === undefined ? {} : { missingArguments }),
     ...(threw === undefined ? {} : { threw }),
-    rejected: Object.freeze(
-      state === undefined ? [] : state.rejected.slice(0, MAX_REPORTED_PLAN_REJECTIONS),
-    ),
+    rejected: Object.freeze(state === undefined ? [] : state.rejected.slice(0, MAX_REPORTED_PLAN_REJECTIONS)),
     rejectedCount: state?.rejectedCount ?? 0,
   });
 }
@@ -1562,15 +1663,18 @@ function emitForEachNode(value: unknown, actions: readonly PublishedPlanAction[]
       // ONE PASS PER SOURCE. Two `for_each` calls over the same rectangle are two RULES of one intent and not two intents:
       // separate passes would each report the tile the other one owns as `no_rule_matched`, and a tile both claim would
       // be worked twice. The first rule stays where the caller wrote it; the rest join it in order.
+      const merged: PlanForEachLoop = withForEachRule(previousLoop, forEachRules(loop)[0]!);
+      // The LENGTH is measured on the document that would result, not on the call that was just read: composing rules
+      // grows the document, and a check that only saw the new rule would let the merge cross the wire's bound.
+      RefuseOversizedDocument(merged, state);
       state.nodes[state.nodes.length - 1] = Object.freeze({
         ...previous,
-        arguments: Object.freeze({
-          loop: Object.freeze({ type: "loop" as const, ...withForEachRule(previousLoop, forEachRules(loop)[0]!) }),
-        }),
+        arguments: Object.freeze({ loop: Object.freeze({ type: "loop" as const, ...merged }) }),
       });
       return;
     }
   }
+  RefuseOversizedDocument(loop, state);
   state.nodes.push(
     Object.freeze({
       nodeId: `n${String(state.nodes.length + 1).padStart(2, "0")}`,
@@ -1580,6 +1684,22 @@ function emitForEachNode(value: unknown, actions: readonly PublishedPlanAction[]
       dependsOn: Object.freeze(previous === undefined ? [] : [previous.nodeId]),
       bindings: Object.freeze({}),
     }),
+  );
+}
+
+/**
+ * Refuses a loop document the wire cannot carry, with its own length and the bound.
+ *
+ * The canonical string the loop becomes is bounded on both sides of the bridge (`MAX_FOR_EACH_LOOP_DOCUMENT_CHARS`), and a
+ * document over it is answered by the TRANSPORT with a code that names nothing a caller can act on. So the producer says
+ * it instead: one dropped call, with the number that broke it and the number to stay under.
+ */
+function RefuseOversizedDocument(loop: PlanForEachLoop, state: PlanScriptState): void {
+  const length = forEachDocumentLength(loop);
+  if (length <= MAX_FOR_EACH_LOOP_DOCUMENT_CHARS) return;
+  rejectPlanCall(
+    `plan_script_for_each_loop_document_too_long:${String(length)}_of_${String(MAX_FOR_EACH_LOOP_DOCUMENT_CHARS)}`,
+    state,
   );
 }
 

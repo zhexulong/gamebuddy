@@ -118,6 +118,29 @@ export const MAX_FOR_EACH_PREDICATES = 8;
 /** How many rules one pass may carry, this loop's own included. */
 export const MAX_FOR_EACH_RULES = 8;
 
+/**
+ * How many characters one loop DOCUMENT may occupy once it is a canonical string on the wire.
+ *
+ * THIS IS THE WIRE'S BOUND, NOT A POLICY OF THE FORM. A canonical argument is a scalar or a destination selector, so the
+ * loop travels as the string its argument declares, and both sides cap a canonical string at 512 characters - the Host in
+ * `host/src/protocol.ts` (`isBodyCanonicalValue`) and the Mod in
+ * `integrations/stardew/src/Core/BodyPrograms/BodyProgramModels.cs` (`BodyProgramValidation.TryDecodeRuntimeValue`), mirrored
+ * by `FarmhandForEachArguments.MaximumDocumentChars`. A document over it can never cross, so the COMPILER refuses it with
+ * its own length instead of letting the pipe answer `invalid_body_node_admission`, which names nothing a caller can fix.
+ *
+ * WHAT FITS, MEASURED. The example the description shows is 162 characters, and the three intercropped rules of a 3x20
+ * patch (`plant_seed` on columns 0,3,6..., `plant_seed` on 1,4,7..., `do: null` on 2,5,8...) are 340. A pass of eight
+ * rules whose predicates each carry a 64-character field name does NOT fit, and no bound chosen here would make it: the
+ * wire's 512 is the smaller authority, so the length check IS the document's limit and the description prints it. The
+ * rule/predicate/value bounds above remain validation bounds, not length arithmetic.
+ */
+export const MAX_FOR_EACH_LOOP_DOCUMENT_CHARS = 512;
+
+/** The document a node carries, as the canonical string the Mod reads: the loop itself, with no wire tag. */
+export function forEachDocumentLength(loop: PlanForEachLoop): number {
+  return JSON.stringify(loop).length;
+}
+
 /** How many values one `in` list may carry. */
 export const MAX_FOR_EACH_VALUES = 8;
 

@@ -1,0 +1,435 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Linq;
+using System.Runtime.Serialization;
+using FluentAssertions;
+using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.BodyPrograms;
+using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Policy;
+using GameBuddy.Stardew.Core.Routing;
+using Microsoft.Xna.Framework;
+using Netcode;
+using StardewValley;
+using StardewValley.Network;
+using StardewValley.TerrainFeatures;
+using Xunit;
+
+namespace GameBuddy.Stardew.Integration.Tests;
+
+/// <summary>
+/// One `for_each` node, from the journal to the native effects, through the REAL seams: the journal authority admits it, the
+/// controller pumps it, <see cref="RouteReenteringBodyProgramExecutor"/> expands it, and every row goes through the one
+/// <see cref="FarmhandActionRouter"/> a single action uses.
+///
+/// <para>
+/// WHAT IS REAL HERE. The catalog is the Mod's own projection (so `for_each` is admitted exactly as it is in production), the
+/// farm is a real <see cref="Farm"/> whose tiles really do (or do not) carry the engine's `Diggable` property, the rows are
+/// read by <see cref="FarmhandForEachFarmWorld"/>, and the ledger is the production <see cref="ExecutionManager"/>. The one
+/// stand-in is the NATIVE BODY: <c>till_soil</c> drives the actor's Hoe through the engine's tick, which no headless test
+/// can provide, so the handler registered under the real registration records the dispatch and settles its receipt.
+/// </para>
+/// <para>
+/// WHY THESE CASES. The measured defect was a "clear a 3x20 strip" task that produced scattered single tiles, because one
+/// node named one target. So the first case is that ONE node addresses every tile of a rectangle, each with its own receipt
+/// on its own tile. The rest are the ways a pass declines to lie: a tile that is not on the farm, a kind no action clears, an
+/// action the live policy disables, and an action that needs a target identity this pass cannot derive.
+/// </para>
+/// </summary>
+public sealed class ForEachNodeExecutionTests
+{
+    private const int MapWidth = 20;
+    private const int MapHeight = 20;
+
+    /// <summary>The measured intent: three rows by twenty columns, declared without reading the world.</summary>
+    private const string TillThePatch = "{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":3,\"h\":2}},\"do\":{\"action\":\"till_soil\"}}";
+
+    /// <summary>One node, one loop, one pass - and every tile of the rectangle reaches the dispatch table by name.</summary>
+    [Fact]
+    public void OneForEachNodeSettlesEveryTileOfItsRectangleThroughTheDispatchTable()
+    {
+        using var harness = ForEachHarness.Create();
+        for (int x = 10; x < 13; x++)
+            for (int y = 10; y < 12; y++)
+                harness.SetDiggable(x, y);
+
+        harness.Run(TillThePatch);
+
+        BodyProgramStatusSnapshot status = harness.Status();
+        status.State.Should().Be(BodyProgramState.Succeeded, harness.Diagnostic);
+        status.Nodes.Should().OnlyContain(node => node.State == BodyProgramNodeState.Succeeded);
+        harness.Handler.Requests.Should().HaveCount(6, "six tiles, six native effects, from ONE node");
+        harness.Handler.Requests.Select(request => (request.Args.X, request.Args.Y)).Should().OnlyHaveUniqueItems(
+            "each row is its own dispatch, on its own tile");
+        harness.Handler.Requests.Should().OnlyContain(
+            request => request.Action == "till_soil" && request.Args.Slot == null && request.Args.ExpectedTargetId == null,
+            "the loop's `do` names an action addressed by its tile alone, and nothing else is invented for it");
+
+        string evidence = harness.NodeEvidence();
+        evidence.Should().Contain("\"succeeded\":6");
+        evidence.Should().Contain("\"failed\":0").And.Contain("\"refused\":0").And.Contain("\"not_matched\":0");
+        evidence.Should().Contain("\"omitted\":0");
+        evidence.Should().Contain("\"rowsOmitted\":0");
+        evidence.Should().Contain("\"state\":\"succeeded\"");
+    }
+
+    /// <summary>
+    /// A rectangle may reach past the farm's edge. Every tile is in the answer by name, and the ones that are not on the farm
+    /// say so instead of being counted as worked.
+    /// </summary>
+    [Fact]
+    public void ARectanglePastTheFarmEdgeNamesTheTilesThatAreNotOnIt()
+    {
+        using var harness = ForEachHarness.Create();
+        harness.SetDiggable(MapWidth - 2, 0);
+        harness.SetDiggable(MapWidth - 1, 0);
+
+        harness.Run($"{{\"source\":{{\"area\":{{\"x\":{MapWidth - 2},\"y\":0,\"w\":4,\"h\":1}}}},\"do\":{{\"action\":\"till_soil\"}}}}");
+
+        harness.Status().State.Should().Be(BodyProgramState.Succeeded, harness.Diagnostic);
+        harness.Handler.Requests.Should().HaveCount(2, "only the two tiles that exist are worked");
+        string evidence = harness.NodeEvidence();
+        evidence.Should().Contain("\"state\":\"not_on_farm\"", "a tile off the map is still named in the table");
+        evidence.Should().Contain("tile_outside_farm_map");
+        CountOf(evidence, "\"state\":\"not_on_farm\"").Should().Be(2, "the two columns past the map's own edge");
+    }
+
+    /// <summary>
+    /// `do: { action: "by_kind" }` is resolved by the Mod's classifier, and a kind it cannot name an action for is a ROW
+    /// answer - never a silent skip, which is the defect this form exists to remove.
+    /// </summary>
+    [Fact]
+    public void AKindWithNoActionIsARowRefusalAndNotASilentSkip()
+    {
+        using var harness = ForEachHarness.Create();
+        // One tillable tile and one that is not: `empty_tillable` has an action, `ground` has none.
+        harness.SetDiggable(4, 4);
+
+        harness.Run("{\"source\":{\"area\":{\"x\":4,\"y\":4,\"w\":2,\"h\":1}},\"do\":{\"action\":\"by_kind\"}}");
+
+        BodyProgramStatusSnapshot status = harness.Status();
+        status.State.Should().Be(BodyProgramState.Failed);
+        status.Nodes.Single().FailureCode.Should().Be("no_action_for_kind:ground", "the row that could not be resolved is named");
+        harness.Handler.Requests.Should().ContainSingle("the tillable row really ran; the other one was refused by name");
+        harness.Handler.Requests.Single().Args.X.Should().Be(4);
+    }
+
+    /// <summary>
+    /// They are the same code even when every row refuses: the node is NOT `succeeded` with zero effects, because a pass that
+    /// did nothing is not a pass that worked.
+    /// </summary>
+    [Fact]
+    public void AnActionTheLivePolicyDoesNotEnableIsARowRefusalForEveryRow()
+    {
+        using var harness = ForEachHarness.Create(enabledActions: Array.Empty<string>());
+        harness.SetDiggable(10, 10);
+
+        harness.Run(TillThePatch);
+
+        BodyProgramStatusSnapshot status = harness.Status();
+        status.State.Should().Be(BodyProgramState.Failed, "no row ran, so the pass did nothing");
+        status.Nodes.Single().FailureCode.Should().Be("row_action_not_enabled:till_soil");
+        harness.Handler.Requests.Should().BeEmpty("the live policy gate is the row's, and it refused every row");
+    }
+
+    /// <summary>
+    /// An action that declares `expectedTargetId` is refused BY NAME per row. A null would reach the handler as "the target
+    /// changed", which is a lie about a tile nobody changed.
+    /// </summary>
+    [Fact]
+    public void AnActionThatNeedsATargetIdentityIsNamedInsteadOfDispatchedWithNull()
+    {
+        using var harness = ForEachHarness.Create();
+        harness.SetDiggable(10, 10);
+
+        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":2,\"h\":1}},\"do\":{\"action\":\"water_crop\"}}");
+
+        BodyProgramStatusSnapshot status = harness.Status();
+        status.State.Should().Be(BodyProgramState.Failed);
+        status.Nodes.Single().FailureCode.Should().Be(
+            "row_argument_missing:expectedtargetid",
+            "the node's reason code carries the action's own argument, projected onto the reason grammar (lowercase)");
+        harness.Handler.Requests.Should().BeEmpty("nothing was dispatched with a null identity");
+    }
+
+    /// <summary>
+    /// The plan-form bypass is about the FORM, not about actions: the same restrictive set that admits `for_each` still
+    /// refuses an ordinary action it does not name. Without this, "bypass" would quietly mean "any action can".
+    /// </summary>
+    [Fact]
+    public void ThePlanFormBypassAdmitsTheFormOnlyAndNotAnOrdinaryAction()
+    {
+        using var harness = ForEachHarness.Create();
+        harness.SetDiggable(10, 10);
+        var enabled = new HashSet<string>(StringComparer.Ordinal) { "till_soil" };
+
+        BodyProgramSubmitResult plan = harness.Submit(TillThePatch, enabled);
+        plan.Code.Should().Be(BodyProgramSubmitCode.Accepted, "a form is admitted as a form");
+
+        BodyProgramSubmitResult single = harness.SubmitSingleAction("cut_weeds", enabled);
+        single.Code.Should().Be(BodyProgramSubmitCode.Rejected, "an ordinary action outside the live policy is still refused");
+        single.Verification.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "action_not_enabled:cut_weeds");
+    }
+
+    private static int CountOf(string text, string needle)
+    {
+        int count = 0;
+        for (int index = text.IndexOf(needle, StringComparison.Ordinal); index >= 0; index = text.IndexOf(needle, index + needle.Length, StringComparison.Ordinal))
+            count += 1;
+        return count;
+    }
+
+    /// <summary>
+    /// A real farm, the production ledger, the one router, and the journal authority a production run composes.
+    ///
+    /// The admission transport answers every challenge with the grant a Host would mint, which is the same seam
+    /// `BodyProgramControllerPumpTests` uses: the controller below it is untouched production code.
+    /// </summary>
+    private sealed class ForEachHarness : IDisposable
+    {
+        private readonly Farmer? playerBefore;
+        private readonly object? worldStateBefore;
+
+        private ForEachHarness(IReadOnlyList<string> enabledActions)
+        {
+            this.playerBefore = Game1.player;
+            this.worldStateBefore = typeof(Game1).GetField("netWorldState", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)!.GetValue(null);
+            var root = (NetRoot<NetWorldState>)FormatterServices.GetUninitializedObject(typeof(NetRoot<NetWorldState>));
+            root.Value = new NetWorldState();
+            typeof(Game1).GetField("netWorldState", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)!.SetValue(null, root);
+            if (Game1.game1 is null)
+                Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
+
+            this.Farm = new Farm();
+            var map = new xTile.Map();
+            var size = new xTile.Dimensions.Size(MapWidth, MapHeight);
+            var tileSize = new xTile.Dimensions.Size(64, 64);
+            map.AddLayer(new xTile.Layers.Layer("Back", map, size, tileSize));
+            map.AddLayer(new xTile.Layers.Layer("Buildings", map, size, tileSize));
+            map.AddLayer(new xTile.Layers.Layer("Front", map, size, tileSize));
+            this.sheet = new xTile.Tiles.TileSheet("spring", map, "Maps/spring_outdoorsTileSheet", tileSize, tileSize);
+            map.AddTileSheet(this.sheet);
+            this.Farm.map = map;
+
+            var adapter = new xTile.Tiles.TileSheet("summer", map, "Maps/spring_outdoorsTileSheet", tileSize, tileSize);
+            map.AddTileSheet(adapter);
+            this.Farm.map = map;
+
+            this.Handler = new RecordingNativeHandler();
+            this.Router = new FarmhandActionRouter();
+            // The REAL registration supplies the handler; the router is the production table, so a row takes exactly the
+            // path a single action takes. `water_crop` is registered too, because the row that names a missing identity must
+            // be refused BEFORE it reaches this table.
+            foreach (string actionId in new[] { "till_soil", "water_crop" })
+            {
+                FarmhandActionRegistration registration = FarmhandActionCatalog.Registrations.Single(entry => entry.ActionId == actionId);
+                this.Router.Register(registration, this.Handler);
+            }
+
+            this.Ledger = new ExecutionManager(
+                new DummyMonitor(),
+                () => FarmhandCapabilityPublication.Initial(new HashSet<string>(enabledActions, StringComparer.Ordinal)));
+            var enabledSet = new HashSet<string>(enabledActions, StringComparer.Ordinal);
+            this.World = new FarmhandForEachFarmWorld(this.Farm, enabledSet, () => false);
+            this.Executor = new RouteReenteringBodyProgramExecutor(
+                this.Router,
+                this.Ledger,
+                forEachWorld: _ => this.World);
+            this.Store = new MemoryJournalStore();
+            this.Authority = OpenBodyProgramJournalAuthority.Open(
+                this.Store,
+                FarmhandBodyProgramCatalogProjection.Create().Catalog!,
+                new BridgeScope("stardew", "save", "world", "player", "companion"),
+                () => new BodyProgramPolicyIdentity("policy-a", 1),
+                () => 10);
+            this.Admission = new ImmediateAdmissionTransport();
+            this.Controller = new FarmhandBodyProgramController(this.Authority, this.Admission, this.Executor);
+        }
+
+        internal Farm Farm { get; }
+
+        internal RecordingNativeHandler Handler { get; }
+
+        internal FarmhandActionRouter Router { get; }
+
+        internal ExecutionManager Ledger { get; }
+
+        internal IFarmhandForEachWorld World { get; }
+
+        internal RouteReenteringBodyProgramExecutor Executor { get; }
+
+        internal MemoryJournalStore Store { get; }
+
+        internal OpenBodyProgramJournalAuthority Authority { get; }
+
+        internal ImmediateAdmissionTransport Admission { get; }
+
+        internal FarmhandBodyProgramController Controller { get; }
+
+        private xTile.Tiles.TileSheet sheet { get; }
+
+        internal static ForEachHarness Create(IReadOnlyList<string>? enabledActions = null) =>
+            new(enabledActions ?? new[] { "till_soil", "cut_weeds", "cut_grass", "scythe_crop", "chop_stump", "water_crop" });
+
+        /// <summary>The engine's own `Diggable` property on the Back layer, which is what the Hoe itself reads.</summary>
+        internal void SetDiggable(int x, int y)
+        {
+            var tile = new xTile.Tiles.StaticTile(this.Farm.map.GetLayer("Back"), this.sheet, xTile.Tiles.BlendMode.Alpha, 0);
+            tile.Properties["Diggable"] = "T";
+            this.Farm.map.GetLayer("Back").Tiles[x, y] = tile;
+        }
+
+        /// <summary>Submits one loop node and pumps until the program stops moving.</summary>
+        internal void Run(string loopDocument)
+        {
+            this.Submit(loopDocument).Code.Should().Be(BodyProgramSubmitCode.Accepted, this.Diagnostic);
+            for (int tick = 0; tick < 16 && this.Authority.Status("program").Snapshot!.State == BodyProgramState.Active; tick++)
+            {
+                this.Controller.Update();
+                if (this.Authority.Status("program").Snapshot!.State != BodyProgramState.Active) break;
+            }
+        }
+
+        internal BodyProgramSubmitResult Submit(string loopDocument, IReadOnlySet<string>? enabled = null) =>
+            this.Authority.Submit(LoopProgram(loopDocument), enabled);
+
+        internal BodyProgramSubmitResult SubmitSingleAction(string actionId, IReadOnlySet<string>? enabled) =>
+            this.Authority.Submit(
+                // Its own program id: the journal accepts one program per identity, and a second submission under the same
+                // id is a CONFLICT - a different fact from the one this case is about.
+                new ActionProgramCandidate("program-single", new[]
+                {
+                    new ActionProgramCandidateNode(
+                        "single",
+                        actionId,
+                        new ReadOnlyDictionary<string, BodyProgramRuntimeValue>(
+                            new Dictionary<string, BodyProgramRuntimeValue>(StringComparer.Ordinal)
+                            {
+                                ["x"] = new("integer", "10"),
+                                ["y"] = new("integer", "10"),
+                            }),
+                        Array.Empty<string>(),
+                        EmptyBindings()),
+                }),
+                enabled);
+
+        internal BodyProgramStatusSnapshot Status() => this.Authority.Status("program").Snapshot!;
+
+        /// <summary>The aggregate a successful node carries as its evidence; a failed node carries none (ADR-006).</summary>
+        internal string NodeEvidence() =>
+            this.Authority.Snapshot.Programs.Single().Nodes.Single().Evidence ?? string.Empty;
+
+        internal string Diagnostic => string.Join(
+            ";",
+            this.Authority.Events("program", 0, 64).Events.Select(@event => $"{@event.Kind}/{@event.NodeId}"));
+
+        public void Dispose()
+        {
+            this.Controller.Close();
+            this.Authority.Close();
+            typeof(Game1).GetField("_player", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.SetValue(null, this.playerBefore);
+            typeof(Game1).GetField("netWorldState", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)!.SetValue(null, this.worldStateBefore);
+        }
+
+        /// <summary>
+        /// The node as the WIRE hands it over: the loop arrives tagged, and the bridge boundary turns it into the canonical
+        /// string the plan form declares (see `FarmhandForEachWireTests`). This is that value.
+        /// </summary>
+        private static ActionProgramCandidate LoopProgram(string loopDocument) => new("program", new[]
+        {
+            new ActionProgramCandidateNode(
+                "loop",
+                FarmhandPlanFormCatalog.ForEachActionId,
+                new ReadOnlyDictionary<string, BodyProgramRuntimeValue>(
+                    new Dictionary<string, BodyProgramRuntimeValue>(StringComparer.Ordinal)
+                    {
+                        [FarmhandForEachArguments.LoopArgument] = new("string", loopDocument),
+                    }),
+                Array.Empty<string>(),
+                EmptyBindings()),
+        });
+
+        private static IReadOnlyDictionary<string, ActionProgramBinding> EmptyBindings() =>
+            new ReadOnlyDictionary<string, ActionProgramBinding>(new Dictionary<string, ActionProgramBinding>(StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// The native body, recorded. It is the ONE stand-in in this file: a real `till_soil` drives the actor's Hoe through the
+    /// engine's tick, which no headless test can run. It keeps the router/ledger contract exactly - it answers with a
+    /// terminal receipt recorded against the identity the router bound - so everything above it is production code.
+    /// </summary>
+    private sealed class RecordingNativeHandler : IFarmhandActionHandler
+    {
+        internal List<BridgeExecutionRequest> Requests { get; } = new();
+
+        public LocalExecutionReceipt Execute(BridgeExecutionRequest request, IExecutionLedger ledger)
+        {
+            this.Requests.Add(request);
+            string executionId = ledger is IDispatchExecutionLedger dispatch
+                && dispatch.TryGetBoundExecutionId(request.RequestId, out string bound)
+                    ? bound
+                    : request.RequestId;
+            return ledger.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Succeeded,
+                "tilled",
+                $"tile={request.Args.X},{request.Args.Y}");
+        }
+    }
+
+    /// <summary>The journal, in memory: the production store writes a file, and the seam is the same one file.</summary>
+    private sealed class MemoryJournalStore : IBodyProgramJournalStore
+    {
+        private string? value;
+
+        public BodyProgramJournalReadResult Read() => this.value is null
+            ? new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Empty, null)
+            : new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, this.value);
+
+        public bool TryWrite(string encodedState)
+        {
+            this.value = encodedState;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// The admission transport, answering every challenge with the grant a Host would mint for it - the same seam the
+    /// controller's own pump tests use.
+    /// </summary>
+    private sealed class ImmediateAdmissionTransport : IBodyProgramAdmissionTransport
+    {
+        private readonly Dictionary<(string, string, int, int), HostAdmissionGrant> grants = new();
+
+        internal List<NodeAdmissionChallenge> Sent { get; } = new();
+
+        public long AttachmentGeneration => 1;
+
+        public void Send(NodeAdmissionChallenge challenge)
+        {
+            this.Sent.Add(challenge);
+            this.grants[(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt)] = new HostAdmissionGrant(
+                challenge.ProgramId,
+                challenge.NodeId,
+                challenge.NodeAttempt,
+                challenge.AdmissionAttempt,
+                challenge.StopEpoch,
+                challenge.CatalogRevision,
+                challenge.PolicyIdentity,
+                challenge.ActionId,
+                challenge.CanonicalArguments,
+                challenge.DerivedResourceClaims,
+                challenge.DeadlineMs,
+                $"grant-{challenge.NodeId}-{challenge.NodeAttempt}",
+                "attachment_01",
+                "host-policy_01");
+        }
+
+        public BodyNodeAdmissionResult? TryTakeResult(string programId, string nodeId, int nodeAttempt, int admissionAttempt) =>
+            this.grants.TryGetValue((programId, nodeId, nodeAttempt, admissionAttempt), out HostAdmissionGrant? grant)
+                ? new BodyNodeAdmissionGrantedResult(grant)
+                : null;
+    }
+}
