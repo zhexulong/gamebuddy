@@ -580,6 +580,24 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         /// other profiles.
         /// </summary>
         Modal,
+
+        /// <summary>
+        /// The cross-day lifecycle's own profile: <c>advance_day</c> is the ONE action that ends a night WITH a
+        /// receipt, and the engine's own bed prompt is its working precondition rather than an obstacle.
+        ///
+        /// <para>
+        /// `GameLocation.cs:3763-3765` raises that prompt as the `Sleep` touch action, and answering it `Yes` runs
+        /// `Sleep_Yes` -> `startSleep` -> `NewDay`: the answer itself is a calendar crossing. So a `sleep` request that
+        /// arrives while its own prompt stands must be admitted - refusing it is what left the intent for the Agent to
+        /// discharge by answering the question itself, and `round41` measured the consequence: three nights crossed six
+        /// days, the first crossing of each pair with no execution behind it.
+        /// </para>
+        /// <para>
+        /// The exemption is ONE identity (<see cref="NativeSleepPrompt"/>), never "a question is up": another question,
+        /// a cutscene, a faint or a transient swing still holds the actor exactly as it does for every other profile.
+        /// </para>
+        /// </summary>
+        Overnight,
     }
 
     /// <summary>
@@ -839,6 +857,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             owners.Add((BodyOwnedByActivity, this.activeAnimalProduct.ExecutionId, "collect_animal_product", false, "committed", false));
         if (this.activeItemUse is not null)
             owners.Add((BodyOwnedByActivity, this.activeItemUse.ExecutionId, "use_item", false, "committed", false));
+        if (this.activeFishing is not null)
+            // A cast is committed from the moment the line is in the water: the engine's rod state machine has already
+            // spent the stamina, so a superseding directive may not take the body away mid-cast.
+            owners.Add((BodyOwnedByActivity, this.activeFishing.ExecutionId, "fish_here", false, "committed", false));
         if (this.activeItemPickup is not null)
             owners.Add((BodyOwnedByActivity, this.activeItemPickup.ExecutionId, "pickup_item", false, "committed", false));
         if (this.activePedestalTaking is not null)
@@ -985,9 +1007,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // the named hold it always had.
         bool eventRunning = disposition == LocalDispositionKind.Event || Game1.eventUp;
         bool actsOnRunningEvent = eventRunning && this.RequestHasEventPath(requestId);
+        // The cross-day lifecycle is the ONE caller whose own prompt is its precondition: `advance_day` answers the
+        // engine's bed question, and that box is what holds the actor. The exemption is the ONE identity
+        // (`NativeSleepPrompt`), never "a question is up" - another question, a cutscene, a faint or a transient swing
+        // still refuses exactly as it does for every other profile.
+        bool ownBedPrompt = profile is AdmissionActionabilityProfile.Overnight
+            && disposition is LocalDispositionKind.Modal
+            && WorldModel.HasDialogueBox(admissionFacts)
+            && NativeSleepPrompt.IsStanding(Game1.activeClickableMenu as DialogueBox);
         bool notActionable = profile is AdmissionActionabilityProfile.Modal
             ? eventRunning && !actsOnRunningEvent
-            : disposition != LocalDispositionKind.Idle;
+            : disposition != LocalDispositionKind.Idle && !ownBedPrompt;
         if (notActionable)
         {
             // WIA 4.?? : the refusal NAMES the hold and carries the facts a countermeasure needs. A single
@@ -1049,6 +1079,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // idle. (An earlier version of this comment claimed four slots were missing from THIS
             // list; they were not, and the real gap was the other way round.)
             || this.activeNavigate is not null
+            || this.activeFishing is not null
             || this.activeDayAdvance is not null || this.controller.HasActiveExecution))
             return this.RejectBodyOwned(requestId, executionId);
 
@@ -1426,6 +1457,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             || (this.activeItemPickup is not null && (this.activeItemPickup.RequestId != requestId || this.activeItemPickup.ExecutionId != executionId))
             || (this.activePedestalTaking is not null && (this.activePedestalTaking.RequestId != requestId || this.activePedestalTaking.ExecutionId != executionId))
             || (this.activeToolApproach is not null && (this.activeToolApproach.RequestId != requestId || this.activeToolApproach.ExecutionId != executionId))
+            || (this.activeFishing is not null && (this.activeFishing.RequestId != requestId || this.activeFishing.ExecutionId != executionId))
             || (this.activeNavigate is not null && (this.activeNavigate.RequestId != requestId || this.activeNavigate.ExecutionId != executionId)))
             return new(executionId, requestId, ExecutionState.Rejected, "execution_mismatch", this.revision, null);
 
@@ -1589,6 +1621,19 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return itemReceipt;
         }
 
+        if (this.activeFishing is not null)
+        {
+            // A cast stopped before the engine's win path consumes nothing beyond the cast itself, so its terminal is an
+            // honest Cancelled; once the win has been declared the catch may already be in flight, which is Uncertain.
+            LocalFishingCastSpec fishingSpec = this.activeFishing;
+            ExecutionState cancelledState = fishingSpec.Phase == LocalFishingPhase.AwaitingCredit ? ExecutionState.Uncertain : ExecutionState.Cancelled;
+            this.SettleFishingCast(fishingSpec, cancelledState, reasonCode,
+                $"location={fishingSpec.Location};target={fishingSpec.TargetId};tile={fishingSpec.TargetX},{fishingSpec.TargetY};phase={fishingSpec.Phase}");
+            return this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? fishingReceipt)
+                ? fishingReceipt
+                : new(executionId, requestId, cancelledState, reasonCode, this.revision, null);
+        }
+
         if (this.active is null)
         {
             if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? terminal) && terminal.ExecutionId == executionId)
@@ -1619,6 +1664,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return this.Cancel(this.activeItemUse.RequestId, this.activeItemUse.ExecutionId, reasonCode);
         if (this.activeToolApproach is not null)
             return this.Cancel(this.activeToolApproach.RequestId, this.activeToolApproach.ExecutionId, reasonCode);
+        if (this.activeFishing is not null)
+            return this.Cancel(this.activeFishing.RequestId, this.activeFishing.ExecutionId, reasonCode);
         if (this.activeItemPickup is not null)
             return this.Cancel(this.activeItemPickup.RequestId, this.activeItemPickup.ExecutionId, reasonCode);
         if (this.active is null)
@@ -1758,6 +1805,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 }
             }
         }
+        // The cast's own tick: the engine's rod state machine is driven by `Farmer`'s tool tick, so this pass only reacts
+        // to the states it reports (a bite, the catch window it opens, the fish in hand).
+        this.UpdateFishingCast();
         if (this.activePedestalTaking is not null)
         {
             LocalPedestalTakingSpec specification = this.activePedestalTaking;
@@ -2264,6 +2314,16 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.AddTrace(receipt);
             this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
         }
+        // The world moved out from under a cast: a modal, an event or a warp. Everything before the engine's win path has
+        // consumed nothing beyond the cast itself, so the terminal is Invalidated and the rod is reeled in through the
+        // engine's own stop. From the win path onwards the catch may already be in flight, so it is Uncertain instead.
+        if (this.activeFishing is not null)
+        {
+            LocalFishingCastSpec specification = this.activeFishing;
+            ExecutionState fishingState = specification.Phase == LocalFishingPhase.AwaitingCredit ? ExecutionState.Uncertain : ExecutionState.Invalidated;
+            this.SettleFishingCast(specification, fishingState, reasonCode,
+                $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};phase={specification.Phase}");
+        }
         if (this.activeItemUse is not null)
         {
             LocalItemUseSpec specification = this.activeItemUse;
@@ -2623,7 +2683,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // "eight" whether it had eight or eighty.
             FarmBuildingTargetsOmitted: farmBuildingTargets is null ? null : farmBuildingTargetsOmitted,
             SeedSupplyTargets: seedSupplyTargets,
-            SeedSupplyTargetsOmitted: seedSupplyTargets is null ? null : seedSupplyTargetsOmitted
+            SeedSupplyTargetsOmitted: seedSupplyTargets is null ? null : seedSupplyTargetsOmitted,
+            // `fish_here`'s discovery projection: only while the action itself is advertised, like every sibling family.
+            WaterTargets: advertisedCapabilities.Contains("fish_here", StringComparer.Ordinal) ? DiscoverWaterTargets(player) : null
         );
         // The rows are read AFTER every family above has walked the world and recorded into the same recorder, so this
         // is one publication of one measurement rather than a second pass over the map.
@@ -2746,6 +2808,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                                      ? new(this.activePedestalTaking.ExecutionId, this.activePedestalTaking.RequestId, "take_pedestal_item",
                                          (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(), activeReceipt?.ReasonCode ?? "accepted",
                                          new Dictionary<string, string> { ["target"] = this.activePedestalTaking.TargetId, ["tile"] = $"{this.activePedestalTaking.TargetX},{this.activePedestalTaking.TargetY}" }, activeOwner.Phase, activeOwner.CancelSafe)
+                                 : this.activeFishing is not null
+                                     ? new(this.activeFishing.ExecutionId, this.activeFishing.RequestId, "fish_here",
+                                         (activeReceipt?.State ?? ExecutionState.Accepted).ToWireValue(), activeReceipt?.ReasonCode ?? "accepted",
+                                         new Dictionary<string, string> { ["target"] = this.activeFishing.TargetId, ["tile"] = $"{this.activeFishing.TargetX},{this.activeFishing.TargetY}", ["phase"] = this.activeFishing.Phase.ToString() }, activeOwner.Phase, activeOwner.CancelSafe)
                                   : null;
         if (activeExecution is not null)
         {
@@ -6131,6 +6197,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         || this.activeItemUse?.ExecutionId == executionId
         || this.activeItemPickup?.ExecutionId == executionId
         || this.activePedestalTaking?.ExecutionId == executionId
+        || this.activeFishing?.ExecutionId == executionId
         || this.activeNavigate?.ExecutionId == executionId
         || this.controller.ActiveExecutionId == executionId;
 
