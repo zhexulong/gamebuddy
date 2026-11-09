@@ -270,6 +270,7 @@ const CONSTANT_MOUNTED_TOOL_NAMES: readonly string[] = Object.freeze([
   "stardew_equip_tool",
   "stardew_feed_animal",
   "stardew_fertilize_tile",
+  "stardew_fish_here",
   "stardew_harvest_bush",
   "stardew_harvest_crop",
   "stardew_harvest_fruit_tree",

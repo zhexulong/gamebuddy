@@ -6482,6 +6482,7 @@
                 "enum": [
                   "water_crop",
                   "break_resource_clump",
+                  "fish_here",
                   "machine_inspect",
                   "machine_collect_output",
                   "npc_relationship",
@@ -7061,6 +7062,7 @@
             "bait_crab_pot",
             "clear_debris",
             "break_resource_clump",
+            "fish_here",
             "machine_inspect",
             "machine_load",
             "machine_collect_output",

@@ -1296,6 +1296,7 @@ export type ExecutionRequest = Readonly<{
     | "bait_crab_pot"
     | "clear_debris"
     | "break_resource_clump"
+    | "fish_here"
     | "machine_inspect"
     | "machine_load"
     | "machine_collect_output"
@@ -2152,6 +2153,7 @@ export const SNAPSHOT_KEYS = [
   "toolSlots",
   "wateringCanFacts",
   "refillWateringCanTargets",
+  "waterTargets",
   "forageTargets",
   "itemTargets",
   "cropTargets",
@@ -3155,6 +3157,7 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     value.action !== "bait_crab_pot" &&
     value.action !== "clear_debris" &&
     value.action !== "break_resource_clump" &&
+    value.action !== "fish_here" &&
     value.action !== "machine_inspect" &&
     value.action !== "machine_load" &&
     value.action !== "machine_collect_output" &&
@@ -3941,9 +3944,14 @@ export function validateExecutionRequest(value: unknown, snapshot: Snapshot, now
     )
       return "invalid_ship_target";
   } else if (
-    ["harvest_bush", "harvest_fruit_tree", "shake_tree", "take_pedestal_item", "toggle_fence_gate"].includes(
-      value.action,
-    )
+    [
+      "harvest_bush",
+      "harvest_fruit_tree",
+      "shake_tree",
+      "take_pedestal_item",
+      "toggle_fence_gate",
+      "fish_here",
+    ].includes(value.action)
   ) {
     if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
     if (
@@ -4509,6 +4517,7 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       value.action === "bait_crab_pot" ||
       value.action === "clear_debris" ||
       value.action === "break_resource_clump" ||
+      value.action === "fish_here" ||
       value.action === "machine_inspect" ||
       value.action === "machine_load" ||
       value.action === "machine_collect_output" ||

@@ -1402,6 +1402,7 @@ test("runtime mounts only the explicitly verified Stardew product tools", async 
           "stardew_feed_animal",
           "stardew_fertilize_tile",
           "stardew_find_destination",
+          "stardew_fish_here",
           "stardew_harvest_bush",
           "stardew_harvest_crop",
           "stardew_harvest_fruit_tree",
