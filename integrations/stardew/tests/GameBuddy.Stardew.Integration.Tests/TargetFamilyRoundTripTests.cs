@@ -152,6 +152,21 @@ public sealed class TargetFamilyRoundTripTests
     /// as "the engine cannot do this".
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Undriven families the only recorded payload measurement cannot cover, each with the reason it is genuinely
+    /// NOT MEASURED rather than known to be cheap.
+    ///
+    /// <para>
+    /// This is the third answer the cost gate otherwise cannot give. `waterTargets` arrived with `fish_here` and no live
+    /// run has observed a snapshot containing it, so no share of the payload exists to check. Every entry expires by
+    /// itself: the gate fails when a family named here IS measured, so the blocker is re-argued instead of standing.
+    /// </para>
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string> UnmeasuredFamilies = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["waterTargets"] = "newer than the recorded measurement: no live run has published it yet, so its share of the observation payload is not measured",
+    };
+
     internal static readonly IReadOnlyDictionary<string, string> Undriven = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["animalDoorTargets"] = "a Building whose Data/Buildings row declares an animal door; the asset is not loaded here",
@@ -203,6 +218,7 @@ public sealed class TargetFamilyRoundTripTests
         ["tailoringTargets"] = "Data/TailoringRecipes and the sewing machine's two-slot pair; the asset is not loaded here",
         ["treeSaplingTargets"] = "a sapling in the pack plus a plantable tile (map `Diggable` property); the harness map declares none",
         ["warpItemTargets"] = "a warp-totem stack whose destination table comes from Data/Objects; the asset is not loaded here",
+        ["waterTargets"] = "a water tile the engine's own `isTileFishable` accepts; `TargetFamilyWorld`'s map declares Back/Buildings/Front layers with no tile PROPERTIES, so `isWaterTile` is false on every tile it can build (the same blocker `refillWateringCanTargets` names), and `FishingActionTests` exercises the refusal vocabulary instead",
         ["wearableTargets"] = "equip_wearable is owed a driver: Farmer wardrobe slots, whose occupants come from Data/Objects and a loaded save",
         ["woodFenceTargets"] = "a currentLocation of type Farm plus a (O)322 stack; TargetFamilyWorld builds a plain GameLocation",
         ["pendingLevelUpChoices"] = "Game1.player.newLevels, which only Game1.showEndOfNightStuff populates at the night boundary",
@@ -345,10 +361,11 @@ public sealed class TargetFamilyRoundTripTests
             + "floor of 5 was the honest reading of 2026-11-01, and `break_rock`/`clear_hoedirt` joined it on 2026-11-08 "
             + "when four missing facts on the probe farmer were fixed");
         undriven.Should().BeLessThanOrEqualTo(
-            63,
+            64,
             "the undriven count may not rise without a new named blocker: the eleven families this file used to call "
             + "driven moved here when the probe stopped counting refusals as passes, and each one names the native "
-            + "surface its handler reaches after the target check");
+            + "surface its handler reaches after the target check - `waterTargets` is the one rise, added with "
+            + "`fish_here` and blocked by the harness map declaring no tile properties");
 
         // Printed so the gap is a NUMBER on every run rather than an absence a reader has to reconstruct. The two
         // counts are of DIFFERENT things and are labelled as such: a pair is an (action, family) row this file drives,
@@ -361,7 +378,7 @@ public sealed class TargetFamilyRoundTripTests
             + $"known-drift {knownDrift}, undriven {undriven} families, undriven pairs {UndrivenPairs.Count}";
         report.Should().Be(
             $"driven 7 pairs over {drivenFamilies} of {declaredFamilies.Count} families, known-drift 0, "
-            + "undriven 63 families, undriven pairs 2",
+            + "undriven 64 families, undriven pairs 2",
             "the counts are the ratchet; a change here is a change to what this gate covers");
     }
 
@@ -614,8 +631,14 @@ public sealed class TargetFamilyRoundTripTests
         output.WriteLine(
             $"  measured over {measurement.Run}: {measurement.Observations} observations, {measurement.TotalBytes} B");
 
-        unmeasured.Should().BeEmpty(
-            "an undriven family the measurement does not cover is one whose cost nobody knows: " + string.Join(" | ", unmeasured));
+        unmeasured.Should().BeSubsetOf(
+            UnmeasuredFamilies.Keys,
+            "an undriven family the measurement does not cover is one whose cost nobody knows, so it must say so here: "
+            + string.Join(" | ", unmeasured));
+        foreach (string family in UnmeasuredFamilies.Keys)
+            unmeasured.Should().Contain(family,
+                $"the `{UnmeasuredFamilies[family]}` entry expires by itself: once the measurement covers `{family}`, the "
+                + "blocker has to be re-argued instead of standing");
 
         unanswered.Should().BeEmpty(
             $"a family above {ExpensiveSharePercent:0.#}% of the observation payload must answer its cost by naming the "

@@ -339,3 +339,48 @@ internal sealed record LocalItemUseSpec(
     long DeadlineMs,
     ExecutionState? DeferredTerminalState = null,
     string? DeferredTerminalReason = null);
+
+/// <summary>
+/// Where one `fish_here` cast is. The rod's own state machine runs inside the engine's tool tick, so this phase only
+/// says what the Mod is still waiting for; it never re-derives a bite, a fish or a size.
+/// </summary>
+internal enum LocalFishingPhase
+{
+    /// <summary>The line is in the water and the engine has not bitten yet (`FishingRod.isNibbling` is still false).</summary>
+    WaitingForBite,
+
+    /// <summary>The rod was hooked; the engine's own catch window is opening the minigame it builds from its own values.</summary>
+    AwaitingCatchWindow,
+
+    /// <summary>The engine's win path was entered with engine-read values; the catch is in hand but not yet booked.</summary>
+    AwaitingCredit,
+}
+
+/// <summary>
+/// Manager-private persistent `fish_here` execution: one request owns one line in the water under one receipt lineage.
+///
+/// <para>
+/// The four pre-cast facts are captured here so the terminal receipt can state the deltas the card requires without a
+/// second read: stamina, the pool slot the action displaced, and the bait stack. `RodSlot` is the ONLY place the rod's
+/// slot lives - every exit restores `PreviousSlot`, because a rod left selected would change what the actor is holding
+/// for the next action.
+/// </para>
+/// </summary>
+internal sealed record LocalFishingCastSpec(
+    string ExecutionId,
+    string RequestId,
+    string Location,
+    int TargetX,
+    int TargetY,
+    string TargetId,
+    int RodSlot,
+    int PreviousSlot,
+    float StaminaBefore,
+    int BaitBefore,
+    long StartedAtMs,
+    long DeadlineMs,
+    LocalFishingPhase Phase,
+    string? CaughtQualifiedItemId = null,
+    int CaughtFishSize = 0,
+    int CaughtFishQuality = 0,
+    int CaughtCountBefore = 0);

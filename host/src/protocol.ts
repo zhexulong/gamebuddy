@@ -65,6 +65,7 @@ import {
   isRecipeTargetFact,
   isRecord,
   isRefillWateringCanTargetFact,
+  isWaterTargetFact,
   isRockSourceTargetFact,
   isScytheCropTargetFact,
   isSeedSupplyTargetFact,
@@ -438,6 +439,12 @@ export type Snapshot = Readonly<{
   }>[];
   /** Adjacent legal native Watering Can refill sources. */
   refillWateringCanTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
+  /**
+   * The tiles the ENGINE says a rod may be cast at in this location (`canFishHere` + `isTileFishable`), nearest first
+   * and capped at 32. The address `fish_here` takes as `expectedTargetId`, recomputed by the Mod from the same location
+   * identity and tile. A row promises no particular fish: which fish swims here is decided inside the engine at the bite.
+   */
+  waterTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
   /**
    * Nearby unwatered crops available through the native WateringCan path, each stating whether its tile is watered and
    * whether the crop is ready to harvest (`water_crop`/`harvest_crop` decide from these), plus the `Data/Crops` facts
@@ -4093,6 +4100,9 @@ export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freez
   { field: "itemTargets", maxItems: 64, accepts: isItemTargetFact },
   { field: "wateringCanFacts", maxItems: 36, accepts: isWateringCanFact },
   { field: "refillWateringCanTargets", maxItems: 8, accepts: isRefillWateringCanTargetFact },
+  // The water `fish_here` may cast at. Bounded at the Mod's own cap (32) and validated entry by entry, so a malformed
+  // row is a NAMED snapshot refusal rather than a tile the companion aims at.
+  { field: "waterTargets", maxItems: 32, accepts: isWaterTargetFact },
   { field: "cropTargets", maxItems: 64, accepts: isCropTargetFact, narrate: namedEntryReason },
   { field: "petBowlTargets", maxItems: 8, accepts: isPetBowlTargetFact },
   { field: "slimeHutchTroughTargets", maxItems: 4, accepts: isSlimeHutchTroughTargetFact },

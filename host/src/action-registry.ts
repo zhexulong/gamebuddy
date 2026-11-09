@@ -177,6 +177,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["watering_can", "water_source", "inventory_slot"],
   ),
   actionAdapter(
+    "fish_here",
+    "Fish a live water tile",
+    "Cast at one water tile the engine itself says a rod may be cast at, wait for the engine's own bite, and let the engine's own win path credit the catch. Every refusal happens before the cast: no rod, no bait the rod needs, water the engine refuses, or too little stamina. The fish, its size, its quality and the bait and tackle consumption are all the engine's own.",
+    ["water_source"],
+  ),
+  actionAdapter(
     "plant_seed",
     "Plant a live seed",
     "Use the native seed placement path on a live empty HoeDirt target.",
@@ -625,6 +631,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   pickup_item: "stardew_pickup_item",
   water_crop: "stardew_water_crop",
   refill_watering_can: "stardew_refill_watering_can",
+  fish_here: "stardew_fish_here",
   plant_seed: "stardew_plant_seed",
   fertilize_tile: "stardew_fertilize_tile",
   place_wood_fence: "stardew_place_wood_fence",

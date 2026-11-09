@@ -130,6 +130,17 @@ export function isRefillWateringCanTargetFact(value: unknown): boolean {
 }
 
 /**
+ * One row of `waterTargets`: the engine's own castable water tile and the opaque id `fish_here` binds it with.
+ *
+ * The SAME shape as the refill family, deliberately: both name a water tile by a hash the Mod derives from the location
+ * and the tile, and both carry nothing else. The two families differ in the PREDICATE that produced them
+ * (`CanRefillWateringCanOnTile` vs `canFishHere` + `isTileFishable`), not in the row the wire carries.
+ */
+export function isWaterTargetFact(value: unknown): boolean {
+  return isRefillWateringCanTargetFact(value);
+}
+
+/**
  * The CLOSED vocabulary of location-fixed interaction points, mirrored by the Mod's
  * `FixedInteractionPointKinds` and by the wire schema's own `enum` for the same field.
  *

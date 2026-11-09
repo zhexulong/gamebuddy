@@ -2953,6 +2953,13 @@
           },
           "maxItems": 8
         },
+        "waterTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/waterTarget"
+          },
+          "maxItems": 32
+        },
         "villagerWhereabouts": {
           "type": "array",
           "items": {
@@ -4027,6 +4034,26 @@
       }
     },
     "refillWateringCanTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "targetId",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "targetId": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        }
+      }
+    },
+    "waterTarget": {
       "type": "object",
       "additionalProperties": false,
       "required": [

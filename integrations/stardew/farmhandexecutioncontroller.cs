@@ -379,6 +379,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         && this.activeBusRide is null
         && this.activeDayAdvance is null
         && this.activePedestalTaking is null
+        && this.activeFishing is null
         && !this.controller.HasActiveExecution;
 
     public long CurrentRevision => this.revision;

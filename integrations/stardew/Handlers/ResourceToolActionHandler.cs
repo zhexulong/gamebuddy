@@ -145,6 +145,13 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
                 request.Args.ExpectedTargetId ?? string.Empty,
                 request.DeadlineMs),
 
+            "fish_here" => this.executions.RequestLocalFishHere(
+                request.RequestId,
+                (int)(request.Args.X ?? 0),
+                (int)(request.Args.Y ?? 0),
+                request.Args.ExpectedTargetId ?? string.Empty,
+                request.DeadlineMs),
+
             "place_wood_fence" => this.executions.RequestLocalPlaceWoodFence(
                 request.RequestId,
                 request.Args.Slot ?? 0,

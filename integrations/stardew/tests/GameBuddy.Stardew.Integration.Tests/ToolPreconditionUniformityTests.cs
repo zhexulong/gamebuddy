@@ -58,8 +58,17 @@ public sealed class ToolPreconditionUniformityTests
     /// <summary>How a handler takes the tool its own registration declares.</summary>
     private const string SelectionCall = "TrySelectDeclaredTool(Game1.player, \"";
 
-    /// <summary>The two spellings of "the tool must already be in your hand": the slot comparison and the old code.</summary>
-    private static readonly string[] HeldToolSpellings = { "CurrentToolIndex !=", "not_equipped" };
+    /// <summary>The two spellings of "the tool must already be in your hand": the slot comparison and the old code.
+    ///
+    /// <para>
+    /// The retired code is named in FULL (`_not_equipped_in_requested_slot`) rather than by the bare `not_equipped`
+    /// fragment, because that fragment also matches the card's own `rod_not_equipped`: `fish_here` mints it when the pack
+    /// holds a rod whose selection cannot be made, which is not the "you are holding something else" refusal this rule
+    /// exists for. A rule that reads a fragment cannot tell the two apart, and widening it back would make the rule fail
+    /// on a code it never meant to police.
+    /// </para>
+    /// </summary>
+    private static readonly string[] HeldToolSpellings = { "CurrentToolIndex !=", "_not_equipped_in_requested_slot" };
 
     /// <summary>
     /// The one sentence an action's own <c>slot</c> description publishes when the slot must be the TOOL the actor is

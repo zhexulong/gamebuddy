@@ -69,9 +69,15 @@ public sealed class RefusalLayerNamingTests
     /// layers in the closed vocabulary, and inventing a word for them would give the model a token that names no
     /// countermeasure.
     /// </para>
+    /// <para>
+    /// RAISED FROM 546 TO 549 by `fish_here`, and the three sites are named rather than absorbed: its two
+    /// `world_not_ready` openings and its `invalid_deadline` refusal. The other eight refusals the action mints DO name a
+    /// layer (the rod and the bait as `tool`/`item`, the cast's water as `back_tile`/`location_constraint`, the stamina as
+    /// `stamina`), which is why the rise is three and not eleven. No world layer exists for "the save is not loaded yet" or
+    /// "your deadline has already passed", and inventing one would put a token on the wire that names no countermeasure.
+    /// </para>
     /// </summary>
-    private const int RecordedBare = 546;
-
+    private const int RecordedBare = 549;
     [Fact]
     public void TheLayerVocabularyIsClosedAndWireShaped()
     {

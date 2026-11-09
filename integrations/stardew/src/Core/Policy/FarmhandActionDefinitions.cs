@@ -507,6 +507,11 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // (check-stardew-action-promotion.mjs:150-156), and no live gate has been run for it. Promotion to
         // LiveVerified is the parent's step and lands with that gate, the way move_placed_furniture's did.
         E("break_resource_clump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(Target(), FarmhandClearingCost.TargetDecidesTool, ClumpOccupants), FarmhandActionLifecycle.Experimental, "debrisTargets"),
+        // Fishing. `waterTargets` is the engine's own castable-tile answer (`GameLocation.canFishHere` + `isTileFishable`),
+        // and the postcondition is `fish_caught` because that is the fact the receipt measures a before/after of
+        // (`fish_caught_before`/`fish_caught_after` around `Farmer.fishCaught`). `experimental` and not `live_verified`:
+        // promotion needs a real target-version run, and the run comes after the action exists.
+        E("fish_here", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(A(null, ToolResource("fishing_rod", FarmhandResourceTemplateValue.AnyUpgrade), "fish_caught", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string"))), FarmhandActionLifecycle.Experimental, "waterTargets"),
         E("npc_relationship", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "npcRelationshipTargets"),
         E("pet_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "petTargets"),
         E("pet_farm_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "farmAnimalPetTargets"),
