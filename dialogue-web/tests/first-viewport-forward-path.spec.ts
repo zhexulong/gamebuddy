@@ -700,6 +700,9 @@ const STATE_SOURCES: Readonly<Record<string, (surface: Surface) => readonly Stat
   [surfaceRoute.CHARACTERS_PANEL]: freshState,
   [surfaceRoute.SETTINGS_PANEL]: freshState,
   [surfaceRoute.MEMORY_PANEL]: freshState,
+  // The preset readout has no command of its own (presets are imported once and read from then on), so its step
+  // forward is the shell's surface switch, exactly like the other read-only management surfaces above.
+  [surfaceRoute.PRESETS_PANEL]: freshState,
 };
 
 function statesOf(surface: Surface): readonly StateUnderTest[] {

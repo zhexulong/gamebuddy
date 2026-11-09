@@ -15,7 +15,7 @@ import { messages } from "../src/i18n";
  *  - opening moves focus onto the panel's first entry, because the panel is what the player
  *    opened and the trigger's next Tab would otherwise land behind it;
  *  - Tab wraps inside the panel (last → first, and Shift+Tab first → last). The panel is not
- *    modal in the visual sense - no backdrop, nothing covered - but the four folded peers exist
+ *    modal in the visual sense - no backdrop, nothing covered - but the folded peers exist
  *    nowhere else in a 400 px bar, so letting Tab out of it would leave those peers reachable only
  *    by Escape or by a reverse walk through the whole document;
  *  - Escape closes it and hands focus back to the trigger (the behaviour that already existed and
@@ -119,18 +119,19 @@ test("the collapsed menu takes focus in, wraps Tab and Escape, and Escape return
   await page.keyboard.press("Shift+Tab");
   const backwards = await focused(page);
   expect(backwards.inMenu, "Shift+Tab from the first entry stays in the panel").toBe(true);
-  expect(backwards.name).toBe(catalogue.memoryPanel);
+  expect(backwards.name).toBe(catalogue.presetsPanel);
 
   const walk: Array<Readonly<{ name: string | null; inMenu: boolean }>> = [];
-  for (let press = 0; press < 4; press += 1) {
+  for (let press = 0; press < 5; press += 1) {
     await page.keyboard.press("Tab");
     walk.push(await focused(page));
   }
-  expect(walk.map((stop) => stop.name), "Tab walks the same four peers, and the fifth press is a wrap").toEqual([
+  expect(walk.map((stop) => stop.name), "Tab walks the same five peers, and the sixth press is a wrap").toEqual([
     catalogue.chatsPanel,
     catalogue.charactersPanel,
     catalogue.settingsPanel,
     catalogue.memoryPanel,
+    catalogue.presetsPanel,
   ]);
   expect(
     walk.filter((stop) => !stop.inMenu),

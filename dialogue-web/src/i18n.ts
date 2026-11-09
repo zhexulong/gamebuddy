@@ -853,6 +853,24 @@ const en = {
   cardImportHistoryEmpty: "No confirmed imports yet.",
   cardImportHistoryFailed: "The import history could not be read.",
 
+  // Preset surface (design/architecture/tavern-preset-compatibility.md §2.1, §2.5, §4). A preset is
+  // read-only, so every line here states a fact about the assembly rather than offering a control.
+  presetsPanel: "Preset assembly",
+  presetReadOnlyHint:
+    "A preset is imported once and read from then on, so this surface shows what the assembly does with it and changes nothing.",
+  presetEntriesLine: "Entries: {{total}} · {{enabled}} enabled · {{disabled}} disabled",
+  presetDisabledTitle: "Switched off",
+  presetDisabledNone: "No entry is switched off.",
+  presetUnfilledTitle: "Markers with no content source",
+  presetUnfilledNone: "Every marker has a content source.",
+  presetMacrosTitle: "Macros this product cannot evaluate",
+  presetMacrosNone: "Every macro this preset spells is implemented.",
+  presetDepthTitle: "Depth injection",
+  presetDepthLine: "{{count}} blocks at depths {{depths}}",
+  presetDepthNone: "No entry is injected at a depth.",
+  presetEmpty: "No preset has been imported yet.",
+  presetReadFailed: "The preset assembly could not be read.",
+
   // Shell (design/104 §2): brand mark, single contextual drawer, panel groups.
   appMark: "GB",
   chatPanel: "Chat",
@@ -1800,6 +1818,22 @@ const zh: Messages = {
   cardImportHistoryHint: "每次已确认的导入，以及按类别保留或丢弃的内容。",
   cardImportHistoryEmpty: "暂无已确认的导入。",
   cardImportHistoryFailed: "无法读取导入历史。",
+
+  // 预设面（design/architecture/tavern-preset-compatibility.md §2.1、§2.5、§4）。预设只读，因此这里的每一行都是关于装配的事实，而不是控件。
+  presetsPanel: "预设装配",
+  presetReadOnlyHint: "预设只导入一次，之后只读；这个页面显示装配如何使用它，不会改动它。",
+  presetEntriesLine: "条目：{{total}} · {{enabled}} 启用 · {{disabled}} 关闭",
+  presetDisabledTitle: "已关闭",
+  presetDisabledNone: "没有已关闭的条目。",
+  presetUnfilledTitle: "没有内容来源的标记",
+  presetUnfilledNone: "每个标记都有内容来源。",
+  presetMacrosTitle: "本产品无法求值的宏",
+  presetMacrosNone: "这个预设用到的宏都已实现。",
+  presetDepthTitle: "深度注入",
+  presetDepthLine: "{{count}} 个块，深度 {{depths}}",
+  presetDepthNone: "没有条目注入到某个深度。",
+  presetEmpty: "还没有导入预设。",
+  presetReadFailed: "无法读取预设装配。",
 
   // 外壳（design/104 §2）：品牌标记、唯一上下文抽屉、面板分组。
   appMark: "GB",

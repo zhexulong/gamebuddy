@@ -2413,6 +2413,40 @@
     color: var(--text-secondary);
   }
 
+  /* --- The preset readout (design/architecture/tavern-preset-compatibility.md §2.1) ---
+
+   A read-only list of four facts: the entry switch, the markers with no content source, the macros this
+   product cannot evaluate and the depth injection. It renders inside a `.management-settings-section` and
+   takes that section's own rhythm, because the browser's default heading and list margins are what put the
+   fourth fact below the fold: measured at 400x800 on the mounted surface, the three `h4` headings and the
+   `ul` lists carried about 96 px each and the depth line read top 805 against an 800 px window - the last of
+   the four facts was the one a phone player could not see without scrolling the region. */
+  [data-preset-assembly] h3,
+  [data-preset-assembly] h4 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  [data-preset-assembly] h3 {
+    font-size: 15px;
+  }
+
+  [data-preset-assembly] ul {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+  }
+
+  [data-preset-assembly] code {
+    font-size: 12px;
+    color: var(--text-primary);
+  }
+
   /* One authored-content group (companions, persona, scenario, opening) is a
    single-level card inside its section group, like a saved connection. */
   .management-settings-section > section {

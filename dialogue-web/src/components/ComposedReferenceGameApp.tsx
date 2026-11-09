@@ -1,4 +1,4 @@
-import { Brain, Gamepad2, MessagesSquare, Settings, SlidersHorizontal, Users } from "lucide-react";
+import { Brain, Gamepad2, MessagesSquare, ScrollText, Settings, SlidersHorizontal, Users } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readChatSnapshotPair } from "../chat-snapshot-pair";
 import {
@@ -17,6 +17,7 @@ import {
   CHATS_PANEL,
   GAME_PANEL,
   MEMORY_PANEL,
+  PRESETS_PANEL,
   SETTINGS_PANEL,
   useSurfaceRoute,
 } from "../composed-surface-route";
@@ -41,6 +42,7 @@ import { GameSurface } from "./GameSurface";
 import { MemorySurface } from "./MemorySurface";
 import { createManagementPipelineApi } from "./management-surface-panels";
 import { ProblemView } from "./ProblemView";
+import { PresetAssemblySurface } from "./PresetAssemblySurface";
 import { SettingsSurface } from "./SettingsSurface";
 import { SkipLink } from "./SkipLink";
 import { SurfaceModelSettings } from "./SurfaceModelSettings";
@@ -227,6 +229,7 @@ export function ComposedReferenceGameApp() {
     setAvatarDigests((previous) => (previous[handle] === digest ? previous : { ...previous, [handle]: digest }));
   }, []);
   const settingsEntryRef = useRef<HTMLButtonElement>(null);
+  const presetsEntryRef = useRef<HTMLButtonElement>(null);
   const memoryEntryRef = useRef<HTMLButtonElement>(null);
   const modelPopoutEntryRef = useRef<HTMLButtonElement>(null);
   /**
@@ -266,7 +269,7 @@ export function ComposedReferenceGameApp() {
 
   const { shownSurface, openPanelOf } = useSurfaceRoute({ returnFocusTo: composerFieldRef });
 
-  const bootstrap = useComposedBootstrap(localeRef, setPreview);
+  const bootstrap = useComposedBootstrap(localeRef, setPreview, managementPipelineApiRef.current);
   const {
     view,
     viewRef,
@@ -1323,11 +1326,15 @@ export function ComposedReferenceGameApp() {
   }, []);
 
   /**
-   * The interface's own display language, not the companion's: it changes what
-   * the player reads here (and the document locale), while the companion language
-   * keeps the separate choice the settings panel owns and persists.
+   * Adopts a language the Host has already confirmed.
+   *
+   * The interface language is the Host's choice (its `player-preference` record, written through
+   * `/api/tavern/v1/settings/ui-language`), so nothing reaches this function until the store answered
+   * with the value it now holds: this repaints the page in THAT language, rewrites the first-paint
+   * cache from it, and remembers it for the next mount. The cache is a cache - the choice outliving a
+   * launch is the Host record's doing, not this browser's.
    */
-  const handleUiLocale = (locale: Locale): void => {
+  const adoptUiLocale = (locale: Locale): void => {
     const current = viewRef.current;
     if (current.kind !== "ready") return;
     localeRef.current = locale;
@@ -1458,6 +1465,7 @@ export function ComposedReferenceGameApp() {
   const openChats = openPanelOf(CHATS_PANEL, chatsEntryRef);
   const openCharacters = openPanelOf(CHARACTERS_PANEL, charactersEntryRef);
   const openSettings = openPanelOf(SETTINGS_PANEL, settingsEntryRef);
+  const openPresets = openPanelOf(PRESETS_PANEL, presetsEntryRef);
   const openMemory = openPanelOf(MEMORY_PANEL, memoryEntryRef);
 
   return (
@@ -1543,6 +1551,14 @@ export function ComposedReferenceGameApp() {
                         active: shownSurface === MEMORY_PANEL,
                         onClick: openMemory,
                         ref: memoryEntryRef,
+                      },
+                      {
+                        id: PRESETS_PANEL,
+                        label: labels().presetsPanel,
+                        icon: ScrollText,
+                        active: shownSurface === PRESETS_PANEL,
+                        onClick: openPresets,
+                        ref: presetsEntryRef,
                       },
                     ]
                   : []),
@@ -1673,7 +1689,7 @@ export function ComposedReferenceGameApp() {
                   csrfToken={view.session.snapshot.csrfToken}
                   labels={labels()}
                   uiLocale={view.locale}
-                  onSelectUiLocale={handleUiLocale}
+                  onSelectUiLocale={adoptUiLocale}
                   onSelectAppearance={appearance.choose}
                   restoreFocusTo={settingsEntryRef}
                 />
@@ -1688,6 +1704,7 @@ export function ComposedReferenceGameApp() {
                   restoreFocusTo={memoryEntryRef}
                 />
               )}
+              {shownSurface === PRESETS_PANEL && <PresetAssemblySurface labels={labels()} />}
             </main>
             {/* This surface's own model settings, over the conversation rather than
               in it (design/104 §3: Chat owns its model choice and the Host stores

@@ -1,0 +1,527 @@
+/**
+ * The read-only preset surface: what the player actually sees about the preset they imported.
+ *
+ * Design (`design/architecture/tavern-preset-compatibility.md` §2.1, §2.5, §4) rules that a preset is imported
+ * once and read from then on, so the surface has no editor. That makes it a surface whose whole job is to SHOW
+ * four facts, and a fact that is only counted ("2 markers unfilled") or only implied by an empty region is a fact
+ * the player cannot act on. This journey therefore asserts each one by name, in the window the player has:
+ *
+ *  1. the entry switch - the total, and the disabled entries listed rather than hidden;
+ *  2. every marker with no content source, named individually;
+ *  3. every macro this product will not evaluate, named beside its own code
+ *     (`macro_not_implemented:<name>` / `macro_unknown:<name>`);
+ *  4. depth injection - the count, the depths, and the blocks that land there.
+ *
+ * The fixture is the assembly's own output, not a hand-written copy of it: `presetAssemblySurface` is imported from
+ * the Host and driven with a realistic SillyTavern preset, and the stub serves exactly what it produced. A field
+ * that drifts between the producer and the browser's mirror therefore fails here instead of agreeing with itself.
+ *
+ * The negative half is the one a "show everything" surface gets wrong: an entry that IS enabled must never be
+ * rendered as a switched-off one, a marker that IS filled must never appear in the unfilled list, and a macro this
+ * product implements must never be reported as one it cannot evaluate.
+ */
+import { presetAssemblySurface } from "../../host/src/preset-assembly-surface.ts";
+import { messages } from "../src/i18n";
+import { type Page, expect, test } from "./frontend-coverage";
+
+const token = "A".repeat(43);
+const csrfToken = `${"C".repeat(42)}A`;
+const chatHandle = `${"B".repeat(42)}A`;
+const expiresAtMs = 1_900_000_000_000;
+
+/**
+ * A realistic chat-completion preset: SillyTavern's own `Default.json` order with the two things a modern preset is
+ * actually worth - markers whose content this product supplies, and entries inside the transcript by depth.
+ *
+ * `nsfwPrompt` is switched off in the order rather than deleted, which is what a real preset does, and
+ * `jailbreak` keeps its authored post-history text (A4 §3.2: the card overrides it only when the card wrote one).
+ */
+const PRESET_DOCUMENT = {
+  name: "Chat completion - depth aware",
+  description: "A preset with markers, a post-history tail and two depth injections.",
+  temperature: 0.9,
+  top_p: 1,
+  prompts: [
+    {
+      identifier: "main",
+      name: "Main Prompt",
+      enabled: true,
+      role: "system",
+      content: "Write {{char}}'s next reply in this scene. {{char}} never speaks for {{user}}.",
+    },
+    {
+      identifier: "worldInfoBefore",
+      name: "World Info (before)",
+      marker: true,
+      enabled: true,
+      role: "system",
+      content: "",
+    },
+    {
+      identifier: "charDescription",
+      name: "Character Description",
+      marker: true,
+      enabled: true,
+      role: "system",
+      content: "",
+    },
+    {
+      identifier: "charPersonality",
+      name: "Character Personality",
+      marker: true,
+      enabled: true,
+      role: "system",
+      content: "",
+    },
+    { identifier: "scenario", name: "Scenario", marker: true, enabled: true, role: "system", content: "" },
+    {
+      identifier: "dialogueExamples",
+      name: "Dialogue Examples",
+      marker: true,
+      enabled: true,
+      role: "system",
+      content: "",
+    },
+    { identifier: "chatHistory", name: "Chat History", marker: true, enabled: true, role: "system", content: "" },
+    {
+      identifier: "jailbreak",
+      name: "Jailbreak",
+      enabled: true,
+      role: "system",
+      content: "Stay in {{char}}'s voice after the transcript.",
+    },
+    {
+      identifier: "directorNote",
+      name: "Director note",
+      enabled: true,
+      role: "system",
+      content: "Keep the pacing slow. {{random::dusk::evening::late night}}",
+      injection_position: 1,
+      injection_depth: 4,
+      injection_order: 100,
+    },
+    {
+      identifier: "styleGuard",
+      name: "Style guard",
+      enabled: true,
+      role: "system",
+      content: "No purple prose.",
+      injection_position: 1,
+      injection_depth: 0,
+      injection_order: 100,
+    },
+    {
+      identifier: "nsfwPrompt",
+      name: "Alternate tone",
+      enabled: false,
+      role: "system",
+      content: "{{if {{getvar::allowed}}}}A different register for this scene.{{/if}}",
+    },
+    {
+      identifier: "spellingProbe",
+      name: "Typo the author shipped",
+      enabled: true,
+      role: "system",
+      content: "Call {{characteristic}} by name when it matters.",
+    },
+  ],
+  prompt_order: [
+    {
+      character_id: 100000,
+      order: [
+        { identifier: "main", enabled: true },
+        { identifier: "worldInfoBefore", enabled: true },
+        { identifier: "charDescription", enabled: true },
+        { identifier: "charPersonality", enabled: true },
+        { identifier: "scenario", enabled: true },
+        { identifier: "dialogueExamples", enabled: true },
+        { identifier: "chatHistory", enabled: true },
+        { identifier: "jailbreak", enabled: true },
+        { identifier: "directorNote", enabled: true },
+        { identifier: "styleGuard", enabled: true },
+        { identifier: "nsfwPrompt", enabled: false },
+        { identifier: "spellingProbe", enabled: true },
+      ],
+    },
+  ],
+};
+
+/**
+ * The assembly's own sources, as the Host would hand them over for this companion: the card's three fields are
+ * supplied, so those three markers are filled - and the world book slots are NOT, because no book is bound to this
+ * conversation.
+ */
+const ASSEMBLY_MARKERS = {
+  charDescription: "Mira tends the greenhouse at the edge of Pelican Town.",
+  charPersonality: "Patient, dry, easily amused.",
+  scenario: "A late-summer evening in the valley.",
+};
+
+const SURFACE = presetAssemblySurface({
+  presetId: "chat-completion-depth-aware",
+  name: "Chat completion - depth aware",
+  revision: 3,
+  document: PRESET_DOCUMENT,
+  macros: {
+    char: "Mira",
+    user: "the player",
+    description: ASSEMBLY_MARKERS.charDescription,
+    personality: ASSEMBLY_MARKERS.charPersonality,
+    scenario: ASSEMBLY_MARKERS.scenario,
+    persona: "A neighbour with a spare hour.",
+    itemId: "assembly",
+  },
+  markers: ASSEMBLY_MARKERS,
+});
+
+/** The composed root the shell reads; every management surface needs the same four reads to mount. */
+const composedRoot = {
+  apiVersion: 1,
+  build: { browserContract: "composed_reference_game_browser_api/v1", profileId: "gamebuddy.composed.reference-game" },
+  chat: {
+    apiVersion: 1,
+    build: { browserContract: "tavern_browser_api/v1", profileId: "gamebuddy.chat-core.reference-pipeline" },
+    csrfToken,
+    browserSession: { expiresAtMs },
+    operations: [],
+    navigation: [{ itemId: "chat", labelKey: "tavern.nav.chat", availability: "available" }],
+    selection: { chatHandle, generation: 1, stateRevision: chatHandle },
+    chat: {
+      companion: { name: "Mira", handle: "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA" },
+      title: null,
+      transcript: [],
+      draft: { revision: 0, present: false },
+      turn: null,
+      worldInfo: null,
+    },
+    memory: { readAvailable: false, mutationAvailable: false, projectionRevision: null },
+    eventStream: null,
+  },
+  game: {
+    apiVersion: 1,
+    build: { browserContract: "game_browser_api/v1", profileId: "gamebuddy.game.preview" },
+    csrfToken,
+    browserSession: { expiresAtMs },
+    game: {
+      prerequisites: { status: "unknown", detectedGame: null, missingItems: [] },
+      instance: { status: "none", gameTitle: null, generation: 0 },
+      compatibility: { status: "unchecked", message: null },
+      attachment: { status: "none", generation: 0 },
+      connectionStatus: "none",
+      actionAuthority: "unavailable",
+      role: null,
+      companionName: null,
+      selectedWorld: null,
+      selectedSave: null,
+      capabilitySummary: { available: false, count: 0 },
+      latestOutcome: "none",
+    },
+  },
+};
+
+const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+
+/** Every route this mount reads, with the preset readout being the producer's own output. */
+async function stubPresetSurface(page: Page, presets: readonly unknown[]): Promise<void> {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(composedRoot)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(composedRoot)));
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
+  );
+  await page.route("**/api/tavern/v1/presets", (route) => route.fulfill(jsonOk({ apiVersion: 1, presets })));
+}
+
+/** What the surface renders for one reading, read as the browser laid it out. */
+type RenderedFacts = Readonly<{
+  entriesLine: string;
+  disabled: readonly string[];
+  unfilled: readonly string[];
+  macros: readonly string[];
+  depthLine: string;
+  blocks: readonly string[];
+  regionScrollTop: number | null;
+  windowHeight: number;
+  /** The four readouts, each with where it landed, so "visible" is a rect rather than an opinion. */
+  rects: readonly Readonly<{ readout: string; top: number; bottom: number }>[];
+}>;
+
+/**
+ * Everything the panel shows, read from the DOM the player is looking at.
+ *
+ * The readout selectors are the panel's own frozen test ids (`data-preset-*`), and a readout that is missing is a
+ * throw naming it rather than an empty list: "the unfilled list is absent" and "the unfilled list is empty" are two
+ * different findings and only one of them is the truth about this preset.
+ */
+async function readRendered(page: Page): Promise<RenderedFacts> {
+  return await page.evaluate(() => {
+    const surface = document.querySelector<HTMLElement>('[data-testid="presets-surface"]');
+    if (surface === null) throw new Error("the preset surface is not mounted");
+    const text = (node: Element | null, what: string): string => {
+      if (node === null) throw new Error(`the panel renders no ${what}`);
+      return (node.textContent ?? "").trim();
+    };
+    const list = (selector: string, attribute: string, what: string): readonly string[] => {
+      const nodes = surface.querySelectorAll<HTMLElement>(`${selector} [${attribute}]`);
+      if (nodes.length === 0 && surface.querySelector(selector) === null)
+        throw new Error(`the panel renders no ${what} list`);
+      return [...nodes].map((node) => node.getAttribute(attribute) ?? "");
+    };
+    const content = surface.querySelector<HTMLElement>(".surface-content");
+    const rectOf = (selector: string, readout: string) => {
+      const node = surface.querySelector<HTMLElement>(selector);
+      if (node === null) throw new Error(`the panel renders no ${readout}`);
+      const rect = node.getBoundingClientRect();
+      return { readout, top: Math.round(rect.top), bottom: Math.round(rect.bottom) };
+    };
+    const blockNodes = [...surface.querySelectorAll<HTMLElement>("[data-preset-depth-blocks] [data-preset-depth-block]")];
+    return {
+      entriesLine: text(surface.querySelector("[data-preset-entries]"), "entries line"),
+      disabled: list("[data-preset-disabled]", "data-preset-disabled-entry", "disabled"),
+      unfilled: list("[data-preset-unfilled]", "data-preset-marker", "unfilled marker"),
+      macros: list("[data-preset-macros]", "data-preset-macro", "macro"),
+      depthLine: text(surface.querySelector("[data-preset-depth-line]"), "depth line"),
+      blocks: blockNodes.map((node) => (node.textContent ?? "").trim()),
+      regionScrollTop: content === null ? null : content.scrollTop,
+      windowHeight: window.innerHeight,
+      rects: [
+        rectOf("[data-preset-entries]", "entries"),
+        rectOf("[data-preset-disabled]", "disabled list"),
+        rectOf("[data-preset-unfilled]", "unfilled list"),
+        rectOf("[data-preset-macros]", "macro list"),
+        rectOf("[data-preset-depth-line]", "depth line"),
+      ],
+    };
+  });
+}
+
+/** The ordered identifiers of one rendered list, with the reading that made it. */
+function expectNamed(actual: readonly string[], expected: readonly string[], what: string): void {
+  const missing = expected.filter((entry) => !actual.includes(entry));
+  const extra = actual.filter((entry) => !expected.includes(entry));
+  expect(
+    [...actual].sort(),
+    `the ${what} the player is shown is not the one the assembly named: missing ${JSON.stringify(missing)}, ` +
+      `unexpected ${JSON.stringify(extra)} (surface ${JSON.stringify([...expected].sort())})`,
+  ).toEqual([...expected].sort());
+}
+
+/** One viewport's reading, asserted against the producer's own output. */
+async function expectPresetReadout(page: Page, viewport: Readonly<{ width: number; height: number }>): Promise<void> {
+  const catalogue = messages("en");
+  await page.setViewportSize(viewport);
+  await stubPresetSurface(page, [SURFACE]);
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=presets`);
+  await expect(page.getByTestId("presets-surface")).toBeVisible();
+  await expect(page.getByTestId("presets-surface").getByRole("heading", { name: SURFACE.name ?? "" })).toBeVisible();
+
+  const rendered = await readRendered(page);
+  console.log(`[preset-surface ${viewport.width}x${viewport.height}] ${JSON.stringify(rendered)}`);
+
+  // 1. The switch is observable: the total, and the disabled entries by name.
+  const expectedEntries = catalogue.presetEntriesLine
+    .replace("{{total}}", String(SURFACE.entries.total))
+    .replace("{{enabled}}", String(SURFACE.entries.enabled))
+    .replace("{{disabled}}", String(SURFACE.entries.disabled));
+  expect(
+    rendered.entriesLine,
+    `the entries line does not state the assembly's own counts (${JSON.stringify(SURFACE.entries)})`,
+  ).toBe(expectedEntries);
+  expect(SURFACE.entries.disabled, "the fixture really carries a switched-off entry").toBeGreaterThan(0);
+  expectNamed(rendered.disabled, SURFACE.disabledEntries, "switched-off entries");
+  for (const identifier of SURFACE.disabledEntries)
+    await expect(page.locator(`[data-preset-disabled-entry="${identifier}"]`), `"${identifier}" is listed as switched off`).toBeVisible();
+
+  // 2. Every marker with no content source is named, one line each.
+  expect(SURFACE.unfilledMarkers.length, "the fixture really leaves a marker unfilled").toBeGreaterThan(0);
+  expectNamed(rendered.unfilled, SURFACE.unfilledMarkers, "markers with no content source");
+  for (const marker of SURFACE.unfilledMarkers) {
+    await expect(page.locator(`[data-preset-marker="${marker}"]`), `the unfilled marker "${marker}" is named`).toBeVisible();
+    await expect(page.locator(`[data-preset-marker="${marker}"]`)).toHaveText(marker);
+  }
+
+  // 3. Every macro this product cannot evaluate is named beside its own code.
+  expect(SURFACE.macros.length, "the fixture really spells a macro this product cannot evaluate").toBeGreaterThan(0);
+  expectNamed(rendered.macros, SURFACE.macros.map((macro) => macro.code), "macros this product cannot evaluate");
+  for (const macro of SURFACE.macros)
+    await expect(
+      page.locator(`[data-preset-macro="${macro.code}"] code`),
+      `"${macro.name}" is reported with its code ${macro.code}`,
+    ).toHaveText(macro.code);
+
+  // 4. Depth injection is visible as a count, as its depths, and as the blocks that land there.
+  expect(SURFACE.depth.count, "the fixture really injects at a depth").toBeGreaterThan(0);
+  expect(rendered.depthLine, "the depth line does not state the assembly's own count and depths").toBe(
+    catalogue.presetDepthLine
+      .replace("{{count}}", String(SURFACE.depth.count))
+      .replace("{{depths}}", SURFACE.depth.depths.join(", ")),
+  );
+  expectNamed(
+    rendered.blocks.map((block) => block.replace(/ · \d+$/u, "")),
+    SURFACE.depth.blocks.map((block) => block.identifier),
+    "depth blocks",
+  );
+
+  // The negative half: what the assembly FILLED must never be shown as a gap.
+  for (const marker of Object.keys(ASSEMBLY_MARKERS)) {
+    expect(
+      rendered.unfilled,
+      `"${marker}" has a content source, so it must not appear among the markers with none`,
+    ).not.toContain(marker);
+    await expect(page.locator(`[data-preset-marker="${marker}"]`), `"${marker}" is filled, so it is not listed as unfilled`).toHaveCount(0);
+  }
+  for (const identifier of ["main", "jailbreak", "directorNote"]) {
+    expect(rendered.disabled, `"${identifier}" is enabled, so it must not appear as switched off`).not.toContain(identifier);
+    await expect(page.locator(`[data-preset-disabled-entry="${identifier}"]`), `"${identifier}" is switched on`).toHaveCount(0);
+  }
+  for (const implemented of ["char", "user", "random"]) {
+    expect(
+      rendered.macros.some((code) => code.endsWith(`:${implemented}`)),
+      `{{${implemented}}} is implemented, so it must not be reported as a macro this product cannot evaluate`,
+    ).toBe(false);
+  }
+
+  // The four facts are inside the window the player has, with the region at its top - on the baseline mobile
+  // viewport as well as the wide one.
+  expect(rendered.regionScrollTop, "the region is at its top when this is measured").toBe(0);
+  for (const rect of rendered.rects) {
+    expect(
+      rect.top >= 0 && rect.bottom <= rendered.windowHeight,
+      `the ${rect.readout} is outside the ${viewport.width}x${viewport.height} window at the top of its own ` +
+        `scroll: it reads top ${rect.top}, bottom ${rect.bottom}, window ${rendered.windowHeight} px`,
+    ).toBe(true);
+  }
+}
+
+/**
+ * A preset with nothing to report says so in words, on all four counts.
+ *
+ * Silence is the reading this surface exists to rule out: an empty list under "Markers with no content source"
+ * and an absent list look the same to a player, and only one of them means "every marker is filled". Each of the
+ * four facts therefore carries its own sentence when it has nothing to say.
+ */
+test("a preset with nothing to report says so on all four counts", async ({ page }) => {
+  const catalogue = messages("en");
+  const clean = presetAssemblySurface({
+    presetId: "clean",
+    name: "A preset with nothing to report",
+    revision: 1,
+    document: {
+      name: "Clean",
+      prompts: [
+        { identifier: "main", enabled: true, role: "system", content: "Write {{char}}'s next reply." },
+        { identifier: "worldInfoBefore", marker: true, enabled: true, role: "system", content: "" },
+        { identifier: "charDescription", marker: true, enabled: true, role: "system", content: "" },
+        { identifier: "chatHistory", marker: true, enabled: true, role: "system", content: "" },
+      ],
+      prompt_order: [
+        {
+          character_id: 100000,
+          order: [
+            { identifier: "main", enabled: true },
+            { identifier: "worldInfoBefore", enabled: true },
+            { identifier: "charDescription", enabled: true },
+            { identifier: "chatHistory", enabled: true },
+          ],
+        },
+      ],
+    },
+    macros: {
+      char: "Mira",
+      user: "the player",
+      description: "Mira tends the greenhouse.",
+      personality: "Dry.",
+      scenario: "An evening.",
+      persona: "A neighbour.",
+      itemId: "clean",
+    },
+    markers: { worldInfoBefore: "A bound world book.", charDescription: "Mira tends the greenhouse." },
+  });
+  expect(clean.disabledEntries, "the fixture really has no switched-off entry").toEqual([]);
+  expect(clean.unfilledMarkers, "the fixture really fills every marker").toEqual([]);
+  expect(clean.macros, "the fixture really spells no unusable macro").toEqual([]);
+  expect(clean.depth.count, "the fixture really injects at no depth").toBe(0);
+
+  await stubPresetSurface(page, [clean]);
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=presets`);
+  const surface = page.getByTestId("presets-surface");
+  await expect(surface.locator("[data-preset-disabled-none]")).toHaveText(catalogue.presetDisabledNone);
+  await expect(surface.locator("[data-preset-unfilled-none]")).toHaveText(catalogue.presetUnfilledNone);
+  await expect(surface.locator("[data-preset-macros-none]")).toHaveText(catalogue.presetMacrosNone);
+  await expect(surface.locator("[data-preset-depth-none]")).toHaveText(catalogue.presetDepthNone);
+  await expect(surface.locator("[data-preset-marker]"), "no marker is listed as unfilled").toHaveCount(0);
+  await expect(surface.locator("[data-preset-depth-blocks]"), "no depth block is listed").toHaveCount(0);
+});
+
+test("the preset surface names the entry switch, the unfilled markers, the unusable macros and the depths at 400x800", async ({
+  page,
+}) => {
+  await expectPresetReadout(page, { width: 400, height: 800 });
+});
+
+test("the same four facts are named at 1440x900", async ({ page }) => {
+  await expectPresetReadout(page, { width: 1440, height: 900 });
+});
+
+/**
+ * The empty state is a fact of its own, and a failed read is not it.
+ *
+ * A surface that rendered a blank region for both would let a player read "this preset does nothing" out of a Host
+ * that never answered - which is the one reading the design forbids in as many words (§4: never silently empty).
+ */
+test("no imported preset and an unreadable readout say different things", async ({ page }) => {
+  const catalogue = messages("en");
+  await stubPresetSurface(page, []);
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=presets`);
+  const surface = page.getByTestId("presets-surface");
+  await expect(surface).toBeVisible();
+  await expect(surface.locator("[data-preset-none]")).toHaveText(catalogue.presetEmpty);
+  await expect(surface.locator("[data-preset-assembly]")).toHaveCount(0);
+
+  await page.route("**/api/tavern/v1/presets", (route) =>
+    route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "unavailable" }) }),
+  );
+  await page.reload();
+  await expect(surface.locator("[data-preset-read-failed]")).toHaveText(catalogue.presetReadFailed);
+  await expect(surface.locator("[data-preset-none]")).toHaveCount(0);
+});
+
+/**
+ * A readout that contradicts itself, or that carries a member this surface cannot show, is refused rather than
+ * rendered - and the player is told it could not be read instead of being shown a half-truth.
+ *
+ * Each body below is the producer's own output with exactly one thing changed, so the refusal is a fact about that
+ * one member: a total that is not `enabled + disabled`, a depth count that is not the blocks beside it, a macro
+ * code that names a different macro than the row it sits on, and a member this surface has no line for.
+ */
+test("a readout that contradicts itself is refused instead of shown", async ({ page }) => {
+  const catalogue = messages("en");
+  const drifted: Array<Readonly<{ what: string; body: unknown }>> = [
+    {
+      what: "a total that is not enabled + disabled",
+      body: { ...SURFACE, entries: { total: SURFACE.entries.total + 1, enabled: SURFACE.entries.enabled, disabled: SURFACE.entries.disabled } },
+    },
+    {
+      what: "a depth count that is not the blocks beside it",
+      body: { ...SURFACE, depth: { ...SURFACE.depth, count: SURFACE.depth.count + 1 } },
+    },
+    {
+      what: "a macro code that names another macro than its row does",
+      body: {
+        ...SURFACE,
+        macros: [{ code: "macro_not_implemented:time", name: "if", entries: ["nsfwPrompt"] }],
+      },
+    },
+    { what: "a member this surface has no line for", body: { ...SURFACE, samplingParams: { temperature: 0.9 } } },
+  ];
+
+  for (const { what, body } of drifted) {
+    await page.unroute("**/api/tavern/v1/presets");
+    await stubPresetSurface(page, [body]);
+    await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=presets`);
+    const surface = page.getByTestId("presets-surface");
+    await expect(surface.locator("[data-preset-read-failed]"), `${what} is not shown as the assembly's truth`).toHaveText(
+      catalogue.presetReadFailed,
+    );
+    await expect(surface.locator("[data-preset-assembly]"), `${what} renders no assembly at all`).toHaveCount(0);
+  }
+});

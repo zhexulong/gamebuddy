@@ -12,6 +12,13 @@ export const CHATS_PANEL = "chats" as const;
 export const CHARACTERS_PANEL = "characters" as const;
 export const SETTINGS_PANEL = "settings" as const;
 export const MEMORY_PANEL = "memory" as const;
+/**
+ * The read-only preset surface (`design/architecture/tavern-preset-compatibility.md` §2.1).
+ *
+ * It is a peer surface with no editor: presets are imported once and read from then on, so this one
+ * only shows the assembly's own facts about them.
+ */
+export const PRESETS_PANEL = "presets" as const;
 
 /** The panel the URL currently names, or null for the conversation itself. */
 function readPanelFromUrl(): string | null {
