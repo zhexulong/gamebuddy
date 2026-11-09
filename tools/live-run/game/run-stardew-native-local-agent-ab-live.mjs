@@ -127,7 +127,7 @@ import {
   measureActionBreadth,
   readActionBreadthSurface,
 } from "../../lib/action-breadth.mjs";
-import { writeEvidenceBundle } from "../../lib/evidence-bundle.mjs";
+import { EVIDENCE_BUNDLE_FILES, writeEvidenceBundle } from "../../lib/evidence-bundle.mjs";
 import { appendTurnMemory, summarizeHostMemory, turnMemoryPoint } from "../../lib/live-run-memory.mjs";
 import {
   installLiveRunInterrupt,
@@ -5168,7 +5168,7 @@ try {
   // about what its teardown did. A run that published none says so by name instead of failing silently here.
   try {
     const stamped = stampReclamation({
-      paths: [RESULT_FILE, capture === null ? null : join(capture.dir, "manifest.json")],
+      paths: [RESULT_FILE, capture === null ? null : join(capture.dir, EVIDENCE_BUNDLE_FILES.manifest)],
       steps: unwindSteps,
     });
     if (stamped.written.length === 0) {

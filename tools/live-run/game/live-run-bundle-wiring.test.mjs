@@ -42,7 +42,10 @@ test("the action trace records the game clock at dispatch, from the bridge snaps
 });
 
 test("the runner writes its bundle through the shared validator, and names a refusal", () => {
-  assert.match(SOURCE, /import \{ writeEvidenceBundle \} from "\.\.\/\.\.\/lib\/evidence-bundle\.mjs";/);
+  assert.match(
+    SOURCE,
+    /import \{ EVIDENCE_BUNDLE_FILES, writeEvidenceBundle \} from "\.\.\/\.\.\/lib\/evidence-bundle\.mjs";/,
+  );
   assert.match(
     SOURCE,
     /import \{ buildFailureSnapshot, buildReproPlan, classifyFailure \} from "\.\.\/\.\.\/lib\/failure-dump\.mjs";/,
@@ -490,7 +493,7 @@ test("the teardown account is stamped by the process that measured it, into the 
   }
   assert.match(
     unwind,
-    /stampReclamation\(\{\n\s+paths: \[RESULT_FILE, capture === null \? null : join\(capture\.dir, "manifest\.json"\)\],/u,
+    /stampReclamation\(\{\n\s+paths: \[RESULT_FILE, capture === null \? null : join\(capture\.dir, EVIDENCE_BUNDLE_FILES\.manifest\)\],/u,
     "one call writes the result AND the bundle's manifest, so two artifacts of one run cannot disagree",
   );
   assert.match(unwind, /RECLAMATION_NOT_STAMPED/u, "a run that published no artifact says so by name");
