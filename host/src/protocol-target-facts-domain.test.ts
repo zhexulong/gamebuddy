@@ -238,6 +238,16 @@ const DECLARED_NARROWINGS: readonly DeclaredNarrowing[] = [
   },
   {
     declaredType: "int?",
+    accepts: "[0, 9007199254740991]",
+    count: 2,
+    reason:
+      "a DAY COUNT the engine's own crop data declares: `CropData.DaysInPhase` is a list of per-phase day counts and " +
+      "`CropData.RegrowDays` is the interval after a pick, so neither can be negative (`Crop.cs` consumes them as day " +
+      "arithmetic against `currentPhase`/`dayOfCurrentPhase`). Absent when the engine resolved no `Data/Crops` row for the " +
+      "crop, which is what `cropFactsUnknown: crop_data_missing` names on the row.",
+  },
+  {
+    declaredType: "int?",
     accepts: "[0, 1000]",
     count: 4,
     reason:
@@ -611,5 +621,11 @@ function parseInterval(text: string): Interval {
  *
  * RAISED FROM 166 TO 169 by `farmAnimalPetTargets`, whose three numeric fields (a tile `x`/`y` pair and the animal's
  * `friendship`) are declared above with the engine fact that makes each legitimate.
+ *
+ * RAISED FROM 169 TO 171 by the crop row's two day counts (`CropTargets.daysToHarvest`/`regrowDays`), declared above.
+ * The measurement at that commit also reports 173, i.e. two narrowings this change does not own: `int [0, 1000]` counts
+ * 107 against the declared 105 and `int [0, int.MaxValue+]` counts 5 against the declared 6, and both of those readings
+ * are identical with this change's `protocol-target-facts.ts` reverted to HEAD - so they belong to work in flight in
+ * another file, and absorbing them here would hide exactly what this ratchet exists to show.
  */
-const NARROWING_CEILING = 169;
+const NARROWING_CEILING = 171;

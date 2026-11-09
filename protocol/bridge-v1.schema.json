@@ -1696,6 +1696,50 @@
         "harvestable": {
           "type": "boolean",
           "description": "`HoeDirt.readyForHarvest()` for this tile, read when the row was published. Optional at the wire for the same reason as `watered`."
+        },
+        "daysToHarvest": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The sum of `CropData.DaysInPhase`, the same derivation the `Crops` data answer publishes. Absent together with the other `Data/Crops` fields when `cropFactsUnknown` names why."
+        },
+        "regrowDays": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "`CropData.RegrowDays`; zero is a single-harvest crop."
+        },
+        "harvestMethod": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "description": "The engine's harvest-method word (`grab`/`scythe`), the same spelling `harvestTargets` publishes."
+        },
+        "isRaised": {
+          "type": "boolean",
+          "description": "`CropData.IsRaised`: a trellis crop, planted on a tile that stops being walkable. Added 2026-11-09 with the rest of the `Data/Crops` half: the fact was already askable through `look_up({table:\"Crops\"})` and was never asked."
+        },
+        "seasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16
+          },
+          "maxItems": 4,
+          "description": "`CropData.Seasons`, as the engine's own season keys (`Utility.getSeasonKey`): spring, summer, fall, winter."
+        },
+        "fullyGrown": {
+          "type": "boolean",
+          "description": "`Crop.fullyGrown`: this plant finished its phases. Deliberately NOT the same question as `harvestable` (`HoeDirt.readyForHarvest()`): a crop just picked and regrowing is fully grown and not yet harvestable."
+        },
+        "tileBlockedNow": {
+          "type": "boolean",
+          "description": "Whether a farmer cannot walk onto this tile at the moment of publication - `GameLocation.isCollidingPosition` over the tile's own 62x62 box, the admission test `PathFindController.cs:222` makes. Not `GameLocation.isTilePassable`, which reads only the map's Back and Buildings layers and reports a trellis crop as open ground. A reading of one instant, tied to the snapshot's `revision`."
+        },
+        "cropFactsUnknown": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Why the `Data/Crops` fields above are absent, as one token (`crop_facts_unknown:crop_data_missing`). The only value today is `crop_data_missing`: the engine resolved no data row for this crop, so there is no such fact rather than a default one. A silence here would let a reader plan on an invented `isRaised: false`."
         }
       }
     },

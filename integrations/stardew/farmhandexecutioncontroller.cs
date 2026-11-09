@@ -4978,11 +4978,66 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // The other half of `CropNeedsWater`, still read through that ONE spelling so this family and the whole-map
             // count cannot disagree: the crop itself needs no water (`HoeDirt.needsWatering`, HoeDirt.cs:380).
             if (!CropNeedsWater(dirt)) continue;
-            string cropId = dirt.crop!.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown";
-            result.Add(new BridgeCropTarget(BuildCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value), (int)pair.Key.X, (int)pair.Key.Y, cropId, RequireDisplayName(dirt.crop.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown"), dirt.isWatered(), dirt.readyForHarvest()));
+            StardewValley.Crop crop = dirt.crop!;
+            string cropId = crop.netSeedIndex.Value ?? crop.indexOfHarvest.Value ?? "unknown";
+            // `Crop.GetData()` is the engine's own `Data/Crops` lookup for THIS crop (Crop.cs:330 -> Game1.cropData), the
+            // same row `look_up({table:"Crops"})` answers with. Null is a fact - a content pack can add a seed whose
+            // data row the engine cannot resolve - so the five data fields stay null and `CropFactsUnknown` says why.
+            StardewValley.GameData.Crops.CropData? data = crop.GetData();
+            result.Add(new BridgeCropTarget(
+                TargetId: BuildCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, crop.netSeedIndex.Value, crop.indexOfHarvest.Value),
+                X: (int)pair.Key.X,
+                Y: (int)pair.Key.Y,
+                CropId: cropId,
+                DisplayName: RequireDisplayName(crop.netSeedIndex.Value ?? crop.indexOfHarvest.Value ?? "unknown"),
+                Watered: dirt.isWatered(),
+                Harvestable: dirt.readyForHarvest(),
+                DaysToHarvest: data is null ? null : data.DaysInPhase.Sum(),
+                RegrowDays: data?.RegrowDays,
+                HarvestMethod: data is null ? null : HarvestMethodName(data.HarvestMethod),
+                IsRaised: data?.IsRaised,
+                Seasons: data?.Seasons is null
+                    ? null
+                    : data.Seasons.Select(static season => Utility.getSeasonKey(season)).Distinct().ToArray(),
+                FullyGrown: crop.fullyGrown.Value,
+                TileBlockedNow: IsTileBlockedForFarmer(location, player, (int)pair.Key.X, (int)pair.Key.Y),
+                CropFactsUnknown: data is null ? CropFactsUnknownToken : null));
         }
         return result;
     }
+
+    /// <summary>
+    /// One token for "this crop has no `Data/Crops` row", published on the row whose data fields are therefore absent.
+    /// </summary>
+    internal const string CropFactsUnknownToken = "crop_data_missing";
+
+    /// <summary>
+    /// Whether a farmer cannot walk onto this tile, as of the snapshot that carries the answer.
+    ///
+    /// <para>
+    /// This is <c>GameLocation.isCollidingPosition</c> over the tile's own 62x62 box - the exact test
+    /// <c>PathFindController.cs:222</c> makes to admit a step - and NOT <c>GameLocation.isTilePassable</c>
+    /// (GameLocation.cs:2898), which reads only the map's Back and Buildings layers. The two disagree on exactly the
+    /// tile a crop row exists for: a trellis crop is a terrain feature whose <c>HoeDirt.isPassable</c> is false
+    /// (HoeDirt.cs:456-463), so the map-only test calls it open ground while the pathfinder refuses it.
+    /// </para>
+    ///
+    /// <para>
+    /// Collision <i>effects</i> are skipped because this is a question, not a step: asking must not shake a crop or
+    /// shove an animal. The answer is a reading of this instant - the field says so in its name - and a reader planning
+    /// later re-observes rather than reusing it.
+    /// </para>
+    /// </summary>
+    private static bool IsTileBlockedForFarmer(StardewValley.GameLocation location, Farmer player, int x, int y) =>
+        location.isCollidingPosition(
+            new Microsoft.Xna.Framework.Rectangle((x * 64) + 1, (y * 64) + 1, 62, 62),
+            Game1.viewport,
+            player is Farmer,
+            0,
+            glider: false,
+            player,
+            pathfinding: true,
+            skipCollisionEffects: true);
 
     /// <summary>
     /// The localized display name for an item identity, taken from the target

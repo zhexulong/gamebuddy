@@ -313,7 +313,53 @@ public sealed record BridgeForageTarget(string TargetId, int X, int Y, string Qu
 
 public sealed record BridgeItemTarget(string TargetId, int X, int Y, string QualifiedItemId, string DisplayName, int Stack);
 
-public sealed record BridgeCropTarget(string TargetId, int X, int Y, string CropId, string DisplayName, bool Watered, bool Harvestable);
+/// <summary>
+/// One crop tile the companion may water, carrying the facts that decide what to do with it.
+///
+/// <para>
+/// The row is what a reader gets WITHOUT asking a second question. Measured 2026-11-09: the runtime already answered
+/// "how should this crop be planted" through `look_up({subject:"data", table:"Crops"})`, and across a day of runs that
+/// table was asked zero times - so a trellis crop stood on a column that stops being walkable and nothing in the
+/// companion's working set said so. `DaysToHarvest`, `RegrowDays`, `HarvestMethod`, `IsRaised` and `Seasons` are the
+/// same five facts `ContentDataQuery.CropRow` publishes, named the same way, so the row can be joined to a data answer.
+/// </para>
+///
+/// <para>
+/// The five data fields are NULLABLE and the serializer drops a null member (`WhenWritingNull`), because a crop with no
+/// `Data/Crops` row - a content pack may add a seed whose data the engine cannot resolve - has no such fact at all, and
+/// a default would read as truth. `CropFactsUnknown` is then the row's own one-token statement of why: <c>crop_data_missing</c>.
+/// </para>
+///
+/// <para>
+/// `FullyGrown` and `Harvestable` are DIFFERENT engine questions and the row carries both: <c>Crop.fullyGrown</c> says
+/// the plant finished its phases, <c>HoeDirt.readyForHarvest()</c> says it can be picked this instant. A crop just
+/// harvested and regrowing is the case they disagree on, and it is exactly the case a layout decision needs while a
+/// harvest decision must refuse it.
+/// </para>
+///
+/// <para>
+/// `TileBlockedNow` is <c>GameLocation.isCollidingPosition</c> over the tile's own 62x62 box - the admission test
+/// `PathFindController.cs:222` itself uses - read at the revision of the snapshot that carries it. It is deliberately
+/// NOT <c>GameLocation.isTilePassable</c> (GameLocation.cs:2898), which reads only the map's Back and Buildings layers
+/// and reports a trellis crop as open ground; the two disagree on precisely the tile this field exists for.
+/// </para>
+/// </summary>
+public sealed record BridgeCropTarget(
+    string TargetId,
+    int X,
+    int Y,
+    string CropId,
+    string DisplayName,
+    bool Watered,
+    bool Harvestable,
+    int? DaysToHarvest,
+    int? RegrowDays,
+    string? HarvestMethod,
+    bool? IsRaised,
+    IReadOnlyList<string>? Seasons,
+    bool FullyGrown,
+    bool TileBlockedNow,
+    string? CropFactsUnknown);
 
 /// <summary>
 /// One crop tile <c>harvest_crop</c> accepts, with the four facts its admission branches on: whether the crop is ready

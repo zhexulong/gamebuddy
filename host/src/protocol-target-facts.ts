@@ -195,7 +195,23 @@ export function isSlimeHutchTroughTargetFact(value: unknown): boolean {
 export function isCropTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasOnlyKeys(value, ["targetId", "x", "y", "cropId", "displayName", "watered", "harvestable"]) &&
+    hasOnlyKeys(value, [
+      "targetId",
+      "x",
+      "y",
+      "cropId",
+      "displayName",
+      "watered",
+      "harvestable",
+      "daysToHarvest",
+      "regrowDays",
+      "harvestMethod",
+      "isRaised",
+      "seasons",
+      "fullyGrown",
+      "tileBlockedNow",
+      "cropFactsUnknown",
+    ]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
@@ -209,7 +225,28 @@ export function isCropTargetFact(value: unknown): boolean {
     // engine's own `isWatered()` / `readyForHarvest()` answer, so a non-boolean is a malformed row rather than a
     // missing measurement.
     (value.watered === undefined || typeof value.watered === "boolean") &&
-    (value.harvestable === undefined || typeof value.harvestable === "boolean")
+    (value.harvestable === undefined || typeof value.harvestable === "boolean") &&
+    // The `Data/Crops` half. Every one of these is absent together when the engine cannot resolve the crop's data row
+    // (`cropFactsUnknown: "crop_data_missing"`), so absence is a stated fact rather than a default: a row may not carry a
+    // number here and no data, and it may not carry the gap token and a number.
+    (value.daysToHarvest === undefined || isNonNegativeSafeInteger(value.daysToHarvest)) &&
+    (value.regrowDays === undefined || isNonNegativeSafeInteger(value.regrowDays)) &&
+    (value.harvestMethod === undefined || isBoundedNonEmptyString(value.harvestMethod, 32)) &&
+    (value.isRaised === undefined || typeof value.isRaised === "boolean") &&
+    (value.seasons === undefined || isCropSeasons(value.seasons)) &&
+    (value.fullyGrown === undefined || typeof value.fullyGrown === "boolean") &&
+    (value.tileBlockedNow === undefined || typeof value.tileBlockedNow === "boolean") &&
+    (value.cropFactsUnknown === undefined || isBoundedNonEmptyString(value.cropFactsUnknown, 64)) &&
+    !(value.cropFactsUnknown !== undefined && value.daysToHarvest !== undefined)
+  );
+}
+
+/** `CropData.Seasons` as the engine's season keys: at most four, each a bounded word. */
+function isCropSeasons(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length <= 4 &&
+    value.every((entry) => typeof entry === "string" && entry.length > 0 && entry.length <= 16)
   );
 }
 

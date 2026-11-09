@@ -437,7 +437,13 @@ export type Snapshot = Readonly<{
   }>[];
   /** Adjacent legal native Watering Can refill sources. */
   refillWateringCanTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
-  /** Nearby unwatered crops available through the native WateringCan path, each stating whether its tile is watered and whether the crop is ready to harvest (`water_crop`/`harvest_crop` decide from these). */
+  /**
+   * Nearby unwatered crops available through the native WateringCan path, each stating whether its tile is watered and
+   * whether the crop is ready to harvest (`water_crop`/`harvest_crop` decide from these), plus the `Data/Crops` facts
+   * that decide what to do with the tile: the row can be joined to a `look_up` answer by `cropId` instead of costing a
+   * second question. Measured 2026-11-09: `look_up({table:"Crops"})` was never asked across a day of runs, so a trellis
+   * crop's blocking column was in no working set at all.
+   */
   cropTargets?: readonly Readonly<{
     targetId: string;
     x: number;
@@ -446,6 +452,30 @@ export type Snapshot = Readonly<{
     displayName: string;
     watered?: boolean;
     harvestable?: boolean;
+    /** The sum of `CropData.DaysInPhase`, the same derivation the `Crops` data answer publishes. Absent with `cropFactsUnknown` for a crop whose data row the engine cannot resolve. */
+    daysToHarvest?: number;
+    /** `CropData.RegrowDays`; zero is a single-harvest crop. */
+    regrowDays?: number;
+    /** The engine's harvest-method word (`grab`/`scythe`), the same spelling `harvestTargets` publishes. */
+    harvestMethod?: string;
+    /** `CropData.IsRaised`: a trellis crop, planted on a tile that stops being walkable. */
+    isRaised?: boolean;
+    /** `CropData.Seasons`, as the engine's season keys (`spring`...`winter`). */
+    seasons?: readonly string[];
+    /**
+     * `Crop.fullyGrown`: this plant has finished its phases. Deliberately NOT the same question as `harvestable`
+     * (`HoeDirt.readyForHarvest()`): a crop just picked and regrowing is `fullyGrown` and not yet harvestable.
+     */
+    fullyGrown?: boolean;
+    /**
+     * Whether a farmer cannot walk onto this tile at the moment of publication - `GameLocation.isCollidingPosition`
+     * over the tile's own 62x62 box, the admission test `PathFindController.cs:222` makes. Not
+     * `GameLocation.isTilePassable`, which reads only the map's Back/Buildings layers and reports a trellis crop as
+     * open ground. A reading of one instant: a plan made later re-observes rather than reusing it.
+     */
+    tileBlockedNow?: boolean;
+    /** `crop_data_missing` when the engine has no `Data/Crops` row for this crop, which is why the five data facts above are absent. */
+    cropFactsUnknown?: string;
   }>[];
   /** The current location's completed, unwatered native Pet Bowl (water_pet_bowl). */
   petBowlTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
