@@ -667,7 +667,11 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
     gate: "check-prelive-gate-registry.mjs",
     reason:
       "the register itself; its falsifier is tools/check-prelive-gate-registry.test.mjs, which plants a forgotten gate, a " +
-      "stale exemption, a dangling runsIn and a wired-but-absent gate and asserts each is named by file",
+      "stale exemption, a dangling runsIn and a wired-but-absent gate and asserts each is named by file, and which " +
+      "also builds a throwaway repository whose worktree package.json has lost a script its commit declares, so a " +
+      "script only HEAD has is not reported as unknown (measured 2026-11-09: exempt_runs_in_unknown_script on a gate " +
+      "that runs), and which asserts a missing runsIn is the named finding exempt_runs_in_missing and exit 1 rather " +
+      "than a TypeError from the elsewhere assertion",
   },
   {
     gate: "check-stardew-observation-gap.mjs",

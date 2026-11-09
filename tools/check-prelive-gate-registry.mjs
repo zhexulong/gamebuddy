@@ -39,14 +39,33 @@
  *   - a class outside `REASON_CLASSES`, or a reason too short to name anything, is `exempt_unreasoned`;
  *   - a `runsIn` that does not resolve to a script/workflow naming the gate is `exempt_runs_in_dangling`;
  *   - an `elsewhere` exemption whose script `tools/check-ci-coverage.mjs` registers as running in no workflow is
- *     `exempt_elsewhere_not_in_ci`.
+ *     `exempt_elsewhere_not_in_ci`;
+ *   - an entry carrying no `runsIn` at all is `exempt_runs_in_missing`. It used to reach the `elsewhere` assertion and
+ *     crash there (`Cannot read properties of undefined (reading 'startsWith')`), and a gate that dies on a stack
+ *     trace has named nothing - the same defect as a register that passes on an empty population. A missing `reason`
+ *     is `exempt_unreasoned` for the same reason rather than a second crash.
+ *
+ * WHICH `package.json`. `runsIn` is resolved against the scripts `HEAD` has AND the scripts on disk: a script
+ * committed through a private index is in `HEAD` and absent from the worktree copy, and reading only the worktree
+ * called a gate that runs `exempt_runs_in_unknown_script` - a passing gate reported unreachable because of a stale
+ * local file (measured 2026-11-09: `tools/check-preset-macros.mjs` on `check:preset-macros`). So the two trees are
+ * read, a script either of them has is a script that runs, and the disagreement between them is printed
+ * (`scripts_read=` / `package_json_trees_disagree=`) rather than left to decide a verdict silently.
  *
  * `wired N of M; exempt K` is the verdict line; `node tools/check-prelive-gate-registry.mjs` exits 1 on any finding.
  *
  * red-proof: inject  with the `elsewhere`-claims-must-run-in-CI check disabled, the falsifier failed on
  *   "an elsewhere claim that the CI coverage gate says runs nowhere is red, quoting that gate's reason"
+ * red-proof: inject  an exemption carrying a `reason` and no `runsIn` -> the register threw `TypeError: Cannot read
+ *   properties of undefined (reading 'startsWith')` at its `elsewhere` assertion, naming no gate at all, instead of
+ *   `exempt_runs_in_missing`
+ * red-proof: inject  resolving `runsIn` against the worktree's script table alone -> `exempt_runs_in_unknown_script`
+ *   for a script `HEAD` declares, i.e. a passing gate called unreachable because of a stale local file
+ * red-proof: inject  reading `HEAD`'s script table from the file on disk -> `{}` where the commit's table was
+ *   expected, and the disagreement between the two trees went unprinted
  */
-import { readFileSync, readdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -745,18 +764,28 @@ export function preludeGatePaths({ rungs = PRELUDE_RUNGS } = {}) {
 /**
  * Does `runsIn` actually lead to this gate? The three claim forms are checked against the file they name, so an
  * exemption cannot outlive the script that stopped running it.
+ *
+ * A script is read from both `package.json` trees - `HEAD`'s and the worktree's - because a script either of them has
+ * is a script that runs somewhere, and a worktree copy that has not caught up is not evidence about the commit.
  */
-export function verifyRunsIn(entry, { scripts, workflow }) {
+export function verifyRunsIn(entry, { scripts, headScripts = {}, workflow }) {
   if (entry.runsIn === "on-demand") return null;
   const fromPnpm = /^pnpm (\S+)$/u.exec(entry.runsIn);
   const fromSuite = /^suite:(\S+)$/u.exec(entry.runsIn);
   if (fromPnpm !== null || fromSuite !== null) {
     const name = fromPnpm?.[1] ?? fromSuite?.[1];
-    const command = scripts[name];
-    if (typeof command !== "string") return { code: "exempt_runs_in_unknown_script", detail: name };
-    if (!command.includes(entry.path))
-      return { code: "exempt_runs_in_script_does_not_name_the_gate", detail: `${name} runs: ${command}` };
-    return null;
+    const head = headScripts ?? {};
+    const readings = [
+      typeof scripts[name] === "string" ? `worktree ${name} runs: ${scripts[name]}` : null,
+      typeof head[name] === "string" ? `HEAD ${name} runs: ${head[name]}` : null,
+    ].filter((reading) => reading !== null);
+    if (readings.length === 0)
+      return {
+        code: "exempt_runs_in_unknown_script",
+        detail: `${name} is in neither the worktree nor HEAD's package.json`,
+      };
+    if (readings.some((reading) => reading.includes(entry.path))) return null;
+    return { code: "exempt_runs_in_script_does_not_name_the_gate", detail: readings.join("; ") };
   }
   const fromWorkflow = /^ci:(\S+)$/u.exec(entry.runsIn);
   if (fromWorkflow !== null) {
@@ -772,11 +801,25 @@ export function verifyRunsIn(entry, { scripts, workflow }) {
 /** Reason classes that assert the gate runs on every push; that claim is checked against the CI coverage gate. */
 const RUNS_ON_EVERY_PUSH = "elsewhere";
 
+/** The class an exemption declares, or `null` when it carries no reason to declare one. */
+function declaredClass(entry) {
+  return typeof entry.reason === "string" ? entry.reason.split(":")[0].trim() : null;
+}
+
 /**
  * The register, checked in both directions. Every finding names the file it is about, because the file is the thing
- * the reader has to open.
+ * the reader has to open. `headScripts` is `HEAD`'s script table, or `null` when git could not read it; passing it
+ * is what keeps a stale worktree copy from deciding whether an exemption's `runsIn` resolves.
  */
-export function checkRegistry({ population, wired, exemptions = EXEMPTIONS, scripts, workflow, ciCoverage }) {
+export function checkRegistry({
+  population,
+  wired,
+  exemptions = EXEMPTIONS,
+  scripts,
+  headScripts = {},
+  workflow,
+  ciCoverage,
+}) {
   const wiredPaths = new Set(wired.keys());
   const populationMembers = new Set(population);
   const exempt = new Map();
@@ -800,7 +843,11 @@ export function checkRegistry({ population, wired, exemptions = EXEMPTIONS, scri
       findings.push({ code: "exempt_not_a_gate", path: entry.path });
       continue;
     }
-    const className = entry.reason.split(":")[0].trim();
+    const className = declaredClass(entry);
+    if (className === null) {
+      findings.push({ code: "exempt_unreasoned", path: entry.path, detail: "the entry carries no reason" });
+      continue;
+    }
     if (!Object.hasOwn(REASON_CLASSES, className)) {
       findings.push({ code: "exempt_unreasoned", path: entry.path, detail: `unknown class "${className}"` });
       continue;
@@ -813,7 +860,15 @@ export function checkRegistry({ population, wired, exemptions = EXEMPTIONS, scri
       });
       continue;
     }
-    const dangling = verifyRunsIn(entry, { scripts, workflow });
+    if (typeof entry.runsIn !== "string" || entry.runsIn.length === 0) {
+      findings.push({
+        code: "exempt_runs_in_missing",
+        path: entry.path,
+        detail: "no runsIn; write pnpm <script>, suite:<script>, ci:<workflow> or on-demand",
+      });
+      continue;
+    }
+    const dangling = verifyRunsIn(entry, { scripts, headScripts, workflow });
     if (dangling !== null) findings.push({ ...dangling, path: entry.path });
     if (className === RUNS_ON_EVERY_PUSH && entry.runsIn.startsWith("pnpm ")) {
       const script = entry.runsIn.slice("pnpm ".length);
@@ -832,7 +887,8 @@ export function checkRegistry({ population, wired, exemptions = EXEMPTIONS, scri
   }
   const counts = new Map();
   for (const entry of exemptOnly) {
-    const className = entry.reason.split(":")[0].trim();
+    const className = declaredClass(entry);
+    if (className === null) continue;
     counts.set(className, (counts.get(className) ?? 0) + 1);
   }
   const onDemand = exemptions.filter((entry) => entry.runsIn === "on-demand").map((entry) => entry.path);
@@ -843,6 +899,10 @@ export function checkRegistry({ population, wired, exemptions = EXEMPTIONS, scri
     exempt: exemptOnly.length,
     byClass: Object.fromEntries([...counts.entries()].sort()),
     onDemand,
+    scriptTrees: {
+      head: headScripts === null ? null : Object.keys(headScripts).length,
+      disagreeing: headScripts === null ? [] : scriptTreeDisagreements(scripts, headScripts),
+    },
     findings,
   };
 }
@@ -855,18 +915,51 @@ function readWorkflow(file) {
   }
 }
 
-export function readScripts() {
-  return JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf8")).scripts ?? {};
+/** The scripts the worktree's `package.json` declares: what this checkout has on disk, not what it has committed. */
+export function readScripts({ root = ROOT } = {}) {
+  return JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).scripts ?? {};
+}
+
+/**
+ * The scripts `HEAD`'s `package.json` declares, or `null` when git cannot answer (no repository, no commit).
+ *
+ * The register used to read the worktree copy alone, and a script committed through a private index - in `HEAD`,
+ * absent from this file on disk - was reported as `exempt_runs_in_unknown_script`: a gate that runs called
+ * unreachable because of a stale local file. Every gate in this tree that asks "does anything run this?" reads
+ * `HEAD` for exactly this reason.
+ */
+export function readHeadScripts({ root = ROOT } = {}) {
+  const result = spawnSync("git", ["show", "HEAD:package.json"], { cwd: root, encoding: "utf8", windowsHide: true });
+  if (result.status !== 0) return null;
+  try {
+    return JSON.parse(result.stdout).scripts ?? {};
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Script names whose command differs between the worktree and `HEAD`, sorted. A name only one tree has is a
+ * disagreement: it is the reading that decides whether an exemption's `runsIn` resolves, so it is printed rather
+ * than left to decide a verdict silently.
+ */
+export function scriptTreeDisagreements(worktreeScripts, headScripts) {
+  const worktree = worktreeScripts ?? {};
+  const head = headScripts ?? {};
+  const names = new Set([...Object.keys(worktree), ...Object.keys(head)]);
+  return [...names].filter((name) => worktree[name] !== head[name]).sort();
 }
 
 /** `tools/check-ci-coverage.mjs` owns the fact "does a script run on every push"; this reads it, never restates it. */
 
 /**
- * The register, read off the real tree: the derived population, the ladder's own wired set, package.json, the workflows
- * and the CI coverage gate. One function, so the CLI and its tests cannot read the tree two different ways.
+ * The register, read off the real tree: the derived population, the ladder's own wired set, both `package.json`
+ * trees, the workflows and the CI coverage gate. One function, so the CLI and its tests cannot read the tree two
+ * different ways.
  */
 export function auditRegistry() {
   const scripts = readScripts();
+  const headScripts = readHeadScripts();
   const files = readdirSync(resolve(ROOT, WORKFLOW_DIR))
     .filter((name) => name.endsWith(".yml"))
     .map((name) => `${WORKFLOW_DIR}/${name}`);
@@ -876,6 +969,7 @@ export function auditRegistry() {
     population: derivePopulation(),
     wired: preludeGatePaths(),
     scripts,
+    headScripts,
     workflow: (file) => texts.get(file) ?? null,
     ciCoverage: {
       runs: new Set([...coverage.workflow, ...coverage.derived]),
@@ -884,61 +978,84 @@ export function auditRegistry() {
   });
 }
 
-function report(result) {
+/**
+ * The register's output as data - the lines a reader sees, and the exit code - so a falsifier can assert the named
+ * finding and the status without spawning a subprocess, and `report` cannot print a verdict it did not return.
+ */
+export function renderRegistry(result) {
+  const lines = [];
   const byClass = Object.entries(result.byClass)
     .map(([name, count]) => `${name}:${count}`)
     .join(",");
-  process.stdout.write(
+  lines.push(
     `prelive_gate_registry: wired ${result.wired} of ${result.total}; exempt ${result.exempt}` +
-      `${byClass === "" ? "" : ` (${byClass})`}\n`,
+      `${byClass === "" ? "" : ` (${byClass})`}`,
   );
-  if (result.onDemand.length > 0)
-    process.stdout.write(
-      `prelive_gate_registry: no_scheduled_home=${result.onDemand.length} ${result.onDemand.join(",")}\n`,
+  lines.push(
+    result.scriptTrees.head === null
+      ? "prelive_gate_registry: scripts_read=worktree-only; git cannot read HEAD:package.json"
+      : "prelive_gate_registry: scripts_read=worktree+HEAD",
+  );
+  if (result.scriptTrees.disagreeing.length > 0)
+    lines.push(
+      `prelive_gate_registry: package_json_trees_disagree=${result.scriptTrees.disagreeing.length} ` +
+        `${result.scriptTrees.disagreeing.join(",")}`,
     );
+  if (result.onDemand.length > 0)
+    lines.push(`prelive_gate_registry: no_scheduled_home=${result.onDemand.length} ${result.onDemand.join(",")}`);
   for (const finding of result.findings) {
     switch (finding.code) {
       case "gate_forgotten":
-        process.stdout.write(
-          `prelive_gate_registry_forgotten: ${finding.path} runs in no prelive rung and no exemption names where it runs\n`,
+        lines.push(
+          `prelive_gate_registry_forgotten: ${finding.path} runs in no prelive rung and no exemption names where it runs`,
         );
         break;
       case "exempt_but_wired":
-        process.stdout.write(
-          `prelive_gate_registry_exempt_but_wired: ${finding.path} (${finding.detail}); delete the exemption\n`,
-        );
+        lines.push(`prelive_gate_registry_exempt_but_wired: ${finding.path} (${finding.detail}); delete the exemption`);
         break;
       case "wired_not_a_gate":
-        process.stdout.write(
-          `prelive_gate_registry_wired_not_a_gate: ${finding.path} is named by ${finding.detail} but is not in the derived population\n`,
+        lines.push(
+          `prelive_gate_registry_wired_not_a_gate: ${finding.path} is named by ${finding.detail} but is not in the derived population`,
         );
         break;
       case "exempt_not_a_gate":
-        process.stdout.write(
-          `prelive_gate_registry_exempt_not_a_gate: ${finding.path} is not in the derived population; delete the entry\n`,
+        lines.push(
+          `prelive_gate_registry_exempt_not_a_gate: ${finding.path} is not in the derived population; delete the entry`,
         );
         break;
       case "exempt_duplicated":
-        process.stdout.write(`prelive_gate_registry_exempt_duplicated: ${finding.path} is listed twice\n`);
+        lines.push(`prelive_gate_registry_exempt_duplicated: ${finding.path} is listed twice`);
         break;
       case "exempt_unreasoned":
-        process.stdout.write(
+        lines.push(
           `prelive_gate_registry_exempt_unreasoned: ${finding.path} - ${finding.detail}; classes are ` +
-            `${Object.keys(REASON_CLASSES).join("|")}\n`,
+            `${Object.keys(REASON_CLASSES).join("|")}`,
+        );
+        break;
+      case "exempt_runs_in_missing":
+        lines.push(
+          `prelive_gate_registry_exempt_runs_in_missing: ${finding.path} - ${finding.detail}; with no runsIn the entry ` +
+            "claims nothing and this register cannot tell a gate with a home from one without",
         );
         break;
       case "exempt_elsewhere_not_in_ci":
-        process.stdout.write(`prelive_gate_registry_exempt_elsewhere_not_in_ci: ${finding.path} - ${finding.detail}\n`);
+        lines.push(`prelive_gate_registry_exempt_elsewhere_not_in_ci: ${finding.path} - ${finding.detail}`);
         break;
       default:
-        process.stdout.write(`prelive_gate_registry_${finding.code}: ${finding.path} - ${finding.detail}\n`);
+        lines.push(`prelive_gate_registry_${finding.code}: ${finding.path} - ${finding.detail}`);
     }
   }
-  process.stdout.write(
+  lines.push(
     `prelive_gate_registry: ${result.status}` +
-      `${result.findings.length === 0 ? "" : ` (${result.findings.length} finding(s))`}\n`,
+      `${result.findings.length === 0 ? "" : ` (${result.findings.length} finding(s))`}`,
   );
-  return result.findings.length === 0 ? 0 : 1;
+  return { lines, exitCode: result.findings.length === 0 ? 0 : 1 };
+}
+
+function report(result) {
+  const rendered = renderRegistry(result);
+  for (const line of rendered.lines) process.stdout.write(`${line}\n`);
+  return rendered.exitCode;
 }
 
 function main() {
