@@ -745,37 +745,42 @@ function canonicalPresentationSource(batch: SerializedBatch): string | undefined
   // Bounded sensory lease: only explicitly salient world-fact kinds may open a
   // companion turn (e.g. day_started / time_milestone morning greetings). Every
   // other world-trigger batch still gets no native presentation lineage.
-  const sensorySources = events
-    .filter((event) => event.kind === "world_fact" && isSalientSensoryKind(event.semanticKind))
+  const factSources = events
+    .filter((event) => event.kind === "world_fact" && opensPresentationLease(event.semanticKind))
     .map((event) => event.sourceEventId)
     .filter(isOpaqueSource);
-  return sensorySources.length > 0 ? sensorySources.at(-1) : undefined;
+  return factSources.length > 0 ? factSources.at(-1) : undefined;
 }
 
 /**
- * White-listed salient sensory kinds allowed to mint a bounded presentation lease.
+ * White-listed fact kinds allowed to mint a bounded presentation lease.
  *
- * `day_started` / `time_milestone` are the Mod's own salient events. `companion_arrival` is the Host's
- * (see `companion-arrival-fact.ts`): she has just arrived on the farm and the world clock gave its first
- * reading. It is the one proactive turn the product owes the player at arrival, so it must open the same
- * presentation lease every other proactive turn does, or her greeting would reach the model and never
- * reach the chat.
+ * Two families qualify, and a member is added only with the sentence that justifies it.
  *
- * `native_notice` is the Host's too (`native-notice-fact.ts`): the game itself said something about the hour
- * ("It's getting late...") and the companion may answer it out loud. It rides the same lease for the same
- * reason - a reply that reaches the model but not the chat is a decision the player never sees.
+ * SENSORY. `day_started` / `time_milestone` are the Mod's own salient events. `companion_arrival` is the
+ * Host's (see `companion-arrival-fact.ts`): she has just arrived on the farm and the world clock gave its
+ * first reading, the one proactive turn the product owes the player at arrival. `native_notice` is the
+ * Host's too (`native-notice-fact.ts`): the game itself said something about the hour and the companion
+ * may answer it out loud. `night_ended_pass_out` is the Mod's verdict on how the night ended. Each rides
+ * the lease for the same reason - a reply that reaches the model but not the chat is a decision the
+ * player never sees.
+ *
+ * OUTCOME. `program_settled` is the one-line ledger of a plan that stopped (`program-settlement-digest.ts`).
+ * The pump already treats a settlement as news that opens a turn (`event-pump.ts:isHeldProgressFact`:
+ * it is deliberately NOT held); without a lease the answer to that news was counted - and lost - as text
+ * nobody was shown. An outcome is not progress, so its volume is one per program, never one per tile.
+ *
+ * Progress and every other world fact keep today's silence: the per-tile traffic (`route_progress`, the
+ * receipt states) is what fills a session, and a bubble per harvested crop is not a companion.
  */
-function isSalientSensoryKind(kind: string | undefined): boolean {
+function opensPresentationLease(kind: string | undefined): boolean {
   return (
     kind === "day_started" ||
     kind === "time_milestone" ||
     kind === "companion_arrival" ||
     kind === "native_notice" ||
-    // The Mod's own verdict on how the night ended. It rides this lease for the same reason the others do: the companion
-    // should be able to say "I passed out at two" out loud, and a fact that reaches the model but not the chat is a
-    // decision the player never sees. It is also the fact that lets the harness stop guessing - see
-    // `multiday-baseline.mjs`'s `night_mechanism_unobserved`.
-    kind === "night_ended_pass_out"
+    kind === "night_ended_pass_out" ||
+    kind === "program_settled"
   );
 }
 

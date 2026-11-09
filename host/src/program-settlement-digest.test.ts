@@ -85,7 +85,7 @@ test("a settled program reaches the pump as one ledger entry, and opens a turn o
     worldFacts: readonly Readonly<{ eventId?: string; payload: Readonly<Record<string, unknown>> }>[];
     triggerEventIds: readonly string[];
   }>;
-  const digest = batch.worldFacts.find((fact) => fact.eventId === "program_settled:plan_1");
+  const digest = batch.worldFacts.find((fact) => fact.eventId === "program_settled_plan_1");
   assert.ok(digest !== undefined, "the batch carries the settled digest");
   assert.equal(digest.payload.programId, "plan_1");
   assert.equal(digest.payload.settledAtMs, 4_242);
@@ -99,7 +99,7 @@ test("a settled program reaches the pump as one ledger entry, and opens a turn o
     (digest.payload.nodes as readonly Readonly<Record<string, unknown>>[]).map((row) => row.index),
     [0, 1],
   );
-  assert.equal(batch.triggerEventIds.includes("program_settled:plan_1"), true);
+  assert.equal(batch.triggerEventIds.includes("program_settled_plan_1"), true);
 });
 
 test("the digest is minted exactly once per program, and never for a program that has not stopped", async () => {
@@ -115,7 +115,7 @@ test("the digest is minted exactly once per program, and never for a program tha
   // Every later observation of the same settled program is silence.
   assert.equal(reporter.report({ programId: "plan_2", settledAtMs: 7, compiled, status: settled }), undefined);
   assert.equal(reporter.report({ programId: "plan_2", settledAtMs: 9, compiled, status: settled }), undefined);
-  assert.deepEqual(announced, ["program_settled:plan_2"]);
+  assert.deepEqual(announced, ["program_settled_plan_2"]);
   // A different program still gets its own.
   assert.ok(
     reporter.report({

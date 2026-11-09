@@ -11,9 +11,16 @@
  *
  * So the Host watches a program it submitted until the Mod's journal says it stopped, and then mints ONE fact: the
  * bounded, indexed, terminal ledger of that program - `programId`, the Mod's own `settledAtMs`, the node rows, and a
- * one-line summary. It enters the same event pump as every other fact, and it is a HELD fact (see
- * `event-pump.ts:isHeldProgressFact`), so it arrives in the model's next batch instead of minting a turn of its own: a
- * settlement is news for the next turn, not a reason to interrupt.
+ * one-line summary. It enters the same event pump as every other fact, and it is an ORDINARY fact: a settlement is an
+ * outcome, so it opens the next turn itself (`event-pump.ts:isHeldProgressFact` holds progress, never an outcome) and
+ * it may open a presentation lease (`companion-loop.ts:opensPresentationLease`), because an outcome nobody was told
+ * about does not exist.
+ *
+ * ITS IDENTITY IS ONE OPAQUE TOKEN, for the same reason every Host-minted salient fact carries one
+ * (`companion-arrival-fact.ts`): it becomes the `sourceEventId` a Game turn presents under, and both the lease
+ * (`isOpaqueSource`) and the Game lineage (`GameTurnLineageTracker.beginPlayerBatch`) accept only
+ * `[A-Za-z0-9_-]{1,128}`. A `:` in it does not fail loudly - it makes the turn silent, which is how the round40 run
+ * lost its answers to settled plans.
  *
  * WHAT IT IS NOT. It is not a second authority. The rows come from `planBatchAnswer` - the same reader, the same join
  * on `nodeId`, the same `PLAN_NODE_STATE_UNREADABLE` for a node the journal said nothing about - so the digest and the
@@ -31,7 +38,7 @@
 import type { WorldFact } from "./event-pump.js";
 import { isTerminalProgramStatus, planBatchAnswer, type PlanAnswerNode } from "./program-status-wait.js";
 
-/** The fact's own identity, and the label the pump holds it under. Only this module mints it. */
+/** The fact's own identity: the `semanticKind` the lease reads, and the one token it is filed under. Only this module mints it. */
 export const PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND = "program_settled";
 
 /** Who synthesised the fact. Not `stardew_mod`: the Mod never says this. */
@@ -95,9 +102,9 @@ export function programSettledDigest(input: SettledDigestInput): WorldFact | und
   return Object.freeze({
     source: PROGRAM_SETTLED_DIGEST_SOURCE,
     kind: "world_fact" as const,
-    eventId: `program_settled:${input.programId}`,
-    sourceEventId: `program_settled:${input.programId}`,
-    correlationId: `program_settled:${input.programId}`,
+    eventId: `program_settled_${input.programId}`,
+    sourceEventId: `program_settled_${input.programId}`,
+    correlationId: `program_settled_${input.programId}`,
     revision: 0,
     occurredAtMs: input.nowMs ?? Date.now(),
     semanticKind: PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND,

@@ -45,8 +45,8 @@ test("a settled programme is news: the digest alone asks for a turn", async () =
   pump.enqueueFact({
     source: "host_game_session",
     kind: "world_fact",
-    eventId: "program_settled:plan_1",
-    sourceEventId: "program_settled:plan_1",
+    eventId: "program_settled_plan_1",
+    sourceEventId: "program_settled_plan_1",
     correlationId: "plan_1",
     observedTick: 12,
     revision: 1,
@@ -60,7 +60,7 @@ test("a settled programme is news: the digest alone asks for a turn", async () =
     "a settlement the model has not been told about must be able to start a turn on its own",
   );
   const delivered = await deliverWorldFactIds(pump);
-  assert.deepEqual(delivered, ["program_settled:plan_1"]);
+  assert.deepEqual(delivered, ["program_settled_plan_1"]);
   assert.equal(pump.hasPendingDelivery, false, "and it is delivered once, not re-requested forever");
 });
 

@@ -3,6 +3,7 @@ import test from "node:test";
 import { GAME_DELIVERY_PACING, selectReactionSound } from "./companion-delivery-pacing.js";
 import { CompanionLoop } from "./companion-loop.js";
 import { MAGIC_CONTEXT_REFUSED_TURN_ENTRY_TYPE } from "./companion-turn-refusal.js";
+import { programSettledDigest } from "./program-settlement-digest.js";
 
 /**
  * What the player receives for one Game turn: that turn's reaction sound, then the words.
@@ -1999,4 +2000,151 @@ test("a turn with no presentation source accounts for its text instead of leavin
     suppressed: { no_presentation_lease: 2 },
     unaccounted: 0,
   });
+});
+
+/** A Pi session that answers whatever batch it is given with one assistant message saying `text`. */
+function sessionSaying(text: string) {
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  return {
+    async sendUserMessage(batch: string) {
+      emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: batch }] } });
+      const snapshot = { id: "assistant_settlement", role: "assistant", content: [], stopReason: "pending" };
+      emit({ type: "message_start", message: snapshot });
+      emit({
+        type: "message_update",
+        message: snapshot,
+        assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: snapshot },
+      });
+      emit({
+        type: "message_update",
+        message: snapshot,
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text, partial: snapshot },
+      });
+      emit({
+        type: "message_end",
+        message: {
+          id: "assistant_settlement",
+          role: "assistant",
+          content: [{ type: "text", text }],
+          stopReason: "stop",
+        },
+      });
+      emit({ type: "agent_settled" });
+    },
+    async abort() {},
+    clearQueue() {},
+    async waitForIdle() {},
+    subscribe(next: (event: unknown) => void) {
+      listeners.add(next);
+      return () => {
+        listeners.delete(next);
+      };
+    },
+  };
+}
+
+/** The delivery account one turn printed, captured around that turn's own flush. */
+async function turnAccount(run: () => Promise<unknown>): Promise<Record<string, unknown>> {
+  const stderrWrite = process.stderr.write;
+  let printed = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    printed += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    await run();
+  } finally {
+    process.stderr.write = stderrWrite;
+  }
+  const line = printed.split("\n").find((entry) => entry.startsWith("NATIVE_COMPANION_TURN_DELIVERY "));
+  assert.notEqual(line, undefined, `no delivery account was printed; stderr was: ${printed}`);
+  return JSON.parse(line!.slice("NATIVE_COMPANION_TURN_DELIVERY ".length)) as Record<string, unknown>;
+}
+
+/** The settled digest for one program, minted by the module that owns it rather than spelled here. */
+function settledDigest(programId: string, nodeState: "succeeded" | "failed") {
+  const digest = programSettledDigest({
+    programId,
+    settledAtMs: 4_242,
+    compiled: [
+      {
+        nodeId: "n01",
+        actionId: "move_to_tile",
+        arguments: { x: { type: "integer", canonicalValue: "5" }, y: { type: "integer", canonicalValue: "8" } },
+      },
+    ],
+    status: {
+      code: "found",
+      snapshot: {
+        programId,
+        state: nodeState,
+        catalogRevision: 3,
+        stopEpoch: 0,
+        eventHighWater: 90,
+        nodes: [{ nodeId: "n01", state: nodeState }],
+      },
+    },
+    nowMs: 7,
+  });
+  assert.notEqual(digest, undefined, "the settled digest must exist for this case to mean anything");
+  return digest!;
+}
+
+test("a settled program opens a presentation lease, because an outcome nobody was told about does not exist", async () => {
+  // The pump already treats a settlement as news that opens a turn (`event-pump.ts:isHeldProgressFact`:
+  // `program_settled` is deliberately not held). The presentation lease disagreed, so the companion was
+  // asked to answer an outcome and the answer was counted as text nobody was shown - the exact shape
+  // round40 lost 40 of its 79 parts to. The presenter below is the only thing that can report delivery,
+  // so the lease and the delivery are two separate facts and both are asserted.
+  const text = "程序跑完了，井也修好了。";
+  const presented: { sourceEventId: string; text: string }[] = [];
+  const loop = new CompanionLoop(sessionSaying(text) as never, {
+    beginPlayerBatch() {},
+    endBatch() {},
+    async presentNativeAssistantContent(content) {
+      presented.push(content as { sourceEventId: string; text: string });
+    },
+  });
+  const digest = settledDigest("plan_41", "succeeded");
+  loop.pump.enqueueFact(digest);
+  const account = await turnAccount(() => loop.flush());
+
+  assert.deepEqual(
+    presented.map((entry) => entry.sourceEventId),
+    [digest.sourceEventId],
+    "the settlement's own identity is the lease the turn presents under",
+  );
+  assert.equal(presented.map((entry) => entry.text).join(""), text, "and the answer reaches the player");
+  assert.deepEqual(account, { textParts: 1, presented: 1, suppressed: {}, unaccounted: 0 });
+});
+
+test("an ordinary execution outcome still opens no lease, so volume cannot creep", async () => {
+  // The one kind added is the settlement. Every other outcome keeps today's silence: the account names
+  // it, and nothing is presented - a lease granted to `execution_settled_succeeded` would put a bubble
+  // on every harvested crop, which is the volume this allowlist exists to bound.
+  const presented: unknown[] = [];
+  const loop = new CompanionLoop(sessionSaying("草割完了。") as never, {
+    beginPlayerBatch() {},
+    endBatch() {},
+    async presentNativeAssistantContent(content) {
+      presented.push(content);
+    },
+  });
+  loop.pump.enqueueFact({
+    source: "stardew_mod",
+    kind: "semantic_event",
+    eventId: "execution_settled_1",
+    sourceEventId: "execution_settled_1",
+    correlationId: "execution_settled_1",
+    revision: 9,
+    occurredAtMs: 5,
+    payload: { kind: "execution_settled_succeeded", executionId: "execution_1" },
+  });
+  const account = await turnAccount(() => loop.flush());
+
+  assert.deepEqual(presented, []);
+  assert.deepEqual(account, { textParts: 1, presented: 0, suppressed: { no_presentation_lease: 1 }, unaccounted: 0 });
 });
