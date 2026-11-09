@@ -445,3 +445,82 @@ test("the iteration report prints the reason the artifact carries, never a code 
     "reading the assessment's field printed (none) beside a blocked run",
   );
 });
+
+// ── The two fields an auditor reads, wired where they are measured ───────────────────────────────────────────────
+//
+// MEASURED 2026-11-09 (`round40`): 46 per-turn memory samples in the runner's log and a complete teardown, and a bundle
+// that published neither - no `hostMemory` at all, and `reclamation: {state: "unobserved", steps: [], reflection:
+// "completed"}`. These assertions are the wiring's own gate: each names the member that would have to drift to make the
+// artifact unreadable again.
+
+test("the run's memory reaches the artifact, from the sampler that measured it and no second reading", () => {
+  // ONE projection, published on the result AND in the bundle, so a reader holding either sees the same series.
+  assert.match(SOURCE, /const hostMemoryRecord = summarizeHostMemory\(\{/u);
+  assert.match(SOURCE, /^    hostMemory: hostMemoryRecord,$/mu, "the result carries it");
+  assert.match(
+    SOURCE,
+    /hostMemory: summarizeHostMemory|hostMemory,\n/,
+    "the bundle carries the same record, not a re-derived one",
+  );
+  const bundleFn = SOURCE.slice(
+    SOURCE.indexOf("async function writeRunBundle({"),
+    SOURCE.indexOf("const timeline = factLog.map"),
+  );
+  assert.match(bundleFn, /^    hostMemory,$/mu, "the bundle literal publishes what the caller projected");
+  // The turn's own reading is what fills the series: the log line is not the instrument any more.
+  assert.match(
+    SOURCE,
+    /const turnMemory = appendTurnMemory\(\{\n\s+series: hostMemory\.turns,\n\s+point: turnMemoryPoint\(\{ turn: agentTurnCount,/u,
+  );
+  assert.match(SOURCE, /hostMemory\.turnsOmitted = turnMemory\.omitted;/u);
+  // Bounded by the shared cap, which the bundle contract also enforces - one constant, two readers.
+  assert.match(
+    SOURCE,
+    /import \{ appendTurnMemory, summarizeHostMemory, turnMemoryPoint \} from "\.\.\/\.\.\/lib\/live-run-memory\.mjs";/u,
+  );
+});
+
+test("the teardown account is stamped by the process that measured it, into the artifacts that exist", () => {
+  // The runner owns the runtime, the binding and the bridge; it appends what it measured, AFTER the unwind.
+  const unwindAt = SOURCE.indexOf("// THE UNWIND, AND ITS ACCOUNT");
+  assert.ok(unwindAt > 0, "the runner must have one teardown path");
+  const unwind = SOURCE.slice(unwindAt, unwindAt + 4_000);
+  for (const step of ["runtime_close", "binding_close", "bridge_detach"]) {
+    assert.ok(unwind.includes(`step: "${step}"`), `the unwind must record ${step}, or the account cannot name it`);
+  }
+  assert.match(
+    unwind,
+    /stampReclamation\(\{\n\s+paths: \[RESULT_FILE, capture === null \? null : join\(capture\.dir, "manifest\.json"\)\],/u,
+    "one call writes the result AND the bundle's manifest, so two artifacts of one run cannot disagree",
+  );
+  assert.match(unwind, /RECLAMATION_NOT_STAMPED/u, "a run that published no artifact says so by name");
+  // The bundle no longer hand-writes a completed reflection over an empty step list: it publishes the explicit
+  // `unobserved` record until the unwind has actually run.
+  assert.match(SOURCE, /^    reclamation: reclamationRecord\(\{\}\),$/mu);
+  assert.doesNotMatch(SOURCE, /^\s*reflection: settlement \?/mu, "a completed reflection over an empty step list");
+});
+
+test("the launcher completes the account with the two steps only it can measure, and names a missing one", () => {
+  const launcher = readFileSync(new URL("./launch-ladder-live.mjs", import.meta.url), "utf8");
+  // The game it did not launch but does own to reap, and the transaction it holds.
+  assert.match(launcher, /launcherReclamationSteps\(\{/u);
+  assert.match(launcher, /survivors: liveGameProcesses\(\)/u, "zero survivors is a measurement, not an inference");
+  assert.match(launcher, /GAMEBUDDY_PROCESS_RECLAMATION_FILE: processReclamationPath,/u);
+  assert.match(launcher, /run_reclamation_step_missing:/u, "the gate names the step, not just a boolean");
+  assert.match(launcher, /missingReclamationSteps\(stamped\.record\)/u, "the gate reads the record it wrote");
+  assert.match(launcher, /exitReason: reclamationExitReason\(game\)/u, "how the game ended is a fact of the account");
+  // A restore that refused is a fact the artifact owes: the stamp happens BEFORE the throw, never instead of it.
+  const restoreAt = launcher.indexOf("const fixtureRestore = { ok: true, error: null };");
+  assert.ok(restoreAt > 0, "the restore's outcome must be measured");
+  assert.ok(
+    launcher.indexOf("stampReclamationAccount(fixtureRestore);") > restoreAt &&
+      launcher.indexOf("if (!fixtureRestore.ok) throw new Error(fixtureRestore.error);") >
+        launcher.indexOf("stampReclamationAccount(fixtureRestore);"),
+    "the account is written before the launcher refuses",
+  );
+  // …and the orchestrator, which alone knows the game's pid and how it ended, hands that over as a record.
+  const orchestrator = readFileSync(new URL("../../_ladder-live-orchestrator.mjs", import.meta.url), "utf8");
+  assert.match(orchestrator, /GAMEBUDDY_PROCESS_RECLAMATION_FILE/u);
+  assert.match(orchestrator, /pid: game\?\.pid \?\? null,/u);
+  assert.match(orchestrator, /exit: game\?\.exit \?\? null,/u);
+});

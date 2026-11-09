@@ -15,6 +15,7 @@ import {
   writeEvidenceBundle,
 } from "./evidence-bundle.mjs";
 import { decideReplayDispatch, expectedReplayWallClockMs, REAL_MILLISECONDS_PER_GAME_MINUTE } from "./replay-clock.mjs";
+import { HOST_MEMORY_TURN_CAP } from "./live-run-memory.mjs";
 import { deriveLoopVerdict } from "../run-stardew-multiplayer-live-loop.mjs";
 
 const TRACE = [
@@ -72,7 +73,26 @@ const bundle = (overrides = {}) => ({
   timeline: { path: EVIDENCE_BUNDLE_FILES.timeline, records: 1, sources: ["player", "llm"] },
   actionTrace: { path: EVIDENCE_BUNDLE_FILES.actionTrace, records: TRACE.length },
   keyFrames: { status: "skipped", reason: "no_evidence_display", dir: null },
-  reclamation: { state: "clean", exitReason: "completed", steps: [], reflection: "completed" },
+  hostMemory: {
+    state: "measured",
+    samples: 412,
+    startRssMb: 316,
+    minRssMb: 229,
+    maxRssMb: 632,
+    minFreeMb: 1057,
+    turns: [{ turn: 0, rssMb: 316, heapUsedMb: 208, sessionBytes: 12_345 }],
+    omitted: 0,
+  },
+  reclamation: {
+    state: "clean",
+    exitReason: "game_exit:code:0",
+    steps: [
+      { step: "runtime_close", state: "ok", detail: null, pids: [] },
+      { step: "process_reap", state: "ok", detail: "game_exit:code:0", pids: [4321] },
+      { step: "fixture_restore", state: "ok", detail: null, pids: [] },
+    ],
+    reflection: "completed",
+  },
   voice: { state: "disabled", playback: "disabled", reasonCode: "voice_preference_absent" },
   failure: null,
   repro: { command: null, expectedWallClockMs: null },
@@ -378,4 +398,72 @@ test("the entry validator is usable on its own, per entry", () => {
   // Nothing to validate is a violation, not an empty pass.
   assert.deepEqual(codesFor(null), ["bundle_not_object"]);
   assert.equal(validateEvidenceBundle(null).ok, false);
+});
+
+// ── The two fields round40 published as nothing at all ────────────────────────────────────────────────────────────
+//
+// MEASURED 2026-11-09 (`round40`): the artifact an auditor reads carried no `hostMemory` and a `reclamation` of
+// `{state: "unobserved", steps: [], reflection: "completed"}` - a completed reflection over zero teardown steps - while
+// the run had 46 memory samples in its log and had genuinely reaped its game and released its fixture. The contract
+// accepted both, so the bundle passed every obligation while being unable to answer either question. These are the
+// falsifiers: a bundle that says NOTHING about its memory, and one that claims a completed unwind it never measured.
+
+const HOST_MEMORY = {
+  state: "measured",
+  samples: 412,
+  startRssMb: 316,
+  minRssMb: 229,
+  maxRssMb: 632,
+  minFreeMb: 1057,
+  turns: [{ turn: 0, rssMb: 316, heapUsedMb: 208, sessionBytes: 12_345 }],
+  omitted: 0,
+};
+
+const RECLAMATION = {
+  state: "clean",
+  exitReason: "game_exit:code:0",
+  steps: [
+    { step: "runtime_close", state: "ok", detail: null, pids: [] },
+    { step: "process_reap", state: "ok", detail: "game_exit:code:0", pids: [4321] },
+    { step: "fixture_restore", state: "ok", detail: null, pids: [] },
+  ],
+  reflection: "completed",
+};
+
+test("a bundle that says nothing about its host memory is refused, and the refusal names the field", () => {
+  assert.deepEqual(codesFor(bundle({ hostMemory: null })), ["host_memory_missing"]);
+  assert.deepEqual(codesFor(bundle({ hostMemory: { ...HOST_MEMORY, state: "" } })), ["host_memory_missing"]);
+  assert.deepEqual(codesFor(bundle({ hostMemory: { ...HOST_MEMORY, omitted: null } })), ["host_memory_missing"]);
+  // Bounded is part of the contract: an unbounded series is not a projection of the run, it is the run.
+  const unbounded = Array.from({ length: HOST_MEMORY_TURN_CAP + 1 }, (_, turn) => ({ ...HOST_MEMORY.turns[0], turn }));
+  assert.deepEqual(codesFor(bundle({ hostMemory: { ...HOST_MEMORY, turns: unbounded } })), [
+    "host_memory_series_unbounded",
+  ]);
+  // The one shape that is allowed to be empty says WHY it is empty.
+  assert.deepEqual(
+    codesFor(bundle({ hostMemory: { ...HOST_MEMORY, state: "not_measured:no_turn_samples", turns: [] } })),
+    [],
+  );
+});
+
+test("round40's reclamation - completed, with no steps - is refused", () => {
+  // The real artifact, verbatim: `{state: "unobserved", exitReason: null, steps: [], reflection: "completed"}`.
+  assert.deepEqual(
+    codesFor(bundle({ reclamation: { state: "unobserved", exitReason: null, steps: [], reflection: "completed" } })),
+    ["reclamation_completed_without_steps"],
+  );
+  // A skipped reflection over no steps is honest, and passes.
+  assert.deepEqual(
+    codesFor(bundle({ reclamation: { state: "unobserved", exitReason: null, steps: [], reflection: "skipped" } })),
+    [],
+  );
+  // A state outside the closed set cannot be judged by a reader or by a gate.
+  assert.deepEqual(codesFor(bundle({ reclamation: { ...RECLAMATION, state: "mostly_fine" } })), [
+    "reclamation_state_unknown",
+  ]);
+  // A step that does not say whether it finished is not a step.
+  assert.deepEqual(codesFor(bundle({ reclamation: { ...RECLAMATION, steps: [{ step: "runtime_close" }] } })), [
+    "reclamation_step_malformed",
+  ]);
+  assert.deepEqual(codesFor(bundle({ reclamation: RECLAMATION, hostMemory: HOST_MEMORY })), []);
 });

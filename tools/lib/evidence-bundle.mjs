@@ -15,6 +15,8 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseInGameTime } from "./replay-clock.mjs";
+import { HOST_MEMORY_TURN_CAP } from "./live-run-memory.mjs";
+import { RECLAMATION_REFLECTIONS, RECLAMATION_STATES } from "./live-run-teardown.mjs";
 import { isLiveRunWindowMode } from "./stardew-live-run.mjs";
 
 const EVIDENCE_BUNDLE_SCHEMA_VERSION = 1;
@@ -240,8 +242,37 @@ export function validateEvidenceBundle(bundle, { actionTrace = null } = {}) {
   const reclamation = bundle.reclamation;
   if (!isPlainObject(reclamation) || !isNonEmptyString(reclamation.state) || !Array.isArray(reclamation.steps)) {
     violations.push(violation("reclamation_missing", "reclamation"));
-  } else if (!["completed", "skipped", "failed"].includes(reclamation.reflection)) {
+  } else if (!RECLAMATION_STATES.includes(reclamation.state)) {
+    violations.push(violation("reclamation_state_unknown", "reclamation.state"));
+  } else if (!RECLAMATION_REFLECTIONS.includes(reclamation.reflection)) {
     violations.push(violation("reclamation_reflection_unknown", "reclamation.reflection"));
+  } else if (reclamation.reflection === "completed" && reclamation.steps.length === 0) {
+    // MEASURED 2026-11-09 (`round40`): `{state: "unobserved", exitReason: null, steps: [], reflection: "completed"}`
+    // passed every obligation while naming no teardown step at all. A completion with nothing behind it is the shape a
+    // reader quotes as "the teardown was fine", so it is refused here rather than left to the reader.
+    violations.push(violation("reclamation_completed_without_steps", "reclamation.steps"));
+  } else {
+    for (const [index, step] of reclamation.steps.entries()) {
+      if (!isPlainObject(step) || !isNonEmptyString(step.step) || (step.state !== "ok" && step.state !== "failed")) {
+        violations.push(violation("reclamation_step_malformed", `reclamation.steps[${String(index)}]`));
+      }
+    }
+  }
+
+  // The run's own memory, which the bundle used to say nothing about at all (measured 2026-11-09, `round40`: 46 samples
+  // in the runner's log, no field in the artifact). `not_measured:no_turn_samples` is a legitimate answer; a missing or
+  // null field is not, and neither is a series longer than its cap.
+  const hostMemory = bundle.hostMemory;
+  if (
+    !isPlainObject(hostMemory) ||
+    !isNonEmptyString(hostMemory.state) ||
+    !Array.isArray(hostMemory.turns) ||
+    !Number.isInteger(hostMemory.omitted) ||
+    hostMemory.omitted < 0
+  ) {
+    violations.push(violation("host_memory_missing", "hostMemory"));
+  } else if (hostMemory.turns.length > HOST_MEMORY_TURN_CAP) {
+    violations.push(violation("host_memory_series_unbounded", "hostMemory.turns"));
   }
 
   const voice = bundle.voice;
@@ -368,7 +399,12 @@ const CHECKED_OBLIGATIONS = Object.freeze([
   "key_frames_dir_missing",
   "key_frames_reason_missing",
   "reclamation_missing",
+  "reclamation_state_unknown",
   "reclamation_reflection_unknown",
+  "reclamation_completed_without_steps",
+  "reclamation_step_malformed",
+  "host_memory_missing",
+  "host_memory_series_unbounded",
   "voice_playback_unknown",
   "voice_reason_missing",
   "multiday_not_object",

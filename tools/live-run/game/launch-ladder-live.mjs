@@ -34,9 +34,14 @@ import { killProcessTree, listStardewProcessIds } from "../../lib/windows-proces
 import {
   installLiveRunInterrupt,
   killedReasonCode,
+  launcherReclamationSteps,
+  missingReclamationSteps,
+  reclamationExitReason,
   restoreFixtureTransaction as restoreFixtureTransactionSteps,
+  stampReclamation,
   writeKilledRunRecord,
 } from "../../lib/live-run-teardown.mjs";
+import { EVIDENCE_BUNDLE_FILES } from "../../lib/evidence-bundle.mjs";
 import { announceStardewFixtureRoots, resolveStardewFixtureRoots } from "../../lib/stardew-fixture-roots.mjs";
 import { STARDEW_MOD_FOLDER } from "../../lib/stardew-mod-folder.mjs";
 import { normalizeLiveRunWindowMode } from "../../lib/stardew-live-run.mjs";
@@ -124,6 +129,9 @@ const templateName = option("template", saveName);
 const suffix = label.length > 0 ? `-${label}` : "";
 const resultPath = path.join(repo, "tools", `_${scenario}${suffix}.result.json`);
 const logPath = path.join(repo, "tools", `_${scenario}${suffix}-live-runner.log`);
+// Where the orchestrator writes what only IT measured: the game process it launched, how it ended, and the survivors it
+// could not reap. A file, because its stderr is a real console (SMAPI needs one) and nothing can be parsed out of it.
+const processReclamationPath = path.join(repo, "tools", `_${scenario}${suffix}-process-reclamation.json`);
 const lockDir = path.join(fixtureRoot, ".stardew-native-local-player-fixture.lock");
 
 const node = process.execPath;
@@ -444,6 +452,7 @@ childSettled = new Promise((resolve) => {
       // itself as `visible` in its own evidence bundle (which the contract then refused, correctly).
       GAMEBUDDY_LADDER_WINDOW_MODE: windowMode,
       GAMEBUDDY_WINDOW_MODE: windowMode,
+      GAMEBUDDY_PROCESS_RECLAMATION_FILE: processReclamationPath,
     },
   });
   // stdio is inherited now (the orchestrator and SMAPI need a real console), so there
@@ -474,7 +483,85 @@ if (takenOver) {
   throw new Error("fixture_taken_over_mid_run");
 }
 
-restoreFixtureTransaction();
+/** The orchestrator's own reading of the game it launched, or a null rather than a fabricated zero. */
+function readProcessReclamation() {
+  try {
+    return JSON.parse(fs.readFileSync(processReclamationPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Complete the run's reclamation account with the two steps only this process can measure: the game tree the
+ * orchestrator launched and reaped, and the fixture transaction this launcher holds.
+ *
+ * WHY here and not in the runner: the runner has already exited - having written its own account of its unwind - before
+ * either of these happens, so a bundle that claimed them would be claiming a fact about the future. Measured 2026-11-09
+ * (`round40`): the run reaped its game and released its transaction, and its artifact published `steps: []`, because the
+ * only process that knew those facts never wrote them down.
+ *
+ * A step this account owes and never measured is named, and makes the launch exit non-zero: an artifact an auditor reads
+ * must not be able to lose its teardown account silently, which is the defect this closes.
+ */
+function stampReclamationAccount(fixtureRestore) {
+  let document;
+  try {
+    document = JSON.parse(fs.readFileSync(resultPath, "utf8"));
+  } catch {
+    console.error(
+      "RECLAMATION_INCOMPLETE",
+      JSON.stringify({ reasonCode: "run_reclamation_not_stamped:no_result_artifact" }),
+    );
+    return null;
+  }
+  const runDir = typeof document?.bundle?.runDir === "string" ? document.bundle.runDir : null;
+  const game = readProcessReclamation();
+  const stamped = stampReclamation({
+    paths: [resultPath, runDir === null ? null : path.join(runDir, EVIDENCE_BUNDLE_FILES.manifest)],
+    steps: launcherReclamationSteps({
+      game,
+      // Read AFTER the fixture is released: this is the zero-survivor assertion as much as it is a field, and a game this
+      // run started that is still alive is the run's ending rather than a line in a list of problems.
+      survivors: liveGameProcesses(),
+      fixtureRestore,
+    }),
+    exitReason: reclamationExitReason(game),
+  });
+  const missing = missingReclamationSteps(stamped.record);
+  console.log(
+    "RECLAMATION",
+    JSON.stringify({
+      state: stamped.record?.state ?? null,
+      game: game === null ? "unobserved" : { pid: game.pid ?? null, closeOutcome: game.closeOutcome ?? null },
+      steps: (stamped.record?.steps ?? []).map((entry) => `${entry.step}:${entry.state}`),
+      missing,
+    }),
+  );
+  if (missing.length > 0) {
+    console.error(
+      "RECLAMATION_INCOMPLETE",
+      JSON.stringify({
+        reasonCode: `run_reclamation_step_missing:${missing.join(",")}`,
+        state: stamped.record?.state ?? null,
+      }),
+    );
+    process.exitCode = 1;
+  }
+  return stamped.record;
+}
+
+// The restore is measured BEFORE the account is written: a restore that refused is a fact the artifact owes, and throwing
+// first would lose the account of everything else that did happen.
+const fixtureRestore = { ok: true, error: null };
+try {
+  restoreFixtureTransaction();
+} catch (error) {
+  fixtureRestore.ok = false;
+  fixtureRestore.error = String(error?.message ?? error).slice(0, 300);
+}
+stampReclamationAccount(fixtureRestore);
+if (!fixtureRestore.ok) throw new Error(fixtureRestore.error);
 
 if (fs.existsSync(resultPath)) {
   const result = JSON.parse(fs.readFileSync(resultPath, "utf8"));

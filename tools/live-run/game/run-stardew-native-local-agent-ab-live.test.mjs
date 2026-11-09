@@ -21,7 +21,8 @@ import {
 } from "../../lib/multiday-baseline.mjs";
 import { watchRollover } from "../../lib/multiday-loop.mjs";
 import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mjs";
-import { killedReasonCode } from "../../lib/live-run-teardown.mjs";
+import { killedReasonCode, reclamationRecord } from "../../lib/live-run-teardown.mjs";
+import { appendTurnMemory, summarizeHostMemory, turnMemoryPoint } from "../../lib/live-run-memory.mjs";
 import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
 import {
   actionBreadthClause,
@@ -1593,6 +1594,7 @@ test("the assembly logs a tool-timing disagreement by name", async () => {
     RUNNER_SOURCE,
     ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
     {
+      ...instrumentGlobals,
       executedActionIds,
       // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once
       // and hands it to its own clause, so a test of the builder supplies the real implementations.
@@ -1749,10 +1751,21 @@ test("a second turn does not answer with the first turn's program", async () => 
     "MOD_HEARTBEAT_STALL_MS",
     "bridgeDisconnections",
     "waitForSessionQuiet",
+    // The turn's own memory instrument: the sampler, the point it builds and the bounded series it appends to. Supplied
+    // as real implementations - the turn records what the sampler measured, and a double here would assert the wiring
+    // against a number no run produced. (Until they were bound, this eval could not even run the turn: `round40`'s
+    // sampler commit referenced a name its own test scope never carried.)
+    "sampleHostMemory",
+    "appendTurnMemory",
+    "turnMemoryPoint",
     `let worldStallReason = null;
 let turnStartedAtMs = null;
+let agentTurnCount = 0;
+const bridgeDiagnostics = [];
+const hostMemory = { turns: [], turnsOmitted: 0 };
+const runSessionRecord = Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" });
 ${extractRunnerFunction(RUNNER_SOURCE, "runAgentTurn").source}
-return { runAgentTurn, stall: () => worldStallReason };`,
+return { runAgentTurn, stall: () => worldStallReason, memory: () => hostMemory };`,
   );
   const { runAgentTurn, stall } = build(
     actionTrace,
@@ -1783,6 +1796,11 @@ return { runAgentTurn, stall: () => worldStallReason };`,
     declaredStallMs,
     Object.freeze([]),
     async (turn) => turn,
+    // The real instrument, and a sampler whose readings the test can reason about: the turn's record is what is under
+    // test here, not the operating system's free memory.
+    () => ({ rssMb: 316, freeMb: 2048, heapUsedMb: 208 }),
+    appendTurnMemory,
+    turnMemoryPoint,
   );
   const previousWaitSeconds = process.env.GAMEBUDDY_AGENT_WAIT_SECONDS;
   process.env.GAMEBUDDY_AGENT_WAIT_SECONDS = "5";
@@ -2724,6 +2742,19 @@ test("the run bundle publishes the crossing record, and one it cannot judge is r
     timeline: { path: "timeline.jsonl", records: 0, sources: ["player", "smapi", "llm"] },
     actionTrace: { path: "actionTrace.jsonl", records: 0 },
     keyFrames: { status: "skipped", reason: "headless_environment", dir: null },
+    // The run's memory and its unwind: the two fields an auditor reads that `round40` published as nothing. Here they
+    // are the honest EMPTY shapes - a run that took no turn sample and one whose unwind nobody has measured yet - which
+    // the contract accepts, unlike a missing field.
+    hostMemory: {
+      state: "not_measured:no_turn_samples",
+      samples: 0,
+      startRssMb: null,
+      minRssMb: null,
+      maxRssMb: null,
+      minFreeMb: null,
+      turns: [],
+      omitted: 0,
+    },
     reclamation: { state: "unobserved", exitReason: null, steps: [], reflection: "skipped" },
     voice: { state: "disabled", playback: "disabled", reasonCode: "voice_not_requested" },
     failure: null,
@@ -2822,6 +2853,7 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
     RUNNER_SOURCE,
     ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
     {
+      ...instrumentGlobals,
       executedActionIds,
       // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once
       // and hands it to its own clause, so a test of the builder supplies the real implementations.
@@ -2928,6 +2960,7 @@ test("a run whose work all went through programs publishes a non-empty attempted
     RUNNER_SOURCE,
     ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
     {
+      ...instrumentGlobals,
       executedActionIds,
       // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once
       // and hands it to its own clause, so a test of the builder supplies the real implementations.
@@ -3030,6 +3063,7 @@ test("an error that escapes the run still publishes the work it had already reco
       "deriveRungVerdict",
     ],
     {
+      ...instrumentGlobals,
       executedActionIds,
       // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once
       // and hands it to its own clause, so a test of the builder supplies the real implementations.
@@ -3081,6 +3115,12 @@ test("an error that escapes the run still publishes the work it had already reco
       closeCapture: async () => null,
       writeFile: async (path, contents) => written.push({ path, contents }),
       writeFileSync: () => {},
+      // The bundle's reclamation account starts as the explicit "nothing measured yet" record, built by the same
+      // module the runner uses: a hand-written literal here would be the second spelling of that shape.
+      reclamationRecord,
+      // This test asserts the run's result reached GAMEBUDDY_RESULT_FILE, so the one path the assembly writes is the file
+      // it set up - the same value the runner derives from that variable at startup.
+      RESULT_FILE: resultFile,
       join: (...parts) => parts.join("/"),
     },
   );
@@ -3233,6 +3273,7 @@ test("a run interrupted from outside publishes its own verdict, with the evidenc
       ],
       {
         // The run's accumulated evidence: this is what a killed run must not lose.
+        ...instrumentGlobals,
         executedActionIds,
         // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once
         // and hands it to its own clause, so a test of the builder supplies the real implementations.
@@ -3257,6 +3298,8 @@ test("a run interrupted from outside publishes its own verdict, with the evidenc
         readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
         TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
         multidayOutcome: { crossings: 1, assessment: { state: "passed", ok: true, violations: [] }, dayRecords },
+        // The bundle's account literal is built by the module the runner uses, so this eval binds the same builder.
+        reclamationRecord,
         historianRubricOutcome: Object.freeze({
           state: "unmeasured",
           reasonCode: "no_compartments_written",
@@ -3685,9 +3728,29 @@ test("a settled turn keeps the day going, and the single accessor is what says s
   assert.equal(settledTurn.settled === true, false);
 });
 
+/**
+ * The instrument globals `buildRunResult` reads: the run's memory sampler, the projection it publishes, and the ONE path
+ * its result is written to. Real implementations, not doubles - the projection is asserted on its own in
+ * `tools/lib/live-run-memory.test.mjs`, and a double here would let the assembly publish a series nobody measured.
+ */
+const instrumentGlobals = Object.freeze({
+  hostMemory: Object.freeze({
+    samples: 0,
+    startRssMb: null,
+    minRssMb: null,
+    maxHostRssMb: null,
+    minFreeMb: null,
+    turns: [],
+    turnsOmitted: 0,
+  }),
+  summarizeHostMemory,
+  RESULT_FILE: "/tmp/gb-runner-result.json",
+});
+
 /** The globals `buildRunResult` reads besides the ones a test supplies, kept in one place for the reason tests below. */
 function builderGlobals(overrides = {}) {
   return {
+    ...instrumentGlobals,
     executedActionIds,
     // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once and
     // hands it to its own clause, so a test of the builder supplies the real implementations. The surface and the

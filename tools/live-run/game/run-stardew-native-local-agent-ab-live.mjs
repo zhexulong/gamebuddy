@@ -128,7 +128,14 @@ import {
   readActionBreadthSurface,
 } from "../../lib/action-breadth.mjs";
 import { writeEvidenceBundle } from "../../lib/evidence-bundle.mjs";
-import { installLiveRunInterrupt, killedReasonCode } from "../../lib/live-run-teardown.mjs";
+import { appendTurnMemory, summarizeHostMemory, turnMemoryPoint } from "../../lib/live-run-memory.mjs";
+import {
+  installLiveRunInterrupt,
+  killedReasonCode,
+  reclamationRecord,
+  reclamationStep,
+  stampReclamation,
+} from "../../lib/live-run-teardown.mjs";
 // Program executions are a second kind of execution, written beside the request frames and merged back at read time.
 // The module's own header states the invariant these two files have to satisfy together.
 import {
@@ -252,6 +259,11 @@ const SCENARIO = (() => {
     throw new Error(`unknown_run_scenario:${String(requested)} (expected one of ${SCENARIOS.join(", ")})`);
   return requested;
 })();
+// WHERE THIS RUN'S RESULT GOES, declared once. The assembly writes it, the escaped-error floor writes it, and the teardown
+// account is stamped into it AFTER the unwind - a third derivation of the name would let the account land in a file
+// nobody reads, which is the defect this whole seam exists to close (measured 2026-11-09, `round40`).
+const RESULT_FILE = process.env.GAMEBUDDY_RESULT_FILE ?? join("tools", `_${SCENARIO}-${Date.now()}.result.json`);
+
 /**
  * The last-resort dump: whatever escapes the run's own try/catch — an unhandled rejection, a synchronous throw in
  * setup, a failure while the run was assembling itself — still publishes the run.
@@ -795,7 +807,18 @@ const ledger = createLedger({ now: () => Date.now() });
 //
 // `minFreeMb` over the whole run is the useful statistic: a death under sustained single-digit-hundred free megabytes
 // is a different finding from a death with gigabytes available, and only one of them is our bug.
-const hostMemory = { samples: 0, minFreeMb: null, maxHostRssMb: null, startRssMb: null, minRssMb: null, series: [] };
+const hostMemory = {
+  samples: 0,
+  minFreeMb: null,
+  maxHostRssMb: null,
+  startRssMb: null,
+  minRssMb: null,
+  series: [],
+  // One point per turn, bounded (`HOST_MEMORY_TURN_CAP`), because the question a death leaves open is the SHAPE across
+  // turns and the artifact could not answer it at all (see `../../lib/live-run-memory.mjs`).
+  turns: [],
+  turnsOmitted: 0,
+};
 let lastHostMemorySampleAtMs = 0;
 const sampleHostMemory = (atMs = Date.now()) => {
   const freeMb = Math.round(freeMemory() / (1024 * 1024));
@@ -823,7 +846,7 @@ const sampleHostMemory = (atMs = Date.now()) => {
       freeMb,
     });
   }
-  return { rssMb, freeMb };
+  return { rssMb, freeMb, heapUsedMb: Math.round(usage.heapUsed / (1024 * 1024)) };
 };
 sampleHostMemory();
 const hostMemoryTimer = setInterval(sampleHostMemory, 5_000);
@@ -1824,6 +1847,15 @@ async function runAgentTurn(text, tools) {
   } catch {
     sessionBytes = null;
   }
+  // The same reading, kept in the series the bundle publishes instead of only in a terminal log (measured 2026-11-09,
+  // `round40`: 46 of these lines and no memory field in the artifact at all).
+  const turnMemory = appendTurnMemory({
+    series: hostMemory.turns,
+    point: turnMemoryPoint({ turn: agentTurnCount, rssMb: rss.rssMb, heapUsedMb: rss.heapUsedMb, sessionBytes }),
+    omitted: hostMemory.turnsOmitted,
+  });
+  hostMemory.turns = turnMemory.turns;
+  hostMemory.turnsOmitted = turnMemory.omitted;
   console.error(
     `HOST_MEMORY_TURN ${JSON.stringify({ turn: agentTurnCount, rssMb: rss.rssMb, freeMb: rss.freeMb, sessionBytes, diagnostics: bridgeDiagnostics.length, facts: factLog.length })}`,
   );
@@ -5080,10 +5112,24 @@ try {
   console.error("RUNNER_CRASH", JSON.stringify({ error: result.error }));
   console.log(JSON.stringify(result, null, 2));
 } finally {
+  // THE UNWIND, AND ITS ACCOUNT. Every step is recorded by the process that performs it - this one owns the voice child,
+  // the runtime, the binding and the bridge; the launcher owns the game tree and the fixture transaction, and adds its
+  // own steps afterwards. The record is written into the artifacts that already exist, so what the teardown DID is
+  // readable from the artifact rather than only from a terminal (measured 2026-11-09, `round40`: a complete unwind and a
+  // bundle that published `steps: []`).
+  const unwindSteps = [];
   if (voiceChild !== null) {
     voiceChild.kill("SIGTERM");
     await Promise.race([once(voiceChild, "close"), new Promise((resolvePromise) => setTimeout(resolvePromise, 5000))]);
     if (!voiceChild.killed) voiceChild.kill("SIGKILL");
+    const stopped = voiceChild.exitCode !== null || voiceChild.signalCode !== null;
+    unwindSteps.push(
+      reclamationStep({
+        step: "voice_child_stopped",
+        ok: stopped,
+        detail: stopped ? null : "voice_child_reported_no_exit",
+      }),
+    );
   }
   // Teardown must not decide whether the run's own evidence exists, but a silent teardown decides it by
   // accident: `flushRunTrace` is the last step of `close()`, and an empty catch here meant the trace file
@@ -5093,14 +5139,56 @@ try {
   // The failure is recorded rather than thrown: a run whose teardown could not write its trace is still a
   // run whose other evidence is worth keeping, and the refusal belongs in the artifact, not in a crash.
   let teardownFailure = null;
-  await runtime?.close().catch((error) => {
-    teardownFailure = error instanceof Error ? error.message : String(error);
+  if (runtime === undefined) {
+    // Nothing was booted to close: the step is not owed, and saying so is not the same as claiming it succeeded.
+    unwindSteps.push(reclamationStep({ step: "runtime_close", ok: true, detail: "not_owed:runtime_never_booted" }));
+  } else {
+    await runtime.close().catch((error) => {
+      teardownFailure = error instanceof Error ? error.message : String(error);
+    });
+    unwindSteps.push(reclamationStep({ step: "runtime_close", ok: teardownFailure === null, detail: teardownFailure }));
+  }
+  let bindingFailure = null;
+  await binding.close().catch((error) => {
+    bindingFailure = error instanceof Error ? error.message : String(error);
   });
-  await binding.close().catch(() => {});
+  unwindSteps.push(reclamationStep({ step: "binding_close", ok: bindingFailure === null, detail: bindingFailure }));
+  let detachFailure = null;
+  try {
+    client.close("agent_ab_complete");
+  } catch (error) {
+    detachFailure = error instanceof Error ? error.message : String(error);
+  }
+  unwindSteps.push(reclamationStep({ step: "bridge_detach", ok: detachFailure === null, detail: detachFailure }));
   ledger.record("run.end");
-  client.close("agent_ab_complete");
   if (teardownFailure !== null) {
     process.stderr.write(`[teardown] runtime close reported: ${teardownFailure.slice(0, 200)}\n`);
+  }
+  // The account lands in the result AND the bundle's manifest, from one call: two artifacts of one run may not disagree
+  // about what its teardown did. A run that published none says so by name instead of failing silently here.
+  try {
+    const stamped = stampReclamation({
+      paths: [RESULT_FILE, capture === null ? null : join(capture.dir, "manifest.json")],
+      steps: unwindSteps,
+    });
+    if (stamped.written.length === 0) {
+      console.error(
+        "RECLAMATION_NOT_STAMPED",
+        JSON.stringify({
+          reasonCode: "run_reclamation_not_stamped:no_result_artifact",
+          steps: unwindSteps.map((entry) => entry.step),
+        }),
+      );
+    }
+  } catch (error) {
+    // The code names the fault; the thrown text is the DETAIL beside it, never the reason itself.
+    console.error(
+      "RECLAMATION_NOT_STAMPED",
+      JSON.stringify({
+        reasonCode: "run_reclamation_not_stamped:artifact_unwritable",
+        detail: String(error?.message ?? error).slice(0, 300),
+      }),
+    );
   }
 }
 /**
@@ -5483,6 +5571,18 @@ async function buildRunResult({
   });
   if (toolTiming.invariant.ok === false)
     console.error(TOOL_TIMING_INVARIANT_VIOLATED, JSON.stringify(toolTiming.invariant));
+  // The run's memory, projected ONCE: the result and the bundle both publish this object, so a reader holding either one
+  // sees the same series and the same extremes. A run with no turn sample says so by name (`not_measured:...`) rather
+  // than by an absent field, which is the reading the old artifact forced an auditor to guess.
+  const hostMemoryRecord = summarizeHostMemory({
+    samples: hostMemory.samples,
+    startRssMb: hostMemory.startRssMb,
+    minRssMb: hostMemory.minRssMb,
+    maxRssMb: hostMemory.maxHostRssMb,
+    minFreeMb: hostMemory.minFreeMb,
+    turns: hostMemory.turns,
+    omitted: hostMemory.turnsOmitted,
+  });
   const result = {
     ...evidence,
     // The run's own window: `startedAtMs` is the runner's own phase clock, so a reader can compute the TAIL (last
@@ -5550,6 +5650,10 @@ async function buildRunResult({
     // What the presentation layer did: every committed companion_text piece in arrival order with its elapsed time,
     // so `firstPieceTtfbMs` (the headline TTFB target) survives however the run ended.
     presentation: summarizePresentationEvidence(),
+    // The run's own memory, as the bundle publishes it and as the auditor reads it. The sampler has measured this all
+    // along; until now it reached a terminal log and nothing else, so a memory question had to be answered from a log
+    // that is not the artifact (measured 2026-11-09, `round40`: 46 samples, no field).
+    hostMemory: hostMemoryRecord,
     // What the Magic Context store recorded about THIS run's own session: how many tokens are still active, how many
     // were reclaimed and by which drop mode, which tools held them, and where the fold boundary stood. Read from the
     // store rather than inferred, because a run that ends at `stopReason: "length"` is a question about this layer and
@@ -5570,6 +5674,7 @@ async function buildRunResult({
     // The program half of the same trace, derived above from the journal read, so the two files and the manifest are
     // written from one derivation and cannot disagree about how many executions the run had.
     programRows,
+    hostMemory: hostMemoryRecord,
     settlement,
     snapshot,
     pose,
@@ -5580,9 +5685,9 @@ async function buildRunResult({
   // failure on the result.
   result.capture = await closeCapture(capture, runtimeRoot, result);
   // Write the machine-readable result to a dedicated file so stdout logs (e.g. native chat ingress traces) can never
-  // corrupt JSON parsing of the result.
-  const resultFile = process.env.GAMEBUDDY_RESULT_FILE ?? join("tools", `_${SCENARIO}-${Date.now()}.result.json`);
-  await writeFile(resultFile, JSON.stringify(result, null, 2), "utf8").catch(() => {});
+  // corrupt JSON parsing of the result. The path is module scope because the TEARDOWN account is stamped into this same
+  // file after the unwind, and a second derivation of the name is how the two writers would come to disagree.
+  await writeFile(RESULT_FILE, JSON.stringify(result, null, 2), "utf8").catch(() => {});
   return result;
 }
 
@@ -5593,6 +5698,7 @@ async function writeRunBundle({
   runtimeRoot,
   actionTrace,
   programRows,
+  hostMemory,
   settlement,
   // Where and when this run last stood, and the failure dump built from it: derived ONCE in buildRunResult, so the
   // bundle cannot judge a run whose `failure` block says something else.
@@ -5693,12 +5799,14 @@ async function writeRunBundle({
     timeline: { path: "timeline.jsonl", records: factLog.length, sources: ["player", "smapi", "llm"] },
     actionTrace: { path: "actionTrace.jsonl", records: actionTrace.length },
     keyFrames: { status: "skipped", reason: "headless_environment", dir: null },
-    reclamation: {
-      state: settlement?.reclamation?.state ?? "unobserved",
-      exitReason: settlement?.reclamation?.exitReason ?? null,
-      steps: [],
-      reflection: settlement ? "completed" : "skipped",
-    },
+    // The run's memory: one projection, carried here so the contract's own face of the run can answer the question an
+    // auditor asks of it. `not_measured:no_turn_samples` is a legitimate answer; a missing field never was.
+    hostMemory,
+    // The teardown account starts here as an EXPLICIT "nothing has been measured yet" and is stamped with the steps the
+    // unwind performs once it has run (`stampReclamation`, in this process's `finally`). The literal below used to read
+    // `reflection: settlement ? "completed" : "skipped"` over an empty `steps` list, so every run published a completed
+    // teardown it had never measured (measured 2026-11-09, `round40`).
+    reclamation: reclamationRecord({}),
     historianRubric: {
       state: historianRubricOutcome.state,
       reasonCode: historianRubricOutcome.reasonCode,

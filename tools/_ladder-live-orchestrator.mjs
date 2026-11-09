@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
+import { createWriteStream, writeFileSync } from "node:fs";
 import { bridgePipeNameFor } from "./lib/stardew-bridge-pipe.mjs";
 import { dirname, join, resolve } from "node:path";
 import { launchStardewLiveRun, normalizeLiveRunWindowMode } from "./lib/stardew-live-run.mjs";
@@ -115,4 +115,31 @@ try {
   // reads as an unrelated failure.
   const survivors = listStardewProcessIds();
   console.error("PROCESS_RECLAMATION", JSON.stringify({ outcome: reclamation?.outcome ?? "no_launch", survivors }));
+  // …and the same facts as a RECORD, because this process launched the game and is the only one that knows its pid and
+  // how it ended. The launcher completes the run's reclamation account with what it reads here; until this file existed,
+  // "which process was reaped, and with what exit" was knowable and never written anywhere (measured 2026-11-09,
+  // `round40`: `reclamation.steps: []` on a run that had reaped its game cleanly).
+  const recordPath = process.env.GAMEBUDDY_PROCESS_RECLAMATION_FILE;
+  if (typeof recordPath === "string" && recordPath.length > 0) {
+    try {
+      writeFileSync(
+        recordPath,
+        `${JSON.stringify(
+          {
+            pid: game?.pid ?? null,
+            windowMode: WINDOW_MODE,
+            closeOutcome: reclamation?.outcome ?? "no_launch",
+            exit: game?.exit ?? null,
+            survivors,
+            atMs: Date.now(),
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+    } catch (error) {
+      console.error("PROCESS_RECLAMATION_NOT_RECORDED", String(error?.message ?? error).slice(0, 200));
+    }
+  }
 }

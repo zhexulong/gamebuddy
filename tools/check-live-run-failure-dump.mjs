@@ -56,7 +56,24 @@ function failingBundle({ failure, repro }) {
     timeline: { path: "timeline.jsonl", records: 0, sources: ["player", "llm"] },
     actionTrace: { path: "actionTrace.jsonl", records: TRACE.length },
     keyFrames: { status: "skipped", reason: "headless_environment", dir: null },
-    reclamation: { state: "clean", exitReason: "completed", steps: [], reflection: "completed" },
+    // Every bundle the contract accepts carries both, because a run that cannot say how much memory it used or what its
+    // unwind did cannot be audited (measured 2026-11-09, `round40`).
+    hostMemory: {
+      state: "measured",
+      samples: 2,
+      startRssMb: 316,
+      minRssMb: 316,
+      maxRssMb: 320,
+      minFreeMb: 2048,
+      turns: [{ turn: 0, rssMb: 316, heapUsedMb: 208, sessionBytes: 12_345 }],
+      omitted: 0,
+    },
+    reclamation: {
+      state: "clean",
+      exitReason: "game_exit:code:0",
+      steps: [{ step: "runtime_close", state: "ok", detail: null, pids: [] }],
+      reflection: "completed",
+    },
     voice: { state: "disabled", playback: "disabled", reasonCode: "voice_preference_absent" },
     failure,
     repro,
