@@ -121,6 +121,21 @@ export type AppearanceView =
   | Readonly<{ kind: "ready"; appearance: AppearanceChoice; pending: boolean }>;
 
 /**
+ * Interface-language state. The same record, the same revision and the same rule as the appearance
+ * above: the select shows what the store holds, a write is confirmed by its own read-back, and the
+ * shell then repaints the interface in the language that came back.
+ *
+ * `locale` is null for a player who has never chosen, which is not a missing value to substitute: the
+ * page follows the browser's own language in that case, and `uiLocale` beside it is what the page is
+ * currently painting.
+ */
+export type UiLanguageView =
+  | Readonly<{ kind: "loading" }>
+  | Readonly<{ kind: "unavailable" }>
+  | Readonly<{ kind: "error" }>
+  | Readonly<{ kind: "ready"; locale: Locale | null; pending: boolean }>;
+
+/**
  * The languages the panel suggests for the companion. Suggestions only: the companion
  * language is the player's own BCP-47 tag, and the Host accepts any bounded tag. These
  * two are the ones this UI is itself localized for, so they are the useful starting
@@ -1040,12 +1055,14 @@ export function companionLanguageLabel(tag: string, labels: ReturnType<typeof me
 
 export function LanguageSettingsPanel({
   languageView,
+  uiLanguageView,
   uiLocale,
   labels,
   onSelectLanguage,
   onSelectUiLanguage,
 }: Readonly<{
   languageView: LanguageView;
+  uiLanguageView: UiLanguageView;
   uiLocale: Locale;
   labels: ReturnType<typeof messages>;
   onSelectLanguage: (locale: string) => void;
@@ -1111,19 +1128,33 @@ export function LanguageSettingsPanel({
           )}
         </div>
       )}
-      {/* The interface's own display language: a separate choice from the companion's. */}
+      {/* The interface's own display language: a separate choice from the companion's, stored in
+          the same Host record. The select is bound to what that record holds, and a write is only
+          adopted once the store answered with it - the page repaints in the language the Host
+          confirmed, never in the one the player just pressed. */}
       <div className="voice-device-selector">
         <label htmlFor="ui-language">{labels.languageUiField}</label>
-        <select
-          id="ui-language"
-          className="form-select"
-          value={uiLocale}
-          onChange={(event) => onSelectUiLanguage(event.target.value === "en" ? "en" : "zh-CN")}
-        >
-          <option value="zh-CN">{labels.languageChinese}</option>
-          <option value="en">{labels.languageEnglish}</option>
-        </select>
-        <p className="management-settings-hint">{labels.languageUiHint}</p>
+        {uiLanguageView.kind === "loading" && <p className="management-settings-hint">{labels.loading}</p>}
+        {uiLanguageView.kind === "unavailable" && (
+          <p className="management-settings-hint">{labels.languageUiUnavailable}</p>
+        )}
+        {uiLanguageView.kind === "error" && <p className="management-settings-hint">{labels.failure}</p>}
+        {uiLanguageView.kind === "ready" && (
+          <>
+            <select
+              id="ui-language"
+              className="form-select"
+              value={uiLanguageView.locale ?? uiLocale}
+              disabled={uiLanguageView.pending}
+              data-ui-language-value={uiLanguageView.locale ?? "unset"}
+              onChange={(event) => onSelectUiLanguage(event.target.value === "en" ? "en" : "zh-CN")}
+            >
+              <option value="zh-CN">{labels.languageChinese}</option>
+              <option value="en">{labels.languageEnglish}</option>
+            </select>
+            <p className="management-settings-hint">{labels.languageUiHint}</p>
+          </>
+        )}
       </div>
     </section>
   );

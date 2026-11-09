@@ -263,6 +263,12 @@ export type CharacterLabels = Readonly<{
   worldBookEntrySummary: string;
   worldBookEntryKeys: string;
   worldBookEntryKeysHint: string;
+  /**
+   * The switch that decides whether an entry takes part at all. Switched off, the entry stays in
+   * the book and in this list - it reaches no context - so this is how a player parks an entry
+   * without losing it.
+   */
+  worldBookEntryEnabled: string;
   /** The entry's second trigger list, and the rule that applies it once a trigger word matched. */
   worldBookEntrySecondaryKeys: string;
   worldBookEntrySecondaryKeysHint: string;
@@ -296,6 +302,15 @@ export type CharacterLabels = Readonly<{
   worldBookImportFailed: string;
 
   /**
+   * The lorebook file export: one library item written back as the same file kind the import
+   * above reads. The saved sentence names the file the Host chose.
+   */
+  worldBookExport: string;
+  worldBookExportBusy: string;
+  worldBookExportSaved: string;
+  worldBookExportFailed: string;
+
+  /**
    * The companion's OWN world book, which is a different thing from the list
    * above: it is what her card carried and what she always has with her.
    */
@@ -310,6 +325,8 @@ export type CharacterLabels = Readonly<{
   companionWorldBookTriggerWords: string;
   companionWorldBookKeySeparator: string;
   companionWorldBookAlwaysOn: string;
+  /** Said of an entry the player switched off: it is still in her book and reaches nothing. */
+  companionWorldBookDisabled: string;
   companionWorldBookNoEntries: string;
   /** The disclosure that reveals one entry's own text. */
   companionWorldBookEntryText: string;
@@ -603,6 +620,7 @@ const en: CharacterLabels = Object.freeze({
   worldBookEntrySummary: "What it says",
   worldBookEntryKeys: "Trigger words",
   worldBookEntryKeysHint: "Separated by commas. Leave empty for an entry that is always on.",
+  worldBookEntryEnabled: "In use",
   worldBookEntrySecondaryKeys: "Second condition words",
   worldBookEntrySecondaryKeysHint:
     "Separated by commas. These words never bring the entry in on their own: once a trigger word has matched, they decide whether it is used.",
@@ -630,6 +648,11 @@ const en: CharacterLabels = Object.freeze({
   worldBookImportTooLarge: "That file is too large to import (limit 2 MB).",
   worldBookImportFailed: "The world book could not be imported.",
 
+  worldBookExport: "Save this world book as a file",
+  worldBookExportBusy: "Saving…",
+  worldBookExportSaved: "Saved {{file}}. It can be imported again here or opened in another app.",
+  worldBookExportFailed: "This world book could not be saved as a file.",
+
   companionWorldBookTitle: "Your companion's own world book",
   companionWorldBookHint:
     "The world book her card carried, kept here with her. An entry is used when your own words match one of its trigger words, unless it is marked as always on.",
@@ -638,6 +661,7 @@ const en: CharacterLabels = Object.freeze({
   companionWorldBookTriggerWords: "Trigger words: {{keys}}",
   companionWorldBookKeySeparator: ", ",
   companionWorldBookAlwaysOn: "Always with her",
+  companionWorldBookDisabled: "Switched off",
   companionWorldBookNoEntries: "Her own book is here, but it carries no entries yet.",
   companionWorldBookEntryText: "What it says",
 
@@ -890,6 +914,7 @@ const zh: CharacterLabels = Object.freeze({
   worldBookEntrySummary: "词条内容",
   worldBookEntryKeys: "触发词",
   worldBookEntryKeysHint: "用逗号分隔。留空表示这条词条始终生效。",
+  worldBookEntryEnabled: "启用",
   worldBookEntrySecondaryKeys: "附加条件词",
   worldBookEntrySecondaryKeysHint:
     "用逗号分隔。这些词不会单独带出词条：等某个触发词命中之后，由它们决定这条词条是否被用到。",
@@ -916,6 +941,11 @@ const zh: CharacterLabels = Object.freeze({
   worldBookImportTooLarge: "该文件过大，无法导入（上限 2 MB）。",
   worldBookImportFailed: "无法导入这本世界书。",
 
+  worldBookExport: "把这本世界书保存为文件",
+  worldBookExportBusy: "正在保存…",
+  worldBookExportSaved: "已保存 {{file}}。可以在这里重新导入，也可以用其他应用打开。",
+  worldBookExportFailed: "无法把这本世界书保存为文件。",
+
   companionWorldBookTitle: "伴侣自己的世界书",
   companionWorldBookHint:
     "她卡片自带的世界书，一直保存在她这里。当你自己的话命中某条词条的触发词时，这条词条才会被用到；标为常驻的除外。",
@@ -924,6 +954,7 @@ const zh: CharacterLabels = Object.freeze({
   companionWorldBookTriggerWords: "触发词：{{keys}}",
   companionWorldBookKeySeparator: "、",
   companionWorldBookAlwaysOn: "始终随行",
+  companionWorldBookDisabled: "已停用",
   companionWorldBookNoEntries: "她的世界书已在这里，但里面还没有词条。",
   companionWorldBookEntryText: "看看正文",
 

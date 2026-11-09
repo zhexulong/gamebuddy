@@ -118,6 +118,21 @@ async function openGameDrawer(page: Page): Promise<void> {
   await expect(surface).toBeVisible();
 }
 
+/**
+ * Step 1's other staging control, where the panel keeps it.
+ *
+ * The Host refuses setup until companion play has been enabled (`gameActivationRequired`), so the
+ * guide leads with activation alone and offers setup behind "Already enabled companion play?".
+ * A journey that means "set Stardew Valley up" opens that disclosure first - which is also the
+ * only way a player reaches it.
+ */
+async function openStagingAlternate(panel: ReturnType<Page["getByRole"]>): Promise<void> {
+  const disclosure = panel.getByTestId("game-guide-step-one-alternate");
+  await expect(disclosure).toBeVisible();
+  await disclosure.locator("summary").click();
+  await expect(disclosure.getByRole("button", { name: "Set up Stardew Valley" })).toBeVisible();
+}
+
 test("composed profile redeems once, renders nested Chat and redacted Game, then reloads from composed state", async ({ page }) => {
   let bootstrapRequests = 0;
   let composedStateRequests = 0;
@@ -526,6 +541,7 @@ test("cancelled Game setup rereads unknown and a later player retry uses a fresh
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
+  await openStagingAlternate(panel);
   const setup = panel.getByRole("button", { name: "Set up Stardew Valley" });
   await setup.click();
   await expect.poll(() => keys.length).toBe(1);
@@ -573,6 +589,7 @@ test("terminal Game setup failure permits only an authoritative fresh-key player
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
+  await openStagingAlternate(panel);
   const setup = panel.getByRole("button", { name: "Set up Stardew Valley" });
   await setup.click();
   await expect.poll(() => keys.length).toBe(1);
@@ -610,6 +627,7 @@ test("uncertain Game setup reread preserves the exact key for manual replay", as
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
+  await openStagingAlternate(panel);
   const setup = panel.getByRole("button", { name: "Set up Stardew Valley" });
   await setup.click();
   await expect.poll(() => keys.length).toBe(1);
@@ -680,6 +698,7 @@ test("Game setup projects Host-owned launch generation and launch rereads actual
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
+  await openStagingAlternate(panel);
   await panel.getByRole("button", { name: "Set up Stardew Valley" }).click();
   await expect.poll(() => setupRequests).toBe(1);
   await expect.poll(() => stateReads).toBe(2);
@@ -755,6 +774,7 @@ test("Game setup ignores a Chat draft that moves under the composed state it rer
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
   await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
+  await openStagingAlternate(panel);
   const setup = panel.getByRole("button", { name: "Set up Stardew Valley" });
   await setup.click();
   // The command was admitted and its authoritative Game reread converged.
@@ -7012,43 +7032,11 @@ async function readPlayerRow(row: import("@playwright/test").Locator) {
  * The first-run handoff, measured against design/research/game-first-run-review-2026-10-21.md: three
  * places where the panel only said what to do after the player had already done it wrong, or said
  * nothing at all. Each assertion fails against the copy those screens shipped.
+ *
+ * The first of the three - step 1's two equal-weight controls, whose one accepted order reached the
+ * player only as a refusal - is `tests/game-start-guide-single-step.spec.ts`'s subject now: the step
+ * leads with the single action the phase names and puts the other behind a disclosure.
  */
-
-test("step 1 numbers its two controls, so their order is read before either is pressed", async ({ page }) => {
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
-  );
-  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
-  );
-  await page.route("**/api/tavern/v1/draft", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
-  );
-
-  await page.goto(`/?step-one-order=1#profile=composed-reference-game&boot=${token}`);
-  await openGameDrawer(page);
-  const panel = page.getByRole("region", { name: "Game state" });
-  const order = panel.getByTestId("game-guide-step-one-order");
-  await expect(order).toBeVisible();
-
-  // Both controls, before anything is pressed, in the one order the Host accepts them in.
-  await expect(order.getByRole("listitem")).toHaveCount(2);
-  const offered = await order
-    .getByRole("button")
-    .evaluateAll((buttons) => buttons.map((button) => button.getAttribute("data-testid")));
-  expect(offered, "activation is offered before setup, which is the order the Host refuses in reverse").toEqual([
-    "game-activate",
-    "game-setup",
-  ]);
-
-  // The step says so in words, and the two controls are an ordered list, so the order is the list's
-  // own semantics rather than a convention the copy has to carry alone.
-  await expect(panel.locator('[data-guide-step="1"] .game-guide-step-detail')).toContainText(
-    "enable companion play, then set up Stardew Valley",
-  );
-  expect(await order.evaluate((node) => node.tagName), "an ordered list is what makes the order readable").toBe("OL");
-});
-
 test("a cabin list read before the game started says what happened, and why reloading fixes it", async ({ page }) => {
   // The shape a launch leaves behind: a Player Host instance exists, so the handoff no longer reads as
   // "there is no session yet" - the read that failed ran when the page opened.

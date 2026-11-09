@@ -529,6 +529,9 @@ async function readRegion(page: Page, region: string | null): Promise<ViewportRe
       if (scroller !== null) scroller.scrollTop = 0;
       const inside = (rect: DOMRect): boolean =>
         rect.top >= -1 && rect.bottom <= window.innerHeight + 1 && rect.left >= -1 && rect.right <= window.innerWidth + 1;
+      // `painted` is the browser's own answer (`checkVisibility`), not geometry: a child of a closed
+      // `<details>` keeps a layout box in Chromium, so a rect alone counts a control the player cannot
+      // see - and the refused-press half of this gate would then be satisfied by an invisible remedy.
       const controls = [...element.querySelectorAll<HTMLElement>(controlSelector)].map((node, index) => {
         const rect = node.getBoundingClientRect();
         const style = getComputedStyle(node);
@@ -542,7 +545,7 @@ async function readRegion(page: Page, region: string | null): Promise<ViewportRe
           bottom: Math.round(rect.bottom),
           width: Math.round(rect.width),
           height: Math.round(rect.height),
-          painted: style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0,
+          painted: node.checkVisibility() && style.display !== "none" && rect.width > 0 && rect.height > 0,
           inViewport: inside(rect),
         };
       });

@@ -1,5 +1,5 @@
 import { type Dispatch, type RefObject, type SetStateAction, useCallback, useEffect, useRef, useState } from "react";
-import { type Locale, type Messages, messages } from "../i18n";
+import { type Locale, type Messages, applyDocumentLocale, messages, persistLocale } from "../i18n";
 import {
   type BrowserTurnV1,
   type ReferencePipelineApi,
@@ -18,6 +18,7 @@ import {
   ComposedReferenceGameProtocolError,
   createComposedReferenceGameBrowserApi,
 } from "../composed-reference-game-browser-api";
+import type { ManagementPipelineApi } from "../management-pipeline-api";
 import { composedProblemView as problemView } from "../composed-problem-view";
 import { readChatSnapshotPair } from "../chat-snapshot-pair";
 import { PANEL_PARAM } from "../composed-surface-route";
@@ -81,6 +82,7 @@ export type ComposedBootstrap = Readonly<{
 export function useComposedBootstrap(
   localeRef: RefObject<Locale>,
   setPreview: Dispatch<SetStateAction<ComposedPreviewV1 | null>>,
+  managementApi: ManagementPipelineApi,
 ): ComposedBootstrap {
   const composedApiRef = useRef(createComposedReferenceGameBrowserApi());
   const tavernApiRef = useRef(createReferencePipelineApi());
@@ -132,6 +134,25 @@ export function useComposedBootstrap(
         }
         const pair = await readChatSnapshotPair(composedApiRef.current, root);
         if (!active) return;
+        // The interface language the player CHOSE, from the one record that outlives the launch.
+        //
+        // It is read here, after the session exists and before the first commit, because that is the
+        // only moment it can still be a first paint: this browser's own storage is discarded with the
+        // ephemeral loopback origin the Desktop serves the shell from, so `resolveLocale` at mount can
+        // carry the last confirmed language across a start but can never establish it. The Host's
+        // answer wins over that cache, and the cache is rewritten from it so the next launch's first
+        // frame is right too. A profile that does not publish the route (or a Host that cannot answer)
+        // leaves the cache in force - the same one frame, never a failed surface.
+        try {
+          const stored = await managementApi.readUiLanguagePreference();
+          if (stored.locale !== null) {
+            localeRef.current = stored.locale;
+            applyDocumentLocale(stored.locale);
+            persistLocale(stored.locale);
+          }
+        } catch {
+          // The first-paint cache stands in; nothing about the conversation depends on this read.
+        }
         const session = createReferencePipelineSession(pair.root.chat);
         setPreview(null);
         commit({ kind: "ready", root: pair.root, session, draft: pair.draft, locale: localeRef.current });
@@ -143,7 +164,7 @@ export function useComposedBootstrap(
       active = false;
       cancelledRef.current = true;
     };
-  }, [commit]);
+  }, [commit, managementApi]);
 
   /**
    * The pair a poll hop projects: the root's own read, which carries the draft's revision *and* its
