@@ -24,6 +24,7 @@ import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mj
 import { killedReasonCode, reclamationRecord } from "../../lib/live-run-teardown.mjs";
 import { appendTurnMemory, summarizeHostMemory, turnMemoryPoint } from "../../lib/live-run-memory.mjs";
 import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
+import { deliveryAccountClause, summarizeDeliveryAccount } from "../../lib/presentation-delivery-account.mjs";
 import {
   actionBreadthClause,
   buildSnapshotCensus,
@@ -48,6 +49,16 @@ import { STARDEW_PUBLISHED_ACTION_GATES } from "../../stardew-action-gate-descri
 import { DAILY_TASK_ROTATION, sweepTaskPrompts } from "../../lib/multiday-daily-tasks.mjs";
 
 const RUNNER_SOURCE = await readFile(new URL("./run-stardew-native-local-agent-ab-live.mjs", import.meta.url), "utf8");
+/**
+ * What the presentation evidence is in the fixtures below: nothing presented, and an account that says exactly that.
+ *
+ * `buildRunResult` decides its `delivery_account` clause on this object, so a fixture that stubbed it as `{ pieces: [] }`
+ * would be a run whose account cannot be READ - which is blocked by name (`delivery_account_absent`), never passed.
+ */
+const NOTHING_PRESENTED = Object.freeze({
+  pieces: [],
+  deliveryAccount: summarizeDeliveryAccount({ records: [], piecesProduced: 0 }),
+});
 // The baseline module's own text: the night-fact reader lives there (one authority for the minted `night_ended_*` shape),
 // so the assertion about how that shape is read belongs to the module rather than to the runner that calls it.
 const NIGHT_FACTS_SOURCE = await readFile(new URL("../../lib/multiday-baseline.mjs", import.meta.url), "utf8");
@@ -600,8 +611,12 @@ test("the run records chunked-presentation evidence so the presence mechanism is
   assert.match(RUNNER_SOURCE, /firstPieceTtfbMs/);
   // Computed in the ONE place a result is assembled (buildRunResult), so the crashed path reports it too: this used to
   // be a local of the success path, and the failure literal computed it a second time.
-  assert.match(RUNNER_SOURCE, /presentation: summarizePresentationEvidence\(\),/);
-  assert.doesNotMatch(RUNNER_SOURCE, /const presentation = summarizePresentationEvidence\(\);/);
+  // ONE derivation, made before the verdict because the verdict reads it: a run whose own piece count disagrees with
+  // its account cannot be `passed`, and the bundle publishes the object the clause was decided on.
+  assert.match(RUNNER_SOURCE, /const presentationEvidence = summarizePresentationEvidence\(\);/u);
+  assert.match(RUNNER_SOURCE, /presentation: presentationEvidence,/u);
+  assert.match(RUNNER_SOURCE, /deliveryAccountClause\(presentationEvidence\.deliveryAccount\)/u);
+  assert.doesNotMatch(RUNNER_SOURCE, /presentation: summarizePresentationEvidence\(\),/u);
   // Recorded before the single-shot voice gate: chunk evidence must not depend
   // on voice being enabled or on a piece being the first one.
   assert.doesNotMatch(RUNNER_SOURCE, /if \(voiceStarted \|\| typeof text/);
@@ -1600,6 +1615,7 @@ test("the assembly logs a tool-timing disagreement by name", async () => {
       // and hands it to its own clause, so a test of the builder supplies the real implementations.
       measureActionBreadth,
       actionBreadthClause,
+      deliveryAccountClause,
       readActionBreadthSurface,
       buildSnapshotCensus,
       snapshotFamilyRows: new Map(),
@@ -1621,7 +1637,7 @@ test("the assembly logs a tool-timing disagreement by name", async () => {
       historianRubricOutcome: null,
       runSessionRecord: Object.freeze({ path: "/tmp/session.jsonl", reason: null }),
       summarizeActionCadence: () => ({ spans: [] }),
-      summarizePresentationEvidence: () => ({ pieces: [] }),
+      summarizePresentationEvidence: () => NOTHING_PRESENTED,
       // The reader's own answer for a violated invariant, verbatim: this test is about the assembly NAMING the violation
       // and publishing the withheld shape, not about re-reading a record.
       readToolTiming: () => ({
@@ -2859,6 +2875,7 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
       // and hands it to its own clause, so a test of the builder supplies the real implementations.
       measureActionBreadth,
       actionBreadthClause,
+      deliveryAccountClause,
       readActionBreadthSurface,
       buildSnapshotCensus,
       snapshotFamilyRows: new Map(),
@@ -2884,7 +2901,7 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
       historianRubricOutcome: null,
       runSessionRecord: Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" }),
       summarizeActionCadence: () => ({ spans: [] }),
-      summarizePresentationEvidence: () => ({ pieces: [] }),
+      summarizePresentationEvidence: () => NOTHING_PRESENTED,
       readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
       buildFailureSnapshot: (input) => input,
       writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
@@ -2966,6 +2983,7 @@ test("a run whose work all went through programs publishes a non-empty attempted
       // and hands it to its own clause, so a test of the builder supplies the real implementations.
       measureActionBreadth,
       actionBreadthClause,
+      deliveryAccountClause,
       readActionBreadthSurface,
       buildSnapshotCensus,
       snapshotFamilyRows: new Map(),
@@ -3001,7 +3019,7 @@ test("a run whose work all went through programs publishes a non-empty attempted
       historianRubricOutcome: null,
       runSessionRecord: Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" }),
       summarizeActionCadence: () => ({ spans: [] }),
-      summarizePresentationEvidence: () => ({ pieces: [] }),
+      summarizePresentationEvidence: () => NOTHING_PRESENTED,
       readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
       buildFailureSnapshot: (input) => input,
       writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
@@ -3069,6 +3087,7 @@ test("an error that escapes the run still publishes the work it had already reco
       // and hands it to its own clause, so a test of the builder supplies the real implementations.
       measureActionBreadth,
       actionBreadthClause,
+      deliveryAccountClause,
       readActionBreadthSurface,
       buildSnapshotCensus,
       snapshotFamilyRows: new Map(),
@@ -3093,7 +3112,7 @@ test("an error that escapes the run still publishes the work it had already reco
       SCENARIO: "multiday_routine",
       LEGACY_LADDER: null,
       summarizeActionCadence: () => ({ spans: [] }),
-      summarizePresentationEvidence: () => ({ pieces: [] }),
+      summarizePresentationEvidence: () => NOTHING_PRESENTED,
       buildFailureSnapshot,
       classifyFailure,
       buildRunObservation: (input) => input,
@@ -3279,6 +3298,7 @@ test("a run interrupted from outside publishes its own verdict, with the evidenc
         // and hands it to its own clause, so a test of the builder supplies the real implementations.
         measureActionBreadth,
         actionBreadthClause,
+        deliveryAccountClause,
         readActionBreadthSurface,
         buildSnapshotCensus,
         snapshotFamilyRows: new Map(),
@@ -3312,7 +3332,7 @@ test("a run interrupted from outside publishes its own verdict, with the evidenc
         SCENARIO: "multiday_routine",
         LEGACY_LADDER: null,
         summarizeActionCadence: () => ({ spans: [] }),
-        summarizePresentationEvidence: () => ({ pieces: [] }),
+        summarizePresentationEvidence: () => NOTHING_PRESENTED,
         buildFailureSnapshot,
         classifyFailure,
         writeFileSync: () => {},
@@ -3758,6 +3778,7 @@ function builderGlobals(overrides = {}) {
     // a test pass against a world the runner could never produce.
     measureActionBreadth,
     actionBreadthClause,
+    deliveryAccountClause,
     readActionBreadthSurface,
     buildSnapshotCensus,
     snapshotFamilyRows: new Map(),
@@ -3779,7 +3800,7 @@ function builderGlobals(overrides = {}) {
     historianRubricOutcome: null,
     runSessionRecord: Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" }),
     summarizeActionCadence: () => ({ spans: [] }),
-    summarizePresentationEvidence: () => ({ pieces: [] }),
+    summarizePresentationEvidence: () => NOTHING_PRESENTED,
     readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
     buildFailureSnapshot: (input) => input,
     writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
@@ -4172,4 +4193,27 @@ test("the observation block counts executions from both channels, and says `not_
   assert.equal(unread.actionCount, null);
   assert.equal(unread.executionChannels, null);
   assert.match(unread.actionCountNotMeasured ?? "", /no_program_journal_read/u);
+});
+
+test("the day's shortage fact is composed once, on the first turn, and published beside the task verdicts", () => {
+  // The runner must hand the fact over through the module whose once-ness is testable, not re-compose the sentence
+  // here: a second spelling of the composition is how a fact quietly becomes an instruction on every turn.
+  assert.match(
+    RUNNER_SOURCE,
+    /import \{ dayPromptWithFact, seedShortageFact \} from "\.\.\/\.\.\/lib\/seed-shortage\.mjs"/,
+  );
+  assert.match(RUNNER_SOURCE, /const withDayFact = \(prompt, fact\) => dayPromptWithFact\(prompt, fact, localeKey\)/);
+  // ONCE PER DAY: the fact is computed under the first-turn guard, from the world as it stands then.
+  assert.match(
+    RUNNER_SOURCE,
+    /const dayFact =\s*turns === 1\s*\?\s*seedShortageFact\(\{/,
+    "the fact is computed on the day's first turn and on no other turn",
+  );
+  assert.match(RUNNER_SOURCE, /taskId: taskForDay\(day\),\s*snapshot: client\.state\?\.snapshot \?\? null,/);
+  // And the first-turn prompt is the one that carries it: a fact appended to a continuation turn would repeat.
+  assert.match(RUNNER_SOURCE, /turns === 1\s*\?\s*withDayFact\(promptForDay\(day\), dayFact\)/);
+  // Published, so "she was handed the supply and did not go" is distinguishable from "nothing ever told her".
+  assert.match(RUNNER_SOURCE, /const seedFacts = \[\];/);
+  assert.match(RUNNER_SOURCE, /if \(dayFact !== null\) seedFacts\.push\(Object\.freeze\(\{ day, \.\.\.dayFact \}\)\);/);
+  assert.match(RUNNER_SOURCE, /\n    seedFacts,/);
 });

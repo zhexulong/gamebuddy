@@ -121,6 +121,14 @@ export function describeDeliveryAccount(account) {
 
 /** The rung clause: a run whose own commitment count disagrees with its account is not a passed run. */
 export function deliveryAccountClause(account) {
+  // An account that could not be read is not an account that agreed: a missing one blocks by name rather than throwing
+  // inside the verdict or, worse, passing because there was nothing to compare.
+  if (account === undefined || account === null)
+    return Object.freeze({
+      id: "delivery_account",
+      passed: false,
+      reasonCode: "delivery_account_absent",
+    });
   return Object.freeze({
     id: "delivery_account",
     passed: account.blocked === null,

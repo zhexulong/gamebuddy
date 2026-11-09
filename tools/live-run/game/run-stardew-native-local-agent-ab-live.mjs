@@ -71,6 +71,12 @@ import {
   resolveVoiceConfiguration,
 } from "../../lib/voice-gateway-launch.mjs";
 import { assessCompanionInteraction, assessSpokenUtterances } from "../../lib/companion-interaction-gate.mjs";
+import {
+  deliveryAccountClause,
+  describeDeliveryAccount,
+  readTurnDeliveryRecords,
+  summarizeDeliveryAccount,
+} from "../../lib/presentation-delivery-account.mjs";
 import { assertLiveRunArtifactFresh } from "../../lib/live-run-artifact-freshness.mjs";
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
 import { redactLiveRunText } from "../core/capture-text.mjs";
@@ -910,6 +916,28 @@ let presentedSummary = null;
 // agent turn was accepted, so the first piece's time-to-first-bubble is
 // measurable instead of inferred.
 const presentationPieces = [];
+/**
+ * Everything this process has written to stderr, so the Host's own artifact lines can be read back.
+ *
+ * The Host publishes ONE `NATIVE_COMPANION_TURN_DELIVERY` line per turn that had anything to deliver
+ * (`host/dist-test/companion-loop.js`, over the same channel as `BODY_PROGRAM_MOUNT`), and that line is the only place
+ * the run states which parts a turn produced and which pieces it committed. The bundle has to reconcile those against
+ * the pieces this harness's own presentation port counted (`presentation.pieceCount`), and the line exists exactly
+ * once - in the log - so it is kept as it is written rather than re-derived from a different population.
+ *
+ * MEASURED 2026-11-09 (round41): 59 pieces presented, and the thirteen delivery records in the log accounted 46 parts
+ * with `unaccounted: 0`. Both numbers were right (11 reaction sounds, 46 paragraphs, 2 extra pieces from a paragraph the
+ * length budget split) and the bundle could not say so, so a reader reported thirteen pieces - a whole turn - with no
+ * record. See `tools/lib/presentation-delivery-account.mjs`.
+ */
+const hostLogChunks = [];
+{
+  const write = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk, encoding, callback) => {
+    hostLogChunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"));
+    return write(chunk, encoding, callback);
+  };
+}
 // What the companion said to each scripted player line, keyed by gate id. A gate with no entry is `not_exercised` -
 // the run never reached that moment - which is a different finding from a bad answer.
 const dialogueReplies = new Map();
@@ -1298,6 +1326,16 @@ function summarizeExecutionOutcomes({ facts, actionOfRequest, terminalReasonCode
  * the presentation layer actually did.
  */
 function summarizePresentationEvidence() {
+  // The run does not get to decide whether its own account adds up: the pieces are counted where they were committed
+  // (the port above) and the account is read back out of the Host's own lines, so the two cannot be the same
+  // derivation. `DELIVERY_ACCOUNT` is printed once per run, in words, so the answer is in the log as well as the bundle.
+  const delivery = readTurnDeliveryRecords(hostLogChunks.join(""));
+  const deliveryAccount = summarizeDeliveryAccount({
+    records: delivery.records,
+    unparsable: delivery.unparsable,
+    piecesProduced: presentationPieces.length,
+  });
+  console.error("DELIVERY_ACCOUNT", describeDeliveryAccount(deliveryAccount));
   return Object.freeze({
     // Each piece carries `atMs` on the run clock, and the turn's own start is published beside them, so a reader can
     // place a spoken line against a dispatch instead of only against its own turn. Before this the silence gate had
@@ -1309,6 +1347,10 @@ function summarizePresentationEvidence() {
     firstPieceTtfbMs: presentationPieces.length > 0 ? presentationPieces[0].elapsedMs : null,
     // A turn that arrived as one wall at the end vs several pieces over time.
     chunked: presentationPieces.length > 1,
+    // Every committed piece accounted for, in the unit it was committed in: the presented paragraphs, the pieces a
+    // paced surface emitted ahead of them, and whatever is left over. A non-zero remainder is a blocked run (the
+    // `delivery_account` clause), not a number a reader has to notice.
+    deliveryAccount,
   });
 }
 /** Exact configuration answer for voice in this run; `enabled:false` carries the reason. */
@@ -5505,12 +5547,22 @@ async function buildRunResult({
   // reason - a red flag nothing consumed is decoration, so it is a clause now and `state` cannot outrun it.
   // `action_breadth` sits just before it: it is a claim about WHICH actions the executions were, so it belongs after
   // every claim about whether the run worked at all and before the clause that says whether the record can be trusted.
+  // ONE derivation of what the presentation layer did, made BEFORE the verdict because the verdict reads it: a run
+  // whose own commitment count disagrees with its account cannot be a passed run, and the bundle publishes the same
+  // object the clause was decided on.
+  const presentationEvidence = summarizePresentationEvidence();
   const rung =
     rungClauses === null
       ? null
       : deriveRungVerdict([
           ...rungClauses,
           actionBreadthClause(actionBreadth),
+          // The run's own delivery account, beside the ledger's: `presentation.pieceCount` pieces were committed and
+          // every one of them has to be either a presented paragraph, a piece emitted ahead of one, or a named
+          // remainder. Round41 published 59 pieces and thirteen records accounting 46 parts with nothing said about
+          // the difference, and a reader reported a whole turn missing. Publishing the account without deciding
+          // anything on it is what let that read as fine.
+          deliveryAccountClause(presentationEvidence.deliveryAccount),
           Object.freeze({
             id: "execution_trace",
             passed: executionTrace.ok === true,
@@ -5649,7 +5701,7 @@ async function buildRunResult({
     providerReadiness,
     // What the presentation layer did: every committed companion_text piece in arrival order with its elapsed time,
     // so `firstPieceTtfbMs` (the headline TTFB target) survives however the run ended.
-    presentation: summarizePresentationEvidence(),
+    presentation: presentationEvidence,
     // The run's own memory, as the bundle publishes it and as the auditor reads it. The sampler has measured this all
     // along; until now it reached a terminal log and nothing else, so a memory question had to be answered from a log
     // that is not the artifact (measured 2026-11-09, `round40`: 46 samples, no field).

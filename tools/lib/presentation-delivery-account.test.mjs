@@ -41,6 +41,12 @@ test("a piece the account never named blocks the run and says which two numbers 
     passed: false,
     reasonCode: "delivery_account_unaccounted_pieces",
   });
+  // An account that could not be read blocks by name instead of throwing inside the verdict or passing on nothing.
+  assert.deepEqual(deliveryAccountClause(undefined), {
+    id: "delivery_account",
+    passed: false,
+    reasonCode: "delivery_account_absent",
+  });
 });
 
 test("a part no layer named is its own block, in the parts population", () => {
