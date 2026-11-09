@@ -306,7 +306,11 @@ function requireStringArray(value, code, allowEmpty = false) {
 }
 
 function parseModProvenance(bridgeSession, executionController) {
-  const hello = /FarmhandActionCatalog\.Registrations\.Select\(registration\s*=>\s*new FarmhandActionRegistrationWire\(/.test(
+  // THE HELLO ADVERTISES THE MOD'S REGISTRATION CATALOGS, and there are two of them: the published ACTIONS, and the
+  // plan FORMS (`FarmhandPlanFormCatalog`) that are admitted as program nodes without being dispatchable actions. Both
+  // are Mod-owned catalogs projected through the one `FarmhandActionRegistrationWire` shape, which is what
+  // `helloAdvertisement: "catalog_projection"` means - never a hand-written list of ids in the Mod or in this producer.
+  const hello = /FarmhandActionCatalog\.Registrations\.Concat\(FarmhandPlanFormCatalog\.Registrations\)\.Select\(\s*registration\s*=>\s*new FarmhandActionRegistrationWire\(/u.test(
     bridgeSession,
   );
   if (!hello) fail("hello_advertisement_missing");

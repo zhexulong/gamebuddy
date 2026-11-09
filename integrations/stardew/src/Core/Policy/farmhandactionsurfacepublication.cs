@@ -110,7 +110,14 @@ public static class FarmhandActionSurfacePublication
         return Array.AsReadOnly(FarmhandActionCatalog.Registrations.Select(ProjectAction).ToArray());
     }
 
-    private static FarmhandActionDescriptorProjection ProjectAction(FarmhandActionRegistration registration)
+    /// <summary>
+    /// One registration projected into the artifact shape.
+    ///
+    /// Internal rather than private because the plan forms are projected through THIS function
+    /// (<see cref="FarmhandPlanFormCatalog"/>): a form's descriptor is read by the same code as an action's, so a
+    /// descriptor rule cannot be true of one and false of the other.
+    /// </summary>
+    internal static FarmhandActionDescriptorProjection ProjectAction(FarmhandActionRegistration registration)
     {
         ArgumentNullException.ThrowIfNull(registration);
         ValidateIdentity(registration.ActionId, nameof(registration.ActionId));

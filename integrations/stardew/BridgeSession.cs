@@ -249,7 +249,7 @@ string? bodyProgramUnavailableReason = null,
              new FarmhandPolicyIdentityWire(publication.PolicyIdentity.Value, publication.CapabilityRevision),
              capabilitySet.EnabledActionIds,
             locale,
-             FarmhandActionCatalog.Registrations.Select(registration => new FarmhandActionRegistrationWire(
+             FarmhandActionCatalog.Registrations.Concat(FarmhandPlanFormCatalog.Registrations).Select(registration => new FarmhandActionRegistrationWire(
                  registration.ActionId,
                  registration.FamilyId,
                  registration.IdentityVersion,

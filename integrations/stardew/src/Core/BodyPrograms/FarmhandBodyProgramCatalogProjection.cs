@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Linq;
 using GameBuddy.Stardew.Core.Policy;
 
 namespace GameBuddy.Stardew.Core.BodyPrograms;
@@ -25,10 +26,29 @@ public sealed record FarmhandBodyProgramCatalogProjectionResult(
 /// <summary>Projects the bounded offline Body Program catalog directly from Mod-owned registrations.</summary>
 public static class FarmhandBodyProgramCatalogProjection
 {
+    /// <summary>
+    /// The catalog the Mod actually runs: its actions, plus its plan forms.
+    ///
+    /// THE PLAN FORMS ARE PART OF THE SAME CATALOG. A form node is admitted, verified and journaled exactly like an
+    /// action node, so it must be a catalog member or the verifier refuses it as `unknown_action`. It is projected
+    /// through the SAME descriptor projection an action uses, so no descriptor rule can hold for one and not the other.
+    /// `FarmhandActionSurfacePublication.Actions` deliberately does NOT carry them: the action surface artifact is what
+    /// the Host builds tools and argument contracts from, and a form is not an action.
+    /// </summary>
     public static FarmhandBodyProgramCatalogProjectionResult Create() =>
-        Create(FarmhandActionSurfaceExport.CreateArtifact());
+        Create(FarmhandActionSurfaceExport.CreateArtifact(), FarmhandPlanFormCatalog.Registrations);
 
-    internal static FarmhandBodyProgramCatalogProjectionResult Create(FarmhandActionDescriptorArtifact artifact)
+    /// <summary>
+    /// Projects ONE supplied artifact, with the given extra registrations.
+    ///
+    /// The artifact stays a parameter so the projection rules can be pinned against a synthetic surface (a read-only
+    /// registration, an unmappable claim, a disallowed lifecycle) without the Mod's own catalog in the way. Production
+    /// passes <see cref="Create()"/>'s artifact and the plan forms; a caller that supplies an artifact alone is asking
+    /// about that artifact.
+    /// </summary>
+    internal static FarmhandBodyProgramCatalogProjectionResult Create(
+        FarmhandActionDescriptorArtifact artifact,
+        IReadOnlyList<FarmhandActionRegistration>? planForms = null)
     {
         ArgumentNullException.ThrowIfNull(artifact);
         if (artifact.Schema != FarmhandActionSurfaceExport.Schema)
@@ -38,7 +58,9 @@ public static class FarmhandBodyProgramCatalogProjection
 
         List<FarmhandBodyProgramCatalogProjectionRejection> rejections = new();
         List<BodyProgramActionDescriptor> accepted = new();
-        foreach (FarmhandActionDescriptorProjection source in artifact.Actions)
+        IEnumerable<FarmhandActionDescriptorProjection> sources = artifact.Actions.Concat(
+            (planForms ?? Array.Empty<FarmhandActionRegistration>()).Select(FarmhandActionSurfacePublication.ProjectAction));
+        foreach (FarmhandActionDescriptorProjection source in sources)
         {
             if (source.Kind == FarmhandOperationKind.ReadOnly.ToWireValue())
             {

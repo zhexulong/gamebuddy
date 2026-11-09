@@ -1053,7 +1053,13 @@ internal static class BodyProgramVerifier
                 diagnostics.Add(Error(Named("unknown_action", node.ActionId), node.NodeId, path + "/actionId",
                     $"'{node.ActionId}' cannot be a Body Program node: only published or live-verified execution actions with a scalar value contract are projected. Dispatch it as a single action instead.",
                     BodyProgramFailedPrecondition.ActionRegistration, "published_or_live_verified_execution_action", node.ActionId));
-            else if (restrictiveActionIds is not null && !restrictiveActionIds.Contains(node.ActionId))
+            // A PLAN FORM IS ADMITTED AS A FORM, NOT AS AN ACTION. It is not in the live action policy's enabled set
+            // because it is not an action - it expands into many - so the policy gate belongs to its ROWS, checked one
+            // by one at dispatch (`row_action_not_enabled:<actionId>`) rather than to the form. The bypass is spelled as
+            // a membership test against `FarmhandPlanFormCatalog`, so an ordinary action id can never take it:
+            // `BodyProgramPlanFormPolicyTests` fails if one does.
+            else if (restrictiveActionIds is not null && !restrictiveActionIds.Contains(node.ActionId)
+                && !FarmhandPlanFormCatalog.IsPlanForm(node.ActionId))
                 diagnostics.Add(Error(Named("action_not_enabled", node.ActionId), node.NodeId, path + "/actionId",
                     $"'{node.ActionId}' is not enabled by the live action policy on this snapshot.",
                     BodyProgramFailedPrecondition.LiveActionPolicy, "enabled_by_live_action_policy", node.ActionId));
