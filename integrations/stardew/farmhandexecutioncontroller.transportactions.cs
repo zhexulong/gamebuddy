@@ -6,6 +6,7 @@ using StardewValley.Tools;
 using StardewValley.Characters;
 using StardewValley.Locations;
 using GameBuddy.Stardew.Core.Models;
+using MineFloorCapability = GameBuddy.Stardew.Core.MineFloorCapability;
 
 namespace GameBuddy.Stardew;
 
@@ -261,6 +262,10 @@ internal sealed partial class ExecutionManager
             MineLadderTargetResolution ladder = ResolveMineLadderTarget(location, targetX, targetY, expectedTargetId, MineLadderKind.Descend);
             if (!ladder.Accepted)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, ladder.RefusalCode, ladder.Evidence);
+            // The floor, before the walk: a descent this surface cannot answer is refused at the request too, because
+            // walking to the ladder first costs a turn and teaches the caller nothing it was not just told.
+            if (this.RefuseDescentIntoMonsters(requestId, executionId, location, ((MineShaft)location).mineLevel + 1, attempt: "ladder_request") is { } refusedDescent)
+                return refusedDescent;
             // 5.2: the ladder is a tile of the level the actor is standing on, so out of the native radius means walk
             // in, not refuse. Identity and reach are re-read on arrival from the live layer.
             if (!IsTileWithinChebyshevRadius(Game1.player, ladder.TileX, ladder.TileY, 1))
@@ -297,6 +302,10 @@ internal sealed partial class ExecutionManager
 
         MineShaft shaft = (MineShaft)location;
         int descentLevel = shaft.mineLevel + 1;
+        // Re-asked on the GAME THREAD at the swing, not only at the request: the floor is native state, and the only
+        // place it can be read for the act is here.
+        if (this.RefuseDescentIntoMonsters(requestId, executionId, location, descentLevel, attempt: "ladder") is { } refusedDescent)
+            return refusedDescent;
         Game1.enterMine(descentLevel);
         if (Game1.player.currentLocation is MineShaft descended && descended.mineLevel == descentLevel)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "mine_entered", $"level={descended.mineLevel};tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};from_level={shaft.mineLevel}");
@@ -323,6 +332,10 @@ internal sealed partial class ExecutionManager
                 $"tile={entrance.TileX},{entrance.TileY};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1;approach=did_not_arrive");
 
         int declaredLevel = entrance.DeclaredLevel;
+        // The entrance map declares which floor it enters (`case "Mine"`, GameLocation.cs:9807-9816), so that value is
+        // the one this surface has to be able to answer.
+        if (this.RefuseDescentIntoMonsters(requestId, executionId, location, declaredLevel, attempt: "entrance") is { } refusedEntrance)
+            return refusedEntrance;
         // Enter through the public native entry (the M8-frozen seam) with the
         // level this exact tile declares; the checks above already proved it is a
         // mine entrance and that its declared level is readable.
@@ -338,6 +351,61 @@ internal sealed partial class ExecutionManager
         this.Remember(accepted);
         this.AddTrace(accepted);
         return accepted;
+    }
+
+    /// <summary>
+    /// The refusal for a descent into a floor this surface cannot answer, or null when the engine keeps that floor
+    /// monster-free.
+    ///
+    /// <para>
+    /// The published action surface has no combat action, so a floor that spawns hostiles asks for a capability that
+    /// does not exist. Descending into one is the shape of failure that costs a whole day: the companion is knocked out,
+    /// loses what it was carrying, and the receipt that promised `mine_entered` named nothing about it. The refusal
+    /// therefore names the FLOOR and the missing CAPABILITY, and nothing else about the descent is attempted.
+    /// </para>
+    /// <para>
+    /// The floor's own state is published beside it (`current_floor`, `hostiles`): whether a hostile is standing in
+    /// front of her right now is a live read of this level's own `characters`, and it is a fact she needs whatever the
+    /// answer about the next floor turns out to be. What is deliberately NOT done is predicting the target floor's roll -
+    /// that draw belongs to `MineShaft.loadLevel`, and a second copy of it here would be a second authority over it.
+    /// </para>
+    /// <para>
+    /// <paramref name="attempt"/> names which seam asked (`ladder_request`, `ladder`, `entrance`, `elevator`), so a
+    /// receipt that refused before the walk and one that refused at the swing are distinguishable.
+    /// </para>
+    /// </summary>
+    private LocalExecutionReceipt? RefuseDescentIntoMonsters(
+        string requestId,
+        string executionId,
+        GameLocation location,
+        int targetFloor,
+        string attempt)
+    {
+        if (MineFloorCapability.IsMonsterFree(targetFloor))
+            return null;
+        return this.RememberTerminal(
+            requestId,
+            executionId,
+            ExecutionState.Rejected,
+            MineFloorCapability.RefusalReasonCode,
+            $"{MineFloorCapability.DescribeRefusal(targetFloor)};attempt={attempt};{DescribeHostilesOnCurrentFloor(location)}");
+    }
+
+    /// <summary>
+    /// Where she is standing and how many hostiles are on THAT floor, from the level's own character list - the one
+    /// place the engine keeps them (<c>GameLocation.characters</c>), read rather than predicted.
+    /// </summary>
+    private static string DescribeHostilesOnCurrentFloor(GameLocation location)
+    {
+        int hostiles = 0;
+        foreach (NPC character in location.characters)
+        {
+            if (character is StardewValley.Monsters.Monster)
+                hostiles += 1;
+        }
+
+        int floor = location is MineShaft shaft ? shaft.mineLevel : 0;
+        return $"current_floor={floor};hostiles={hostiles}";
     }
 
     /// <summary>

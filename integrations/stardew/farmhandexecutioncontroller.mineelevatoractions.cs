@@ -210,6 +210,13 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 "mine_elevator_floor_already_current",
                 $"floor={floorToSelect}");
 
+        // A floor this surface cannot answer is refused BY NAME before the warp, exactly like the ladder descent:
+        // the elevator is just a shorter route to the same hostile floor. Floor 0 is the mine ENTRANCE map - the way
+        // out - so it is not a descent and this guard does not apply to it.
+        if (floorToSelect != 0
+            && this.RefuseDescentIntoMonsters(request.RequestId, executionId, shaft, floorToSelect, attempt: "elevator") is { } refusedFloor)
+            return refusedFloor;
+
         // Floor 0 targets the mine entrance map; every other floor targets a
         // generated level, and the native layout repositions the actor on arrival,
         // so the postcondition for those is "reached the level", not a fixed tile.

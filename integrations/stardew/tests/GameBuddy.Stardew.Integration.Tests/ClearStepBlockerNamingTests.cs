@@ -28,8 +28,9 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class ClearStepBlockerNamingTests
 {
     /// <summary>
-    /// (a) A weed on the only route: the refusal names the WEED, the action of ours whose declared kind accepts it, the
-    /// id the frame published for it, and the tile the caller must stand on to clear it.
+    /// The NON-DESTRUCTIVE case, which must not regress: the refusal still answers with the action that clears it - now
+    /// with the PRICE of that dispatch beside it, and with the other branch (`detour_steps`) so the caller can weigh the
+    /// two.
     /// </summary>
     [Fact]
     public void AWeedOnTheOnlyRouteIsNamedWithTheActionThatClearsIt()
@@ -46,9 +47,40 @@ public sealed class ClearStepBlockerNamingTests
             "the engine's own name for the occupant, not a word the costing table invented");
         evidence.Should().Contain("clears_with=cut_weeds",
             "the caller must be able to clear it in the next plan without another observation round-trip");
+        evidence.Should().Contain("stamina:0,tool:scythe,turns:1",
+            "and what that dispatch costs: a scythe swing charges no stamina (MeleeWeapon has no charge) and takes one turn");
+        evidence.Should().Contain("detour_steps=none",
+            "one corridor has no way around it, and the refusal has to say that rather than leave it to be guessed");
         evidence.Should().Contain("blocker_target=weed_",
             "the id the frame published for that weed, so the clearing action can be addressed by it");
         evidence.Should().Contain("stand_at=5,3", "and where she must stand to swing at it");
+    }
+
+    /// <summary>
+    /// (a) THE shape the operator met in play: a bush is in the way. It blocks a body, no priced tool removes it, and
+    /// `harvest_bush` is a HARVEST that declares no `Clears` - so the refusal must say there is no action for it and
+    /// offer the other branch, instead of describing the tile as a wall (`blocked_by=none`) or advertising a harvest as
+    /// a way through.
+    /// </summary>
+    [Fact]
+    public void ABushOnTheOnlyRouteIsNamedAsHavingNoPublishedActionAndOffersTheWalkInstead()
+    {
+        using ClearStepMoveTests.CorridorHarness harness = ClearStepMoveTests.CorridorHarness.Create();
+        harness.BuildCorridor();
+        harness.PlaceBush(6, 3);
+
+        (string code, string? evidence) = harness.Refuse(fromX: 2, fromY: 3);
+
+        code.Should().Be(StardewBodyController.NoNativePathReasonCode);
+        evidence.Should().NotBeNull();
+        evidence!.Should().Contain("blocker_occupant=bush",
+            "the thing actually in the way, named from the engine's large terrain feature");
+        evidence.Should().Contain("clears_with=no_published_action_clears:bush",
+            "harvest_bush harvests a bush rather than clearing a path through one, so nothing we publish removes it");
+        evidence.Should().NotContain("clears_with=harvest_bush",
+            "a harvest advertised as a way through would be advice the action cannot honour");
+        evidence.Should().Contain("reachable=5,3;detour_steps=3",
+            "the other branch, measured: three steps of walking reach 5,3, and that is as close as she can get");
     }
 
     /// <summary>
@@ -92,8 +124,8 @@ public sealed class ClearStepBlockerNamingTests
         harness.PlaceWeed(6, 3);
 
         harness.BlindController().DescribeBlocker(harness.Actor, (6, 3)).Should().Be(
-            $"blocker_occupant=weed;clears_with=cut_weeds;blocker_target={harness.WeedTargetId(6, 3)}",
-            "the weed's own engine name, the one action that declares it clears weeds, and the id the frame carries");
+            $"blocker_occupant=weed@6,3;clears_with=cut_weeds(stamina:0,tool:scythe,turns:1);blocker_target={harness.WeedTargetId(6, 3)}",
+            "the weed's own engine name and tile, the one action that declares it clears weeds with that dispatch's price, and the id the frame carries");
     }
 
     [Fact]
@@ -104,8 +136,8 @@ public sealed class ClearStepBlockerNamingTests
         harness.PlaceRock(6, 3);
 
         harness.BlindController().DescribeBlocker(harness.Actor, (6, 3)).Should().Be(
-            "blocker_occupant=quarry_boulder;clears_with=clear_debris,break_resource_clump;blocker_target=blocker_not_published",
-            "both clump actions declare it, and neither can address it by an id this frame never published");
+            "blocker_occupant=quarry_boulder@6,3;clears_with=clear_debris(stamina:4,tool:target_requirement,turns:1),break_resource_clump(stamina:4,tool:target_requirement,turns:1);blocker_target=blocker_not_published",
+            "both clump actions declare it, at the engine's own pickaxe charge (2 * (power + 1) - MiningLevel * 0.1 = 4 at a bare pickaxe and Mining 0), and neither can address it by an id this frame never published");
     }
 
     /// <summary>
@@ -125,11 +157,48 @@ public sealed class ClearStepBlockerNamingTests
             .Where(registration => registration.ActionId != "cut_weeds")
             .ToArray();
 
-        ClearingActionSurface.ActionsThatClear("weed", surfaceWithoutCutWeeds).Should().BeEmpty();
+        ClearingActionSurface.ClearersOf("weed", surfaceWithoutCutWeeds).Should().BeEmpty();
 
-        string described = ClearingEvidence.DescribeBlocker("weed", targetId: null, ClearingActionSurface.ActionsThatClear("weed", surfaceWithoutCutWeeds));
+        string described = ClearingEvidence.DescribeBlocker(
+            "weed",
+            (6, 3),
+            targetId: null,
+            clearers: ClearingActionSurface.ClearersOf("weed", surfaceWithoutCutWeeds),
+            staminaCharge: 0,
+            detourFacts: null);
         described.Should().Contain("clears_with=no_published_action_clears:weed",
             "the code alphabet the wire accepts, and the occupant the caller can name back to us");
+    }
+
+    /// <summary>
+    /// The bush, driven straight through the formatter: no price is quoted for a branch that does not exist, and the
+    /// walk the caller DOES have is offered in the same breath.
+    /// </summary>
+    [Fact]
+    public void ABushQuotesNoClearPriceAndTheWalkInstead()
+    {
+        string described = ClearingEvidence.DescribeBlocker(
+            "bush",
+            (6, 3),
+            targetId: null,
+            clearers: ClearingActionSurface.ClearersOf("bush", FarmhandActionCatalog.Registrations),
+            staminaCharge: null,
+            detourFacts: ClearingEvidence.DescribeDetour((5, 3), 3));
+
+        described.Should().Be(
+            "blocker_occupant=bush@6,3;clears_with=no_published_action_clears:bush;blocker_target=blocker_not_published;reachable=5,3;detour_steps=3",
+            "nothing to swing at, no invented price for it, and the measured walk in its place");
+    }
+
+    /// <summary>
+    /// A branch that was never offered is stated as `none`, not as a zero: `detour_steps=0` would read as "you are
+    /// already there", which is the opposite of what an enclosed route means.
+    /// </summary>
+    [Fact]
+    public void NoReachableTileIsSaidInWords()
+    {
+        ClearingEvidence.DescribeDetour(null, null).Should().Be("detour_steps=none");
+        ClearingEvidence.DescribeDetour((5, 3), null).Should().Be("detour_steps=none");
     }
 
     /// <summary>
@@ -146,8 +215,32 @@ public sealed class ClearStepBlockerNamingTests
     [InlineData("stump", "clear_debris")]
     public void ThePublishedSurfaceNamesTheActionThatClearsEachOccupant(string occupant, string actionId)
     {
-        ClearingActionSurface.ActionsThatClear(occupant, FarmhandActionCatalog.Registrations)
+        ClearingActionSurface.ClearersOf(occupant, FarmhandActionCatalog.Registrations)
+            .Select(offer => offer.ActionId)
             .Should().Contain(actionId);
+    }
+
+    /// <summary>
+    /// A gate over the catalog itself, not over today's rows: a `Clears` declaration that does not say what the swing
+    /// costs cannot be weighed against walking around, and "we never got round to it" is exactly how a price becomes a
+    /// guess. `turns` is one everywhere, because a clearing action IS one dispatched action.
+    /// </summary>
+    [Fact]
+    public void EveryClearingDeclarationStatesWhatTheSwingCosts()
+    {
+        FarmhandActionRegistration[] declaring = FarmhandActionCatalog.Registrations
+            .Where(registration => registration.Descriptor?.Clears is not null)
+            .ToArray();
+
+        declaring.Should().NotBeEmpty("the population must not be empty, or this gate agrees with itself");
+        foreach (FarmhandActionRegistration registration in declaring)
+        {
+            FarmhandClearingCost cost = registration.Descriptor!.Clears!.Cost;
+            cost.Tool.Should().NotBeNullOrWhiteSpace($"{registration.ActionId} declares a clearing without naming the tool it swings");
+            cost.Turns.Should().Be(1, $"{registration.ActionId} is one dispatched action, so its clear costs one turn");
+            registration.Descriptor!.Clears!.Occupants.Should().NotBeEmpty(
+                $"{registration.ActionId} declares a clearing price for no occupant at all");
+        }
     }
 
     /// <summary>
@@ -159,7 +252,7 @@ public sealed class ClearStepBlockerNamingTests
     public void EveryOccupantDeclarationNamesTheFamilyThatPublishesIt()
     {
         string[] offenders = FarmhandActionCatalog.Registrations
-            .Where(registration => registration.Descriptor?.Clears is { Count: > 0 }
+            .Where(registration => registration.Descriptor?.Clears is { Occupants.Count: > 0 }
                 && string.IsNullOrEmpty(registration.Descriptor.TargetFamily))
             .Select(registration => registration.ActionId)
             .ToArray();

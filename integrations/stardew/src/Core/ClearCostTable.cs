@@ -30,12 +30,16 @@ public static class ClearCostTable
     public static readonly IReadOnlyList<string> Kinds = new[] { "rock", "stump", "weed", "grass", "crop" };
 
     /// <summary>
-    /// The cost of clearing <paramref name="kind"/> on this actor, or <c>null</c> when the kind cannot be
-    /// cleared at all - water, a building, the map edge - which the search must treat as a wall.
+    /// The ENGINE's stamina charge for one swing of <paramref name="kind"/>, on this tool power and skill, or
+    /// <c>null</c> when the kind cannot be cleared at all.
+    ///
+    /// Split out from <see cref="Cost"/> because there are two readers with two questions: the clearing SEARCH wants
+    /// the search unit (charge plus the allowance below), and a refusal that tells a caller what a dispatch costs wants
+    /// the engine's own number, without a unit the engine never charges.
     /// </summary>
-    public static int? Cost(string kind, int toolPower, int skillLevel, bool efficient)
+    public static int? Stamina(string kind, int toolPower, int skillLevel, bool efficient)
     {
-        int? stamina = kind switch
+        int? charge = kind switch
         {
             // 2 * (power + 1) - level * 0.1
             "rock" => Charge(2 * (toolPower + 1), skillLevel),
@@ -45,11 +49,24 @@ public static class ClearCostTable
             "weed" or "grass" or "crop" => 0,
             _ => null,
         };
-        if (stamina is null)
+        // A kind no tool removes is a wall whatever the tool is enchanted with; only a CLEARABLE kind can be free.
+        if (charge is null)
+            return null;
+        // The efficient enchantment removes the charge entirely, which is the engine's own rule and not a discount.
+        return efficient ? 0 : charge;
+    }
+
+    /// <summary>
+    /// The cost of clearing <paramref name="kind"/> on this actor, or <c>null</c> when the kind cannot be
+    /// cleared at all - water, a building, the map edge - which the search must treat as a wall.
+    /// </summary>
+    public static int? Cost(string kind, int toolPower, int skillLevel, bool efficient)
+    {
+        if (Stamina(kind, toolPower, skillLevel, efficient) is not int stamina)
             return null;
         if (efficient)
             return Allowance;
-        return Math.Max(0, stamina.Value) + Allowance;
+        return Math.Max(0, stamina) + Allowance;
     }
 
     private static int Charge(int baseCharge, int skillLevel) =>

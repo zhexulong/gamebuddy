@@ -19,7 +19,7 @@ namespace GameBuddy.Stardew;
 /// WHY IT IS READ HERE AND NOT IN CORE. Core must stay free of the engine (see `CoreArchitectureTests`), so the pass takes
 /// the rows it is given. This is the one place that knows the engine's three containers, and it visits them in the engine's
 /// order - <c>resourceClumps</c>, then <c>objects</c>, then <c>terrainFeatures</c> - because a tile holds at most one of
-/// them, exactly as <c>StardewBodyController.ClearableAt</c> does.
+/// them, exactly as <c>StardewBodyController.OccupantAt</c> does.
 /// </para>
 /// <para>
 /// The KIND WORDS are <see cref="ClearableKind"/>'s and <see cref="FarmhandForEachKindActions"/>'s; nothing here invents a

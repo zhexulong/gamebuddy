@@ -3,6 +3,7 @@ using StardewValley;
 using StardewValley.Characters;
 using StardewValley.Pathfinding;
 using GameBuddy.Stardew.Core;
+using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Policy;
 
 namespace GameBuddy.Stardew;
@@ -25,11 +26,15 @@ internal delegate string? PublishedTargetIdLookup(Farmer localPlayer, string tar
 /// this process' Game1.player. It deliberately has no remote-player, teleport,
 /// or world-goal API. ExecutionManager is its sole owner.
 /// </summary>
+    // What the cardinal flood concluded about one goal. `ClosestToTargetSteps` is how many STEPS the flood took to
+    // reach `ClosestToTarget` - its own depth, not a Manhattan estimate - and it is published as `detour_steps`, so
+    // "go around it" carries a number a caller can weigh against a clear's stamina charge and one dispatched turn.
     internal readonly record struct ReachabilityVerdict(
         bool TargetEnclosed,
         bool ComponentContainsTarget = false,
         Point? ClosestToTarget = null,
-        int ComponentTiles = 0);
+        int ComponentTiles = 0,
+        int? ClosestToTargetSteps = null);
 
 internal sealed class StardewBodyController
 {
@@ -373,30 +378,234 @@ internal sealed class StardewBodyController
     }
 
     /// <summary>
-    /// What stands on the blocker's tile, which of our actions clears it, and the id the published frame carries for it.
+    /// What stands on the blocker's tile, which of our actions clears it and what that dispatch costs, the id the
+    /// published frame carries for it, and - when <paramref name="goalTile"/> is given - what it costs to leave it
+    /// alone.
     ///
     /// <para>
-    /// Empty when the tile is no longer priced by the clearing search - the one state in which this function has no
-    /// name to give. It runs on the arrival re-plan's own read of the world, through the SAME <see cref="ClearableAt"/> the
-    /// plan was made with, so the occupant it names and the blocker the plan resolved cannot be two different things.
+    /// Empty only when the tile holds nothing this walk can name. It runs on the arrival re-plan's own read of the
+    /// world, through the SAME <see cref="OccupantAt"/> the plan was made with, so the occupant it names and the blocker
+    /// the plan resolved cannot be two different things.
+    /// </para>
+    /// <para>
+    /// The two prices are the point. `clears_with=<action>(stamina:N,tool:T,turns:1)` is one branch and
+    /// `detour_steps=none` is the other: before this, a refusal published only the clear, so the only thing a caller
+    /// could do with it was swing. Measured `round40`: one weed, a four-way corridor, and the Agent swung rather than
+    /// walked because nothing said how far 'around' was.
     /// </para>
     /// <para>
     /// It decides nothing. Which action to dispatch, and whether to dispatch one at all, stays the caller's - this
     /// only stops the caller having to guess.
     /// </para>
     /// </summary>
-    internal string DescribeBlocker(Farmer localPlayer, (int X, int Y) blockerTile)
+    internal string DescribeBlocker(Farmer localPlayer, (int X, int Y) blockerTile, Vector2? goalTile = null)
     {
         if (localPlayer.currentLocation is not { } location)
             return string.Empty;
-        if (ClearableAt(location, localPlayer, new Vector2(blockerTile.X, blockerTile.Y)) is not { } priced)
+        if (OccupantAt(location, localPlayer, new Vector2(blockerTile.X, blockerTile.Y)) is not { } occupancy)
             return string.Empty;
-        string? targetId = this.publishedTargetId?.Invoke(localPlayer, priced.TargetFamily, blockerTile.X, blockerTile.Y);
-        return ClearingEvidence.DescribeBlocker(
-            priced.Occupant,
-            targetId,
-            ClearingActionSurface.ActionsThatClear(priced.Occupant, FarmhandActionCatalog.Registrations));
+        return this.DescribeObstruction(
+            localPlayer,
+            occupancy,
+            blockerTile,
+            goalTile is { } goal ? DescribeDetourFacts(localPlayer, goal) : null);
     }
+
+    /// <summary>
+    /// The named obstruction on the FRONTIER of the actor's own walkable component, nearest <paramref name="goalTile"/>,
+    /// with the same facts <see cref="DescribeBlocker"/> publishes - as a `;`-prefixed evidence suffix, or the empty
+    /// string when the component only ever touches walls and open ground.
+    ///
+    /// <para>
+    /// This is the refusal shape a clearing PLAN cannot reach. A priced blocker resolves to a clear step and is walked
+    /// to; a bush never does - no priced tool removes it, so the plan is `unreachable` and the receipt used to answer
+    /// with `blocked_by=none` about a tile the caller could not get past, which reads as "nothing is in the way". The
+    /// frontier is the honest answer without a plan: the tiles the actor can stand on, and the named thing just beyond
+    /// the last of them.
+    /// </para>
+    /// <para>
+    /// Nearest TO THE GOAL rather than to the actor, because the caller's question is about the route it asked for, and
+    /// a deterministic tie-break (`Y`, then `X`) because two runs over one world have to produce one receipt.
+    /// </para>
+    /// </summary>
+    internal string DescribeFrontierBlocker(Farmer localPlayer, Vector2 goalTile, string? detourFacts)
+    {
+        if (localPlayer.currentLocation is not { } location)
+            return string.Empty;
+        if (FindFrontierObstruction(localPlayer, goalTile) is not { } obstruction)
+            return string.Empty;
+        string facts = this.DescribeObstruction(localPlayer, obstruction.Occupant, obstruction.Tile, detourFacts);
+        return facts.Length == 0 ? string.Empty : $";{facts}";
+    }
+
+    /// <summary>
+    /// One named obstruction, priced or not, as the receipt words it. The one place those words are assembled, so the
+    /// blocker a walk arrived at and the blocker a walk never started for cannot be described differently.
+    /// </summary>
+    private string DescribeObstruction(
+        Farmer localPlayer,
+        Occupancy occupancy,
+        (int X, int Y) tile,
+        string? detourFacts)
+    {
+        string? targetId = this.publishedTargetId?.Invoke(localPlayer, occupancy.TargetFamily, tile.X, tile.Y);
+        return ClearingEvidence.DescribeBlocker(
+            occupancy.Occupant,
+            tile,
+            targetId,
+            ClearingActionSurface.ClearersOf(occupancy.Occupant, FarmhandActionCatalog.Registrations),
+            occupancy.StaminaCharge,
+            detourFacts);
+    }
+
+    /// <summary>
+    /// The refusal's HINT: everything a settled failure keeps. The evidence above is withheld once a failure settles
+    /// (ADR-006), so this is the only channel that reaches the model.
+    ///
+    /// <para>
+    /// Measured `round41`, 19:04-19:05: a navigation warped the actor to the Farm's north exit, whose only land route
+    /// was an 18-tile corridor closed at its far end by ONE weed. Eleven `move_to_tile` refusals followed in 59 seconds
+    /// and every hint said `closest=40,7;closest_distance=30` - a coordinate she adopted as her own position ("I'm stuck
+    /// at 40,7") - while `component_tiles`, `target_enclosed` and the weed's own name appeared in her session 0 times.
+    /// She lost 76 seconds and escaped by cutting weeds nothing had named.
+    /// </para>
+    /// <para>
+    /// So the hint carries the size of the route, the verdict, WHAT closes it and where, the action that opens it (or
+    /// the word that no action does), the tile a swing reaches it from, and what walking instead would cost. It is
+    /// composed in that order under the journal's own bound
+    /// (<see cref="BodyProgramValidation.MaximumNodeHintLength"/>): a hint longer than that is refused by the wire AND
+    /// the journal, which would make the refusal silent again - so the least important segment is dropped rather than
+    /// the whole field.
+    /// </para>
+    /// </summary>
+    private string DescribeRouteHint(
+        Farmer localPlayer,
+        LocalMoveSpec specification,
+        ReachabilityVerdict verdict,
+        string blockedBy)
+    {
+        var segments = new List<string>
+        {
+            // The pinned two answers of `RefusalHint`: the closest tile the flood reached, or the layer that refused
+            // the destination. Everything below is what that answer was missing.
+            RefusalHint(verdict.ClosestToTarget, specification.TargetTile, blockedBy),
+            $"component_tiles={verdict.ComponentTiles.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+            $"target_enclosed={verdict.TargetEnclosed.ToString().ToLowerInvariant()}",
+        };
+        // The step a swing would take, and the thing it would hit, through the SAME resolvers the receipt uses.
+        if (this.ResolveClearStep(localPlayer, specification.TargetTile) is { Step.ApproachTile: { } approach })
+            segments.Add($"stand_at={approach.X.ToString(System.Globalization.CultureInfo.InvariantCulture)},{approach.Y.ToString(System.Globalization.CultureInfo.InvariantCulture)}");
+        if (FindFrontierObstruction(localPlayer, specification.TargetTile) is { } obstruction)
+        {
+            segments.Add(ClearingEvidence.DescribeBlockerBrief(
+                obstruction.Occupant.Occupant,
+                obstruction.Tile,
+                ClearingActionSurface.ClearersOf(obstruction.Occupant.Occupant, FarmhandActionCatalog.Registrations)));
+        }
+        segments.Add(ClearingEvidence.DescribeDetour(
+            verdict.ClosestToTarget is Point reachable ? (reachable.X, reachable.Y) : null,
+            verdict.ClosestToTargetSteps));
+        return JoinWithinHintBound(segments);
+    }
+
+    /// <summary>
+    /// The segments joined by `;`, stopping before the journal's bound - the same bounded walk
+    /// `RouteReenteringBodyProgramExecutor` performs when it appends to a hint, so the Mod cannot mint a hint the wire
+    /// will refuse.
+    /// </summary>
+    private static string JoinWithinHintBound(IReadOnlyList<string> segments)
+    {
+        var text = new System.Text.StringBuilder();
+        foreach (string segment in segments)
+        {
+            int added = (text.Length == 0 ? 0 : 1) + segment.Length;
+            if (text.Length + added > BodyProgramValidation.MaximumNodeHintLength)
+                break;
+            if (text.Length > 0)
+                text.Append(';');
+            text.Append(segment);
+        }
+        return text.ToString();
+    }
+
+    /// <summary>What going around costs, from the flood's OWN depth - the number a caller weighs the clear against.</summary>
+    private static string DescribeDetourFacts(Farmer localPlayer, Vector2 goalTile)
+    {
+        GameLocation? location = localPlayer.currentLocation;
+        if (location?.map is null || location.map.Layers.Count == 0)
+            return ClearingEvidence.DescribeDetour(null, null);
+        var layer = location.map.Layers[0];
+        ReachabilityVerdict? verdict = AssessReachability(
+            new Point((int)localPlayer.Tile.X, (int)localPlayer.Tile.Y),
+            new Point((int)goalTile.X, (int)goalTile.Y),
+            tile => tile.X >= 0
+                && tile.Y >= 0
+                && tile.X < layer.LayerWidth
+                && tile.Y < layer.LayerHeight
+                && IsWalkableTile(location, localPlayer, new Vector2(tile.X, tile.Y)),
+            ReachabilityProbeLimit,
+            findClosestReachable: true);
+        return verdict is ReachabilityVerdict assessed
+            ? ClearingEvidence.DescribeDetour(
+                assessed.ClosestToTarget is Point reachable ? (reachable.X, reachable.Y) : null,
+                assessed.ClosestToTargetSteps)
+            : ClearingEvidence.DescribeDetour(null, null);
+    }
+
+    /// <summary>
+    /// The named occupant just past the actor's walkable component, nearest <paramref name="goalTile"/> - or null when
+    /// the component's frontier is nothing but unnamed walls.
+    /// </summary>
+    private static FrontierObstruction? FindFrontierObstruction(Farmer localPlayer, Vector2 goalTile)
+    {
+        GameLocation? location = localPlayer.currentLocation;
+        if (location?.map is null || location.map.Layers.Count == 0)
+            return null;
+        var layer = location.map.Layers[0];
+        HashSet<Point>? component = ReachableTiles(
+            new Point((int)localPlayer.Tile.X, (int)localPlayer.Tile.Y),
+            ReachabilityProbeLimit,
+            tile => tile.X >= 0
+                && tile.Y >= 0
+                && tile.X < layer.LayerWidth
+                && tile.Y < layer.LayerHeight
+                && IsWalkableTile(location, localPlayer, new Vector2(tile.X, tile.Y)));
+        if (component is null)
+            return null;
+
+        FrontierObstruction? best = null;
+        int bestDistance = int.MaxValue;
+        foreach (Point tile in component)
+        {
+            foreach (Point offset in CardinalOffsets)
+            {
+                Point candidate = new(tile.X + offset.X, tile.Y + offset.Y);
+                if (component.Contains(candidate))
+                    continue;
+                if (!location.isTileOnMap(new Vector2(candidate.X, candidate.Y)))
+                    continue;
+                if (OccupantAt(location, localPlayer, new Vector2(candidate.X, candidate.Y)) is not { } occupancy)
+                    continue;
+                int distance = Math.Abs(candidate.X - (int)goalTile.X) + Math.Abs(candidate.Y - (int)goalTile.Y);
+                bool better = best is not { } incumbent
+                    || distance < bestDistance
+                    || (distance == bestDistance && Before(candidate, incumbent.Tile));
+                if (!better)
+                    continue;
+                best = new FrontierObstruction((candidate.X, candidate.Y), occupancy);
+                bestDistance = distance;
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>The deterministic tie-break between two equally distant frontier obstacles: north-most, then west-most.</summary>
+    private static bool Before(Point candidate, (int X, int Y) current) =>
+        candidate.Y < current.Y || (candidate.Y == current.Y && candidate.X < current.X);
+
+    /// <summary>A named occupant on the frontier, and the tile it stands on.</summary>
+    private readonly record struct FrontierObstruction((int X, int Y) Tile, Occupancy Occupant);
 
     /// <summary>
     /// Handles the tick a clear-approach walk reaches <c>stand_at</c>, or says false when this tick is not one.
@@ -430,9 +639,10 @@ internal sealed class StardewBodyController
             // The step alone was not enough to decide WITH: measured `round40` attempt 2, one weed on a four-way route
             // was the run's only failed action, and a receipt that named the tile and the price but not which action
             // swings at a weed ended it. `DescribeBlocker` adds the engine's name for the occupant, the action of ours
-            // whose declared kind accepts it and the id the frame published for it, so the caller's next plan can be
-            // the plan that clears it. The refusal is still a refusal: nothing was swung at, removed or persisted.
-            string blockerFacts = this.DescribeBlocker(localPlayer, arrived.BlockerTile);
+            // whose declared kind accepts it, what that dispatch costs, and how far around it is instead - so the
+            // caller's next plan can weigh the two. The refusal is still a refusal: nothing was swung at, removed or
+            // persisted.
+            string blockerFacts = this.DescribeBlocker(localPlayer, arrived.BlockerTile, arrived.Requested.TargetTile);
             this.Fail(
                 ClearStepBlockedReasonCode,
                 $"tile={FormatTile(currentTile)};requested={FormatTile(arrived.Requested.TargetTile)};clear_step_walk=arrived;blocker={arrived.BlockerTile.X},{arrived.BlockerTile.Y};{fresh!.Evidence}"
@@ -578,8 +788,17 @@ internal sealed class StardewBodyController
                 // and `FormatReachableHint` was only wired into the branch below, so this branch published the verdict without
                 // the escape. The hint is now on both branches, from the same `ClosestToTarget` the flood already filled.
                 + $";{FormatReachableHint(unreachable.ClosestToTarget, new Point((int)specification.TargetTile.X, (int)specification.TargetTile.Y))}"
-                + DescribeClearToReach(localPlayer, specification);
-            this.reachabilityHint = RefusalHint(unreachable.ClosestToTarget, specification.TargetTile, blockedBy);
+                + DescribeClearToReach(localPlayer, specification)
+                // WHAT is in the way, when a clearing plan has no step to offer. Without this branch a bush - which no
+                // published action removes, so the plan is `unreachable` - refused with `blocked_by=none` about a tile
+                // the caller could not get past, and the two prices of the decision were both missing.
+                + this.DescribeFrontierBlocker(
+                    localPlayer,
+                    specification.TargetTile,
+                    ClearingEvidence.DescribeDetour(
+                        unreachable.ClosestToTarget is Point frontierGoal ? (frontierGoal.X, frontierGoal.Y) : null,
+                        unreachable.ClosestToTargetSteps));
+            this.reachabilityHint = this.DescribeRouteHint(localPlayer, specification, unreachable, blockedBy);
             return false;
         }
 
@@ -695,7 +914,7 @@ internal sealed class StardewBodyController
             // closer, and `FormatReachableHint` already renders that as the empty string rather than a false claim.
             if (verdict is ReachabilityVerdict hintSource)
             {
-                this.reachabilityHint = RefusalHint(hintSource.ClosestToTarget, specification.TargetTile, blockedBy);
+                this.reachabilityHint = this.DescribeRouteHint(localPlayer, specification, hintSource, blockedBy);
             }
             return false;
         }
@@ -1450,8 +1669,8 @@ internal sealed class StardewBodyController
     {
         if (actor is null)
             return null;
-        return ClearableAt(location, actor, tile) is { } priced
-            ? $"{priced.Kind}@{(int)tile.X},{(int)tile.Y}"
+        return OccupantAt(location, actor, tile) is { ClearCost: not null } occupancy
+            ? $"{occupancy.Kind}@{(int)tile.X},{(int)tile.Y}"
             : null;
     }
 
@@ -1553,9 +1772,9 @@ internal sealed class StardewBodyController
     /// <summary>
     /// The tiles an actor could pay to clear, with the price, and the kind behind each price.
     ///
-    /// One walk over the three occupancy containers the engine uses - resourceClumps, objects,
-    /// terrainFeatures - in that order, because a tile holds at most one of them. Kinds the cost table
-    /// does not price (water, a building, the map edge) are absent by construction.
+    /// One walk over the occupancy containers the engine uses - resourceClumps, objects, terrainFeatures,
+    /// largeTerrainFeatures - in that order, because a tile holds at most one of them. Occupants the cost table does
+    /// not price (a bush, water, a building, the map edge) are absent by construction: this is the PRICED reading.
     /// </summary>
     private static void CollectClearableTiles(
         StardewValley.GameLocation location,
@@ -1568,25 +1787,34 @@ internal sealed class StardewBodyController
         {
             for (int y = 0; y < layer.LayerHeight; y += 1)
             {
-                if (ClearableAt(location, localPlayer, new Vector2(x, y)) is not { } priced)
+                if (OccupantAt(location, localPlayer, new Vector2(x, y)) is not { } occupancy)
                     continue;
-                clearable[new Point(x, y)] = priced.Cost;
-                kinds[new Point(x, y)] = priced.Kind;
+                if (!(occupancy.ClearCost is int price))
+                    continue;
+                clearable[new Point(x, y)] = price;
+                kinds[new Point(x, y)] = occupancy.Kind;
             }
         }
     }
 
     /// <summary>
-    /// What one tile's occupant would cost to remove, and the clear kind it prices as, for THIS actor's tools and
-    /// skills - or null when the tile is empty, or holds something no priced tool removes (a wall is not a bill).
+    /// One tile's occupant as the engine names it, with what removing it would cost THIS actor's tools and skills -
+    /// or null when the tile holds nothing this walk can name.
     ///
     /// <para>
-    /// ONE mapping, read by two callers that must not drift: the clearing plan behind <c>clear_to_reach</c>, and the
-    /// approach ring's name for the thing in the way (<c>approach_blocked_by:rock@9,2</c>). The containers are visited
-    /// in the engine's order - resourceClumps, objects, terrainFeatures - because a tile holds at most one of them.
+    /// THE one walk over the engine's occupancy containers, read by three callers that must not drift: the clearing
+    /// plan behind <c>clear_to_reach</c>, the name a refusal gives the thing in the way (<c>blocker_occupant=bush</c>),
+    /// and the frontier read that finds that thing without a clearing plan at all. A second walker here is how the
+    /// tile that is priced and the tile that is named become two different tiles.
+    /// </para>
+    /// <para>
+    /// <see cref="Occupancy.ClearCost"/> is null for an occupant that can be NAMED but not cleared - a bush is the one
+    /// that matters, because a bush in a corridor is a route no published action opens and the caller has to be told
+    /// so in words (`no_published_action_clears:bush`) rather than told the tile is a wall. Naming it costs nothing and
+    /// pricing it would be a lie, so the two readings are separate fields of one answer.
     /// </para>
     /// </summary>
-    private static (string Kind, int Cost, string Occupant, string TargetFamily)? ClearableAt(
+    private static Occupancy? OccupantAt(
         StardewValley.GameLocation location,
         Farmer localPlayer,
         Vector2 tile)
@@ -1600,18 +1828,17 @@ internal sealed class StardewBodyController
         {
             if (clump.Tile != tile)
                 continue;
+            // A clump the native tool table does not price stays an UNNAMED wall (the corridor's own walls are built
+            // from one), so the frontier read cannot mistake a wall for the thing in the way.
             if (!ExecutionManager.TryGetDebrisToolRequirement(clump, out string toolKind, out _))
                 return null;
             if (ClearableKind.Map("resourceClump", toolKind) is not { } clumpKind)
                 return null;
-            int? clumpCost = ClearCostTable.Cost(
-                clumpKind,
-                toolPower,
-                clumpKind == "stump" ? foraging : mining,
-                efficient: false);
+            if (Price(clumpKind, toolPower, clumpKind == "stump" ? foraging : mining) is not { } clumpPrice)
+                return null;
             // A clump's row is published by ONE family whichever clump it is, because "which tool removes this" is a
             // property of the clump and `debrisTargets` carries it as a field rather than as a separate list.
-            return clumpCost is { } paid ? (clumpKind, paid, ClumpOccupant(clump.parentSheetIndex.Value), "debrisTargets") : null;
+            return new Occupancy(clumpKind, clumpPrice.Cost, ClumpOccupant(clump.parentSheetIndex.Value), "debrisTargets", clumpPrice.Stamina);
         }
 
         if (location.objects.TryGetValue(tile, out StardewValley.Object? item) && item is not null)
@@ -1622,10 +1849,9 @@ internal sealed class StardewBodyController
             string detail = item.QualifiedItemId == "(O)2" ? "stone" : item.IsWeeds() ? "weed" : string.Empty;
             if (ClearableKind.Map("object", detail) is not { } objectKind)
                 return null;
-            int? objectCost = ClearCostTable.Cost(objectKind, toolPower, mining, efficient: false);
-            if (objectCost is not { } paid)
+            if (Price(objectKind, toolPower, mining) is not { } objectPrice)
                 return null;
-            return (objectKind, paid, detail, detail == "weed" ? "weedTargets" : "rockSourceTargets");
+            return new Occupancy(objectKind, objectPrice.Cost, detail, detail == "weed" ? "weedTargets" : "rockSourceTargets", objectPrice.Stamina);
         }
 
         if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
@@ -1639,14 +1865,49 @@ internal sealed class StardewBodyController
             };
             if (ClearableKind.Map("terrain", detail) is not { } terrainKind)
                 return null;
-            int? terrainCost = ClearCostTable.Cost(terrainKind, toolPower, farming, efficient: false);
-            if (terrainCost is not { } paid)
+            if (Price(terrainKind, toolPower, farming) is not { } terrainPrice)
                 return null;
-            return (terrainKind, paid, detail, detail == "grass" ? "grassTargets" : "scytheCropTargets");
+            return new Occupancy(terrainKind, terrainPrice.Cost, detail, detail == "grass" ? "grassTargets" : "scytheCropTargets", terrainPrice.Stamina);
+        }
+
+        // LAST, because a bush is the one occupant that blocks a body and that no priced tool removes. It is named so
+        // the refusal can say `no_published_action_clears:bush`, and left unpriced so the clearing search still treats
+        // it as the wall it is. `largeTerrainFeatures` is the only collection a bush is ever stored in
+        // (GameLocation.cs:286; a saved farm never puts one in `terrainFeatures`), and the point test is the one the
+        // ENGINE's own collision uses for these features (`isCollidingPosition` intersects the bounding box,
+        // GameLocation.cs:2637-2648) as well as the one `DescribeFeatureLayer` uses - so "named here" and "blocks the
+        // body" are the same question, not two.
+        foreach (StardewValley.TerrainFeatures.LargeTerrainFeature large in location.largeTerrainFeatures)
+        {
+            if (!large.getBoundingBox().Contains((int)tile.X * 64 + 32, (int)tile.Y * 64 + 32))
+                continue;
+            if (large is StardewValley.TerrainFeatures.Bush)
+                return new Occupancy("bush", null, "bush", "bushTargets", null);
         }
 
         return null;
     }
+
+    /// <summary>
+    /// The engine's stamina charge for one swing at <paramref name="kind"/>, and the search's own unit for it, or null
+    /// when the kind cannot be cleared at all. One function so the two readings cannot drift: the unit IS the charge
+    /// plus the table's allowance.
+    /// </summary>
+    private static (int Stamina, int Cost)? Price(string kind, int toolPower, int skillLevel) =>
+        ClearCostTable.Stamina(kind, toolPower, skillLevel, efficient: false) is int stamina
+        && ClearCostTable.Cost(kind, toolPower, skillLevel, efficient: false) is int cost
+            ? (stamina, cost)
+            : null;
+
+    /// <summary>
+    /// One tile's named occupant, its clearing price when it has one, and the family that publishes it.
+    ///
+    /// <para>
+    /// <c>ClearCost</c> is the search unit and <c>StaminaCharge</c> is the engine's own charge for one swing; both are
+    /// null for an occupant nothing published removes.
+    /// </para>
+    /// </summary>
+    private sealed record Occupancy(string Kind, int? ClearCost, string Occupant, string TargetFamily, int? StaminaCharge);
 
     /// <summary>
     /// The ENGINE's own name for one resource clump, from the constants its own type declares
@@ -1886,19 +2147,22 @@ internal sealed class StardewBodyController
         bool reachesNeighbourhood = false;
         bool targetTraversable = canTraverse(targetTile);
         Point? closest = null;
+        int? closestSteps = null;
         int closestDistance = Chebyshev(actorTile, targetTile);
         var visited = new HashSet<Point> { actorTile };
-        var pending = new Queue<Point>();
-        pending.Enqueue(actorTile);
+        // The queue carries the tile's own depth, because `detour_steps` is a distance the caller weighs against a
+        // clear's price and a Manhattan estimate is not that number.
+        var pending = new Queue<(Point Tile, int Steps)>();
+        pending.Enqueue((actorTile, 0));
 
         while (pending.Count > 0)
         {
-            Point current = pending.Dequeue();
+            (Point current, int steps) = pending.Dequeue();
             if (IsTargetNeighbour(current))
             {
                 reachesNeighbourhood = true;
                 if (!findClosestReachable)
-                    return new ReachabilityVerdict(false, targetTraversable, current, visited.Count);
+                    return new ReachabilityVerdict(false, targetTraversable, current, visited.Count, steps);
             }
             foreach (Point offset in neighbours)
             {
@@ -1911,7 +2175,7 @@ internal sealed class StardewBodyController
                 {
                     reachesNeighbourhood = true;
                     if (!findClosestReachable)
-                        return new ReachabilityVerdict(false, targetTraversable, next, visited.Count);
+                        return new ReachabilityVerdict(false, targetTraversable, next, visited.Count, steps + 1);
                 }
                 if (next != targetTile)
                 {
@@ -1921,16 +2185,17 @@ internal sealed class StardewBodyController
                     if (distance < closestDistance)
                     {
                         closest = next;
+                        closestSteps = steps + 1;
                         closestDistance = distance;
                     }
                 }
                 if (visited.Count > maxVisited)
                     return null;
-                pending.Enqueue(next);
+                pending.Enqueue((next, steps + 1));
             }
         }
 
-        return new ReachabilityVerdict(!reachesNeighbourhood, reachesNeighbourhood && targetTraversable, closest, visited.Count);
+        return new ReachabilityVerdict(!reachesNeighbourhood, reachesNeighbourhood && targetTraversable, closest, visited.Count, closestSteps);
     }
 
     /// <summary>

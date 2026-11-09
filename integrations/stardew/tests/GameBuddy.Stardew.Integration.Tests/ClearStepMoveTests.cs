@@ -311,7 +311,11 @@ public sealed class ClearStepMoveTests
 
         public Farmer Actor { get; private set; }
 
-        public static CorridorHarness Create()
+        /// <summary>
+        /// A corridor of <paramref name="width"/> tiles, because the length is what a route refusal has to report:
+        /// the live shape this file's siblings reproduce is an 18-tile corridor closed at its far end.
+        /// </summary>
+        public static CorridorHarness Create(int width = 16)
         {
             var harness = new CorridorHarness();
 
@@ -352,8 +356,12 @@ public sealed class ClearStepMoveTests
 
             GameLocation location = new();
             var map = new xTile.Map();
-            map.AddLayer(new xTile.Layers.Layer("Back", map, new xTile.Dimensions.Size(16, 16), new xTile.Dimensions.Size(64, 64)));
-            map.AddLayer(new xTile.Layers.Layer("Buildings", map, new xTile.Dimensions.Size(16, 16), new xTile.Dimensions.Size(64, 64)));
+            xTile.Dimensions.Size size = new(width, 16);
+            map.AddLayer(new xTile.Layers.Layer("Back", map, size, new xTile.Dimensions.Size(64, 64)));
+            map.AddLayer(new xTile.Layers.Layer("Buildings", map, size, new xTile.Dimensions.Size(64, 64)));
+            // `Bush`'s constructor reads the Front layer of the location it is placed in (Bush.cs:91), so a map
+            // without one could not hold the one large terrain feature a route refusal has to be able to name.
+            map.AddLayer(new xTile.Layers.Layer("Front", map, size, new xTile.Dimensions.Size(64, 64)));
             location.map = map;
             location.IsFarm = true;
             // A NAME OF ITS OWN, and a place in `Game1.locations`. `Farmer.currentLocation` is a `NetLocationRef`, which
@@ -398,6 +406,17 @@ public sealed class ClearStepMoveTests
             SetField(actor, "miningLevel", new NetInt(0));
             SetField(actor, "foragingLevel", new NetInt(0));
             SetField(actor, "farmingLevel", new NetInt(0));
+            // `Game1.stats` is `player.stats`, and a bush's own constructor reads it (`datePlanted`, Bush.cs:95) as does
+            // its sprite (`:277`). An uninitialized farmer carries a null one, so the one large terrain feature this
+            // harness has to be able to place would have thrown inside the engine's bookkeeping instead.
+            SetField(actor, "stats", new StardewValley.Stats());
+            // `Bush.loadSprite` picks its own sprite through `Utility.CreateRandom`, which asks `Game1.UseLegacyRandom` -
+            // `player.teamRoot.Value.useLegacyRandom` - before it can choose one. The real team constructor loads
+            // multiplayer state a headless process has none of, so it is built uninitialized with the one flag this
+            // path reads; without it the bush the corridor refusal must be able to name cannot be placed at all.
+            var team = (FarmerTeam)FormatterServices.GetUninitializedObject(typeof(FarmerTeam));
+            SetField(team, "useLegacyRandom", new NetBool(true));
+            SetField(actor, "teamRoot", new NetRoot<FarmerTeam>(team));
             var buffs = new StardewValley.Buffs.BuffManager();
             typeof(StardewValley.Buffs.BuffManager)
                 .GetField("CombinedEffects", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
@@ -419,7 +438,7 @@ public sealed class ClearStepMoveTests
         /// </summary>
         public void BuildCorridor()
         {
-            for (int x = 0; x < 16; x++)
+            for (int x = 0; x < this.Location.map.Layers[0].LayerWidth; x++)
             {
                 for (int y = 0; y < 16; y++)
                 {
@@ -433,6 +452,17 @@ public sealed class ClearStepMoveTests
         /// <summary>The one boulder the native table prices as `rock`, on the corridor's only route.</summary>
         public void PlaceRock(int x, int y) =>
             this.Location.resourceClumps.Add(new StardewValley.TerrainFeatures.ResourceClump(148, 1, 1, new Vector2(x, y)));
+
+        /// <summary>
+        /// A bush on the corridor: the one occupant that blocks a body, that no priced tool removes, and that
+        /// `harvest_bush` HARVES without ever clearing a way through it.
+        ///
+        /// Size 0 because that is the one size whose own bounding box is exactly its tile
+        /// (`Bush.getBoundingBox`, Bush.cs:300-304 - sizes 1 and 2 reach a tile further east), so a fixture that says
+        /// "a bush at 6,3" blocks 6,3 and nothing else.
+        /// </summary>
+        public void PlaceBush(int x, int y) =>
+            this.Location.largeTerrainFeatures.Add(new StardewValley.TerrainFeatures.Bush(new Vector2(x, y), 0, this.Location));
 
         /// <summary>
         /// A weed in the object layer, built from exactly the two facts `Object.IsWeeds()` reads
@@ -497,12 +527,22 @@ public sealed class ClearStepMoveTests
 
         public (string ReasonCode, string? Evidence) Refuse(int fromX, int fromY)
         {
-            this.Actor.position.Set(new Vector2(fromX * 64 + 8, fromY * 64));
-            LocalMoveSpec specification = this.Specification();
-            bool started = new StardewBodyController((_, _, _) => { })
-                .TryStart(specification, this.Actor, tick: 1, out string reasonCode, out string? evidence);
-            started.Should().BeFalse("a rock in the only corridor has no native route");
+            (string reasonCode, string? evidence, _) = this.RefuseWithHint(fromX, fromY);
             return (reasonCode, evidence);
+        }
+
+        /// <summary>
+        /// The same refusal WITH the hint the node keeps, because a settled failure's evidence is withheld (ADR-006) and
+        /// the hint is the only channel that reaches the model.
+        /// </summary>
+        public (string ReasonCode, string? Evidence, string? Hint) RefuseWithHint(int fromX, int fromY, Vector2? target = null)
+        {
+            this.Actor.position.Set(new Vector2(fromX * 64 + 8, fromY * 64));
+            LocalMoveSpec specification = this.Specification(target);
+            bool started = new StardewBodyController((_, _, _) => { })
+                .TryStart(specification, this.Actor, tick: 1, out string reasonCode, out string? evidence, out string? hint);
+            started.Should().BeFalse("nothing beyond the corridor's blocker is reachable in one walk");
+            return (reasonCode, evidence, hint);
         }
 
         public StardewBodyController.ClearApproachWalk? PlanWalk(int fromX, int fromY, out string? refusal)
@@ -519,10 +559,10 @@ public sealed class ClearStepMoveTests
             return walk!;
         }
 
-        private LocalMoveSpec Specification() => new(
+        private LocalMoveSpec Specification(Vector2? target = null) => new(
             "execution_01",
             "request_01",
-            Requested,
+            target ?? Requested,
             AllowAdjacentArrival: false,
             1,
             10_000,
