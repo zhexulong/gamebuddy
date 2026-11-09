@@ -400,7 +400,14 @@ function sourceOf(text, start, end) {
  * clause that leaves no trace and `early-return` for a return before the
  * function has reported anything.
  */
-export function findSilentFailures(repoRoot) {
+export function findSilentFailures(repoRoot, declared = []) {
+  // A declaration is the player-facing decision about a site, so it is also what lets a site be SEEN: the name heuristic
+  // below skips catches inside functions whose names do not look like observers, and a hook such as `useAppearance` is
+  // exactly that shape. Without this, the text scanner and the TypeScript-AST scanner (`tools/lib/unreported-catch.mjs`)
+  // disagreed about one line - the AST gate named `use-appearance.ts:37` while this one reported `found 0`, which is the
+  // "one fact, two spellings" defect inside the gates themselves. A declared site is now enrolled by name; anything else
+  // keeps the heuristic, so the population does not widen on its own.
+  const declaredSites = new Set(declared.map((entry) => `${entry.path}:${entry.symbol}`));
   const findings = [];
   for (const file of listSourceFiles(repoRoot)) {
     const path = toPosix(relative(repoRoot, file));
@@ -413,9 +420,10 @@ export function findSilentFailures(repoRoot) {
     const spokens = new Map();
     const observerAt = (index) => {
       const fn = enclosingFunction(blanked, pairs, index);
-      if (fn === null || !OBSERVING_NAME.test(fn.name)) return null;
+      if (fn === null) return null;
+      const observes = OBSERVING_NAME.test(fn.name);
       if (!spokens.has(fn.open)) spokens.set(fn.open, OBSERVABLE_SINK.test(blanked.slice(fn.open + 1, fn.close)));
-      return { ...fn, speaks: spokens.get(fn.open) };
+      return { ...fn, observes, speaks: spokens.get(fn.open) };
     };
 
     CATCH_CLAUSE.lastIndex = 0;
@@ -430,6 +438,7 @@ export function findSilentFailures(repoRoot) {
       if (rethrow !== null && rethrow.test(body)) continue;
       const fn = observerAt(match.index);
       if (fn === null) continue;
+      if (!fn.observes && !declaredSites.has(`${path}:${fn.name}`)) continue;
       findings.push({
         kind: "silent-catch",
         path,
@@ -447,7 +456,8 @@ export function findSilentFailures(repoRoot) {
       const statement = match[0];
       if (!/^return(?:\s+(?:undefined|null))?\s*;$/u.test(statement.trim())) continue;
       const fn = observerAt(match.index);
-      if (fn === null || !fn.speaks) continue;
+      if (fn === null || (!fn.observes && !declaredSites.has(`${path}:${fn.name}`))) continue;
+      if (!fn.speaks) continue;
       const enclosing = pairs
         .filter((pair) => pair.open < match.index && match.index < pair.close)
         .sort((left, right) => right.open - left.open);
@@ -664,7 +674,8 @@ const DECLARED = Object.freeze([
     kind: "early-return",
     path: "host/src/host-service.ts",
     symbol: "announceProviderWait",
-    reason: "said once by design: the stderr line written above it carries the same instant, so a second sentence is not progress and a status that keeps reappearing reads as a stall",
+    reason:
+      "said once by design: the stderr line written above it carries the same instant, so a second sentence is not progress and a status that keeps reappearing reads as a stall",
     witness: "if (this.#providerWaitAnnounced) return;",
     sites: 1,
   }),
@@ -672,7 +683,8 @@ const DECLARED = Object.freeze([
     kind: "silent-catch",
     path: "tools/live-action.mjs",
     symbol: "closeSession",
-    reason: "closing a bridge that is already gone owes no unsubscribe, and the session is dropped either way so the next action opens a fresh one",
+    reason:
+      "closing a bridge that is already gone owes no unsubscribe, and the session is dropped either way so the next action opens a fresh one",
     witness: "a bridge that is already gone owes no unsubscribe",
     sites: 1,
   }),
@@ -680,7 +692,8 @@ const DECLARED = Object.freeze([
     kind: "silent-catch",
     path: "tools/live-run/game/stardew-world-survival-live.mjs",
     symbol: "observeWorld",
-    reason: "a connection that could not observe is closed best-effort; the reading this function returns is the observation or the named last error, so a close failure changes no claim",
+    reason:
+      "a connection that could not observe is closed best-effort; the reading this function returns is the observation or the named last error, so a close failure changes no claim",
     witness: "A connection that could not observe is closed best-effort",
     sites: 1,
   }),
@@ -688,7 +701,8 @@ const DECLARED = Object.freeze([
     kind: "silent-catch",
     path: "tools/live-run/game/stardew-world-survival-live.mjs",
     symbol: "teardownWorld",
-    reason: "a failed reclamation is reported through note(...) and then judged by the survivor list below it; throwing here would replace that measurement with an exception",
+    reason:
+      "a failed reclamation is reported through note(...) and then judged by the survivor list below it; throwing here would replace that measurement with an exception",
     witness: "reclamation of the ",
     sites: 1,
   }),
@@ -714,7 +728,7 @@ function declarationProblems(declared) {
  * that no longer matches the code it waives.
  */
 export function checkSilentFailures(repoRoot, declared = DECLARED) {
-  const findings = findSilentFailures(repoRoot);
+  const findings = findSilentFailures(repoRoot, declared);
   const problems = declarationProblems(declared);
   const waived = new Set();
   for (const entry of declared) {

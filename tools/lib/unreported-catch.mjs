@@ -222,6 +222,14 @@ function declaresWithin(ts, clause, name) {
  */
 export const DECLARED = Object.freeze([
   Object.freeze({
+    path: "dialogue-web/src/components/use-appearance.ts",
+    witness: "// The OS answer stands in until the Host can answer; the stored choice is untouched.",
+    sites: 1,
+    reason:
+      "a cosmetic read the Host refuses leaves `system` in force: the OS answer paints, the record still holds what " +
+      "the player chose, and a preference nobody could read is indistinguishable from one nobody ever set",
+  }),
+  Object.freeze({
     path: "dialogue-web/src/components/GameSurface.tsx",
     witness: "/* retain the current authoritative projection */",
     sites: 12,
