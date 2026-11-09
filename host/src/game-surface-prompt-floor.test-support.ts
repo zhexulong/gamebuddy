@@ -83,6 +83,8 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       "Negative prompt examples and quotes were removed in favor of affirmative target framing across card.json and identity-profile.ts. The CHARACTER columns below were re-derived from the product's builder exactly; the TOKEN columns were NOT re-measured, because that needs the whole materialized-session instrumentation above and the claude-encoding count this lane could reproduce differs from the reading's. `envelopeChars`/`envelopeBytes` moved by the exact character count delta.",
     remeasured_2026_11_08:
       "The Game prompt grew from 10,886 to 13,411 chars, and NONE of it is tool text: the builder renders no tool definition, and the conduct block - the only place the floor names a tool - is still 6,194 chars. The growth is the card's own authored text plus one Host line: its performance directive (characterVoice) +2,181, its persona and examples +237, and the Host floor's language line +107. The two card halves arrived in 63f0dcde (already stale at HEAD, +993) and in this tree's re-authored card (+1,425); the language line is this tree's identity-profile.ts. The CHARACTER columns are re-derived from the product's builder exactly; `envelopeChars`/`envelopeBytes` moved by the JSON-escaped system string's own delta (+2,594 chars, +6,846 bytes), which is the exact envelope delta because `tools` and `messages` are unchanged. The TOKEN columns are carried UNCHANGED and are now a substantial under-count: the ai-tokenizer in this tree counts the previously recorded 10,886-char prompt at 6,480, so the vocabulary behind the recorded 5,119 is not reproducible here at all, and no token number in this file describes the current prompt.",
+    remeasured_2026_11_09:
+      "The Game prompt grew from 13,411 to 13,781 chars (+370) and the conduct slice from 6,194 to 6,631 (+437), so at least one line also left the prompt: both deltas are recorded as measured, not reconciled. One source is isolated exactly - the language directive grew +92, measured by substituting zh-CN into both spellings. The remainder is card prose from 796f701a (the campfire line) and 7761b039 (the management-panel card), neither isolated line by line here. Envelope and token columns were NOT re-measured in this commit.",
   }),
   floor: Object.freeze({
     toolCount: 14,
@@ -90,7 +92,7 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     // 2026-11-05 reading: the card's performance directive +2,181, its persona and examples +237, and the Host floor's
     // language line +107. The `remeasured_2026_11_08` method entry attributes it line by line. The token column below
     // is the older MEASUREMENT and is now an under-count of a shorter prompt (see that entry).
-    systemChars: 13411,
+    systemChars: 13781,
     systemTokens: 5119,
     toolsTokens: 3552,
     // 23,152 + 2,594: the JSON-escaped system string's own delta, which is the whole envelope's delta because the
@@ -103,11 +105,11 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
-    chars: 6194,
+    chars: 6631,
     tokens: 1227,
     // The measured slice over the measured prompt: 6,194 / 13,411. Recorded as the quotient, not as a share typed
     // separately from the two numbers it divides - the previous recording carried 0.5619 against 6,194/10,886 = 0.5690.
-    charShareOfSystemPrompt: 0.4619,
+    charShareOfSystemPrompt: 0.4812,
     tokenShareOfSystemPrompt: 0.24,
   }),
   denominator: Object.freeze([
