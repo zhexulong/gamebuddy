@@ -3257,6 +3257,20 @@
     border-color: var(--warning);
   }
 
+  .installation-mod-loader-acquire {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    font-size: 11px;
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .installation-mod-loader-acquire:hover {
+    color: var(--text-primary);
+  }
+
   .installation-candidate .game-action {
     margin-left: auto;
   }

@@ -106,6 +106,17 @@ type Pending = "none" | "scan" | "action";
  */
 const isConfirmableCandidate = (status: StardewInstallationCandidateV1["status"]): boolean =>
   status === "candidate" || status === "admission_required";
+
+/**
+ * Where a player gets the mod loader.
+ *
+ * SMAPI is Pathoschild's own project and is published at smapi.io; the companion Mod runs under it, the product
+ * does not ship it, and it is not the Host's to install. So the panel points at the distribution its author
+ * publishes and stops there. The surface is a page served over a loopback listener and rendered in a real
+ * browser, so an ordinary link IS the mechanism: the browser performs the navigation and no Host seam, contract
+ * operation or child process is involved.
+ */
+const SMAPI_DOWNLOAD_URL = "https://smapi.io";
 export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props) {
   const [state, setState] = useState<InstallationDiscoveryState>("loading");
   /**
@@ -312,6 +323,20 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
                   <span className="installation-mod-loader" data-mod-loader={modLoader ?? "unknown"}>
                     {installationModLoaderLabel(labels, modLoader)}
                   </span>
+                )}
+                {/* Beside the chip that names the gap, and only for the value that means it: a
+                  folder that already loads the companion needs no pointer to a download, and a
+                  Host that said nothing gets neither chip nor link - the panel does not pretend
+                  to know. One outbound link, to the loader's own publisher. */}
+                {modLoader === "missing" && (
+                  <a
+                    className="installation-mod-loader-acquire"
+                    href={SMAPI_DOWNLOAD_URL}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                  >
+                    {labels.gameInstallationModLoaderAcquire}
+                  </a>
                 )}
                 {/* The wire member stays as the row's own attribution (`data-source`),
                   and the words beside the name are the player's language: a source

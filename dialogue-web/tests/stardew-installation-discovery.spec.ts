@@ -1,4 +1,5 @@
 import { expect, test } from "./frontend-coverage";
+import { messages } from "../src/i18n";
 
 const token = "A".repeat(43);
 const csrfToken = "C".repeat(42) + "A";
@@ -522,6 +523,168 @@ test.describe("B2 installation discovery: route-mocked UI behavior", () => {
     await expect(chip).toHaveCount(1);
     // Both locales name SMAPI, so the sentence itself is asserted without pinning a translation.
     await expect(chip).toContainText(/SMAPI/u);
+  });
+
+  /**
+   * The row that says the loader is missing has to say where the player gets it.
+   *
+   * The chip is the product's own sentence - "there is no mod loader (SMAPI) in that folder" - and it was the
+   * whole of it: a player read the name of a piece of software, with no hint that it belongs to somebody else's
+   * project and nothing to act on. The product cannot install it (SMAPI is Pathoschild's, published at
+   * smapi.io), so the one honest offer is a link to where it is published.
+   *
+   * The readings below are the rule, not a wish: `missing` gets exactly one link; `present` gets none, because
+   * that row is not asking for anything; and a Host that said nothing gets neither chip nor link, because the
+   * panel may not claim a check it did not make. Both viewports are measured because the link sits in a row
+   * that wraps at 400x800, and the last reading is the keyboard's: the link is a stop the player reaches, and
+   * mounting the panel must not have put the cursor on it.
+   */
+  test("a row without a mod loader points at the loader's own site, and only that row", async ({ page }) => {
+    // One row in each value the Host can report for the optional `modLoader`, all three confirmable so the only
+    // difference between them is the loader.
+    const withLoader = (id: string, modLoader: "present" | "missing" | undefined) => ({
+      candidateId: id,
+      source: "steam-vdf",
+      label: "Stardew Valley",
+      hint: "Detected installation (path hidden)",
+      status: "admission_required",
+      ...(modLoader === undefined ? {} : { modLoader }),
+    });
+    const expectedLinkText = messages("en").gameInstallationModLoaderAcquire;
+    await page.route(BOOTSTRAP_ROUTE, (route) => route.fulfill(jsonOk(root)));
+    await mountGameDrawerRoutes(page);
+    await page.route(DRAFT_ROUTE, (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })));
+    await page.route(DISCOVERY_ROUTE, (route) =>
+      route.fulfill(
+        jsonOk({
+          apiVersion: 1,
+          candidates: [
+            withLoader(candidateId, "present"),
+            withLoader(candidateStatusId, "missing"),
+            withLoader(invalidStatusId, undefined),
+          ],
+          diagnostics: [],
+        }),
+      ),
+    );
+
+    type LinkReading = {
+      href: string | null;
+      text: string;
+      target: string | null;
+      rel: string | null;
+      width: number;
+      height: number;
+      inViewport: boolean;
+    };
+    const rows = async (): Promise<{ modLoader: string | null; link: LinkReading | null }[]> =>
+      (await panel(page)
+        .locator(".installation-candidate")
+        .evaluateAll((nodes) =>
+          nodes.map((node) => {
+            const link = node.querySelector("a[href]");
+            const box = link === null ? null : link.getBoundingClientRect();
+            return {
+              modLoader: node.querySelector("[data-mod-loader]")?.getAttribute("data-mod-loader") ?? null,
+              link:
+                link === null || box === null
+                  ? null
+                  : {
+                      href: link.getAttribute("href"),
+                      text: (link.textContent ?? "").trim(),
+                      target: link.getAttribute("target"),
+                      rel: link.getAttribute("rel"),
+                      width: Math.round(box.width),
+                      height: Math.round(box.height),
+                      inViewport:
+                        box.top >= -1 &&
+                        box.bottom <= window.innerHeight + 1 &&
+                        box.left >= -1 &&
+                        box.right <= window.innerWidth + 1,
+                    },
+            };
+          }),
+        )) as { modLoader: string | null; link: LinkReading | null }[];
+
+    let mounted = false;
+    for (const viewport of [
+      { width: 400, height: 800 },
+      { width: 1440, height: 900 },
+    ]) {
+      const at = `${viewport.width}x${viewport.height}`;
+      await page.setViewportSize(viewport);
+      if (mounted) await page.reload();
+      else {
+        await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+        mounted = true;
+      }
+      await openGameDrawer(page);
+      await expect(panel(page)).toHaveAttribute("data-state", "candidates");
+
+      // An offer, not an interruption: mounting the panel leaves the cursor where the player left it.
+      expect(
+        await page.evaluate(() => document.activeElement?.getAttribute("href") ?? null),
+        `${at}: mounting the panel does not put the cursor on the link`,
+      ).toBe(null);
+
+      const read = await rows();
+      const missing = read.filter((row) => row.modLoader === "missing");
+      expect(missing, `${at}: the reply's one missing-loader row is rendered`).toHaveLength(1);
+      const link = missing[0]!.link;
+      expect(link, `${at}: the row that names the missing loader offers a way to get it`).not.toBeNull();
+      expect(link!.href, `${at}: the link goes to the site SMAPI's own author publishes`).toBe("https://smapi.io");
+      expect(link!.text, `${at}: and says what it is for`).toBe(expectedLinkText);
+      expect(link!.text, `${at}: the sentence names the loader`).toMatch(/SMAPI/u);
+      expect(link!.text, `${at}: and the site it opens`).toMatch(/smapi\.io/u);
+      expect(link!.target, `${at}: it opens beside the app instead of navigating the surface away`).toBe("_blank");
+      expect((link!.rel ?? "").split(/\s+/u), `${at}: no referrer, no opener`).toEqual(
+        expect.arrayContaining(["noreferrer", "noopener"]),
+      );
+      expect(link!.height, `${at}: the link is laid out`).toBeGreaterThan(0);
+      expect(link!.width, `${at}: with a target a pointer can hit`).toBeGreaterThan(0);
+      expect(link!.inViewport, `${at}: and wholly inside the window`).toBe(true);
+
+      // The other two values must not borrow it: `present` needs no download, and an unknown loader is not a
+      // claim the panel is entitled to make.
+      expect(
+        read.filter((row) => row.modLoader === "present").map((row) => row.link),
+        `${at}: a folder that already has the loader is offered no download`,
+      ).toEqual([null]);
+      expect(
+        read.filter((row) => row.modLoader === null).map((row) => row.link),
+        `${at}: a loader the Host did not report leaves neither chip nor link`,
+      ).toEqual([null]);
+
+      // Keyboard: the link is the stop before the row's own control, and it draws the sheet's ring.
+      const missingRow = panel(page)
+        .locator(".installation-candidate")
+        .filter({ has: page.locator('[data-mod-loader="missing"]') });
+      await missingRow.getByRole("button", { name: "Confirm", exact: true }).focus();
+      await page.keyboard.press("Shift+Tab");
+      const focused = await page.evaluate(() => {
+        const active = document.activeElement;
+        const style = active === null ? null : getComputedStyle(active);
+        return {
+          href: active?.getAttribute("href") ?? null,
+          className: active instanceof HTMLElement ? active.className : "",
+          outlineWidth: style?.outlineWidth ?? "0px",
+        };
+      });
+      expect(focused.href, `${at}: one step back from the row's own control lands on the link`).toBe(
+        "https://smapi.io",
+      );
+      expect(focused.className, `${at}: and the focused element is the acquire link`).toContain(
+        "installation-mod-loader-acquire",
+      );
+      expect(focused.outlineWidth, `${at}: the focused link draws the sheet's ring`).not.toBe("0px");
+
+      // The link is an addition, not a rearrangement: the panel's own controls are where they were.
+      for (const name of ["Choose game folder", "Find again", "Cancel"])
+        await expect(panel(page).getByRole("button", { name, exact: true })).toBeEnabled();
+      console.log(
+        `[install-loader-link] ${at}: ${JSON.stringify(read.map((row) => ({ modLoader: row.modLoader, link: row.link === null ? null : { href: row.link.href, text: row.link.text, box: `${row.link.width}x${row.link.height}` } })))} focused=${JSON.stringify(focused)}`,
+      );
+    }
   });
 
   /**

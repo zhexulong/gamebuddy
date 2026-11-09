@@ -962,7 +962,9 @@ const en = {
   gameInstallationNoCandidates: "No Stardew Valley installation was found.",
   gameInstallationResultUnavailable: "We couldn't read the installation search result.",
   gameInstallationModLoaderPresent: "SMAPI is already installed here, so this folder can run the companion.",
+  gameInstallationModLoaderAcquire: "Install SMAPI (opens smapi.io)",
   gameInstallationModLoaderMissing:
+  gameInstallationModLoaderAcquire: "安装 SMAPI（打开 smapi.io）",
     "We found Stardew Valley, but there is no mod loader (SMAPI) in that folder. Install SMAPI, then find again — or choose a game folder that already has it.",
   // The one-click mod-loader install. Every string here is an outcome the Host actually
   // reports, and each names the player's own next step rather than a code.
