@@ -698,6 +698,9 @@ test("a readout that contradicts itself is refused instead of shown", async ({ p
     await page.unroute("**/api/tavern/v1/presets");
     await stubPresetSurface(page, [body]);
     await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=presets`);
+    // The surface is asserted mounted before anything is read out of it: a read on a panel that never rendered
+    // would throw its own error and be counted as a finding about the assembly.
+    await expect(page.getByTestId("presets-surface")).toBeVisible();
     const surface = page.getByTestId("presets-surface");
     await expect(surface.locator("[data-preset-read-failed]"), `${what} is not shown as the assembly's truth`).toHaveText(
       catalogue.presetReadFailed,

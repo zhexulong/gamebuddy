@@ -97,7 +97,9 @@ export function surfaceComponents(root) {
   const source = read(join(root, SHELL_SOURCE));
   if (source === null) return new Map();
   const components = new Map();
-  for (const match of source.matchAll(/\{shownSurface === (\w+_PANEL) && \(\s*<(\w+)/gu)) {
+  // The parentheses are style, not meaning: `{cond && (<Panel />)}` and `{cond && <Panel />}` are the same guard, and
+  // requiring the paren made this reader blind to a surface that was in fact guarded and rendered.
+  for (const match of source.matchAll(/\{shownSurface === (\w+_PANEL) && \(?\s*<(\w+)/gu)) {
     components.set(match[1], match[2]);
   }
   // A surface rendered unconditionally and told which one is selected is the same fact, written once.
