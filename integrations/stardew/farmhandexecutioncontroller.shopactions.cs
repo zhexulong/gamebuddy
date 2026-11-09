@@ -825,6 +825,7 @@ internal sealed partial class ExecutionManager
     private IReadOnlyList<BridgeSeedSupplyTarget> DiscoverSeedSupplyTargets(
         Farmer player,
         IReadOnlyList<BridgeInventoryItemFact>? inventoryItemFacts,
+        IReadOnlyList<BridgeShopTarget>? shopTargetsHere,
         out int omitted)
     {
         omitted = 0;
@@ -900,7 +901,9 @@ internal sealed partial class ExecutionManager
                     ShopDisplayName(entry.ShopId),
                     shopData,
                     entry.Price,
-                    eligibleOwners));
+                    eligibleOwners,
+                    shopTargetsHere,
+                    ShopOwningLocation(entry.ShopId)));
             }
             // A seed nobody stocks still gets a row: the absent shop half IS the answer ("no known source"), and it
             // must not be confused with no row at all (she holds no plantable seed) or with no family (nothing was
@@ -948,17 +951,27 @@ internal sealed partial class ExecutionManager
 
     /// <summary>
     /// One row for a seed the actor holds and NO shop in `Data/Shops` stocks: the seed and its count, and no shop half.
+    ///
+    /// The address half states WHY it carries no address rather than leaving all three fields absent: a row nothing
+    /// could be reached from must say whether the shop is elsewhere or does not exist, because <c>price</c> and
+    /// <c>openNow</c> are absent here too and an absent address beside them would read as "not measured".
     /// </summary>
     internal static BridgeSeedSupplyTarget SeedWithoutSupplyRow(string qualifiedItemId, string displayName, int? heldCount) =>
-        new(qualifiedItemId, displayName, heldCount, null, null, null, null, null, null, null, null, null);
+        new(qualifiedItemId, displayName, heldCount, null, null, null, null, null, null, null, null, null,
+            ShopLocationUnknown: "no_shop_stocks_this_seed");
 
     /// <summary>
     /// One supply row, projected from the shop's OWN data: the declared owner and its hours query, the price the menu
-    /// charges, the row's declared price, and the engine's open-now answer.
+    /// charges, the row's declared price, the engine's open-now answer, and where in the world that shop is.
     ///
     /// <c>openNow</c> is three-valued on purpose. <c>null</c> means the question could not be asked - the shop declares
     /// no owner entry (<c>no_owner_entry</c>) or its condition could not be evaluated
     /// (<c>owner_condition_unreadable</c>) - and a reader must not see that as "closed".
+    ///
+    /// <paramref name="shopTargetsHere"/> is the shop-target list `CreateBridgeSnapshot` published for this location
+    /// (the family `shop_purchase` addresses), and <paramref name="owningLocation"/> is the <c>GameLocation</c> this
+    /// shop id names. Both are READ, never re-derived, so the address half of this row and the `shopTargets` row it
+    /// names are one fact with one producer.
     /// </summary>
     internal static BridgeSeedSupplyTarget SeedSupplyRow(
         string qualifiedItemId,
@@ -968,7 +981,9 @@ internal sealed partial class ExecutionManager
         string shopDisplayName,
         ShopData shopData,
         int price,
-        IReadOnlyList<ShopOwnerData>? eligibleOwners)
+        IReadOnlyList<ShopOwnerData>? eligibleOwners,
+        IReadOnlyList<BridgeShopTarget>? shopTargetsHere,
+        GameLocation? owningLocation)
     {
         List<ShopOwnerData> owners = shopData.Owners ?? new List<ShopOwnerData>();
         ShopOwnerData? owner = owners.FirstOrDefault(
@@ -998,6 +1013,8 @@ internal sealed partial class ExecutionManager
                     && string.Equals(candidate.Name, ownerName, StringComparison.Ordinal));
             openNowReason = null;
         }
+        (BridgeSeedSupplyDestination? Destination, string? Location, string? Unknown) address = ResolveShopAddress(
+            shopId, ownerName, shopDisplayName, shopTargetsHere, owningLocation);
         return new BridgeSeedSupplyTarget(
             qualifiedItemId,
             displayName,
@@ -1010,7 +1027,10 @@ internal sealed partial class ExecutionManager
             DeclaredSeedPrice(shopData, qualifiedItemId),
             shopData.Currency,
             openNow,
-            openNowReason);
+            openNowReason,
+            address.Destination,
+            address.Location,
+            address.Unknown);
     }
 
     /// <summary>
@@ -1065,15 +1085,97 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
+    /// The `GameLocation` a `Data/Shops` id names - the room the shop's counter stands in - or null when the id names
+    /// no map at all (a stall, the casino, a festival shop).
+    ///
+    /// ONE reader, because TWO facts are projected from it: the shop's displayed name and the location half of the
+    /// supply row's address. `Game1.getLocationFromName` is the engine's own lookup, and a shop id is a map name
+    /// precisely because the shop's counter lives in that map.
+    /// </summary>
+    private static GameLocation? ShopOwningLocation(string shopId)
+    {
+        try
+        {
+            return Game1.getLocationFromName(shopId);
+        }
+        catch (Exception)
+        {
+            // A lookup that threw is the same answer this field needs: no location could be read for this id. The
+            // supply row names that rather than failing the whole snapshot.
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The shop's address, of which EXACTLY ONE member is always set.
+    ///
+    /// <list type="number">
+    /// <item><c>Destination</c> - this shop's counter is in the location the actor is standing in, because
+    /// <paramref name="shopTargetsHere"/> (the list <c>DiscoverShopTargets</c> produced for THIS snapshot) holds a row
+    /// for it. The destination carries that row's own <c>TargetId</c>, location and owner tile, so it and the
+    /// <c>shopTargets</c> row `shop_purchase` resolves are the same fact. No id is minted here.</item>
+    /// <item><c>Location</c> - the shop exists on a map but its counter is not in this one, so only the room can be
+    /// named. This is the farm-at-06:00 case that started it: "SeedShop" is the answer to "where do I head", and it
+    /// is deliberately not a destination, so it cannot read as a waypoint already within reach.</item>
+    /// <item><c>Unknown</c> - neither could be read, and the reason is named (<c>shop_location_unreadable</c>) so an
+    /// absent address is a stated fact instead of an empty field beside a real price.</item>
+    /// </list>
+    /// </summary>
+    private static (BridgeSeedSupplyDestination? Destination, string? Location, string? Unknown) ResolveShopAddress(
+        string shopId,
+        string ownerName,
+        string shopDisplayName,
+        IReadOnlyList<BridgeShopTarget>? shopTargetsHere,
+        GameLocation? owningLocation)
+    {
+        BridgeShopTarget? counter = null;
+        if (shopTargetsHere is not null)
+        {
+            foreach (BridgeShopTarget candidate in shopTargetsHere)
+            {
+                if (!string.Equals(candidate.ShopId, shopId, StringComparison.Ordinal))
+                    continue;
+                // The row publishes ONE owner entry and its hours, so the counter that owner stands at is the address
+                // that entry describes. A tile-opened stall has no owner name to match and keeps the first row.
+                if (string.Equals(candidate.OwnerName, ownerName, StringComparison.Ordinal))
+                {
+                    counter = candidate;
+                    break;
+                }
+                counter ??= candidate;
+            }
+        }
+        if (counter is not null)
+        {
+            string label = ownerName.Length > 0
+                ? ownerName
+                : shopDisplayName.Length > 0 ? shopDisplayName : shopId;
+            return (
+                new BridgeSeedSupplyDestination(
+                    counter.Location,
+                    counter.TargetId,
+                    new BridgeTile(counter.OwnerTileX, counter.OwnerTileY),
+                    label),
+                null,
+                null);
+        }
+        return owningLocation is not null
+            ? (null, owningLocation.NameOrUniqueName, null)
+            : (null, null, "shop_location_unreadable");
+    }
+
+    /// <summary>
     /// The shop's own name as the game localizes it, or empty when the id names no map at all (a stall, the casino, a
     /// festival shop). Empty is that fact; the caller still has `shopId`.
     /// </summary>
     private static string ShopDisplayName(string shopId)
     {
+        GameLocation? location = ShopOwningLocation(shopId);
+        if (location is null)
+            return string.Empty;
         try
         {
-            StardewValley.GameLocation? location = Game1.getLocationFromName(shopId);
-            return location is null ? string.Empty : location.DisplayName;
+            return location.DisplayName;
         }
         catch (Exception)
         {

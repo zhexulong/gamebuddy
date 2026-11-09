@@ -1276,6 +1276,22 @@ public sealed record BridgeShopTarget(
 /// seed held) and from no family at all (nothing was measured). The three are the difference between "walking to town
 /// is worth it" and "it is not".
 /// </para>
+/// <para>
+/// <c>ShopDestination</c>, <c>ShopLocation</c> and <c>ShopLocationUnknown</c> are the ADDRESS half, and EXACTLY ONE of
+/// them is written on every row. Measured 2026-11-09 (round40, 35 minutes): <c>plant_seed</c> landed two tiles because
+/// the world gave her two seeds, `shop_purchase` was never called, and the shortage fact DID reach her - it named
+/// <c>shopId=SeedShop</c>, the owner, the price and the trading window - but never where that shop is, so "go and buy"
+/// had no first step to make. <c>ShopId</c> is the shop's identity in <c>Data/Shops</c>, not a position in the world.
+/// </para>
+/// <para>
+/// <c>ShopDestination</c> is published when the shop's counter is in the location the actor is STANDING IN, and it is
+/// the `shopTargets` row itself - the same id, tile and location <c>shop_purchase</c> takes as <c>targetId</c> -
+/// selected out of the list that one discovery returned, so the two families cannot disagree. <c>ShopLocation</c> names
+/// the room the counter is in when it is somewhere else: enough to head for, and deliberately NOT a destination, so a
+/// reader never mistakes it for a waypoint within reach. <c>ShopLocationUnknown</c> names why neither could be read
+/// (<c>shop_location_unreadable</c>, <c>no_shop_stocks_this_seed</c>). A price and an open-now answer with none of the
+/// three would read as a shop she can walk to, which is the defect this half removes.
+/// </para>
 /// </summary>
 public sealed record BridgeSeedSupplyTarget(
     string QualifiedItemId,
@@ -1289,7 +1305,32 @@ public sealed record BridgeSeedSupplyTarget(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? DeclaredPrice,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Currency,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? OpenNow,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OpenNowReason);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OpenNowReason,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] BridgeSeedSupplyDestination? ShopDestination = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ShopLocation = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ShopLocationUnknown = null);
+
+/// <summary>
+/// Where a shop's counter IS, in terms a walk can start from: the location, the exact target id <c>shop_purchase</c>
+/// accepts there, the tile that target stands on, and the name to show while walking.
+///
+/// <para>
+/// Every member is taken from a row the Mod ALREADY publishes - a <c>shopTargets</c> row, selected out of the list
+/// <c>DiscoverShopTargets</c> returned for this location - and never re-derived: a second copy of the identity would
+/// agree with itself today and disagree with the purchase tomorrow, which is why the selection reads the published
+/// row's own <c>TargetId</c> rather than minting one.
+/// </para>
+/// <para>
+/// <c>Tile</c> is the published row's own owner tile, which is where the actor has to stand: one tile from it, the
+/// engine's own interaction radius. It is carried here as well as on the shop row so that a reader holding only this
+/// destination can still plan the walk - the tile is not a second measurement, it is the same number.
+/// </para>
+/// </summary>
+public sealed record BridgeSeedSupplyDestination(
+    string Location,
+    string TargetId,
+    BridgeTile Tile,
+    string Label);
 
 public sealed record BridgeExecutionRequest(
     string RequestId,

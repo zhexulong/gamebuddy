@@ -52,7 +52,9 @@ public sealed class SeedSupplyProjectionTests
         ShopData shop,
         IReadOnlyList<ShopOwnerData>? eligibleOwners,
         int chargedPrice = 20,
-        int? heldCount = 2) =>
+        int? heldCount = 2,
+        IReadOnlyList<BridgeShopTarget>? shopTargetsHere = null,
+        StardewValley.GameLocation? owningLocation = null) =>
         ExecutionManager.SeedSupplyRow(
             ParsnipSeeds,
             "Parsnip Seeds",
@@ -61,7 +63,9 @@ public sealed class SeedSupplyProjectionTests
             "Pierre's General Store",
             shop,
             chargedPrice,
-            eligibleOwners);
+            eligibleOwners,
+            shopTargetsHere,
+            owningLocation);
 
     [Fact]
     public void TheRowCarriesTheShopsOwnHoursQueryAndItsDeclaredPrice()
@@ -166,6 +170,11 @@ public sealed class SeedSupplyProjectionTests
         row.Currency.Should().BeNull();
         row.OpenNow.Should().BeNull();
         row.OpenNowReason.Should().BeNull();
+        // The address half is still written, and it names the reason: a row nothing could be reached from must say so
+        // rather than leaving an empty field beside the absent price. `ShopAddressabilityTests` owns the rest.
+        row.ShopDestination.Should().BeNull();
+        row.ShopLocation.Should().BeNull();
+        row.ShopLocationUnknown.Should().Be("no_shop_stocks_this_seed");
     }
 
     [Fact]

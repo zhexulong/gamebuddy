@@ -2425,13 +2425,22 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("redeem_prize_ticket", StringComparer.Ordinal) || advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("put_item_in_fish_tank", StringComparer.Ordinal) || advertisedCapabilities.Contains("place_item_on_pedestal", StringComparer.Ordinal) || advertisedCapabilities.Contains("open_geode", StringComparer.Ordinal)
                 ? DiscoverInventoryItemFacts(player)
                 : null;
+        // ONE shop-target list per snapshot, shared. `shopTargets` publishes it, and the seed-supply row's destination
+        // is SELECTED out of it rather than derived a second time: a second walk of `Data/Shops` could disagree with
+        // the first about what this room sells, and the seed row would then name a counter `shop_purchase` refuses.
+        // Gated on EITHER action, because a shortage fact published for `plant_seed` names a counter too.
+        IReadOnlyList<BridgeShopTarget>? shopTargetsHere =
+            advertisedCapabilities.Contains("shop_purchase", StringComparer.Ordinal)
+            || advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal)
+                ? this.DiscoverShopTargets(player)
+                : null;
         // The shortage fact's SUPPLY half, published only while the action whose day it belongs to is advertised: a
         // companion that cannot sow a tile has no shortage, and a family published for an unadvertised action would be a
         // fact about a world it cannot act in.
         IReadOnlyList<BridgeSeedSupplyTarget>? seedSupplyTargets = null;
         int seedSupplyTargetsOmitted = 0;
         if (advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal))
-            seedSupplyTargets = DiscoverSeedSupplyTargets(player, inventoryItemFacts, out seedSupplyTargetsOmitted);
+            seedSupplyTargets = DiscoverSeedSupplyTargets(player, inventoryItemFacts, shopTargetsHere, out seedSupplyTargetsOmitted);
         BridgeSnapshot snapshot = new BridgeSnapshot(
             this.revision,
             player.currentLocation?.NameOrUniqueName ?? "unknown",
@@ -2532,7 +2541,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // eligible (ShopBuilder.GetCurrentOwners evaluates ShopOwnerData.Condition), rather
             // than scanning map tiles for "shop tiles" — the game hardcodes which tile opens
             // which shop per location, so a tile scan cannot generalise.
-            advertisedCapabilities.Contains("shop_purchase", StringComparer.Ordinal) ? DiscoverShopTargets(player) : null,
+            advertisedCapabilities.Contains("shop_purchase", StringComparer.Ordinal) ? shopTargetsHere : null,
             advertisedCapabilities.Contains("harvest_bush", StringComparer.Ordinal) ? DiscoverBushTargets(player) : null,
             advertisedCapabilities.Contains("harvest_fruit_tree", StringComparer.Ordinal) ? DiscoverFruitTreeTargets(player) : null,
             advertisedCapabilities.Contains("shake_tree", StringComparer.Ordinal) ? DiscoverShakeTreeTargets(player) : null,
