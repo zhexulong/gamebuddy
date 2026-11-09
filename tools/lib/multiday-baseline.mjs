@@ -282,6 +282,26 @@ function nightOutsideBaselineScope(classified) {
 }
 
 /**
+ * THE DAY A `day_started` FACT NAMES, or null when it names none.
+ *
+ * One reading for two questions: `worldDayStartsFromFacts` counts DISTINCT days, and `morning-liveness.mjs` labels the
+ * day a morning belongs to. Both parse the identity the Mod mints (`Sensory/ISalientEventFilter.cs:74`:
+ * `day_started_day_<TotalDays>`), because that is the only place the day is stated - `round41`'s
+ * `morningLiveness.days[]` came back `day: null` for all six entries while it read a `worldFactPayload.day` field the Mod
+ * has never published.
+ */
+export function dayStartedDayOf(fact) {
+  if (!isPlainObject(fact)) return null;
+  const kind = fact.worldFactKind ?? fact.kind ?? fact.payload?.kind;
+  if (kind !== "day_started") return null;
+  const eventId = fact.eventId ?? fact.worldFactPayload?.eventId ?? "";
+  const match = /^day_started_day_(\d+)$/u.exec(typeof eventId === "string" ? eventId : "");
+  if (match === null) return null;
+  const day = Number.parseInt(match[1], 10);
+  return Number.isInteger(day) ? day : null;
+}
+
+/**
  * THE WORLD'S OWN DAY STARTS, read off the Mod's `day_started` world facts.
  *
  * The one thing in a run that is the world's calendar rather than the runner's loop count. The Mod mints
@@ -294,13 +314,8 @@ function nightOutsideBaselineScope(classified) {
 export function worldDayStartsFromFacts(facts) {
   const days = [];
   for (const fact of Array.isArray(facts) ? facts : []) {
-    if (!isPlainObject(fact)) continue;
-    const kind = fact.worldFactKind ?? fact.kind ?? fact.payload?.kind;
-    if (kind !== "day_started") continue;
-    const eventId = fact.eventId ?? fact.worldFactPayload?.eventId ?? "";
-    const match = /^day_started_day_(\d+)$/u.exec(typeof eventId === "string" ? eventId : "");
-    if (match === null) continue;
-    const day = Number.parseInt(match[1], 10);
+    const day = dayStartedDayOf(fact);
+    if (day === null) continue;
     if (!days.includes(day)) days.push(day);
   }
   return days;
