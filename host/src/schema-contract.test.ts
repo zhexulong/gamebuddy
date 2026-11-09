@@ -1567,44 +1567,66 @@ function dereference(defs: Record<string, SchemaNode>, node: SchemaNode): Schema
   return { ...(defs[reference.split("/").pop() ?? ""] as SchemaNode), ...rest };
 }
 
-/** A witness for the bounded character-class patterns the snapshot families use. */
-function patternWitness(pattern: string): string {
+/** The characters this suite tries for a pattern's character class, most likely first. It is a plain
+ * alphabet rather than a per-property table: membership in a class is decided by that class's OWN
+ * regexp (`classWitnesses`), and the finished witness by the whole pattern's own regexp
+ * (`patternWitness`), so no string here has to be trusted on its own. */
+const WITNESS_ALPHABET: readonly string[] = Object.freeze(["a", "A", "0", "7", "_", "-", "s", "Z", " "]);
+
+/** The characters a character class's own `[...]` admits out of `WITNESS_ALPHABET`, so ranges, escapes
+ * and negations are read by the same engine that reads the real frame. */
+function classWitnesses(charClass: string): readonly string[] {
+  const single = new RegExp(`^[${charClass}]$`);
+  return WITNESS_ALPHABET.filter((character) => single.test(character));
+}
+
+/** An escape a bare character class does not cover, as the character it matches. */
+const ESCAPE_WITNESSES: Readonly<Record<string, string>> = Object.freeze({
+  d: "7",
+  D: "a",
+  w: "a",
+  W: "-",
+  s: " ",
+  S: "a",
+});
+
+/** One attempt at a witness: `pass` picks the same-ranked character at every class occurrence, which is
+ * enough for the anchored one- and two-class patterns the families carry and stays bounded when a
+ * pattern has more. `null` means this walk cannot express the pattern at all - a group, an unclosed
+ * class - which `patternWitness` reports rather than guessing past. */
+function walkPattern(pattern: string, pass: number): string | null {
   const body = pattern
     .replace(/^\^/, "")
     .replace(/\$$/, "")
     .replace(/\(\?!\[\\s\\S\]\)$/, "");
-  const sampleOf = (charClass: string): string => {
-    if (charClass.includes("0-9")) return "7";
-    if (charClass.includes("a-f")) return "a";
-    if (charClass.includes("A-Z")) return "A";
-    return "a";
-  };
   let out = "";
   for (let index = 0; index < body.length; ) {
     if (body[index] === "[") {
       const end = body.indexOf("]", index);
-      const charClass = body.slice(index + 1, end);
+      if (end < 0) return null;
+      const witnesses = classWitnesses(body.slice(index + 1, end));
+      if (witnesses.length === 0) return null;
+      const character = witnesses[Math.min(pass, witnesses.length - 1)] as string;
       index = end + 1;
       const quantifier = /^\{(\d+)(?:,\d+)?\}/.exec(body.slice(index));
       if (quantifier === null) {
-        out += sampleOf(charClass);
+        out += character;
         continue;
       }
       index += quantifier[0].length;
-      out += sampleOf(charClass).repeat(Number(quantifier[1]));
+      out += character.repeat(Number(quantifier[1]));
       continue;
     }
     if (body[index] === "\\") {
-      out += body[index + 1];
+      const escaped = body[index + 1] ?? "";
+      out += ESCAPE_WITNESSES[escaped] ?? escaped;
       index += 2;
       continue;
     }
-    // A group would need a real regex witness. Refusing loudly keeps an unsupported pattern from
-    // silently shrinking this suite's coverage.
-    if (body[index] === "(") throw new Error(`unsupported schema pattern: ${pattern}`);
-    // A quantifier applies to whatever preceded it, so it consumes no character of its own. Emitting it verbatim
-    // made every  pattern produce a witness containing  - valid for neither side - which the suite then
-    // reported as the Host refusing what the schema declares.
+    // A group needs a real regexp witness. Refusing loudly keeps an unsupported pattern from silently
+    // shrinking this suite's coverage instead of standing in a value the schema itself would refuse.
+    if (body[index] === "(") return null;
+    // A quantifier applies to whatever preceded it, so it consumes no character of its own.
     if (body[index] === "+" || body[index] === "*" || body[index] === "?") {
       index += 1;
       continue;
@@ -1615,27 +1637,38 @@ function patternWitness(pattern: string): string {
   return out;
 }
 
-/** The smallest instance the schema admits for this node; throws on a keyword it cannot witness. */
-function generateSchemaValue(defs: Record<string, SchemaNode>, node: SchemaNode, depth = 0): unknown {
-  if (depth > 12) throw new Error("schema_contract_generation_too_deep");
-  const schema = dereference(defs, node);
+/** A witness the pattern's OWN regexp accepts, or a blocked failure naming where the pattern came from.
+ * The previous version built a string from the pattern and returned it unchecked, so a witness the
+ * schema itself refuses was then reported as the HOST refusing what the schema declares - which the gate
+ * cannot tell apart from the two sides really disagreeing. */
+function patternWitness(pattern: string, where: string): string {
+  const accepts = new RegExp(pattern);
+  const tried = new Set<string>();
+  for (let pass = 0; pass < WITNESS_ALPHABET.length; pass += 1) {
+    const candidate = walkPattern(pattern, pass);
+    if (candidate === null || tried.has(candidate)) continue;
+    tried.add(candidate);
+    if (accepts.test(candidate)) return candidate;
+  }
+  throw new Error(`${where}: no witness of the schema's own pattern ${pattern} was found`);
+}
+
+/** Whether a conditional's `if` selects the instance it is asked about, answered by the schema's own
+ * evaluator rather than by reading the condition here. */
+function conditionHolds(condition: SchemaNode, instance: unknown): boolean {
+  return new Ajv2020({ strict: false }).compile(condition)(instance) === true;
+}
+
+/** The value this node's OWN keywords admit, before any `allOf` narrowing. */
+function generateOwnValue(defs: Record<string, SchemaNode>, schema: SchemaNode, where: string, depth: number): unknown {
   if (schema.const !== undefined) return schema.const;
   if (Array.isArray(schema.enum)) return schema.enum[0];
-  if (Array.isArray(schema.oneOf)) return generateSchemaValue(defs, schema.oneOf[0] as SchemaNode, depth + 1);
-  if (Array.isArray(schema.allOf)) {
-    let merged: Record<string, unknown> = {};
-    for (const part of schema.allOf) {
-      const generated = generateSchemaValue(defs, part as SchemaNode, depth + 1);
-      if (generated !== null && typeof generated === "object" && !Array.isArray(generated))
-        merged = { ...merged, ...(generated as Record<string, unknown>) };
-    }
-    return merged;
-  }
+  if (Array.isArray(schema.oneOf)) return generateSchemaValue(defs, schema.oneOf[0] as SchemaNode, where, depth + 1);
   const types = Array.isArray(schema.type) ? schema.type : [schema.type];
   if (types.length === 1 && types[0] === "null") return null;
   const type = types.find((candidate) => candidate !== "null");
   if (type === "string") {
-    if (typeof schema.pattern === "string") return patternWitness(schema.pattern);
+    if (typeof schema.pattern === "string") return patternWitness(schema.pattern, where);
     const length = Math.max(1, typeof schema.minLength === "number" ? schema.minLength : 1);
     return "s".repeat(typeof schema.maxLength === "number" ? Math.min(length, schema.maxLength) : length);
   }
@@ -1649,24 +1682,65 @@ function generateSchemaValue(defs: Record<string, SchemaNode>, node: SchemaNode,
   if (type === "boolean") return false;
   if (type === "array") {
     const length = Math.max(1, typeof schema.minItems === "number" ? schema.minItems : 1);
-    return Array.from({ length }, () => generateSchemaValue(defs, schema.items as SchemaNode, depth + 1));
+    return Array.from({ length }, () => generateSchemaValue(defs, schema.items as SchemaNode, where, depth + 1));
   }
   if (type === "object" || schema.properties !== undefined) {
     const properties = (schema.properties ?? {}) as Record<string, SchemaNode>;
     const generated: Record<string, unknown> = {};
     for (const key of (schema.required ?? []) as string[])
-      generated[key] = generateSchemaValue(defs, properties[key] as SchemaNode, depth + 1);
+      generated[key] = generateSchemaValue(defs, properties[key] as SchemaNode, `${where}.${key}`, depth + 1);
     // A member the schema pins to one value is always written by the Mod, so it belongs to the
     // smallest faithful instance even when the schema does not require it.
     for (const [key, property] of Object.entries(properties)) {
       if (key in generated) continue;
       const resolved = dereference(defs, property);
       if (resolved.const !== undefined || Array.isArray(resolved.enum))
-        generated[key] = generateSchemaValue(defs, property, depth + 1);
+        generated[key] = generateSchemaValue(defs, property, `${where}.${key}`, depth + 1);
     }
     return generated;
   }
-  throw new Error(`unsupported schema node: ${JSON.stringify(schema).slice(0, 200)}`);
+  throw new Error(`${where}: unsupported schema node: ${JSON.stringify(schema).slice(0, 200)}`);
+}
+
+/** The smallest instance the schema admits for this node; throws on a keyword it cannot witness. `where`
+ * is the family and property path, so a blocked generation names what it could not witness instead of
+ * leaving the reader to guess which family produced it. */
+function generateSchemaValue(defs: Record<string, SchemaNode>, node: SchemaNode, where: string, depth = 0): unknown {
+  if (depth > 12) throw new Error(`${where}: schema_contract_generation_too_deep`);
+  const schema = dereference(defs, node);
+  // A def can carry its own shape beside an `allOf` that narrows it, or delegate the whole shape to the
+  // parts, so the merge starts from the node's own value and `{}` stands in when there is nothing else.
+  const delegatesShape =
+    Array.isArray(schema.allOf) &&
+    schema.type === undefined &&
+    schema.properties === undefined &&
+    schema.const === undefined &&
+    !Array.isArray(schema.enum) &&
+    !Array.isArray(schema.oneOf);
+  const own = delegatesShape ? {} : generateOwnValue(defs, schema, where, depth);
+  if (!Array.isArray(schema.allOf)) return own;
+  if (own === null || typeof own !== "object" || Array.isArray(own))
+    throw new Error(`${where}: an allOf narrowed a value that is not an object`);
+  let merged = own as Record<string, unknown>;
+  for (const part of schema.allOf) {
+    const branchNode = dereference(defs, part as SchemaNode);
+    // A conditional in the same `allOf` narrows what the parts BEFORE it produced - the families express
+    // their coupled shapes this way - so its branch is chosen against the merged instance so far and laid
+    // over it. Reading the condition through the schema's own evaluator keeps this walk from owning a
+    // second opinion about what it means.
+    const chosen =
+      branchNode.if === undefined
+        ? branchNode
+        : conditionHolds(branchNode.if as SchemaNode, merged)
+          ? (branchNode.then as SchemaNode | undefined)
+          : (branchNode.else as SchemaNode | undefined);
+    if (chosen === undefined) continue;
+    const narrowed = generateSchemaValue(defs, chosen, where, depth + 1);
+    if (narrowed === null || typeof narrowed !== "object" || Array.isArray(narrowed))
+      throw new Error(`${where}: an allOf part admitted a value that is not an object`);
+    merged = { ...merged, ...(narrowed as Record<string, unknown>) };
+  }
+  return merged;
 }
 
 const schemaContractScope: Scope = {
@@ -1749,29 +1823,38 @@ test("the schema owns every snapshot family bound the Host projects", async () =
   }
 });
 
-test("the Host admits the schema's own smallest instance of every snapshot family", async () => {
+test("the Host admits the schema's own smallest instance of every snapshot family", async (t) => {
+  const validate = await schemaValidator();
   const { defs, families } = await snapshotSchema();
+  assert.ok(families.length > 0, "the schema declares snapshot families, so this population cannot be zero");
+  t.diagnostic(`families examined ${families.length}`);
+  // Three readings per family, and the order matters: the first asks whether the SAMPLE is a value the
+  // schema itself admits, and only then whether the Host agrees with it. Before this, a witness the
+  // schema refused was reported as `invalid_snapshot:<family>` - a Host/Mod disagreement that did not
+  // exist - because the generator returned a pattern witness without checking it against the pattern.
+  // Every family is sampled and reported, not just the first that breaks.
+  const disagreed: string[] = [];
   for (const [field, family] of families) {
-    const sample = generateSchemaValue(defs, family.items as SchemaNode);
+    const sample = generateSchemaValue(defs, family.items as SchemaNode, field);
     const message = snapshotWith(field, [sample]);
-    assert.equal(
-      diagnoseBridgeMessage(message, schemaContractScope),
-      "accepted",
-      `${field} refused what the schema declares: ${JSON.stringify(sample)}`,
-    );
-    assert.equal(
-      validateBridgeMessage(message, schemaContractScope),
-      null,
-      `${field} refused what the schema declares: ${JSON.stringify(sample)}`,
-    );
+    if (validate(message) !== true)
+      disagreed.push(
+        `${field}: the generator built ${JSON.stringify(sample)}, which the schema itself refuses: ${JSON.stringify(validate.errors)}`,
+      );
+    const host = diagnoseBridgeMessage(message, schemaContractScope);
+    if (host !== "accepted") disagreed.push(`${field}: the Host answered ${host} for ${JSON.stringify(sample)}`);
+    const detail = validateBridgeMessage(message, schemaContractScope);
+    if (detail !== null)
+      disagreed.push(`${field}: the Host's typed reader answered ${detail} for ${JSON.stringify(sample)}`);
   }
+  assert.deepEqual(disagreed, [], `families examined ${families.length}: both sides must admit every sample`);
 });
 
 test("the Host refuses a snapshot family entry the schema's shape does not allow, naming the field", async () => {
   const { defs, families } = await snapshotSchema();
   const caps = new Map<string, number>(SNAPSHOT_FAMILY_RULES.map((rule) => [rule.field, rule.maxItems]));
   for (const [field, family] of families) {
-    const sample = generateSchemaValue(defs, family.items as SchemaNode);
+    const sample = generateSchemaValue(defs, family.items as SchemaNode, field);
     const maxItems = caps.get(field);
     if (maxItems !== undefined) {
       const message = snapshotWith(

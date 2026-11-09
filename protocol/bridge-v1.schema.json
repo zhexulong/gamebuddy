@@ -8308,7 +8308,41 @@
           "minimum": 0,
           "maximum": 4
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "const": "placed_furniture"
+              }
+            }
+          },
+          "then": {
+            "required": ["rotation", "rotations"],
+            "properties": {
+              "rotation": {
+                "type": "integer"
+              },
+              "rotations": {
+                "type": "integer"
+              }
+            }
+          },
+          "else": {
+            "required": ["rotation", "rotations"],
+            "properties": {
+              "rotation": {
+                "type": "null"
+              },
+              "rotations": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
     },
     "wearableTarget": {
       "type": "object",
