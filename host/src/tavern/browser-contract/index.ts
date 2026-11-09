@@ -748,6 +748,19 @@ export const TavernConnectionProviderV1Schema = strictObject({
   setupFields: Type.Array(TavernConnectionSetupFieldV1Schema, { maxItems: 5 }),
   /** Curated guidance the panel offers as suggestions; never the set of ids a player may type. */
   allowedPlayerModels: Type.Array(TavernConnectionModelV1Schema, { maxItems: TAVERN_MODEL_LISTING_LIMIT }),
+  /**
+   * Ids the Host documents for this entry's endpoint, offered as suggestions.
+   *
+   * Not availability: nothing here was read from the endpoint. It exists so a first run has a
+   * starting point while no probe has run yet, and the panel labels it as a suggestion beside the
+   * listing the endpoint itself returned. Bounded by the same ceiling as that listing, and filtered
+   * to the ids this product would accept.
+   *
+   * Optional because it is additive: a Host that has no suggestion for an entry says nothing, and a
+   * projection that omits it is read as "no suggestions", which is the same surface with a shorter
+   * list. Making it required would refuse every projection written before the field existed.
+   */
+  suggestedModelIds: Type.Optional(Type.Array(ListedModelId, { maxItems: TAVERN_MODEL_LISTING_LIMIT })),
   /** True only for the one OpenAI-compatible escape hatch (design/28 §1). */
   escapeHatch: Type.Boolean(),
   /** True when this provider is served by an operator environment credential. */
@@ -984,6 +997,10 @@ const OperationId = Type.Union([
   // constructed, so a running game keeps the text it started with.
   Type.Literal("settings.game-prompt.read"),
   Type.Literal("settings.game-prompt.update"),
+  Type.Literal("settings.appearance.read"),
+  Type.Literal("settings.appearance.update"),
+  Type.Literal("settings.ui-language.read"),
+  Type.Literal("settings.ui-language.update"),
   Type.Literal("settings.connection.read"),
   Type.Literal("settings.connection.create"),
   Type.Literal("settings.connection.test"),
@@ -1044,6 +1061,10 @@ const LabelKey = Type.Union([
   Type.Literal("tavern.operation.settings.delivery.update"),
   Type.Literal("tavern.operation.settings.game-prompt.read"),
   Type.Literal("tavern.operation.settings.game-prompt.update"),
+  Type.Literal("tavern.operation.settings.appearance.read"),
+  Type.Literal("tavern.operation.settings.appearance.update"),
+  Type.Literal("tavern.operation.settings.ui-language.read"),
+  Type.Literal("tavern.operation.settings.ui-language.update"),
   Type.Literal("tavern.operation.settings.connection.read"),
   Type.Literal("tavern.operation.settings.connection.create"),
   Type.Literal("tavern.operation.settings.connection.test"),
@@ -1205,6 +1226,40 @@ export const WorldInfoImportCommandV1Schema = strictObject({
 export const MAX_WORLD_INFO_IMPORT_BODY_BYTES = ST_CARD_DECODER_LIMITS_V1.inputBytesJson + 8_192;
 
 /**
+ * The external lorebook shape `world-info.export` writes and `world-info.import` reads back.
+ *
+ * The format is named because a file is the one artifact that leaves this product: the player
+ * needs to know what they are holding, and a reader other than this one needs a fact to key on.
+ */
+export const TAVERN_LOREBOOK_EXPORT_FORMAT = "sillytavern-lorebook/v1" as const;
+/**
+ * `world-info.export`: one library item as an external lorebook file.
+ *
+ * `document` is the file itself - the Host's own bytes, in the flat SillyTavern shape its own
+ * importer reads - so the browser saves exactly what the Host exported and never re-serializes a
+ * book it did not author. `entryCount` is the number of entries the document carries, so the
+ * surface can say what it saved without parsing the file.
+ *
+ * `document` carries no ceiling on purpose, for the reason `ProfileBackupExportV1` does not: the
+ * library's own revision envelope bounds an item, and a contract bound below it would refuse to
+ * export a book the player legally holds - exactly when they wanted a copy most.
+ */
+export const WorldInfoExportV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  format: Type.Literal(TAVERN_LOREBOOK_EXPORT_FORMAT),
+  itemHandle: OpaqueHandle,
+  entryCount: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+  /**
+   * The name the download carries. The Host names the file - as it does for the card export and
+   * the backup - so one rule decides it rather than one per surface. The pattern is exactly what
+   * no filesystem accepts: path separators, the Windows-reserved characters and control
+   * characters.
+   */
+  fileName: Type.String({ minLength: 1, maxLength: 128, pattern: '^[^\\\\/:*?"<>|\\u0000-\\u001F]+$' }),
+  document: Type.String({ minLength: 1 }),
+});
+
+/**
  * Companion library entry: opaque handle plus display metadata only. No
  * identity, continuity, profile, hash, path or runtime fact is expressible.
  */
@@ -1267,6 +1322,16 @@ export const CompanionWorldBookEntryV1Schema = strictObject({
   title: Type.String({ minLength: 1, maxLength: 256 }),
   keys: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 16 }),
   constant: Type.Boolean(),
+  /**
+   * Whether the entry is part of her background at all.
+   *
+   * It is REQUIRED here and optional in the durable book (`worldbook.ts`), because the two layers
+   * answer different questions: the file may omit it and means "enabled", while this projection is
+   * what the panel draws and what an edit sends back - a switch with no value to draw would be a
+   * control the player cannot read. A disabled entry stays in the book, stays listed, and reaches
+   * no assembled context.
+   */
+  enabled: Type.Boolean(),
   /**
    * The entry's own text, as the Host rendered it: macros resolved, bounded.
    *
@@ -1744,6 +1809,122 @@ export const ChatExportV1Schema = strictObject({
 /** `chat.export`'s own query: the exact Chat the browser's list handed out. */
 export const ChatExportQueryV1Schema = strictObject({ chatHandle: OpaqueHandle });
 
+/**
+ * `profile.backup.export`: the whole profile as one archive, or a refusal that names what it could
+ * not read.
+ *
+ * `document` is the archive itself - the Host's own bytes - so the browser saves exactly what the
+ * Host produced and never re-serialises it. It carries no ceiling on purpose: a profile's size is
+ * the player's data, and a contract bound below the largest legitimate profile would refuse a
+ * backup exactly when the player needed one most (the defect the Chat list already paid for with
+ * its own removed count cap).
+ *
+ * A refusal is a bounded list of authority ids rather than a sentence: the ids are members of the
+ * Host's own `PROFILE_BACKUP_AUTHORITIES` declaration, and the surface turns each into the player's
+ * language. "The backup failed" tells a player nothing about which of their chats, companions or
+ * Memory is unreadable, so the id is the fact this wire has to carry.
+ */
+export const ProfileBackupExportV1Schema = Type.Union([
+  strictObject({
+    status: Type.Literal("saved"),
+    fileName: Type.String({ minLength: 1, maxLength: 128, pattern: "^[A-Za-z0-9._-]+$" }),
+    document: Type.String({ minLength: 1 }),
+  }),
+  strictObject({
+    status: Type.Literal("refused"),
+    unreadable: Type.Array(Type.String({ minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9-]*$" }), {
+      minItems: 1,
+      maxItems: 16,
+    }),
+  }),
+]);
+
+/**
+ * The `presets.read` readout: the assembly's own truth about every preset the store holds
+ * (`design/architecture/tavern-preset-compatibility.md` §2.1, §2.5, §4, §5).
+ *
+ * The shapes below mirror `host/src/preset-assembly-surface.ts` member for member, and they are a
+ * MIRROR rather than a re-derivation: the producer is the one reading, and a member it stops
+ * emitting fails closed here instead of reaching a panel that would draw it as an absence.
+ */
+
+/** Where an effective sampler value came from. `unset` means no layer sets it, so nothing is sent. */
+export const PresetSamplingSourceV1Schema = Type.Union([
+  Type.Literal("preset"),
+  Type.Literal("model"),
+  Type.Literal("thinking-level"),
+  Type.Literal("unset"),
+]);
+/**
+ * One sampler key's value in force and the layer that decided it (§5).
+ *
+ * `value` is null exactly when `source` is `unset`: JSON cannot carry `undefined`, and a row that
+ * lost its value that way would be an omitted row - which a player reads as "there is no such
+ * setting", the opposite of the fact.
+ */
+export const PresetSamplingRowV1Schema = strictObject({
+  key: Type.String({ minLength: 1, maxLength: 64 }),
+  value: Type.Union([Type.Number(), Type.Null()]),
+  source: PresetSamplingSourceV1Schema,
+});
+/**
+ * Why the sampler reading could not be taken.
+ *
+ * `no_composed_model` is the whole set today and it is a NAMED absence: the reading is taken
+ * against the composed model the adapter will send, and no preset is bound to the runtime yet.
+ * A closed union rather than a free string, so a reason the browser has no line for cannot be
+ * published as prose.
+ */
+export const PresetSamplingUnavailableV1Schema = strictObject({
+  unavailable: Type.Union([Type.Literal("no_composed_model")]),
+});
+/** One macro the preset spells that this product will not evaluate, with the entries that spell it. */
+export const PresetAssemblyMacroV1Schema = strictObject({
+  code: Type.String({ minLength: 1, maxLength: 192 }),
+  name: Type.String({ minLength: 1, maxLength: 128 }),
+  entries: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { minItems: 1 }),
+});
+/** One entry placed inside the transcript by `injection_depth`. */
+export const PresetAssemblyDepthBlockV1Schema = strictObject({
+  identifier: Type.String({ minLength: 1, maxLength: 128 }),
+  depth: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+});
+/**
+ * One stored preset, assembled: the entry partition, the slots with no source, the macros this
+ * product declines, the depth injection, and the sampler reading.
+ *
+ * `sampling` is one shape or the other, never both and never neither: rows say what will be sent,
+ * `{ unavailable }` says the reading does not exist and why. A body carrying both would state two
+ * things about one fact, and a body carrying neither leaves the player unable to tell "nothing is
+ * sent" from "nobody looked".
+ */
+export const PresetAssemblySurfaceV1Schema = strictObject({
+  presetId: Type.String({ minLength: 1, maxLength: 128 }),
+  name: Type.Union([Type.String({ minLength: 1, maxLength: 256 }), Type.Null()]),
+  revision: Revision,
+  entries: strictObject({ total: Revision, enabled: Revision, disabled: Revision }),
+  disabledEntries: Type.Array(Type.String({ minLength: 1, maxLength: 128 })),
+  unfilledMarkers: Type.Array(Type.String({ minLength: 1, maxLength: 128 })),
+  macros: Type.Array(PresetAssemblyMacroV1Schema),
+  depth: strictObject({
+    count: Revision,
+    depths: Type.Array(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+    blocks: Type.Array(PresetAssemblyDepthBlockV1Schema),
+  }),
+  sampling: Type.Union([Type.Array(PresetSamplingRowV1Schema, { maxItems: 8 }), PresetSamplingUnavailableV1Schema]),
+});
+/**
+ * `GET /api/tavern/v1/presets`: every preset the durable store holds, one assembly row each.
+ *
+ * The cap is the browser mirror's own (`MAX_PRESETS` in
+ * `dialogue-web/src/preset-assembly-surface.ts`): a readout the surface refuses to draw is not a
+ * readout, so the wire carries the same ceiling rather than a longer list the panel would reject.
+ */
+export const PresetAssemblyReadV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  presets: Type.Array(PresetAssemblySurfaceV1Schema, { maxItems: 100 }),
+});
+
 export const TavernStateEventStreamV1Schema = strictObject({ epoch: OpaqueHandle, cursor: OpaqueHandle });
 
 /**
@@ -1898,12 +2079,55 @@ export const TavernGamePromptAdditionV1Schema = strictObject({
     format: "tavern-browser-game-prompt-addition-v1",
   }),
 });
+
 export const TavernGamePromptAdditionCommandV1Schema = strictObject({
   expectedRevision: Revision,
   addition: Type.String({
     maxLength: MAX_GAME_PROMPT_ADDITION_CHARS,
     format: "tavern-browser-game-prompt-addition-v1",
   }),
+});
+
+/**
+ * The appearance this browser paints itself in: one of the three the product offers.
+ *
+ * `system` is a choice, not a missing value - it means "follow the operating system" - so
+ * the wire carries no null. What each appearance paints, and how `system` is resolved, is
+ * the stylesheet's and the code that applies it; this schema only refuses a fourth value.
+ */
+export const TavernAppearanceChoiceV1Schema = Type.Union([
+  Type.Literal("system"),
+  Type.Literal("light"),
+  Type.Literal("dark"),
+]);
+
+export const TavernAppearancePreferenceV1Schema = strictObject({
+  revision: Revision,
+  appearance: TavernAppearanceChoiceV1Schema,
+});
+export const TavernAppearancePreferenceCommandV1Schema = strictObject({
+  expectedRevision: Revision,
+  appearance: TavernAppearanceChoiceV1Schema,
+});
+
+/**
+ * The interface's own display language: one of the catalogues this product ships.
+ *
+ * Not the companion language (`TavernCompanionLocaleV1Schema`, an open bounded BCP-47 tag): the two
+ * are separate choices and one never rewrites the other. This one is CLOSED, because a UI language
+ * the browser has no catalogue for cannot be painted at all - the wire refuses a third value rather
+ * than storing one. `locale` is null when the player has never chosen, and the page then follows the
+ * browser's own language.
+ */
+export const TavernUiLocaleV1Schema = Type.Union([Type.Literal("en"), Type.Literal("zh-CN")]);
+
+export const TavernUiLanguagePreferenceV1Schema = strictObject({
+  revision: Revision,
+  locale: Type.Union([TavernUiLocaleV1Schema, Type.Null()]),
+});
+export const TavernUiLanguagePreferenceCommandV1Schema = strictObject({
+  expectedRevision: Revision,
+  locale: TavernUiLocaleV1Schema,
 });
 
 const MemoryStateSnapshotV1Schema = Type.Union([
@@ -2834,6 +3058,23 @@ const RouteDescriptors = Object.freeze([
     request: WorldInfoImportCommandV1Schema,
     success: { status: 200, contentType: "application/json", schema: WorldInfoStateV1Schema },
   }),
+  // The export that answers it: one item as the external lorebook file the import above reads
+  // back. It takes the same addressing command the item read does - `GET` carries it in the
+  // query - because the export is a read of one exact item in the exact projection the browser
+  // last saw.
+  route({
+    routeId: "world-info.export",
+    method: "GET",
+    path: "/api/tavern/v1/world-info/export",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: WorldInfoItemCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: WorldInfoExportV1Schema },
+  }),
   route({
     routeId: "settings.voice.read",
     method: "GET",
@@ -2963,6 +3204,64 @@ const RouteDescriptors = Object.freeze([
     query: noQuery,
     request: TavernGamePromptAdditionCommandV1Schema,
     success: { status: 200, contentType: "application/json", schema: TavernGamePromptAdditionV1Schema },
+  }),
+  route({
+    routeId: "settings.appearance.read",
+    method: "GET",
+    path: "/api/tavern/v1/settings/appearance",
+    operationId: "settings.appearance.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: TavernAppearancePreferenceV1Schema },
+  }),
+  route({
+    routeId: "settings.appearance.update",
+    method: "PUT",
+    path: "/api/tavern/v1/settings/appearance",
+    operationId: "settings.appearance.update",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: TavernAppearancePreferenceCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: TavernAppearancePreferenceV1Schema },
+  }),
+  route({
+    routeId: "settings.ui-language.read",
+    method: "GET",
+    path: "/api/tavern/v1/settings/ui-language",
+    operationId: "settings.ui-language.read",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: TavernUiLanguagePreferenceV1Schema },
+  }),
+  route({
+    routeId: "settings.ui-language.update",
+    method: "PUT",
+    path: "/api/tavern/v1/settings/ui-language",
+    operationId: "settings.ui-language.update",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "required",
+    idempotency: "none",
+    headers: CsrfHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    request: TavernUiLanguagePreferenceCommandV1Schema,
+    success: { status: 200, contentType: "application/json", schema: TavernUiLanguagePreferenceV1Schema },
   }),
   route({
     routeId: "settings.connection.read",
@@ -3475,6 +3774,37 @@ const RouteDescriptors = Object.freeze([
     query: ChatExportQueryV1Schema,
     success: { status: 200, contentType: "application/json", schema: ChatExportV1Schema },
   }),
+  // The whole-profile backup: one archive of every declared durable authority, or a refusal that
+  // names the authorities it could not read. It is the one route a player reaches for their own data.
+  route({
+    routeId: "profile.backup.export",
+    method: "GET",
+    path: "/api/tavern/v1/profile/backup/export",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: ProfileBackupExportV1Schema },
+  }),
+  // The preset readout: every preset the durable store holds, assembled by the one producer
+  // (`presetAssemblySurface`). A read with no command and no CSRF header, because a preset is
+  // imported once and edited by nobody (design §2.1) - the store owns the one legal mutation.
+  route({
+    routeId: "presets.read",
+    method: "GET",
+    path: "/api/tavern/v1/presets",
+    auth: "browser_session",
+    origin: "same-origin",
+    csrf: "none",
+    idempotency: "none",
+    headers: EmptyHeaders,
+    pathParams: noPath,
+    query: noQuery,
+    success: { status: 200, contentType: "application/json", schema: PresetAssemblyReadV1Schema },
+  }),
 ]);
 
 export const TavernBrowserContractV1 = Object.freeze({
@@ -3506,6 +3836,10 @@ export const TavernBrowserContractV1 = Object.freeze({
     TavernDeliveryPreferenceCommandV1Schema,
     TavernGamePromptAdditionV1Schema,
     TavernGamePromptAdditionCommandV1Schema,
+    TavernAppearancePreferenceV1Schema,
+    TavernAppearancePreferenceCommandV1Schema,
+    TavernUiLanguagePreferenceV1Schema,
+    TavernUiLanguagePreferenceCommandV1Schema,
     TavernStateSnapshotV1Schema,
     SubmitMessageCommandV1Schema,
     SaveDraftCommandV1Schema,
@@ -3543,9 +3877,18 @@ export const TavernBrowserContractV1 = Object.freeze({
     WorldInfoCreateCommandV1Schema,
     WorldInfoUpdateCommandV1Schema,
     WorldInfoImportCommandV1Schema,
+    WorldInfoExportV1Schema,
     ChatExportDispositionV1Schema,
     ChatExportV1Schema,
     ChatExportQueryV1Schema,
+    ProfileBackupExportV1Schema,
+    PresetSamplingSourceV1Schema,
+    PresetSamplingRowV1Schema,
+    PresetSamplingUnavailableV1Schema,
+    PresetAssemblyMacroV1Schema,
+    PresetAssemblyDepthBlockV1Schema,
+    PresetAssemblySurfaceV1Schema,
+    PresetAssemblyReadV1Schema,
     CompanionListEntryV1Schema,
     CompanionListV1Schema,
     CompanionDetailV1Schema,
@@ -3627,6 +3970,12 @@ export type TavernDeliveryPreferenceV1 = Static<typeof TavernDeliveryPreferenceV
 export type TavernDeliveryPreferenceCommandV1 = Static<typeof TavernDeliveryPreferenceCommandV1Schema>;
 export type TavernGamePromptAdditionV1 = Static<typeof TavernGamePromptAdditionV1Schema>;
 export type TavernGamePromptAdditionCommandV1 = Static<typeof TavernGamePromptAdditionCommandV1Schema>;
+export type TavernAppearanceChoiceV1 = Static<typeof TavernAppearanceChoiceV1Schema>;
+export type TavernAppearancePreferenceV1 = Static<typeof TavernAppearancePreferenceV1Schema>;
+export type TavernAppearancePreferenceCommandV1 = Static<typeof TavernAppearancePreferenceCommandV1Schema>;
+export type TavernUiLocaleV1 = Static<typeof TavernUiLocaleV1Schema>;
+export type TavernUiLanguagePreferenceV1 = Static<typeof TavernUiLanguagePreferenceV1Schema>;
+export type TavernUiLanguagePreferenceCommandV1 = Static<typeof TavernUiLanguagePreferenceCommandV1Schema>;
 export type StCardImportFieldSummaryV1 = Static<typeof StCardImportFieldSummaryV1Schema>;
 export type StCardImportDispositionV1 = Static<typeof StCardImportDispositionV1Schema>;
 export type StCardImportLossV1 = Static<typeof StCardImportLossV1Schema>;
@@ -3681,6 +4030,43 @@ export type WorldInfoItemCommandV1 = Static<typeof WorldInfoItemCommandV1Schema>
 export type WorldInfoCreateCommandV1 = Static<typeof WorldInfoCreateCommandV1Schema>;
 export type WorldInfoUpdateCommandV1 = Static<typeof WorldInfoUpdateCommandV1Schema>;
 export type WorldInfoImportCommandV1 = Static<typeof WorldInfoImportCommandV1Schema>;
+export type WorldInfoExportV1 = Static<typeof WorldInfoExportV1Schema>;
+/**
+ * The preset readout's wire types are HAND-WRITTEN rather than `Static` of their schemas, for the
+ * reason the world book's and the exports' are: the producer freezes every list it carries, so the
+ * type has to say `readonly` rather than describe a mutable array it never returns. The schemas stay
+ * the validator the dispatcher checks every reply against.
+ *
+ * `sampling` is the schema's union as well: rows, or `{ unavailable }` naming why no reading exists.
+ */
+export type PresetSamplingSourceV1 = "preset" | "model" | "thinking-level" | "unset";
+export type PresetSamplingRowV1 = Readonly<{
+  key: string;
+  value: number | null;
+  source: PresetSamplingSourceV1;
+}>;
+export type PresetSamplingUnavailableV1 = Readonly<{ unavailable: "no_composed_model" }>;
+export type PresetAssemblyMacroV1 = Readonly<{
+  code: string;
+  name: string;
+  entries: readonly string[];
+}>;
+export type PresetAssemblyDepthBlockV1 = Readonly<{ identifier: string; depth: number }>;
+export type PresetAssemblySurfaceV1 = Readonly<{
+  presetId: string;
+  name: string | null;
+  revision: number;
+  entries: Readonly<{ total: number; enabled: number; disabled: number }>;
+  disabledEntries: readonly string[];
+  unfilledMarkers: readonly string[];
+  macros: readonly PresetAssemblyMacroV1[];
+  depth: Readonly<{ count: number; depths: readonly number[]; blocks: readonly PresetAssemblyDepthBlockV1[] }>;
+  sampling: readonly PresetSamplingRowV1[] | PresetSamplingUnavailableV1;
+}>;
+export type PresetAssemblyReadV1 = Readonly<{
+  apiVersion: typeof TAVERN_BROWSER_API_VERSION;
+  presets: readonly PresetAssemblySurfaceV1[];
+}>;
 export type ChatExportCommandV1 = Static<typeof ChatExportQueryV1Schema>;
 export type ChatExportDispositionV1 = Static<typeof ChatExportDispositionV1Schema>;
 /**
@@ -3718,6 +4104,7 @@ export type CompanionWorldBookEntryV1 = Readonly<{
   title: string;
   keys: readonly string[];
   constant: boolean;
+  enabled: boolean;
   content: string;
 }>;
 export type CompanionWorldBookV1 = Readonly<{

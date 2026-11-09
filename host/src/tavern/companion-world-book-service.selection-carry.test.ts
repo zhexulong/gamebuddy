@@ -26,7 +26,13 @@ import { macroTable } from "./macro-engine.js";
 const MACROS = macroTable({ char: "琥珀", user: "阿岚" });
 
 /** One row as the editor sends it back: the projection's own four fields, body already rendered. */
-type EditorRow = Readonly<{ title: string; keys: readonly string[]; constant: boolean; content: string }>;
+type EditorRow = Readonly<{
+  title: string;
+  keys: readonly string[];
+  constant: boolean;
+  enabled: boolean;
+  content: string;
+}>;
 
 /** One entry's hidden facts - everything the projection does not carry - in one comparable shape. */
 function hidden(entry: WorldBookEntry): Readonly<Record<string, unknown>> {
@@ -113,6 +119,7 @@ async function editorRows(root: string): Promise<readonly EditorRow[]> {
     title: entry.title,
     keys: [...entry.keys],
     constant: entry.constant,
+    enabled: entry.enabled,
     content: entry.content,
   }));
 }
@@ -182,7 +189,13 @@ test("a field the command can state is the row's own, and the carry never overri
     const durable = await save(root, [
       // Every field this command can state, stated: a body of her own, no trigger words, and the
       // always-on flag turned on (the card's greenhouse entry carried none).
-      { title: rows[GREENHOUSE]!.title, keys: [], constant: true, content: "{{user}}说这扇玻璃是她挑的。" },
+      {
+        title: rows[GREENHOUSE]!.title,
+        keys: [],
+        constant: true,
+        enabled: true,
+        content: "{{user}}说这扇玻璃是她挑的。",
+      },
       rows[SPRINKLER]!,
       rows[RAIN]!,
     ]);

@@ -4,12 +4,13 @@ import { MAX_GAME_PROMPT_ADDITION_CHARS } from "../tavern/browser-contract/index
 import { join } from "node:path";
 
 /**
- * Host-owned player preference record. One path, one revision, five field
+ * Host-owned player preference record. One path, one revision, six field
  * groups: the companion language the runtimes read at mount, the cloud TTS
  * consent/output the Voice surface reads, whether Chat replies arrive as short
  * paced pieces, the player's own addition to the Game companion's instructions
- * (read once, at Game-session start), and the appearance this browser paints
- * itself in. Every player-visible settings write goes through this one record's
+ * (read once, at Game-session start), the appearance this browser paints itself
+ * in, and the interface's own display language. Every player-visible settings
+ * write goes through this one record's
  * compare-and-swap, so a write from any settings surface advances the same
  * revision and a stale expectedRevision is rejected for all of them.
  */
@@ -112,6 +113,19 @@ export type AppearanceChoice = "system" | "light" | "dark";
 export const APPEARANCE_CHOICES: readonly AppearanceChoice[] = Object.freeze(["system", "light", "dark"]);
 
 /**
+ * The interface's own display language: one of the two catalogues this product ships.
+ *
+ * A separate fact from `locale` above, which is what the COMPANION speaks - the settings surface
+ * states the difference in its own words, and one choice never rewrites the other.
+ *
+ * The set is CLOSED, unlike the companion's bounded BCP-47 tag: a language no catalogue can paint has
+ * no meaning here, and the browser's own `Locale` union is exactly these two. `null` means the player
+ * has never chosen, and the page then follows the browser's own language the way it did before this
+ * was stored at all.
+ */
+export type UiLocale = "en" | "zh-CN";
+
+/**
  * The single root-level path of the record. One path, one authority: the
  * management surface writes it and every runtime reads it, so neither side
  * carries a preference of its own.
@@ -138,6 +152,15 @@ export type PlayerPreference = Readonly<{
   gamePromptAddition: GamePromptAddition;
   /** The appearance the player chose; never chosen is `system`. */
   appearance: AppearanceChoice;
+  /**
+   * The interface language the player chose; null (or absent) means never chosen.
+   *
+   * Optional on this projection, and always set by the store, for the reason `gamePromptAddition`'s
+   * projection gives: a fixture that does not care about this setting must not have to learn it. The
+   * read that serves it collapses both spellings of "never chosen" to null, so nothing downstream
+   * can see the difference.
+   */
+  uiLocale?: UiLocale | null;
 }>;
 
 /**
@@ -153,7 +176,8 @@ export type PlayerPreferenceUpdate =
   | Readonly<{ action: "setPersona"; persona: VoicePersona }>
   | Readonly<{ action: "setPaced"; paced: PacedDelivery }>
   | Readonly<{ action: "setGamePromptAddition"; addition: GamePromptAddition }>
-  | Readonly<{ action: "setAppearance"; appearance: AppearanceChoice }>;
+  | Readonly<{ action: "setAppearance"; appearance: AppearanceChoice }>
+  | Readonly<{ action: "setUiLocale"; uiLocale: UiLocale }>;
 
 type StoredPlayerPreference = Readonly<{
   schemaVersion: typeof PLAYER_PREFERENCE_SCHEMA_VERSION;
@@ -167,6 +191,7 @@ type StoredPlayerPreference = Readonly<{
   paced: PacedDelivery;
   gamePromptAddition: GamePromptAddition;
   appearance: AppearanceChoice;
+  uiLocale: UiLocale | null;
 }>;
 
 export class PlayerPreferenceRevisionConflict extends Error {
@@ -201,6 +226,7 @@ export class PlayerPreferenceStore {
         paced: update.action === "setPaced" ? update.paced : current.paced,
         gamePromptAddition: update.action === "setGamePromptAddition" ? update.addition : current.gamePromptAddition,
         appearance: update.action === "setAppearance" ? update.appearance : current.appearance,
+        uiLocale: update.action === "setUiLocale" ? update.uiLocale : current.uiLocale,
       });
       await writeAtomically(this.path, next);
       const readBack = await this.load();
@@ -282,6 +308,7 @@ const DEFAULT_PLAYER_PREFERENCE: StoredPlayerPreference = Object.freeze({
   paced: false,
   gamePromptAddition: "",
   appearance: "system",
+  uiLocale: null,
 });
 
 function project(value: StoredPlayerPreference): PlayerPreference {
@@ -296,6 +323,7 @@ function project(value: StoredPlayerPreference): PlayerPreference {
     paced: value.paced,
     gamePromptAddition: value.gamePromptAddition,
     appearance: value.appearance,
+    uiLocale: value.uiLocale,
   });
 }
 
@@ -313,6 +341,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
     !isPaced(value.paced) ||
     !isGamePromptAddition(value.gamePromptAddition) ||
     !isAppearanceChoice(value.appearance) ||
+    !isUiLocaleOrNull(value.uiLocale) ||
     !hasExactKeys(value, [
       "schemaVersion",
       "revision",
@@ -325,6 +354,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
       "paced",
       "gamePromptAddition",
       "appearance",
+      "uiLocale",
     ])
   )
     throw new Error("invalid_player_preference_store");
@@ -352,6 +382,7 @@ function validateStored(value: unknown): StoredPlayerPreference {
     paced: value.paced as PacedDelivery,
     gamePromptAddition: value.gamePromptAddition as GamePromptAddition,
     appearance: value.appearance as AppearanceChoice,
+    uiLocale: value.uiLocale as UiLocale | null,
   });
 }
 
@@ -380,6 +411,9 @@ function isUpdate(value: unknown): value is PlayerPreferenceUpdate {
   }
   if (value.action === "setAppearance") {
     return hasExactKeys(value, ["action", "appearance"]) && isAppearanceChoice(value.appearance);
+  }
+  if (value.action === "setUiLocale") {
+    return hasExactKeys(value, ["action", "uiLocale"]) && isUiLocale(value.uiLocale);
   }
   return value.action === "revoke" && hasExactKeys(value, ["action"]);
 }
@@ -422,6 +456,15 @@ function isPaced(value: unknown): value is PacedDelivery {
 /** One of the three appearances, exactly - never a free string from the wire. */
 function isAppearanceChoice(value: unknown): value is AppearanceChoice {
   return value === "system" || value === "light" || value === "dark";
+}
+
+/** One of the two catalogues this product ships, exactly - never a free string from the wire. */
+function isUiLocale(value: unknown): value is UiLocale {
+  return value === "en" || value === "zh-CN";
+}
+
+function isUiLocaleOrNull(value: unknown): value is UiLocale | null {
+  return value === null || isUiLocale(value);
 }
 
 /**

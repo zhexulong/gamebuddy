@@ -51,6 +51,8 @@ export type CompanionWorldBookEntryProjection = Readonly<{
   keys: readonly string[];
   /** Always-on background, carried regardless of what is said, so it has no trigger words. */
   constant: boolean;
+  /** Whether the entry takes part at all; the panel's switch, and what an edit sends back. */
+  enabled: boolean;
   /**
    * The entry's authored body, verbatim from the durable book. It is rendered
    * through the run's macro table on the way to the browser, so what the player
@@ -81,6 +83,7 @@ export function projectCompanionWorldBook(book: WorldBook | null): CompanionWorl
           title: entry.title,
           keys: Object.freeze((entry.keys ?? []).slice(0, MAX_PROJECTED_KEYS)),
           constant: entry.constant === true,
+          enabled: entry.enabled !== false,
           content: entry.content,
         }),
       ),
@@ -159,6 +162,7 @@ function renderWorldBook(book: WorldBook, macros: MacroTable): CompanionWorldBoo
       title: entry.title,
       keys: Object.freeze([...(entry.keys ?? [])]),
       constant: entry.constant === true,
+      enabled: entry.enabled !== false,
       content,
     });
   });
@@ -348,6 +352,10 @@ function authoredEntries(
       provenance: carried?.provenance ?? ("authored" as const),
       tokenBudget: carried?.tokenBudget ?? ("small" as const),
       ...(entry.constant ? { constant: true } : {}),
+      // Absent in the durable book means enabled, so the live state writes no field: only the
+      // switched-off entry stores `false`, and a switch the player turns back on restores the
+      // shape the card import writes.
+      ...(entry.enabled ? {} : { enabled: false }),
       // The worldbook validator refuses an empty key list, so "no trigger words" is an
       // absent field - the same shape the card import writes for a keyless entry.
       ...(keys.length === 0 ? {} : { keys }),

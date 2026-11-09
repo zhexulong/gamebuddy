@@ -317,6 +317,7 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
               "provenance",
               "tokenBudget",
               "constant",
+              "enabled",
               "keys",
               "secondaryKeys",
               "selectiveLogic",
@@ -341,7 +342,8 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
             scope: scope as "companion" | "setting" | "integration" | "world",
             provenance: provenance as "authored" | "st-card-import" | "reviewed-import",
             tokenBudget: tokenBudget as "small" | "medium",
-            ...(x.constant === undefined ? {} : { constant: requiredConstant(x.constant) }),
+            ...(x.constant === undefined ? {} : { constant: requiredBoolean(x.constant) }),
+            ...(x.enabled === undefined ? {} : { enabled: requiredBoolean(x.enabled) }),
             ...(x.keys === undefined ? {} : { keys: requiredWorldBookKeys(x.keys) }),
             ...(x.secondaryKeys === undefined ? {} : { secondaryKeys: requiredWorldBookKeys(x.secondaryKeys) }),
             ...(x.selectiveLogic === undefined ? {} : { selectiveLogic: requiredSelectiveLogic(x.selectiveLogic) }),
@@ -478,7 +480,7 @@ function importRecord(v: Record<string, unknown>): StCardImportRecord {
             if (!record(macro) || !only(macro, ["token", "standard"])) fail();
             return freeze({
               token: requiredText(macro.token, 64),
-              standard: requiredConstant(macro.standard),
+              standard: requiredBoolean(macro.standard),
             });
           };
           // The named half is optional and capped: a card that lost more entries than the cap still records the true
@@ -815,7 +817,7 @@ function deepFreeze<T>(value: T): T {
 function fail(): never {
   throw new Error("invalid_tavern_artifact");
 }
-function requiredConstant(v: unknown): boolean {
+function requiredBoolean(v: unknown): boolean {
   if (typeof v !== "boolean") fail();
   return v;
 }

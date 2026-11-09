@@ -143,9 +143,21 @@ test("a rewritten body is the player's text while the entry it belongs to keeps 
       expectedRevision: 3,
       entries: [
         // The player rewrites this row with a macro of her OWN, which is her text.
-        { title: "温室", keys: ["温室", "玻璃房"], constant: false, content: "{{user}}说这扇玻璃是她挑的。" },
+        {
+          title: "温室",
+          keys: ["温室", "玻璃房"],
+          constant: false,
+          enabled: true,
+          content: "{{user}}说这扇玻璃是她挑的。",
+        },
         // …and sends this row back exactly as she read it.
-        { title: "洒水器", keys: ["洒水器", "灌溉"], constant: true, content: "琥珀修好了洒水器，管子接在井边。" },
+        {
+          title: "洒水器",
+          keys: ["洒水器", "灌溉"],
+          constant: true,
+          enabled: true,
+          content: "琥珀修好了洒水器，管子接在井边。",
+        },
       ],
       refreshBindings: async (previous, next) => {
         calls.push({ previous, next });
@@ -268,7 +280,7 @@ test("a stale revision is refused by name, and the durable book is untouched", a
         containmentRoot: root,
         macros: MACROS,
         expectedRevision: 2,
-        entries: [{ title: "温室", keys: [], constant: false, content: "改过了。" }],
+        entries: [{ title: "温室", keys: [], constant: false, enabled: true, content: "改过了。" }],
         refreshBindings: async (previous, next) => {
           calls.push({ previous, next });
           return 0;
@@ -296,7 +308,7 @@ test("an entry the worldbook validator will not keep is refused by name", async 
         containmentRoot: root,
         macros: MACROS,
         expectedRevision: 3,
-        entries: [{ title: "", keys: ["温室"], constant: false, content: "" }],
+        entries: [{ title: "", keys: ["温室"], constant: false, enabled: true, content: "" }],
         refreshBindings: async () => 0,
       }),
       /companion_world_book_invalid/,
@@ -321,7 +333,7 @@ test("no book at all and an unreadable book are each their own refusal", async (
           containmentRoot: root,
           macros: MACROS,
           expectedRevision: 1,
-          entries: [{ title: "温室", keys: [], constant: false, content: "正文。" }],
+          entries: [{ title: "温室", keys: [], constant: false, enabled: true, content: "正文。" }],
           refreshBindings: async () => 0,
         }),
         code,
@@ -346,7 +358,7 @@ test("a refresh the durable store refuses leaves the book exactly as it was", as
         containmentRoot: root,
         macros: MACROS,
         expectedRevision: 3,
-        entries: [{ title: "温室", keys: [], constant: false, content: "改过了。" }],
+        entries: [{ title: "温室", keys: [], constant: false, enabled: true, content: "改过了。" }],
         refreshBindings: async () => {
           throw new Error("chat_thread_store_closed");
         },
@@ -376,7 +388,7 @@ test("a restoring write that fails too reports the one state a retry cannot fix"
         containmentRoot: root,
         macros: MACROS,
         expectedRevision: 3,
-        entries: [{ title: "温室", keys: [], constant: false, content: "改过了。" }],
+        entries: [{ title: "温室", keys: [], constant: false, enabled: true, content: "改过了。" }],
         refreshBindings: async () => {
           // The pin refresh failed AND the restoring write cannot land: the book is the
           // new one while the threads that pinned the old revision still pin it.

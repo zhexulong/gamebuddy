@@ -52,6 +52,7 @@ test("player preference defaults to unconfigured and projects one record with ex
       paced: false,
       gamePromptAddition: "",
       appearance: "system" as const,
+      uiLocale: null,
     } satisfies PlayerPreference);
 
     const updated = await store.update(0, { action: "setLocale", locale: "zh-CN" });
@@ -68,6 +69,7 @@ test("player preference defaults to unconfigured and projects one record with ex
       "paced",
       "persona",
       "revision",
+      "uiLocale",
     ]);
     assert.deepEqual(await store.read(), updated);
   });
@@ -626,5 +628,49 @@ test("an appearance write cannot clobber the other groups and a stale revision i
     const appearance = await store.update(language.revision, { action: "setAppearance", appearance: "dark" });
     assert.equal(appearance.locale, "en-US");
     assert.equal(appearance.appearance, "dark");
+  });
+});
+
+/**
+ * The interface language is one of the two catalogues, and nothing else.
+ *
+ * The record is where the choice becomes durable, so this is where the closed set has to hold: the
+ * wire refuses a third language first, but a store that accepted one would be a durable fact no
+ * catalogue can paint. `null` is the player who never chose, which is a different thing from a choice
+ * the store could not read.
+ */
+test("the interface language round-trips as one of the two catalogues and refuses a third", async () => {
+  await withStore(async (path, store) => {
+    // Never chosen is null: the page then follows the browser's own language, exactly as before.
+    assert.equal((await store.read()).uiLocale, null);
+
+    const written = await store.update(0, { action: "setUiLocale", uiLocale: "en" });
+    assert.equal(written.uiLocale, "en");
+    assert.equal(written.revision, 1);
+    // Choosing a language touches no other field group - least of all the companion's own language.
+    assert.equal(written.locale, null);
+    assert.equal(written.appearance, "system");
+
+    // Durable: a fresh store over the same path answers the same choice.
+    assert.equal((await new PlayerPreferenceStore(path).read()).uiLocale, "en");
+
+    const chinese = await store.update(written.revision, { action: "setUiLocale", uiLocale: "zh-CN" });
+    assert.equal(chinese.uiLocale, "zh-CN");
+
+    for (const update of [
+      { action: "setUiLocale" },
+      { action: "setUiLocale", uiLocale: null },
+      { action: "setUiLocale", uiLocale: "ja-JP" },
+      { action: "setUiLocale", uiLocale: "zh" },
+      { action: "setUiLocale", uiLocale: "EN" },
+      { action: "setUiLocale", uiLocale: "en", extra: true },
+    ]) {
+      await assert.rejects(
+        store.update(chinese.revision, update as never),
+        /invalid_player_preference_update/u,
+        `expected ${JSON.stringify(update)} to be refused`,
+      );
+    }
+    assert.equal((await store.read()).uiLocale, "zh-CN", "a refused write leaves the record untouched");
   });
 });

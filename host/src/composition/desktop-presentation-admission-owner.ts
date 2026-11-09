@@ -10,6 +10,7 @@ import {
 import { projectRenderedCompanionWorldBook, updateCompanionWorldBook } from "../tavern/companion-world-book-service.js";
 import { createCompanionProfileService } from "../tavern/companion-profile-service.js";
 import { createCompanionCardExportService } from "../tavern/companion-card-export-service.js";
+import { exportProfileBackup } from "../profile-backup/profile-backup-export.js";
 import { createCompanionAvatarService, type CompanionAvatarService } from "../tavern/companion-avatar/index.js";
 import { createCompanionAvatarRequestHandler } from "../tavern/companion-avatar/face.js";
 import { createCompanionDeletionService } from "../tavern/companion-deletion-service.js";
@@ -61,6 +62,8 @@ import {
 import { createTavernLibraryService, isTavernArtifactUnreadable } from "../tavern/library-service.js";
 import { provisionDirectNewCompanion, provisionNewCompanion } from "../tavern/new-companion-service.js";
 import { createPersonaManagementService } from "../tavern/persona-management/persona-management.js";
+import { createPresetAssemblyRead } from "../tavern/preset-assembly-read.js";
+import { createPresetStore } from "../tavern/preset-store.js";
 import {
   createScenarioManagementService,
   withScenarioSurfaceMacros,
@@ -217,6 +220,8 @@ type TavernManagementDomains = Readonly<
     managementService: ChatManagementService;
     memoryService: MemoryManagementService;
     worldInfoService: WorldInfoBindingManagementService;
+    profileBackupService: NonNullable<TavernManagementDialogueWebOptions["profileBackupService"]>;
+    presetAssemblyRead: NonNullable<TavernManagementDialogueWebOptions["presetAssemblyRead"]>;
     modelProfileStore: ModelProfileStore;
     playerPreferenceStore: PlayerPreferenceStore;
     /** Present only when the shared semantic authority supplied the ADR 0009 selection capability. */
@@ -511,6 +516,45 @@ function createTavernManagementDomains(
     resolveCompanion: companionForHandle,
   });
   /**
+   * The whole-profile backup: the deployment manifest is injected because it, not this assembly,
+   * owns the runtime root and the authority generation the archive has to describe.
+   */
+  const profileBackupService = Object.freeze({
+    export: () => exportProfileBackup({ deployment: manifest }),
+  });
+  /**
+   * The preset readout (`presets.read`): every preset the durable store holds, assembled by the one
+   * producer. The store is rooted exactly where it defines its own layout
+   * (`<playerRoot>/presets/<presetId>/preset.json`), so this read enumerates the same population an
+   * importer writes - and its empty state is the store's answer, not this assembly's.
+   *
+   * The three producer inputs this mount cannot supply yet are stated rather than guessed:
+   *
+   *  - `sampling` is null. No preset is bound to the Chat runtime, so there is no composed model to read
+   *    the effective values from, and the surface reports `no_composed_model` rather than values nothing
+   *    sends (design §5);
+   *  - `macros` and `markers` are empty. Both are the Chat pipeline's to fill when it assembles a
+   *    preset (the companion card's fields and the bound world book); until it does, every marker reads
+   *    as a slot with no source, which is the assembly's own answer about the content it was given.
+   *
+   * None of the four other facts depends on them: the entry partition, the macro findings and the depth
+   * injection are read from the stored document alone.
+   */
+  const presetAssemblyRead = createPresetAssemblyRead({
+    store: createPresetStore({ runtimeRoot: manifest.runtimeRoot, playerRoot: tavernPaths.playerRoot }),
+    macros: Object.freeze({
+      char: "",
+      user: "",
+      description: "",
+      personality: "",
+      scenario: "",
+      persona: "",
+      itemId: "",
+    }),
+    markers: Object.freeze({}),
+    sampling: null,
+  });
+  /**
    * Removing a roster companion for good.
    *
    * The in-play fact is the SAME `manifest.principal.companionId` the roster's `isCurrent` is
@@ -692,6 +736,8 @@ function createTavernManagementDomains(
       companionWorldBookService,
       companionProfileService,
       companionCardExportService,
+      profileBackupService,
+      presetAssemblyRead,
       companionAvatarService,
       companionDeletionService,
       companionActivationService,
@@ -1040,13 +1086,15 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
     "exportChat",
   ],
   memoryService: ["read", "mutate"],
-  worldInfoService: ["read", "setBinding", "detail", "create", "importLorebook", "update", "delete"],
+  worldInfoService: ["read", "setBinding", "detail", "create", "importLorebook", "exportLorebook", "update", "delete"],
   connectionService: ["read", "create", "test", "activate", "selectModel", "remove"],
   libraryService: ["listCompanions"],
   companionVoiceService: ["read", "update"],
   companionWorldBookService: ["read", "update"],
   companionProfileService: ["read"],
   companionCardExportService: ["read"],
+  profileBackupService: ["export"],
+  presetAssemblyRead: ["read"],
   companionAvatarService: ["update"],
   companionDeletionService: ["delete"],
   newCompanionProvisioner: ["create"],
@@ -1138,6 +1186,10 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.delivery.update",
       "settings.game-prompt.read",
       "settings.game-prompt.update",
+      "settings.appearance.read",
+      "settings.appearance.update",
+      "settings.ui-language.read",
+      "settings.ui-language.update",
       "settings.connection.read",
       "settings.connection.create",
       "settings.connection.test",
@@ -1200,9 +1252,18 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       // Lorebook import follows the companion group in that same canonical order: the route
       // that serves the managed library's existing importer to the player.
       "world-info.import",
+      // The export that closes the loop follows it: one library item written back as the external
+      // lorebook file the import above reads.
+      "world-info.export",
       // The Chat transcript export is last in that same order: one Chat's own transcript as a
       // SillyTavern chat file.
       "chat.export",
+      // The whole-profile backup appends after it in the same canonical order: every declared
+      // durable authority as one archive the player keeps.
+      "profile.backup.export",
+      // The preset readout appends last: the assembly's own reading of every preset the store holds,
+      // which the Preset panel reads on mount instead of a route nothing served.
+      "presets.read",
     ],
     operationIds: [
       "draft.save",
@@ -1219,6 +1280,10 @@ export function composeTavernManagementProfile(): ComposedTavernProfile {
       "settings.delivery.update",
       "settings.game-prompt.read",
       "settings.game-prompt.update",
+      "settings.appearance.read",
+      "settings.appearance.update",
+      "settings.ui-language.read",
+      "settings.ui-language.update",
       "settings.connection.read",
       "settings.connection.create",
       "settings.connection.test",

@@ -60,6 +60,8 @@ import {
   TavernBrowserValidatorsV1,
   type TavernAppearancePreferenceCommandV1,
   type TavernAppearancePreferenceV1,
+  type TavernUiLanguagePreferenceCommandV1,
+  type TavernUiLanguagePreferenceV1,
   type TavernConnectionCreateCommandV1,
   type TavernConnectionModelCommandV1,
   type TavernConnectionRevisionCommandV1,
@@ -90,6 +92,7 @@ import type { CompanionAvatarService } from "./tavern/companion-avatar/index.js"
 import type { CompanionDeletionService } from "./tavern/companion-deletion-service.js";
 import type { CompanionActivationService } from "./tavern/companion-activation-service.js";
 import type { ProfileBackupExport } from "./profile-backup/profile-backup-export.js";
+import type { PresetAssemblyRead } from "./tavern/preset-assembly-read.js";
 import type { GameBrowserStateV1 } from "./game-browser-contract/index.js";
 import { TavernConnectionRevisionConflict } from "./tavern/connection-store.js";
 import { playerOfferedProviders } from "./tavern/provider-catalog.js";
@@ -175,6 +178,17 @@ const MANAGEMENT_GAME_PROMPT_ROUTES = ["settings.game-prompt.read", "settings.ga
  * record fails closed at composition.
  */
 const MANAGEMENT_APPEARANCE_ROUTES = ["settings.appearance.read", "settings.appearance.update"] as const;
+/**
+ * Optional interface-language extension: only a profile that declares these routes mounts the
+ * read/write of the language this browser paints its own interface in. It is its own group directly
+ * after the appearance group, so a profile that advertises it without the one Host-owned preference
+ * record fails closed at composition.
+ *
+ * It is NOT the companion-language group (`settings.language.*`): that one stores what she speaks and
+ * accepts any bounded BCP-47 tag, while this one stores the player's own display language and accepts
+ * only a catalogue the product ships.
+ */
+const MANAGEMENT_UI_LANGUAGE_ROUTES = ["settings.ui-language.read", "settings.ui-language.update"] as const;
 const MANAGEMENT_OPERATION_IDS_WITH_MEMORY = [
   "draft.save",
   "draft.discard",
@@ -331,6 +345,14 @@ const MANAGEMENT_COMPANION_ACTIVATE_ROUTES = ["companion.activate"] as const;
  */
 const MANAGEMENT_WORLD_INFO_IMPORT_ROUTES = ["world-info.import"] as const;
 /**
+ * Optional lorebook-export extension: only a profile that declares this route mounts
+ * `GET /api/tavern/v1/world-info/export`, the read that writes one managed library item as the
+ * external lorebook file the import above reads back. It appends directly after the import in the
+ * same frozen canonical order, and like every other option a profile that advertises it without
+ * the bound export member fails closed at composition.
+ */
+const MANAGEMENT_WORLD_INFO_EXPORT_ROUTES = ["world-info.export"] as const;
+/**
  * Optional Chat-export extension: only a profile that declares this route mounts
  * `GET /api/tavern/v1/chat/export`, one Chat's transcript as the interchange's own SillyTavern
  * chat file. It appends last in the same frozen canonical order, and like every other option a
@@ -344,6 +366,13 @@ const MANAGEMENT_CHAT_EXPORT_ROUTES = ["chat.export"] as const;
  * advertises it without the bound export member fails closed at composition.
  */
 const MANAGEMENT_PROFILE_BACKUP_ROUTES = ["profile.backup.export"] as const;
+/**
+ * Optional preset readout: only a profile that declares this route mounts `GET /api/tavern/v1/presets`,
+ * the assembly's own reading of every preset the durable store holds. It appends last in the same
+ * frozen canonical order, and like every other option a profile that advertises it without the bound
+ * read fails closed at composition - otherwise the panel would read a route nothing serves.
+ */
+const MANAGEMENT_PRESET_ROUTES = ["presets.read"] as const;
 const bootstrapRequestValidator = Compile(
   (TavernBrowserContractV1.routes.find((route) => route.routeId === "bootstrap")! as { request: TSchema }).request,
 );
@@ -379,6 +408,9 @@ const gamePromptAdditionUpdateValidator = Compile(
 const appearancePreferenceUpdateValidator = Compile(
   TavernBrowserContractV1.schemas.TavernAppearancePreferenceCommandV1Schema,
 );
+const uiLanguagePreferenceUpdateValidator = Compile(
+  TavernBrowserContractV1.schemas.TavernUiLanguagePreferenceCommandV1Schema,
+);
 const createCompanionValidator = Compile(TavernBrowserContractV1.schemas.CreateCompanionCommandV1Schema);
 const personaUpdateValidator = Compile(TavernBrowserContractV1.schemas.PersonaUpdateCommandV1Schema);
 const scenarioUpdateValidator = Compile(TavernBrowserContractV1.schemas.ScenarioUpdateCommandV1Schema);
@@ -395,6 +427,31 @@ const updateCompanionWorldBookValidator = Compile(
 const companionAvatarUploadValidator = Compile(TavernBrowserContractV1.schemas.CompanionAvatarUploadCommandV1Schema);
 const companionDeleteValidator = Compile(TavernBrowserContractV1.schemas.DeleteCompanionCommandV1Schema);
 const companionActivateValidator = Compile(TavernBrowserContractV1.schemas.ActivateCompanionCommandV1Schema);
+
+/**
+ * The one item-addressing command a library GET carries, read from the query string a GET has
+ * instead of a body.
+ *
+ * Only the contract's own four members are accepted, each at most once: an unknown or repeated
+ * parameter is a request this surface does not serve, rather than one to be quietly ignored.
+ * Query parameters arrive as strings while the contract keeps `apiVersion` and the selection
+ * generation as integers, so exactly those two are parsed - and the compiled contract schema, not
+ * a second shape test here, decides whether what remains is the command.
+ */
+function worldInfoItemQuery(url: URL): WorldInfoItemCommandV1 | null {
+  const queryValue: Record<string, string | number> = {};
+  const seen = new Set<string>();
+  for (const [key, value] of url.searchParams) {
+    if (
+      seen.has(key) ||
+      (key !== "apiVersion" && key !== "selectionGeneration" && key !== "expectedRevision" && key !== "itemHandle")
+    )
+      return null;
+    seen.add(key);
+    queryValue[key] = key === "apiVersion" || key === "selectionGeneration" ? Number(value) : value;
+  }
+  return worldInfoItemValidator.Check(queryValue) ? (queryValue as WorldInfoItemCommandV1) : null;
+}
 
 /**
  * The one Host-owned Chat/Game model profile store this dispatcher accepts. It
@@ -524,6 +581,15 @@ export type TavernManagementDialogueWebOptions = Readonly<{
   profileBackupService?: Readonly<{
     export(): Promise<ProfileBackupExport>;
   }>;
+  /**
+   * The preset readout (`presets.read`): what the assembly does with each preset the store holds.
+   *
+   * The read resolves the durable store, reads every stored document and projects it through
+   * `presetAssemblySurface` (`preset-assembly-read.ts`), so this dispatcher never re-derives a fact the
+   * producer owns. Present only when the mounted profile declares the route; the route stays unavailable
+   * otherwise.
+   */
+  presetAssemblyRead?: PresetAssemblyRead;
   /**
    * The companion's own picture, written by the player who is looking at her
    * (`companion.avatar.update`). It is the SAME service the runtime asset face reads:
@@ -824,6 +890,7 @@ export function createTavernManagementDialogueWebRequestHandler(
   const companionProfileService = options.companionProfileService;
   const companionCardExportService = options.companionCardExportService;
   const profileBackupService = options.profileBackupService;
+  const presetAssemblyRead = options.presetAssemblyRead;
   const companionAvatarService = options.companionAvatarService;
   const companionDeletionService = options.companionDeletionService;
   const companionActivationService = options.companionActivationService;
@@ -866,7 +933,8 @@ export function createTavernManagementDialogueWebRequestHandler(
   if (
     (profile.routeIds.includes("world-info.read") ||
       profile.routeIds.includes("world-info.bind") ||
-      profile.routeIds.includes("world-info.import")) &&
+      profile.routeIds.includes("world-info.import") ||
+      profile.routeIds.includes("world-info.export")) &&
     worldInfoService === undefined
   )
     throw new Error("tavern_management_composition_unavailable");
@@ -881,7 +949,9 @@ export function createTavernManagementDialogueWebRequestHandler(
       profile.routeIds.includes("settings.delivery.read") ||
       profile.routeIds.includes("settings.delivery.update") ||
       profile.routeIds.includes("settings.appearance.read") ||
-      profile.routeIds.includes("settings.appearance.update")) &&
+      profile.routeIds.includes("settings.appearance.update") ||
+      profile.routeIds.includes("settings.ui-language.read") ||
+      profile.routeIds.includes("settings.ui-language.update")) &&
     playerPreferenceStore === undefined
   )
     throw new Error("tavern_management_composition_unavailable");
@@ -1022,6 +1092,12 @@ export function createTavernManagementDialogueWebRequestHandler(
     if (chatSelectProvisioner === undefined) throw new Error("tavern_management_composition_unavailable");
     if (!profile.operationIds.includes("chat.select")) throw new Error("tavern_management_composition_unavailable");
   }
+  // The preset readout is mounted only when the exact read over the durable store is injected; a
+  // profile that advertises `presets.read` without it fails closed before dispatch, so the panel is
+  // never shown a readout the Host cannot read. It is a read, not an operation, and the profile
+  // declares it as such (`MANAGEMENT_PRESET_ROUTES`), so no operation id is required of it.
+  if (profile.routeIds.includes("presets.read") && presetAssemblyRead === undefined)
+    throw new Error("tavern_management_composition_unavailable");
 
   let browser: BrowserSession | undefined;
   let bootstrapUsed = false;
@@ -1303,6 +1379,48 @@ export function createTavernManagementDialogueWebRequestHandler(
           throw new Error("player_preference_store_unavailable");
         return sendJson(response, 200, preference);
       }
+      // The interface's own display language, stored in the same record and CASed on the same revision as
+      // the companion language beside it. The two are separate fields and separate routes on purpose: this
+      // route accepts only a catalogue the browser ships, while `settings.language` accepts any bounded tag.
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/settings/ui-language") {
+        if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (
+          !profile.routeIds.includes("settings.ui-language.read") ||
+          !profile.operationIds.includes("settings.ui-language.read") ||
+          playerPreferenceStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const preference: TavernUiLanguagePreferenceV1 = uiLanguagePreference(await playerPreferenceStore.read());
+        if (!TavernBrowserValidatorsV1.TavernUiLanguagePreferenceV1Schema.Check(preference))
+          throw new Error("player_preference_store_unavailable");
+        return sendJson(response, 200, preference);
+      }
+      if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/ui-language") {
+        if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
+        const session = admitRequest(request, origin);
+        if (session === null) return sendProblem(response, 401, "unauthorized");
+        if (!tokensEqual(singleHeader(request.headers["x-csrf-token"]) ?? "", session.csrf))
+          return sendProblem(response, 403, "csrf_failed");
+        if (
+          !profile.routeIds.includes("settings.ui-language.update") ||
+          !profile.operationIds.includes("settings.ui-language.update") ||
+          playerPreferenceStore === undefined
+        )
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const body = await readJsonBody(request, MAX_BODY_BYTES);
+        if (!uiLanguagePreferenceUpdateValidator.Check(body)) return sendProblem(response, 400, "invalid_request");
+        const command = body as TavernUiLanguagePreferenceCommandV1;
+        const preference = uiLanguagePreference(
+          await playerPreferenceStore.update(command.expectedRevision, {
+            action: "setUiLocale",
+            uiLocale: command.locale,
+          }),
+        );
+        if (!TavernBrowserValidatorsV1.TavernUiLanguagePreferenceV1Schema.Check(preference))
+          throw new Error("player_preference_store_unavailable");
+        return sendJson(response, 200, preference);
+      }
       if (request.method === "PUT" && url.pathname === "/api/tavern/v1/settings/delivery") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
         const session = admitRequest(request, origin);
@@ -1369,24 +1487,9 @@ export function createTavernManagementDialogueWebRequestHandler(
           worldInfoService === undefined
         )
           return sendProblem(response, 404, "profile_operation_unavailable");
-        const queryValue: Record<string, string | number> = {};
-        const seen = new Set<string>();
-        for (const [key, value] of url.searchParams) {
-          if (
-            seen.has(key) ||
-            (key !== "apiVersion" &&
-              key !== "selectionGeneration" &&
-              key !== "expectedRevision" &&
-              key !== "itemHandle")
-          )
-            return sendProblem(response, 400, "invalid_request");
-          seen.add(key);
-          // Query parameters arrive as strings; the contract keeps apiVersion and the
-          // selection generation as integers, so the dispatcher parses exactly those two.
-          queryValue[key] = key === "apiVersion" || key === "selectionGeneration" ? Number(value) : value;
-        }
-        if (!worldInfoItemValidator.Check(queryValue)) return sendProblem(response, 400, "invalid_request");
-        const item = await worldInfoService.detail(queryValue as WorldInfoItemCommandV1);
+        const queryCommand = worldInfoItemQuery(url);
+        if (queryCommand === null) return sendProblem(response, 400, "invalid_request");
+        const item = await worldInfoService.detail(queryCommand);
         // The projection Handle was current, so a missing item is a genuine library fact:
         // the item was removed by another writer since the browser read the list.
         if (item === null) return sendProblem(response, 404, "world_info_not_found");
@@ -1446,6 +1549,18 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!TavernBrowserValidatorsV1.WorldInfoStateV1Schema.Check(worldInfo))
           throw new Error("world_info_binding_service_unavailable");
         return sendJson(response, 200, worldInfo);
+      }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/world-info/export") {
+        if (await hasRequestBody(request)) return sendProblem(response, 400, "invalid_request");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (!profile.routeIds.includes("world-info.export") || worldInfoService?.exportLorebook === undefined)
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        const queryCommand = worldInfoItemQuery(url);
+        if (queryCommand === null) return sendProblem(response, 400, "invalid_request");
+        const exported = await worldInfoService.exportLorebook(queryCommand);
+        if (!TavernBrowserValidatorsV1.WorldInfoExportV1Schema.Check(exported))
+          throw new Error("world_info_binding_service_unavailable");
+        return sendJson(response, 200, exported);
       }
       if (request.method === "DELETE" && url.pathname === "/api/tavern/v1/world-info/item") {
         if (url.search !== "" || !isSameOrigin(request, origin)) return sendProblem(response, 401, "unauthorized");
@@ -1529,6 +1644,21 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (!TavernBrowserValidatorsV1.ProfileBackupExportV1Schema.Check(exported))
           throw new Error("chat_management_service_unavailable");
         return sendJson(response, 200, exported);
+      }
+      if (request.method === "GET" && url.pathname === "/api/tavern/v1/presets") {
+        // presets.read: the assembly's own reading of every preset the durable store holds. A pure
+        // read, so no CSRF fact and no body; the store's state IS the answer, including an empty one.
+        if (await hasRequestBody(request)) return sendProblem(response, 400, "invalid_request");
+        if (admitRequest(request, origin) === null) return sendProblem(response, 401, "unauthorized");
+        if (!profile.routeIds.includes("presets.read") || presetAssemblyRead === undefined)
+          return sendProblem(response, 404, "profile_operation_unavailable");
+        if (url.search !== "") return sendProblem(response, 400, "invalid_request");
+        const read = await presetAssemblyRead.read();
+        // The contract's own schema, not a second check here: a readout the browser would refuse is a
+        // failure of this Host, and it fails loudly rather than shipping a body the panel cannot draw.
+        if (!TavernBrowserValidatorsV1.PresetAssemblyReadV1Schema.Check(read))
+          throw new Error("preset_assembly_read_unavailable");
+        return sendJson(response, 200, read);
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/chats") {
         if (await hasRequestBody(request)) return sendProblem(response, 400, "invalid_request");
@@ -2697,10 +2827,11 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
   // The core surface and the extension groups are declared per profile
   // revision. A profile may declare any subset of the optional groups, and only
   // them, in the frozen canonical order: core, output devices, language,
-  // delivery, Game prompt addition, appearance, connections, model profiles,
+  // delivery, Game prompt addition, appearance, interface language, connections, model profiles,
   // companions/personas/retention, card import,
   //  new-chat opening, new chat, chat selection, World Info authoring, companion
-  //  profile, card export, companion avatar, lorebook import, chat export. A partially applied
+  //  profile, card export, companion avatar, lorebook import, lorebook export, chat export, the
+  //  whole-profile backup and the preset readout. A partially applied
   //  group, an undeclared
   // route or a reordered list fails closed, so no route is mounted that this
   // dispatcher cannot serve.
@@ -2719,6 +2850,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_DELIVERY_ROUTES,
     MANAGEMENT_GAME_PROMPT_ROUTES,
     MANAGEMENT_APPEARANCE_ROUTES,
+    MANAGEMENT_UI_LANGUAGE_ROUTES,
     MANAGEMENT_CONNECTION_ROUTES,
     MANAGEMENT_MODEL_PROFILE_ROUTES,
     MANAGEMENT_P9_ROUTES,
@@ -2734,8 +2866,10 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_COMPANION_DELETE_ROUTES,
     MANAGEMENT_COMPANION_ACTIVATE_ROUTES,
     MANAGEMENT_WORLD_INFO_IMPORT_ROUTES,
+    MANAGEMENT_WORLD_INFO_EXPORT_ROUTES,
     MANAGEMENT_CHAT_EXPORT_ROUTES,
     MANAGEMENT_PROFILE_BACKUP_ROUTES,
+    MANAGEMENT_PRESET_ROUTES,
   ] as const;
   const operationGroups = [
     coreOperations,
@@ -2744,6 +2878,7 @@ export function managementProfileFitsCanonicalGroups(profile: ComposedTavernProf
     MANAGEMENT_DELIVERY_ROUTES,
     MANAGEMENT_GAME_PROMPT_ROUTES,
     MANAGEMENT_APPEARANCE_ROUTES,
+    MANAGEMENT_UI_LANGUAGE_ROUTES,
     MANAGEMENT_CONNECTION_ROUTES,
     MANAGEMENT_MODEL_PROFILE_ROUTES,
     MANAGEMENT_P9_ROUTES,
@@ -2973,6 +3108,13 @@ function appearancePreference(preference: PlayerPreference): TavernAppearancePre
   // `?? "system"` for the same reason the addition reads `?? ""`: the store always sets it, and a fixture that does
   // not care about the appearance must not have to learn it.
   return { revision: preference.revision, appearance: preference.appearance ?? "system" };
+}
+
+/** The interface-language field group of the one player preference record. */
+function uiLanguagePreference(preference: PlayerPreference): TavernUiLanguagePreferenceV1 {
+  // `?? null` for the same reason the sibling projections above default: the store always sets it, and a fixture that
+  // does not care about this setting must not have to learn it. `null` is the record's own "never chosen".
+  return { revision: preference.revision, locale: preference.uiLocale ?? null };
 }
 
 /**
