@@ -14,6 +14,7 @@ import {
   type PublishedPlanAction,
 } from "../body-program-script.js";
 import { planFormExecutionUnavailableReason } from "../body-program-for-each.js";
+import { bodyProgramPreflightRefusal } from "../body-program-preflight.js";
 import { Type } from "typebox";
 import {
   createStableGameRuntimeBindingIdentity,
@@ -931,36 +932,19 @@ function assertFreshBodyProgramPreflight(
     state.enabledActionIds ?? [],
     mountedPolicy,
   );
-  const allowed = new Set(visible.map((registration) => registration.actionId));
-  if (
-    Array.isArray(request.nodes) &&
-    request.nodes.some((node) => !isRecord(node) || typeof node.actionId !== "string" || !allowed.has(node.actionId))
-  ) {
-    // Name the actions, not just the refusal.
-    //
-    // Measured 2026-10-25 (`night4`): 31 of 49 `plan_work` calls came back `body_program_preflight_rejected`, and the
-    // code named neither the node nor the action. The companion could not tell a lifecycle restriction from a typo in
-    // its own script, so it retried the same shape four and five times - the loop a specific message exists to shorten.
-    // `allowed` is the catalogue this connection really offers, so the refusal can say what was refused AND what was
-    // possible, without the caller having to reverse-engineer it.
-    const refused = request.nodes
-      .filter((node) => !isRecord(node) || typeof node.actionId !== "string" || !allowed.has(node.actionId))
-      .map((node) => (isRecord(node) && typeof node.actionId === "string" ? node.actionId : "<no_action_id>"));
-    // What `visible` actually saw, and nothing that re-derives it.
-    //
-    // An earlier version of this message recomputed the predicate by hand from present/lifecycle/kind/enabled/denied.
-    // That is a strict subset of `visibleActionsFromModCatalog`, so it can disagree with the thing it explains - and it
-    // did: it reported every clause passing for `cut_weeds` while `visible` refused it, because the real answer was in a
-    // clause the copy did not model. A diagnostic that paraphrases the decision is worse than no diagnostic.
-    const registrations = state.registrations ?? [];
-    const liveCapabilities = state.enabledActionIds ?? [];
-    const refusedPresent = refused.filter((actionId) => registrations.some((entry) => entry.actionId === actionId));
-    throw new Error(
-      `body_program_preflight_rejected:${refused.join(",")}:allowed=${[...allowed].sort().join(",")}` +
-        `:registrations=${String(registrations.length)}:live=${String(liveCapabilities.length)}` +
-        `:refused_present=${refusedPresent.join(",") || "none"}`,
-    );
-  }
+  // Asked in ONE place (`body-program-preflight.ts`), because what may appear in a node is answered by three layers - the
+  // preflight, the plan compiler's builder vocabulary and the Mod's own admission - and a decision that lives inline in
+  // the layer that also reads the connection cannot be tested, so it drifts.
+  //
+  // The classification reads two facts and re-derives neither: `visible` is what this connection offers now (asked of
+  // `visibleActionsFromModCatalog`, never recomputed clause by clause - an earlier message that recomputed it reported
+  // every clause passing for `cut_weeds` while `visible` refused it), and the registrations are what the attached Mod
+  // publishes at all. Neither is a hand-written subset of the other.
+  const refusal = bodyProgramPreflightRefusal(request.nodes, {
+    visibleActionIds: visible.map((registration) => registration.actionId),
+    registeredActionIds: state.registrations.map((registration) => registration.actionId),
+  });
+  if (refusal !== null) throw new Error(refusal);
 }
 
 function readBodyProgramPolicyIdentity(connection: GameConnection): FarmhandPolicyIdentity {
