@@ -355,6 +355,38 @@ export function extractSchemaRowFields(source) {
 // Checker
 // ---------------------------------------------------------------------------
 
+/**
+ * Every nullable member of a `Bridge*` wire record must carry `WhenWritingNull`.
+ *
+ * A nullable C# member serialises as `"key": null` by default, and the Host validators treat a null as a wrong type -
+ * so the frame is refused, the bridge closes, and the run dies on a shape the compiler could not see. Population: the
+ * `Bridge*` records in the one models file, which is where every wire record lives.
+ */
+export function nullableWireKeysWithoutOmission(source) {
+  const findings = [];
+  const text = blankCommentText(source);
+  const recordPattern = /public sealed record (Bridge\w+)\(([\s\S]*?)\);/gu;
+  for (const match of text.matchAll(recordPattern)) {
+    const [, record, body] = match;
+    for (const line of body.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      if (trimmed.includes("WhenWritingNull")) continue;
+      // `int? X`, `string? Y = null`, `IReadOnlyList<T>? Z (with a = default)`
+      if (!/\b\w+(?:<[^>]*>)?\?\s+\w+/u.test(trimmed)) continue;
+      const name = /\b\w+(?:<[^>]*>)?\?\s+(\w+)/u.exec(trimmed)?.[1];
+      if (name === undefined) continue;
+      findings.push({
+        code: "nullable_wire_key_without_omission",
+        member: `${record}.${name}`,
+        detail:
+          "a nullable member serialises as `key: null`, and the Host reads a null as the wrong type and refuses the whole frame; add [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] or make the member non-nullable",
+      });
+    }
+  }
+  return findings;
+}
+
 function defaultRead(root, relativePath) {
   return readFileSync(path.join(root, relativePath), "utf8");
 }
@@ -379,6 +411,21 @@ export function checkStardewCropRowDerivation({
   const validatorFields = extractValidatorRowFields(read(VALIDATOR_PATH));
   const schemaFields = extractSchemaRowFields(read(SCHEMA_PATH));
   const discoveryBody = extractRowDiscoveryBody(read(EXECUTION_CONTROLLER_PATH));
+
+  // 0. A NULLABLE wire key must be OMITTED when null, never sent as `null`.
+  //
+  // Measured 2026-11-09: the crop row gained `int? DaysToHarvest` and friends with no `WhenWritingNull`, so a real farm
+  // sent `"daysToHarvest": null` and the Host's validator refused the whole frame after 162 seconds
+  // (`invalid_snapshot:cropTargets`). The parity check below compares key NAMES and cannot see a value shape, which is
+  // why this is a separate assertion over the same file.
+  //
+  // Population: the fact rows this gate already owns (the ones the Host validates key by key). The other `Bridge*`
+  // records are ADVISORY: their Host readers tolerate null today, and a blanket rule over them would turn this into a
+  // 30-entry exception list, which is the shape this project refuses. The count is printed so a reader can see how
+  // much of the wire the rule does not cover.
+  const nullableFindings = nullableWireKeysWithoutOmission(read(BRIDGE_MODELS_PATH));
+  for (const finding of nullableFindings) if (finding.member.startsWith(`${ROW_RECORD}.`)) findings.push(finding);
+  const advisoryNullable = nullableFindings.length - nullableFindings.filter((f) => findings.includes(f)).length;
 
   if (workerFields.length === 0)
     push(

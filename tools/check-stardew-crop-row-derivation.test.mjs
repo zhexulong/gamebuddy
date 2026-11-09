@@ -46,7 +46,7 @@ test("the two populations are read from source, and every worker field is reacha
 
 test("one shared field removed from the row is named, not averaged away", () => {
   const report = checkStardewCropRowDerivation({
-    overrides: withEdit(BRIDGE_MODELS_PATH, (source) => source.replace("    bool? IsRaised,\n", "")),
+    overrides: withEdit(BRIDGE_MODELS_PATH, (source) => source.replace(/[^\n]*bool\? IsRaised,\n/u, "")),
   });
   assert.equal(report.verdict, "blocked");
   assert.ok(
@@ -168,5 +168,25 @@ test("an unreadable deployed build is named, not silently skipped", () => {
       (finding) => finding.code === "deployed_host_stale" || finding.code === "deployed_host_absent",
     ),
     `an empty deployed validator must be named, not passed; got ${JSON.stringify(result.findings)}`,
+  );
+});
+
+test("a nullable crop key without WhenWritingNull is the defect that closed a bridge", () => {
+  // Measured 2026-11-09: `int? DaysToHarvest` with no omission attribute sent `"daysToHarvest": null`, the Host read a
+  // null as the wrong type, and the whole snapshot was refused 162s into the run. Key-name parity cannot see this,
+  // which is why the rule is asserted on the declaration itself.
+  const source = sourceOf(BRIDGE_MODELS_PATH);
+  const mutated = source.replace(
+    /\[property: JsonIgnore\(Condition = JsonIgnoreCondition\.WhenWritingNull\)\] bool\? IsRaised,/u,
+    "bool? IsRaised,",
+  );
+  assert.notEqual(mutated, source, "the fixture must actually strip the attribute, or this proves nothing");
+  const result = checkStardewCropRowDerivation({ overrides: { [BRIDGE_MODELS_PATH]: mutated } });
+  assert.ok(
+    result.findings.some(
+      (finding) =>
+        finding.code === "nullable_wire_key_without_omission" && finding.member === "BridgeCropTarget.IsRaised",
+    ),
+    `expected the stripped attribute to be named; got ${JSON.stringify(result.findings.map((f) => f.code))}`,
   );
 });

@@ -352,14 +352,14 @@ public sealed record BridgeCropTarget(
     string DisplayName,
     bool Watered,
     bool Harvestable,
-    int? DaysToHarvest,
-    int? RegrowDays,
-    string? HarvestMethod,
-    bool? IsRaised,
-    IReadOnlyList<string>? Seasons,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? DaysToHarvest,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? RegrowDays,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? HarvestMethod,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? IsRaised,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Seasons,
     bool FullyGrown,
     bool TileBlockedNow,
-    string? CropFactsUnknown);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CropFactsUnknown);
 
 /// <summary>
 /// One crop tile <c>harvest_crop</c> accepts, with the four facts its admission branches on: whether the crop is ready
