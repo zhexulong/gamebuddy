@@ -873,6 +873,8 @@ const en = {
   presetSamplingTitle: "Sampling in force",
   presetSamplingHint:
     "What each sampler key is actually sent as, and which layer decided it - a preset value can be overridden by the model or the thinking level, and unset means nothing is sent.",
+  presetSamplingUnavailable:
+    "Sampling not measured: no composed model exists for this preset yet, so nothing states what would be sent.",
 
   // Shell (design/104 §2): brand mark, single contextual drawer, panel groups.
   appMark: "GB",
@@ -1846,6 +1848,7 @@ const zh: Messages = {
   presetSamplingTitle: "实际生效的采样参数",
   presetSamplingHint:
     "每个采样键真正下发的值，以及是哪一层决定的——预设里的值可能被模型或思考等级覆盖；unset 表示不发这个键。",
+  presetSamplingUnavailable: "未测量采样参数：这个预设还没有合成后的模型，因此无法说明会下发什么。",
 
   // 外壳（design/104 §2）：品牌标记、唯一上下文抽屉、面板分组。
   appMark: "GB",

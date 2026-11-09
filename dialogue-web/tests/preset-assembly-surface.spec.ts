@@ -23,9 +23,10 @@
  * key a model or a thinking level decided must never be shown at the value the preset wrote. The last one is the
  * false green design §5 names: the panel would look right while the request carried something else.
  */
-import { presetAssemblySurface } from "../../host/src/preset-assembly-surface.ts";
+import { type PresetSamplingRowV1, presetAssemblySurface } from "../../host/src/preset-assembly-surface.ts";
 import { PRESET_SAMPLING_KEYS, presetSamplingParams } from "../../host/src/tavern/preset-sampling.ts";
 import { messages } from "../src/i18n";
+import { validatePresetAssemblyRead } from "../src/preset-assembly-surface";
 import { type Page, expect, test } from "./frontend-coverage";
 
 const token = "A".repeat(43);
@@ -194,6 +195,19 @@ const SURFACE = presetAssemblySurface({
   },
   markers: ASSEMBLY_MARKERS,
 });
+
+/**
+ * The sampler rows this fixture's surface publishes, or a failure naming the absence.
+ *
+ * The fifth answer has two shapes: rows, or the named reason there are none. This fixture always supplies the composed
+ * model, so an absence here is the fixture losing the runtime's facts rather than a case to skip.
+ */
+const SURFACE_SAMPLING_ROWS: readonly PresetSamplingRowV1[] = (() => {
+  const reading = SURFACE.sampling;
+  if ("unavailable" in reading)
+    throw new Error(`the fixture must carry sampler rows; it carries ${JSON.stringify(reading)}`);
+  return reading;
+})();
 
 /** The composed root the shell reads; every management surface needs the same four reads to mount. */
 const composedRoot = {
@@ -420,15 +434,15 @@ async function expectPresetReadout(page: Page, viewport: Readonly<{ width: numbe
     PRESET_SAMPLING_KEYS.map((key) => [key, authored[key]] as const),
   );
   expect(
-    SURFACE.sampling.map((row) => row.key),
+    SURFACE_SAMPLING_ROWS.map((row) => row.key),
     "the producer emits a row for every sampling key, in the allow-list's own order",
   ).toEqual([...PRESET_SAMPLING_KEYS]);
-  const presetRow = SURFACE.sampling.find((row) => row.source === "preset");
-  const levelRow = SURFACE.sampling.find((row) => row.source === "thinking-level");
-  const unsetRow = SURFACE.sampling.find((row) => row.source === "unset");
+  const presetRow = SURFACE_SAMPLING_ROWS.find((row) => row.source === "preset");
+  const levelRow = SURFACE_SAMPLING_ROWS.find((row) => row.source === "thinking-level");
+  const unsetRow = SURFACE_SAMPLING_ROWS.find((row) => row.source === "unset");
   if (presetRow === undefined || levelRow === undefined || unsetRow === undefined)
     throw new Error(
-      `the fixture must carry a preset, a thinking-level and an unset row; it carries ${JSON.stringify(SURFACE.sampling)}`,
+      `the fixture must carry a preset, a thinking-level and an unset row; it carries ${JSON.stringify(SURFACE_SAMPLING_ROWS)}`,
     );
   const overridden = authoredByKey.get(levelRow.key);
   expect(overridden, `the fixture really writes ${levelRow.key}`).not.toBeUndefined();
@@ -442,7 +456,7 @@ async function expectPresetReadout(page: Page, viewport: Readonly<{ width: numbe
   expect(
     [...renderedKeys].sort(),
     "the panel renders a row for every sampling key - an unset key that loses its row reads as no such setting",
-  ).toEqual(SURFACE.sampling.map((row) => row.key).sort());
+  ).toEqual(SURFACE_SAMPLING_ROWS.map((row) => row.key).sort());
 
   const samplingRow = (key: string) => page.locator(`[data-preset-sampling-row="${key}"]`);
   await expect(samplingRow(presetRow.key), `the ${presetRow.source}-sourced row is visible`).toBeVisible();
@@ -461,7 +475,7 @@ async function expectPresetReadout(page: Page, viewport: Readonly<{ width: numbe
 
   // The negative half: for every key the model or the thinking level decided, the value the preset wrote is
   // nowhere in that row. This is the reading §5 exists for - the panel must not describe a request nobody sends.
-  for (const row of SURFACE.sampling) {
+  for (const row of SURFACE_SAMPLING_ROWS) {
     if (row.source !== "thinking-level" && row.source !== "model") continue;
     const written = authoredByKey.get(row.key);
     if (written === undefined) continue;
@@ -599,22 +613,34 @@ test("a readout that contradicts itself is refused instead of shown", async ({ p
       what: "a sampling source this surface does not know",
       body: {
         ...SURFACE,
-        sampling: SURFACE.sampling.map((row) => (row.key === "top_p" ? { ...row, source: "provider" } : row)),
+        sampling: SURFACE_SAMPLING_ROWS.map((row) => (row.key === "top_p" ? { ...row, source: "provider" } : row)),
       },
     },
     {
       what: "an unset sampling row that still carries a value",
       body: {
         ...SURFACE,
-        sampling: SURFACE.sampling.map((row) => (row.source === "unset" ? { ...row, value: 0.5 } : row)),
+        sampling: SURFACE_SAMPLING_ROWS.map((row) => (row.source === "unset" ? { ...row, value: 0.5 } : row)),
       },
     },
     {
       what: "a decided sampling row that carries no value",
       body: {
         ...SURFACE,
-        sampling: SURFACE.sampling.map((row) => (row.source === "preset" ? { ...row, value: null } : row)),
+        sampling: SURFACE_SAMPLING_ROWS.map((row) => (row.source === "preset" ? { ...row, value: null } : row)),
       },
+    },
+    {
+      what: "a sampler reading that carries the rows and the reason at once",
+      body: { ...SURFACE, sampling: { unavailable: "no_composed_model", rows: SURFACE_SAMPLING_ROWS } },
+    },
+    {
+      what: "a sampler reading that carries neither the rows nor a reason",
+      body: { ...SURFACE, sampling: {} },
+    },
+    {
+      what: "a reason this surface has no line for",
+      body: { ...SURFACE, sampling: { unavailable: "no_provider_configured" } },
     },
     { what: "a member this surface has no line for", body: { ...SURFACE, samplingParams: { temperature: 0.9 } } },
   ];
@@ -629,4 +655,73 @@ test("a readout that contradicts itself is refused instead of shown", async ({ p
     );
     await expect(surface.locator("[data-preset-assembly]"), `${what} renders no assembly at all`).toHaveCount(0);
   }
+});
+
+/**
+ * No composed model is a NAMED absence, not an empty row list and not the values the preset wrote.
+ *
+ * This is the state the product is in today: nothing binds a preset to the Chat runtime, so the readout cannot say
+ * what would be sent. The panel must say THAT - a section with no rows would read to a player as "no setting is
+ * sent", which is a different and false claim (§5).
+ */
+test("a preset with no composed model says the sampling was not measured", async ({ page }) => {
+  const catalogue = messages("en");
+  const unmeasured = presetAssemblySurface({
+    presetId: "unmeasured",
+    name: "A preset with no composed model",
+    revision: 1,
+    document: PRESET_DOCUMENT,
+    macros: {
+      char: "Mira",
+      user: "the player",
+      description: ASSEMBLY_MARKERS.charDescription,
+      personality: ASSEMBLY_MARKERS.charPersonality,
+      scenario: ASSEMBLY_MARKERS.scenario,
+      persona: "A neighbour with a spare hour.",
+      itemId: "unmeasured",
+    },
+    markers: ASSEMBLY_MARKERS,
+    sampling: null,
+  });
+  expect(unmeasured.sampling, "the producer reports the named absence when no composed model is supplied").toEqual({
+    unavailable: "no_composed_model",
+  });
+
+  await stubPresetSurface(page, [unmeasured]);
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=presets`);
+  const surface = page.getByTestId("presets-surface");
+  const line = surface.locator("[data-preset-sampling-unavailable]");
+  await line.scrollIntoViewIfNeeded();
+  await expect(line, "the absence is stated in words rather than rendered as an empty section").toHaveText(
+    catalogue.presetSamplingUnavailable,
+  );
+  await expect(line).toHaveAttribute("data-preset-sampling-unavailable", "no_composed_model");
+  await expect(
+    surface.locator("[data-preset-sampling-row]"),
+    "no sampling row is rendered for a reading nobody took",
+  ).toHaveCount(0);
+});
+
+/**
+ * The four refusals of the sampler reading, each naming what it hit rather than "invalid body".
+ *
+ * They are asserted on the validator directly because the panel turns every refusal into the same banner: a reader
+ * debugging a drifted Host needs to know which of the four it was, and only the message carries that.
+ */
+test("each refused sampler reading is refused by the name of what it did", () => {
+  const read = (sampling: unknown) =>
+    () => validatePresetAssemblyRead({ apiVersion: 1, presets: [{ ...SURFACE, sampling }] });
+
+  expect(read({ unavailable: "no_composed_model", rows: SURFACE_SAMPLING_ROWS }), "rows and a reason at once").toThrow(
+    /carries both the reason and the rows/u,
+  );
+  expect(read({ unavailable: "no_composed_model", samplingRows: [] }), "a reason with rows beside it").toThrow(
+    /beside the reason, so rows are still attached to an absence/u,
+  );
+  expect(read({}), "neither shape").toThrow(/carries neither the rows nor the reason there are none/u);
+  expect(read({ unavailable: "no_provider_configured" }), "a reason this surface cannot name").toThrow(
+    /is "no_provider_configured", which is none of/u,
+  );
+  // And the shape that IS a reading passes, so the four refusals above are not a blanket refusal of the branch.
+  expect(() => validatePresetAssemblyRead({ apiVersion: 1, presets: [SURFACE] })).not.toThrow();
 });

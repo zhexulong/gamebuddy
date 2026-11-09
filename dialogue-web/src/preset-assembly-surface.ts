@@ -20,6 +20,11 @@
  * decided a sampler key, and a `source` this surface did not recognise would have to be guessed - guessed as
  * `preset`, which is exactly the claim that makes a panel show a value the runtime does not send. So an unknown
  * source is a refusal naming the value, never a fallback.
+ *
+ * `sampling` also has a second shape, and it is the honest one while no composed model exists: the named absence
+ * `{ unavailable: "no_composed_model" }`. It is validated as strictly as the rows - never beside them, never with a
+ * reason this surface cannot name - because "not measured" and "nothing is sent" are different facts and a panel
+ * that rendered one as the other would be telling the player about a request nobody sends.
  */
 
 export type PresetAssemblyMacroV1 = Readonly<{
@@ -44,6 +49,20 @@ export type PresetSamplingSourceV1 = (typeof PRESET_SAMPLING_SOURCES)[number];
  */
 export type PresetSamplingRowV1 = Readonly<{ key: string; value: number | null; source: PresetSamplingSourceV1 }>;
 
+/**
+ * Why no sampler reading could be taken. A closed set, one member per fact, so a reason this surface has no line
+ * for cannot be rendered as prose.
+ *
+ * `no_composed_model` is the whole of it today: the reading is taken against the composed model the adapter will
+ * send, and nothing binds a preset to the runtime yet.
+ */
+export const PRESET_SAMPLING_UNAVAILABLE_REASONS = Object.freeze(["no_composed_model"] as const);
+
+export type PresetSamplingUnavailableReasonV1 = (typeof PRESET_SAMPLING_UNAVAILABLE_REASONS)[number];
+
+/** The named absence: no rows exist, and this says why. Never accompanied by rows. */
+export type PresetSamplingUnavailableV1 = Readonly<{ unavailable: PresetSamplingUnavailableReasonV1 }>;
+
 export type PresetAssemblySurfaceV1 = Readonly<{
   presetId: string;
   name: string | null;
@@ -53,7 +72,12 @@ export type PresetAssemblySurfaceV1 = Readonly<{
   unfilledMarkers: readonly string[];
   macros: readonly PresetAssemblyMacroV1[];
   depth: Readonly<{ count: number; depths: readonly number[]; blocks: readonly PresetAssemblyDepthBlockV1[] }>;
-  sampling: readonly PresetSamplingRowV1[];
+  /**
+   * Rows, or the reason there are none: one shape or the other, never both and never neither. A body carrying both
+   * states two things about one fact, and one carrying neither leaves the player unable to tell "nothing is sent"
+   * from "nobody looked".
+   */
+  sampling: readonly PresetSamplingRowV1[] | PresetSamplingUnavailableV1;
 }>;
 
 export type PresetAssemblyReadV1 = Readonly<{ apiVersion: 1; presets: readonly PresetAssemblySurfaceV1[] }>;
@@ -152,14 +176,9 @@ function presetOf(value: unknown, path: string): PresetAssemblySurfaceV1 {
   if (distinct.length !== depths.length || distinct.some((depth, index) => depth !== depths[index]))
     refuse(`${path}.depth.depths`, `is [${depths.join(", ")}], but the blocks land at [${distinct.join(", ")}]`);
 
-  if (!Array.isArray(value.sampling)) refuse(`${path}.sampling`, "is not a list");
-  const sampling = value.sampling.map((row, index) => samplingRowOf(row, `${path}.sampling[${index}]`));
-  const repeated = sampling.map((row) => row.key).filter((key, index, keys) => keys.indexOf(key) !== index);
-  if (repeated.length > 0)
-    refuse(
-      `${path}.sampling`,
-      `carries ${[...new Set(repeated)].join(", ")} twice, so one row is not the one in force`,
-    );
+  if (!Array.isArray(value.sampling) && (typeof value.sampling !== "object" || value.sampling === null))
+    refuse(`${path}.sampling`, "is neither rows nor the reason there are none");
+  const sampling = samplingReadingOf(value.sampling, `${path}.sampling`);
 
   return Object.freeze({
     presetId: value.presetId,
@@ -204,6 +223,49 @@ function samplingRowOf(value: unknown, path: string): PresetSamplingRowV1 {
   if (typeof sampled !== "number" || !Number.isFinite(sampled))
     refuse(`${path}.value`, `is ${String(sampled)}, but ${source} sets it, so a finite number is what is sent`);
   return Object.freeze({ key, value: sampled, source });
+}
+
+/**
+ * The sampler reading: the rows in force, or the named reason there are none.
+ *
+ * The two shapes are exclusive by construction, and each way a body can try to have it both ways is refused by its
+ * own name: rows and a reason together, a reason with rows still attached beside it, a reason this surface has no
+ * line for, and an object that states neither. A generic "invalid sampling" would tell a reader nothing about which
+ * of those four the Host sent.
+ */
+function samplingReadingOf(value: unknown, path: string): readonly PresetSamplingRowV1[] | PresetSamplingUnavailableV1 {
+  if (Array.isArray(value)) {
+    const rows = value.map((row, index) => samplingRowOf(row, `${path}[${index}]`));
+    const repeated = rows.map((row) => row.key).filter((key, index, keys) => keys.indexOf(key) !== index);
+    if (repeated.length > 0)
+      refuse(path, `carries ${[...new Set(repeated)].join(", ")} twice, so one row is not the one in force`);
+    return Object.freeze(rows);
+  }
+  expectRecord(value, path);
+  const present = Object.keys(value);
+  if (!present.includes("unavailable")) {
+    refuse(
+      path,
+      present.length === 0
+        ? "carries neither the rows nor the reason there are none"
+        : `carries ${present.join(", ")} and no reason, so it states neither rows nor an absence`,
+    );
+  }
+  const beside = present.filter((key) => key !== "unavailable");
+  if (beside.includes("rows"))
+    refuse(path, `carries both the reason and the rows (${beside.join(", ")}), so one fact has two answers`);
+  if (beside.length > 0)
+    refuse(path, `carries ${beside.join(", ")} beside the reason, so rows are still attached to an absence`);
+  const declared = value.unavailable;
+  if (typeof declared !== "string") refuse(`${path}.unavailable`, `is ${String(declared)}, which is not a reason`);
+  const reason = PRESET_SAMPLING_UNAVAILABLE_REASONS.find((candidate) => candidate === declared);
+  if (reason === undefined)
+    refuse(
+      `${path}.unavailable`,
+      `is "${declared}", which is none of ${PRESET_SAMPLING_UNAVAILABLE_REASONS.join(", ")} - this surface has no ` +
+        "line for an absence it cannot name",
+    );
+  return Object.freeze({ unavailable: reason });
 }
 
 function macroOf(value: unknown, path: string): PresetAssemblyMacroV1 {

@@ -14,7 +14,9 @@
  *  - §5 - a preset's sampling values reach the wire through the provider entry's `samplingParams`, and the model or
  *    the thinking level may override any of them, so the surface carries `effectivePresetSampling`'s own reading per
  *    key (`{ key, value, source }`) instead of the value the preset wrote. A row is produced for every sampling key,
- *    including the `unset` ones, because an omitted row reads as "no such setting".
+ *    including the `unset` ones, because an omitted row reads as "no such setting". When no composed model exists the
+ *    surface reports `{ unavailable: "no_composed_model" }` instead of rows: the reading cannot be taken, and neither
+ *    an empty list nor the preset's own values is the fact (§5).
  *
  * The population of the macro scan is the preset's own text, read the way `tools/check-preset-macros.mjs` reads it
  * (every string at any depth), and the table and the token grammar are that module's and the gate's shared
@@ -57,6 +59,28 @@ export type PresetAssemblyDepthBlockV1 = Readonly<{ identifier: string; depth: n
 export type PresetSamplingRowV1 = Readonly<{ key: string; value: number | null; source: SamplingSource }>;
 
 /**
+ * Why the sampler reading could not be taken at all. A closed set, one member per fact, so the wire never carries a
+ * sentence only one side understands.
+ *
+ * `no_composed_model` is the whole of it today: the reading is taken against the composed model the adapter will send
+ * (§5), and nothing binds a preset to the runtime yet, so there is no composed model this readout could describe. It
+ * is a NAMED absence rather than an empty row list or the preset's own values: an omitted row reads as "no such
+ * setting" and the written value reads as "this is what will be sent", and neither is true while no model exists.
+ */
+export type PresetSamplingUnavailableReasonV1 = "no_composed_model";
+
+/**
+ * The fifth answer: the rows in force, or the named reason no reading exists.
+ *
+ * Exactly one shape, never both and never neither - a body carrying rows and an absence would say two things about
+ * the same fact, and a body carrying neither would leave the player unable to tell "nothing is sent" from "nobody
+ * looked".
+ */
+export type PresetSamplingReadingV1 =
+  | readonly PresetSamplingRowV1[]
+  | Readonly<{ unavailable: PresetSamplingUnavailableReasonV1 }>;
+
+/**
  * What the read-only preset surface shows for one imported preset.
  *
  * `entries`, `disabledEntries`, `unfilledMarkers`, `macros` and `depth` are the four answers: the switch is
@@ -81,7 +105,7 @@ export type PresetAssemblySurfaceV1 = Readonly<{
     blocks: readonly PresetAssemblyDepthBlockV1[];
   }>;
   /** Every sampling key, with the value in force and its layer: never the value the preset wrote. */
-  sampling: readonly PresetSamplingRowV1[];
+  sampling: PresetSamplingReadingV1;
 }>;
 
 /**
@@ -92,7 +116,9 @@ export type PresetAssemblySurfaceV1 = Readonly<{
  *
  * `sampling` is the runtime's own facts, for the same reason: the composed model the adapter will send and the
  * thinking level the session reports are what decide the effective value, and a caller that could pass its own
- * intentions instead would make the reading say something the wire will not show.
+ * intentions instead would make the reading say something the wire will not show. `null` is the caller stating that
+ * no composed model exists for this preset; the surface then reports `unavailable` by name instead of rows, because
+ * the alternative - rows built from the preset's own values - is the false reading §5 exists to delete.
  */
 export function presetAssemblySurface(
   input: Readonly<{
@@ -102,7 +128,7 @@ export function presetAssemblySurface(
     document: unknown;
     macros: MacroContext;
     markers: Readonly<Record<string, string>>;
-    sampling: Readonly<{ model: SamplingRuntimeModel; thinkingLevel: string }>;
+    sampling: Readonly<{ model: SamplingRuntimeModel; thinkingLevel: string }> | null;
   }>,
 ): PresetAssemblySurfaceV1 {
   const document = validatePresetDocument(input.document);
@@ -124,7 +150,10 @@ export function presetAssemblySurface(
       depths: Object.freeze([...new Set(blocks.map((block) => block.depth))]),
       blocks: Object.freeze(blocks),
     }),
-    sampling: presetSurfaceSampling(document, input.sampling),
+    sampling:
+      input.sampling === null
+        ? Object.freeze({ unavailable: "no_composed_model" as const })
+        : presetSurfaceSampling(document, input.sampling),
   });
 }
 

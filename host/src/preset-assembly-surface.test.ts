@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { type PresetAssemblySurfaceV1, presetAssemblySurface } from "./preset-assembly-surface.js";
+import {
+  type PresetAssemblySurfaceV1,
+  type PresetSamplingRowV1,
+  presetAssemblySurface,
+} from "./preset-assembly-surface.js";
 import { assemblePreset } from "./tavern/preset-assembler.js";
 import type { MacroContext } from "./tavern/preset-macros.js";
 import { PRESET_SAMPLING_KEYS } from "./tavern/preset-sampling.js";
@@ -162,8 +166,20 @@ function surfaceOf(
   });
 }
 
+/**
+ * The sampling rows the surface reports, or a failure naming the absence.
+ *
+ * The fifth answer is one of two shapes: rows, or `{ unavailable }` stating why no reading exists. A
+ * fixture that took no reading must fail here by name rather than slip through as an empty list.
+ */
+function samplingRows(surface: PresetAssemblySurfaceV1): readonly PresetSamplingRowV1[] {
+  const reading = surface.sampling;
+  if ("unavailable" in reading) assert.fail(`the surface reports no sampler reading: ${JSON.stringify(reading)}`);
+  return reading;
+}
+
 function row(surface: PresetAssemblySurfaceV1, key: string) {
-  const found = surface.sampling.find((entry) => entry.key === key);
+  const found = samplingRows(surface).find((entry) => entry.key === key);
   assert.ok(found !== undefined, `the reading carries no row for "${key}"`);
   return found;
 }
@@ -274,16 +290,16 @@ test("every sampling key has a row, and an unset one reads null on the wire inst
   const surface = surfaceOf();
 
   assert.deepEqual(
-    surface.sampling.map((entry) => entry.key),
+    samplingRows(surface).map((entry) => entry.key),
     [...PRESET_SAMPLING_KEYS],
   );
-  const unset = surface.sampling.filter((entry) => entry.source === "unset");
+  const unset = samplingRows(surface).filter((entry) => entry.source === "unset");
   assert.ok(unset.length > 0, "the fixture must leave a key unset, or the null path is untested");
   for (const entry of unset) assert.equal(entry.value, null, `${entry.key} is unset, so the value is null`);
 
   // The reason `null` and not `undefined`: JSON drops an undefined member, so the row would vanish and the player
   // would read "there is no such setting" instead of "nothing is sent".
-  const wire = JSON.parse(JSON.stringify(surface.sampling)) as readonly { key: string; value: unknown }[];
+  const wire = JSON.parse(JSON.stringify(samplingRows(surface))) as readonly { key: string; value: unknown }[];
   assert.deepEqual(
     wire.map((entry) => entry.key),
     [...PRESET_SAMPLING_KEYS],
@@ -291,7 +307,7 @@ test("every sampling key has a row, and an unset one reads null on the wire inst
   for (const entry of wire) assert.ok("value" in entry, `${entry.key} lost its value member on the wire`);
   assert.deepEqual(
     wire,
-    surface.sampling.map((entry) => ({ key: entry.key, value: entry.value, source: entry.source })),
+    samplingRows(surface).map((entry) => ({ key: entry.key, value: entry.value, source: entry.source })),
   );
 });
 
@@ -351,6 +367,6 @@ test("a preset with nothing to report says so on every count, and its sampling r
   assert.deepEqual(clean.unfilledMarkers, []);
   assert.deepEqual(clean.macros, []);
   assert.deepEqual(clean.depth, { count: 0, depths: [], blocks: [] });
-  assert.equal(clean.sampling.length, PRESET_SAMPLING_KEYS.length);
-  assert.ok(clean.sampling.every((entry) => entry.source === "unset" && entry.value === null));
+  assert.equal(samplingRows(clean).length, PRESET_SAMPLING_KEYS.length);
+  assert.ok(samplingRows(clean).every((entry) => entry.source === "unset" && entry.value === null));
 });

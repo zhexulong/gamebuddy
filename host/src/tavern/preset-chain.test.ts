@@ -42,7 +42,11 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
-import { type PresetAssemblySurfaceV1, presetAssemblySurface } from "../preset-assembly-surface.js";
+import {
+  type PresetAssemblySurfaceV1,
+  type PresetSamplingRowV1,
+  presetAssemblySurface,
+} from "../preset-assembly-surface.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { assemblePreset, type PresetAssembly } from "./preset-assembler.js";
@@ -239,6 +243,19 @@ async function withChain(
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+}
+
+/**
+ * The sampling rows the surface reports, or a failure naming the absence.
+ *
+ * The fifth answer is one of two shapes - rows, or `{ unavailable }` stating why no reading exists - and this
+ * chain always supplies the composed model, so an absence here is the chain losing the runtime's facts rather
+ * than something to skip past.
+ */
+function samplingRows(surface: PresetAssemblySurfaceV1): readonly PresetSamplingRowV1[] {
+  const reading = surface.sampling;
+  if ("unavailable" in reading) assert.fail(`the chain lost its sampler reading: ${JSON.stringify(reading)}`);
+  return reading;
 }
 
 /**
@@ -581,7 +598,8 @@ test("nothing the assembler skipped is silently dropped: every switched-on row i
 
 test("every sampler key the preset wrote reaches the surface's reading of what the runtime will send", async () => {
   await withChain(async ({ document, surface }) => {
-    const temperature = surface.sampling.find((row) => row.key === "temperature");
+    const rows = samplingRows(surface);
+    const temperature = rows.find((row) => row.key === "temperature");
     assert.ok(temperature !== undefined, `the reading carries no temperature row: ${JSON.stringify(surface.sampling)}`);
     assert.equal(temperature.source, "preset");
     assert.equal(
@@ -590,7 +608,7 @@ test("every sampler key the preset wrote reaches the surface's reading of what t
       "the value the preset wrote must be the value the reading reports the runtime sending",
     );
 
-    const topP = surface.sampling.find((row) => row.key === "top_p");
+    const topP = rows.find((row) => row.key === "top_p");
     assert.ok(topP !== undefined);
     assert.equal(topP.source, "thinking-level", "the level overrode top_p, so the preset's value is not what is sent");
     assert.notEqual(topP.value, document.top_p);

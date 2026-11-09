@@ -168,13 +168,19 @@ function PresetAssemblyRow({
       <p className="management-settings-hint" data-preset-sampling-hint>
         {labels.presetSamplingHint}
       </p>
-      <ul data-preset-sampling>
-        {preset.sampling.map((row) => (
-          <li key={row.key} data-preset-sampling-row={row.key}>
-            <code>{row.key}</code> = {row.value === null ? "\u2014" : String(row.value)} ({row.source})
-          </li>
-        ))}
-      </ul>
+      {"unavailable" in preset.sampling ? (
+        <p className="management-settings-hint" data-preset-sampling-unavailable={preset.sampling.unavailable}>
+          {labels.presetSamplingUnavailable}
+        </p>
+      ) : (
+        <ul data-preset-sampling>
+          {preset.sampling.map((row) => (
+            <li key={row.key} data-preset-sampling-row={row.key}>
+              <code>{row.key}</code> = {row.value === null ? "\u2014" : String(row.value)} ({row.source})
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
