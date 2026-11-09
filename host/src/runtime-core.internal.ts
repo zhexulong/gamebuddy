@@ -77,7 +77,13 @@ import {
 import type { TavernAuthoredContextCatalog } from "./tavern/catalog-service.js";
 import { mergeModelProviderEntry, modelProviderEntry } from "./tavern/pi-provider-store.js";
 import { TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
-import { assertToolSurface, type DeclaredToolGroup, planToolSurface, type ToolSurfacePlan } from "./tool-surface.js";
+import {
+  applyToolDescriptionOverrides,
+  assertToolSurface,
+  type DeclaredToolGroup,
+  planToolSurface,
+  type ToolSurfacePlan,
+} from "./tool-surface.js";
 import { createWorldBookTools, type WorldBookBinding } from "./worldbook.js";
 export { identityKey, resolveRuntimePaths };
 export type { CompanionModelConfig, CompanionThinkingLevel, RuntimePaths };
@@ -1965,6 +1971,7 @@ export async function createRuntimeWithFixedToolsCore(
       tools: [...extension.tools.keys()],
     })),
   });
+  applyToolDescriptionOverrides(loader.getExtensions().extensions, toolSurface);
   const inactiveFixedToolNames = fixedTools.filter((tool) => tool.defaultActive === false).map((tool) => tool.name);
   const expectedToolNames = toolSurface.mounted.filter((name) => !inactiveFixedToolNames.includes(name));
   const customTools = hostToolGroups

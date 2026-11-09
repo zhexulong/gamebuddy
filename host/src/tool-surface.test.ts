@@ -17,9 +17,12 @@ import { Type } from "typebox";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { type CompanionIdentity, createCompanionRuntime } from "./runtime.js";
 import {
+  applyToolDescriptionOverrides,
   assertToolSurface,
+  CLASS_DESCRIPTION_OVERRIDES,
   type CompanionSurface,
   DENIED_TOOL_CLASSES,
+  GAME_SESSION_INSPECTION_DESCRIPTION,
   PERMITTED_TOOL_CLASSES,
   planToolSurface,
   TOOL_CAPABILITY_CLASSES,
@@ -102,6 +105,15 @@ async function loadFixtureExtension(
   });
   await loader.reload();
   return { loader, settingsManager };
+}
+
+/** One registered tool's description, read back from the loader's own registry. */
+function registeredDescription(loader: DefaultResourceLoader, name: string): string {
+  for (const extension of loader.getExtensions().extensions) {
+    const entry = extension.tools.get(name) as { definition?: { description?: unknown } } | undefined;
+    if (entry?.definition?.description !== undefined) return String(entry.definition.description);
+  }
+  throw new Error(`tool ${name} is not registered with this loader`);
 }
 
 /** What the loader registered, in the one shape the plan reads: the extension entry and its tool names. */
@@ -342,6 +354,129 @@ test("the Chat surface stays a dialogue surface: the same extension's tools do n
     try {
       assert.deepEqual(runtime.session.agent.state.tools, []);
       assert.deepEqual([...runtime.toolSurface.mounted], []);
+    } finally {
+      runtime.session.dispose();
+    }
+  });
+});
+
+/**
+ * THE MOUNTED WORDS, IN HER SITUATION.
+ *
+ * <p>
+ * The Magic Context extension registers `ctx_search` and `ctx_expand` with the wording of a coding agent's
+ * session: "everything that ever happened in this project, not just what is on your desk". The Game surface is
+ * where a farmhand who has just forgotten her own morning reads them, and on a 34-minute run she never called
+ * either one while using `ctx_reduce` six times - the tool that shrinks. A description that has to be translated
+ * before it applies to her is a description that does not apply to her.
+ * </p>
+ *
+ * <p>
+ * The override is one table keyed by the surface's own capability classes, so a tool the extension registers
+ * later arrives with the class's wording and no edit here. There is no list of names anywhere: the population is
+ * the plan's classification, which is the module's own statement of what a session-inspection tool is.
+ * </p>
+ */
+test("the Game surface mounts its archive tools with the recall wording, not the desk metaphor", async () => {
+  await withRoot(async (root) => {
+    const { loader } = await loadFixtureExtension(root, "fixture-archive", ["notes_lookup"]);
+    const statusTool = fixtureTool("companion_status");
+    const plan = planToolSurface({
+      surface: "game",
+      groups: [{ toolClass: "host_control", tools: [statusTool] }],
+      extensions: [{ entry: "<inline:fixture-archive>", toolClass: "session_inspection" }],
+      registered: registeredExtensionTools(loader),
+    });
+    assert.equal(registeredDescription(loader, "notes_lookup"), "notes_lookup fixture");
+
+    applyToolDescriptionOverrides(loader.getExtensions().extensions, plan);
+
+    assert.equal(
+      registeredDescription(loader, "notes_lookup"),
+      CLASS_DESCRIPTION_OVERRIDES.game.session_inspection,
+      "every tool the plan classifies as session inspection mounts with the class's wording",
+    );
+    assert.equal(
+      statusTool.description,
+      "companion_status fixture",
+      "a tool of another class is untouched: the override is keyed by class, not applied to the whole surface",
+    );
+  });
+});
+
+test("a tool the extension registers later arrives already carrying the class's wording", async () => {
+  await withRoot(async (root) => {
+    // The population is the plan, so a tool nothing had heard of at authoring time is covered by being registered
+    // under the extension whose class the Host declares. This is the property that a name list cannot have.
+    const { loader } = await loadFixtureExtension(root, "fixture-archive", ["notes_lookup", "later_lookup"]);
+    const plan = planToolSurface({
+      surface: "game",
+      groups: [],
+      extensions: [{ entry: "<inline:fixture-archive>", toolClass: "session_inspection" }],
+      registered: registeredExtensionTools(loader),
+    });
+    applyToolDescriptionOverrides(loader.getExtensions().extensions, plan);
+    for (const name of ["notes_lookup", "later_lookup"])
+      assert.equal(registeredDescription(loader, name), GAME_SESSION_INSPECTION_DESCRIPTION);
+  });
+});
+
+test("the Chat surface's copy of the same tools is unchanged", async () => {
+  await withRoot(async (root) => {
+    const { loader } = await loadFixtureExtension(root, "fixture-archive", ["notes_lookup"]);
+    const plan = planToolSurface({
+      surface: "chat",
+      groups: [{ toolClass: "host_control", tools: [fixtureTool("companion_status")] }],
+      extensions: [{ entry: "<inline:fixture-archive>", toolClass: "session_inspection" }],
+      registered: registeredExtensionTools(loader),
+    });
+    assert.deepEqual([...plan.mounted], ["companion_status"], "Chat mounts no session inspection tool");
+    applyToolDescriptionOverrides(loader.getExtensions().extensions, plan);
+    assert.equal(
+      registeredDescription(loader, "notes_lookup"),
+      "notes_lookup fixture",
+      "Chat has no entry in the table, so the registered words stay the extension's own",
+    );
+    assert.deepEqual(Object.keys(CLASS_DESCRIPTION_OVERRIDES.chat), [], "Chat overrides no class's wording");
+  });
+});
+
+test("the real Game surface mounts ctx_search and ctx_expand with that wording", async () => {
+  await withRoot(async (root) => {
+    const runtime = await createCompanionRuntime(
+      identity,
+      root,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      "game_archive_wording_01",
+      undefined,
+      "game",
+    );
+    try {
+      const mounted = runtime.session.agent.state.tools;
+      const search = mounted.find((tool) => tool.name === "ctx_search");
+      const expand = mounted.find((tool) => tool.name === "ctx_expand");
+      assert.ok(search !== undefined, "the Game surface mounts ctx_search");
+      assert.ok(expand !== undefined, "the Game surface mounts ctx_expand");
+      assert.equal(search.description, GAME_SESSION_INSPECTION_DESCRIPTION);
+      assert.equal(expand.description, GAME_SESSION_INSPECTION_DESCRIPTION);
+      assert.doesNotMatch(
+        search.description,
+        /desk|archive in this project|commit history/iu,
+        "the mounted words are about her own turns, not about a coding agent's working tree",
+      );
+      // The population is the plan: every session-inspection tool this surface mounts carries the class wording,
+      // so nothing reaches her with the extension's own vocabulary.
+      const inspection = mounted
+        .filter((tool) => toolClassOf(runtime.toolSurface, tool.name) === "session_inspection")
+        .map((tool) => tool.name);
+      assert.ok(inspection.length >= 2, `the surface mounts session inspection tools: ${inspection.join(", ")}`);
+      for (const tool of mounted.filter((candidate) => inspection.includes(candidate.name)))
+        assert.equal(tool.description, GAME_SESSION_INSPECTION_DESCRIPTION, `${tool.name} kept the old wording`);
     } finally {
       runtime.session.dispose();
     }

@@ -94,6 +94,78 @@ export type DeclaredExtension = Readonly<{
   toolClass: ToolCapabilityClass;
 }>;
 
+/**
+ * What the Game surface's archive family is for, in the situation she is actually in.
+ *
+ * It names the two calls that read her own turns back and says that `ctx_reduce` is the opposite of them, because
+ * the run that produced this text used the opposite six times and never asked for anything back. It keeps one
+ * clause each for the two members that are not about recall (`ctx_memory`, `ctx_note`), so replacing a class's
+ * wording does not delete the only sentence that says what they are for.
+ */
+export const GAME_SESSION_INSPECTION_DESCRIPTION = `Your own earlier turns. What you said, decided, saw or were told earlier is still yours even when it is no longer in view; this family reads it back, and none of them deletes anything.
+
+ctx_search - search your own earlier turns and anything you said, decided or saw that is no longer in view. Phrase it as a question carrying the words you expect back.
+ctx_expand - bring one item back whole: tag=N is a §N§ tag or a [dropped §N§] placeholder; message=N and start/end are message ordinals, such as the ones a <session-history> heading or a ctx_search hit shows.
+ctx_reduce - the opposite: it shrinks what is in view so there is room to keep going, and nothing it shrinks is lost.
+ctx_memory - facts worth keeping for a long time; ctx_note - a follow-up you mean to come back to.
+
+If something is not in view, search before answering that you did not do it.`;
+
+/** One surface's own wording, per capability class. */
+export type ClassDescriptionOverrides = Readonly<
+  Record<CompanionSurface, Readonly<Partial<Record<ToolCapabilityClass, string>>>>
+>;
+
+/**
+ * The words a surface gives a whole CLASS of tools, in place of what the extension registered.
+ *
+ * <p>
+ * The Magic Context extension writes for a coding agent: `ctx_search` is "everything that ever happened in this
+ * project, not just what is on your desk" and `ctx_expand` is "original content that is no longer on your desk".
+ * The Game surface is where a farmhand who has just forgotten her own morning reads them, and measured on a
+ * 34-minute run she used `ctx_reduce` (the tool that SHRINKS) six times and never called either of the two that
+ * read her history back. A description that has to be translated before it applies to her is a description that
+ * does not apply to her.
+ * </p>
+ *
+ * <p>
+ * One table, keyed by the same capability classes this module already declares - NOT by tool name. The population
+ * it applies to is the plan's own classification, so a tool the extension registers tomorrow arrives with its
+ * class's wording and no edit here; a second list of names saying "these are the session-inspection tools" is
+ * exactly the defect this module replaced. Chat states its emptiness rather than omitting the key, so a surface
+ * added to the union must answer this question instead of inheriting silence.
+ * </p>
+ */
+export const CLASS_DESCRIPTION_OVERRIDES: ClassDescriptionOverrides = Object.freeze({
+  game: Object.freeze({ session_inspection: GAME_SESSION_INSPECTION_DESCRIPTION }),
+  chat: Object.freeze({}),
+});
+
+/**
+ * Give every tool the plan classifies into an overridden class the words this surface owns.
+ *
+ * <p>
+ * Called at MOUNT time: a loader's registered definitions are what Pi reads when it builds the session's tool
+ * registry, so the description the provider receives is the one set here. Nothing about the tool's execution
+ * changes - the schema, the handler and the identity are the extension's, and only the sentence the model reads
+ * is the surface's. A definition belongs to one loader (each runtime constructs its own, and the extension
+ * registers its tools per load), so writing it here cannot reach another surface's copy.
+ * </p>
+ */
+export function applyToolDescriptionOverrides(
+  registered: readonly Readonly<{ tools: ReadonlyMap<string, Readonly<{ definition: ToolDefinition }>> }>[],
+  plan: ToolSurfacePlan,
+): void {
+  const overrides = CLASS_DESCRIPTION_OVERRIDES[plan.surface];
+  for (const extension of registered) {
+    for (const [name, entry] of extension.tools) {
+      const description = overrides[toolClassOf(plan, name)];
+      if (description === undefined) continue;
+      entry.definition.description = description;
+    }
+  }
+}
+
 /** What an extension actually registered, as the loader reports it before any session exists. */
 export type RegisteredExtensionTools = Readonly<{
   entry: string;
