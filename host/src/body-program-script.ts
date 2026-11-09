@@ -979,6 +979,28 @@ export function compilePlanScript(
   // replayed and could not answer idempotency, so that is a refusal rather than a plan with a null revision.
   if (snapshotRevision === null)
     return refused("plan_snapshot_missing", scriptSource, null, undefined, undefined, state);
+  // THE PROGRAM THIS COMPILER PRODUCES MUST SATISFY THE RULE THE MOD ENFORCES ON SUBMISSION.
+  //
+  // `dependsOn` is the model's only relation and it does two jobs at once: it orders the nodes that touch a shared
+  // resource (`BodyProgramVerifier.ValidateResourceConflicts`) and it is the edge a failure propagates along
+  // (`FailedDependents.Compute`). Every published action claims `embodied_actor`, so a candidate holding two unordered
+  // steps is refused by the Mod with `resource_conflict:<actionId>` - "order them with dependsOn to group them in one
+  // program" - which is why this compiler writes one edge per call.
+  //
+  // Nothing below can fire while that is true, and that is the point: the compiler's own output is the one thing that
+  // must never be a candidate the other side refuses. Written here, a future producer change that drops the edge is
+  // refused by name in the same turn; left to the wire, it is a program the Mod rejects after a full round trip, with
+  // a code that names no line the author can look at.
+  const conflicts = planResourceConflictCodes(state.nodes, dependencies.actions);
+  if (conflicts.length > 0)
+    return refused(
+      `plan_resource_conflict:${conflicts.join(",")}`,
+      scriptSource,
+      snapshotRevision,
+      undefined,
+      undefined,
+      state,
+    );
   // What this plan assumed and the snapshot it read could not answer. Read from the SAME nodes that are about to be
   // submitted, so the warning describes the plan rather than the script.
   const layout = layoutFactsAbsent(state.nodes, dependencies.actions, snapshot);
@@ -1007,6 +1029,58 @@ export function compilePlanScript(
 export function planProgramId(snapshotRevision: number, nodes: readonly PlanNode[]): string {
   const digest = createHash("sha256").update(JSON.stringify(nodes)).digest("hex").slice(0, 16);
   return `plan_${snapshotRevision}_${digest}`;
+}
+
+/** The part of a candidate node the Mod's ordering rule reads. */
+export type PlanOrderingNode = Readonly<{
+  nodeId: string;
+  actionId: string;
+  dependsOn: readonly string[];
+}>;
+
+/**
+ * THE ORDERING REQUIREMENT the Mod enforces on any two nodes that touch the same resource, in the Mod's own codes.
+ *
+ * `BodyProgramVerifier.ValidateResourceConflicts` (`OpenBodyProgramJournalAuthority.cs`) refuses a candidate in which
+ * two nodes whose actions share a resource-claim key are not transitively ordered by `dependsOn`, and every published
+ * action claims `embodied_actor`. So a candidate is a chain or it is refused - there is no way to say "run this after
+ * that, but not because of it", which is the whole reason a compiled script writes one edge per call.
+ *
+ * This is that rule as the Host reads it, from the same published claims (`resourceClaims` are projected from the
+ * Mod's own `resourceTemplate`), so a caller is told by the side that compiled the plan rather than after a round trip
+ * - and told the SAME code, `resource_conflict:<actionId>`, which is what the Mod's diagnostic carries. Two nodes, one
+ * code each, because the Mod reports the pair once per node it cannot place: a candidate of three independent steps
+ * answers two conflicts, both naming the second and third.
+ */
+export function planResourceConflictCodes(
+  nodes: readonly PlanOrderingNode[],
+  actions: readonly PublishedPlanAction[],
+): readonly string[] {
+  const claimsOf = new Map(
+    actions.map((action) => [action.actionId, action.resourceClaims.map((claim) => claim.key)] as const),
+  );
+  const dependsOn = new Map(nodes.map((node) => [node.nodeId, node.dependsOn] as const));
+  const dependsTransitively = (from: string, target: string, seen: Set<string> = new Set()): boolean => {
+    if (from === target) return true;
+    if (seen.has(from)) return false;
+    seen.add(from);
+    return (dependsOn.get(from) ?? []).some((dependency) => dependsTransitively(dependency, target, seen));
+  };
+  const conflicts: string[] = [];
+  for (let left = 0; left < nodes.length; left += 1)
+    for (let right = left + 1; right < nodes.length; right += 1) {
+      const leftClaims = claimsOf.get(nodes[left]!.actionId);
+      const rightClaims = claimsOf.get(nodes[right]!.actionId);
+      if (leftClaims === undefined || rightClaims === undefined) continue;
+      if (!leftClaims.some((key) => rightClaims.includes(key))) continue;
+      if (
+        dependsTransitively(nodes[left]!.nodeId, nodes[right]!.nodeId) ||
+        dependsTransitively(nodes[right]!.nodeId, nodes[left]!.nodeId)
+      )
+        continue;
+      conflicts.push(`resource_conflict:${nodes[right]!.actionId}`);
+    }
+  return Object.freeze(conflicts);
 }
 
 function refused(

@@ -221,6 +221,41 @@ public sealed class BodyProgramControllerPumpTests
     }
 
     [Fact]
+    public void AStepThatSharesTheActorWithANeighbourItDoesNotDependOnIsRefusedByTheModelItself()
+    {
+        // THIS IS WHAT THE 21.7% IS MADE OF, PINNED WHERE IT IS ENFORCED.
+        //
+        // `dependsOn` is the model's ONLY relation, and it carries two meanings at once. `BodyProgramVerifier.
+        // ValidateResourceConflicts` requires every pair of nodes claiming the same resource to be transitively ordered
+        // by it, and every published action claims `embodied_actor`. So two INDEPENDENT steps can only be submitted as
+        // a chain - which makes the second a dependent that a failure of the first skips - or not at all.
+        //
+        // That is why a compiled script is a chain, and why the chain cannot simply be dropped at the producer:
+        // measured over one 34-minute run, 102 of 469 nodes were `skipped_dependency` (21.7%), with one
+        // `no_native_path` failure skipping 15 nodes of a 16-node plan (`plan_1661`). The amplification is in the
+        // model, not in the compiler or in the skip rule: nothing in it can say "run this after that, but not because
+        // of it".
+        //
+        // The Host side of the same rule is `planResourceConflictCodes` (`host/src/body-program-script.ts`), and the
+        // case that drives it with this same three-step shape is
+        // `body-program-script.test.ts` "the Host reads the ordering conflict the Mod refuses, in the Mod's own code".
+        // This case fails the day a second, ordering-only relation exists - and then it must be re-derived from that
+        // relation rather than deleted.
+        OpenBodyProgramJournalAuthority authority = Open();
+
+        BodyProgramSubmitResult submitted = authority.Submit(MachineProgramWithIndependentNeighbour());
+
+        submitted.Code.Should().Be(BodyProgramSubmitCode.Rejected);
+        // Two conflicts, not three: the pair that already has an edge (`load` depends on `inspect`) is accepted, and the
+        // one that has none (`neighbour`) is reported once against each of the two nodes it cannot be ordered with. A
+        // count of three would say the ordering edge does not count at all; a count of one, that ordering is not the
+        // question being asked.
+        submitted.Verification.Diagnostics.Should().HaveCount(2);
+        submitted.Verification.Diagnostics.Select(diagnostic => diagnostic.Code)
+            .Should().AllSatisfy(code => code.Should().StartWith("resource_conflict:"));
+    }
+
+    [Fact]
     public void PumpConsumesRejectedAdmissionWithoutTreatingUnavailableAsRejected()
     {
         OpenBodyProgramJournalAuthority authority = Open();
@@ -879,6 +914,14 @@ public sealed class BodyProgramControllerPumpTests
         new ActionProgramCandidateNode("inspect", "machine_inspect", Args(("x", "integer", "1"), ("y", "integer", "1"), ("expectedTargetId", "string", "candidate-target|1")), Array.Empty<string>(), Bindings()),
         new ActionProgramCandidateNode("load", "machine_load", Args(("x", "integer", "1"), ("y", "integer", "1"), ("slot", "integer", "5"), ("expectedQualifiedItemId", "string", "(O)433"), ("expectedTargetId", "string", "placeholder-target")), new[] { "inspect" }, Bindings("expectedTargetId", new ActionProgramBinding("inspect", "machine_target_id"))),
         new ActionProgramCandidateNode("verify", "machine_load", Args(("x", "integer", "1"), ("y", "integer", "1"), ("slot", "integer", "5"), ("expectedQualifiedItemId", "string", "(O)433"), ("expectedTargetId", "string", "opaque-target")), new[] { "load" }, Bindings()),
+    });
+
+    private static ActionProgramCandidate MachineProgramWithIndependentNeighbour() => new("program", new[]
+    {
+        new ActionProgramCandidateNode("inspect", "machine_inspect", Args(("x", "integer", "1"), ("y", "integer", "1"), ("expectedTargetId", "string", "candidate-target|1")), Array.Empty<string>(), Bindings()),
+        new ActionProgramCandidateNode("load", "machine_load", Args(("x", "integer", "1"), ("y", "integer", "1"), ("slot", "integer", "5"), ("expectedQualifiedItemId", "string", "(O)433"), ("expectedTargetId", "string", "placeholder-target")), new[] { "inspect" }, Bindings("expectedTargetId", new ActionProgramBinding("inspect", "machine_target_id"))),
+        // The second tile of the list: no edge, no binding, no interest in what `inspect` produced.
+        new ActionProgramCandidateNode("neighbour", "machine_load", Args(("x", "integer", "6"), ("y", "integer", "6"), ("slot", "integer", "9"), ("expectedQualifiedItemId", "string", "(O)24"), ("expectedTargetId", "string", "neighbour-target")), Array.Empty<string>(), Bindings()),
     });
 
     private sealed class ImmediateAdmissionTransport : IBodyProgramAdmissionTransport

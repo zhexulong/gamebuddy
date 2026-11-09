@@ -11,6 +11,7 @@ import {
   type PublishedPlanAction,
   planActionsFromRegistrations,
   planProgramId,
+  planResourceConflictCodes,
   planShape,
   planWorkDescription,
 } from "./body-program-script.js";
@@ -315,6 +316,73 @@ test("a plan with no transition is exactly the plan the script wrote", () => {
       bindings: {},
     },
   ]);
+});
+
+/**
+ * ONE RULE, TWO READERS: the ordering requirement the Mod enforces, read on the Host side.
+ *
+ * `BodyProgramVerifier.ValidateResourceConflicts` (`OpenBodyProgramJournalAuthority.cs`) refuses any candidate holding
+ * two nodes whose actions share a resource-claim key and which are not transitively ordered by `dependsOn`. The claims
+ * below are the Mod's own, read out of the published surface artifact rather than written here, and the code asserted
+ * is the one the Mod's diagnostic carries: `GameBuddy.Stardew.Core.Tests.BodyProgramControllerPumpTests.
+ * AStepThatSharesTheActorWithANeighbourItDoesNotDependOnIsRefusedByTheModelItself` drives the real verifier with the
+ * same three-step candidate and reads two `resource_conflict:` codes off it.
+ */
+test("the Host reads the ordering conflict the Mod refuses, in the Mod's own code", () => {
+  const claimed = (actionId: string) => {
+    const action = ACTIONS.find((candidate) => candidate.actionId === actionId);
+    assert.ok(action, `${actionId} is on the published surface`);
+    return action;
+  };
+  const walk = claimed("move_to_tile");
+  const harvest = claimed("harvest_crop");
+  // The claim that makes two steps of one actor an ordering question at all, taken from the surface and not assumed.
+  assert.deepEqual(
+    walk.resourceClaims
+      .map((claim) => claim.key)
+      .filter((key) => harvest.resourceClaims.some((other) => other.key === key)),
+    ["embodied_actor"],
+    "two steps share the actor claim, so the Mod requires one of them to depend on the other",
+  );
+  const step = (nodeId: string, actionId: string, dependsOn: readonly string[] = []) => ({
+    nodeId,
+    actionId,
+    dependsOn,
+  });
+
+  assert.deepEqual(
+    planResourceConflictCodes([step("n001", walk.actionId), step("n002", harvest.actionId)], ACTIONS),
+    [`resource_conflict:${harvest.actionId}`],
+    "unordered, it is the code the Mod would answer",
+  );
+  // The inverse, in both directions: ONE edge is all the Mod asks for ("order them with dependsOn").
+  assert.deepEqual(
+    planResourceConflictCodes([step("n001", walk.actionId), step("n002", harvest.actionId, ["n001"])], ACTIONS),
+    [],
+  );
+  assert.deepEqual(
+    planResourceConflictCodes([step("n001", walk.actionId, ["n002"]), step("n002", harvest.actionId)], ACTIONS),
+    [],
+  );
+  // TRANSITIVE, not direct: the Mod walks the edge closure, so a third step that reaches the first through the second
+  // is ordered without naming it.
+  assert.deepEqual(
+    planResourceConflictCodes(
+      [step("n001", walk.actionId), step("n002", harvest.actionId, ["n001"]), step("n003", walk.actionId, ["n002"])],
+      ACTIONS,
+    ),
+    [],
+  );
+  // And the shape the Mod was driven with, node for node: one step that consumes another, and a THIRD step that is
+  // independent of both. The ordered pair is accepted and the two pairs the third one cannot be placed against are
+  // refused - two codes, both naming that third step, which is what the real verifier answered.
+  assert.deepEqual(
+    planResourceConflictCodes(
+      [step("n001", walk.actionId), step("n002", harvest.actionId, ["n001"]), step("n003", harvest.actionId)],
+      ACTIONS,
+    ),
+    [`resource_conflict:${harvest.actionId}`, `resource_conflict:${harvest.actionId}`],
+  );
 });
 
 test("the program a script produced passes the real Body Program validator", () => {
