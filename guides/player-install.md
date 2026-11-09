@@ -44,9 +44,9 @@ pnpm run:sandbox-level3 -- --setup desktop/dist/setup/GameBuddy.Setup.exe
 
 ### 2. 安装模组加载器与伴侣 Mod
 
-- 如果游戏目录还没有 SMAPI，界面会提供「帮我安装 SMAPI」：GameBuddy 复制它自带的加载器，不改动目录中的其他文件。
-- 如果目录里已有别人安装的 SMAPI 文件，GameBuddy 不会强行覆盖；按提示清理冲突文件或换一个目录。
-- 随后 GameBuddy 会把伴侣 Mod 部署到 `Mods/GameBuddy`。
+- 如果游戏目录还没有 SMAPI，请先从 [SMAPI](https://smapi.io/) 安装。SMAPI 属于它自己的项目，GameBuddy 不附带、下载或替换 SMAPI。
+- SMAPI 安装到该游戏目录后，回到 GameBuddy 点「重新查找」；GameBuddy 会检测加载器并把伴侣 Mod 部署到 `Mods/GameBuddy`。
+- 如果目录里已有其他版本的 GameBuddy Mod，应用会按版本和文件内容判断是复用、更新还是要求确认；不会覆盖不属于 GameBuddy 的 Mod。
 - 如果 Steam 启动方式需要额外参数，界面会给出对应提示。
 
 > GameBuddy 不会接管你的存档目录，也不会替你改写存档文件。
@@ -98,7 +98,7 @@ Chat 与 Game 是两个可以同时存在的表面：你可以在 Chat 里设定
 | 现象 | 先做什么 |
 | :--- | :--- |
 | 找不到游戏 | 在「游戏安装」中手动选择包含 `Stardew Valley.exe` 的文件夹 |
-| 提示缺少 SMAPI | 用「帮我安装 SMAPI」；或先自行安装 SMAPI 后重新查找 |
+| 提示缺少 SMAPI | 从 [SMAPI](https://smapi.io/) 安装到当前 Stardew 目录后，回到 GameBuddy 点「重新查找」 |
 | `Mods` 目录不可写 | 关闭 Stardew 与所有模组管理器，检查目录权限后重试 |
 | `Mods/GameBuddy` 属于其他 Mod | GameBuddy 不会覆盖别人的文件夹；先确认并移除冲突目录 |
 | 连接测试失败 | 检查 provider、Base URL、模型 ID 与 key；提示会区分具体原因 |
@@ -108,8 +108,14 @@ Chat 与 Game 是两个可以同时存在的表面：你可以在 Chat 里设定
 
 如果问题可以复现，请附上：GameBuddy 版本、Windows 版本、Stardew/SMAPI 版本、界面显示的错误文案与时间点。**不要附 API key、完整存档或私密角色卡内容。**
 
+## 玩家路径验收边界
+
+安装器 → 自定义 Stardew 路径 → Mod 部署 → 首次 authenticated action（同一 lineage 的 terminal receipt）已经通过独立路径验收。可复核的阶段入口是 [`tools/run-stardew-lifecycle-cold-session.mjs`](../tools/run-stardew-lifecycle-cold-session.mjs)：它在真实安装根上编排 discovery/admission、Mod deployment、启动、authenticated attachment 和一次真实 action。该 runner 不替代 action-owned postcondition；具体 native world effect 仍由对应 action 的 live gate 证明。
+
+这项验收不等于所有发布条件都已完成：签名公开发行与自动更新仍在收敛，关闭后游戏存活、重新 attachment 和 fresh observation sync 的完整尾段也单独计量。干净机安装/卸载范围见[沙盒验收](../design/operations/sandbox-acceptance.md)，它不包含 Stardew 或 SMAPI。
+
 ## 已知边界
 
-- 正式支持的游戏只有 Stardew Valley 1.6.x + SMAPI 4.x，平台只有 Windows x64。
+- 正式支持的游戏只有 Stardew Valley 1.6.x + SMAPI 4.x，平台只有 Windows x64；SMAPI 由玩家从其官方项目安装。
 - 语音（ASR / TTS）仍在开发中，当前版本不保证可用；它不作为独立产品表面。
 - 签名公开发行通道仍在收敛；从源码构建的安装包属于未签名预览产物，Windows SmartScreen 可能提示，不用于分发。

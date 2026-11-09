@@ -1,5 +1,6 @@
 import {
   Check,
+  ChevronDown,
   Hand,
   Play,
   Plug,
@@ -75,6 +76,17 @@ const GAME_CREATE_FORM_ID = "game-create-form";
  * layout). A group with nothing to offer renders nothing at all: design/26 §1
  * fixes a control as absent rather than a disabled lookalike.
  *
+ * A step states ONE next action, and a step the phase has already moved past is
+ * not drawn at all. Which action that is comes from `forwardActions`, the one
+ * derivation in `../game-lifecycle-controls`: the guide never re-derives "what
+ * can the player do now" from the raw projection, so the control it leads with
+ * and the action the state offers cannot disagree. The staging pair (enable
+ * companion play, then set up Stardew Valley) is the case that forced this: the
+ * Host accepts them in one order only, so drawing them side by side offered a
+ * button whose own refusal taught the order after the player had picked it - and
+ * drawing both after the attempt was already staged walked the player through a
+ * step that no longer applied.
+ *
  * Every typed Host value is rendered through `../game-presentation`, which maps
  * the frozen `game_browser_api/v1` union to localized player outcomes. A raw
  * enum, a code, a revision or a handle is never shown (design/104 §10).
@@ -95,6 +107,11 @@ const GAME_CREATE_FORM_ID = "game-create-form";
  *   so its lead and its waiting sentence read with its cards) with
  *   `data-capability-state="published" | "unpublished"`, and the guide keeps
  *   `data-testid="game-start-guide"`;
+ * - the guide's step 1 carries `data-guide-action="activate" | "setup"` naming the
+ *   one control it leads with (from `forwardActions`), draws that control and no
+ *   other as `.primary`, offers the other inside
+ *   `data-testid="game-guide-step-one-alternate"`, and is absent entirely when the
+ *   phase has no staging action left;
  * - every fact row keeps its `dt`/`dd` text adjacency (a label and its value are
  *   never separated by anything, so the row still reads `ConnectionConnected`);
  * - every status sentence is still the `role="status"` line it was.
@@ -257,6 +274,23 @@ export function GameStatePanel({
   // lifecycle controls, presented inside the three-step guide's affordances
   // (never a second set of them).
   const companionInFarm = game !== null && game.game.attachment.status === "attached";
+  /**
+   * The one staging action this phase names, or `null` when the staging step is
+   * behind the player.
+   *
+   * `forwardActions` is the phase's own ordered step list (`../game-lifecycle-controls`),
+   * so this reads the same declaration the zero-forward-path gate drives instead of
+   * repeating the projection's predicates here. `activate` leads while the Host has
+   * staged nothing; `setup` leads once activation is established (the Host refuses it
+   * before that with `gameActivationRequired`); at `activated_not_launched` neither is
+   * offered, which is what makes step 1 disappear rather than ask for work already done.
+   */
+  const stagingAction: "activate" | "setup" | null =
+    session.controls.forwardActions[0] === "activate"
+      ? "activate"
+      : session.controls.forwardActions[0] === "setup"
+        ? "setup"
+        : null;
   // The terminal operation's confirm step is the same arm-and-close pair the Chats rows take
   // (`./armed-confirmation`): arming replaces the trigger with the confirmation, so without it the
   // page drops focus onto `<body>` at both ends, and Escape reaches the shell's window handler -
@@ -316,10 +350,11 @@ export function GameStatePanel({
 
           {/* Getting going. The three steps are the reading order of the first
               run (start Stardew, load the farm, the companion moves in), and
-              each step carries the affordance that belongs to it: the setup and
-              activation chain in step 1, the launch in step 2, the cabin choice
-              in step 3. Once the companion is in the farm the same group holds
-              the actions-resume affordance it held before. */}
+              each step carries the affordance that belongs to it: one staging
+              action in step 1, the launch in step 2, the cabin choice in
+              step 3. A step whose premise the current phase has already
+              established is not drawn at all. Once the companion is in the farm
+              the same group holds the actions-resume affordance it held before. */}
           <PanelGroup id="game-group-next-step" title={labels.gameGroupNextStep}>
             {/* The two states whose step is not a control on this page, stated where the
                 guide would have been so the player is never left reading a panel of
@@ -374,16 +409,21 @@ export function GameStatePanel({
               </div>
             ) : (
               <ol className="game-guide-steps" data-testid="game-start-guide" aria-label={labels.gameStartGuide}>
-                <li className="game-guide-step" data-guide-step="1">
-                  <h4 className="game-guide-step-title">{labels.gameGuideStepOneTitle}</h4>
-                  <p className="game-guide-step-detail">{labels.gameGuideStepOneDetail}</p>
-                  {/* Step 1 holds two controls the Host accepts in one order
-                      only, so they are numbered here: the order is part of the
-                      step the player reads, not something a refusal teaches
-                      after they picked the second one first. */}
-                  <ol className="game-guide-substeps" data-testid="game-guide-step-one-order">
-                    {lifecycle.activation.available && (
-                      <li className="game-guide-substep">
+                {/* Step 1 is drawn only while the phase names a staging action. Once the Host
+                    reports the attempt staged and the prerequisites met, the phase is
+                    `activated_not_launched` and this step is behind the player: presenting it
+                    again would ask for work they have already done. */}
+                {stagingAction !== null && (
+                  <li className="game-guide-step" data-guide-step="1" data-guide-action={stagingAction}>
+                    <h4 className="game-guide-step-title">{labels.gameGuideStepOneTitle}</h4>
+                    <p className="game-guide-step-detail">{labels.gameGuideStepOneDetail}</p>
+                    {/* One step, one control. `forwardActions[0]` is the action this phase can
+                        actually take, so it is the only one drawn at full weight; setup answers
+                        `gameActivationRequired` until activation has staged the attempt, which is
+                        why it is offered to the player who says companion play is already enabled
+                        instead of standing beside the button that precedes it. */}
+                    <div className="game-actions">
+                      {stagingAction === "activate" ? (
                         <button
                           type="button"
                           className="game-action primary"
@@ -395,11 +435,28 @@ export function GameStatePanel({
                           <Power size={16} aria-hidden="true" />
                           {labels.gameActivation}
                         </button>
-                        <p className="game-subpanel-note">{labels.gameActivationHint}</p>
-                      </li>
-                    )}
-                    {lifecycle.setup.available && (
-                      <li className="game-guide-substep">
+                      ) : (
+                        <button
+                          type="button"
+                          className="game-action primary"
+                          data-testid="game-setup"
+                          disabled={lifecycle.setup.active}
+                          onClick={handlers.setup}
+                        >
+                          <Settings size={16} aria-hidden="true" />
+                          {labels.gameSetup}
+                        </button>
+                      )}
+                    </div>
+                    <p className="game-subpanel-note">
+                      {stagingAction === "activate" ? labels.gameActivationHint : labels.gameSetupHint}
+                    </p>
+                    {stagingAction === "activate" && lifecycle.setup.available && (
+                      <details className="custom-disclosure" data-testid="game-guide-step-one-alternate">
+                        <summary>
+                          <ChevronDown size={16} aria-hidden="true" />
+                          {labels.gameGuideStepOneAlternate}
+                        </summary>
                         <button
                           type="button"
                           className="game-action"
@@ -411,41 +468,41 @@ export function GameStatePanel({
                           {labels.gameSetup}
                         </button>
                         <p className="game-subpanel-note">{labels.gameSetupHint}</p>
-                      </li>
+                      </details>
                     )}
-                  </ol>
-                  {lifecycle.activation.active && (
-                    <p className="game-status" data-tone="progress" role="status">
-                      {labels.gameActivationInProgress}
-                    </p>
-                  )}
-                  {lifecycle.activation.failure !== null && (
-                    <p className="game-status" data-tone="danger" role="status">
-                      {gameOperationFailureSentence(lifecycle.activation.failure, labels.gameActivationFailed)}
-                    </p>
-                  )}
-                  {lifecycle.activation.notConfigured && (
-                    <p className="game-status" data-tone="info" role="status">
-                      {labels.gameActivationNotConfigured}
-                    </p>
-                  )}
-                  {lifecycle.activation.unavailable && (
-                    <p className="game-status" data-tone="info" role="status">
-                      {labels.gameActivationUnavailable}
-                    </p>
-                  )}
-                  {lifecycle.setup.notStaged ? (
-                    <p className="game-status" data-tone="info" role="status">
-                      {labels.gameActivationRequired}
-                    </p>
-                  ) : (
-                    lifecycle.setup.failure !== null && (
-                      <p className="game-status" data-tone="danger" role="status">
-                        {gameOperationFailureSentence(lifecycle.setup.failure, labels.gameSetupFailed)}
+                    {lifecycle.activation.active && (
+                      <p className="game-status" data-tone="progress" role="status">
+                        {labels.gameActivationInProgress}
                       </p>
-                    )
-                  )}
-                </li>
+                    )}
+                    {lifecycle.activation.failure !== null && (
+                      <p className="game-status" data-tone="danger" role="status">
+                        {gameOperationFailureSentence(lifecycle.activation.failure, labels.gameActivationFailed)}
+                      </p>
+                    )}
+                    {lifecycle.activation.notConfigured && (
+                      <p className="game-status" data-tone="info" role="status">
+                        {labels.gameActivationNotConfigured}
+                      </p>
+                    )}
+                    {lifecycle.activation.unavailable && (
+                      <p className="game-status" data-tone="info" role="status">
+                        {labels.gameActivationUnavailable}
+                      </p>
+                    )}
+                    {lifecycle.setup.notStaged ? (
+                      <p className="game-status" data-tone="info" role="status">
+                        {labels.gameActivationRequired}
+                      </p>
+                    ) : (
+                      lifecycle.setup.failure !== null && (
+                        <p className="game-status" data-tone="danger" role="status">
+                          {gameOperationFailureSentence(lifecycle.setup.failure, labels.gameSetupFailed)}
+                        </p>
+                      )
+                    )}
+                  </li>
+                )}
 
                 <li className="game-guide-step" data-guide-step="2">
                   <h4 className="game-guide-step-title">{labels.gameGuideStepTwoTitle}</h4>

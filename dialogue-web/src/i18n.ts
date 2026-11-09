@@ -962,9 +962,11 @@ const en = {
   gameInstallationNoCandidates: "No Stardew Valley installation was found.",
   gameInstallationResultUnavailable: "We couldn't read the installation search result.",
   gameInstallationModLoaderPresent: "SMAPI is already installed here, so this folder can run the companion.",
+  // The chip above says the loader is missing; this is the player's way to it. It names the loader and the
+  // site it opens rather than saying "click here", because the sentence is the only thing that tells a
+  // player what a link in a row of chips will do.
   gameInstallationModLoaderAcquire: "Install SMAPI (opens smapi.io)",
   gameInstallationModLoaderMissing:
-  gameInstallationModLoaderAcquire: "安装 SMAPI（打开 smapi.io）",
     "We found Stardew Valley, but there is no mod loader (SMAPI) in that folder. Install SMAPI, then find again — or choose a game folder that already has it.",
   // The one-click mod-loader install. Every string here is an outcome the Host actually
   // reports, and each names the player's own next step rather than a code.
@@ -1076,10 +1078,12 @@ const en = {
   gameStartGuide: "Getting started together",
   gameGuideStepOneTitle: "Start Stardew",
   gameGuideStepOneDetail:
-    "If you have not chosen your game folder yet, choose it in Game installation on this page, then do the two controls below in this order: enable companion play, then set up Stardew Valley.",
-  // What each of step 1's two controls is for. They run in one order only - the
-  // Host refuses setup before activation - and that order used to reach the
-  // player only as a refusal after they had already picked the wrong one.
+    "If you have not chosen your game folder yet, choose it under Game installation on this page. Then press the one button below: it is the next thing left to do.",
+  // The one staging action the step does not lead with, put behind a disclosure instead of
+  // beside it: the Host refuses setup until companion play has been enabled, so only the
+  // player who says that first step is already behind them is offered it here.
+  gameGuideStepOneAlternate: "Already enabled companion play?",
+  // What each staging control is for.
   gameActivationHint: "Gets the companion ready to play in this session.",
   gameSetupHint: "Prepares Stardew Valley and the companion's mod.",
   gameGuideStepTwoTitle: "Load your farm",
@@ -1933,6 +1937,7 @@ const zh: Messages = {
   gameInstallationModLoaderMissing:
     "已找到《星露谷物语》，但这个目录里没有模组加载器（SMAPI）。请先安装 SMAPI，再重新查找；也可以选择已经装有 SMAPI 的游戏文件夹。",
   gameInstallationModLoaderPresent: "这里已经装好了 SMAPI，这个文件夹可以直接加载伴侣。",
+  gameInstallationModLoaderAcquire: "安装 SMAPI（打开 smapi.io）",
   gameCompanionModReady: "伴侣 Mod 已在游戏目录中，星露谷现在可以加载它了。",
   gameCompanionModLoaderMissing: "伴侣 Mod 需要先安装 SMAPI。安装 SMAPI 后再试。",
   gameCompanionModModsDirectoryMissing: "该游戏目录没有 Mods 文件夹。先用 SMAPI 启动一次游戏，它会自动创建，然后重试。",
@@ -1993,7 +1998,8 @@ const zh: Messages = {
   gameStartGuide: "怎么开始",
   gameGuideStepOneTitle: "启动星露谷",
   gameGuideStepOneDetail:
-    "如果还没选过游戏目录，先在本页的「游戏安装」里选好；然后按顺序做下面两个操作：先启用伙伴陪玩，再设置《星露谷物语》。",
+    "如果还没选过游戏目录，请先在本页的「游戏安装」里选好；然后按下面唯一的那个按钮：这是接下来唯一要做的事。",
+  gameGuideStepOneAlternate: "已经启用伙伴陪玩？",
   gameActivationHint: "让伴侣为这次会话做好准备。",
   gameSetupHint: "准备好《星露谷物语》和伴侣模组。",
   gameGuideStepTwoTitle: "载入你的农场",
