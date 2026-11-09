@@ -10,17 +10,21 @@
  *  2. every marker with no content source, named individually;
  *  3. every macro this product will not evaluate, named beside its own code
  *     (`macro_not_implemented:<name>` / `macro_unknown:<name>`);
- *  4. depth injection - the count, the depths, and the blocks that land there.
+ *  4. depth injection - the count, the depths, and the blocks that land there;
+ *  5. sampling in force - the value each sampler key is actually sent as, with the layer that decided it.
  *
  * The fixture is the assembly's own output, not a hand-written copy of it: `presetAssemblySurface` is imported from
  * the Host and driven with a realistic SillyTavern preset, and the stub serves exactly what it produced. A field
  * that drifts between the producer and the browser's mirror therefore fails here instead of agreeing with itself.
  *
  * The negative half is the one a "show everything" surface gets wrong: an entry that IS enabled must never be
- * rendered as a switched-off one, a marker that IS filled must never appear in the unfilled list, and a macro this
- * product implements must never be reported as one it cannot evaluate.
+ * rendered as a switched-off one, a marker that IS filled must never appear in the unfilled list, a macro this
+ * product implements must never be reported as one it cannot evaluate, and - the one this file exists for now - a
+ * key a model or a thinking level decided must never be shown at the value the preset wrote. The last one is the
+ * false green design §5 names: the panel would look right while the request carried something else.
  */
 import { presetAssemblySurface } from "../../host/src/preset-assembly-surface.ts";
+import { PRESET_SAMPLING_KEYS, presetSamplingParams } from "../../host/src/tavern/preset-sampling.ts";
 import { messages } from "../src/i18n";
 import { type Page, expect, test } from "./frontend-coverage";
 
@@ -157,11 +161,28 @@ const ASSEMBLY_MARKERS = {
   scenario: "A late-summer evening in the valley.",
 };
 
+/**
+ * The runtime's own facts for the sampling reading, as the Host will have them when it serves this readout: the
+ * composed model the adapter sends (the preset's values already written into it by `withPresetSampling`, plus this
+ * model's own `frequency_penalty` default) and the thinking level the session reports.
+ *
+ * `high` overrides `temperature`, which is the case §5 exists for: the value the preset wrote (0.9) is not the value
+ * the request carries (0.2). `top_p` stays the preset's, and the five keys no layer sets stay unset.
+ */
+const SAMPLING_RUNTIME = {
+  model: {
+    samplingParams: { temperature: 0.9, top_p: 1, frequency_penalty: 0.1 },
+    samplingParamsByThinkingLevel: { high: { temperature: 0.2 } },
+  },
+  thinkingLevel: "high",
+};
+
 const SURFACE = presetAssemblySurface({
   presetId: "chat-completion-depth-aware",
   name: "Chat completion - depth aware",
   revision: 3,
   document: PRESET_DOCUMENT,
+  sampling: SAMPLING_RUNTIME,
   macros: {
     char: "Mira",
     user: "the player",
@@ -390,6 +411,66 @@ async function expectPresetReadout(page: Page, viewport: Readonly<{ width: numbe
         `scroll: it reads top ${rect.top}, bottom ${rect.bottom}, window ${rendered.windowHeight} px`,
     ).toBe(true);
   }
+
+  // 5. Sampling: the value each sampler key is really sent as, and the layer that decided it. The preset writes
+  // `temperature: 0.9` while the thinking level decides 0.2, so a row that echoed the preset's own value would be
+  // exactly the false green §5 names. Measured last, because revealing these rows scrolls the region.
+  const authored = presetSamplingParams(PRESET_DOCUMENT);
+  const authoredByKey: ReadonlyMap<string, number | undefined> = new Map(
+    PRESET_SAMPLING_KEYS.map((key) => [key, authored[key]] as const),
+  );
+  expect(
+    SURFACE.sampling.map((row) => row.key),
+    "the producer emits a row for every sampling key, in the allow-list's own order",
+  ).toEqual([...PRESET_SAMPLING_KEYS]);
+  const presetRow = SURFACE.sampling.find((row) => row.source === "preset");
+  const levelRow = SURFACE.sampling.find((row) => row.source === "thinking-level");
+  const unsetRow = SURFACE.sampling.find((row) => row.source === "unset");
+  if (presetRow === undefined || levelRow === undefined || unsetRow === undefined)
+    throw new Error(
+      `the fixture must carry a preset, a thinking-level and an unset row; it carries ${JSON.stringify(SURFACE.sampling)}`,
+    );
+  const overridden = authoredByKey.get(levelRow.key);
+  expect(overridden, `the fixture really writes ${levelRow.key}`).not.toBeUndefined();
+  expect(levelRow.value, `the fixture really changes ${levelRow.key} at this level`).not.toBe(overridden);
+
+  const samplingList = page.locator("[data-preset-sampling]");
+  await samplingList.scrollIntoViewIfNeeded();
+  const renderedKeys = await samplingList
+    .locator("[data-preset-sampling-row]")
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-preset-sampling-row") ?? ""));
+  expect(
+    [...renderedKeys].sort(),
+    "the panel renders a row for every sampling key - an unset key that loses its row reads as no such setting",
+  ).toEqual(SURFACE.sampling.map((row) => row.key).sort());
+
+  const samplingRow = (key: string) => page.locator(`[data-preset-sampling-row="${key}"]`);
+  await expect(samplingRow(presetRow.key), `the ${presetRow.source}-sourced row is visible`).toBeVisible();
+  await expect(samplingRow(presetRow.key), `the preset-sourced ${presetRow.key} shows (preset)`).toHaveText(
+    `${presetRow.key} = ${presetRow.value} (preset)`,
+  );
+  await expect(samplingRow(levelRow.key), `the ${levelRow.source}-sourced row is visible`).toBeVisible();
+  await expect(
+    samplingRow(levelRow.key),
+    `the thinking level decided ${levelRow.key}, so the row shows the level's value and says so`,
+  ).toHaveText(`${levelRow.key} = ${levelRow.value} (thinking-level)`);
+  await expect(samplingRow(unsetRow.key), `the unset row for ${unsetRow.key} is present`).toBeVisible();
+  await expect(samplingRow(unsetRow.key), `an unset key says so instead of disappearing`).toHaveText(
+    `${unsetRow.key} = \u2014 (unset)`,
+  );
+
+  // The negative half: for every key the model or the thinking level decided, the value the preset wrote is
+  // nowhere in that row. This is the reading §5 exists for - the panel must not describe a request nobody sends.
+  for (const row of SURFACE.sampling) {
+    if (row.source !== "thinking-level" && row.source !== "model") continue;
+    const written = authoredByKey.get(row.key);
+    if (written === undefined) continue;
+    const shown = await samplingRow(row.key).innerText();
+    expect(
+      shown,
+      `"${row.key}" is decided by ${row.source}, so the panel must not show the preset's written ${written}`,
+    ).not.toContain(`= ${written} (`);
+  }
 }
 
 /**
@@ -435,6 +516,7 @@ test("a preset with nothing to report says so on all four counts", async ({ page
       itemId: "clean",
     },
     markers: { worldInfoBefore: "A bound world book.", charDescription: "Mira tends the greenhouse." },
+    sampling: { model: {}, thinkingLevel: "off" },
   });
   expect(clean.disabledEntries, "the fixture really has no switched-off entry").toEqual([]);
   expect(clean.unfilledMarkers, "the fixture really fills every marker").toEqual([]);
@@ -452,13 +534,13 @@ test("a preset with nothing to report says so on all four counts", async ({ page
   await expect(surface.locator("[data-preset-depth-blocks]"), "no depth block is listed").toHaveCount(0);
 });
 
-test("the preset surface names the entry switch, the unfilled markers, the unusable macros and the depths at 400x800", async ({
+test("the preset surface names the entry switch, the unfilled markers, the unusable macros, the depths and the sampling in force at 400x800", async ({
   page,
 }) => {
   await expectPresetReadout(page, { width: 400, height: 800 });
 });
 
-test("the same four facts are named at 1440x900", async ({ page }) => {
+test("the same five facts are named at 1440x900", async ({ page }) => {
   await expectPresetReadout(page, { width: 1440, height: 900 });
 });
 
@@ -491,7 +573,9 @@ test("no imported preset and an unreadable readout say different things", async 
  *
  * Each body below is the producer's own output with exactly one thing changed, so the refusal is a fact about that
  * one member: a total that is not `enabled + disabled`, a depth count that is not the blocks beside it, a macro
- * code that names a different macro than the row it sits on, and a member this surface has no line for.
+ * code that names a different macro than the row it sits on, a sampling row whose `source` this surface does not
+ * know (which must never fall back to `preset`), an `unset` row that still carries a value, a decided row that
+ * carries none, and a member this surface has no line for.
  */
 test("a readout that contradicts itself is refused instead of shown", async ({ page }) => {
   const catalogue = messages("en");
@@ -509,6 +593,27 @@ test("a readout that contradicts itself is refused instead of shown", async ({ p
       body: {
         ...SURFACE,
         macros: [{ code: "macro_not_implemented:time", name: "if", entries: ["nsfwPrompt"] }],
+      },
+    },
+    {
+      what: "a sampling source this surface does not know",
+      body: {
+        ...SURFACE,
+        sampling: SURFACE.sampling.map((row) => (row.key === "top_p" ? { ...row, source: "provider" } : row)),
+      },
+    },
+    {
+      what: "an unset sampling row that still carries a value",
+      body: {
+        ...SURFACE,
+        sampling: SURFACE.sampling.map((row) => (row.source === "unset" ? { ...row, value: 0.5 } : row)),
+      },
+    },
+    {
+      what: "a decided sampling row that carries no value",
+      body: {
+        ...SURFACE,
+        sampling: SURFACE.sampling.map((row) => (row.source === "preset" ? { ...row, value: null } : row)),
       },
     },
     { what: "a member this surface has no line for", body: { ...SURFACE, samplingParams: { temperature: 0.9 } } },

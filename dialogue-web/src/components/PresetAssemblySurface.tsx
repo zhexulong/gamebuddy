@@ -11,7 +11,12 @@
  *    is a fact nobody can see at all;
  *  - which macros this product will not evaluate, each with the code that says so
  *    (`macro_not_implemented:<name>` / `macro_unknown:<name>`);
- *  - that depth injection exists at all: how many blocks, and at which depths.
+ *  - that depth injection exists at all: how many blocks, and at which depths;
+ *  - what each sampler key will actually be sent as, and which layer decided it (`preset` / `model` /
+ *    `thinking-level` / `unset`). This is the one fact the preset's own file cannot answer (§5): the model or the
+ *    thinking level may override a value the preset wrote, so a panel that echoed the written value would be telling
+ *    the player about a request nobody sends. Every key gets a row, `unset` ones included - an omitted row reads as
+ *    "there is no such setting" rather than "nothing is sent".
  *
  * The read is one GET on mount. A failed read says so; it never renders an empty assembly, because "no preset was
  * imported" and "the assembly could not be read" are two different facts and a player acts differently on each.
@@ -158,6 +163,18 @@ function PresetAssemblyRow({
           </ul>
         </>
       )}
+
+      <h4>{labels.presetSamplingTitle}</h4>
+      <p className="management-settings-hint" data-preset-sampling-hint>
+        {labels.presetSamplingHint}
+      </p>
+      <ul data-preset-sampling>
+        {preset.sampling.map((row) => (
+          <li key={row.key} data-preset-sampling-row={row.key}>
+            <code>{row.key}</code> = {row.value === null ? "\u2014" : String(row.value)} ({row.source})
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

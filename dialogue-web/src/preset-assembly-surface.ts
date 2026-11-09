@@ -15,6 +15,11 @@
  * The shape mirrors `host/src/preset-assembly-surface.ts` (`PresetAssemblySurfaceV1`). The mirror is hand-written
  * because the browser bundle may not import the Host's node-side modules, and the spec that mounts this surface
  * feeds it the producer's REAL output - so a drifted mirror fails a journey instead of agreeing with itself.
+ *
+ * `sampling` is the one member whose drift is a lie rather than an absence (design §5): a row says which layer
+ * decided a sampler key, and a `source` this surface did not recognise would have to be guessed - guessed as
+ * `preset`, which is exactly the claim that makes a panel show a value the runtime does not send. So an unknown
+ * source is a refusal naming the value, never a fallback.
  */
 
 export type PresetAssemblyMacroV1 = Readonly<{
@@ -26,6 +31,19 @@ export type PresetAssemblyMacroV1 = Readonly<{
 
 export type PresetAssemblyDepthBlockV1 = Readonly<{ identifier: string; depth: number }>;
 
+/** Which layer decided a sampler key's value. Mirrors the Host's `SamplingSource`. */
+export const PRESET_SAMPLING_SOURCES = Object.freeze(["preset", "model", "thinking-level", "unset"] as const);
+
+export type PresetSamplingSourceV1 = (typeof PRESET_SAMPLING_SOURCES)[number];
+
+/**
+ * One sampler key's effective value and its layer, on the wire.
+ *
+ * `value` is `null` exactly when `source` is `unset`; JSON cannot carry `undefined`, and a row that lost its value
+ * that way would be an omitted row on the wire, which reads as "there is no such setting".
+ */
+export type PresetSamplingRowV1 = Readonly<{ key: string; value: number | null; source: PresetSamplingSourceV1 }>;
+
 export type PresetAssemblySurfaceV1 = Readonly<{
   presetId: string;
   name: string | null;
@@ -35,6 +53,7 @@ export type PresetAssemblySurfaceV1 = Readonly<{
   unfilledMarkers: readonly string[];
   macros: readonly PresetAssemblyMacroV1[];
   depth: Readonly<{ count: number; depths: readonly number[]; blocks: readonly PresetAssemblyDepthBlockV1[] }>;
+  sampling: readonly PresetSamplingRowV1[];
 }>;
 
 export type PresetAssemblyReadV1 = Readonly<{ apiVersion: 1; presets: readonly PresetAssemblySurfaceV1[] }>;
@@ -96,6 +115,7 @@ function presetOf(value: unknown, path: string): PresetAssemblySurfaceV1 {
     "unfilledMarkers",
     "macros",
     "depth",
+    "sampling",
   ]);
   if (typeof value.presetId !== "string" || value.presetId.length === 0) refuse(`${path}.presetId`, "is not a name");
   if (value.name !== null && typeof value.name !== "string") refuse(`${path}.name`, "is neither a string nor null");
@@ -132,6 +152,15 @@ function presetOf(value: unknown, path: string): PresetAssemblySurfaceV1 {
   if (distinct.length !== depths.length || distinct.some((depth, index) => depth !== depths[index]))
     refuse(`${path}.depth.depths`, `is [${depths.join(", ")}], but the blocks land at [${distinct.join(", ")}]`);
 
+  if (!Array.isArray(value.sampling)) refuse(`${path}.sampling`, "is not a list");
+  const sampling = value.sampling.map((row, index) => samplingRowOf(row, `${path}.sampling[${index}]`));
+  const repeated = sampling.map((row) => row.key).filter((key, index, keys) => keys.indexOf(key) !== index);
+  if (repeated.length > 0)
+    refuse(
+      `${path}.sampling`,
+      `carries ${[...new Set(repeated)].join(", ")} twice, so one row is not the one in force`,
+    );
+
   return Object.freeze({
     presetId: value.presetId,
     name: value.name,
@@ -141,7 +170,40 @@ function presetOf(value: unknown, path: string): PresetAssemblySurfaceV1 {
     unfilledMarkers,
     macros: Object.freeze(macros),
     depth: Object.freeze({ count, depths: Object.freeze(depths), blocks: Object.freeze(blocks) }),
+    sampling: Object.freeze(sampling),
   });
+}
+
+/**
+ * One sampling row, or the refusal naming the member that drifted.
+ *
+ * The two cross-field facts are checked here for the same reason the depth count is: `source` and `value` are one
+ * fact with two spellings. An `unset` row carries `null` because nothing is sent, and a settable layer carries a finite
+ * number because something is - a body that says otherwise is refused rather than rendered.
+ */
+function samplingRowOf(value: unknown, path: string): PresetSamplingRowV1 {
+  expectRecord(value, path);
+  expectExactKeys(value, path, ["key", "value", "source"]);
+  if (typeof value.key !== "string" || value.key.length === 0) refuse(`${path}.key`, "is not a sampling key");
+  const key = value.key;
+  const declared = value.source;
+  if (typeof declared !== "string") refuse(`${path}.source`, `is ${String(declared)}, which is not a sampling source`);
+  const source = PRESET_SAMPLING_SOURCES.find((candidate) => candidate === declared);
+  if (source === undefined)
+    refuse(
+      `${path}.source`,
+      `is "${declared}", which is none of ${PRESET_SAMPLING_SOURCES.join(", ")} - an unrecognised layer cannot be ` +
+        "reported as the preset's",
+    );
+  if (source === "unset") {
+    if (value.value !== null)
+      refuse(`${path}.value`, `is ${String(value.value)}, but a key no layer sets carries null`);
+    return Object.freeze({ key, value: null, source });
+  }
+  const sampled = value.value;
+  if (typeof sampled !== "number" || !Number.isFinite(sampled))
+    refuse(`${path}.value`, `is ${String(sampled)}, but ${source} sets it, so a finite number is what is sent`);
+  return Object.freeze({ key, value: sampled, source });
 }
 
 function macroOf(value: unknown, path: string): PresetAssemblyMacroV1 {

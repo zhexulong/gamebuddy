@@ -11,6 +11,10 @@
  *    player can act on, and a missing entry is a fact nobody can see at all.
  *  - §4 - a macro this product declined or does not know is named with its code (`macro_not_implemented:<name>`,
  *    `macro_unknown:<name>`), never counted away and never rendered as an empty string.
+ *  - §5 - a preset's sampling values reach the wire through the provider entry's `samplingParams`, and the model or
+ *    the thinking level may override any of them, so the surface carries `effectivePresetSampling`'s own reading per
+ *    key (`{ key, value, source }`) instead of the value the preset wrote. A row is produced for every sampling key,
+ *    including the `unset` ones, because an omitted row reads as "no such setting".
  *
  * The population of the macro scan is the preset's own text, read the way `tools/check-preset-macros.mjs` reads it
  * (every string at any depth), and the table and the token grammar are that module's and the gate's shared
@@ -24,6 +28,12 @@
 import { assemblePreset } from "./tavern/preset-assembler.js";
 import { type MacroContext, PRESET_MACROS, presetMacroTokens } from "./tavern/preset-macros.js";
 import { type PresetDocument, validatePresetDocument } from "./tavern/preset-document.js";
+import {
+  type SamplingRuntimeModel,
+  type SamplingSource,
+  effectivePresetSampling,
+  presetSamplingParams,
+} from "./tavern/preset-sampling.js";
 
 /** One macro the preset spells that this product will not evaluate, with the code that says why. */
 export type PresetAssemblyMacroV1 = Readonly<{
@@ -38,11 +48,21 @@ export type PresetAssemblyMacroV1 = Readonly<{
 export type PresetAssemblyDepthBlockV1 = Readonly<{ identifier: string; depth: number }>;
 
 /**
+ * One sampling key's effective value and the layer that decided it (§5).
+ *
+ * `value` is `null` exactly when `source` is `unset`, and for one reason: JSON has no `undefined`, so a row carrying
+ * `undefined` would be dropped from the array on the wire - an omitted row, which a player reads as "there is no such
+ * setting", the opposite of the fact. Every other source carries the finite number the runtime will send.
+ */
+export type PresetSamplingRowV1 = Readonly<{ key: string; value: number | null; source: SamplingSource }>;
+
+/**
  * What the read-only preset surface shows for one imported preset.
  *
  * `entries`, `disabledEntries`, `unfilledMarkers`, `macros` and `depth` are the four answers: the switch is
  * observable, every unfilled slot is named, every unusable macro is named with its code, and the depth injection
- * is visible as a count and as the depths themselves.
+ * is visible as a count and as the depths themselves. `sampling` is the fifth: what each sampler key will actually
+ * be sent as, and which layer decided it.
  */
 export type PresetAssemblySurfaceV1 = Readonly<{
   presetId: string;
@@ -60,6 +80,8 @@ export type PresetAssemblySurfaceV1 = Readonly<{
     depths: readonly number[];
     blocks: readonly PresetAssemblyDepthBlockV1[];
   }>;
+  /** Every sampling key, with the value in force and its layer: never the value the preset wrote. */
+  sampling: readonly PresetSamplingRowV1[];
 }>;
 
 /**
@@ -67,6 +89,10 @@ export type PresetAssemblySurfaceV1 = Readonly<{
  *
  * `markers` is the assembly's own slot content (the companion card, the bound world book), which the caller owns:
  * a slot with no source is what `unfilledMarkers` reports, and this function must not invent one.
+ *
+ * `sampling` is the runtime's own facts, for the same reason: the composed model the adapter will send and the
+ * thinking level the session reports are what decide the effective value, and a caller that could pass its own
+ * intentions instead would make the reading say something the wire will not show.
  */
 export function presetAssemblySurface(
   input: Readonly<{
@@ -76,6 +102,7 @@ export function presetAssemblySurface(
     document: unknown;
     macros: MacroContext;
     markers: Readonly<Record<string, string>>;
+    sampling: Readonly<{ model: SamplingRuntimeModel; thinkingLevel: string }>;
   }>,
 ): PresetAssemblySurfaceV1 {
   const document = validatePresetDocument(input.document);
@@ -97,7 +124,36 @@ export function presetAssemblySurface(
       depths: Object.freeze([...new Set(blocks.map((block) => block.depth))]),
       blocks: Object.freeze(blocks),
     }),
+    sampling: presetSurfaceSampling(document, input.sampling),
   });
+}
+
+/**
+ * The sampling rows, read through `effectivePresetSampling` and never recomputed here.
+ *
+ * The preset's own values come from the document through `presetSamplingParams`, the same allow-list read the wire
+ * uses, so the row a player sees and the value that is carried cannot be two opinions. A layer that holds a value
+ * which is not a finite number is refused by name rather than narrowed to `null`: `null` is this wire's word for
+ * "nothing is sent", and reporting it for a layer that does set the key would be the false green §5 exists for.
+ */
+function presetSurfaceSampling(
+  document: PresetDocument,
+  runtime: Readonly<{ model: SamplingRuntimeModel; thinkingLevel: string }>,
+): readonly PresetSamplingRowV1[] {
+  const readings = effectivePresetSampling({
+    model: runtime.model,
+    thinkingLevel: runtime.thinkingLevel,
+    preset: presetSamplingParams(document),
+  });
+  return Object.freeze(
+    readings.map((reading) => {
+      if (reading.source === "unset") return Object.freeze({ key: reading.key, value: null, source: reading.source });
+      const value = reading.value;
+      if (typeof value !== "number" || !Number.isFinite(value))
+        throw new Error(`preset_sampling_not_a_number:${reading.key}:${reading.source}:${String(value)}`);
+      return Object.freeze({ key: reading.key, value, source: reading.source });
+    }),
+  );
 }
 
 /**
