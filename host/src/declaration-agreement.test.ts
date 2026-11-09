@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   FACTS,
   hostFamilyRules,
+  hostFunctionBodies,
   hostMemberReaders,
   hostNamedMembers,
   hostSnapshotKeys,
@@ -346,6 +347,118 @@ test("every field the Mod publishes is a field the Host's reader names", () => {
     [],
     "a field on one side only is a wire break in one direction: the Mod sends what the Host rejects, or the Host\n" +
       `demands what the Mod never sends.\n${report.findings.fields.join("\n")}`,
+  );
+});
+
+/**
+ * The Host functions that ADMIT a frame, as opposed to the one that explains a refusal.
+ *
+ * `validateBridgeMessage` hands the snapshot payload to `validateSnapshot`, and these four are the whole of what
+ * that call decides for a member that is not a family row: the key set, the family verdicts, the one scalar that
+ * lives beside them, and every other scalar. `diagnoseSnapshot` is deliberately NOT in this list - it runs AFTER
+ * a refusal, to name the field, so a check that exists only there refuses nothing; the frame was already admitted.
+ *
+ * That is not a hypothesis. `farmBuildingTargetsOmitted` was named by the diagnostic and missing from
+ * `snapshotDecisionScalarsAccepted`, so the gate's old rule ("some Host function names it") was green while
+ * `validateBridgeMessage` accepted `"eight"`, `-1`, `1.5` and `{}` for it. The same shape hid `currentToolSlot`,
+ * `currentToolSlotItem`, `actorDispositionDetail` and `actorDispositionActionOwned`.
+ */
+const PRODUCT_PATH = [
+  "validateSnapshot",
+  "snapshotDecisionScalarsAccepted",
+  "firstSnapshotFamilyVerdict",
+  "acceptedDailyQuestVerdict",
+] as const;
+
+/** One scalar member, and which of the two paths names it. */
+interface ProductPathRow {
+  readonly key: string;
+  readonly product: boolean;
+  readonly diagnostic: boolean;
+}
+
+interface ProductPathReport {
+  readonly scalars: readonly ProductPathRow[];
+  /** The members whose name ends in `Omitted`: the cap counts, which are one class and are read as one. */
+  readonly omitted: readonly ProductPathRow[];
+  readonly findings: readonly string[];
+}
+
+/**
+ * Which path names which scalar, read from the declarations rather than from a list written here.
+ *
+ * The population is the Mod's own record: a `scalar` member has no family rule and no row reader, so the path that
+ * admits the frame is the only thing that can validate it. Families are decided by `SNAPSHOT_FAMILY_RULES` (walked
+ * by `firstSnapshotFamilyVerdict`) and nested records by the reader bound to their member; both have their own
+ * comparison above, and neither is counted here.
+ */
+function productPathReport(source: string = PROTOCOL): ProductPathReport {
+  const bodies = hostFunctionBodies(source);
+  const product = PRODUCT_PATH.map((name) => {
+    const body = bodies.get(name);
+    if (body === undefined)
+      throw new Error(`\`${name}\` is not declared in protocol.ts: the product path is unreadable`);
+    return body;
+  });
+  const diagnostic = bodies.get("diagnoseSnapshot");
+  if (diagnostic === undefined) throw new Error("`diagnoseSnapshot` is not declared: the two paths cannot be compared");
+  const names = (key: string): ProductPathRow => ({
+    key,
+    product: product.some((body) => new RegExp(`value\\.${key}\\b`, "u").test(body)),
+    diagnostic: new RegExp(`value\\.${key}\\b`, "u").test(diagnostic),
+  });
+
+  const members = modSnapshotMembers(MODELS);
+  const scalars = members.filter((member) => member.kind === "scalar").map((member) => names(member.wireName));
+  if (scalars.length === 0) throw new Error("the Mod declares no scalar member: the population is unreadable");
+  const omitted = members
+    .filter((member) => member.wireName.endsWith("Omitted"))
+    .map((member) => names(member.wireName));
+  if (omitted.length === 0) throw new Error("the Mod declares no `...Omitted` member: the cap counts are unreadable");
+
+  const findings = scalars
+    .filter((row) => !row.product)
+    .map((row) =>
+      row.diagnostic
+        ? `${row.key}: \`diagnoseSnapshot\` names it and the decision path does not, so \`validateSnapshot\` admits a ` +
+          "value of any type for it - the diagnostic only explains a refusal that already happened"
+        : `${row.key}: neither path names it, so \`validateSnapshot\` admits a value of any type for it`,
+    );
+  return { scalars, omitted, findings };
+}
+
+test("every scalar the Mod publishes is named by the path that admits the frame", () => {
+  const report = productPathReport();
+  // Printed before the assertion, so the numbers are a reading even when the gate is green.
+  console.log(
+    `product path: scalars examined ${report.scalars.length} · named by validateSnapshot's path ` +
+      `${report.scalars.filter((row) => row.product).length} · named only by the diagnostic ` +
+      `${report.scalars.filter((row) => !row.product && row.diagnostic).length}`,
+  );
+  assert.ok(report.scalars.length > 20, `the Mod's scalars must have been read (found ${report.scalars.length})`);
+  assert.deepEqual(
+    report.findings,
+    [],
+    "a scalar the decision path does not name is a scalar `validateSnapshot` accepts with any value. The diagnostic\n" +
+      `cannot cover it: it runs after the frame was admitted.\n${report.findings.join("\n")}`,
+  );
+});
+
+test("every cap count the Mod publishes is named by both Host paths", () => {
+  const report = productPathReport();
+  const validated = report.omitted.filter((row) => row.product && row.diagnostic);
+  console.log(`omitted keys examined ${report.omitted.length} · validated ${validated.length}`);
+  // Every one of these is an `int?` count beside a family its cap truncated, so one shape decides all of them: a
+  // non-negative integer, or absent, or null. A count that only one path names is a count the other path lets
+  // through - `"eight"` beside eight rows reads as a complete supply.
+  const unvalidated = report.omitted.filter((row) => !(row.product && row.diagnostic));
+  assert.deepEqual(
+    unvalidated.map(
+      (row) =>
+        `${row.key}: named by ${row.product ? "the decision path only" : row.diagnostic ? "the diagnostic only" : "neither path"}`,
+    ),
+    [],
+    "a cap count one path does not name is a count the other path accepts unchecked",
   );
 });
 

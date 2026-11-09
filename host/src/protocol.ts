@@ -4282,9 +4282,13 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
  * The non-family snapshot members the decision path requires.
  *
  * These rules are deliberately NOT shared with `diagnoseSnapshot`: three of them genuinely differ
- * (the exact `tile` key set is only demanded here, `weather` may not be null here, and the disposition
- * is only type-checked here while the diagnostic enforces the closed set), so merging the two would
- * change which snapshots the bridge admits.
+ * (the `tile` key set is only demanded here, `weather` may not be null here, and `actorDispositionKind` is
+ * only type-checked here while the diagnostic enforces the closed set), so merging the two would change
+ * which snapshots the bridge admits. What they may NOT do is differ by OMISSION: a member this function
+ * forgets is a member `validateSnapshot` admits with any value, and a check that exists only in the
+ * diagnostic refuses nothing - it runs after the frame was already admitted. `declaration-agreement.test.ts`
+ * holds every scalar the Mod publishes to being named here, so a member added to one path and not the other
+ * fails by name.
  */
 function snapshotDecisionScalarsAccepted(value: Record<string, unknown>): boolean {
   return (
@@ -4297,9 +4301,24 @@ function snapshotDecisionScalarsAccepted(value: Record<string, unknown>): boolea
     isFiniteNumber(value.stamina) &&
     typeof value.exhausted === "boolean" &&
     (value.actorDispositionKind === undefined || typeof value.actorDispositionKind === "string") &&
+    // The disposition's detail and ownership answer, both of which the diagnostic already names: a modal
+    // class read as a number and an ownership flag read as a string are the same defect `actorDispositionKind`
+    // was moved here for (see the comment in `diagnoseSnapshot`).
+    (value.actorDispositionDetail === undefined ||
+      value.actorDispositionDetail === null ||
+      typeof value.actorDispositionDetail === "string") &&
+    (value.actorDispositionActionOwned === undefined || typeof value.actorDispositionActionOwned === "boolean") &&
     isFiniteNumber(value.health) &&
     typeof value.actionable === "boolean" &&
     (value.currentTool === undefined || value.currentTool === null || typeof value.currentTool === "string") &&
+    // The tool slot and the item occupying it, the pair `currentTool` is answered with: a slot is a non-negative
+    // integer and the occupant is a qualified id or absent. Both were named only by the diagnostic.
+    (value.currentToolSlot === undefined ||
+      value.currentToolSlot === null ||
+      isNonNegativeSafeInteger(value.currentToolSlot)) &&
+    (value.currentToolSlotItem === undefined ||
+      value.currentToolSlotItem === null ||
+      typeof value.currentToolSlotItem === "string") &&
     (value.inventorySlots === undefined || Number.isSafeInteger(value.inventorySlots)) &&
     isBcp47Locale(value.presentationLocale) &&
     isNonNegativeSafeInteger(value.timeOfDay) &&
