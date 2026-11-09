@@ -327,12 +327,15 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   "check-stardew-fixture-action-coverage.mjs",
   "check-stardew-native-notice-coverage.mjs",
   "check-stardew-postcondition-delta.mjs",
-  // Prints a per-rule `checks[]` verdict - patch header vs diff, applies to the current submodule, extension
-  // point present after applying, patched file parses, extension point absent without the patch - so its default
-  // run is the report the conformance suite reads. Its falsifier is tools/check-vendor-patches-apply.test.mjs,
-  // which injects a changed context line into the shipped patch (git apply --check fails), a declared extension
-  // point its diff never adds, an extension point the pinned submodule already has, and a patch that only parses
-  // until it is applied.
+  // Prints a per-reading verdict, each naming the state it read - `applies-to-working-tree` (state=worktree),
+  // `applies-to-pinned-commit` (state=pin:<sha>, the commit the parent repository records) and `extension-point` -
+  // plus a per-rule `checks[]` verdict (patch header vs diff, patched file parses, extension point absent without
+  // the patch), so its default run is the report the conformance suite reads. Its falsifier is
+  // tools/check-vendor-patches-apply.test.mjs, which injects a changed context line into the shipped patch (both
+  // apply readings red), ONE dirty line in the working-tree copy while the pin stays clean (only the working-tree
+  // reading red), the same drift on the pin side (only the pinned reading red), the four ways the pin cannot be
+  // read (`not_measured`, never passed), a declared extension point its diff never adds, an extension point the
+  // submodule already has, and a patch that only parses until it is applied.
   "check-vendor-patches-apply.mjs",
 ]);
 
@@ -361,7 +364,9 @@ function runGateDefault(path, { spawn = spawnSync, timeoutMs = GATE_RUN_TIMEOUT_
  * gate that prints a human sentence, or nothing, has no report - whatever its source happens to mention.
  */
 function selfVerificationReport(stdout) {
-  const OUTCOME = new Set(["passed", "failed", "blocked"]);
+  // `not_measured` is a gate saying it printed a report and could not measure part of it - the honest third answer
+  // beside passed and failed, so a report carrying it is still a report.
+  const OUTCOME = new Set(["passed", "failed", "blocked", "not_measured"]);
   for (const line of String(stdout).split("\n").reverse()) {
     const trimmed = line.trim();
     if (!trimmed.startsWith("{")) continue;

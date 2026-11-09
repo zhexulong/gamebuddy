@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
  * Vendor patch gate: every patch under `patches/vendor-magic-context/` must still fit the submodule it
- * patches, must actually introduce the extension point it declares, and must be the only reason that
- * extension point exists.
+ * patches - in BOTH states a checkout can be in - must actually introduce the extension point it declares,
+ * and must be the only reason that extension point exists.
  *
- * WHY (the accident this prevents)
+ * WHY (the two accidents this prevents)
  *
  * `vendor/magic-context` is a git submodule we do not own, and GameBuddy has to change it: the single
  * authority for assembling the outgoing message array lives inside it, so SillyTavern preset segments
@@ -12,6 +12,11 @@
  * upgrade path is therefore a patch file, not a fork - and a patch file rots silently. Upstream moves a
  * line, `git apply` stops matching, and nothing notices until someone upgrades the pin and the feature
  * is simply gone. The gate is the thing that notices.
+ *
+ * The second accident is quieter. The working tree is not what a clean checkout gets: an uncommitted edit
+ * inside the submodule, or a checkout left on another commit, makes a patch fit HERE and stop fitting in
+ * CI. A gate that reads only the working tree reports green until somebody else's build goes red, and the
+ * answer it gives - "the patch applies" - is a fact about this machine, not about the pin.
  *
  * The third assertion is the one that expires the exemption: with NO patch applied, the extension point
  * must NOT exist. The day upstream ships an assembly seam of its own, that assertion turns red and names
@@ -27,32 +32,71 @@
  *   3. the patch's file list and line counts come from `git apply --numstat`, so the declared numbers are
  *      checked against the patch's real content rather than trusted.
  *
- * Each patch is then applied to a THROWAWAY copy - the touched files copied into a fresh `git init`
- * directory under the OS temp dir - so `vendor/**` is never written and the check needs no clean tree.
+ * THE THREE READINGS, EACH WITH THE STATE IT READ
+ *
+ * Each patch is applied to a THROWAWAY copy - the pre-image written into a fresh `git init` directory under
+ * the OS temp dir - so `vendor/**` is never written and the check needs no clean tree. The pre-image is read
+ * TWICE, and that is the point of the gate:
+ *
+ *   - `applies-to-working-tree` seeds the copy from `vendor/magic-context` as this checkout has it ON DISK.
+ *     This reading explains a red here and now.
+ *   - `applies-to-pinned-commit` seeds it from the same files as `git show <pin>:<path>`, where `<pin>` is what
+ *     the PARENT repository records for the submodule (`git ls-tree HEAD vendor/magic-context`). This reading
+ *     is the one whose verdict travels to a clean checkout.
+ *   - `extension-point` reads the applied copy for every declared hook, and the pre-image for their absence.
+ *
+ * Neither apply reading substitutes for the other, so neither is reported as the other: every reading prints
+ * the state it read (`state=worktree`, `state=pin:e52ae3f8...`), and `<patch> <reading>: <verdict>` lines say
+ * which verdict came from which state.
+ *
+ * NOT MEASURED IS ITS OWN VERDICT. A submodule with no git directory of its own (a source export), a parent
+ * directory that is not a git repository, a HEAD that records no gitlink, or a pin naming an object the
+ * submodule cannot read - each makes the pinned reading `not_measured` with that reason named
+ * (`submodule_not_initialised`, `parent_git_unavailable`, `submodule_pin_unrecorded`,
+ * `pin_commit_unreadable`). It is not a pass, and it is not a failure of the whole gate: the working-tree
+ * reading still runs and still turns red on its own. The run then reports `status: not_measured` and prints
+ * `vendor_patches_skipped: <reading> <reason>` on stdout, which `tools/prelive.mjs` counts as UNAVAILABLE
+ * rather than passed.
  *
  * THE THREE ASSERTIONS
  *
- *   (a) `git apply --check` succeeds against the CURRENT submodule content;
+ *   (a) `git apply --check` succeeds against BOTH states - the working tree and the pinned commit;
  *   (b) after applying, every declared `extension-point:` exists in the copy, and every touched
  *       TypeScript file still parses (TypeScript's own parser, diagnostics only - not a typecheck);
  *   (c) with no patch applied, every declared extension point is ABSENT (the patch is load-bearing).
  *
  * Output: one JSON verdict
- * `{"gate":"vendor-patches-apply","examined":N,"files":N,"extensionPoints":N,"violations":[],"status":...}`
- * and the line `examined N patch(es)`. `status` is `blocked` when there is nothing to measure (no
- * patches, no submodule, no TypeScript parser) and `failed` when a patch is wrong.
+ * `{"gate":"vendor-patches-apply","examined":N,"files":N,"extensionPoints":N,"violations":[],"readings":[],
+ * "checks":[],"status":...}` - `readings` is one entry per patch per reading (`{patch, reading, state, status,
+ * reason}`), so the report cannot say `passed` without saying which state it read - and the line
+ * `vendor_patches: examined N patch(es), ... N reading(s) ...`. `status` is `blocked` when there is nothing to
+ * measure (no patches, no submodule, no TypeScript parser), `not_measured` when the pin could not be read, and
+ * `failed` when a patch is wrong. Exit 0 for `passed` and `not_measured`, 1 otherwise.
  *
  * Usage:
  *   node tools/check-vendor-patches-apply.mjs                    # this repository
  *   node tools/check-vendor-patches-apply.mjs --root <dir>       # a fixture tree
  *
- * red-proof: inject  change one context line of the patch (e.g. the `cacheTtlConfig` line it anchors on)
- *            -> `vendor_patch_does_not_apply:<patch>:packages/pi-plugin/src/context-handler.ts` with git's
- *            own `error: patch failed` text, exit 1. Restore -> `examined 1 patch(es)`, exit 0
- *            (tools/check-vendor-patches-apply.test.mjs drives the same function over fixture trees).
+ * red-proof: inject  edit one line of the WORKING-TREE copy of the seam file - the `cacheTtlConfig` context
+ *            line the shipped patch's second hunk anchors on - in a fixture whose pinned commit still holds
+ *            it. Observed, with the real patch and the real seam file (`.tmp/red-proof-pinned.mjs`):
+ *
+ *              exit 1
+ *              vendor_patch_does_not_apply:0001-preset-assembly-seam.patch:packages/pi-plugin/src/context-handler.ts
+ *              0001-preset-assembly-seam.patch applies-to-working-tree: failed (state=worktree)
+ *              0001-preset-assembly-seam.patch applies-to-pinned-commit: passed (state=pin:7abcd8e3...)
+ *              vendor_patches: examined 1 patch(es), ... 3 reading(s), 1 violation(s) [failed]
+ *
+ *            Restoring that one line: both readings `passed`, `0 violation(s)`, exit 0.
+ *
+ *            THAT ASYMMETRY IS THE DEFECT CLASS THIS READING CLOSES. The old gate read only the working
+ *            tree, so the dirty checkout above was green here and red in CI. A second case drives the other
+ *            direction - a pin that drifted away from a locally repaired working tree - where the pinned
+ *            reading is the only red one. Both live in tools/check-vendor-patches-apply.test.mjs, beside
+ *            the four not_measured reasons and the skip marker prelive reads.
  */
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -63,6 +107,12 @@ const PATCH_DIRECTORY = ["patches", "vendor-magic-context"];
 const SUBMODULE_DIRECTORY = ["vendor", "magic-context"];
 const MAX_MODIFIED_LINES_PER_FILE = 10;
 const PARSEABLE = /\.(?:ts|tsx|mts|cts)$/u;
+/** The three readings, by the name the report prints. One spelling, used by every site that names them. */
+const READING = Object.freeze({
+  workingTree: "applies-to-working-tree",
+  pinned: "applies-to-pinned-commit",
+  extensionPoint: "extension-point",
+});
 
 /** A patch's own declarations, read only from the mail body - never from the diff it carries. */
 export function parseVendorPatchHeader(text) {
@@ -136,17 +186,93 @@ function resolveTypeScript(root) {
   return null;
 }
 
-function copyInto(targetRoot, submoduleDirectory, file) {
-  const source = join(submoduleDirectory, file);
-  if (!existsSync(source)) return false;
-  const destination = join(targetRoot, file);
-  mkdirSync(dirname(destination), { recursive: true });
-  copyFileSync(source, destination);
-  return true;
+/** What git said, in its own words - the detail a violation carries instead of a paraphrase. */
+function gitReason(error) {
+  return `${String(error.stderr ?? "").trim() || String(error.message ?? error)}`.trim();
 }
 
-/** One throwaway tree per patch, so a failure in one patch cannot mask or corrupt the next. */
-function applyToThrowawayCopy(patch, submoduleDirectory, files, created) {
+/** A git call that reports failure instead of throwing: the pin probe must tell "no git" from "no pin". */
+function gitProbe(cwd, args) {
+  try {
+    return {
+      ok: true,
+      text: execFileSync("git", ["-c", "core.autocrlf=false", ...args], {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+      error: null,
+    };
+  } catch (error) {
+    return { ok: false, text: "", error: gitReason(error) };
+  }
+}
+
+/**
+ * The commit the PARENT repository records for the submodule - what a clean checkout gets - or the reason that
+ * cannot be read. There is deliberately no fallback to the working tree: "could not read the pin" and "the pin
+ * agrees" are different facts, and reporting the second as the first is the accident this reading exists for.
+ */
+function readSubmodulePin(root, submoduleDirectory) {
+  const parent = gitProbe(root, ["rev-parse", "--git-dir"]);
+  if (!parent.ok) return { sha: null, reason: "parent_git_unavailable", detail: parent.error };
+  const entry = gitProbe(root, ["ls-tree", "HEAD", "--", "vendor/magic-context"]);
+  if (!entry.ok) return { sha: null, reason: "submodule_pin_unrecorded", detail: entry.error };
+  const line = entry.text.split(/\r?\n/u).find((candidate) => candidate.trim() !== "") ?? "";
+  const match = /^160000 commit ([0-9a-f]{40})\t/u.exec(line);
+  if (match === null) {
+    return {
+      sha: null,
+      reason: "submodule_pin_unrecorded",
+      detail: `git ls-tree HEAD -- vendor/magic-context printed ${JSON.stringify(line)}; a gitlink (mode 160000) is required`,
+    };
+  }
+  const sha = match[1];
+  // An empty submodule directory is still inside the PARENT work tree, so git answers cheerfully from there.
+  // `--show-cdup` is empty only when the directory IS the root of a work tree of its own, which is the fact that
+  // tells "this submodule is initialised" from "this path belongs to someone else's checkout".
+  const cdup = gitProbe(submoduleDirectory, ["rev-parse", "--show-cdup"]);
+  if (!cdup.ok) return { sha, reason: "submodule_not_initialised", detail: cdup.error };
+  const levelsUp = cdup.text.trim();
+  if (levelsUp !== "") {
+    return {
+      sha,
+      reason: "submodule_not_initialised",
+      detail: `${submoduleDirectory} is not the root of its own work tree: git puts it ${levelsUp} below the work tree it found`,
+    };
+  }
+  const commit = gitProbe(submoduleDirectory, ["cat-file", "-e", `${sha}^{commit}`]);
+  if (!commit.ok) return { sha, reason: "pin_commit_unreadable", detail: commit.error };
+  return { sha, reason: null, detail: null };
+}
+
+/** The pinned text of the files the patch touches - as the pin has them, not as this checkout has them. */
+function pinnedPreImage(submoduleDirectory, sha, files, created) {
+  const seed = [];
+  const missing = [];
+  for (const file of files) {
+    if (created.has(file)) continue;
+    const object = `${sha}:${file}`;
+    const shown = gitProbe(submoduleDirectory, ["show", object]);
+    if (!shown.ok) {
+      // `show` fails the same way for a path the pin does not have and for an object it cannot read.
+      if (gitProbe(submoduleDirectory, ["cat-file", "-e", object]).ok) {
+        return { seed: [], missing: [], reason: "pin_object_unreadable", detail: shown.error };
+      }
+      missing.push(file);
+      continue;
+    }
+    seed.push({ file, text: shown.text });
+  }
+  return { seed, missing, reason: null, detail: null };
+}
+
+/**
+ * One throwaway tree per reading per patch, so a failure in one cannot mask or corrupt the next: `git init`, the
+ * pre-image written in from whichever state this reading reads, then the patch. `dryRun` stops after
+ * `git apply --check`, which is all a reading needs when nothing downstream will read the applied result.
+ */
+function applyToThrowawayCopy(patch, seed, { dryRun = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "vendor-patch-"));
   const git = (...args) =>
     execFileSync("git", ["-c", "core.autocrlf=false", ...args], {
@@ -155,25 +281,27 @@ function applyToThrowawayCopy(patch, submoduleDirectory, files, created) {
       stdio: ["ignore", "pipe", "pipe"],
     });
   try {
-    const absent = files.filter((file) => !(created.has(file) || copyInto(root, submoduleDirectory, file)));
+    for (const { file, text } of seed) {
+      const destination = join(root, file);
+      mkdirSync(dirname(destination), { recursive: true });
+      writeFileSync(destination, text, "utf8");
+    }
     git("init", "-q");
     let checkError = null;
     let applyError = null;
-    if (absent.length === 0) {
+    try {
+      git("apply", "--check", patch);
+    } catch (error) {
+      checkError = gitReason(error);
+    }
+    if (checkError === null && !dryRun) {
       try {
-        git("apply", "--check", patch);
+        git("apply", patch);
       } catch (error) {
-        checkError = `${String(error.stderr ?? "").trim() || String(error.message ?? error)}`.trim();
-      }
-      if (checkError === null) {
-        try {
-          git("apply", patch);
-        } catch (error) {
-          applyError = `${String(error.stderr ?? "").trim() || String(error.message ?? error)}`.trim();
-        }
+        applyError = gitReason(error);
       }
     }
-    return { root, absent, checkError, applyError };
+    return { root, checkError, applyError };
   } catch (error) {
     rmSync(root, { recursive: true, force: true });
     throw error;
@@ -198,9 +326,13 @@ function parseFailure(typescript, file, text) {
   return `${file}${where}: ${typescript.flattenDiagnosticMessageText(first.messageText, " ")}`;
 }
 
-/** A rule's own verdict: failed if it caught something, blocked if it never got to look. */
+/**
+ * A rule's own verdict. `not_measured` is its own answer - a prerequisite was absent, so the rule never got to look
+ * and says why - and `blocked` is an empty population, which is not the same fact and must not be spelled the same.
+ */
 function ruleOutcome(rule) {
   if (rule.failed > 0) return "failed";
+  if (rule.reasons.length > 0) return "not_measured";
   return rule.measured > 0 ? "passed" : "blocked";
 }
 
@@ -212,13 +344,19 @@ export function checkVendorPatchesApply({ root = REPOSITORY_ROOT } = {}) {
   // the default run's JSON is a self-verification report and not a summary sentence.
   const rules = new Map(
     [
-      ["header", "patch_header_declares_kind_and_size"],
-      ["applies", "patch_applies_to_current_submodule"],
-      ["present", "extension_point_present_after_apply"],
-      ["parses", "patched_file_parses"],
-      ["absent", "extension_point_absent_without_patch"],
-    ].map(([rule, id]) => [rule, { id, measured: 0, failed: 0 }]),
+      ["header", { id: "patch_header_declares_kind_and_size", state: null }],
+      ["worktree", { id: "patch_applies_to_working_tree", state: "worktree" }],
+      ["pinned", { id: "patch_applies_to_pinned_commit", state: "pin:unknown" }],
+      ["present", { id: "extension_point_present_after_apply", state: "worktree" }],
+      ["parses", { id: "patched_file_parses", state: "worktree" }],
+      ["absent", { id: "extension_point_absent_without_patch", state: "worktree" }],
+    ].map(([rule, spec]) => [rule, { ...spec, measured: 0, failed: 0, reasons: [] }]),
   );
+  // Every reading prints the state it read, so a green verdict cannot be mistaken for a verdict about the pin.
+  const readings = [];
+  const record = (patchName, reading, state, status, reason = null) => {
+    readings.push({ patch: patchName, reading, state, status, ...(reason === null ? {} : { reason }) });
+  };
   const fail = (rule, violation) => {
     rules.get(rule).failed += 1;
     violations.push(violation);
@@ -237,6 +375,7 @@ export function checkVendorPatchesApply({ root = REPOSITORY_ROOT } = {}) {
     files: 0,
     extensionPoints: 0,
     violations,
+    readings,
     checks: [],
     status: "blocked",
   };
@@ -246,10 +385,16 @@ export function checkVendorPatchesApply({ root = REPOSITORY_ROOT } = {}) {
       status: ruleOutcome(rule),
       measured: rule.measured,
       failed: rule.failed,
+      state: rule.state,
+      ...(rule.reasons.length === 0 ? {} : { reason: rule.reasons[0] }),
     }));
-    const clean = violations.length === 0 && result.checks.every((check) => check.status === "passed");
+    const failed = violations.length > 0 || result.checks.some((check) => check.status === "failed");
+    const unmeasured = result.checks.some((check) => check.status === "not_measured");
     if (result.examined === 0) result.status = "blocked";
-    else result.status = clean ? "passed" : "failed";
+    else if (failed) result.status = "failed";
+    else if (unmeasured) result.status = "not_measured";
+    else if (result.checks.every((check) => check.status === "passed")) result.status = "passed";
+    else result.status = "blocked";
     return result;
   };
 
@@ -280,6 +425,10 @@ export function checkVendorPatchesApply({ root = REPOSITORY_ROOT } = {}) {
   }
 
   const seenFiles = new Set();
+  // The pin is read once, before any patch, and every reading prints the state it read. When it cannot be read the
+  // reason is named on the rule, so the whole run reports `not_measured` rather than a verdict about the working tree.
+  const pin = readSubmodulePin(root, submoduleDirectory);
+  rules.get("pinned").state = pin.sha === null ? "pin:unavailable" : `pin:${pin.sha}`;
   for (const name of patches) {
     const patch = join(patchDirectory, name);
     const declared = parseVendorPatchHeader(readFileSync(patch, "utf8"));
@@ -388,39 +537,107 @@ export function checkVendorPatchesApply({ root = REPOSITORY_ROOT } = {}) {
     if (rules.get("header").failed === 0) measure("header");
 
     const files = numstat.map((entry) => entry.file);
-    const copy = applyToThrowawayCopy(patch, submoduleDirectory, files, patchCreatedFiles(patch));
+    for (const file of files) seenFiles.add(file);
+    const created = patchCreatedFiles(patch);
+
+    // Reading 1: the state this checkout currently has on disk - the reading that explains a red here and now.
+    const worktreeSeed = [];
+    const worktreeMissing = [];
+    for (const file of files) {
+      if (created.has(file)) continue;
+      const source = join(submoduleDirectory, file);
+      if (!existsSync(source)) {
+        worktreeMissing.push(file);
+        continue;
+      }
+      worktreeSeed.push({ file, text: readFileSync(source, "utf8") });
+    }
+    const worktreeCopy = worktreeMissing.length === 0 ? applyToThrowawayCopy(patch, worktreeSeed) : null;
     try {
-      for (const file of copy.absent) {
-        fail("applies", {
+      let worktreeStatus = "failed";
+      for (const file of worktreeMissing) {
+        fail("worktree", {
           code: `vendor_patch_file_missing:${name}:${file}`,
           expected: join(submoduleDirectory, file),
-          detail: "the patch targets a file the pinned submodule does not have",
+          detail: "the patch targets a file the submodule working tree does not have",
         });
       }
-      if (copy.checkError !== null) {
-        fail("applies", {
+      if (worktreeCopy !== null && worktreeCopy.checkError !== null) {
+        fail("worktree", {
           code: `vendor_patch_does_not_apply:${name}:${files.join(",")}`,
-          expected: "git apply --check against the current submodule content",
-          detail: copy.checkError,
+          expected: "git apply --check against the submodule working tree",
+          detail: worktreeCopy.checkError,
         });
-      } else if (copy.applyError !== null) {
-        fail("applies", {
+      } else if (worktreeCopy !== null && worktreeCopy.applyError !== null) {
+        fail("worktree", {
           code: `vendor_patch_apply_failed:${name}:${files.join(",")}`,
           expected: "git apply against a throwaway copy",
-          detail: copy.applyError,
+          detail: worktreeCopy.applyError,
         });
+      } else if (worktreeCopy !== null) {
+        measure("worktree");
+        worktreeStatus = "passed";
+      }
+      record(name, READING.workingTree, "worktree", worktreeStatus);
+
+      // Reading 2: the pinned commit - what a clean checkout gets, and the verdict that travels to CI. Its own
+      // pre-image, from the submodule's own git, never from the files on disk beside it.
+      let pinnedStatus = "not_measured";
+      if (pin.sha === null || pin.reason !== null) {
+        rules.get("pinned").reasons.push(`${pin.reason}: ${pin.detail}`);
+        const state = pin.sha === null ? "pin:unavailable" : `pin:${pin.sha}`;
+        record(name, READING.pinned, state, pinnedStatus, pin.reason);
       } else {
-        measure("applies");
-        // (b) the declared extension points exist in the applied copy, and it still parses.
+        const state = `pin:${pin.sha}`;
+        const preImage = pinnedPreImage(submoduleDirectory, pin.sha, files, created);
+        if (preImage.reason !== null) {
+          rules.get("pinned").reasons.push(`${preImage.reason}: ${preImage.detail}`);
+          record(name, READING.pinned, state, pinnedStatus, preImage.reason);
+        } else if (preImage.missing.length > 0) {
+          pinnedStatus = "failed";
+          for (const file of preImage.missing) {
+            fail("pinned", {
+              code: `vendor_patch_file_missing_from_pin:${name}:${file}`,
+              expected: `${pin.sha}:${file}`,
+              detail: "the patch targets a file the pinned submodule commit does not have",
+            });
+          }
+          record(name, READING.pinned, state, pinnedStatus);
+        } else {
+          const pinnedCopy = applyToThrowawayCopy(patch, preImage.seed, { dryRun: true });
+          try {
+            if (pinnedCopy.checkError !== null) {
+              fail("pinned", {
+                code: `vendor_patch_does_not_apply_to_pin:${name}:${files.join(",")}`,
+                expected: `git apply --check against ${pin.sha}, the commit the parent repository records`,
+                detail: pinnedCopy.checkError,
+              });
+              pinnedStatus = "failed";
+            } else {
+              measure("pinned");
+              pinnedStatus = "passed";
+            }
+          } finally {
+            rmSync(pinnedCopy.root, { recursive: true, force: true });
+          }
+          record(name, READING.pinned, state, pinnedStatus);
+        }
+      }
+
+      // Reading 3, and assertions (b) and (c): what the patch introduces, read from the copy it was applied to.
+      let extensionStatus = "blocked";
+      if (worktreeStatus === "passed") {
         const applied = files
-          .filter((file) => existsSync(join(copy.root, file)))
-          .map((file) => ({ file, text: readFileSync(join(copy.root, file), "utf8") }));
+          .filter((file) => existsSync(join(worktreeCopy.root, file)))
+          .map((file) => ({ file, text: readFileSync(join(worktreeCopy.root, file), "utf8") }));
+        let extensionFailed = false;
         for (const point of declared.extensionPoints) {
           result.extensionPoints += 1;
           if (applied.some((entry) => entry.text.includes(point))) {
             measure("present");
             continue;
           }
+          extensionFailed = true;
           fail("present", {
             code: `vendor_patch_extension_point_missing:${name}:${point}`,
             expected: `${point} present after applying`,
@@ -439,7 +656,8 @@ export function checkVendorPatchesApply({ root = REPOSITORY_ROOT } = {}) {
             detail: failure,
           });
         }
-        // (c) without the patch, the extension points are absent - the patch is load-bearing.
+        // (c) without the patch, the extension points are absent - the patch is load-bearing. Read from the
+        // working tree, and the reading below says so.
         const pristine = files
           .filter((file) => existsSync(join(submoduleDirectory, file)))
           .map((file) => ({ file, text: readFileSync(join(submoduleDirectory, file), "utf8") }));
@@ -449,18 +667,38 @@ export function checkVendorPatchesApply({ root = REPOSITORY_ROOT } = {}) {
             measure("absent");
             continue;
           }
+          extensionFailed = true;
           fail("absent", {
             code: `vendor_patch_extension_point_present_unpatched:${name}:${point}`,
             expected: `${point} absent from ${carrier.file}`,
             detail:
-              "the pinned submodule already has it: delete this patch (upstream shipped the seam) rather than keep a patch that changes nothing",
+              "the submodule already has it: delete this patch (upstream shipped the seam) rather than keep a patch that changes nothing",
           });
         }
+        extensionStatus = extensionFailed ? "failed" : "passed";
       }
+      record(
+        name,
+        READING.extensionPoint,
+        "worktree",
+        extensionStatus,
+        extensionStatus === "blocked"
+          ? "the patch did not apply to the working tree, so no applied copy was read"
+          : null,
+      );
     } finally {
-      rmSync(copy.root, { recursive: true, force: true });
+      if (worktreeCopy !== null) rmSync(worktreeCopy.root, { recursive: true, force: true });
     }
-    for (const file of files) seenFiles.add(file);
+  }
+
+  // A patch rejected at its header never reached an apply. It still gets its three readings, blocked and named: a
+  // report that silently omitted them would read as a smaller population rather than an unreached one.
+  for (const name of patches) {
+    if (readings.some((entry) => entry.patch === name)) continue;
+    const reason = "the patch was rejected before any apply was attempted";
+    record(name, READING.workingTree, "worktree", "blocked", reason);
+    record(name, READING.pinned, rules.get("pinned").state, "blocked", reason);
+    record(name, READING.extensionPoint, "worktree", "blocked", reason);
   }
 
   result.files = seenFiles.size;
@@ -473,15 +711,34 @@ function report(result, out = process.stdout, err = process.stderr) {
     err.write(`  expected: ${violation.expected}\n`);
     err.write(`  ${violation.detail}\n`);
   }
+  // One line per patch per reading, each carrying the state it read: a verdict whose state is unstated is a verdict
+  // the reader has to assume, and the whole point of the pinned reading is that the assumption was wrong before.
+  for (const reading of result.readings) {
+    err.write(
+      `${reading.patch} ${reading.reading}: ${reading.status} (state=${reading.state})` +
+        `${reading.reason === undefined ? "" : ` reason=${reading.reason}`}\n`,
+    );
+  }
   for (const check of result.checks) {
-    err.write(`${check.id}: ${check.status} (measured ${check.measured}, failed ${check.failed})\n`);
+    err.write(
+      `${check.id}: ${check.status} (measured ${check.measured}, failed ${check.failed})` +
+        `${check.state === null ? "" : ` state=${check.state}`}` +
+        `${check.reason === undefined ? "" : ` reason=${check.reason}`}\n`,
+    );
+  }
+  if (result.status === "not_measured") {
+    const reasons = result.checks
+      .filter((check) => check.status === "not_measured")
+      .map((check) => `${check.id} ${check.reason}`);
+    out.write(`vendor_patches_skipped: ${reasons.join("; ")}\n`);
   }
   err.write(
     `vendor_patches: examined ${result.examined} patch(es), ${result.files} file(s), ` +
-      `${result.extensionPoints} extension point(s), ${result.violations.length} violation(s) [${result.status}]\n`,
+      `${result.extensionPoints} extension point(s), ${result.readings.length} reading(s), ` +
+      `${result.violations.length} violation(s) [${result.status}]\n`,
   );
   out.write(`${JSON.stringify(result)}\n`);
-  return result.status === "passed" ? 0 : 1;
+  return result.status === "passed" || result.status === "not_measured" ? 0 : 1;
 }
 
 function argumentAfter(argv, flag) {
