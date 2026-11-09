@@ -436,14 +436,17 @@ test("unknown injection_position, marker outside the table, and a dangling order
   const unknownMarker = presetDocument({
     prompts: [
       { identifier: "main", content: "开场" },
-      { identifier: "personaDescription", marker: true },
+      // `quietPrompt` is a real SillyTavern prompt (`openai.js:1229` reads `prompts.get('quietPrompt')`) that
+      // this product's table does not carry, so it is the fixture for "a marker outside the table" rather than
+      // a name invented for the test.
+      { identifier: "quietPrompt", marker: true },
       { identifier: "chatHistory", marker: true },
     ],
-    order: ["main", "personaDescription", "chatHistory"],
+    order: ["main", "quietPrompt", "chatHistory"],
   });
   assert.throws(
-    () => assemblePreset(unknownMarker, { macros: MACROS, markers: { personaDescription: "人设" } }),
-    /preset_marker_not_in_table:personaDescription/,
+    () => assemblePreset(unknownMarker, { macros: MACROS, markers: { quietPrompt: "旁白指令" } }),
+    /preset_marker_not_in_table:quietPrompt/,
   );
 
   const dangling = presetDocument({

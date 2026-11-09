@@ -27,11 +27,19 @@ export type PresetMarkerKind = "cut" | "slot";
  * is neither a slot nor counted as unfilled. Everything else is filled from the assembly's markers and named
  * as unfilled when that source is absent - including `main` and `jailbreak`, which the preset itself may
  * textually fill.
+ *
+ * `personaDescription` is the player's own persona, not the card's: `PromptManager.js:306` lists it among the
+ * prompt sources and `openai.js:1432-1435` pushes it as a `system` message under exactly this identifier. It
+ * is a slot like the card fields, so an assembly with no persona source - the ordinary player who never wrote
+ * one - names it in `unfilled` (design §2.5) instead of refusing the document or dropping it silently. Its
+ * position is visible in the request, which is why the group it comes from matters at all (see
+ * `selectedPromptOrderGroup`).
  */
 export const PRESET_MARKERS = Object.freeze({
   chatHistory: "cut",
   worldInfoBefore: "slot",
   worldInfoAfter: "slot",
+  personaDescription: "slot",
   charDescription: "slot",
   charPersonality: "slot",
   scenario: "slot",
@@ -50,8 +58,18 @@ export type PresetEntrySegment = "before" | "after" | "depth" | "cut" | "disable
 /** One `prompt_order` row, in the order the preset assembles it, with the segment it lands in. */
 export type PresetEntryPlacement = Readonly<{ identifier: string; segment: PresetEntrySegment }>;
 
-/** ST's own global default order id; the per-character orders (100001 = group default) do not apply here. */
-const DEFAULT_PROMPT_ORDER_CHARACTER_ID = 100000;
+/**
+ * The chat-completion prompt order id. `PromptManager.js:336` is the base class default -
+ * `promptOrder: { strategy: 'global', dummyId: 100000 }`, the single group a preset written by the stock
+ * prompt manager ships - and `openai.js:696-700` OVERRIDES it for the chat-completion path this product runs:
+ * `promptOrder: { strategy: 'global', dummyId: 100001 }`. `PromptManager.js:438` copies that id into
+ * `activeCharacter` and `:1207-1209` then finds the group as
+ * `prompt_order.find(list => String(list.character_id) === String(character.id))`, so 100001 is the id the
+ * wire really reads. It is the group that carries the extra `personaDescription` slot.
+ */
+const CHAT_COMPLETION_PROMPT_ORDER_ID = 100001;
+/** The base class default (`PromptManager.js:336`): the only group a legacy preset ships on its own. */
+const LEGACY_PROMPT_ORDER_ID = 100000;
 
 /**
  * The one refusal that means "this document declares no placement at all", which a caller must read differently
@@ -136,26 +154,46 @@ function readDefinitions(doc: unknown): ReadonlyMap<string, PresetPlacementDefin
 }
 
 /**
- * The rows the preset actually assembles. A preset with two orders carries the global one (character_id 100000)
- * as its own; 100001 is SillyTavern's group-chat default, and this product has no group chats, so it is only a
- * fallback for a document that has no global order at all.
+ * Which `prompt_order` group a preset assembles, first match wins - a LADDER, never one hardcoded id:
+ *
+ *  1. `character_id === 100001` - SillyTavern 1.19's chat-completion group (`openai.js:698` overriding
+ *     `PromptManager.js:336`), the one that also carries `personaDescription`;
+ *  2. `character_id === 100000` - the base class's single group, which is all a legacy preset ships (our own
+ *     `assets/tavern/presets/amber-deepseek-v4.1.json` is one, and ST's `PromptManager` writes presets in
+ *     this shape);
+ *  3. the document's first readable group - an id neither of the two above, which ST would only reach for that
+ *     one character.
+ *
+ * Two ids rather than one because an official preset and a legacy preset disagree about which groups exist:
+ * selecting 100001 alone makes every single-group 100000 preset unreadable, and selecting 100000 alone is what
+ * ST's chat-completion path does not do. The ladder is what lets a legacy preset keep working while an official
+ * one picks up its extra slot.
+ *
+ * Both readers - this module's placements and `preset-assembler.ts` - call this function, so "which group" is
+ * one decision in one place; `undefined` means the document declares no readable group at all, which each
+ * caller names with its own code.
+ */
+export function selectedPromptOrderGroup(promptOrder: readonly unknown[]): Record<string, unknown> | undefined {
+  const groups: Record<string, unknown>[] = [];
+  for (const entry of promptOrder) {
+    const candidate = asRecord(entry);
+    if (candidate === undefined || !Array.isArray(candidate.order)) continue;
+    groups.push(candidate);
+  }
+  // Compared as strings, exactly as `PromptManager.js:1207-1209` does, so a document that wrote the id as a
+  // string is read the same way SillyTavern reads it.
+  const firstWith = (characterId: number): Record<string, unknown> | undefined =>
+    groups.find((group) => String(group.character_id) === String(characterId));
+  return firstWith(CHAT_COMPLETION_PROMPT_ORDER_ID) ?? firstWith(LEGACY_PROMPT_ORDER_ID) ?? groups[0];
+}
+
+/**
+ * The rows the preset actually assembles: the ladder's group, in its own row sequence.
  */
 function readOrderRows(doc: unknown): readonly PresetPlacementRow[] {
   const record = asRecord(doc);
   if (record === undefined) throw new Error("preset_segments_document_not_object");
-  const orders = Array.isArray(record.prompt_order) ? record.prompt_order : [];
-  let chosen: Record<string, unknown> | undefined;
-  let fallback: Record<string, unknown> | undefined;
-  for (const entry of orders) {
-    const candidate = asRecord(entry);
-    if (candidate === undefined || !Array.isArray(candidate.order)) continue;
-    if (candidate.character_id === DEFAULT_PROMPT_ORDER_CHARACTER_ID) {
-      chosen = candidate;
-      break;
-    }
-    fallback ??= candidate;
-  }
-  chosen ??= fallback;
+  const chosen = selectedPromptOrderGroup(Array.isArray(record.prompt_order) ? record.prompt_order : []);
   if (chosen === undefined) throw new Error(PRESET_SEGMENTS_ORDER_MISSING);
   return (chosen.order as readonly unknown[]).map((row, position) => {
     const order = asRecord(row);

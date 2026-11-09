@@ -11,11 +11,11 @@
  *    the transcript by `injection_depth`.
  *
  * The two rulings this module is the single implementation of:
- *  - §2.5 - a marker is a SLOT, not a content source. `worldInfoBefore`/`worldInfoAfter`/`charDescription`/
- *    `charPersonality`/`scenario`/`dialogueExamples` are filled from the assembly's own sources (this
- *    product's card, catalogue and world-book material); a slot with no source is named in `unfilled`
- *    instead of being blanked. There is no "preset world book versus card world book" order to invent -
- *    the marker says where the bound book goes, not what goes in it.
+ *  - §2.5 - a marker is a SLOT, not a content source. `worldInfoBefore`/`worldInfoAfter`/`personaDescription`/
+ *    `charDescription`/`charPersonality`/`scenario`/`dialogueExamples` are filled from the assembly's own
+ *    sources (this product's card, catalogue, world-book material and the player's own persona); a slot with no
+ *    source is named in `unfilled` instead of being blanked. There is no "preset world book versus card world
+ *    book" order to invent - the marker says where the bound book goes, not what goes in it.
  *  - §6 S3/S4 - a real preset's markers are either filled or named, and the four depth boundaries below are
  *    the only places the depth list's meaning can be lost.
  *
@@ -30,7 +30,7 @@
  * `itemId`, the preset entry's own identity, which is what seeds §2.7's content-addressed draws.
  */
 import { evaluatePresetText, type MacroContext } from "./preset-macros.js";
-import { PRESET_MARKERS, type PresetMarkerKind } from "./preset-placement.js";
+import { PRESET_MARKERS, type PresetMarkerKind, selectedPromptOrderGroup } from "./preset-placement.js";
 
 /** The marker table is re-published here because this module is where a marker's MEANING is consumed (§2.5). */
 export { PRESET_MARKERS, type PresetMarkerKind };
@@ -54,9 +54,6 @@ export type PresetAssembly = {
   /** Every entry skipped because enabled === false. */
   disabled: readonly string[];
 };
-
-/** ST's own global default order id; the per-character orders (100001 = group default) do not apply here. */
-const DEFAULT_PROMPT_ORDER_CHARACTER_ID = 100000;
 
 /** One prompt definition from `prompts[]`, still raw where a decision has not been made yet. */
 type PresetPromptDefinition = {
@@ -253,26 +250,17 @@ function readPromptDefinitions(doc: unknown): ReadonlyMap<string, PresetPromptDe
 type PresetOrderRow = { identifier: string; enabled: unknown };
 
 /**
- * The `order` rows this preset actually assembles, in their own sequence. A preset with two orders carries
- * the global one (character_id 100000) as its own; 100001 is SillyTavern's group-chat default, and this
- * product has no group chats, so it is only a fallback for a document that has no global order at all.
+ * The `order` rows this preset actually assembles, in their own sequence.
+ *
+ * Which group is `preset-placement.ts`'s ladder and not a second decision here: ST's chat-completion path reads
+ * `character_id` 100001 (`openai.js:698` overriding `PromptManager.js:336`), a legacy preset carries only
+ * 100000, and the ladder picks the first of those the document has. The two readings - this assembly and that
+ * module's placements - must never disagree about it.
  */
 function readPromptOrder(doc: unknown): readonly PresetOrderRow[] {
   const record = asRecord(doc);
   if (record === undefined) throw new Error("preset_document_not_object");
-  const orders = Array.isArray(record.prompt_order) ? record.prompt_order : [];
-  let chosen: Record<string, unknown> | undefined;
-  let fallback: Record<string, unknown> | undefined;
-  for (const entry of orders) {
-    const candidate = asRecord(entry);
-    if (candidate === undefined || !Array.isArray(candidate.order)) continue;
-    if (candidate.character_id === DEFAULT_PROMPT_ORDER_CHARACTER_ID) {
-      chosen = candidate;
-      break;
-    }
-    fallback ??= candidate;
-  }
-  chosen ??= fallback;
+  const chosen = selectedPromptOrderGroup(Array.isArray(record.prompt_order) ? record.prompt_order : []);
   if (chosen === undefined) throw new Error("preset_prompt_order_missing");
   return (chosen.order as readonly unknown[]).map((row, position) => {
     const order = asRecord(row);

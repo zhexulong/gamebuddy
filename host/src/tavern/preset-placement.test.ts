@@ -167,37 +167,84 @@ test("the order row's switch is the authoritative one, as the assembler reads it
   assert.deepEqual(identifiers(presetEntryPlacements(doc), "disabled"), [...assembly.disabled]);
 });
 
-test("the global prompt order wins, and the group default is only the fallback for a document without one", () => {
-  const both = {
-    name: "two orders",
-    prompts: [
-      { identifier: "main", content: "global" },
-      { identifier: "group_only", content: "group" },
-      { identifier: "chatHistory", marker: true },
-    ],
-    prompt_order: [
-      { character_id: 100001, order: [{ identifier: "chatHistory", enabled: true }] },
-      {
-        character_id: 100000,
-        order: [
-          { identifier: "main", enabled: true },
-          { identifier: "chatHistory", enabled: true },
-        ],
-      },
-    ],
-  };
-  const assembly = assemblePreset(both, { macros: MACROS, markers: {} });
+/**
+ * The ladder: ST's chat-completion group first (`openai.js:698` overriding `PromptManager.js:336`), the legacy
+ * single group second, any other group last.
+ *
+ * Every rung is measured against `assemblePreset`'s own buckets as well as this module's placements, and every
+ * document below carries a row its neighbours do not - a rung is only measurable if selecting the wrong group
+ * changes something. The 100001 and 100000 groups here differ by one row (`personaDescription` vs `legacy_only`),
+ * so "which group won" is a reading rather than an assumption.
+ */
+test("the ladder reads ST's chat-completion group first, the legacy group second, any other group last", () => {
+  const LADDER_MARKERS: Readonly<Record<string, string>> = { personaDescription: "the player's own description" };
 
-  assert.deepEqual(identifiers(presetEntryPlacements(both), "before"), assembledIdentifiers(assembly, "before"));
+  // Same two groups, opposite document order: the ladder names the id, so position must not decide it.
+  const chatFirst = ladderDocument([
+    { characterId: 100001, identifiers: ["main", "personaDescription", "chatHistory"] },
+    { characterId: 100000, identifiers: ["main", "legacy_only", "chatHistory"] },
+  ]);
+  const legacyFirst = ladderDocument([
+    { characterId: 100000, identifiers: ["main", "legacy_only", "chatHistory"] },
+    { characterId: 100001, identifiers: ["main", "personaDescription", "chatHistory"] },
+  ]);
+  for (const doc of [chatFirst, legacyFirst]) {
+    const assembly = assemblePreset(doc, { macros: MACROS, markers: LADDER_MARKERS });
+    assert.deepEqual(
+      assembledIdentifiers(assembly, "before"),
+      ["main", "personaDescription"],
+      "the 100001 group must win wherever it sits in the document, and its own rows must be the ones assembled",
+    );
+    assert.deepEqual(identifiers(presetEntryPlacements(doc), "before"), assembledIdentifiers(assembly, "before"));
+  }
 
-  const fallback = { ...both, prompt_order: [{ character_id: 100001, order: both.prompt_order[0]?.order ?? [] }] };
-  const fallbackAssembly = assemblePreset(fallback, { macros: MACROS, markers: {} });
-  assert.deepEqual(identifiers(presetEntryPlacements(fallback), "cut"), ["chatHistory"]);
+  const legacyOnly = ladderDocument([{ characterId: 100000, identifiers: ["main", "legacy_only", "chatHistory"] }]);
+  const legacyAssembly = assemblePreset(legacyOnly, { macros: MACROS, markers: LADDER_MARKERS });
   assert.deepEqual(
-    identifiers(presetEntryPlacements(fallback), "before"),
-    assembledIdentifiers(fallbackAssembly, "before"),
+    assembledIdentifiers(legacyAssembly, "before"),
+    ["main", "legacy_only"],
+    "a preset that ships only the legacy group must keep assembling exactly as it did",
+  );
+  assert.deepEqual(
+    identifiers(presetEntryPlacements(legacyOnly), "before"),
+    assembledIdentifiers(legacyAssembly, "before"),
+  );
+
+  const neither = ladderDocument([{ characterId: 7, identifiers: ["main", "other_group", "chatHistory"] }]);
+  const otherAssembly = assemblePreset(neither, { macros: MACROS, markers: LADDER_MARKERS });
+  assert.deepEqual(
+    assembledIdentifiers(otherAssembly, "before"),
+    ["main", "other_group"],
+    "a document naming neither id falls to its first readable group, which is the only order it declares",
+  );
+  assert.deepEqual(
+    identifiers(presetEntryPlacements(neither), "before"),
+    assembledIdentifiers(otherAssembly, "before"),
   );
 });
+
+/**
+ * A document with one `prompt_order` group per entry given, in the order given, and a prompt pool wide enough
+ * for every rung: `personaDescription` (100001's own row), `legacy_only` (100000's), `other_group`.
+ */
+function ladderDocument(
+  groups: readonly { characterId: number; identifiers: readonly string[] }[],
+): Record<string, unknown> {
+  return {
+    name: "ladder fixture",
+    prompts: [
+      { identifier: "main", content: "opening" },
+      { identifier: "personaDescription", marker: true },
+      { identifier: "legacy_only", content: "legacy row" },
+      { identifier: "other_group", content: "other row" },
+      { identifier: "chatHistory", marker: true },
+    ],
+    prompt_order: groups.map((group) => ({
+      character_id: group.characterId,
+      order: group.identifiers.map((identifier) => ({ identifier, enabled: true })),
+    })),
+  };
+}
 
 test("an order row naming a prompt the document does not define is unplaced here and refused there", () => {
   const doc = presetDocument({
