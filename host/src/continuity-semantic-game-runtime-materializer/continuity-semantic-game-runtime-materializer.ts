@@ -10,6 +10,7 @@ import {
   planProgramId,
   planShape,
   planWorkDescription,
+  type CompiledPlan,
   type PlanScriptRequest,
   type PublishedPlanAction,
 } from "../body-program-script.js";
@@ -371,7 +372,7 @@ function createBodyProgramTools(
             const submitted = await submitProgram({ programId, nodes });
             const code = submitted.details.code;
             if (typeof code !== "string") throw new Error("body_program_protocol_invalid");
-            span.end({ programId, submitted: code });
+            span.end({ programId, submitted: code, layoutFactsAbsent: compiled.layoutFactsAbsentCount });
             const accepted = code === "accepted" || code === "idempotent";
             // AWAITED, because the original design says so and the shape drifted away from it.
             //
@@ -414,6 +415,7 @@ function createBodyProgramTools(
                 programId,
                 submitted: code,
                 ...refused,
+                ...layoutFactsNote(compiled),
               });
             // Recorded the moment the Mod accepts it: this is the identity a STOP has to name, and nothing else in the
             // Host knows which program is currently in the world.
@@ -433,6 +435,10 @@ function createBodyProgramTools(
                 remaining: answer.remaining,
                 nodes: answer.nodes,
                 ...refused,
+                // What the plan assumed that the snapshot it was compiled against could not answer. Beside the plan rather
+                // than in front of it: the warning is a fact the companion learns from, and a plan that blocked on it would
+                // leave her no way to say "water them anyway".
+                ...layoutFactsNote(compiled),
                 ...beside,
               });
             /**
@@ -686,6 +692,24 @@ function planDetails(details: Readonly<Record<string, unknown>>) {
   return Object.freeze({
     content: [{ type: "text" as const, text: JSON.stringify(details) }],
     details: Object.freeze(details),
+  });
+}
+
+/**
+ * The plan's own account of what it could not know: bounded warnings plus the population they were cut from.
+ *
+ * <p>
+ * Absent when the plan asked nothing the snapshot could not answer - a block saying "nothing was missing" spends payload
+ * on every ordinary plan to say nothing. `layoutFactsAbsentTruncated` is present for the same reason `droppedTruncated`
+ * is: a reader must not have to compare two lengths to learn that the list is a window.
+ * </p>
+ */
+function layoutFactsNote(compiled: CompiledPlan): Readonly<Record<string, unknown>> {
+  if (!compiled.ok || compiled.layoutFactsAbsentCount === 0) return {};
+  return Object.freeze({
+    layoutFactsAbsent: compiled.layoutFactsAbsent,
+    layoutFactsAbsentCount: compiled.layoutFactsAbsentCount,
+    layoutFactsAbsentTruncated: compiled.layoutFactsAbsentCount > compiled.layoutFactsAbsent.length,
   });
 }
 
