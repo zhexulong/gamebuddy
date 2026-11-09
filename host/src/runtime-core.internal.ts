@@ -48,6 +48,7 @@ import {
   writeIdentityProfileBinding,
 } from "./identity-profile.js";
 import { buildCompanionDeskGuidance, COMPANION_DESK_GUIDANCE_FILE_NAME } from "./magic-context-companion-guidance.js";
+import { magicContextContentLanguage } from "./magic-context-content-language.js";
 import { projectHistorianModel } from "./magic-context-historian-projection.internal.js";
 import { protectedToolsForRun } from "./magic-context-protected-tools.js";
 import { anchorPiSessionGreeting } from "./pi-session-greeting-anchor.internal.js";
@@ -70,7 +71,11 @@ import {
   type RuntimePaths,
   resolveRuntimePaths,
 } from "./runtime-identity.js";
-import { DEFAULT_COMPANION_LOCALE, resolveGamePromptAddition } from "./settings/player-preference-store.js";
+import {
+  DEFAULT_COMPANION_LOCALE,
+  resolveCompanionLocale,
+  resolveGamePromptAddition,
+} from "./settings/player-preference-store.js";
 import {
   type ExactReceiptRecoveryPort,
   type ReceiptRecoveryOutcome,
@@ -1711,6 +1716,14 @@ export async function createRuntimeWithFixedToolsCore(
   const magicContextUserConfigDir = join(paths.runtimeCwd, "config");
   if (loadMagicContextExtension) {
     await mkdir(join(magicContextUserConfigDir, "cortexkit"), { recursive: true });
+    // Magic Context writes its own prose - the fold's `<new-compartments>` summaries and their one-line titles, the
+    // guidance block - from ITS `language` setting, not from the companion prompt, so leaving it unset is what made
+    // a Chinese session's own memories arrive in English. The value is the player's companion locale: the surface's
+    // own already-resolved presentation locale where it carries one, and otherwise the stored preference the Game
+    // core call resolves for itself (it passes no presentation). See magic-context-content-language.ts for the shape
+    // the vendor accepts and why an unusable locale is refused rather than written.
+    const companionLocale = presentation?.profile.locale ?? (await resolveCompanionLocale(paths.root));
+    const contentLanguage = magicContextContentLanguage(companionLocale);
     // The Game surface's primary guidance section, written BEFORE the config that names it. The extension reads
     // both at boot and, when the path names no readable file carrying exactly one marker, warns and falls back to
     // the built-in coding-agent prose - so the order is what makes the seam reachable at all.
@@ -1724,6 +1737,7 @@ export async function createRuntimeWithFixedToolsCore(
       JSON.stringify(
         {
           prompt_surface: { guidance_override_path: COMPANION_DESK_GUIDANCE_FILE_NAME },
+          ...(contentLanguage === undefined ? {} : { language: contentLanguage }),
           ...(magicContextHistorianEnabled
             ? {
                 historian: {
