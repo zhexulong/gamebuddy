@@ -221,6 +221,22 @@ public class MoveApproachSubstitutionTests
         StardewBodyController.FormatReachableHint(new Point(30, 40), new Point(35, 55)).Should().Be("closest=30,40;closest_distance=15");
     }
 
+    [Fact]
+    public void ARefusalWithNoCloserTileNamesWhatBlocksInsteadOfOnlySayingThereIsNothing()
+    {
+        // `RefusalHint` documents two answers: the closest reachable tile when the flood found one, and WHAT BLOCKS when it
+        // did not. Only the first could ever be produced, because `FormatReachableHint` answers `closest=none` rather than
+        // the empty string the second branch tests for - so the `blocked_by` half was unreachable code. A settled failure
+        // keeps its hint and nothing else (ADR-006 withholds the evidence of a node that proved nothing), which is how the
+        // blocker the probe had already named reached no ledger at all.
+        StardewBodyController.RefusalHint(null, new Vector2(50, 6), "location_constraint")
+            .Should().Be("no_route;blocked_by=location_constraint");
+
+        // A closer tile is still the more useful answer when there is one, and its coordinates are what the model acts on.
+        StardewBodyController.RefusalHint(new Point(49, 14), new Vector2(49, 15), "none")
+            .Should().Be("closest=49,14;closest_distance=1");
+    }
+
     // ---- one tile, one rule ---------------------------------------------------------------
 
     /*

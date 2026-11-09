@@ -1083,10 +1083,9 @@ internal sealed class StardewBodyController
     /// The one line a refused move carries to the model.
     ///
     /// <para>
-    /// A refusal always says SOMETHING. `FormatReachableHint` returns the empty string when the flood found no closer
-    /// tile, and an empty hint is indistinguishable from "there is nothing to say" - the model then receives
-    /// `{"failureCode":"no_native_path"}` and nothing else, which is what produced nine blind re-aims in `round21` and
-    /// twenty-nine refusals with an empty hint in `round26`.
+    /// A refusal always says SOMETHING. An empty hint is indistinguishable from "there is nothing to say" - the model then
+    /// receives `{"failureCode":"no_native_path"}` and nothing else, which is what produced nine blind re-aims in
+    /// `round21` and twenty-nine refusals with an empty hint in `round26`.
     /// </para>
     /// <para>
     /// When there IS a closer tile, its coordinates are the most useful thing that can be said. When there is not - an
@@ -1094,12 +1093,14 @@ internal sealed class StardewBodyController
     /// layer `DescribeTargetOccupant` named. `Mountain.landslide` is the canonical case: a `NetBool(DaysPlayed < 5)`
     /// over (50,4)-(52,8) that no entity query can see and that reports as `location_constraint`.
     /// </para>
+    /// <para>
+    /// The second answer is chosen by whether the flood found a tile, NOT by whether `FormatReachableHint` rendered an empty
+    /// string: it renders `closest=none` for the no-tile case, so a test on its length made the `blocked_by` half
+    /// unreachable and every enclosed target reached its node's ledger as `closest=none` - the verdict without the blocker.
+    /// </para>
     /// </summary>
-    internal static string RefusalHint(Point? closest, Vector2 targetTile, string blockedBy)
-    {
-        string reachable = FormatReachableHint(closest, new Point((int)targetTile.X, (int)targetTile.Y));
-        return reachable.Length > 0 ? reachable : $"no_route;blocked_by={blockedBy}";
-    }
+    internal static string RefusalHint(Point? closest, Vector2 targetTile, string blockedBy) =>
+        closest is Point ? FormatReachableHint(closest, new Point((int)targetTile.X, (int)targetTile.Y)) : $"no_route;blocked_by={blockedBy}";
 
     internal static string FormatReachableHint(Point? closest, Point target)
     {

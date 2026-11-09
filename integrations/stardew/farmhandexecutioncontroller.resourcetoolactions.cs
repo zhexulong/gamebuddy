@@ -1549,10 +1549,12 @@ internal sealed partial class ExecutionManager
             }
 
             // Nothing is dispatched: no walk is committed for a placement the actor cannot
-            // reach, so the refusal arrives before the engine spends its search budget.
-            (string refusalCode, string refusalEvidence) = DescribeNoReachableApproach(
+            // reach, so the refusal arrives before the engine spends its search budget. The hint travels with it: the
+            // node keeps that line and not the evidence, so a refusal without one is a verdict the model can only answer
+            // by aiming again.
+            (string refusalCode, string refusalEvidence, string refusalHint) = DescribeNoReachableApproach(
                 anchor, actor, isStandable, footprint);
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusalCode, refusalEvidence + DescribeApproachRange(targetX: anchor.X, targetY: anchor.Y));
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusalCode, refusalEvidence + DescribeApproachRange(targetX: anchor.X, targetY: anchor.Y), hint: refusalHint);
         }
         (int X, int Y) goal = standingTile.Value;
         // The tile the arrival must be measured against: for a single-tile target the target itself, so every existing

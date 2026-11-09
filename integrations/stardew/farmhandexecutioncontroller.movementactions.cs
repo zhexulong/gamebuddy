@@ -265,7 +265,7 @@ internal sealed partial class ExecutionManager
         ApproachTileSelector.Select(targetTiles, actor, isStandable, isReachable);
     /// <summary>
     /// The refusal for a placement with no reachable standing tile: the code an agent can branch
-    /// on, plus the evidence a reader needs to see WHY.
+    /// on, the evidence a reader needs to see WHY, and the one line the settled node keeps.
     ///
     /// The code names the tile pair with COLONS. The wire's reasonCode alphabet is `[a-z0-9_:-]`
     /// (`protocol/bridge-v1.schema.json`, `FarmhandExecutionJournal.IsValidReasonCode`), so a
@@ -276,8 +276,15 @@ internal sealed partial class ExecutionManager
     /// wall (`standable_neighbour=unreachable`), and no free neighbour at all is geometry
     /// (`standable_neighbour=none`). Neither is `target_out_of_reach`, which stays what a FAILED
     /// ROUTE to a tile that does exist reports.
+    ///
+    /// The third statement is that same distinction in the channel that outlives the refusal. ADR-006
+    /// withholds the evidence of a node that proved nothing, so a node settled here kept the code and
+    /// nothing else - and the code says only that this placement has no approach, not whether a wall
+    /// stands in the way (walk around or clear it) or the tile has no free neighbour (choose another
+    /// target). Bounded, and derived from the same predicate as the evidence, so the two cannot name
+    /// different worlds.
     /// </summary>
-    internal static (string Code, string Evidence) DescribeNoReachableApproach(
+    internal static (string Code, string Evidence, string Hint) DescribeNoReachableApproach(
         (int X, int Y) target,
         (int X, int Y) actor,
         Func<(int X, int Y), bool> isStandable,
@@ -288,10 +295,11 @@ internal sealed partial class ExecutionManager
         // there would call a reachable placement unreachable.
         System.Collections.Generic.IReadOnlyList<(int X, int Y)> tiles = footprint ?? new[] { target };
         bool anyStandable = ApproachTileSelector.Select(tiles, actor, isStandable, _ => true) is not null;
-        string evidence = $"target={target.X},{target.Y};actor={actor.X},{actor.Y};reach=1;approach=none;standable_neighbour={(anyStandable ? "unreachable" : "none")}";
+        string neighbour = anyStandable ? "unreachable" : "none";
+        string evidence = $"target={target.X},{target.Y};actor={actor.X},{actor.Y};reach=1;approach=none;standable_neighbour={neighbour}";
         if (footprint is not null)
             evidence += $";footprint={footprint.Count}";
-        return ($"{NoReachableApproachReasonCode}:{target.X}:{target.Y}", evidence);
+        return ($"{NoReachableApproachReasonCode}:{target.X}:{target.Y}", evidence, $"no_approach;standable_neighbour={neighbour}");
     }
 
     /// <summary>

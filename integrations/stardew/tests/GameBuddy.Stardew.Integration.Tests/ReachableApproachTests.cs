@@ -46,7 +46,7 @@ public sealed class ReachableApproachTests
         ExecutionManager.SelectToolApproachTile((5, 5), (0, 0), standable.Contains, reachable.Contains)
             .Should().BeNull("there is nowhere to stand, so no walk may be committed");
 
-        (string code, string evidence) = ExecutionManager.DescribeNoReachableApproach((5, 5), (0, 0), standable.Contains);
+        (string code, string evidence, _) = ExecutionManager.DescribeNoReachableApproach((5, 5), (0, 0), standable.Contains);
         code.Should().Be("no_reachable_approach:5:5", "the refusal names the tile, so a reader knows which target had no approach");
         evidence.Should().Contain("target=5,5", "the human-facing pair still reads as a coordinate");
     }
@@ -56,14 +56,27 @@ public sealed class ReachableApproachTests
     {
         // Both refuse, but the evidence must not tell the same story: one placement has a free
         // tile the actor cannot reach (a wall), the other has no free tile (geometry).
-        (string walledCode, string walledEvidence) =
+        (string walledCode, string walledEvidence, _) =
             ExecutionManager.DescribeNoReachableApproach((5, 5), (0, 0), Tiles((5, 6)).Contains);
-        (string noneCode, string noneEvidence) =
+        (string noneCode, string noneEvidence, _) =
             ExecutionManager.DescribeNoReachableApproach((5, 5), (0, 0), Tiles().Contains);
 
         walledCode.Should().Be(noneCode, "the placement has no approach either way");
         walledEvidence.Should().Contain("standable_neighbour=unreachable");
         noneEvidence.Should().Contain("standable_neighbour=none");
+    }
+
+    [Fact]
+    public void TheNoApproachRefusalCarriesTheFactAModelCanActOnAsItsHint()
+    {
+        // The refusal's evidence names which shape it is, and a settled failure's evidence is withheld (ADR-006), so a
+        // node kept `no_reachable_approach:5:5` and nothing else - a verdict a companion can only answer by aiming again.
+        // The hint is the channel that survives into the node's ledger, so it has to carry the same distinction.
+        (_, _, string walledHint) = ExecutionManager.DescribeNoReachableApproach((5, 5), (0, 0), Tiles((5, 6)).Contains);
+        (_, _, string noneHint) = ExecutionManager.DescribeNoReachableApproach((5, 5), (0, 0), Tiles().Contains);
+
+        walledHint.Should().Be("no_approach;standable_neighbour=unreachable");
+        noneHint.Should().Be("no_approach;standable_neighbour=none", "a wall and geometry are different corrections");
     }
 
     [Fact]
@@ -73,7 +86,7 @@ public sealed class ReachableApproachTests
         // the wire's schema. Asserted against the REAL validator and the REAL schema file rather
         // than a second copy of the pattern: a future tightening has to fail here instead of
         // silently faulting the bridge.
-        (string code, _) = ExecutionManager.DescribeNoReachableApproach((35, 54), (0, 0), Tiles((35, 55)).Contains);
+        (string code, _, _) = ExecutionManager.DescribeNoReachableApproach((35, 54), (0, 0), Tiles((35, 55)).Contains);
 
         FarmhandExecutionJournal.IsValidReasonCode(code)
             .Should().BeTrue($"{code} is journaled as a receipt reasonCode");
