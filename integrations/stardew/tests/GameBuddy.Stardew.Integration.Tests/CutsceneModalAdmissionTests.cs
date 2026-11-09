@@ -33,6 +33,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// that called the handler directly would prove nothing about which action admission thinks it is admitting.
 /// </para>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the one pin reads `ModalActionHandler`'s dispatch table and the event seam inside each handler body, because that seam is the native `Event.answerDialogue` / `DialogueBox.closeDialogue` call a headless runner cannot execute - the family's admission rests on a property of the handler's own text, while the four cases here drive the production router for real; the pin stays beside the behaviour it guards, so a modal row added tomorrow fails by action id here and in the run.
 public sealed class CutsceneModalAdmissionTests
 {
     private const string ScopePlayerId = "1001";
