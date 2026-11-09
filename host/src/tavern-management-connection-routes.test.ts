@@ -215,6 +215,7 @@ async function withHandler(
           persona: null,
           paced: false,
           gamePromptAddition: "",
+          appearance: "system" as const,
         };
       },
       async update() {
@@ -228,6 +229,7 @@ async function withHandler(
           persona: null,
           paced: false,
           gamePromptAddition: "",
+          appearance: "system" as const,
         };
       },
     }),
@@ -355,6 +357,7 @@ test("the connection read projects the catalog, and selectable models are the ca
         providerId: string;
         setupFields: readonly string[];
         allowedPlayerModels: readonly { modelId: string }[];
+        suggestedModelIds: readonly string[];
         escapeHatch: boolean;
         environmentManaged: boolean;
       }[];
@@ -380,6 +383,19 @@ test("the connection read projects the catalog, and selectable models are the ca
     // ...and the player still names one, which is what makes the empty list a starting point rather
     // than a dead end. The endpoint's own `/models` reply is the list.
     assert.ok(byId.get("deepseek")!.setupFields.includes("modelId"));
+    // A first run has no probe behind it - the field is filled from a saved, tested connection - so
+    // the entry publishes the ids its own API documentation names. This is the hop the panel reads:
+    // `suggestedModelIds` on the projection, never a second list in the browser.
+    assert.deepEqual(byId.get("deepseek")!.suggestedModelIds, ["deepseek-chat", "deepseek-reasoner"]);
+    assert.deepEqual(byId.get("openai")!.suggestedModelIds, []);
+    assert.deepEqual(byId.get(TAVERN_ESCAPE_HATCH_PROVIDER_ID)!.suggestedModelIds, []);
+    // One id, one claim: a suggestion never doubles as a stated model of the same entry.
+    for (const provider of body.providers)
+      assert.deepEqual(
+        provider.suggestedModelIds.filter((id) => provider.allowedPlayerModels.some((model) => model.modelId === id)),
+        [],
+        `${provider.providerId} states and suggests the same id`,
+      );
     const escapeHatches = body.providers.filter((provider) => provider.escapeHatch);
     assert.equal(escapeHatches.length, 1);
     assert.equal(escapeHatches[0]!.providerId, TAVERN_ESCAPE_HATCH_PROVIDER_ID);
@@ -1411,6 +1427,7 @@ test("a profile that advertises connection routes without the Host service fails
               persona: null,
               paced: false,
               gamePromptAddition: "",
+              appearance: "system" as const,
             };
           },
           async update() {
@@ -1424,6 +1441,7 @@ test("a profile that advertises connection routes without the Host service fails
               persona: null,
               paced: false,
               gamePromptAddition: "",
+              appearance: "system" as const,
             };
           },
         }),

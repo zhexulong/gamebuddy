@@ -248,6 +248,7 @@ function managementOptions(input: {
           persona: null,
           paced: false,
           gamePromptAddition: "",
+          appearance: "system" as const,
         };
       },
       async update() {

@@ -304,6 +304,7 @@ async function fixture(withCreate: boolean, options: Readonly<{ withCompanionArt
           persona: null,
           paced: false,
           gamePromptAddition: "",
+          appearance: "system" as const,
         };
       },
       async update() {

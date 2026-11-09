@@ -214,6 +214,7 @@ async function stageFixmounted(root: string) {
           persona: null,
           paced: false,
           gamePromptAddition: "",
+          appearance: "system" as const,
         };
       },
       async update() {
@@ -227,6 +228,7 @@ async function stageFixmounted(root: string) {
           persona: null,
           paced: false,
           gamePromptAddition: "",
+          appearance: "system" as const,
         };
       },
     }),

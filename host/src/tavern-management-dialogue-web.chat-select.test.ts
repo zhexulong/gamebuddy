@@ -226,6 +226,7 @@ async function fixture() {
           persona: null,
           paced: false,
           gamePromptAddition: "",
+          appearance: "system" as const,
         };
       },
       async update() {

@@ -45,12 +45,16 @@ const CORE_OPERATIONS = [
   "settings.voice.consent",
 ] as const;
 const LANGUAGE_ROUTES = ["settings.language.read", "settings.language.update"] as const;
+/** The appearance group sits after the language group in the dispatcher's canonical order. */
+const APPEARANCE_ROUTES = ["settings.appearance.read", "settings.appearance.update"] as const;
+/** The interface-language group sits directly after the appearance group in that same order. */
+const UI_LANGUAGE_ROUTES = ["settings.ui-language.read", "settings.ui-language.update"] as const;
 
 const settingsProfile = composeTavernProfile({
   profileId: "gamebuddy.tavern-management.chat-list-title",
   releaseTier: "tavern_management",
-  routeIds: [...CORE_ROUTES, ...LANGUAGE_ROUTES],
-  operationIds: [...CORE_OPERATIONS, ...LANGUAGE_ROUTES],
+  routeIds: [...CORE_ROUTES, ...LANGUAGE_ROUTES, ...APPEARANCE_ROUTES, ...UI_LANGUAGE_ROUTES],
+  operationIds: [...CORE_OPERATIONS, ...LANGUAGE_ROUTES, ...APPEARANCE_ROUTES, ...UI_LANGUAGE_ROUTES],
   navigationItemIds: ["chat", "characters"],
 });
 
@@ -371,5 +375,160 @@ test("a persona selection round-trips through the SAME consent operation and a s
     const afterClear = (await cleared.json()) as { revision: number; persona: string | null };
     assert.equal(afterClear.revision, 2);
     assert.equal(afterClear.persona, null);
+  });
+});
+
+/**
+ * The appearance route pair, over the real handler and the real durable record.
+ *
+ * The three things this pins that nothing else can: the surface is a browser-session read and a
+ * CSRF-bound write (a write without the header is refused before the store sees it); a stale
+ * `expectedRevision` is a conflict rather than a silent overwrite of the language group beside it;
+ * and the reply IS the record's read-back, so the page can paint the answer instead of the request.
+ */
+test("the appearance is read and written over its own CSRF-bound route, through the one record", async () => {
+  await withServer(async (origin) => {
+    const session = await bootstrap(origin);
+
+    const before = await (await read(origin, "/api/tavern/v1/settings/appearance", session)).json();
+    assert.deepEqual(before, { revision: 0, appearance: "system" });
+    assert.deepEqual(Object.keys(before).sort(), ["appearance", "revision"]);
+
+    // A write from another origin, and one without the session's CSRF header, both stop before the store.
+    const noOrigin = await fetch(`${origin}/api/tavern/v1/settings/appearance`, {
+      method: "PUT",
+      headers: { Cookie: session.cookie, "Content-Type": "application/json", "x-csrf-token": session.csrfToken },
+      body: JSON.stringify({ expectedRevision: 0, appearance: "light" }),
+    });
+    assert.equal(noOrigin.status, 401);
+    const noCsrf = await fetch(`${origin}/api/tavern/v1/settings/appearance`, {
+      method: "PUT",
+      headers: { Origin: origin, Cookie: session.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ expectedRevision: 0, appearance: "light" }),
+    });
+    assert.equal(noCsrf.status, 403);
+    assert.equal(
+      (await (await read(origin, "/api/tavern/v1/settings/appearance", session)).json()).appearance,
+      "system",
+    );
+
+    // A value the contract does not declare is refused as an invalid request, not stored.
+    const fourth = await write(origin, "/api/tavern/v1/settings/appearance", session, {
+      expectedRevision: 0,
+      appearance: "sepia",
+    });
+    assert.equal(fourth.status, 400);
+
+    const written = await write(origin, "/api/tavern/v1/settings/appearance", session, {
+      expectedRevision: 0,
+      appearance: "light",
+    });
+    assert.equal(written.status, 200);
+    assert.deepEqual(await written.json(), { revision: 1, appearance: "light" });
+    assert.deepEqual(await (await read(origin, "/api/tavern/v1/settings/appearance", session)).json(), {
+      revision: 1,
+      appearance: "light",
+    });
+
+    // The same record: the language group reads the revision the appearance write produced, and a
+    // stale appearance write from a tab that never saw it is a conflict rather than a clobber.
+    assert.deepEqual(await (await read(origin, "/api/tavern/v1/settings/language", session)).json(), {
+      revision: 1,
+      locale: null,
+    });
+    const stale = await write(origin, "/api/tavern/v1/settings/appearance", session, {
+      expectedRevision: 0,
+      appearance: "dark",
+    });
+    assert.equal(stale.status, 409);
+    assert.equal(
+      (await (await read(origin, "/api/tavern/v1/settings/appearance", session)).json()).appearance,
+      "light",
+    );
+  });
+});
+
+/**
+ * The interface-language route pair, over the real handler and the real durable record.
+ *
+ * This is the layer the defect was in: the choice used to live in this browser's `localStorage`, and
+ * the Desktop serves the shell from an ephemeral `127.0.0.1` origin, so every launch was a fresh store
+ * and the interface language reset. The three things this pins:
+ *
+ *  - the surface is a browser-session read and a CSRF-bound write (a write from another origin, or one
+ *    without the session's own header, is refused before the store sees it);
+ *  - the value set is CLOSED: a language no catalogue ships is an invalid request, never stored - and
+ *    the companion language's own open BCP-47 tag is not accepted here either, because the two are
+ *    separate choices;
+ *  - the reply IS the record's read-back, and a stale `expectedRevision` is a conflict rather than a
+ *    silent overwrite of the appearance group beside it in the same record.
+ */
+test("the interface language is read and written over its own CSRF-bound route, through the one record", async () => {
+  await withServer(async (origin) => {
+    const session = await bootstrap(origin);
+
+    const before = await (await read(origin, "/api/tavern/v1/settings/ui-language", session)).json();
+    assert.deepEqual(before, { revision: 0, locale: null });
+    assert.deepEqual(Object.keys(before).sort(), ["locale", "revision"]);
+
+    // A write from another origin, and one without the session's CSRF header, both stop before the store.
+    const noOrigin = await fetch(`${origin}/api/tavern/v1/settings/ui-language`, {
+      method: "PUT",
+      headers: { Cookie: session.cookie, "Content-Type": "application/json", "x-csrf-token": session.csrfToken },
+      body: JSON.stringify({ expectedRevision: 0, locale: "en" }),
+    });
+    assert.equal(noOrigin.status, 401);
+    const noCsrf = await fetch(`${origin}/api/tavern/v1/settings/ui-language`, {
+      method: "PUT",
+      headers: { Origin: origin, Cookie: session.cookie, "Content-Type": "application/json" },
+      body: JSON.stringify({ expectedRevision: 0, locale: "en" }),
+    });
+    assert.equal(noCsrf.status, 403);
+    assert.equal((await (await read(origin, "/api/tavern/v1/settings/ui-language", session)).json()).locale, null);
+
+    // A language no catalogue ships is refused, and so is the companion language's own open tag: this
+    // route stores a UI language, not "some BCP-47 string".
+    for (const refused of ["ja-JP", "sepia", "zh"]) {
+      const invalid = await write(origin, "/api/tavern/v1/settings/ui-language", session, {
+        expectedRevision: 0,
+        locale: refused,
+      });
+      assert.equal(invalid.status, 400, `${refused} is not a UI language this product ships`);
+    }
+
+    const written = await write(origin, "/api/tavern/v1/settings/ui-language", session, {
+      expectedRevision: 0,
+      locale: "en",
+    });
+    assert.equal(written.status, 200);
+    assert.deepEqual(await written.json(), { revision: 1, locale: "en" });
+    assert.deepEqual(await (await read(origin, "/api/tavern/v1/settings/ui-language", session)).json(), {
+      revision: 1,
+      locale: "en",
+    });
+
+    // The same record: the companion language group reads the revision this write produced, and its own
+    // value is untouched - the interface language never rewrites what she speaks.
+    assert.deepEqual(await (await read(origin, "/api/tavern/v1/settings/language", session)).json(), {
+      revision: 1,
+      locale: null,
+    });
+    const companion = await write(origin, "/api/tavern/v1/settings/language", session, {
+      expectedRevision: 1,
+      locale: "zh-CN",
+    });
+    assert.equal(companion.status, 200);
+    assert.deepEqual(await (await read(origin, "/api/tavern/v1/settings/ui-language", session)).json(), {
+      revision: 2,
+      locale: "en",
+    });
+
+    // A stale write from a tab that never saw those revisions is a conflict, not a clobber.
+    const stale = await write(origin, "/api/tavern/v1/settings/ui-language", session, {
+      expectedRevision: 0,
+      locale: "zh-CN",
+    });
+    assert.equal(stale.status, 409);
+    assert.equal((await (await read(origin, "/api/tavern/v1/settings/ui-language", session)).json()).locale, "en");
   });
 });
