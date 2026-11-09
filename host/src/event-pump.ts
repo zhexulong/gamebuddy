@@ -716,12 +716,44 @@ export class CompanionEventPump {
   }
 }
 
+/**
+ * The two fact shapes the pump holds latest-only, each with the reason it is safe: the population the
+ * classification test reads. A kind may only be held when a NAMED later fact will wake the model for it, otherwise
+ * the pump silently swallows the only news the model was going to get.
+ *
+ * Measured 2026-11-07 (round39 and the run before it): `program_settled` sat in the held set, so a submitted plan
+ * settled into a fact that never asked for a turn. The companion went quiet for 816.5 s and the first bubble came only
+ * because the player typed. Nothing in any bundle records "a turn was owed" - the fact is never delivered, so there is
+ * no artifact of it at all - which is why the silence walked past every audit until someone read this file.
+ */
+export const HELD_RECEIPT_PROGRESS_STATES: Readonly<Record<string, string>> = Object.freeze({
+  accepted: "the terminal receipt for the same execution wakes the model",
+  running: "the terminal receipt for the same execution wakes the model",
+  meaningful_progress: "the terminal receipt for the same execution wakes the model",
+});
+
+/**
+ * Semantic-event kinds that are PROGRESS, not outcomes: per-tile route advance, the start of an execution, and
+ * the actor falling idle. They describe a moving state, so only the latest one matters.
+ *
+ * Measured 2026-10-17 on a real multi-day run: one long agent turn (70 assistant messages, ~350s) made the Mod
+ * publish 129 such observations, each with its OWN freshly-minted correlationId, and they filled the 128-entry
+ * pending window - so the pump threw and the bridge closed mid-run. The receipt counterpart of exactly this
+ * traffic is already latest-only; a semantic event describing the same progress must be treated the same way, or a
+ * long session is indistinguishable from a flood.
+ */
+export const HELD_SEMANTIC_PROGRESS_KINDS: Readonly<Record<string, string>> = Object.freeze({
+  execution_started: "the receipt for the same execution wakes the model, and its terminal does too",
+  route_progress: "the node's own completion or rejection arrives as a receipt fact",
+  body_idle: "the next receipt or plan settlement arrives as an ordinary fact",
+});
+
 /** Receipt progress is latest-only; terminal and invalidating states remain ordinary facts. */
 function isMeaningfulProgressFact(fact: WorldFact): boolean {
   return (
     fact.kind === "execution_receipt" &&
     typeof fact.payload.state === "string" &&
-    ["accepted", "running", "meaningful_progress"].includes(fact.payload.state)
+    fact.payload.state in HELD_RECEIPT_PROGRESS_STATES
   );
 }
 
@@ -742,7 +774,7 @@ function isProgressSemanticEvent(fact: WorldFact): boolean {
   return (
     fact.kind === "semantic_event" &&
     typeof fact.payload.kind === "string" &&
-    ["execution_started", "route_progress", "body_idle"].includes(fact.payload.kind)
+    fact.payload.kind in HELD_SEMANTIC_PROGRESS_KINDS
   );
 }
 
