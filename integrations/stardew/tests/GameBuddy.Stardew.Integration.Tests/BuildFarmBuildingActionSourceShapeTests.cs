@@ -192,8 +192,21 @@ public sealed class BuildFarmBuildingActionSourceShapeTests
     public void Snapshot_PublishesTheSiteProjectionUnderItsOwnCapabilityGate()
     {
         string publication = ReadRepositoryFile(Path.Combine("integrations", "stardew", "farmhandexecutioncontroller.cs"));
-        publication.Should().Contain(
-            "advertisedCapabilities.Contains(\"build_farm_building\", StringComparer.Ordinal) ? DiscoverBuildFarmBuildingTargets(player) : null");
+        // The projection is read as the STATEMENT that declares it, not as one line of it: the site list gained an
+        // `out` count for the cap it applies (2026-11-09), which wrapped the ternary. What has to hold is that the
+        // list exists only for the branch that advertises the action - an agent that cannot act on a site must not be
+        // shown one - so the gate, the discovery and the null branch are asserted where they are written.
+        const string declaration = "IReadOnlyList<BridgeFarmBuildingTarget>? farmBuildingTargets =";
+        int start = publication.IndexOf(declaration, StringComparison.Ordinal);
+        start.Should().BeGreaterThanOrEqualTo(0, $"the snapshot must declare the site projection: {declaration}");
+        int end = publication.IndexOf(';', start);
+        end.Should().BeGreaterThan(start, "the declaration must be a statement that ends");
+        string projection = publication[start..end];
+        projection.Should().Contain("advertisedCapabilities.Contains(\"build_farm_building\", StringComparer.Ordinal)",
+            "the site list is published under the action's own capability gate");
+        projection.Should().Contain("? DiscoverBuildFarmBuildingTargets(player",
+            "and it is the same discovery the fixture's Given asks");
+        projection.Should().Contain(": null", "a snapshot that does not advertise the action publishes no site at all");
     }
 
     [Fact]
