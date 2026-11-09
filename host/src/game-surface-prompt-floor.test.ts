@@ -5,7 +5,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { GAME_SURFACE_PROMPT_FLOOR as READING } from "./game-surface-prompt-floor.test-support.js";
+import { planActionsFromRegistrations, PLAN_ACTION_LIFECYCLES, planWorkDescription } from "./body-program-script.js";
 import { buildChatCompanionSystemPrompt, buildGameCompanionSystemPrompt } from "./identity-profile.js";
+import type { ActionRegistration } from "./protocol.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
 /**
@@ -15,8 +17,8 @@ import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
  * The premise under test is the owner's: "the Game surface's tool definitions are too heavy". That is a claim
  * about a NUMBER - how much of the context window is spent before the player says anything - and the only
  * honest way to answer it is to measure the assembled request. Measuring `game-tools.ts`'s source size would
- * have been the wrong number: that file is mostly implementations, and 95 of the action tools it can build are
- * not in the request at all (`planBuilder` below).
+ * have been the wrong number: that file is mostly implementations, and none of the per-action tools it builds is
+ * in the request at all (`planBuilder` below).
  * </p>
  *
  * <p>
@@ -137,7 +139,7 @@ test("the Chat surface still mounts zero tools, so the recorded comparison stays
 });
 
 test("the reading's premise about the plan builder still holds: the flat per-action tools are not mounted", () => {
-  // The count that answers "are 95 schemas in the request?" is architectural, not numeric: the live Game
+  // The question "are the per-action schemas in the request?" is architectural, not numeric: the live Game
   // materializer declares `planActionSurface`, and `runtime-core.internal.ts` then drops every tool the adapter
   // publishes as an action. Both halves are asserted, so the reading's `flatPerActionToolsMounted: false`
   // cannot quietly become false while its token totals stay plausible.
@@ -161,7 +163,137 @@ test("the reading's premise about the plan builder still holds: the flat per-act
   assert.match(
     runtimeSource,
     /planActionSurface\s*\n?\s*\?[\s\S]{0,200}?actionIdForToolName\(tool\.name\) === null/u,
-    "runtime-core no longer filters adapter action tools out of a plan-builder surface, so the 95 flat tools are back in the request",
+    "runtime-core no longer filters adapter action tools out of a plan-builder surface, so the flat per-action tools are back in the request",
+  );
+});
+
+/**
+ * The Mod's emitted action surface: the artifact the attested-pipe fixture loads, read from the same path.
+ *
+ * It is the authority for BOTH counts the reading claims - which actions exist, and which of them the plan builder
+ * can expose - so neither claim is a hand-maintained copy of this file's contents.
+ */
+const SURFACE_ARTIFACT = join(
+  ROOT,
+  "integrations",
+  "stardew",
+  "action-development",
+  "contracts",
+  "generated",
+  "action-surface.v1.json",
+);
+
+type SurfaceAction = Readonly<{
+  actionId: string;
+  lifecycle: ActionRegistration["lifecycle"];
+  kind: ActionRegistration["kind"];
+  argumentSchema?: Readonly<Record<string, Readonly<{ type: string; enum?: readonly string[] }>>>;
+  outputFacts?: Readonly<Record<string, string>>;
+  resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }>;
+}>;
+
+const SURFACE = (JSON.parse(readFileSync(SURFACE_ARTIFACT, "utf8")) as Readonly<{ actions: readonly SurfaceAction[] }>)
+  .actions;
+
+/**
+ * The surface rebuilt into the registrations a live `hello_ack` advertises, which is the shape the Host's own plan
+ * admission takes from the wire. `familyId` is the one field the artifact does not publish; the plan builder groups by
+ * it and this gate counts ids, so a single placeholder family carries every action.
+ */
+const ADVERTISED: readonly ActionRegistration[] = SURFACE.map((action) =>
+  Object.freeze({
+    actionId: action.actionId,
+    familyId: "fixture_family",
+    identityVersion: 1,
+    lifecycle: action.lifecycle,
+    kind: action.kind,
+    ...(action.argumentSchema === undefined
+      ? {}
+      : {
+          descriptor: {
+            argumentSchema: action.argumentSchema,
+            outputFacts: action.outputFacts ?? {},
+            ...(action.resourceTemplate === undefined ? {} : { resourceTemplate: action.resourceTemplate }),
+          },
+        }),
+  }),
+);
+
+/** Every action the adapter can build a per-action tool for: the population a plan surface drops. */
+const FLAT_TOOLS = SURFACE.filter((action) => action.kind === "execution").map((action) => action.actionId);
+/** The builder methods the product derives from the surface, through its own admission test. */
+const BUILDER_METHODS = planActionsFromRegistrations(ADVERTISED).map((action) => action.actionId);
+
+/**
+ * The reading claims two sizes of the plan-builder surface, and both are gated here against the surface itself.
+ *
+ * <p>
+ * This is the defect the gate exists for: the reading carried `95` and `92` as literals and nothing compared either to
+ * the catalog, so by 2026-11-10 both were wrong about the surface they described - 101 executable actions, of which the
+ * builder derives 95 methods - and every run stayed green. A number typed beside the thing it describes is a second
+ * spelling, so the failure names the drift and its source instead of printing `expected 95, got 101`.
+ * </p>
+ */
+test("the reading's two plan-builder counts are the emitted surface's own counts", () => {
+  const claims = [
+    {
+      name: "flatPerActionTools",
+      claimed: READING.planBuilder.claims.flatPerActionTools,
+      derived: FLAT_TOOLS.length,
+      population: `the executable actions on ${SURFACE_ARTIFACT}, one per per-action tool the plan surface drops`,
+    },
+    {
+      name: "plannableBuilderMethods",
+      claimed: READING.planBuilder.claims.plannableBuilderMethods,
+      derived: BUILDER_METHODS.length,
+      population: `the actions body-program-script.ts planActionsFromRegistrations admits from ${FLAT_TOOLS.length} executable ones`,
+    },
+  ];
+  const drifting = claims
+    .filter((claim) => claim.claimed !== claim.derived)
+    .map((claim) => `${claim.name}: ${claim.population} is ${claim.derived}, the reading claims ${claim.claimed}`);
+  assert.deepEqual(
+    drifting,
+    [],
+    `the reading's plan-builder claims no longer match the surface they describe: ${drifting.join(" | ")}. Re-derive the ` +
+      "reading from the artifact in its own commit; do not edit a claim to match the tree.",
+  );
+});
+
+/** The description the Game prompt hands the model for `stardew_plan_work`, built from the surface exactly as the mount does. */
+const PLAN_WORK_DESCRIPTION = planWorkDescription(planActionsFromRegistrations(ADVERTISED));
+
+/** The description names the action as a builder method, and not merely as a substring of a longer id. */
+function namesBuilderMethod(actionId: string): boolean {
+  return new RegExp(`(^|[\\s:,])${actionId}([\\s,]|$)`, "u").test(PLAN_WORK_DESCRIPTION);
+}
+
+test("every action the surface admits to a plan is a builder method the prompt names", () => {
+  // The property behind the two counts: the vocabulary the model is handed is generated per admitted action, so an
+  // action that became plannable without a method (or a method without a name in the description) is capability the
+  // player cannot reach - and it is named here, one id at a time, rather than summed into a total.
+  const unnamed = BUILDER_METHODS.filter((actionId) => !namesBuilderMethod(actionId));
+  assert.deepEqual(
+    unnamed,
+    [],
+    `these actions are plannable on the Mod's surface but stardew_plan_work's description names no builder method ` +
+      `for them, so the model cannot call them: ${unnamed.join(", ")}`,
+  );
+  // The other side of the same property: a surface action the plan form does not admit is a capability with no route
+  // left at all once the flat tools are dropped. The one stated reason is the `experimental` lifecycle, which the plan
+  // form does not publish; anything else is named, so a widened argument-type filter cannot silently withdraw an action.
+  const plannableLifecycles = new Set(PLAN_ACTION_LIFECYCLES);
+  const wrongfullyExcluded = SURFACE.filter(
+    (action) =>
+      action.kind === "execution" &&
+      plannableLifecycles.has(action.lifecycle) &&
+      !BUILDER_METHODS.includes(action.actionId),
+  ).map((action) => `${action.actionId} (${action.lifecycle})`);
+  assert.deepEqual(
+    wrongfullyExcluded,
+    [],
+    `the Mod publishes these actions as playable steps but the plan builder exposes no method for them, so on a plan ` +
+      `surface they are unreachable: ${wrongfullyExcluded.join(", ")}`,
   );
 });
 

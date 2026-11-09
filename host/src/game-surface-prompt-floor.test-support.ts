@@ -4,7 +4,8 @@
  * <p>
  * It lives in `.test-support.ts` so it is compiled into the test artifact and excluded from the production
  * build: this is a reading, not product configuration. The numbers below were measured, not chosen - the
- * `method` block says how, per number, and the test that reads this file re-derives the parts it can.
+ * `method` block says how, per number - and the test that reads this file re-derives the parts it can: the
+ * character columns from the product's own builder, and the plan-builder counts from the Mod's emitted surface.
  * </p>
  *
  * <p>
@@ -57,8 +58,25 @@ export type PromptFloorReading = Readonly<{
   rows: readonly PromptFloorRow[];
   planBuilder: Readonly<{
     flatPerActionToolsMounted: false;
-    publishedActions: number;
-    plannableBuilderMethods: number;
+    /**
+     * The reading's CLAIM about the size of the plan-builder surface, split into the two populations it names.
+     *
+     * Until 2026-11-10 it was one `publishedActions` (95) beside a `plannableBuilderMethods` (92), and neither matched
+     * the surface it described: the Mod publishes 101 executable actions and the plan builder derives 95 methods from
+     * them. Each half is now gated by `game-surface-prompt-floor.test.ts`, which DERIVES both from
+     * `action-surface.v1.json` and fails naming the drift, so neither is a hand-maintained second spelling of the
+     * catalog and neither is ever edited to match the tree.
+     */
+    claims: Readonly<{
+      /**
+       * The per-action tools the adapter publishes - the surface's executable actions, which
+       * `action-registry-consistency.test.ts` holds set-equal to this file's mount blocks. `runtime-core.internal.ts`
+       * drops every one of them from a plan surface.
+       */
+      flatPerActionTools: number;
+      /** The subset `stardew_plan_work` exposes as builder methods, by the product's own plan admission. */
+      plannableBuilderMethods: number;
+    }>;
     note: string;
   }>;
 }>;
@@ -72,7 +90,7 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     tokens:
       "ai-tokenizer with the claude encoding, resolved the way vendor/magic-context/packages/plugin/src/hooks/magic-context/read-session-formatting.ts resolves it. This is the count Magic Context's estimateTokens returns.",
     tools:
-      "Read off a real materialized production session: createHostGameRuntimeMaterializer().materializeEnter(...) over an attested Windows named-pipe bridge whose hello_ack publishes integrations/stardew/action-development/contracts/generated/action-surface.v1.json (95 actions), with session.agent.state.tools as the population. BODY_PROGRAM_MOUNT reported mounted=true, so this is the plan-builder surface a live Farmhand gets.",
+      "Read off a real materialized production session: createHostGameRuntimeMaterializer().materializeEnter(...) over an attested Windows named-pipe bridge whose hello_ack publishes integrations/stardew/action-development/contracts/generated/action-surface.v1.json, with session.agent.state.tools as the population. BODY_PROGRAM_MOUNT reported mounted=true, so this is the plan-builder surface a live Farmhand gets.",
     system:
       "buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, 'zh-CN'), the builder runtime-core.internal.ts installs, over the shipped card.",
     combination:
@@ -85,6 +103,8 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       "The Game prompt grew from 10,886 to 13,411 chars, and NONE of it is tool text: the builder renders no tool definition, and the conduct block - the only place the floor names a tool - is still 6,194 chars. The growth is the card's own authored text plus one Host line: its performance directive (characterVoice) +2,181, its persona and examples +237, and the Host floor's language line +107. The two card halves arrived in 63f0dcde (already stale at HEAD, +993) and in this tree's re-authored card (+1,425); the language line is this tree's identity-profile.ts. The CHARACTER columns are re-derived from the product's builder exactly; `envelopeChars`/`envelopeBytes` moved by the JSON-escaped system string's own delta (+2,594 chars, +6,846 bytes), which is the exact envelope delta because `tools` and `messages` are unchanged. The TOKEN columns are carried UNCHANGED and are now a substantial under-count: the ai-tokenizer in this tree counts the previously recorded 10,886-char prompt at 6,480, so the vocabulary behind the recorded 5,119 is not reproducible here at all, and no token number in this file describes the current prompt.",
     remeasured_2026_11_09:
       "The Game prompt grew from 13,411 to 13,781 chars (+370) and the conduct slice from 6,194 to 6,631 (+437), so at least one line also left the prompt: both deltas are recorded as measured, not reconciled. One source is isolated exactly - the language directive grew +92, measured by substituting zh-CN into both spellings. The remainder is card prose from 796f701a (the campfire line) and 7761b039 (the management-panel card), neither isolated line by line here. Envelope and token columns were NOT re-measured in this commit.",
+    planBuilderCounts:
+      "Derived, not measured off a session: `game-surface-prompt-floor.test.ts` reads integrations/stardew/action-development/contracts/generated/action-surface.v1.json (the artifact the live hello_ack publishes), counts its executable actions for `flatPerActionTools`, and runs the Host's own plan admission (`body-program-script.ts` `planActionsFromRegistrations`) over the same actions for `plannableBuilderMethods`. The pair recorded here until 2026-11-10 - 95 and 92 - had no gate tying either number to that artifact, and by then the surface published 101 executable actions of which 95 were plannable, so one number had gone stale and the other named the wrong population. Both are gated now: a surface that grows fails the gate BY NAME rather than leaving the numbers to rot.",
   }),
   floor: Object.freeze({
     toolCount: 14,
@@ -240,8 +260,10 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
   ]),
   planBuilder: Object.freeze({
     flatPerActionToolsMounted: false,
-    publishedActions: 95,
-    plannableBuilderMethods: 92,
-    note: "The 95 flat per-action tools are NOT in the request: runtime-core.internal.ts drops every adapter action tool when planActionSurface is declared, and the live Game materializer declares it. The 14-tool set above is the measurement of that, not an assumption - stardew_plan_work's description carries the 92 builder method names instead.",
+    claims: Object.freeze({
+      flatPerActionTools: 101,
+      plannableBuilderMethods: 95,
+    }),
+    note: "The flat per-action tools are NOT in the request: runtime-core.internal.ts drops every adapter action tool when planActionSurface is declared, and the live Game materializer declares it. The 14-tool set above is the measurement of that, not an assumption - stardew_plan_work's description carries the builder method names instead.",
   }),
 });

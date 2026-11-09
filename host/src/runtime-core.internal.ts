@@ -1942,12 +1942,11 @@ export async function createRuntimeWithFixedToolsCore(
             : { dispatchAdmissionFactory: () => dispatchController.createAdmission() }),
         })
       : undefined;
-  // A surface that carries the plan builder does not also carry the flat per-action tools: the builder exposes the
-  // same vocabulary the Mod's Body Program catalog accepts (host/src/body-program-script.ts, measured over the
-  // published 95-action surface: the builder's method set and the adapter's mounted action-tool set are the same 92
-  // executable actions), so a one-step tool mounted beside it only invites one-step runs. A tool the adapter does not
-  // publish as an action stays mounted - `stardew_stop_action` is deliberately not an action. The decision is the
-  // composition's to declare, not a Stardew tool name's to imply here.
+  // A surface that carries the plan builder does not also carry the flat per-action tools: the builder exposes a
+  // method for every action the plan form admits (host/src/body-program-script.ts, generated from the registration
+  // vocabulary, never hand-written per action), so a one-step tool mounted beside it only invites one-step runs. A
+  // tool the adapter does not publish as an action stays mounted - `stardew_stop_action` is deliberately not an
+  // action. The decision is the composition's to declare, not a Stardew tool name's to imply here.
   const actionToolsToMount =
     integrationToolSet === undefined
       ? []
