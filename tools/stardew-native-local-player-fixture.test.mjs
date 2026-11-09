@@ -1194,7 +1194,8 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
   assert.match(setup, /artifactSourceCount < 1/);
   assert.match(
     entry,
-    /!farm\.IsTileOccupiedBy\(artifactPending\.StandingTile, ~CollisionMask\.Farmers, CollisionMask\.None, useFarmerTile: false\)/,
+    /&& StardewBodyController\.IsStandableTile\(farm, e\.Player, artifactPending\.StandingTile\)/,
+    "the tile she is warped onto is answered by the body's own rule, which is the one the engine admits a step with",
   );
   const failureMarker = "error=fixture_native_local_artifact_spot_approach_unreachable";
   const failureBranchStart = entry.indexOf(
@@ -1220,7 +1221,7 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
     "source_hoedirt_absent",
     "source_indoor_pot",
     "standing_on_map",
-    "standing_passable",
+    "standing_standable",
     "standing_occupied_use_farmer_tile_false",
     "hoe_count",
     "basic_hoe",
@@ -1235,10 +1236,11 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
     entry.indexOf("private static Vector2? FindNativeLocalFarmFixtureTile", helperStart),
   );
   assert.doesNotMatch(helper, /isTilePassable\(artifactTile\)/);
-  assert.match(helper, /candidate => farm\.isTileOnMap\(candidate\) && farm\.isTilePassable\(candidate\)/);
+  assert.doesNotMatch(helper, /farm\.isTilePassable\(candidate\)/, "the standing tile is not answered by the map");
   assert.match(
     helper,
-    /!farm\.IsTileOccupiedBy\(candidate, ~CollisionMask\.Farmers, CollisionMask\.None, useFarmerTile: false\)/,
+    /candidate => StardewBodyController\.IsStandableTile\(farm, Game1\.player, candidate\)/,
+    "the standing tile is the body's answer, which admits her own tile without an exemption and refuses a bush",
   );
 
   const artifactWarpStart = entry.indexOf("if (this.nativeLocalDigArtifactSpotFixturePending");
@@ -1247,13 +1249,21 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
     entry.indexOf("if (this.nativeLocalClearHoeDirtFixturePending", artifactWarpStart),
   );
   assert.doesNotMatch(artifactWarp, /isTilePassable\(artifactPending\.ArtifactTile\)/);
-  assert.match(artifactWarp, /farm\.isTileOnMap\(artifactPending\.StandingTile\)/);
-  assert.match(artifactWarp, /farm\.isTilePassable\(artifactPending\.StandingTile\)/);
+  assert.doesNotMatch(
+    artifactWarp,
+    /farm\.isTilePassable\(artifactPending\.StandingTile\)/,
+    "the tile the warp lands on is not answered by the map's Back layer alone",
+  );
   assert.match(
     artifactWarp,
-    /!farm\.IsTileOccupiedBy\(artifactPending\.StandingTile, ~CollisionMask\.Farmers, CollisionMask\.None, useFarmerTile: false\)/,
+    /StardewBodyController\.IsStandableTile\(farm, e\.Player, artifactPending\.StandingTile\)/,
+    "the landed tile is asked of the body's rule, which is what decides whether she can stand there at all",
   );
-  assert.doesNotMatch(artifactWarp, /\|\| e\.Player\.Tile == artifactPending\.StandingTile/);
+  assert.doesNotMatch(
+    artifactWarp,
+    /\|\| e\.Player\.Tile == artifactPending\.StandingTile/,
+    "the actor's own arrival needs no local exemption: the predicate admits its own tile",
+  );
   assert.doesNotMatch(artifactWarp, /CollisionMask\.All, CollisionMask\.None, useFarmerTile: false/);
 
   assert.doesNotMatch(setup, /isTilePassable\(artifactTile\)/);
@@ -1320,8 +1330,16 @@ test("native-local dig-artifact-spot fixture selects an intact artifact spot and
     executionManager.indexOf("private IReadOnlyList<BridgeArtifactSpotResultTarget>", artifactDiscoveryStart),
   );
   assert.doesNotMatch(artifactDiscovery, /location\.isTilePassable\(pair\.Key\)/);
-  assert.match(artifactDiscovery, /location\.isTilePassable\(standing\)/);
-  assert.match(artifactDiscovery, /\|\| player\.Tile == standing/);
+  assert.doesNotMatch(
+    artifactDiscovery,
+    /location\.isTilePassable\(standing\)/,
+    "the adjacent action tile is not answered by the map's Back layer either",
+  );
+  assert.match(
+    artifactDiscovery,
+    /StardewBodyController\.IsStandableTile\(location, player, standing\)/,
+    "it is answered by the body's rule, whose own-tile admission is why the live target is not hidden",
+  );
   const execution = await readExecutionManagerSources();
   assert.match(execution, /hoe\.UpgradeLevel != 0/);
   assert.match(execution, /basic_hoe_not_equipped_in_requested_slot/);

@@ -759,13 +759,15 @@ public sealed partial class ModEntry : Mod
             || !NativeItemPredicates.IsArtifactSpot(artifact)
             || artifact is StardewValley.Objects.IndoorPot)
             return null;
+        // `IsStandableTile` is the one rule for "may the body stop here": it admits the actor's OWN tile without asking
+        // the collision test (so a live target is not hidden because she already stands on its only action tile), and it
+        // refuses a tile the map's Back layer calls open while a bush or a trellis crop holds it.
         return new[]
         {
             artifactTile + new Vector2(-1f, 0f), artifactTile + new Vector2(1f, 0f),
             artifactTile + new Vector2(0f, -1f), artifactTile + new Vector2(0f, 1f),
         }
-        .Where(candidate => farm.isTileOnMap(candidate) && farm.isTilePassable(candidate)
-            && !farm.IsTileOccupiedBy(candidate, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
+        .Where(candidate => StardewBodyController.IsStandableTile(farm, Game1.player, candidate))
         .Cast<Vector2?>()
         .FirstOrDefault();
     }
@@ -811,9 +813,9 @@ public sealed partial class ModEntry : Mod
                 target + new Vector2(0f, -1f), target + new Vector2(0f, 1f),
             };
             Vector2[] validStanding = cardinal
-                .Where(standing => farm.isTileOnMap(standing)
-                    && farm.isTilePassable(standing)
-                    && !farm.IsTileOccupiedBy(standing, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)
+                // The body's answer, not the map's: this tile becomes the one standing place the whole recovery chain
+                // runs from, so a bush or a trellis crop on it is a refusal now rather than a stalled step later.
+                .Where(standing => StardewBodyController.IsStandableTile(farm, Game1.player, standing)
                     && Math.Max(Math.Abs(standing.X - cropTile.X), Math.Abs(standing.Y - cropTile.Y)) <= 1)
                 .ToArray();
             if (validStanding.Length == 1) return (target, validStanding[0]);
@@ -829,9 +831,9 @@ public sealed partial class ModEntry : Mod
             for (int y = bin.tileY.Value - 1; y <= bin.tileY.Value + bin.tilesHigh.Value; y++)
             {
                 Vector2 tile = new(x, y);
-                if (!farm.isTileOnMap(tile) || !farm.isTilePassable(tile))
-                    continue;
-                if (farm.IsTileOccupiedBy(tile, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))
+                // The bin's own footprint and the ring around it are asked of the body's rule; the map-only reading
+                // called the bin's ground open because buildings are not on its Back layer.
+                if (!StardewBodyController.IsStandableTile(farm, Game1.player, tile))
                     continue;
                 candidates.Add(tile);
             }
@@ -1575,9 +1577,8 @@ public sealed partial class ModEntry : Mod
                 && string.Equals(farm.NameOrUniqueName, crabPotPending.FarmName, StringComparison.Ordinal)
                 && !IsExcludedCrabPotLocation(farm)
                 && StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, (int)crabPotPending.TargetTile.X, (int)crabPotPending.TargetTile.Y)
-                && farm.isTileOnMap(crabPotPending.StandingTile)
-                && farm.isTilePassable(crabPotPending.StandingTile)
-                && !farm.IsTileOccupiedBy(crabPotPending.StandingTile, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)
+                // The tile she is placed on, answered by the rule that decides whether she may stand there at all.
+                && StardewBodyController.IsStandableTile(farm, e.Player, crabPotPending.StandingTile)
                 && e.Player.Items.Count(item => ReferenceEquals(item, crabPotPending.CrabPot)) == 1
                 && crabPotPending.CrabPot.QualifiedItemId == "(O)710"
                 && crabPotPending.CrabPot.Stack == crabPotPending.CrabPotStack
@@ -1606,9 +1607,7 @@ public sealed partial class ModEntry : Mod
                 && farm.terrainFeatures.ContainsKey(artifactPending.ArtifactTile) == false
                 && farm.GetHoeDirtAtTile(artifactPending.ArtifactTile) is null
                 && artifact is not StardewValley.Objects.IndoorPot
-                && farm.isTileOnMap(artifactPending.StandingTile)
-                && farm.isTilePassable(artifactPending.StandingTile)
-                && !farm.IsTileOccupiedBy(artifactPending.StandingTile, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)
+                && StardewBodyController.IsStandableTile(farm, e.Player, artifactPending.StandingTile)
                 && e.Player.Items.OfType<Hoe>().Count() == 1
                 && e.Player.Items.OfType<Hoe>().Single().UpgradeLevel == 0)
             {
@@ -1626,7 +1625,7 @@ public sealed partial class ModEntry : Mod
             int diagnosticHoeCount = e.Player.Items.OfType<Hoe>().Count();
             bool diagnosticBasicHoe = diagnosticHoeCount == 1
                 && e.Player.Items.OfType<Hoe>().Single().UpgradeLevel == 0;
-            this.Monitor.Log($"[DEBUG-artifact-fixture] player_is_game1_player={e.Player == Game1.player}; new_location_is_farm={diagnosticFarm is not null}; farm_name_equal={diagnosticFarm is not null && string.Equals(diagnosticFarm.NameOrUniqueName, artifactPending.FarmName, StringComparison.Ordinal)}; source_count={(diagnosticFarm?.objects.Pairs.Count(pair => pair.Value.QualifiedItemId == "(O)590") ?? 0)}; source_present_at_expected_tile={diagnosticArtifact is not null}; source_qid_is_590={diagnosticArtifact?.QualifiedItemId == "(O)590"}; source_on_map={diagnosticArtifact is not null && diagnosticFarm!.isTileOnMap(artifactPending.ArtifactTile)}; source_terrain_absent={diagnosticFarm is not null && !diagnosticFarm.terrainFeatures.ContainsKey(artifactPending.ArtifactTile)}; source_hoedirt_absent={diagnosticFarm is not null && diagnosticFarm.GetHoeDirtAtTile(artifactPending.ArtifactTile) is null}; source_indoor_pot={diagnosticArtifact is StardewValley.Objects.IndoorPot}; standing_on_map={diagnosticFarm is not null && diagnosticFarm.isTileOnMap(artifactPending.StandingTile)}; standing_passable={diagnosticFarm is not null && diagnosticFarm.isTilePassable(artifactPending.StandingTile)}; standing_occupied_use_farmer_tile_false={diagnosticFarm is not null && diagnosticFarm.IsTileOccupiedBy(artifactPending.StandingTile, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)}; hoe_count={diagnosticHoeCount}; basic_hoe={diagnosticBasicHoe}; player_tile={(int)e.Player.Tile.X},{(int)e.Player.Tile.Y}; expected_standing_tile={(int)artifactPending.StandingTile.X},{(int)artifactPending.StandingTile.Y}.", LogLevel.Error);
+            this.Monitor.Log($"[DEBUG-artifact-fixture] player_is_game1_player={e.Player == Game1.player}; new_location_is_farm={diagnosticFarm is not null}; farm_name_equal={diagnosticFarm is not null && string.Equals(diagnosticFarm.NameOrUniqueName, artifactPending.FarmName, StringComparison.Ordinal)}; source_count={(diagnosticFarm?.objects.Pairs.Count(pair => pair.Value.QualifiedItemId == "(O)590") ?? 0)}; source_present_at_expected_tile={diagnosticArtifact is not null}; source_qid_is_590={diagnosticArtifact?.QualifiedItemId == "(O)590"}; source_on_map={diagnosticArtifact is not null && diagnosticFarm!.isTileOnMap(artifactPending.ArtifactTile)}; source_terrain_absent={diagnosticFarm is not null && !diagnosticFarm.terrainFeatures.ContainsKey(artifactPending.ArtifactTile)}; source_hoedirt_absent={diagnosticFarm is not null && diagnosticFarm.GetHoeDirtAtTile(artifactPending.ArtifactTile) is null}; source_indoor_pot={diagnosticArtifact is StardewValley.Objects.IndoorPot}; standing_on_map={diagnosticFarm is not null && diagnosticFarm.isTileOnMap(artifactPending.StandingTile)}; standing_standable={diagnosticFarm is not null && StardewBodyController.IsStandableTile(diagnosticFarm, e.Player, artifactPending.StandingTile)}; standing_occupied_use_farmer_tile_false={diagnosticFarm is not null && diagnosticFarm.IsTileOccupiedBy(artifactPending.StandingTile, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)}; hoe_count={diagnosticHoeCount}; basic_hoe={diagnosticBasicHoe}; player_tile={(int)e.Player.Tile.X},{(int)e.Player.Tile.Y}; expected_standing_tile={(int)artifactPending.StandingTile.X},{(int)artifactPending.StandingTile.Y}.", LogLevel.Error);
             this.nativeLocalDigArtifactSpotFixturePending = null;
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture setup failed: scenario=native_dig_artifact_spot_v1; error=fixture_native_local_artifact_spot_approach_unreachable; exception_type=InvalidOperationException.", LogLevel.Error);
@@ -1703,10 +1702,10 @@ public sealed partial class ModEntry : Mod
                 && string.Equals(farm.NameOrUniqueName, hoeDirtPending.FarmName, StringComparison.Ordinal)
                 && farm.terrainFeatures.TryGetValue(hoeDirtPending.DirtTile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
                 && feature is StardewValley.TerrainFeatures.HoeDirt { crop: null }
-                && farm.isTileOnMap(hoeDirtPending.StandingTile)
-                // The just-warped Player now occupies this prevalidated tile;
-                // do not reject the pending setup because of its own arrival.
-                && farm.isTilePassable(hoeDirtPending.StandingTile))
+                // The just-warped Player now occupies this prevalidated tile. `IsStandableTile` admits the actor's own
+                // tile without asking the collision test, so the arrival needs no exemption - and the tile's answer is
+                // the planner's, not the map's.
+                && StardewBodyController.IsStandableTile(farm, e.Player, hoeDirtPending.StandingTile))
             {
                 e.Player.Position = hoeDirtPending.StandingTile * Game1.tileSize;
                 this.nativeLocalClearHoeDirtFixturePending = null;
@@ -2822,7 +2821,9 @@ public sealed partial class ModEntry : Mod
                     continue;
                 foreach ((int nx, int ny) in new[] { (x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1) })
                 {
-                    if (nx < 0 || ny < 0 || nx > 1000 || ny > 1000 || !location.isTilePassable(new xTile.Dimensions.Location(nx, ny), Game1.viewport))
+                    // The ref binds the neighbour she will stand on, so the body's rule decides it. The water tile
+                    // itself needs no clause: `CanRefillWateringCanOnTile` already found it.
+                    if (!StardewBodyController.IsStandableTile(location, player, new Vector2(nx, ny)))
                         continue;
                     candidates.Add(new SceneAffordanceSource(
                         SceneAffordanceKind.WaterSource,
@@ -3034,8 +3035,7 @@ public sealed partial class ModEntry : Mod
             animal.Tile + new Vector2(1f, 0f), animal.Tile + new Vector2(0f, -1f),
         })
         {
-            if (!house.isTileOnMap(candidate) || !house.isTilePassable(candidate)
-                || house.IsTileOccupiedBy(candidate, CollisionMask.All, CollisionMask.None, useFarmerTile: false))
+            if (!StardewBodyController.IsStandableTile(house, Game1.player, candidate))
                 continue;
             standingTile = candidate;
             return true;

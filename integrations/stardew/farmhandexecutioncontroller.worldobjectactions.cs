@@ -244,12 +244,14 @@ internal sealed partial class ExecutionManager
         bool tilePlaceable = Utility.playerCanPlaceItemHere(location, source, targetX * 64 + 32, targetY * 64 + 32, Game1.player)
             && source.canBePlacedHere(location, tile);
         if (!tilePlaceable)
+            // Two different facts, and the refusal names both: `map_passable` is the map layer the placement arm reads,
+            // `body_standable` is whether she may stand there at all - the map calls a bush tile open ground.
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 "place_owned_object_tile_not_placeable",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};slot={slot};item={source.QualifiedItemId};tile_index={location.getTileIndexAt(targetX, targetY, "Back")};passable={location.isTilePassable(tile).ToString().ToLowerInvariant()}");
+                $"target={targetX},{targetY};location={location.NameOrUniqueName};slot={slot};item={source.QualifiedItemId};tile_index={location.getTileIndexAt(targetX, targetY, "Back")};map_passable={location.isTilePassable(tile).ToString().ToLowerInvariant()};body_standable={StardewBodyController.IsStandableTile(location, Game1.player, tile).ToString().ToLowerInvariant()}");
 
         int beforeCount = CountQualifiedItem(Game1.player, source.QualifiedItemId);
         // The tile's own terrain feature is read before the call so the receipt can name the

@@ -3890,13 +3890,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 && location.GetHoeDirtAtTile(pair.Key) is null
                 && pair.Value is not StardewValley.Objects.IndoorPot
                 && new[] { pair.Key + new Vector2(-1f, 0f), pair.Key + new Vector2(1f, 0f), pair.Key + new Vector2(0f, -1f), pair.Key + new Vector2(0f, 1f) }
-                    .Any(standing => location.isTileOnMap(standing) && location.isTilePassable(standing)
-                        // The current player may legally occupy the only
-                        // adjacent action tile. Do not hide that exact live
-                        // target merely because the occupancy query observes
-                        // the player already standing there.
-                        && (!location.IsTileOccupiedBy(standing, CollisionMask.All, CollisionMask.None, useFarmerTile: false)
-                            || player.Tile == standing)))
+                    // `IsStandableTile` is the one rule for "may the body stop here", and it admits the actor's OWN
+                    // tile without asking the collision test: a live target is not hidden because she already stands
+                    // on its only action tile. A neighbour the map calls open while a bush or a trellis crop holds it
+                    // is refused, which the map-only reading could not see.
+                    .Any(standing => StardewBodyController.IsStandableTile(location, player, standing)))
             // Keep the published list bounded, but make its cap deterministic
             // so a fixture-selected source is always discoverable when it is
             // within the existing eight-target publication boundary.
@@ -4879,9 +4877,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             && !farm.objects.ContainsKey(tile)
             && Utility.playerCanPlaceItemHere(farm, source, (int)tile.X * 64 + 32, (int)tile.Y * 64 + 32, Game1.player)
             && source.canBePlacedHere(farm, tile)
+            // The fence tile itself must be passable MAP ground, which is the engine's own placement requirement and
+            // stays a map read. Whether the body can stand beside it is a different question, and the stance below
+            // answers that one with the planner's rule.
             && farm.isTilePassable(tile)
             && new[] { tile + new Vector2(1f, 0f), tile + new Vector2(-1f, 0f), tile + new Vector2(0f, 1f), tile + new Vector2(0f, -1f) }
-                .Any(stance => farm.isTileOnMap(stance) && farm.isTilePassable(stance) && !farm.objects.ContainsKey(stance));
+                .Any(stance => StardewBodyController.IsStandableTile(farm, Game1.player, stance));
     }
 
     private static string BuildWoodFenceTargetId(Farm farm, int slot, int x, int y)

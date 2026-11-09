@@ -282,7 +282,10 @@ private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
             // arrangement it anchors. Every other class still counts, so objects,
             // terrain features, buildings and characters (NPCs, pets) still
             // disqualify a candidate.
-            if (!location.isTileOnMap(tile) || !location.isTilePassable(tile)
+            //
+            // The first clause is the PLANNER's admission rather than the map's: the Given is a line the A* will step
+            // on, and `isTilePassable` called a trellis crop open ground while `isCollidingPosition` refused it.
+            if (!StardewBodyController.IsWalkableTile(location, Game1.player, tile)
                 || location.objects.ContainsKey(tile)
                 || location.terrainFeatures.ContainsKey(tile)
                 || location.IsTileOccupiedBy(tile, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false))

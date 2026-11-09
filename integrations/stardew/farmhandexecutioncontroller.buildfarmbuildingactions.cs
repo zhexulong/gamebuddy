@@ -368,7 +368,12 @@ internal sealed partial class ExecutionManager
     {
         Rectangle buildableRectangle = location.GetBuildableRectangle();
         if (buildableRectangle != Rectangle.Empty && !buildableRectangle.Contains((int)tile.X, (int)tile.Y)) return false;
-        return location.isTilePassable(tile) && !location.IsTileOccupiedBy(tile, CollisionMask.All, CollisionMask.All);
+        // `isTilePassable` is the engine's own placement arm - map ground, not a body - so it stays. Whether the body
+        // may stand on the same tile is a different question (a human door behind a bush strands the farmer the
+        // building is for), and `IsWalkableTile` is the one place the Mod asks it.
+        return location.isTilePassable(tile)
+            && StardewBodyController.IsWalkableTile(location, Game1.player, tile)
+            && !location.IsTileOccupiedBy(tile, CollisionMask.All, CollisionMask.All);
     }
 
     /// <summary>

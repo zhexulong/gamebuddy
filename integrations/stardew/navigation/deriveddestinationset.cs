@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Xna.Framework;
 using StardewValley;
 using StardewValley.GameData.Characters;
 using StardewValley.GameData.Locations;
@@ -375,9 +376,10 @@ internal sealed class DerivedDestinationSet
         reasonCode = "farm_water_unavailable";
         // Surrounding Standable Set: a water tile itself is impassable; the
         // landmark is only valid while at least one eligible water tile has a
-        // passable neighbor the Farmhand can stand on. The set is derived from
-        // CanRefillWateringCanOnTile + isTilePassable so discovery and arrival
-        // can never target the water tile. Scan only the loaded map bounds.
+        // neighbour the Farmhand may stand on. The set is derived from
+        // CanRefillWateringCanOnTile + `IsStandableTile` - the body's own rule,
+        // not the map's - so discovery and arrival can never target the water
+        // tile and can never bind a neighbour the engine would refuse.
         if (farm.map is null || farm.map.Layers.Count == 0)
             return false;
         int width = farm.map.Layers[0].LayerWidth;
@@ -391,8 +393,9 @@ internal sealed class DerivedDestinationSet
                     continue;
                 foreach ((int nx, int ny) in new[] { (x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1) })
                 {
-                    if (nx >= 0 && ny >= 0 && nx < width && ny < height
-                        && farm.isTilePassable(new xTile.Dimensions.Location(nx, ny), Game1.viewport))
+                    // The neighbour is where the body stands, so its answer is the planner's: a bush at the pond's
+                    // edge reads as passable ground to the map's Back layer and is a step the engine refuses.
+                    if (StardewBodyController.IsStandableTile(farm, Game1.player, new Vector2(nx, ny)))
                     {
                         hasStandableWaterEdge = true;
                         break;
