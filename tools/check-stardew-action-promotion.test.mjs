@@ -85,7 +85,7 @@ test("promotion checker accepts the Mod-owned registration projection", () => {
 test("promotion checker rejects a Bridge hello that stops projecting Mod registrations", () => {
   const failures = failuresFor({
     bridgeSession: sources.bridgeSession.replace(
-      "FarmhandActionCatalog.Registrations.Select(registration => new FarmhandActionRegistrationWire(",
+      "FarmhandActionCatalog.Registrations.Concat(FarmhandPlanFormCatalog.Registrations).Select(registration => new FarmhandActionRegistrationWire(",
       "Array.Empty<FarmhandActionRegistration>().Select(registration => new FarmhandActionRegistrationWire(",
     ),
   });

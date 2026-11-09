@@ -449,7 +449,10 @@ function assertUnique(values, label, failures) {
 function findMissingBridgeHelloAdvertisements(source, expectedActionIds) {
   // Registration identity is Mod-owned. The authenticated hello must project
   // that catalog directly rather than reproduce a Host-side action list.
-  return /FarmhandActionCatalog\.Registrations\.Select\(registration\s*=>\s*new FarmhandActionRegistrationWire\(/.test(
+  // The Mod owns TWO registration catalogs - the published actions and the plan FORMS (a form is admitted as a program
+  // node but is never dispatched as an action) - and the hello projects both through the one wire shape, so this marks
+  // the projection of both rather than of the action list alone.
+  return /FarmhandActionCatalog\.Registrations\.Concat\(FarmhandPlanFormCatalog\.Registrations\)\.Select\(\s*registration\s*=>\s*new\s+FarmhandActionRegistrationWire\(/u.test(
     source,
   )
     ? []
