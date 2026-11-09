@@ -15,6 +15,12 @@
  */
 import { spawnSync } from "node:child_process";
 import { cleanOutputLines } from "../lib/subprocess-output.mjs";
+import {
+  assessResultFreshness,
+  assertResultLabel,
+  planResultFile,
+  supersededResultName,
+} from "../lib/live-run-bundle.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -24,6 +30,9 @@ const dryRun = args.includes("--dry-run");
 const skipBuild = args.includes("--no-build");
 const labelIndex = args.indexOf("--label");
 const label = labelIndex >= 0 ? args[labelIndex + 1] : "loop";
+// Validated at parse time, not at launch time: this is a path component, and the earlier the refusal the less work an
+// invalid label can set in motion (a build, a fixture transaction).
+assertResultLabel(label);
 
 /**
  * The fixture save both the fixture profile and the launcher name, read from the binding that owns it.
@@ -216,6 +225,28 @@ if (!dryRun && RUNTIME_ROOT !== null) {
 if (!dryRun) delete process.env.MAGIC_CONTEXT_STORAGE_DIR;
 
 const env = { ...process.env, GAMEBUDDY_LADDER_WINDOW_MODE: "foreground" };
+
+// The launcher names its bundle after the label, so the label is a path component. It used to be taken from argv
+// verbatim, which means `--label ../../x` could have written - or, if a future cleanup deleted it, erased - a file
+// outside `tools/`. The pattern is what `launch-ladder-live.mjs` itself accepts, so validating here rejects nothing
+// that would have worked.
+const resultName = `_${SCENARIO}-${label}.result.json`;
+const resultPath = planResultFile({ repo, scenario: SCENARIO, label });
+
+// A previous attempt's bundle is MOVED ASIDE, never deleted: this file is the only record of a run that may have cost
+// 34 minutes, and a review found the launcher reading an old one as if it were this attempt's (round40 attempt 1
+// answered `crossings 0 of 2` after attempt 2 had crossed both nights). Renaming keeps the evidence and removes the
+// hazard; deletion would have removed both.
+if (!dryRun && fs.existsSync(resultPath)) {
+  const stat = fs.lstatSync(resultPath);
+  if (!stat.isFile() || stat.isSymbolicLink())
+    throw new Error(`refusing to move a non-regular result aside: ${resultPath}`);
+  const aside = supersededResultName(resultPath, Date.now());
+  fs.renameSync(resultPath, aside);
+  console.log(`\nprevious bundle moved aside: ${path.basename(aside)}`);
+}
+
+const launchedAtMs = Date.now();
 if (!dryRun) {
   process.stdout.write(`\n$ node tools/live-run/game/launch-ladder-live.mjs --scenario ${SCENARIO} --label ${label}\n`);
   const launched = spawnSync(
@@ -239,10 +270,19 @@ if (!dryRun) {
 }
 
 // 5. REPORT what the run says, and stop. Interpreting it is the reader's job.
-const result = path.join(repo, "tools", `_${SCENARIO}-${label}.result.json`);
+const result = resultPath;
 if (!fs.existsSync(result)) {
   console.log(`\nno result at ${path.relative(repo, result)} - the launcher did not finish`);
   process.exit(0);
+}
+// Freshness is the second half of the same defect: a bundle this launch did not write is not this run's answer,
+// whatever it says. Both decisions live in `tools/lib/live-run-bundle.mjs` so they can be asserted.
+const freshness = assessResultFreshness({ mtimeMs: fs.statSync(result).mtimeMs, launchedAtMs });
+if (!dryRun && !freshness.fresh) {
+  console.log(
+    `\nstale_result_precedes_launch: ${path.basename(result)} was written ${String(Math.round(freshness.behindMs / 1000))}s before this attempt started`,
+  );
+  process.exit(2);
 }
 const parsed = JSON.parse(fs.readFileSync(result, "utf8"));
 const multiday = parsed.multiday ?? {};
