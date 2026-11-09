@@ -372,7 +372,10 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                     receipt.Evidence,
                     $"route_reentrant_terminal:state={receipt.State}:request={receipt.RequestId}:revision={receipt.Revision}");
             case BodyProgramNodeOutcome.Cancelled:
-                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Cancelled, Array.Empty<RuntimeFact>(), null, null, null, receipt.ReasonCode);
+                // A cancellation is still a settlement, and the receipt that produced one may state why (`Invalidated`
+                // arrives here through the default arm below). Its reason detail belongs on the node; its evidence does
+                // not, because nothing was proved.
+                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Cancelled, Array.Empty<RuntimeFact>(), null, null, null, receipt.ReasonCode, null, receipt.Evidence);
             case BodyProgramNodeOutcome.Uncertain:
                 // A terminal the action minted: it ran, and its own postcondition could not confirm the effect. It must
                 // NOT be retried (the side effect may already exist), so it settles the node as the unknown it is. Its
@@ -390,7 +393,13 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 // reached the companion as a bare `Failed` and it re-sent the same doomed node; the reason is a statement
                 // about why nothing happened, not proof that something did, so it cannot be confused with the evidence
                 // the success path requires.
-                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null, receipt.ReasonCode, receipt.Hint);
+                //
+                // The receipt's EVIDENCE travels too - as `RefusalDetail`, never as `Evidence`. That is the whole of
+                // round41's defect: `shop_purchase` refused `shop_counter_out_of_reach` six times while
+                // `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1` sat in this receipt, and the model received the
+                // reason code alone and invented the world fact it needed. ADR-006's ban is on evidence for a node that
+                // claims no effect; a reason detail is the same statement the reason code makes, one level down.
+                return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null, receipt.ReasonCode, receipt.Hint, receipt.Evidence);
         }
     }
 

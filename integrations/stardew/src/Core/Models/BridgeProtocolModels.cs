@@ -281,6 +281,20 @@ public sealed record BridgeWateringCanFact(int Slot, string QualifiedItemId, str
 public sealed record BridgeRefillWateringCanTarget(string TargetId, int X, int Y);
 
 /// <summary>
+/// One tile the ENGINE says a rod may be cast at, from the same two questions <c>FishingRod.DoFunction</c> gates a cast
+/// on (<c>FishingRod.cs:411</c>): <c>location.canFishHere()</c> and <c>location.isTileFishable(x, y)</c>. Discovery asks
+/// them once per tile, so the family cannot drift from the predicate the cast itself re-asks.
+///
+/// <para>
+/// <see cref="TargetId"/> is the address <c>fish_here</c> takes as <c>expectedTargetId</c>, recomputed by the handler from
+/// the same location identity and tile. A row therefore does not promise a FISH: which fish swims here is decided by the
+/// engine inside <c>GameLocation.getFish</c> at the bite, from weather, season, time, depth and skill, and nothing in this
+/// family participates in that.
+/// </para>
+/// </summary>
+public sealed record BridgeWaterTarget(string TargetId, int X, int Y);
+
+/// <summary>
 /// One interaction point the MAP ITSELF fixes at a tile: a mine level's ladder, a shop counter, a
 /// television. Not an entity, and not a warp: it has no <c>location.objects</c> row and no
 /// <c>location.warps</c> entry, so a radius-bounded entity discovery can never publish it.
@@ -938,7 +952,11 @@ public sealed record BridgeSnapshot(
     // count the cap left out beside it. Null means NOT MEASURED; an empty array is the measured answer "she holds no
     // plantable seed", exactly as `soilTiles` null differs from `soilTiles: []`.
     IReadOnlyList<BridgeSeedSupplyTarget>? SeedSupplyTargets = null,
-    int? SeedSupplyTargetsOmitted = null);
+    int? SeedSupplyTargetsOmitted = null,
+    // The tiles this location's own engine predicates say a rod may be cast at - the discovery projection `fish_here`'s
+    // expectedTargetId comes from. Published only while `fish_here` is advertised. Defaulted and LAST for the same reason
+    // as its siblings above: the positional list is already closed by the parameters before them.
+    IReadOnlyList<BridgeWaterTarget>? WaterTargets = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,
@@ -1514,6 +1532,32 @@ string? FailureCode = null,
 /// computed and dropped. Bounded and omitted when null, so the wire shape only grows for a node that has one.
 /// </para>
 string? Hint = null,
+/// <summary>
+/// WHY a node settled without succeeding, in the refusing layer's OWN words - the part of the receipt's evidence a caller
+/// could act on, carried as a reason detail rather than as proof of an effect.
+///
+/// <para>
+/// Measured 2026-11-01 (`round41`): `shop_purchase` answered `shop_counter_out_of_reach` six times while the Mod's receipt
+/// held `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1`; the model got
+/// `{"reasonCode":"shop_counter_out_of_reach","actionId":"shop_purchase"}`, invented the world fact and retried. Every
+/// one of that round's 94 `program_status` replies carried no evidence and no detail at all.
+/// </para>
+/// <para>
+/// Legal only on `failed`/`cancelled`/`rejected` and NEVER on `succeeded`, which is the shape ADR-006 already gives
+/// `FailureCode`: it names an absence of effect, and the states that prove an effect may not also describe its absence.
+/// Omitted when null, so a node without one keeps the wire shape it had.
+/// </para>
+string? RefusalDetail = null,
+/// <summary>
+/// The journal's own `RecoveryDiagnostic` for a node whose outcome cannot be determined (`execution_uncertain`,
+/// `recovery_required`).
+///
+/// <para>
+/// The journal held it and the wire did not publish it, so `recovery_required` reached a caller as a state with no reason
+/// at all - and a Host that then had to say "no reason" would be saying something it already knew to be false. Legal only
+/// on `recovery_required`; omitted when null.
+/// </para>
+string? RecoveryDiagnostic = null,
 /// <summary>
 /// The action this node runs, from the journal's own <see cref="VerifiedBodyProgramNode.ActionId"/>.
 ///

@@ -64,7 +64,8 @@ public sealed class BodyProgramJournalFreezeTests
         "diagnostic-1",
         "policy_denied",
         "row_target_identity_unavailable:plant_seed:seedtargets",
-        "refused=2;row_target_identity_unavailable:plant_seed:seedtargets=2");
+        "refused=2;row_target_identity_unavailable:plant_seed:seedtargets=2",
+        "owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1");
 
     private static BodyProgramJournalState State(BodyProgramJournalNode node) => new(
         BodyProgramJournalPersistence.SchemaVersion,

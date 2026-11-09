@@ -275,6 +275,18 @@ interface PlanNodeAnswer {
   readonly reasonCode?: string;
   /** Where to go instead, when the reason was that the target had no route. */
   readonly hint?: string;
+  /**
+   * WHY, in the Mod's own words - the receipt's evidence for a node that settled without succeeding, carried verbatim.
+   *
+   * Present on every node whose state is not `succeeded`, because a settlement without a reason is the silence this
+   * field exists to end: when the Mod sent none the row says `unknown_reason:<state>` rather than omitting the key, so
+   * "the Mod had nothing more to say" and "the Host forgot to ask" cannot be the same answer. Absent on `succeeded`,
+   * which proves the effect instead.
+   *
+   * Never re-rendered and never summarised: `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1` is what the refusing
+   * layer wrote, and a Host that reformatted it into prose would be a second author of a fact it did not observe.
+   */
+  readonly reasonDetail?: string;
   /** The tile the node acts on, when its arguments name one - the coordinate a refusal is read against. */
   readonly tile?: Readonly<{ x: number; y: number }>;
   /**
@@ -363,6 +375,7 @@ export function planBatchAnswer(
     const state = row?.state ?? PLAN_NODE_STATE_UNREADABLE;
     const reasonCode = row?.rejectionCode ?? row?.failureCode ?? null;
     const hint = row?.hint ?? null;
+    const reasonDetail = planNodeReasonDetail(state, row?.refusalDetail ?? null, row?.recoveryDiagnostic ?? null);
     const tile = planNodeTile(node.arguments);
     const clock = NODE_STATES_SETTLED.has(state) ? undefined : elapsed.get(node.nodeId);
     const skippedBecause = state === "skipped_dependency" ? producersThatSkipped(node.dependsOn, journal) : [];
@@ -372,6 +385,7 @@ export function planBatchAnswer(
       state,
       ...(reasonCode === null ? {} : { reasonCode }),
       ...(hint === null ? {} : { hint }),
+      ...(reasonDetail === null ? {} : { reasonDetail }),
       ...(tile === undefined ? {} : { tile }),
       ...(clock === undefined ? {} : { elapsedMs: clock }),
       ...(skippedBecause.length === 0 ? {} : { skippedBecause }),
@@ -379,6 +393,37 @@ export function planBatchAnswer(
   });
   const remaining = nodes.filter((node) => !NODE_STATES_SETTLED.has(node.state)).length;
   return Object.freeze({ nodes: Object.freeze(nodes), settled: remaining === 0, remaining });
+}
+
+/**
+ * WHY a node settled, as the row states it: the Mod's own detail, else the state it stopped in.
+ *
+ * <para>
+ * `null` means exactly one thing - the node `succeeded` - and every other state, including the Host's own `unknown` for a
+ * node the journal did not list, answers a string. That is deliberate. `round41` measured the whole defect this closes:
+ * `shop_purchase` refused `shop_counter_out_of_reach` six times while the Mod's receipt held
+ * `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1`, the model read only the code, and it invented the world fact it
+ * needed. Ninety-four `program_status` replies in that round carried no `evidence` and no `detail` at all.
+ * </para>
+ * <para>
+ * `unknown_reason:<state>` is therefore the placeholder for "the reason side of this frame is empty", and it must stay
+ * IMPOSSIBLE to omit: a row that simply dropped the key would be indistinguishable from one whose refusal carried no
+ * detail, and the difference between "the Mod said nothing" and "there was nothing to say" is the difference between a
+ * bug and a success. It never coexists with a real detail, because the two are arms of one `??` chain.
+ * </para>
+ * <para>
+ * `recoveryDiagnostic` is consulted for the same reason: the journal's own `execution_uncertain` did not use to reach the
+ * wire, so `recovery_required` would otherwise answer `unknown_reason:recovery_required` - a second lie about a state the
+ * Mod had already explained.
+ * </para>
+ */
+export function planNodeReasonDetail(
+  state: string,
+  refusalDetail: string | null,
+  recoveryDiagnostic: string | null,
+): string | null {
+  if (state === "succeeded") return null;
+  return refusalDetail ?? recoveryDiagnostic ?? `unknown_reason:${state}`;
 }
 
 /**
@@ -415,6 +460,8 @@ type PlanJournalNode = Readonly<{
   rejectionCode?: string | null;
   failureCode?: string | null;
   hint?: string | null;
+  refusalDetail?: string | null;
+  recoveryDiagnostic?: string | null;
 }>;
 
 /**
@@ -437,6 +484,8 @@ function readPlanJournalNodes(snapshot: unknown): readonly PlanJournalNode[] {
         rejectionCode: typeof entry.rejectionCode === "string" ? entry.rejectionCode : null,
         failureCode: typeof entry.failureCode === "string" ? entry.failureCode : null,
         hint: typeof entry.hint === "string" ? entry.hint : null,
+        refusalDetail: typeof entry.refusalDetail === "string" ? entry.refusalDetail : null,
+        recoveryDiagnostic: typeof entry.recoveryDiagnostic === "string" ? entry.recoveryDiagnostic : null,
       }),
     );
   }

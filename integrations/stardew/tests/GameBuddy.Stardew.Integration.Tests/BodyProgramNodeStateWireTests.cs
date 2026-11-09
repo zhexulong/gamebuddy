@@ -84,4 +84,50 @@ public sealed class BodyProgramNodeStateWireTests
         // downstream as a condition.
         BridgeProtocol.TrySerialize(new BridgeBodyProgramStatusResult("found", projected), out _, out _).Should().BeFalse();
     }
+
+    /// <summary>
+    /// One projection, two spellings - and they must not drift.
+///
+/// <para>
+/// A node reaches the wire through `BridgeSession.NodeStatus` (what the running game answers `program_status` with) or
+/// through `BridgeProtocol.ProjectBodyProgramStatusSnapshot` (the Core-side projection). Two implementations of one fact
+/// is already one too many; the risk is that a field is added to one of them and the answer then depends on which caller
+/// asked. `Hint` was exactly that: the journal held it, one projection read it, and a failed `for_each` pass stated its
+/// per-reason counts to nobody.
+/// </para>
+/// <para>
+/// The population is every reason field a node can carry, on a node that carries all of them at once - so a field added to
+/// `BodyProgramJournalNode` and projected by only one side fails here by name once it is wired in.
+/// </para>
+/// </summary>
+[Fact]
+public void TheSessionProjectionAndTheProtocolProjectionAnswerTheSameNode()
+{
+    var snapshot = new BodyProgramStatusSnapshot("program_1", BodyProgramState.RecoveryRequired, 7, 2, 11,
+        new[]
+        {
+            new BodyProgramJournalNode("n01", BodyProgramNodeState.Failed, 3, 4, null, null,
+                FailureCode: "shop_counter_out_of_reach", Hint: "closest=4,19", RefusalDetail: "owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1"),
+            new BodyProgramJournalNode("n02", BodyProgramNodeState.Rejected, 3, 4, null, null, RejectionCode: "policy_denied"),
+            new BodyProgramJournalNode("n03", BodyProgramNodeState.RecoveryRequired, 3, 4, null, null, RecoveryDiagnostic: "execution_uncertain"),
+            new BodyProgramJournalNode("n04", BodyProgramNodeState.Succeeded, 3, 4, null, null),
+        },
+        new[]
+        {
+            new BodyProgramNodeWork("n01", "shop_purchase", null, null),
+            new BodyProgramNodeWork("n02", "plant_seed", 4, 7),
+            new BodyProgramNodeWork("n03", "till_soil", 5, 7),
+            new BodyProgramNodeWork("n04", "water_crop", 6, 7),
+        });
+
+    BridgeBodyProgramStatusSnapshot session = BridgeSession.ToBridgeSnapshot(snapshot)!;
+    BridgeBodyProgramStatusSnapshot protocol = BridgeProtocol
+        .ProjectBodyProgramStatusResult(new BodyProgramStatusResult(BodyProgramQueryCode.Found, snapshot)).Snapshot!;
+
+    protocol.Should().BeEquivalentTo(session, "two projections of one journal must be one answer");
+    protocol.Nodes.Should().HaveCount(4);
+    protocol.Nodes.Select(node => node.RefusalDetail).Should().Equal(
+        "owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1", null, null, null);
+    protocol.Nodes.Select(node => node.RecoveryDiagnostic).Should().Equal(null, null, "execution_uncertain", null);
+    }
 }

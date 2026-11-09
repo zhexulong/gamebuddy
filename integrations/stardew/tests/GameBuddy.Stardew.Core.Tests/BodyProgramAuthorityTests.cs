@@ -526,9 +526,79 @@ public sealed class BodyProgramAuthorityTests
         BodyProgramJournalPersistence.TryValidate(authority.Snapshot, out string? refusal).Should().BeTrue(refusal);
     }
 
+     /// <summary>
+     /// A refused node owes the caller the refusing layer's OWN sentence, and owes it without presenting proof of an effect.
+     ///
+     /// <para>
+     /// Measured 2026-11-01 (`round41`): `shop_purchase` refused `shop_counter_out_of_reach` six times while the Mod's
+     /// receipt held `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1`; the model received the code alone and invented
+     /// the world fact it needed. ADR-006 (`:175`) forbids EVIDENCE here, and this is not that - it is the same statement the
+     /// reason code makes, one level down - so it lives in its own field instead of dissolving the ADR.
+     /// </para>
+     /// </summary>
      [Fact]
-     public void ReopenRejectsPersistedFactWithTamperedOutputKind()
-    {
+     public void ARefusedNodesReasonDetailSurvivesWithoutPresentingProofOfAnEffect()
+     {
+         var store = new MemoryStore(); var authority = Open(store);
+         authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!; HostAdmissionGrant grant = Grant(challenge);
+         grant = authority.TryConsumeHostGrant(grant).Value!; authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+
+         const string detail = "owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1";
+         authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Failed,
+             Array.Empty<RuntimeFact>(), null, null, null, "shop_counter_out_of_reach", null, detail)).IsSuccess.Should().BeTrue();
+
+         BodyProgramJournalNode failed = authority.Status("program").Snapshot!.Nodes.Single();
+         failed.State.Should().Be(BodyProgramNodeState.Failed);
+         failed.RefusalDetail.Should().Be(detail, "the model reads this node; a reason it cannot read is no reason");
+         failed.Evidence.Should().BeNull("a node claiming no effect must not present proof of one");
+         failed.ReceiptId.Should().BeNull();
+         failed.PostconditionVerification.Should().BeNull();
+
+         OpenBodyProgramJournalAuthority reopened = Open(store);
+         BodyProgramJournalPersistence.TryValidate(reopened.Snapshot, out string? reason).Should().BeTrue(reason);
+         reopened.Snapshot.Programs.Single().Nodes.Single().RefusalDetail
+             .Should().Be(detail, "the reason is part of the durable node, not a transient projection");
+     }
+
+     /// <summary>
+     /// ...and it is refused everywhere a second account of the same tuple would be.
+     ///
+     /// <para>
+     /// The same gate `FailureCode` and `Hint` already pass, one state over: a success proves an effect and may not also
+     /// explain its absence, an undetermined outcome states its reason in `RecoveryDiagnostic`, and a detail long enough to
+     /// become a payload - or carrying a control character - is not a reason any more.
+     /// </para>
+     /// </summary>
+     [Fact]
+     public void ARefusalDetailIsRefusedWhereItWouldBeASecondClaim()
+     {
+         var store = new MemoryStore(); var authority = Open(store);
+         authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!; HostAdmissionGrant grant = Grant(challenge);
+         grant = authority.TryConsumeHostGrant(grant).Value!; authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+         const string detail = "owner=Pierre;owner_tile=4,17";
+
+         authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded,
+                 Array.Empty<RuntimeFact>(), "receipt", "evidence", "postcondition", null, null, detail))
+             .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+         authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Uncertain,
+                 Array.Empty<RuntimeFact>(), null, null, null, null, null, detail))
+             .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+         authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Failed,
+                 Array.Empty<RuntimeFact>(), null, null, null, "shop_counter_out_of_reach", null, new string('a', BodyProgramValidation.MaximumNodeRefusalDetailLength + 1)))
+             .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+         authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Failed,
+                 Array.Empty<RuntimeFact>(), null, null, null, "shop_counter_out_of_reach", null, "owner=Pierre\nradius=1"))
+             .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+
+         // Nothing was mutated by any of the four refusals.
+         authority.Status("program").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.Running);
+         BodyProgramJournalPersistence.TryValidate(authority.Snapshot, out string? refusal).Should().BeTrue(refusal);
+     }
+
+     [Fact]
+     public void ReopenRejectsPersistedFactWithTamperedOutputKind()    {
         var store = new MemoryStore(); var authority = Open(store);
         authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!; HostAdmissionGrant grant = Grant(challenge);

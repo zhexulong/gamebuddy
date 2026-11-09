@@ -989,7 +989,11 @@ public static class BridgeProtocol
          // A hint is not a reason code (`closest=49,14;closest_distance=1` is outside that grammar), so it carries the
          // journal's own length bound instead. Both validators must agree: the typed one guards the outgoing object graph
          // and the JsonElement one guards a reparse, and a rule present in only one of them is a rule that does not hold.
-         && (node.Hint is null || BodyProgramValidation.IsValidNodeHint(node.Hint));
+         && (node.Hint is null || BodyProgramValidation.IsValidNodeHint(node.Hint))
+         // The refusal detail and the recovery diagnostic carry the same two rules the journal enforces: a bound (so a
+         // reason cannot become a payload) and a STATE (so a node that proved an effect can never also describe its
+         // absence). The state rule is asked of the same declaration the journal uses, not restated here.
+         && IsLocatedReasonShape(node.State, node.RefusalDetail, node.RecoveryDiagnostic);
 
 private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @event is not null
          && IsJavaScriptSafeInteger(@event.Cursor)
@@ -1013,13 +1017,14 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         && (value.GetProperty("nodeId").ValueKind == JsonValueKind.Null || ReadOpaqueString(value.GetProperty("nodeId"), out _))
         && value.GetProperty("path").ValueKind == JsonValueKind.String && value.GetProperty("message").ValueKind == JsonValueKind.String;
 
-    private static bool IsValidBodyProgramNodeStatus(JsonElement value) => HasExactPropertiesOrOptional(value, new[] { "nodeId", "state", "nodeAttempt", "admissionAttempt" }, new[] { "rejectionCode", "failureCode", "hint", "actionId", "x", "y" })
+    private static bool IsValidBodyProgramNodeStatus(JsonElement value) => HasExactPropertiesOrOptional(value, new[] { "nodeId", "state", "nodeAttempt", "admissionAttempt" }, new[] { "rejectionCode", "failureCode", "hint", "refusalDetail", "recoveryDiagnostic", "actionId", "x", "y" })
          && ReadOpaqueString(value.GetProperty("nodeId"), out _) && IsBodyProgramNodeState(value.GetProperty("state"))
          && value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) && attempt >= 0 && value.GetProperty("admissionAttempt").TryGetInt32(out int admission) && admission >= 0
          && IsAbsentNullOrIdentifier(value, "actionId")
          && IsAbsentNullOrCoordinatePair(value)
          && IsAbsentNullOrReasonCode(value, "rejectionCode") && IsAbsentNullOrReasonCode(value, "failureCode")
-         && IsAbsentNullOrBoundedHint(value, "hint");
+         && IsAbsentNullOrBoundedHint(value, "hint")
+         && IsLocatedReasonShape(value);
 
     /// <summary>
     /// An optional action id: absent, JSON null, or a program identifier in the journal's own grammar.
@@ -1065,6 +1070,51 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         !value.TryGetProperty(name, out JsonElement property)
         || property.ValueKind == JsonValueKind.Null
         || (property.ValueKind == JsonValueKind.String && IsReasonCode(property.GetString()));
+
+    /// <summary>
+    /// The two reasons whose legality depends on the STATE they ride: absent-or-null, or a bounded string on one of the
+    /// states the journal itself permits.
+    ///
+    /// <para>
+    /// One rule in one place, asked from both directions: this overload takes the journal's own state and strings, and the
+    /// <see cref="JsonElement"/> overload recovers the state through the same `ToWireValue` projection that produced the
+    /// token. The state predicates are <see cref="BodyProgramValidation.MayCarryRefusalDetail"/> and
+    /// <see cref="BodyProgramValidation.MayCarryRecoveryDiagnostic"/> - the journal's own declarations - so a frame the wire
+    /// accepts cannot be one the journal refuses, and a `succeeded` node can never also describe the absence of its own
+    /// effect.
+    /// </para>
+    /// </summary>
+    private static bool IsLocatedReasonShape(string? wireState, string? refusalDetail, string? recoveryDiagnostic)
+    {
+        BodyProgramNodeState[] named = Enum.GetValues<BodyProgramNodeState>().Where(state => ToWireValue(state) == wireState).ToArray();
+        if (named.Length != 1) return false;
+        BodyProgramNodeState state = named[0];
+        return BodyProgramValidation.IsValidRefusalDetail(refusalDetail)
+            && (refusalDetail is null || BodyProgramValidation.MayCarryRefusalDetail(state))
+            && (recoveryDiagnostic is null || BodyProgramValidation.IsOpaqueDiagnostic(recoveryDiagnostic))
+            && (recoveryDiagnostic is null || BodyProgramValidation.MayCarryRecoveryDiagnostic(state));
+    }
+
+    private static bool IsLocatedReasonShape(JsonElement value)
+    {
+        if (!value.TryGetProperty("state", out JsonElement stateValue) || stateValue.ValueKind != JsonValueKind.String) return false;
+        return TryReadOptionalString(value, "refusalDetail", out string? refusalDetail)
+            && TryReadOptionalString(value, "recoveryDiagnostic", out string? recoveryDiagnostic)
+            && IsLocatedReasonShape(stateValue.GetString(), refusalDetail, recoveryDiagnostic);
+    }
+
+    /// <summary>
+    /// An optional string: absent or JSON null answer true with a null, a non-string answers false rather than reading as
+    /// "no reason" - the shape this field exists to make unreadable-by-accident impossible.
+    /// </summary>
+    private static bool TryReadOptionalString(JsonElement value, string name, out string? text)
+    {
+        text = null;
+        if (!value.TryGetProperty(name, out JsonElement property) || property.ValueKind == JsonValueKind.Null) return true;
+        if (property.ValueKind != JsonValueKind.String) return false;
+        text = property.GetString();
+        return true;
+    }
 
     private static bool IsValidBodyProgramEvent(JsonElement value) => HasExactProperties(value, "cursor", "programId", "kind", "catalogRevision", "nodeId", "nodeAttempt", "atMs")
         && value.GetProperty("cursor").TryGetInt64(out long cursor) && cursor >= 0 && cursor <= BodyProgramValidation.MaximumJavaScriptSafeInteger && ReadOpaqueString(value.GetProperty("programId"), out _)
@@ -1158,7 +1208,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             snapshot.Nodes.Select(node =>
             {
                 BodyProgramNodeWork work = snapshot.Work.Single(candidate => candidate.NodeId == node.NodeId);
-                return new BridgeBodyProgramNodeStatus(node.NodeId, node.State.ToWireValue(), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, work.ActionId, work.X, work.Y);
+                return new BridgeBodyProgramNodeStatus(node.NodeId, node.State.ToWireValue(), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, node.RefusalDetail, node.RecoveryDiagnostic, work.ActionId, work.X, work.Y);
             }).ToArray());
 
     private static bool TryReadBodyProgramCandidate(JsonElement value, out ActionProgramCandidate? candidate)
@@ -2172,6 +2222,10 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         // re-resolves the person and measures reach against the live tile.
         "talk_to_npc" => new[] { "x", "y", "expectedTargetId" },
         "refill_watering_can" => new[] { "x", "y", "slot", "expectedTargetId" },
+        // fish_here names the water tile it casts at and the opaque `waterTargets` row that binds it. It carries no slot:
+        // the rod comes from the action's own `tool:fishing_rod` claim, exactly as every other declared-tool action takes
+        // its tool, and the slot the actor held before the cast is restored on every exit.
+        "fish_here" => new[] { "x", "y", "expectedTargetId" },
         "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" or "plant_sapling" or "interact_npc_with_item" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
         "clear_debris" or "collect_animal_product" or "feed_animal" or "chop_tree" or "break_rock" or "clear_hoedirt" or "dig_artifact_spot" or "chop_stump" or "cut_weeds" or "cut_grass" or "scythe_crop" => new[] { "x", "y", "slot", "expectedTargetId" },
         "clear_cask" or "dress_mannequin" or "set_sign_display" or "deposit_silo_hay" => new[] { "x", "y", "slot", "expectedTargetId" },

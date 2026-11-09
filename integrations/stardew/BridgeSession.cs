@@ -1725,7 +1725,7 @@ string? bodyProgramUnavailableReason = null,
     private static BridgeBodyProgramNodeStatus NodeStatus(BodyProgramStatusSnapshot snapshot, BodyProgramJournalNode node)
     {
         BodyProgramNodeWork work = snapshot.Work.Single(candidate => candidate.NodeId == node.NodeId);
-        return new BridgeBodyProgramNodeStatus(node.NodeId, ToWire(node.State), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, work.ActionId, work.X, work.Y);
+        return new BridgeBodyProgramNodeStatus(node.NodeId, ToWire(node.State), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, node.RefusalDetail, node.RecoveryDiagnostic, work.ActionId, work.X, work.Y);
     }
     private static BridgeBodyProgramEvent ToBridgeEvent(BodyProgramJournalEvent @event) => new(
         @event.Cursor, @event.ProgramId, @event.Kind, @event.CatalogRevision, @event.NodeId, @event.NodeAttempt, @event.AtMs);

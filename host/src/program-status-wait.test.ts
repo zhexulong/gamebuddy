@@ -6,8 +6,10 @@ import {
   createProgramProgressObserver,
   isTerminalProgramStatus,
   planBatchAnswer,
+  planNodeReasonDetail,
   waitForTerminalProgramStatus,
 } from "./program-status-wait.js";
+import { BODY_PROGRAM_NODE_STATES } from "./protocol.js";
 
 /**
  * The predicate that decides whether a wait is over, pinned against every state the Mod can publish
@@ -480,6 +482,7 @@ test("a plan answers every node it carries at its own index, never at the journa
       actionId: "move_to_tile",
       state: "rejected",
       reasonCode: "actor_held_by_modal",
+      reasonDetail: "unknown_reason:rejected",
       tile: { x: 5, y: 8 },
     },
     { index: 1, actionId: "move_to_tile", state: "succeeded" },
@@ -516,7 +519,12 @@ test("a node the journal does not describe is unknown, and never counts as settl
   const answer = planBatchAnswer([answerNode("n01"), answerNode("n02")], {
     nodes: [{ nodeId: "n01", state: "succeeded" }],
   });
-  assert.deepEqual(answer.nodes[1], { index: 1, actionId: "move_to_tile", state: "unknown" });
+  assert.deepEqual(answer.nodes[1], {
+    index: 1,
+    actionId: "move_to_tile",
+    state: "unknown",
+    reasonDetail: "unknown_reason:unknown",
+  });
   assert.equal(answer.settled, false);
   assert.equal(answer.remaining, 1);
   // No snapshot at all - `not_found`, or a submission the Mod refused - reads the same way, rather than as an empty plan.
@@ -620,4 +628,109 @@ test("a clock rides only on a node that has not stopped", () => {
   assert.equal("elapsedMs" in (answer.nodes[0] as object), false);
   assert.equal(answer.nodes[1]?.elapsedMs, 12_500);
   assert.equal(answer.nodes[2]?.elapsedMs, 300, "a queued node's wait is timed too");
+});
+
+/**
+ * T2 - SINGLE READER.
+ *
+ * The Mod's refusal detail is a string the refusing layer wrote (`owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1`)
+ * and the plan answer carries it BYTE-IDENTICAL. Not re-rendered, not summarised, not re-cased: a Host that reformatted it
+ * would be a second author of a fact it did not observe, and the caller that reads it would be reading the Host's prose
+ * about the game rather than the game's own answer.
+ *
+ * The `deepEqual` on the whole row is the assertion, not `row.reasonDetail === input`: it also pins that the detail arrives
+ * beside the code it explains and not in place of it.
+ */
+test("the Mod's own refusal detail reaches the plan answer byte for byte", () => {
+  const detail = "owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1";
+  const answer = planBatchAnswer([{ nodeId: "n01", actionId: "shop_purchase", arguments: {} }], {
+    nodes: [
+      {
+        nodeId: "n01",
+        state: "failed",
+        failureCode: "shop_counter_out_of_reach",
+        refusalDetail: detail,
+      },
+    ],
+  });
+  assert.deepEqual(answer.nodes[0], {
+    index: 0,
+    actionId: "shop_purchase",
+    state: "failed",
+    reasonCode: "shop_counter_out_of_reach",
+    reasonDetail: detail,
+  });
+  // A `shop_purchase` row's arguments name no tile, so the row invents none: the coordinate in a refusal is the one the
+  // MOD bound, and reading one out of arguments that carry none is how "node 3 failed at 61,18" became sayable about a
+  // node that acts on a shop counter.
+  assert.equal("tile" in (answer.nodes[0] as object), false, "the arguments carry no tile, so the row invents none");
+});
+
+/**
+ * T3 - THE GATE.
+ *
+ * Population: `BODY_PROGRAM_NODE_STATES`, the declaration the wire validator itself accepts (`isBodyProgramNodeState`),
+ * not a list written here. For every member: a non-succeeded node with no reason answers `unknown_reason:<state>`, a node
+ * with a real detail answers that detail, and the two never coexist.
+ *
+ * Why a gate and not a test: the defect is "a settlement reaches the caller with no reason", and its members are states
+ * nobody has written yet. A list of the states someone remembered cannot cover the state added next; the enum can. The
+ * count is printed and refused at zero, because a gate that examined nothing agrees with itself.
+ */
+test("every node state the wire names either carries its reason or says it has none", () => {
+  assert.ok(BODY_PROGRAM_NODE_STATES.length >= 11, `examined ${BODY_PROGRAM_NODE_STATES.length} node states`);
+  const examined: string[] = [];
+  const rowFor = (state: string, extra: Readonly<Record<string, unknown>> = {}) =>
+    planBatchAnswer([{ nodeId: "n01", actionId: "shop_purchase", arguments: {} }], {
+      nodes: [{ nodeId: "n01", state, ...extra }],
+    }).nodes[0];
+  for (const state of BODY_PROGRAM_NODE_STATES) {
+    const row = rowFor(state);
+    assert.ok(row !== undefined, `the state '${state}' must produce a row`);
+    assert.equal(row.state, state, `the state '${state}' must arrive verbatim`);
+    if (state === "succeeded") {
+      assert.equal(
+        Object.hasOwn(row as object, "reasonDetail"),
+        false,
+        "a success proves its effect and owes no reason",
+      );
+    } else {
+      assert.equal(
+        row.reasonDetail,
+        `unknown_reason:${state}`,
+        `the state '${state}' settles without succeeding, so the row must say the reason is missing rather than omit it`,
+      );
+    }
+    // ...and with a real detail the placeholder is gone. One `??` chain, so the two arms cannot coexist.
+    if (state === "failed" || state === "cancelled" || state === "rejected") {
+      const explained = rowFor(state, { refusalDetail: "owner=Pierre;radius=1" });
+      assert.equal(
+        explained?.reasonDetail,
+        "owner=Pierre;radius=1",
+        `the state '${state}' must carry the Mod's detail`,
+      );
+      assert.notEqual(explained?.reasonDetail, `unknown_reason:${state}`, "real detail and placeholder never coexist");
+    }
+    // `recovery_required` is the one state whose journal reason is a diagnostic rather than a detail: the Mod writes
+    // `execution_uncertain` there, and answering `unknown_reason:recovery_required` would deny something it had said.
+    if (state === "recovery_required") {
+      const diagnosed = rowFor(state, { recoveryDiagnostic: "execution_uncertain" });
+      assert.equal(diagnosed?.reasonDetail, "execution_uncertain", "the journal's own diagnostic is the reason");
+    }
+    examined.push(state);
+  }
+  assert.deepEqual(examined, [...BODY_PROGRAM_NODE_STATES], `examined ${examined.length} node states`);
+  assert.equal(examined.length, BODY_PROGRAM_NODE_STATES.length);
+});
+
+/**
+ * The single decision point, asked directly: `succeeded` is the only state with no reason, and the placeholder can never
+ * stand where a real detail exists.
+ */
+test("a reason detail answers for every settled state and is absent only for a success", () => {
+  assert.equal(planNodeReasonDetail("succeeded", null, null), null);
+  assert.equal(planNodeReasonDetail("succeeded", "a detail a broken Mod sent", null), null, "a success has no reason");
+  assert.equal(planNodeReasonDetail("cancelled", "why", null), "why");
+  assert.equal(planNodeReasonDetail("failed", null, null), "unknown_reason:failed");
+  assert.equal(planNodeReasonDetail("recovery_required", null, "execution_uncertain"), "execution_uncertain");
 });

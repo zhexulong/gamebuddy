@@ -1821,6 +1821,48 @@ export type BodyProgramStatusRequest = Readonly<{ programId?: string }>;
  * program.
  */
 export type BodyProgramStopRequest = Readonly<{ programId: string; stopEpoch: number }>;
+
+/**
+ * Every node state the Mod's journal settles a node in, in ONE declaration.
+ *
+ * The population is the Mod's own `BodyProgramNodeState` (eleven durable values, `BodyProgramModels.cs`), and it is
+ * declared here as a value rather than as eleven `||` arms for one reason: the state list is what
+ * `isBodyProgramNodeState` accepts AND what `planNodeReasonDetail` has to answer for, and a gate that checks "every state
+ * owes a reason" cannot derive its population from a boolean function's source.
+ *
+ * `skipped_dependency` and `abandoned` are in it because the journal really settles nodes there: 30 skipped and 1
+ * abandoned against ZERO `recovery_required` in one measured run, while the wire projection named nine states and folded
+ * both into `recovery_required` - a vocabulary collapse that read as a condition.
+ */
+export const BODY_PROGRAM_NODE_STATES = Object.freeze([
+  "pending",
+  "awaiting_host_admission",
+  "host_admitted",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "recovery_required",
+  "rejected",
+  "skipped_dependency",
+  "abandoned",
+] as const);
+export type BodyProgramNodeState = (typeof BODY_PROGRAM_NODE_STATES)[number];
+
+/**
+ * The states a node may carry `refusalDetail` on: the ones where it settled without succeeding.
+ *
+ * The same three the Mod's journal permits (`BodyProgramValidation.MayCarryRefusalDetail`), stated over the wire
+ * token: a `succeeded` node proves an effect, an in-flight one has refused nothing, and `recovery_required` says why in
+ * `recoveryDiagnostic` instead.
+ */
+const REFUSAL_DETAIL_NODE_STATES: ReadonlySet<BodyProgramNodeState> = new Set(["failed", "cancelled", "rejected"]);
+
+/** The Mod's own bound on a refusal detail (`BodyProgramValidation.MaximumNodeRefusalDetailLength`). */
+export const MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH = 512;
+
+/** The Mod's own bound on a recovery diagnostic (`BodyProgramValidation.MaximumRecoveryDiagnosticLength`). */
+export const MAX_BODY_PROGRAM_RECOVERY_DIAGNOSTIC_LENGTH = 4096;
 export type BodyProgramEventsRequest = Readonly<{ programId: string; cursor: number; pageSize: number }>;
 type BodyProgramDiagnostic = Readonly<{
   severity: string;
@@ -1855,6 +1897,22 @@ type BodyProgramNodeStatus = Readonly<{
    * on a node whose evidence is deliberately absent (ADR-006). `closest=49,14;closest_distance=1` is the shape.
    */
   hint?: string | null;
+  /**
+   * WHY a node settled without succeeding, in the refusing layer's own words - e.g.
+   * `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1`.
+   *
+   * A reason detail, never proof of an effect: it is legal only on `failed`/`cancelled`/`rejected` and never on
+   * `succeeded`, which is the same footing `failureCode` has. Absent when the Mod had nothing more to say than the code,
+   * and the plan answer then says so instead of staying silent (`program-status-wait.ts:planNodeReasonDetail`).
+   */
+  refusalDetail?: string | null;
+  /**
+   * The journal's own diagnostic for a node whose outcome cannot be determined (`execution_uncertain`).
+   *
+   * Only on `recovery_required`. Without it that state reaches a caller as a state with no reason at all, and a reader
+   * that then has to say "no reason" would be saying something it already knew to be false.
+   */
+  recoveryDiagnostic?: string | null;
   /**
    * The action this node runs, from the journal's own compiled descriptor.
    *
@@ -4974,7 +5032,7 @@ function isBodyProgramNodeStatus(value: unknown): boolean {
     hasExactKeysOrOptional(
       value,
       ["nodeId", "state", "nodeAttempt", "admissionAttempt", "actionId"],
-      ["rejectionCode", "failureCode", "hint", "x", "y"],
+      ["rejectionCode", "failureCode", "hint", "refusalDetail", "recoveryDiagnostic", "x", "y"],
     ) &&
     isOpaqueId(value.nodeId) &&
     isOpaqueId(value.actionId) &&
@@ -4987,6 +5045,18 @@ function isBodyProgramNodeStatus(value: unknown): boolean {
     // A hint is not a reason code - `closest=49,14;closest_distance=1` is outside that grammar - so it carries its own
     // bound. It is the same 256 the Mod's journal enforces, so a frame the wire accepts cannot be one the journal refuses.
     (value.hint === undefined || value.hint === null || (typeof value.hint === "string" && value.hint.length <= 256)) &&
+    // The two reasons whose legality depends on the STATE they ride. The bound is the Mod's own declaration
+    // (`BodyProgramValidation.MaximumNodeRefusalDetailLength`, `MaximumRecoveryDiagnosticLength`), and the state rule is
+    // the same one the journal enforces: a node that proved an effect can never also describe its absence, and an
+    // undetermined outcome is the only state whose reason is a diagnostic.
+    isOptionalBoundedReason(value.refusalDetail, MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH) &&
+    (value.refusalDetail === undefined ||
+      value.refusalDetail === null ||
+      REFUSAL_DETAIL_NODE_STATES.has(value.state as BodyProgramNodeState)) &&
+    isOptionalBoundedReason(value.recoveryDiagnostic, MAX_BODY_PROGRAM_RECOVERY_DIAGNOSTIC_LENGTH) &&
+    (value.recoveryDiagnostic === undefined ||
+      value.recoveryDiagnostic === null ||
+      value.state === "recovery_required") &&
     isBodyProgramNodeState(value.state) &&
     isNonNegativeInt32(value.nodeAttempt) &&
     isNonNegativeInt32(value.admissionAttempt)
@@ -4997,6 +5067,11 @@ function isAbsentCoordinate(value: unknown): boolean {
 }
 function isCoordinateOrAbsent(value: unknown): boolean {
   return isAbsentCoordinate(value) || isNonNegativeInt32(value);
+}
+/** An optional bounded, control-character-free string: the shape both MOD state reasons use. */
+function isOptionalBoundedReason(value: unknown, maximum: number): boolean {
+  if (value === undefined || value === null) return true;
+  return typeof value === "string" && value.length >= 1 && value.length <= maximum && !/\p{Cc}/u.test(value);
 }
 function isBodyProgramState(value: unknown): boolean {
   return (
@@ -5009,23 +5084,7 @@ function isBodyProgramState(value: unknown): boolean {
   );
 }
 function isBodyProgramNodeState(value: unknown): boolean {
-  return (
-    value === "pending" ||
-    value === "awaiting_host_admission" ||
-    value === "host_admitted" ||
-    value === "running" ||
-    value === "succeeded" ||
-    value === "failed" ||
-    value === "cancelled" ||
-    value === "recovery_required" ||
-    value === "rejected" ||
-    // The two states the Mod's journal settles a node in when its dependency never came good (`skipped_dependency`) or
-    // when it was dispatched and its outcome can never be known (`abandoned`). Both are terminal, both are named in
-    // `NODE_STATES_SETTLED` above, and until they had wire names the Mod folded them into `recovery_required` - a
-    // measured run's bundle then read 31 recovery nodes against a journal that held none.
-    value === "skipped_dependency" ||
-    value === "abandoned"
-  );
+  return typeof value === "string" && (BODY_PROGRAM_NODE_STATES as readonly string[]).includes(value);
 }
 function hasUniqueKeys(value: Record<string, unknown>): boolean {
   return Object.keys(value).length <= 32;

@@ -196,7 +196,16 @@ public sealed record NodeExecutionBinding(string ProgramId, string NodeId, int N
 /// </para>
 /// </summary>
 public sealed record BodyProgramTerminalResult(NodeExecutionBinding Execution, BodyProgramNodeOutcome Outcome, IReadOnlyList<RuntimeFact>? Facts,
-    string? ReceiptId, string? Evidence, string? PostconditionVerification, string? FailureCode = null, string? Hint = null);
+    string? ReceiptId, string? Evidence, string? PostconditionVerification, string? FailureCode = null, string? Hint = null,
+    /// <summary>
+    /// The receipt's own <see cref="LocalExecutionReceipt.Evidence"/> for a terminal that did NOT succeed, carried into
+    /// <see cref="BodyProgramJournalNode.RefusalDetail"/> instead of into <see cref="Evidence"/>.
+    ///
+    /// The two fields hold the same string on the same receipt and must not be confused: `Evidence` licenses `Succeeded`
+    /// (ADR-006 `:175`) and is therefore refused on every other outcome by <c>TryComplete</c>, while this one is the reason
+    /// detail a caller reads and is legal exactly there.
+    /// </summary>
+    string? RefusalDetail = null);
 
 public sealed record VerifiedBodyProgramNode(string NodeId, string ActionId, IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments,
     IReadOnlyList<string> DependsOn, IReadOnlyDictionary<string, ActionProgramBinding> Bindings, IReadOnlyDictionary<string, string> DerivedResourceClaims)
@@ -255,7 +264,29 @@ public sealed record BodyProgramJournalNode(string NodeId, BodyProgramNodeState 
     /// Bounded by <see cref="BodyProgramValidation.MaximumNodeHintLength"/>: `closest=49,14;closest_distance=1` is 33
     /// characters, and the ceiling leaves room for a longer form without letting a free-form string become a payload.
     /// </para>
-    string? Hint = null);
+    string? Hint = null,
+    /// <summary>
+    /// WHY, in the refusing layer's own words - the part of <see cref="BodyProgramTerminalResult.Evidence"/> a caller needs
+    /// and could not read, carried as a reason detail and NOT as proof of an effect.
+    ///
+    /// <para>
+    /// Measured 2026-11-01 (`round41`): `shop_purchase` answered `shop_counter_out_of_reach` six times and the Mod's own
+    /// receipt held `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1`. The model received
+    /// `{"reasonCode":"shop_counter_out_of_reach","actionId":"shop_purchase"}`, invented the world fact it needed, and
+    /// retried. Across that round's 94 `program_status` replies, `evidence` and `detail` appeared zero times.
+    /// </para>
+    /// <para>
+    /// ADR-006 (`:163`, `:175`) forbids EVIDENCE on a node that claims no effect, and this is deliberately not that: it
+    /// proves nothing happened, names no receipt and verifies no postcondition - it says why nothing happened. It is legal
+    /// exactly where a node settled without succeeding (`Failed`, `Cancelled`, and `Rejected`, whose deterministic veto
+    /// names its reason in <see cref="RejectionCode"/> instead), which is the same set of states the ADR already refuses
+    /// proof for.
+    /// </para>
+    /// <para>
+    /// Bounded by <see cref="BodyProgramValidation.MaximumNodeRefusalDetailLength"/> on both the write and the read path, so
+    /// a detail long enough to become a payload fails closed instead of reaching a model.
+    /// </para>
+    string? RefusalDetail = null);
 public sealed record RuntimeFact(string ProgramId, string NodeId, int NodeAttempt, string FactName, IReadOnlyDictionary<string, BodyProgramCanonicalValue> Values);
 public sealed record BodyProgramJournalProgram(VerifiedBodyProgram Program, BodyProgramState State, long StopEpoch, IReadOnlyList<BodyProgramJournalNode> Nodes, IReadOnlyList<RuntimeFact> Facts);
 
@@ -400,6 +431,20 @@ internal static class BodyProgramValidation
     /// </summary>
     internal const int MaximumNodeHintLength = 256;
     internal static bool IsValidNodeHint(string? value) => value is null or { Length: <= MaximumNodeHintLength };
+    /// <summary>
+    /// The largest a node's refusal detail may be.
+    ///
+    /// <para>
+    /// A BOUNDED REASON, not a payload. The measured instance is
+    /// `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1` (52 characters); 512 leaves room for a shop's own
+    /// `closed_message=` tail without letting a free-form string become a second evidence channel. Checked on the write
+    /// path, on the read-back path and on the wire, so a journal carrying a longer one fails closed rather than reaching a
+    /// model - and control characters are refused for the same reason they are refused in every other opaque projection.
+    /// </para>
+    /// </summary>
+    internal const int MaximumNodeRefusalDetailLength = 512;
+    internal static bool IsValidRefusalDetail(string? value) => value is null
+        || (value.Length is >= 1 and <= MaximumNodeRefusalDetailLength && !value.Any(char.IsControl));
     internal const long MaximumJavaScriptSafeInteger = 9007199254740991L;
     /// <summary>Descriptor-owned static watchdog budget for ordinary short actions (hang protection, not ETA).</summary>
     internal const long DefaultWatchdogMs = 60_000;
@@ -435,7 +480,30 @@ internal static class BodyProgramValidation
         && IsIdentifier(value.ProgramId) && IsIdentifier(value.NodeId) && value.NodeAttempt > 0
         && IsIdentifier(value.RequestId) && IsIdentifier(value.IdempotencyKey) && IsIdentifier(value.ExecutionId);
     internal static bool IsOpaqueTerminalProof(string? value) => value is { Length: >= 1 and <= 4096 } && !value.Any(char.IsControl);
-    internal static bool IsOpaqueDiagnostic(string? value) => value is { Length: >= 1 and <= 4096 } && !value.Any(char.IsControl);
+    internal static bool IsOpaqueDiagnostic(string? value) => value is { Length: >= 1 and <= MaximumRecoveryDiagnosticLength } && !value.Any(char.IsControl);
+    /// <summary>
+    /// The largest a node's recovery diagnostic may be. Shared with the wire validator so a bound cannot differ between the
+    /// journal that wrote it and the frame that carries it.
+    /// </summary>
+    internal const int MaximumRecoveryDiagnosticLength = 4096;
+    /// <summary>
+    /// The states a node may carry a refusal detail on: the ones where it settled without succeeding.
+    ///
+    /// <para>
+    /// One rule for three states rather than a second rule for a fourth case. `Rejected` is included because a veto is
+    /// also a settlement with no effect - it names its cause in <see cref="BodyProgramJournalNode.RejectionCode"/>, and a
+    /// detail beside it is the same statement one level down. Nothing else may carry one: an in-flight node has not
+    /// refused anything, a `Succeeded` one proves an effect instead, and `RecoveryRequired` already says why in
+    /// <see cref="BodyProgramJournalNode.RecoveryDiagnostic"/>.
+    /// </para>
+    /// </summary>
+    internal static bool MayCarryRefusalDetail(BodyProgramNodeState state) => state
+        is BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected;
+    /// <summary>
+    /// The one state that may carry a <see cref="BodyProgramJournalNode.RecoveryDiagnostic"/>: the one whose whole meaning
+    /// is "the outcome could not be determined", so the reason there is a diagnostic and not a cause.
+    /// </summary>
+    internal static bool MayCarryRecoveryDiagnostic(BodyProgramNodeState state) => state == BodyProgramNodeState.RecoveryRequired;
     internal static bool IsOpaquePolicyValue(string? value) => value is { Length: >= 1 and <= 4096 } && !value.Any(char.IsControl);
     /// <summary>
     /// The prefix of a rejection that names the loop ROW the live policy does not offer.

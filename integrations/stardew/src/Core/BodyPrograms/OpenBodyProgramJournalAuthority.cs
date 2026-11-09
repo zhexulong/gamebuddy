@@ -506,6 +506,7 @@ public sealed class OpenBodyProgramJournalAuthority
                 RecoveryDiagnostic = null,
                 RejectionCode = null,
                 FailureCode = null,
+                RefusalDetail = null,
             }).ToArray();
         BodyProgramJournalProgram updated = ReplaceNode(program, rejected);
         foreach (BodyProgramJournalNode skippedNode in skipped) updated = ReplaceNode(updated, skippedNode);
@@ -570,17 +571,25 @@ public sealed class OpenBodyProgramJournalAuthority
             // A success may not also name a failure reason: the two are different statements about the same tuple, and
             // accepting both would let a reader pick whichever one it preferred.
             if (result.FailureCode is not null) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
+            // ...nor a refusal DETAIL, which is the same statement one level down: `Evidence` is the proof a `Succeeded`
+            // node already carries, and a reason detail on that node would be a second, unverifiable account of it.
+            if (result.RefusalDetail is not null) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
             if (!ValidFactSet(descriptor!, grant, result.Facts)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.FactProvenanceMismatch);
         }
         // A non-success terminal may carry WHY, and nothing that would read as proof of an effect: no facts, no receipt,
         // no evidence, no postcondition. The reason is a reason code (ADR-006 `:163`: "the code is not free-form text"),
-        // and it is legal only on the two states that mean "dispatched, settled, no effect" - a Cancelled node and an
-        // Uncertain one (which settles as RecoveryRequired and already carries `RecoveryDiagnostic`) may not claim one.
+        // the hint says where to go instead, and the refusal detail says why in the refusing layer's own words - all three
+        // are statements about the absence of an effect, and the first two are already legal only on `Failed`/`Cancelled`.
+        // The detail is the same statement one level down: `receipt.Evidence` is where it lives on the receipt, and it must
+        // arrive here as `BodyProgramTerminalResult.RefusalDetail` or not at all.
         else if (result.Facts is null || result.Facts.Count != 0 || result.ReceiptId is not null || result.Evidence is not null || result.PostconditionVerification is not null
             || (result.FailureCode is not null && (result.Outcome is not (BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled) || !BodyProgramValidation.IsReasonCode(result.FailureCode)))
             // A hint is legal on the same two states as a reason code, and for the same reason: it names where to go
             // next, not what happened. A hint on a Succeeded node would be a claim about a world state nobody checked.
-            || (result.Hint is not null && (result.Outcome is not (BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled) || !BodyProgramValidation.IsValidNodeHint(result.Hint)))) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
+            || (result.Hint is not null && (result.Outcome is not (BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled) || !BodyProgramValidation.IsValidNodeHint(result.Hint)))
+            // The refusal detail is legal on exactly the states the hint is, and bounded separately: 512 characters is a
+            // reason, not a payload, and a control character would let it forge a line of its own.
+            || (result.RefusalDetail is not null && (result.Outcome is not (BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled) || !BodyProgramValidation.IsValidRefusalDetail(result.RefusalDetail)))) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
         BodyProgramNodeState nodeState = result.Outcome switch { BodyProgramNodeOutcome.Succeeded => BodyProgramNodeState.Succeeded, BodyProgramNodeOutcome.Failed => BodyProgramNodeState.Failed, BodyProgramNodeOutcome.Cancelled => BodyProgramNodeState.Cancelled, _ => BodyProgramNodeState.RecoveryRequired };
         // Terminal settle releases every claim this attempt acquired at the
         // HostAdmitted boundary (ADR-006 durable acquire/release transition).
@@ -596,6 +605,10 @@ public sealed class OpenBodyProgramJournalAuthority
             RecoveryDiagnostic = result.Outcome == BodyProgramNodeOutcome.Uncertain ? "execution_uncertain" : null,
             FailureCode = result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled ? result.FailureCode : null,
             Hint = result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled ? result.Hint : null,
+            // The reason detail rides the same states as the hint, for the same reason: it names why nothing happened. Its
+            // bound and its control-character ban are enforced by `BodyProgramValidation.IsValidRefusalDetail` on the write
+            // path, on the read-back path and on the wire, so this assignment carries a checked value.
+            RefusalDetail = result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled ? result.RefusalDetail : null,
             ClaimOwnership = released,
         };
         BodyProgramJournalProgram updated = ReplaceNode(program!, completed) with { Facts = result.Outcome == BodyProgramNodeOutcome.Succeeded ? Array.AsReadOnly(program!.Facts.Concat(result.Facts!).ToArray()) : program!.Facts };
@@ -628,6 +641,7 @@ public sealed class OpenBodyProgramJournalAuthority
                          RecoveryDiagnostic = null,
                          RejectionCode = null,
                          FailureCode = null,
+                         RefusalDetail = null,
                          ClaimOwnership = null,
                      })
                      .ToArray()

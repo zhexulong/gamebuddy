@@ -10,7 +10,7 @@ namespace GameBuddy.Stardew.Core.BodyPrograms;
 ///
 /// <para>
 /// The class name and ADR-006 still call the authority `BodyProgramJournal/v1`; <see cref="SchemaVersion"/> is the
-/// PAYLOAD SHAPE number and moves independently of that name. It is 4 as of the node `orderedAfter` key.
+/// PAYLOAD SHAPE number and moves independently of that name. It is 5 as of the node `refusalDetail` key.
 /// </para>
 /// </summary>
 public static class BodyProgramJournalPersistence
@@ -26,13 +26,18 @@ public static class BodyProgramJournalPersistence
     /// v3 payload has no `orderedAfter` on its nodes and must not be read as if every ordering edge were a dependency.
     /// </para>
     /// <para>
+    /// RAISED to 5 for the node `refusalDetail` key. A v4 payload has no such key and must not be read as a node that
+    /// refused without a reason: that is the difference between "this build cannot use this data" and "the Mod never had
+    /// a reason", and only the version number can tell them apart.
+    /// </para>
+    /// <para>
     /// There is no migration/dual-read path here by design, and the two directions are NOT the same fact. An OLDER journal
     /// is superseded: counted, set aside intact, and replaced by a fresh writable one (<see cref="TryReadSchemaVersion"/>).
     /// A NEWER one stays fail-closed (`Corrupt`), because a downgrade must never destroy records it cannot read - that is
     /// the difference between "this build cannot use this data" and "this build may throw it away".
     /// </para>
     /// </summary>
-    public const int SchemaVersion = 4;
+    public const int SchemaVersion = 5;
     private static readonly JsonSerializerOptions WriteOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public static string Encode(BodyProgramJournalState state, BodyProgramActionCatalog? catalog = null, BridgeScope? expectedScope = null)
@@ -174,10 +179,11 @@ public static class BodyProgramJournalPersistence
             node.ClaimOwnership is null ? null : BodyProgramValidation.FreezeMap(node.ClaimOwnership),
             node.DerivedDeadlineMs,
             node.ReceiptId, node.Evidence, node.PostconditionVerification, node.RecoveryDiagnostic, node.RejectionCode, node.FailureCode,
-            // `Hint` is the LAST field of the record, and leaving it out here dropped it on EVERY persist: the journal held
-            // the hint, the projection to the wire read it, and the frozen state this authority keeps answering from did
-            // not. Measured while a failed `for_each` pass tried to state its per-reason counts - the counts never arrived.
-            node.Hint)).ToArray()),
+            // `Hint` and `RefusalDetail` are the last two fields of the record, and leaving either out here drops it on
+            // EVERY persist: the journal held it, the projection to the wire read it, and the frozen state this authority
+            // keeps answering from did not. Measured while a failed `for_each` pass tried to state its per-reason counts -
+            // the counts never arrived.
+            node.Hint, node.RefusalDetail)).ToArray()),
         Array.AsReadOnly(program.Facts.Select(fact => new RuntimeFact(fact.ProgramId, fact.NodeId, fact.NodeAttempt, fact.FactName, BodyProgramValidation.FreezeMap(fact.Values))).ToArray()));
 
     internal static VerifiedBodyProgram FreezeVerified(VerifiedBodyProgram program) => new(program.ProgramId, program.CatalogRevision,
@@ -255,7 +261,8 @@ public static class BodyProgramJournalPersistence
         {
             if (node.AdmissionAttempt != 0 || node.CanonicalBoundArguments is not null || node.AttemptPolicyIdentity is not null || node.ClaimOwnership is not null
                 || node.DerivedDeadlineMs is not null
-                || node.ReceiptId is not null || node.Evidence is not null || node.PostconditionVerification is not null || node.RejectionCode is not null || node.FailureCode is not null)
+                || node.ReceiptId is not null || node.Evidence is not null || node.PostconditionVerification is not null || node.RejectionCode is not null || node.FailureCode is not null
+                || node.RefusalDetail is not null)
                 { refusal = "unattempted_shape"; return false; }
         }
         else
@@ -275,6 +282,11 @@ public static class BodyProgramJournalPersistence
         if (node.ExecutionBinding is not null && (!BodyProgramValidation.IsValidExecutionBinding(node.ExecutionBinding) || node.ExecutionBinding.NodeId != node.NodeId
             || node.ExecutionBinding.NodeAttempt != node.NodeAttempt || node.ExecutionBinding.ProgramId != program.Program.ProgramId)) { refusal = "binding"; return false; }
 
+        bool hasRefusalDetail = node.RefusalDetail is not null;
+        if (hasRefusalDetail && (!BodyProgramValidation.IsValidRefusalDetail(node.RefusalDetail) || !BodyProgramValidation.MayCarryRefusalDetail(node.State)))
+            { refusal = "refusal_detail"; return false; }
+        if (node.RecoveryDiagnostic is not null && !BodyProgramValidation.MayCarryRecoveryDiagnostic(node.State))
+            { refusal = "recovery_diagnostic"; return false; }
         bool hasProof = node.ReceiptId is not null || node.Evidence is not null || node.PostconditionVerification is not null;
         bool hasCompleteProof = BodyProgramValidation.IsOpaqueTerminalProof(node.ReceiptId) && BodyProgramValidation.IsOpaqueTerminalProof(node.Evidence)
             && BodyProgramValidation.IsOpaqueTerminalProof(node.PostconditionVerification);
@@ -548,7 +560,7 @@ public static class BodyProgramJournalPersistence
     private static bool ReadNode(JsonElement value, out BodyProgramJournalNode? node)
     {
         node = null;
-        if (!Exact(value, "nodeId", "state", "nodeAttempt", "admissionAttempt", "grantId", "executionBinding", "canonicalBoundArguments", "attemptPolicyIdentity", "claimOwnership", "derivedDeadlineMs", "receiptId", "evidence", "postconditionVerification", "recoveryDiagnostic", "rejectionCode", "failureCode", "hint")
+        if (!Exact(value, "nodeId", "state", "nodeAttempt", "admissionAttempt", "grantId", "executionBinding", "canonicalBoundArguments", "attemptPolicyIdentity", "claimOwnership", "derivedDeadlineMs", "receiptId", "evidence", "postconditionVerification", "recoveryDiagnostic", "rejectionCode", "failureCode", "hint", "refusalDetail")
             || !ReadString(value.GetProperty("nodeId"), out string? id) || !ReadEnum<BodyProgramNodeState>(value.GetProperty("state"), out BodyProgramNodeState state)
             || !value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) || !value.GetProperty("admissionAttempt").TryGetInt32(out int admission)
             || !ReadNullableString(value.GetProperty("grantId"), out string? grant) || !ReadNullableExecutionBinding(value.GetProperty("executionBinding"), out NodeExecutionBinding? binding)
@@ -560,8 +572,9 @@ public static class BodyProgramJournalPersistence
              || !ReadNullableProof(value.GetProperty("postconditionVerification"), out string? postcondition) || !ReadNullableDiagnostic(value.GetProperty("recoveryDiagnostic"), out string? diagnostic)
              || !ReadNullableString(value.GetProperty("rejectionCode"), out string? rejectionCode)
              || !ReadNullableReasonCode(value.GetProperty("failureCode"), out string? failureCode)
-             || !ReadNullableHint(value.GetProperty("hint"), out string? hint)) return false;
-         node = new(id!, state, attempt, admission, grant, binding, canonical, policy, ownership, derivedDeadline, receipt, evidence, postcondition, diagnostic, rejectionCode, failureCode, hint); return true;
+             || !ReadNullableHint(value.GetProperty("hint"), out string? hint)
+             || !ReadNullableRefusalDetail(value.GetProperty("refusalDetail"), out string? refusalDetail)) return false;
+         node = new(id!, state, attempt, admission, grant, binding, canonical, policy, ownership, derivedDeadline, receipt, evidence, postcondition, diagnostic, rejectionCode, failureCode, hint, refusalDetail); return true;
     }
 
     /// <summary>
@@ -583,6 +596,16 @@ public static class BodyProgramJournalPersistence
     {
         result = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
         return value.ValueKind == JsonValueKind.Null || (value.ValueKind == JsonValueKind.String && BodyProgramValidation.IsValidNodeHint(result));
+    }
+
+    /// <summary>
+    /// A null-or-bounded-refusal-detail field. Anything that is neither null nor within the bound fails the whole document
+    /// closed: a malformed reason must never be read as "no reason", which is the silence this field exists to end.
+    /// </summary>
+    private static bool ReadNullableRefusalDetail(JsonElement value, out string? result)
+    {
+        result = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        return value.ValueKind == JsonValueKind.Null || (value.ValueKind == JsonValueKind.String && BodyProgramValidation.IsValidRefusalDetail(result));
     }
 
     private static bool ReadNullableDeadline(JsonElement value, out long? deadline)

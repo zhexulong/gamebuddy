@@ -136,6 +136,7 @@ public sealed class RouteReenteringBodyProgramExecutorTests
         terminal.Evidence.Should().Contain("location=town", "evidence is the verbatim native live-state string, unparsed");
         terminal.PostconditionVerification.Should().NotBeNullOrWhiteSpace();
         terminal.FailureCode.Should().BeNull("a success states no failure reason - the two are different claims about the same tuple");
+        terminal.RefusalDetail.Should().BeNull("the reason-detail channel belongs to a settlement that claims no effect");
         ledger.BoundActionId.Should().Be("machine_inspect");
         ledger.BoundExecutionId.Should().Be("exec_inspect_1", "the dispatch identity is bound to the tuple execution id");
 
@@ -228,6 +229,11 @@ public sealed class RouteReenteringBodyProgramExecutorTests
         terminal.Should().NotBeNull();
         terminal!.Outcome.Should().Be(BodyProgramNodeOutcome.Failed);
         terminal.FailureCode.Should().Be("door_out_of_range", "the refusal's own code is the fact that lets the companion change its approach");
+        // ...AND the receipt's evidence, which is where the sentence that explains the code lives. It travels in
+        // `RefusalDetail`, not in `Evidence`: measured `round41`, `shop_purchase` refused `shop_counter_out_of_reach` six
+        // times while `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1` sat in this exact field, and the model
+        // received the code alone and invented the world fact it needed.
+        terminal.RefusalDetail.Should().Be("source=64,14;door=64,14;actor=60,26;distance=6", "the refusing layer's own words, verbatim");
         // The other half of the contract: a reason is not proof of an effect.
         terminal.Facts.Should().BeEmpty("a failure carries no facts");
         terminal.ReceiptId.Should().BeNull("a failure carries no receipt projection");
@@ -257,6 +263,7 @@ public sealed class RouteReenteringBodyProgramExecutorTests
         terminal.Should().NotBeNull();
         terminal!.Outcome.Should().NotBe(BodyProgramNodeOutcome.Succeeded);
         terminal.FailureCode.Should().Be(reasonCode, $"{state} settles the node, so its reason must survive the projection");
+        terminal.RefusalDetail.Should().Be("detail=1", $"{state} carries the receipt's own detail, or the reason code is all a caller can act on");
         terminal.Facts.Should().BeEmpty();
         terminal.Evidence.Should().BeNull();
     }

@@ -1721,4 +1721,68 @@ public sealed class BridgeBodyProgramProtocolTests
             .Should().BeEquivalentTo("severity", "code", "nodeId", "path", "message");
         diagnostic.GetProperty("nodeId").ValueKind.Should().Be(JsonValueKind.Null);
     }
+
+    /// <summary>
+    /// The two reasons a settlement owes a caller, on the wire, in the frame that already carries its state.
+///
+/// <para>
+/// `RefusalDetail` is where the refusing layer's own sentence travels - `round41`: `shop_purchase` refused
+/// `shop_counter_out_of_reach` six times while `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1` sat in the Mod's
+/// receipt, and all 94 `program_status` replies that round carried neither an evidence nor a detail. `RecoveryDiagnostic`
+/// is the journal's `execution_uncertain`, which the wire never published - so `recovery_required` arrived as a state with
+/// no reason at all.
+/// </para>
+/// <para>
+/// Both are reason-only: they are legal on exactly the states that claim no effect, and this test asserts BOTH directions -
+/// that the Mod publishes them and that it refuses a frame where they would describe a success.
+/// </para>
+/// </summary>
+[Fact]
+public void BodyProgramNodeStatusCarriesItsReasonDetailAndRecoveryDiagnosticAndRefusesThemOnASuccess()
+{
+    var snapshot = new BodyProgramStatusSnapshot("program_1", BodyProgramState.Failed, 7, 2, 11, new[]
+    {
+        new BodyProgramJournalNode("first", BodyProgramNodeState.Failed, 3, 4, null, null,
+            FailureCode: "shop_counter_out_of_reach", RefusalDetail: "owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1"),
+        new BodyProgramJournalNode("second", BodyProgramNodeState.RecoveryRequired, 3, 4, null, null, RecoveryDiagnostic: "execution_uncertain"),
+        new BodyProgramJournalNode("third", BodyProgramNodeState.Succeeded, 3, 4, null, null),
+    }, new[]
+    {
+        new BodyProgramNodeWork("first", "shop_purchase", null, null),
+        new BodyProgramNodeWork("second", "till_soil", 3, 4),
+        new BodyProgramNodeWork("third", "water_crop", 3, 4),
+    });
+
+    BridgeBodyProgramStatusResult projected = BridgeProtocol.ProjectBodyProgramStatusResult(new BodyProgramStatusResult(BodyProgramQueryCode.Found, snapshot));
+    BridgeProtocol.TrySerialize(projected, out string json, out string serializeReason).Should().BeTrue(serializeReason);
+
+    using (JsonDocument document = JsonDocument.Parse(json))
+    {
+        JsonElement nodes = document.RootElement.GetProperty("snapshot").GetProperty("nodes");
+        nodes[0].GetProperty("refusalDetail").GetString().Should().Be("owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1");
+        nodes[1].GetProperty("recoveryDiagnostic").GetString().Should().Be("execution_uncertain");
+        // Null reasons stay off the wire, so a node that has none keeps the shape it always had.
+        nodes[2].TryGetProperty("refusalDetail", out _).Should().BeFalse();
+        nodes[2].TryGetProperty("recoveryDiagnostic", out _).Should().BeFalse();
+    }
+
+    BridgeProtocol.TryDeserializeBodyProgramStatusResult(ResultEnvelope("program_status_result", json), out BridgeEnvelope<BridgeBodyProgramStatusResult>? envelope, out string reason).Should().BeTrue(reason);
+    envelope!.Payload.Snapshot!.Nodes[0].RefusalDetail.Should().Be("owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1");
+    envelope.Payload.Snapshot.Nodes[1].RecoveryDiagnostic.Should().Be("execution_uncertain");
+    envelope.Payload.Snapshot.Nodes[2].RefusalDetail.Should().BeNull();
+
+    // A reason on a success is a second account of a tuple that already carries proof, and the wire refuses it for the same
+    // reason the journal does: two callers must not be able to read one settlement two ways.
+    var succeededWithReason = new BodyProgramStatusSnapshot("program_1", BodyProgramState.Succeeded, 7, 2, 11,
+        new[] { new BodyProgramJournalNode("first", BodyProgramNodeState.Succeeded, 3, 4, null, null, RefusalDetail: "owner=Pierre") },
+        new[] { new BodyProgramNodeWork("first", "water_crop", 3, 4) });
+    BridgeProtocol.TrySerialize(BridgeProtocol.ProjectBodyProgramStatusResult(new BodyProgramStatusResult(BodyProgramQueryCode.Found, succeededWithReason)), out _, out reason).Should().BeFalse();
+    reason.Should().Be("invalid_body_program_result");
+    // ...and so is a recovery diagnostic on any other state.
+    var failedWithDiagnostic = new BodyProgramStatusSnapshot("program_1", BodyProgramState.Failed, 7, 2, 11,
+        new[] { new BodyProgramJournalNode("first", BodyProgramNodeState.Failed, 3, 4, null, null, RecoveryDiagnostic: "execution_uncertain") },
+        new[] { new BodyProgramNodeWork("first", "water_crop", 3, 4) });
+    BridgeProtocol.TrySerialize(BridgeProtocol.ProjectBodyProgramStatusResult(new BodyProgramStatusResult(BodyProgramQueryCode.Found, failedWithDiagnostic)), out _, out reason).Should().BeFalse();
+    reason.Should().Be("invalid_body_program_result");
+    }
 }
