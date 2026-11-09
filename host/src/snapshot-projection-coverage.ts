@@ -161,6 +161,8 @@ const WITHHELD_SCALAR_KEYS: Readonly<Record<string, string>> = Object.freeze({
     "A count used only while planning artifact-spot digs, paired with the family it counts. Delivered by `stardew_observe`.",
   fixedInteractionPointsOmitted:
     "A count used only while reading the map's fixed interaction points, paired with the family it counts: it says the list was truncated, and it would be a second spelling of `fixedInteractionPoints.length` in a per-turn fact block that already has to stay under 4 KB. Delivered by `stardew_observe`.",
+  farmBuildingTargetsOmitted:
+    "The number of `farmBuildingTargets` rows the Mod's cap (16) left out, paired with the family it counts. Nothing renders it: no projection reads the building family either (`farmBuildingTargets` is withheld above) and the cap is enforced Mod-side, so there is no building line in the fact block for a count to qualify. Delivered by `stardew_observe` beside the rows it counts; if a renderer ever prints a building list - `host/src/snapshot-projection.ts` has no building line today - it has to print this count with it, or a farm at the cap reads as a farm with exactly sixteen buildings.",
   soilTilesOmitted:
     "The number of soil tiles the Mod's bound left out of `soilTiles`, paired with the family it counts. The per-turn fact block reports the published count (`soilTilesCount`), and without the omission beside it a 64-row neighbourhood would read as a complete patch that happens to be 64 tiles - which is how a truncated list became a defect once already. Delivered by `stardew_observe`.",
   discoveryExclusions:
@@ -172,7 +174,7 @@ const WITHHELD_SCALAR_KEYS: Readonly<Record<string, string>> = Object.freeze({
   seedSupplyTargets:
     "Where the seeds the actor HOLDS are sold, for how much, and whether the shop's own hours query says it is open. Read by the live harness, which is the layer that knows the DAY's task: the shortage is `task patch tiles` minus `heldCount`, and the Host's per-turn fact block has no task to subtract from. Publishing it into the environment line would state a supply with no shortage beside it, once per turn, for a fact that changes once a day. Delivered by `stardew_observe` to the harness.",
   seedSupplyTargetsOmitted:
-    "The number of supply rows the Mod's cap left out, paired with the family it counts. The harness reads it beside the rows for the same reason `soilTilesOmitted` exists: a bounded list without its omission count reads as a complete world.",
+    "The number of `seedSupplyTargets` rows the Mod's cap (8) left out, paired with the family it counts. Nothing reads it today: the family is withheld above, and the only reader of the rows - `tools/lib/seed-shortage.mjs`, the live harness that turns them into the day's seed-shortage fact - computes the shortage from the rows alone and never consults this count, so a supply truncated at eight rows still reads as a complete one to that layer. That file is where it has to be read if the fact is ever to state the truncation; until then the wire validates it and no product text shows it.",
 });
 
 /**
