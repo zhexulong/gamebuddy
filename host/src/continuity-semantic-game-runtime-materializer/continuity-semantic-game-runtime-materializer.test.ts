@@ -1088,6 +1088,12 @@ const FAMILIES_NOT_IN_PLAN_PARAMETERS: Readonly<Record<string, string>> = Object
   harvestWhereabouts: "a per-location summary, addressed through harvestTargets",
   inventoryItemFacts: "reread evidence for one action, not a family a script loops",
   panSites: "pan_for_ore's sites; published per-family and addressed through the action's own target",
+  waterTargets:
+    "the tiles a rod may cast at, each with its id; fish_here names one tile and its expectedTargetId, and no action loops over water - a loop over it would be a second cast per tile the engine never asked for",
+  seedSupplyTargets:
+    "what the seeds she needs sell for and how many she holds - the shortage fact reads it, and no action takes a supply row as an argument (plant_seed names a tile and a slot)",
+  discoveryExclusions:
+    "why a family came back empty this turn - a diagnostic roster the fact line reads, never a target any action addresses",
 });
 
 test("a plan does not hold the turn unless the caller asks it to", async () => {
