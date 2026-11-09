@@ -50,6 +50,7 @@ import {
   sweepTaskPrompts,
 } from "../../lib/multiday-daily-tasks.mjs";
 import { judgeTaskPurpose } from "../../lib/task-purpose.mjs";
+import { dayPromptWithFact, seedShortageFact } from "../../lib/seed-shortage.mjs";
 import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
 import { createLedger, ledgerSpans, ledgerSummary } from "./run-ledger.mjs";
 import { chooseLevelUpResolution, readPendingLevelUpsFromSnapshot } from "../../lib/level-up-evidence.mjs";
@@ -572,6 +573,11 @@ const sessionTurns = [];
 // entry per day the run actually delivered, built where the day's receipts are still addressable; the session
 // verdict reads it, and the result publishes it, so a run cannot be green on an unachieved task and cannot hide one.
 const taskPurposes = [];
+// What the run TOLD the companion about a seed shortage, per day, in the words it was handed (see
+// `seed-shortage.mjs`). One entry per day whose task declared a patch, computed once on that day's first turn from the
+// world as it stood then. It is recorded because "she was handed the supply and still did not go" and "nothing ever
+// told her" are different findings, and only this list tells them apart.
+const seedFacts = [];
 // What the companion could actually see during the session. Sampled WHILE the
 // session runs (the surface a turn can rely on), never read after teardown: the
 // post-run snapshot is empty in practice, which silently emptied the audit's
@@ -789,13 +795,35 @@ const ledger = createLedger({ now: () => Date.now() });
 //
 // `minFreeMb` over the whole run is the useful statistic: a death under sustained single-digit-hundred free megabytes
 // is a different finding from a death with gigabytes available, and only one of them is our bug.
-const hostMemory = { samples: 0, minFreeMb: null, maxHostRssMb: null };
-const sampleHostMemory = () => {
+const hostMemory = { samples: 0, minFreeMb: null, maxHostRssMb: null, startRssMb: null, minRssMb: null, series: [] };
+let lastHostMemorySampleAtMs = 0;
+const sampleHostMemory = (atMs = Date.now()) => {
   const freeMb = Math.round(freeMemory() / (1024 * 1024));
-  const rssMb = Math.round(process.memoryUsage().rss / (1024 * 1024));
+  const usage = process.memoryUsage();
+  const rssMb = Math.round(usage.rss / (1024 * 1024));
   hostMemory.samples += 1;
   hostMemory.minFreeMb = hostMemory.minFreeMb === null ? freeMb : Math.min(hostMemory.minFreeMb, freeMb);
   hostMemory.maxHostRssMb = hostMemory.maxHostRssMb === null ? rssMb : Math.max(hostMemory.maxHostRssMb, rssMb);
+  hostMemory.startRssMb ??= rssMb;
+  hostMemory.minRssMb = hostMemory.minRssMb === null ? rssMb : Math.min(hostMemory.minRssMb, rssMb);
+  // A series, not just extremes: `maxHostRssMb` alone cannot tell a one-off allocation spread (the first provider
+  // request, the first fold child) from a leak that grows with turns, and those two have opposite fixes. Measured
+  // 2026-11-09: one run reached 866 MB in 2.97 minutes with 3 GB free, another sat at 374 MB after 1.41 minutes - a
+  // 300 MB spread with the same work, which is why the answer needs the shape and not the peak. `external` and
+  // `arrayBuffers` separate native allocation (SQLite, spawned children) from the V8 heap.
+  if (atMs - lastHostMemorySampleAtMs >= 60_000) {
+    lastHostMemorySampleAtMs = atMs;
+    hostMemory.series.push({
+      atMs,
+      rssMb,
+      heapUsedMb: Math.round(usage.heapUsed / (1024 * 1024)),
+      heapTotalMb: Math.round(usage.heapTotal / (1024 * 1024)),
+      externalMb: Math.round(usage.external / (1024 * 1024)),
+      arrayBuffersMb: Math.round(usage.arrayBuffers / (1024 * 1024)),
+      freeMb,
+    });
+  }
+  return { rssMb, freeMb };
 };
 sampleHostMemory();
 const hostMemoryTimer = setInterval(sampleHostMemory, 5_000);
@@ -873,6 +901,7 @@ const dialogueDelivery = new Map();
 const nightRecordsByDay = new Map();
 const presentationPieceAtMs = [];
 let turnStartedAtMs = null;
+let agentTurnCount = 0;
 /**
  * The agent session's own terminal record for the turn(s) this run drove.
  *
@@ -1785,6 +1814,20 @@ async function deliverDialogueGatesForDay(day, tools) {
 
 async function runAgentTurn(text, tools) {
   turnStartedAtMs = Date.now();
+  // One line per turn, because the only question a memory death leaves open is its SHAPE: flat after the first
+  // allocation spread, or growing with turns. `sessionBytes` is the retained-transcript proxy (Pi holds the session
+  // twice in RAM) and costs one stat; `diagnostics` is the runner's own unbounded array.
+  const rss = sampleHostMemory(turnStartedAtMs);
+  let sessionBytes = null;
+  try {
+    sessionBytes = statSync(runSessionRecord.path).size;
+  } catch {
+    sessionBytes = null;
+  }
+  console.error(
+    `HOST_MEMORY_TURN ${JSON.stringify({ turn: agentTurnCount, rssMb: rss.rssMb, freeMb: rss.freeMb, sessionBytes, diagnostics: bridgeDiagnostics.length, facts: factLog.length })}`,
+  );
+  agentTurnCount += 1;
   sampleAdvertisedActions();
   const agentTurn = (async () => {
     try {
@@ -2402,7 +2445,7 @@ function sampleGameProcess() {
       [
         "-NoProfile",
         "-Command",
-        "Get-Process -Name StardewModdingAPI,Stardew* -ErrorAction SilentlyContinue | Select-Object -First 1 -Property Responding,CPU | ConvertTo-Json -Compress",
+        "Get-Process -Name StardewModdingAPI,Stardew* -ErrorAction SilentlyContinue | Select-Object -First 1 -Property Responding,CPU,WorkingSet64,PrivateMemorySize64 | ConvertTo-Json -Compress",
       ],
       { encoding: "utf8", timeout: 8_000 },
     );
@@ -2414,6 +2457,15 @@ function sampleGameProcess() {
       return Object.freeze({
         responding: parsed.Responding === true,
         cpuSeconds: typeof parsed.CPU === "number" ? parsed.CPU : null,
+        // The game's own working set. Without it a run that dies of memory exhaustion cannot say whose: the harness
+        // records system-wide free memory and the Host's RSS, and never the process that owns most of the machine.
+        // Measured 2026-11-09: `minFreeMb: 97` beside `hostRssMb: 934` on a machine whose rest state is 4.2 GB free of
+        // 31 - a 934 MB process cannot account for that, so the attribute had no owner in any artifact.
+        workingSetMb: typeof parsed.WorkingSet64 === "number" ? Math.round(parsed.WorkingSet64 / (1024 * 1024)) : null,
+        privateMb:
+          typeof parsed.PrivateMemorySize64 === "number"
+            ? Math.round(parsed.PrivateMemorySize64 / (1024 * 1024))
+            : null,
         note: null,
       });
     } catch {
@@ -4045,6 +4097,20 @@ try {
     localeKey === "zh"
       ? `（第 ${String(day)} 天，天已经黑了。该收工就收工：想睡就回床上躺下，这一天才算过去；还想接着干也行。）`
       : `(Day ${String(day)}, and it is late - the sky is dark. If you are done, go to bed and sleep and the day ends; if you want to keep working, that is yours to choose.)`;
+  /**
+   * The day's prompt with the world's own shortage fact appended, or the prompt alone - the composition lives in
+   * `seed-shortage.mjs` so its once-per-day property is testable rather than asserted here.
+   *
+   * A FACT, not an instruction: it states the task's tile count, the seeds she holds, the shortfall, and where the
+   * missing seed is sold with the shop's own hours - and stops. Whether to walk to town is hers, because her deciding
+   * her own day is the property the character card grants her. The defect this answers was not a missing order but a
+   * missing fact: measured 2026-11-09, two seed stacks against a sixty-tile strip, four tiles planted, "种子就这些了，想
+   * 铺满二十格还得再买种" - and asked afterwards, "没有想过买种子".
+   *
+   * ONCE PER DAY, on the first turn. The shortage does not move while the supply does (a shop closes at 18:00), and a
+   * fact repeated every turn would become the instruction by repetition that this deliberately is not.
+   */
+  const withDayFact = (prompt, fact) => dayPromptWithFact(prompt, fact, localeKey);
   let status = null;
   // The promise the CURRENT day's turn settles on. The night watcher waits on it so "the night has not begun"
   // and "the companion will not sleep" are different answers instead of one timeout.
@@ -4123,9 +4189,21 @@ try {
           while (!nightCrossedIn(dayScope)) {
             turns += 1;
             const clock = readWorldClock();
+            // The day's shortage fact, read from the world as it stands at the FIRST turn of the day: what the task
+            // asks for, what she holds, and where the missing seed is sold. Null when there is nothing to say (the task
+            // declares no patch, or the pack already covers it), and then the prompt is untouched.
+            const dayFact =
+              turns === 1
+                ? seedShortageFact({
+                    taskId: taskForDay(day),
+                    snapshot: client.state?.snapshot ?? null,
+                    locale: localeKey,
+                  })
+                : null;
+            if (dayFact !== null) seedFacts.push(Object.freeze({ day, ...dayFact }));
             const prompt =
               turns === 1
-                ? promptForDay(day)
+                ? withDayFact(promptForDay(day), dayFact)
                 : clock.unknown === false && clock.minutes !== null && clock.minutes >= LATE_DAY_MINUTES
                   ? promptForLateDay(day)
                   : promptForDayContinuation(day);
@@ -4916,6 +4994,10 @@ try {
     // Published because the verdict above is decided from it: a reader must be able to check the judgement instead
     // of trusting it, and a gap has to travel with the run that hit it (`missingFact`).
     taskPurposes,
+    // What the run TOLD the companion about a seed shortage, in the words it was handed, per day. Published beside the
+    // task verdicts because "she was handed the supply and did not go" and "nothing ever told her" are different
+    // findings about the same run, and a reader must be able to tell which one it is looking at.
+    seedFacts,
     // The scheduled player lines, judged by the gate module, and what happened to each of them: a gate that was never
     // delivered is a different finding from one that was delivered and answered badly, and both are different from a
     // gate that reported a pass without ground truth (which the module cannot do: it reports `not_judgeable`).
