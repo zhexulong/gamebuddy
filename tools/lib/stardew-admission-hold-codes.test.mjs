@@ -25,7 +25,11 @@ function modCodes() {
   const fromSwitch = [...body.matchAll(/ActorDispositionKind\.\w+\s*=>\s*"([a-z_]+)"/g)].map((m) => m[1]);
   const generic = [...body.matchAll(/_ => "([a-z_]+)"/g)].map((m) => m[1]);
   const owners = [...controller.matchAll(/"(body_owned(?:_by_[a-z_]+)?)"/g)].map((m) => m[1]);
-  return { fromSwitch, generic, owners };
+  // The EVENT vocabulary, declared as constants beside the body owners, so this mirror reads the Mod's own spelling
+  // instead of a hand copy: `event_` is the Mod's own prefix for "the world refused this because of a running event".
+  const events = [...controller.matchAll(/internal const string \w+ = "(event_[a-z0-9_]+)"/g)].map((m) => m[1]);
+  assert.ok(events.length >= 1, "the Mod must declare its event-vocabulary codes as named constants");
+  return { fromSwitch, generic, owners, events };
 }
 
 test("the list contains every code the Mod's disposition switch can return", () => {
@@ -44,9 +48,19 @@ test("the list contains every named body owner the controller mints", () => {
   }
 });
 
+test("the list contains every event code the Mod declares", () => {
+  // The cutscene vocabulary grew a second code because one word answered two questions: `cutscene_active` is the hold
+  // for every action with no path through a cutscene, while `event_has_no_dialogue_box` is the modal family finding
+  // nothing on screen to act on. A live gate that reads "was it a hold?" must recognise both.
+  const { events } = modCodes();
+  for (const code of events) {
+    assert.ok(ADMISSION_HOLD_CODES.includes(code), `the Mod can return ${code} but the list omits it`);
+  }
+});
+
 test("the list carries nothing the Mod cannot return", () => {
-  const { fromSwitch, generic, owners } = modCodes();
-  const live = new Set([...fromSwitch, ...generic, ...owners]);
+  const { fromSwitch, generic, owners, events } = modCodes();
+  const live = new Set([...fromSwitch, ...generic, ...owners, ...events]);
   for (const code of ADMISSION_HOLD_CODES) {
     assert.ok(live.has(code), `the list claims ${code}, which the Mod's source does not mint`);
   }

@@ -12,6 +12,11 @@
  *   - `WorldModel.HoldReasonCode` - what KIND of hold it is (four named holds plus the generic fallback that is
  *     still correct when nothing more specific applies, e.g. `Idle` with `CanMove == false`).
  *   - the named BODY OWNERS (`farmhandexecutioncontroller.cs`) - which in-flight execution holds the body.
+ *
+ * Plus the EVENT vocabulary: the codes the shared admission mints about a RUNNING event. They belong here for the same
+ * reason as the holds - a runner asserts "it was refused because the world held the actor", and `event_has_no_dialogue_box`
+ * is exactly that - but they are NOT dispositions: `cutscene_active` keeps its own spelling for every request whose
+ * action has no path through a cutscene.
  */
 
 /** Every reason code the shared admission can return for a held actor. */
@@ -33,6 +38,8 @@ export const ADMISSION_HOLD_CODES = Object.freeze([
   "body_owned_by_activity",
   // the defensive fallback for an owner this build cannot name
   "body_owned",
+  // the EVENT vocabulary: the cutscene refused the request because there was nothing in it to act on
+  "event_has_no_dialogue_box",
 ]);
 
 /**
