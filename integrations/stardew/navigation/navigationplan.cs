@@ -19,7 +19,7 @@ internal sealed record NavigationPlan(
             new NavigationDestinationResolution(null, null, null, terminalReason),
             new NavigationWorldView(
                 HasLivePlayer: false,
-                PlayerActionable: false,
+                PlayerHold: null,
                 CurrentSourceLocation: null,
                 SourceX: 0,
                 SourceY: 0,

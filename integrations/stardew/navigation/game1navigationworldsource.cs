@@ -22,7 +22,7 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
         GameLocation? location = player?.currentLocation;
         bool live = Context.IsWorldReady && player is not null && location is not null;
         if (!live)
-            return new NavigationWorldView(false, false, null, 0, 0, false, Array.Empty<NavigationTransitionLeg>(), false, false, false, false);
+            return new NavigationWorldView(false, null, null, 0, 0, false, Array.Empty<NavigationTransitionLeg>(), false, false, false, false);
 
         var legs = new List<NavigationTransitionLeg>();
         foreach (WorldEdge edge in EnumerateEdges(location!))
@@ -39,9 +39,11 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
         }
 
         string? current = location!.NameOrUniqueName;
+        // ONE reading of "the player may act this frame", and the hold is described only when it says she may not.
+        bool actionable = player!.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp;
         return new NavigationWorldView(
             true,
-            player!.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp,
+            actionable ? null : WorldModel.DescribeCurrentNavigationHold(player),
             current,
             player.TilePoint.X,
             player.TilePoint.Y,

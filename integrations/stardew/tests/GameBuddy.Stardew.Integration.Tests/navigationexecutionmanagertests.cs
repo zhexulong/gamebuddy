@@ -870,8 +870,14 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
 
     private static NavigationWorldView NotAtFarm() => View(true, true, "Farm", at: false, new[] { MineLeg });
 
+    /// <summary>
+    /// The hold these fixtures publish for a body the game has not described further, in <see cref="WorldModel"/>'s own
+    /// words rather than a second copy of them.
+    /// </summary>
+    private static readonly string NotActionableHold = WorldModel.DescribeNavigationHold(default, canMove: false);
+
     private static NavigationWorldView View(bool live, bool actionable, string source, bool at, IReadOnlyList<NavigationTransitionLeg> legs)
-        => new(live, actionable, source, 0, 0, at, legs, BoundaryExcludesDestination: false, DestinationTemporarilyUnavailable: false, TransitionAmbiguousOrUnknown: false, UncorrelatedTransition: false);
+        => new(live, actionable ? null : NotActionableHold, source, 0, 0, at, legs, BoundaryExcludesDestination: false, DestinationTemporarilyUnavailable: false, TransitionAmbiguousOrUnknown: false, UncorrelatedTransition: false);
 
     /// <summary>Mutable fake world source so the fresh coordinator re-read can change.</summary>
     private sealed class MutableWorldSource : INavigationWorldSource

@@ -57,7 +57,7 @@ public sealed class NavigationOutcomeEvidenceTests
         NavigationDestinationResolution resolution = new(binding, binding, "Desert", null);
         NavigationWorldView view = new(
             HasLivePlayer: true,
-            PlayerActionable: true,
+            PlayerHold: null,
             CurrentSourceLocation: "BusStop",
             SourceX: 4,
             SourceY: 4,

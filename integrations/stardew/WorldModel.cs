@@ -307,6 +307,74 @@ internal static class WorldModel
     }
 
     /// <summary>
+    /// The evidence a refusal carries when the actor cannot start a world action: WHAT holds her, from the same closed
+    /// set <see cref="DescribeCurrentBodyHold"/> names, and what would clear it.
+    ///
+    /// <para>
+    /// It exists because `destination_locked` carried `actionable=false` and nothing else, so a cutscene, an open menu,
+    /// a faint and a tool swing all read as the same word. Measured from a live run's settlement digests: a companion
+    /// that wanted to leave the farm for town was refused `destination_locked` and stayed on the farm for two in-game
+    /// days, because the only response its evidence left open was the same request again. The caller has already
+    /// decided that the actor cannot act - this says WHY, from the one owner of that vocabulary, so no gate invents a
+    /// second set of names for the same holds.
+    /// </para>
+    ///
+    /// <para>
+    /// A hold the closed vocabulary cannot name is published as `unknown_holder:&lt;engine field&gt;` rather than left
+    /// silent: the engine reported it through a specific field, and naming that field is the difference between a
+    /// refusal a caller can act on and no answer at all.
+    /// </para>
+    /// </summary>
+    public static string DescribeNavigationHold(
+        in ActorWorldFacts facts,
+        bool canMove,
+        bool? modalIsQuestion = null)
+    {
+        ActorDisposition disposition = Classify(facts);
+        string holder = disposition.Kind == ActorDispositionKind.Idle
+            ? $"{UnknownHolderPrefix}{UnnamedHolderEngineFact}"
+            : HoldReasonCode(disposition.Kind);
+        return $"held_by={holder};{DescribeBodyHold(disposition, facts, canMove, modalIsQuestion)}"
+            + NavigationCountermeasure(disposition.Kind);
+    }
+
+    /// <summary>
+    /// <see cref="DescribeNavigationHold"/> with the modal probe filled from the LIVE modal, for the same reason
+    /// <see cref="DescribeCurrentBodyHold"/> reads it: a cutscene's own dialogue box is only reachable through the live
+    /// menu, and guessing `is_question` would tell the caller to dismiss a box that is waiting for an answer.
+    /// </summary>
+    public static string DescribeCurrentNavigationHold(Farmer? player)
+    {
+        bool? isQuestion = null;
+        if (Game1.activeClickableMenu is DialogueBox dialogue)
+            isQuestion = dialogue.isQuestion;
+        return DescribeNavigationHold(ReadFacts(player), player?.CanMove ?? false, isQuestion);
+    }
+
+    /// <summary>
+    /// The `<see cref="UnknownHolderPrefix"/>` code and the engine field that reported the hold, for the one hold the
+    /// closed set has no member for: <c>CanMove=false</c> with no event, menu, faint or animation that produced it.
+    /// </summary>
+    private const string UnknownHolderPrefix = "unknown_holder:";
+    private const string UnnamedHolderEngineFact = "CanMove";
+
+    /// <summary>
+    /// What would CLEAR the hold, in the vocabulary the admission itself reads. <see cref="DescribeEventHold"/> already
+    /// names its own answer (the event-acting family, or `none` plus the one step left), so a cutscene is not answered
+    /// twice; every other hold names either the modal-resolving family - whose working precondition IS an open modal -
+    /// or `none` plus the one step that remains.
+    /// </summary>
+    private static string NavigationCountermeasure(ActorDispositionKind kind) => kind switch
+    {
+        ActorDispositionKind.Event => string.Empty,
+        ActorDispositionKind.Modal
+            => $";admissible_actions={string.Join(",", FarmhandActionCatalog.ModalResolvingActionIds.OrderBy(actionId => actionId, StringComparer.Ordinal))}",
+        ActorDispositionKind.PassOut => ";admissible_actions=none;next_step=wait_for_day_to_advance",
+        ActorDispositionKind.Transient => ";admissible_actions=none;next_step=wait_for_retry_window",
+        _ => ";admissible_actions=none;next_step=observe_again",
+    };
+
+    /// <summary>
     /// A cutscene's evidence NAMES what the Agent can do about it, because a hold with no countermeasure is a hold an
     /// Agent can only retry. Measured from a live run's transcript: four retries over twenty minutes against
     /// `cutscene_active`, while the two actions that end a cutscene's own dialogue box were the two the gate refused.

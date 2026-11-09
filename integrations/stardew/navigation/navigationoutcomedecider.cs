@@ -76,9 +76,9 @@ internal static class NavigationOutcomeDecider
         if (view.DestinationTemporarilyUnavailable)
             return new NavigationOutcome(ExecutionState.Blocked, "destination_temporarily_unavailable",
                 $"destination={label};availability=temporary");
-        if (!view.PlayerActionable)
+        if (view.PlayerHold is { } hold)
             return new NavigationOutcome(ExecutionState.Rejected, "destination_locked",
-                $"destination={label};actionable=false");
+                $"destination={label};actionable=false;{hold}");
         if (view.BoundaryExcludesDestination)
         {
             string? destination = resolution.Binding?.CanonicalDestinationIdentity;

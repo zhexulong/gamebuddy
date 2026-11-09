@@ -146,7 +146,7 @@ internal sealed class AcceptedNavigationExecution
     private static NavigationPlan PlanWithoutLiveWorld(NavigationDestinationResolution resolution)
     {
         var emptyView = new NavigationWorldView(
-            false, false, null, 0, 0, false,
+            false, null, null, 0, 0, false,
             Array.Empty<NavigationTransitionLeg>(), false, false, false, false);
         return new NavigationPlan(resolution, emptyView, NavigationOutcomeDecider.DecideTerminalBeforeRouting(resolution, emptyView)!);
     }

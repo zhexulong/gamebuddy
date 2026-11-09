@@ -27,9 +27,15 @@ internal sealed record NavigationTransitionLeg(
 /// target-native warps/doors; tests construct it from equivalent synthetic
 /// source facts. No route/tile/identity is projected to an Agent surface.
 /// </summary>
+/// <param name="PlayerHold">
+/// Why the player cannot start a transition right now, in the wire-evidence form <see cref="WorldModel"/> owns
+/// (<c>held_by=cutscene_active;…</c>), or <see langword="null"/> when nothing holds her. This is the SAME fact the
+/// actionability test decided, named by the one owner of body holds - not a second definition of "actionable" - so a
+/// refusal cannot say `actionable=false` without saying what did it.
+/// </param>
 internal sealed record NavigationWorldView(
     bool HasLivePlayer,
-    bool PlayerActionable,
+    string? PlayerHold,
     string? CurrentSourceLocation,
     int SourceX,
     int SourceY,

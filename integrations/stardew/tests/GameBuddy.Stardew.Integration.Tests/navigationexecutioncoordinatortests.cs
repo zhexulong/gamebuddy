@@ -203,6 +203,12 @@ public sealed class NavigationExecutionCoordinatorTests
         return (new NavigationExecutionCoordinator(runtime), staleRef);
     }
 
+    /// <summary>
+    /// The hold these fixtures publish for a body the game has not described further, in <see cref="WorldModel"/>'s own
+    /// words rather than a second copy of them.
+    /// </summary>
+    private static readonly string NotActionableHold = WorldModel.DescribeNavigationHold(default, canMove: false);
+
     private static NavigationWorldView View(
         bool live,
         bool actionable,
@@ -214,7 +220,7 @@ public sealed class NavigationExecutionCoordinatorTests
         bool unknown = false,
         bool uncorrelated = false) => new(
             live,
-            actionable,
+            actionable ? null : NotActionableHold,
             source,
             0,
             0,
