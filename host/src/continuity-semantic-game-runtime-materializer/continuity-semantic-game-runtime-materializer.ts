@@ -95,6 +95,7 @@ import {
   type ProgramStatusProgress,
 } from "../program-status-wait.js";
 import { createProgramSettlementReporter, watchProgramSettlement } from "../program-settlement-digest.js";
+import { createProgramEventDeliveryLedger, type ProgramSnapshotStaleness } from "../program-event-delivery.js";
 import type { WorldFact } from "../event-pump.js";
 import { createGameRuntimeAttachment } from "./game-runtime-attachment.js";
 import {
@@ -183,6 +184,11 @@ function createBodyProgramTools(
    * (`createProgramSettlementReporter`).
    */
   const settlement = createProgramSettlementReporter(announceSettledFact);
+  /**
+   * What this runtime's connection has already been delivered, per program (`program-event-delivery.ts`). One per
+   * runtime, beside the settlement ledger: the cursors belong to THIS session's journal, and program ids repeat.
+   */
+  const eventDelivery = createProgramEventDeliveryLedger();
 
   /**
    * The Mod's own stamp of the moment it closed this program's journal, or `null` when it cannot be read.
@@ -225,6 +231,7 @@ function createBodyProgramTools(
         if (record === undefined || !record.available) throw new Error("action_program_runtime_unavailable");
         const result = await record.port.status({ programId });
         programStatusProgress.observe(result);
+        eventDelivery.observeStatus(result);
         return result;
       },
       onSettled: async (status) => {
@@ -562,7 +569,7 @@ function createBodyProgramTools(
         // (`host-service.ts` `acceptIntegrationFact`) rather than by asking here. Measured 2026-11-03 (`round29`): 48
         // calls, `waitMs` median 30,000 (the cap), 248 s blocked - the description advertised waiting, so it waited.
         description:
-          "One submitted plan's journal state and its `progress`: `total`, `settled`, `remaining`, `running` (dispatched, receipt owed), `queued`, and `current` with `observedInStateMs` - how long this Host has watched that node in its state, so `0` means it has just appeared. This is a DIAGNOSTIC, not a progress bar: a plan's progress reaches you as receipts, so read this when a settlement you expected never arrived, or when a step looks stuck - not after every submission. `waitMs` is a rare opt-in that holds your turn until the plan settles or the bound expires (`waited.reachedTerminal` says which, `waited.snapshotChanged: false` that nothing moved); while it holds the turn you cannot stop, append or steer, so leave it out unless this turn genuinely needs the settled answer.",
+          "One submitted plan's journal state and its `progress`: `total`, `settled`, `remaining`, `running` (dispatched, receipt owed), `queued`, and `current` with `observedInStateMs` - how long this Host has watched that node in its state, so `0` means it has just appeared. This is a DIAGNOSTIC, not a progress bar: a plan's progress reaches you as receipts, so read this when a settlement you expected never arrived, or when a step looks stuck - not after every submission. `waitMs` is a rare opt-in that holds your turn until the plan settles or the bound expires (`waited.reachedTerminal` says which, `waited.snapshotChanged: false` that nothing moved); while it holds the turn you cannot stop, append or steer, so leave it out unless this turn genuinely needs the settled answer. `staleSnapshotReplaced` means the journal answered once from a state it had already moved past (`stale_snapshot:eventHighWater=N;delivered=M`) and this answer is the current re-read, so you are reading the plan's real state; `staleSnapshot` means the answer in front of you IS that older snapshot because the re-read did not catch up, so `state` describes where the plan was at N and must not be read as its current state.",
         // Mounted only once a submission has been recorded (see mountProgramReadersAfterSubmission); until then it can
         // only be read as empty, and two always-empty readers are what an agent polls instead of submitting the plan at
         // all.
@@ -581,13 +588,39 @@ function createBodyProgramTools(
             programStatusProgress.observe(result);
             return result;
           };
-          const first = await read();
+          /**
+           * One read, plus the question a single read cannot answer: is this snapshot older than what this
+           * connection has ALREADY been delivered for the program?
+           *
+           * `program-event-delivery.ts` holds the watermark and says why the two can disagree. The read that is
+           * behind is not shown: the Mod composes its answer from the journal state it publishes, and the next read
+           * is usually current again, so one re-read is the difference between reporting a finished plan as running
+           * and answering it.
+           */
+          const readTracked = async () => {
+            const result = await read();
+            return Object.freeze({ result, staleness: eventDelivery.observeStatus(result) });
+          };
+          const first = await readTracked();
+          const tracked = first.staleness === null ? first : await readTracked();
+          // A lagging answer is kept as a FACT even when the re-read replaced it: the whole point is that the Mod's
+          // journal can answer from a state it has already moved past, and a repair nobody can see is how that went
+          // unnoticed (`stale_snapshot:eventHighWater=626;delivered=633` on a plan that had already settled).
+          const staleness = Object.freeze({
+            current: tracked.staleness,
+            replaced: tracked.staleness === null ? first.staleness : null,
+          });
           // Omitted or zero keeps the old behaviour exactly: one read, return. Only a caller that asked to wait
           // pays for the loop, so no existing path gets slower or starts blocking.
-          if (waitMs === undefined || waitMs === 0 || isTerminalProgramStatus(first))
-            return toolResult(first, null, programStatusProgress.observe(first));
-          const waited = await waitForTerminalProgramStatus(read, first, waitMs);
-          return toolResult(waited.result, waited.waited, programStatusProgress.observe(waited.result));
+          if (waitMs === undefined || waitMs === 0 || isTerminalProgramStatus(tracked.result))
+            return toolResult(tracked.result, null, programStatusProgress.observe(tracked.result), staleness);
+          const waited = await waitForTerminalProgramStatus(read, tracked.result, waitMs);
+          return toolResult(
+            waited.result,
+            waited.waited,
+            programStatusProgress.observe(waited.result),
+            Object.freeze({ current: eventDelivery.observeStatus(waited.result), replaced: null }),
+          );
         },
       }),
     ),
@@ -603,7 +636,13 @@ function createBodyProgramTools(
         parameters: bodyProgramToolParameters("stardew_action_program_events"),
         execute: async (_toolCallId, params) => {
           if (!isBodyProgramEventsRequest(params)) throw new Error("invalid_body_program_tool_arguments");
-          return invoke(params, validateEventsRequest, validateBodyProgramEventsResult, (port) => port.events(params));
+          const page = await invoke(params, validateEventsRequest, validateBodyProgramEventsResult, (port) =>
+            port.events(params),
+          );
+          // A page states how far into the journal the Mod had already gone when it answered, which is a delivery
+          // this Host now holds. `program-event-delivery.ts` compares later status snapshots against it.
+          eventDelivery.observeEvents(params.programId, page.details);
+          return page;
         },
       }),
     ),
@@ -1143,16 +1182,29 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
  * running" - the distinction the poll loop existed to express and a fixed `running` reply hides. `progress` rides
  * beside them both, because a read that did not wait still has to say how much work is left for the next decision to be
  * an informed one; it is absent only for the tools that have no plan to report on.
+ *
+ * `staleSnapshot` and `staleSnapshotReplaced` are the same kind of fact, published for the same reason: a snapshot
+ * older than what this connection already delivered is not a statement about the plan, and it must not be read as one
+ * (`program-event-delivery.ts`). `staleSnapshot` means the answer being returned IS that snapshot - the journal did not
+ * catch up when it was re-read - and `staleSnapshotReplaced` means one was received and the answer reports the current
+ * read instead. Both are absent on every answer that never met a lagging snapshot.
  */
 function toolResult<TDetails>(
   details: TDetails,
   waited: Readonly<{ reachedTerminal: boolean; snapshotChanged: boolean }> | null,
   progress?: ProgramStatusProgress | null,
+  staleness?: Readonly<{ current: ProgramSnapshotStaleness | null; replaced: ProgramSnapshotStaleness | null }>,
 ) {
   const published = {
     ...(details as Record<string, unknown>),
     ...(waited === null ? {} : { waited }),
     ...(progress === undefined ? {} : { progress }),
+    ...(staleness?.current === undefined || staleness.current === null
+      ? {}
+      : { staleSnapshot: staleness.current.code }),
+    ...(staleness?.replaced === undefined || staleness.replaced === null
+      ? {}
+      : { staleSnapshotReplaced: staleness.replaced.code }),
   } as TDetails;
   return Object.freeze({
     content: [{ type: "text" as const, text: JSON.stringify(published) }],

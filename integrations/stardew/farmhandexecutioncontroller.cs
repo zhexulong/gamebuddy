@@ -5429,7 +5429,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         bool terminal = state is ExecutionState.Succeeded or ExecutionState.Failed or ExecutionState.Cancelled or ExecutionState.Invalidated or ExecutionState.Expired or ExecutionState.Uncertain;
         if (terminal)
             this.active = null;
-        LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, state, reasonCode, this.revision, evidence);
+        // The one sentence a refusal computed has to travel in the one field a settled node keeps: ADR-006 withholds a
+        // settled failure's evidence, and this receipt used to carry no hint at all. Measured `round41`,
+        // 19:04:10-19:05:26: a `clear_step_blocked` whose evidence held
+        // `clear_step=weed@40,9;stand_at=41,8;remaining_clears=1` reached the model as `Hint=null`, the session contained
+        // `clear_step` 0 times, and 76 seconds went into re-aiming at a corridor one weed closed.
+        string? refusalHint = state is ExecutionState.Failed or ExecutionState.Cancelled
+            ? ClearingEvidence.DescribeRouteHint(evidence)
+            : null;
+        LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, state, reasonCode, this.revision, evidence, Hint: refusalHint);
         this.Remember(receipt);
         this.AddTrace(receipt);
         if (terminal)

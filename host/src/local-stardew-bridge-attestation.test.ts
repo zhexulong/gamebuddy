@@ -3113,3 +3113,416 @@ test("authenticated bridge rejects unsolicited hello_ack by unknown correlation"
     },
   );
 });
+
+/**
+ * A status answer must never be OLDER than the events this connection already delivered for that program.
+ *
+ * MEASURED 2026-11-09 (round41 `multiday_routine`): a `programStatus` reply carried `snapshot.programId=plan_739…`,
+ * `state: "active"`, `eventHighWater: 626`, while that program's three nodes had all reached `succeeded` on journal
+ * cursors 625/629/633. The answer is composed by the Mod from the journal state it publishes
+ * (`local-stardew-bridge.ts:609`) and was forwarded verbatim
+ * (`continuity-semantic-game-runtime-materializer.ts:571-591`), so nothing compared it with what this Host had already
+ * been handed and a finished plan was reported as still running. `eventHighWater` is the journal-wide cursor at the
+ * moment the snapshot was composed, so it is monotone: a snapshot below one this Host already holds is provably older.
+ */
+test(
+  "a settled program is not answered from a snapshot the connection has already moved past",
+  { timeout: 15_000 },
+  async () => {
+    const requests: BridgeMessage[] = [];
+    // Read 1 is the background settlement watch the submission starts (it would otherwise race this test's own read),
+    // read 2 is the tool's first read - composed from a journal state the Mod has already moved past - and read 3 is
+    // its re-read.
+    let statusReads = 0;
+    await withHelloAck(
+      "farmhand_client",
+      generation,
+      async (pipeName) => {
+        const client = await LocalStardewBridgeClient.connectFarmhand(
+          scope,
+          pipeName,
+          token,
+          generation,
+          Date.now() + 10_000,
+          testAdapter,
+        );
+        const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+          client,
+          Object.freeze({
+            playerId: "player_attestation",
+            companionId: scope.companionId,
+            continuityId,
+            saveId: scope.saveId,
+            worldId: scope.worldId,
+          }),
+          { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+        );
+        const binding = await receiptBackedBinding(launch);
+        let materialized:
+          | Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>>
+          | undefined;
+        try {
+          materialized = await binding.executeWithBinding((bindingToken) =>
+            withConsumedBindingExecution(bindingToken, (execution) =>
+              createHostGameRuntimeMaterializer().materializeEnter(
+                reserveGameRuntimeMaterialization(execution),
+                enterPermit(execution),
+              ),
+            ),
+          );
+          const tools = () => observeMaterializedProductionRuntimeForTest(materialized!).session.agent.state.tools;
+          const execute = async (name: string, params: Record<string, unknown>) =>
+            (
+              await tools()
+                .find((tool) => tool.name === name)!
+                .execute("delivery_watermark", params, new AbortController().signal, () => undefined)
+            ).details as {
+              code?: string;
+              snapshot?: { state?: string; eventHighWater?: number };
+              staleSnapshot?: string;
+              staleSnapshotReplaced?: string;
+            };
+          // The readers mount on a recorded submission, so one accepted program comes first.
+          await execute("stardew_submit_action_program", {
+            programId: "plan_739_frozen",
+            nodes: [
+              { nodeId: "n01", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {} },
+              { nodeId: "n03", actionId: "move_to_tile", arguments: {}, dependsOn: ["n01"], bindings: {} },
+            ],
+          });
+          // The plan's own event log, which is what this Host has already been delivered: cursors 625/629/633 with a
+          // journal watermark of 633. Every later status snapshot has to be at least this current.
+          const events = await execute("stardew_action_program_events", {
+            programId: "plan_739_frozen",
+            cursor: 0,
+            pageSize: 32,
+          });
+          assert.equal((events as { highWater?: number }).highWater, 633);
+          const status = await execute("stardew_action_program_status", { programId: "plan_739_frozen" });
+          assert.equal(status.code, "found");
+          assert.equal(status.snapshot?.eventHighWater, 634, "the answer is the read that caught up");
+          assert.equal(
+            status.snapshot?.state,
+            "succeeded",
+            "a plan whose nodes all settled on events this Host already has is not 'active'",
+          );
+          assert.equal(status.staleSnapshot, undefined, "the answer in hand is current, so nothing about it is stale");
+          assert.equal(
+            status.staleSnapshotReplaced,
+            "stale_snapshot:eventHighWater=626;delivered=633",
+            "and the frozen answer it replaced is named, not dropped silently",
+          );
+          assert.equal(
+            requests.filter((request) => request.type === "program_status").length,
+            3,
+            "one read for the watch, one frozen read, and exactly one re-read",
+          );
+        } finally {
+          await materialized?.close();
+          await binding.close();
+        }
+      },
+      (request, socket) => {
+        requests.push(request);
+        if (request.type === "program_submit") {
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_program_submit_delivery_watermark",
+              type: "program_submit_result",
+              payload: {
+                code: "accepted",
+                verification: { accepted: true, catalogRevision: 1, diagnostics: [] },
+                snapshot: {
+                  programId: request.payload.programId,
+                  state: "active",
+                  catalogRevision: 1,
+                  stopEpoch: 0,
+                  eventHighWater: 620,
+                  nodes: [],
+                },
+              },
+            }),
+          );
+          return true;
+        }
+        if (request.type === "program_events") {
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_program_events_delivery_watermark",
+              type: "program_events_result",
+              payload: {
+                programId: request.payload.programId,
+                code: "found",
+                events: [
+                  {
+                    cursor: 625,
+                    programId: request.payload.programId,
+                    kind: "node_settled",
+                    catalogRevision: 1,
+                    nodeId: "n01",
+                    nodeAttempt: 1,
+                    atMs: 1_264_847,
+                  },
+                  {
+                    cursor: 629,
+                    programId: request.payload.programId,
+                    kind: "node_settled",
+                    catalogRevision: 1,
+                    nodeId: "auto_walk_02",
+                    nodeAttempt: 1,
+                    atMs: 1_265_049,
+                  },
+                  {
+                    cursor: 633,
+                    programId: request.payload.programId,
+                    kind: "node_settled",
+                    catalogRevision: 1,
+                    nodeId: "n03",
+                    nodeAttempt: 1,
+                    atMs: 1_265_261,
+                  },
+                ],
+                nextCursor: 633,
+                highWater: 633,
+              },
+            }),
+          );
+          return true;
+        }
+        if (request.type !== "program_status") return;
+        statusReads += 1;
+        if (statusReads === 1) {
+          // The settlement watch: a journal that does not hold the plan yet ends it without a digest, which keeps this
+          // test's own reads the only ones that decide anything.
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_program_status_delivery_watch",
+              type: "program_status_result",
+              payload: { code: "not_found", snapshot: null, programs: null, programCount: 0 },
+            }),
+          );
+          return true;
+        }
+        const frozen = statusReads === 2;
+        socket.write(
+          frame({
+            ...request,
+            messageId: "mod_program_status_delivery_watermark",
+            type: "program_status_result",
+            payload: {
+              code: "found",
+              snapshot: {
+                programId: request.payload.programId,
+                state: frozen ? "active" : "succeeded",
+                catalogRevision: 1,
+                stopEpoch: 0,
+                eventHighWater: frozen ? 626 : 634,
+                nodes: [
+                  { nodeId: "n01", actionId: "move_to_tile", state: "succeeded", nodeAttempt: 1, admissionAttempt: 1 },
+                  {
+                    nodeId: "n03",
+                    actionId: "move_to_tile",
+                    state: frozen ? "pending" : "succeeded",
+                    nodeAttempt: frozen ? 0 : 1,
+                    admissionAttempt: frozen ? 0 : 1,
+                  },
+                ],
+              },
+              programs: null,
+              programCount: 1,
+            },
+          }),
+        );
+        return true;
+      },
+    );
+  },
+);
+
+/**
+ * When the journal does not catch up, the answer says so instead of reading as an authoritative `active`.
+ *
+ * The same round41 snapshot, with a Mod that keeps composing it: the re-read is one attempt to get a current answer,
+ * not a loop, and what comes back is LABELLED with both cursors so a caller can tell "the plan is running" from "the
+ * journal is behind the events I already hold".
+ */
+test(
+  "a snapshot that stays behind the delivered events names itself instead of reading as current",
+  { timeout: 15_000 },
+  async () => {
+    const requests: BridgeMessage[] = [];
+    // Read 1 is the background settlement watch the submission starts; every read after it is frozen, so the answer
+    // the tool reports is the lagging one and has to say so.
+    let statusReads = 0;
+    await withHelloAck(
+      "farmhand_client",
+      generation,
+      async (pipeName) => {
+        const client = await LocalStardewBridgeClient.connectFarmhand(
+          scope,
+          pipeName,
+          token,
+          generation,
+          Date.now() + 10_000,
+          testAdapter,
+        );
+        const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+          client,
+          Object.freeze({
+            playerId: "player_attestation",
+            companionId: scope.companionId,
+            continuityId,
+            saveId: scope.saveId,
+            worldId: scope.worldId,
+          }),
+          { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+        );
+        const binding = await receiptBackedBinding(launch);
+        let materialized:
+          | Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>>
+          | undefined;
+        try {
+          materialized = await binding.executeWithBinding((bindingToken) =>
+            withConsumedBindingExecution(bindingToken, (execution) =>
+              createHostGameRuntimeMaterializer().materializeEnter(
+                reserveGameRuntimeMaterialization(execution),
+                enterPermit(execution),
+              ),
+            ),
+          );
+          const tools = () => observeMaterializedProductionRuntimeForTest(materialized!).session.agent.state.tools;
+          const execute = async (name: string, params: Record<string, unknown>) =>
+            (
+              await tools()
+                .find((tool) => tool.name === name)!
+                .execute("stale_answer", params, new AbortController().signal, () => undefined)
+            ).details as {
+              code?: string;
+              snapshot?: { state?: string };
+              staleSnapshot?: string;
+              staleSnapshotReplaced?: string;
+            };
+          await execute("stardew_submit_action_program", {
+            programId: "plan_739_frozen_forever",
+            nodes: [{ nodeId: "n01", actionId: "move_to_tile", arguments: {}, dependsOn: [], bindings: {} }],
+          });
+          await execute("stardew_action_program_events", {
+            programId: "plan_739_frozen_forever",
+            cursor: 0,
+            pageSize: 32,
+          });
+          const status = await execute("stardew_action_program_status", {
+            programId: "plan_739_frozen_forever",
+          });
+          assert.equal(status.code, "found");
+          assert.equal(status.snapshot?.state, "active", "the Mod's own word is not rewritten by this Host");
+          assert.equal(
+            status.staleSnapshot,
+            "stale_snapshot:eventHighWater=626;delivered=633",
+            "but it is qualified by the cursor it was composed at and the one this connection already reached",
+          );
+          assert.equal(status.staleSnapshotReplaced, undefined, "nothing replaced it, so nothing claims to have");
+          assert.equal(
+            requests.filter((request) => request.type === "program_status").length,
+            3,
+            "one read for the watch, one frozen read, and exactly one re-read - not a poll loop",
+          );
+        } finally {
+          await materialized?.close();
+          await binding.close();
+        }
+      },
+      (request, socket) => {
+        requests.push(request);
+        if (request.type === "program_submit") {
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_program_submit_stale_answer",
+              type: "program_submit_result",
+              payload: {
+                code: "accepted",
+                verification: { accepted: true, catalogRevision: 1, diagnostics: [] },
+                snapshot: {
+                  programId: request.payload.programId,
+                  state: "active",
+                  catalogRevision: 1,
+                  stopEpoch: 0,
+                  eventHighWater: 620,
+                  nodes: [],
+                },
+              },
+            }),
+          );
+          return true;
+        }
+        if (request.type === "program_events") {
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_program_events_stale_answer",
+              type: "program_events_result",
+              payload: {
+                programId: request.payload.programId,
+                code: "found",
+                events: [
+                  {
+                    cursor: 633,
+                    programId: request.payload.programId,
+                    kind: "node_settled",
+                    catalogRevision: 1,
+                    nodeId: "n01",
+                    nodeAttempt: 1,
+                    atMs: 1_265_261,
+                  },
+                ],
+                nextCursor: 633,
+                highWater: 633,
+              },
+            }),
+          );
+          return true;
+        }
+        if (request.type !== "program_status") return;
+        statusReads += 1;
+        if (statusReads === 1) {
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_program_status_stale_watch",
+              type: "program_status_result",
+              payload: { code: "not_found", snapshot: null, programs: null, programCount: 0 },
+            }),
+          );
+          return true;
+        }
+        socket.write(
+          frame({
+            ...request,
+            messageId: "mod_program_status_stale_answer",
+            type: "program_status_result",
+            payload: {
+              code: "found",
+              snapshot: {
+                programId: request.payload.programId,
+                state: "active",
+                catalogRevision: 1,
+                stopEpoch: 0,
+                eventHighWater: 626,
+                nodes: [
+                  { nodeId: "n01", actionId: "move_to_tile", state: "succeeded", nodeAttempt: 1, admissionAttempt: 1 },
+                ],
+              },
+              programs: null,
+              programCount: 1,
+            },
+          }),
+        );
+        return true;
+      },
+    );
+  },
+);
