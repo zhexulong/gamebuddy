@@ -409,7 +409,9 @@ async function resolveBoundWorldBookSource(
   // cannot fully render is omitted from the companion's context, but never
   // silently: see renderWorldBookEntry.
   const constantEntries: readonly WorldBookEntry[] = book.entries
-    .filter((entry) => entry.constant === true)
+    // A disabled entry is not part of her background: it stays in the book, and it reaches
+    // neither the always-on block nor the per-turn candidates.
+    .filter((entry) => entry.enabled !== false && entry.constant === true)
     .flatMap((entry) => {
       const rendered = renderWorldBookEntry(entry, macros);
       return rendered === undefined ? [] : [Object.freeze({ ...entry, ...rendered })];
@@ -419,7 +421,7 @@ async function resolveBoundWorldBookSource(
   // Without them it returns an empty list (catalog-service.ts:327), so the companion never surfaces what
   // its own card says - silently, with no error anywhere.
   const keywordEntries = book.entries
-    .filter((entry) => entry.constant !== true)
+    .filter((entry) => entry.enabled !== false && entry.constant !== true)
     .flatMap((entry) => {
       const rendered = renderWorldBookEntry(entry, macros);
       return rendered === undefined

@@ -575,14 +575,14 @@ test("Chat construction takes the companion language from the player's stored pr
     assert.equal(prepared.presentation.profile.locale, "en-US");
     // And that value is exactly what the prompt's language line will say.
     const prompt = buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, prepared.presentation.profile.locale);
-    assert.match(prompt, /Consistently converse in English/u);
+    assert.match(prompt, /Consistently think, reason, and converse in English/u);
     assert.doesNotMatch(prompt, /Chinese/u);
     // A second construction on the same root sees the update: the preference is
     // durable state, not a mount-time snapshot.
     await store.update(english.revision, { action: "setLocale", locale: "zh-CN" });
     assert.equal(await resolveCompanionLocale(value.runtimeRoot), "zh-CN");
     const chinese = buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE, "zh-CN");
-    assert.match(chinese, /Consistently converse in Chinese \(Simplified\)/u);
+    assert.match(chinese, /Consistently think, reason, and converse in Chinese \(Simplified\)/u);
     void paths;
   } finally {
     await value.binding.close();
@@ -760,6 +760,73 @@ test("a {{char}} entry reaches the materialization, and an entry nothing can ren
     assert.match(diagnostics, /Unknown/u, "the report names the entry");
   } finally {
     process.stderr.write = stderrWrite;
+    await value.binding.close();
+    await releaseConstructionAndFixture(prepared, value);
+  }
+});
+
+// The other half of "this entry reaches her context": an entry the player switched OFF must reach
+// nothing. It stays in the book (so nothing was deleted on her behalf) and it is skipped at BOTH
+// assembly seams - the always-on block and the per-turn candidates - because a switch that only
+// silenced one of them would still let the entry ride into the prompt through the other.
+test("a switched-off world-book entry reaches neither the always-on block nor the per-turn candidates", async () => {
+  const { join: joinPath } = await import("node:path");
+  const { readWorldBook } = await import("../worldbook.js");
+  const bookRoot = await canonicalTestRoot("chat-runtime-worldbook-enabled-");
+  const bookPath = joinPath(bookRoot, "worldbook.json");
+  const entry = (entryId: string, title: string, content: string, extra: Record<string, unknown>) => ({
+    entryId,
+    title,
+    content,
+    scope: "setting" as const,
+    provenance: "authored" as const,
+    tokenBudget: "small" as const,
+    ...extra,
+  });
+  await writeWorldBook(
+    bookPath,
+    validateWorldBook({
+      schemaVersion: 1,
+      worldBookId: "worldbook_switched",
+      revision: 1,
+      alwaysOnPremise: "农场的清晨。",
+      entries: [
+        entry("wb-const-on", "SENTINEL-CONSTANT-ON", "SENTINEL-CONSTANT-ON 始终随行。", { constant: true }),
+        entry("wb-const-off", "SENTINEL-CONSTANT-OFF", "SENTINEL-CONSTANT-OFF 被停用。", {
+          constant: true,
+          enabled: false,
+        }),
+        entry("wb-key-on", "SENTINEL-KEYWORD-ON", "SENTINEL-KEYWORD-ON 是雨天的事。", { keys: ["雨天"] }),
+        entry("wb-key-off", "SENTINEL-KEYWORD-OFF", "SENTINEL-KEYWORD-OFF 是晴天的事。", {
+          keys: ["晴天"],
+          enabled: false,
+        }),
+      ],
+    }),
+  );
+  // The field is accepted AND stored: the durable book carries all four entries, two of them off.
+  const stored = await readWorldBook(bookPath);
+  assert.deepEqual(
+    stored.entries.map((candidate) => candidate.enabled === false),
+    [false, true, false, true],
+    "the switch is a durable fact the book keeps, not a row the import threw away",
+  );
+  const value = await fixture({ ownWorldBookPath: bookPath });
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
+  try {
+    prepared = await value.binding.executeWithBinding((token) =>
+      withConsumedChatRuntimeBinding(token, (execution) =>
+        prepareExactChatRuntimeConstruction(execution, permit(execution)),
+      ),
+    );
+    const catalog = await prepared.materializeDesiredStableContextForPiSession("pi_session_switched_book");
+    const materialized = catalog.stableSources.map((source) => source.content).join("\n");
+    const volatile = catalog.volatileSources.map((source) => source.content).join("\n");
+    assert.equal(materialized.includes("SENTINEL-CONSTANT-ON"), true, "control: an enabled always-on entry is carried");
+    assert.equal(materialized.includes("SENTINEL-CONSTANT-OFF"), false, "a switched-off always-on entry is not");
+    assert.equal(volatile.includes("SENTINEL-KEYWORD-ON"), true, "control: an enabled keyword entry is a candidate");
+    assert.equal(volatile.includes("SENTINEL-KEYWORD-OFF"), false, "a switched-off keyword entry is not");
+  } finally {
     await value.binding.close();
     await releaseConstructionAndFixture(prepared, value);
   }

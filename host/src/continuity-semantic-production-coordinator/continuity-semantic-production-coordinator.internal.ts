@@ -4411,8 +4411,7 @@ export async function settleDurableGameRecoveryOnStartup(
     settledAtUnixMs: Date.now(),
   };
   if (ownerOutcome !== "proven_dead") {
-    const code =
-      ownerOutcome === "alive" ? "game_recovery_blocked_owner_alive" : "game_recovery_blocked_owner_unknown";
+    const code = ownerOutcome === "alive" ? "game_recovery_blocked_owner_alive" : "game_recovery_blocked_owner_unknown";
     recordStartupGameRecovery(Object.freeze({ ...settled, settlement: "refused", code }));
     throw new SemanticProductionCoordinatorError(code);
   }
