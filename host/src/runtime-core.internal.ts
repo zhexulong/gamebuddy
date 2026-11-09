@@ -36,6 +36,7 @@ import {
   assertProfileMatchesBinding,
   buildChatCompanionSystemPrompt,
   buildGameCompanionSystemPrompt,
+  CHAT_SURFACE_SKIP_SIGNATURE,
   createIdentityProfileBinding,
   DEFAULT_IDENTITY_PROFILE,
   type IdentityProfile,
@@ -46,6 +47,7 @@ import {
   writeIdentityProfile,
   writeIdentityProfileBinding,
 } from "./identity-profile.js";
+import { buildCompanionDeskGuidance, COMPANION_DESK_GUIDANCE_FILE_NAME } from "./magic-context-companion-guidance.js";
 import { projectHistorianModel } from "./magic-context-historian-projection.internal.js";
 import { protectedToolsForRun } from "./magic-context-protected-tools.js";
 import { anchorPiSessionGreeting } from "./pi-session-greeting-anchor.internal.js";
@@ -68,7 +70,7 @@ import {
   type RuntimePaths,
   resolveRuntimePaths,
 } from "./runtime-identity.js";
-import { resolveGamePromptAddition } from "./settings/player-preference-store.js";
+import { DEFAULT_COMPANION_LOCALE, resolveGamePromptAddition } from "./settings/player-preference-store.js";
 import {
   type ExactReceiptRecoveryPort,
   type ReceiptRecoveryOutcome,
@@ -1452,6 +1454,30 @@ export async function createGameCompanionRuntime(
 }
 
 /**
+ * Refuse a surface whose prompt disagrees with the shared Magic Context config's skip signature.
+ *
+ * <p>
+ * One runtime directory serves both surfaces of a continuity, so the guidance block is switched off per
+ * surface by a substring of the Chat prompt (`system_prompt_injection.skip_signatures`). A substring decision
+ * has two failure directions and both are silent at the point they matter, so both are refused here, where the
+ * prompt is built:
+ * </p>
+ *
+ * <ul>
+ *   <li>A Chat prompt that no longer carries the sentence: an edit to the Chat floor would quietly un-skip the
+ *       surface and she would be told about five tools she does not have.</li>
+ *   <li>A Game prompt that carries it: the player's own instructions are free text appended to the Game prompt,
+ *       so a player who pastes that sentence would switch off the archive protocol for their own companion -
+ *       deleting, in one paste, the thing this change exists to turn on.</li>
+ * </ul>
+ */
+function assertMagicContextSurfaceSignature(surface: "chat" | "game", systemPrompt: string): void {
+  const carries = systemPrompt.includes(CHAT_SURFACE_SKIP_SIGNATURE);
+  if (surface === "chat" && !carries) throw new Error("chat_prompt_missing_magic_context_skip_signature");
+  if (surface === "game" && carries) throw new Error("game_prompt_carries_magic_context_skip_signature");
+}
+
+/**
  * Create a Pi SDK session without coding-agent discovery. Only the installed,
  * pinned Magic Context extension can load; built-ins, project/user extensions,
  * skills, templates, context files, and coding prompts are excluded.
@@ -1627,11 +1653,19 @@ export async function createRuntimeWithFixedToolsCore(
             },
           },
           sidekick: { disable: true },
-          // The upstream generic system block is a coding-agent instruction set
-          // (ctx_memory/ctx_search/Git/project guidance). Chat intentionally keeps
-          // it out of the Companion prompt; m[0]/m[1] remains the sole native
+          // The upstream generic system block is written for a coding agent, and what it carries is the desk
+          // protocol: the archive is searchable, ctx_search reads it back, ctx_expand returns one item whole, and
+          // a reply opens with a §N§ number. The Game surface needs the first three and must not be given the
+          // fourth, so the primary section is the Host's own prose
+          // (magic-context-companion-guidance.ts) supplied through the extension's primaryOverride seam, and the
+          // runtime clauses (temporal, caveman, language) stay composer-owned. m[0]/m[1] remains the sole native
           // read-only Semantic Memory injection path.
-          system_prompt_injection: { enabled: false },
+          //
+          // skip_signatures is stated rather than left to its upstream default, and it is the surface opt-out:
+          // Chat mounts no ctx_* tool, so the protocol would describe tools she does not have there. Both
+          // directions are asserted where the prompts are built, because the signature is a substring of the
+          // Chat prompt and the Game prompt carries the player's own free text.
+          system_prompt_injection: { enabled: true, skip_signatures: [CHAT_SURFACE_SKIP_SIGNATURE] },
           memory: {
             // GameBuddy selects the domain; the vendored Magic Context fork owns
             // historian interpretation, promotion, retrieval, and injection.
@@ -1677,10 +1711,19 @@ export async function createRuntimeWithFixedToolsCore(
   const magicContextUserConfigDir = join(paths.runtimeCwd, "config");
   if (loadMagicContextExtension) {
     await mkdir(join(magicContextUserConfigDir, "cortexkit"), { recursive: true });
+    // The Game surface's primary guidance section, written BEFORE the config that names it. The extension reads
+    // both at boot and, when the path names no readable file carrying exactly one marker, warns and falls back to
+    // the built-in coding-agent prose - so the order is what makes the seam reachable at all.
+    await writeFile(
+      join(magicContextUserConfigDir, "cortexkit", COMPANION_DESK_GUIDANCE_FILE_NAME),
+      buildCompanionDeskGuidance(presentation?.profile.locale ?? DEFAULT_COMPANION_LOCALE),
+      "utf8",
+    );
     await writeFile(
       join(magicContextUserConfigDir, "cortexkit", "magic-context.jsonc"),
       JSON.stringify(
         {
+          prompt_surface: { guidance_override_path: COMPANION_DESK_GUIDANCE_FILE_NAME },
           ...(magicContextHistorianEnabled
             ? {
                 historian: {
@@ -1797,6 +1840,14 @@ export async function createRuntimeWithFixedToolsCore(
   // Chat never reads it: the addition is the Game surface's own, and a Chat mount that consulted
   // it would be reaching for a setting its own settings group does not show.
   const gamePromptAddition = runtimeSurface === "game" ? await resolveGamePromptAddition(paths.root) : undefined;
+  // One string, built here rather than inline below, because it is also what the two guards read: the shared
+  // Magic Context config skips its guidance block by a SUBSTRING of the Chat prompt, so the substring has to be
+  // shown to cross no surface boundary in either direction. See `assertMagicContextSurfaceSignature`.
+  const companionSystemPrompt =
+    runtimeSurface === "chat"
+      ? buildChatCompanionSystemPrompt(profile, presentation?.profile.locale)
+      : buildGameCompanionSystemPrompt(profile, presentation?.profile.locale, gamePromptAddition);
+  assertMagicContextSurfaceSignature(runtimeSurface, companionSystemPrompt);
   // The turn a provider request belongs to is stated on the request itself, because nothing else on the
   // wire carries it and a captured body could otherwise only be attributed by its arrival position. The
   // value is set by the provider-start runner and cleared by the same turn; an inline factory is the only
@@ -1820,10 +1871,7 @@ export async function createRuntimeWithFixedToolsCore(
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: true,
-    systemPrompt:
-      runtimeSurface === "chat"
-        ? buildChatCompanionSystemPrompt(profile, presentation?.profile.locale)
-        : buildGameCompanionSystemPrompt(profile, presentation?.profile.locale, gamePromptAddition),
+    systemPrompt: companionSystemPrompt,
     appendSystemPrompt: [],
   });
   // The fork must never spawn the external `pi` CLI from a GameBuddy runtime.

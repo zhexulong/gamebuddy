@@ -14,7 +14,7 @@ import {
 
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "./identity-profile.js";
+import { CHAT_SURFACE_SKIP_SIGNATURE, DEFAULT_IDENTITY_PROFILE, identityProfileHash } from "./identity-profile.js";
 import { GAMEPLAY_SUBAGENT_MODEL_CONFIG } from "./gameplay-task-subagent.js";
 import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "./game-integration-adapter.js";
 import type { KnowledgeBundle } from "./knowledge.js";
@@ -1747,9 +1747,19 @@ test("runtime loads only Magic Context and preserves a session partition", async
       "promote-primers": "",
       "refresh-primers": "",
     });
-    assert.equal(config.system_prompt_injection.enabled, false);
-    assert.equal(runtime.session.systemPrompt.includes("## Magic Context"), false);
-    assert.equal(runtime.session.systemPrompt.includes("ctx_memory"), false);
+    // This boolean is the gate Magic Context reads before it composes anything, and it was `false` while the same
+    // runtime mounted `ctx_search` and `ctx_expand`: the tools were reachable and the protocol that explains them
+    // was not. The skip signature is the surface opt-out that replaces it — Chat mounts no ctx_* tool, Game mounts
+    // all five, and both surfaces share this one config file.
+    assert.deepEqual(config.system_prompt_injection, {
+      enabled: true,
+      skip_signatures: [CHAT_SURFACE_SKIP_SIGNATURE],
+    });
+    // The section itself is composed by the extension's `before_agent_start` hook, so it cannot be read off a
+    // constructed session: the two lines this replaces asserted that `runtime.session.systemPrompt` did NOT contain
+    // "## Magic Context" or "ctx_memory", which was true whether injection was on or off and so tested nothing.
+    // The assembled prompt is asserted after a real turn in `magic-context-companion-guidance.test.ts`; do not
+    // reintroduce a construction-time content check here.
     assert.equal(config.memory.domain, MAGIC_CONTEXT_MEMORY_DOMAIN);
     assert.equal(config.memory.enabled, MAGIC_CONTEXT_MEMORY_ENABLED);
     assert.equal(config.memory.auto_promote, false);

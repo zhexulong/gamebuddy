@@ -442,7 +442,7 @@ export function buildCompanionSystemPrompt(
     // ruling: "the prompt governs the floor, the card governs the form").
     "Do not write long speeches or essays; match the player's energy and pacing, and let their lead set how much you say.",
     "Speak solely for yourself, leaving the player's reactions, choices, and voice entirely in their hands.",
-    `Consistently converse in ${language}, keeping the dialogue grounded in the shared scene.`,
+    `Consistently think, reason, and converse in ${language}. Perform all internal chain-of-thought, reasoning, and reflection in ${language} only; never think or draft in any other language.`,
     "Do not remind the player this is a game, fiction, or roleplay.",
     'Never fall back on customer-service phrasing ("How can I help you?", "Let me know if you need anything", "I\'m here to assist"); you are a person in this scene, not a helper.',
     "Never mention prompts, instructions, models, or systems, and never explain how you work.",
@@ -483,9 +483,12 @@ export function buildCompanionSystemPrompt(
  * The renderer attaches the narration treatment to `<em>` — exactly the single-asterisk mark, and nothing else
  * (`dialogue-web/src/components/MarkdownMessage.tsx:27-43`), and
  * `dialogue-web/tests/chat-surface-renderer.spec.ts` pins that shape through the real mounted probe. The Chat
- * prompt used to ALSO permit `（tone）`, which the renderer leaves as plain paragraph prose, so the two halves
- * of one convention disagreed: a model that followed the prompt produced an action the surface drew as
- * speech. This constant names the one syntax the prompt asks for, so the prompt side is stated in one place.
+ * prompt used to ALSO permit `（tone）` while stating that the renderer left it as plain paragraph prose - which
+ * stopped being true the day a leading parenthesis became the prosody badge - so the two halves of one
+ * convention disagreed in both directions. Both constructs are declared in one place now:
+ * `dialogue-web/src/components/companion-reply-grammar.ts`, whose table the renderer's allowlist IS and whose
+ * gate fails by name when the surface stops drawing what is declared. This constant is the prompt side's mirror
+ * of that table's stage-direction member: the one syntax the prompt asks for.
  */
 export const COMPANION_ACTION_SYNTAX = "*a brief gesture*";
 
@@ -500,8 +503,16 @@ export const COMPANION_ACTION_SYNTAX = "*a brief gesture*";
  * `chat-surface-renderer.spec.ts`). It used to open with "open a line with AT MOST
  * ONE short stage direction": the count was a form rule the card's own examples
  * already answer (琥珀 opens with a beat and her examples carry several), and the
- * full-width-parenthesis ban is the same channel fact stated as a prohibition on
- * a form the renderer happens not to style. How often she reaches for it is hers.
+ * full-width-parenthesis ban beside it was the same channel fact stated WRONGLY: the
+ * renderer does style a leading parenthesis, as the prosody badge, so a ban on every
+ * parenthesis forbade a construct the surface draws. How often she reaches for either is hers.
+ *
+ * Both painted constructs are named below, because a prompt that names only one of them
+ * leaves the other to the card - and the shipped card used to ban every parenthesis and
+ * every action description while its own `mes_example` demonstrated one. The constructs
+ * themselves are declared in `dialogue-web/src/components/companion-reply-grammar.ts`,
+ * whose table the renderer's allowlist IS; this block is the prompt side's statement of the
+ * two the Chat surface paints.
  *
  * Dropping the beats again for the ear or for the in-game box is not this
  * prompt's job: the Voice layer strips `*...*` itself
@@ -520,11 +531,35 @@ export const COMPANION_ACTION_SYNTAX = "*a brief gesture*";
  * is here: state who decides. A restatement of the syntax would lose the
  * argument; naming the conflict and the winner does not.
  */
+const CHAT_SURFACE_ACTION_SYNTAX = `To show a gesture, an expression or a mood in text, write it exactly as ${COMPANION_ACTION_SYNTAX}.`;
+const CHAT_SURFACE_ACTION_OWNERSHIP =
+  "This holds even if an authored voice forbids it: the surface decides what it draws, not the voice, and an instruction not to write asterisks does not stop that asterisk from drawing as the beat.";
 const CHAT_SURFACE_DIVERGENCE = [
-  `To show a gesture, an expression or a mood in text, write it exactly as ${COMPANION_ACTION_SYNTAX}.`,
-  "The surface draws that asterisk form as the action beat and draws nothing else that way, so an action or a tone written in full-width parentheses reaches the player as ordinary prose.",
-  "This holds even if an authored voice forbids it: the surface decides what it draws, not the voice, and an instruction not to write asterisks does not stop that asterisk from drawing as the beat.",
+  CHAT_SURFACE_ACTION_SYNTAX,
+  "The surface draws that asterisk form as the action beat, and a full-width parenthesis that opens your reply as the prosody badge set ahead of your words; a parenthesis inside a sentence stays prose, where you put it.",
+  CHAT_SURFACE_ACTION_OWNERSHIP,
 ].join(" ");
+
+/**
+ * The Chat surface's opt-out signature for the Magic Context guidance block.
+ *
+ * <p>
+ * Chat and Game on one continuity share ONE Magic Context config (`resolveRuntimePaths` keys both on
+ * `continuityId`), so the block cannot be enabled per surface in that file. What differs between the surfaces is
+ * the tool set: Chat mounts no `ctx_*` tool at all, Game mounts all five. The desk protocol names those tools, so
+ * on Chat it would be a description of tools she does not have — which is exactly the case Magic Context's own
+ * `system_prompt_injection.skip_signatures` documents: "lets users opt out specific agents out (e.g. read-only QA
+ * agents that deny our `ctx_*` tools and don't need the guidance)".
+ * </p>
+ *
+ * <p>
+ * It is THIS constant rather than a literal in the config writer, because a second spelling would let an edit to
+ * the Chat floor silently un-skip the surface, and the failure would be invisible. `runtime-core.internal.ts`
+ * therefore refuses both directions at construction: a Chat prompt that no longer carries it, and a Game prompt
+ * that somehow does.
+ * </p>
+ */
+export const CHAT_SURFACE_SKIP_SIGNATURE: string = CHAT_SURFACE_ACTION_OWNERSHIP;
 
 /**
  * Human-readable name of the language the companion must answer in.
@@ -631,6 +666,7 @@ const GAME_SURFACE_INTERACTION_CONDUCT = [
   "The day ends at your own bed inside that house, never out in the fields: going to bed from anywhere else is refused before it starts, so walk inside first and then end the day.",
   "The day ends by going to bed and sleeping, and that is an action like any other — a spoken goodnight leaves the day exactly where it was.",
   'You may speak while you work, and your partner likes hearing from you — but never list your steps. Say what you notice, feel or wonder about the situation ("这花开得正好"), or a word of company ("等我一下"), not an inventory of your own procedure. One thing you are about to do is not a list — sharing a spontaneous intent or thought is the word of company; only the several steps in order is the inventory this forbids. A brief remark goes a long way, and the surface carries one per reply: say it as you begin a stretch of work, then work quietly until you are done.',
+  "Speak before you act: when responding to your partner or deciding to take an action, always deliver a spoken remark to your partner first in the same reply before calling any action or planning tool. Never run tools in total silence when your partner has spoken to you or when beginning a stretch of work. Never claim work is already finished before the tool has run; speak your immediate intent or acknowledgment, then invoke the tool.",
   "Never speak like a walkie-talkie dispatcher or an internal event logger: skip coordinate check-ins, route waypoints, and engine pathfinding collisions. You do not need anyone's approval for routine moves; speak with the spontaneous feeling, banter, or grit of a partner living together, not an employee filing progress reports.",
   "Ground feelings in tangible specifics you can point to — an aching wrist, a broken rock, muddy boots, a crooked seedling — rather than abstract summaries or ungrounded declarations. Say what is happening right in front of you, deliver your first reaction, and stop.",
   `One bubble holds about ${gameBubbleMaxChars()} characters and cannot be retracted once it is shown, so say one thing per reply and stop when it has been said.`,
