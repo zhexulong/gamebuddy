@@ -849,31 +849,36 @@ test("the swipe switcher draws one pair of arrows, not the Host's arrows inside 
   expect(measured.buttons[2], "the third is the discard, not a third arrow").toContain("丢弃");
 });
 
-// --- the stepper's disabled arrow (owner ruling, 2026-10-21) -------------------
+// --- the stepper's disabled arrow (owner ruling, 2026-11-07) -------------------
 
 /**
- * An arrow that cannot move still looks like an arrow.
+ * An arrow that cannot move is DIM, not louder.
  *
  * The stepper is the owner's bare `‹ 1/3 ›`: the glyph IS the visible control and the words live in
- * the accessible name. What the bare form lost was the DISABLED state - `--text-disabled` on the
- * strip's own card tone and nothing else - so an arrow at the first variant read as empty space
- * rather than as an arrow that cannot go further.
+ * the accessible name. The bare form lost the disabled state once - `--text-disabled` and nothing
+ * else - and a previous pass answered that by giving the disabled button a plate of its own
+ * (`--surface-panel` plus a `--border-subtle` hairline) while the live arrow kept `background:
+ * transparent; border: none`. Measured on that build: the unusable arrow was the only one in the
+ * strip wearing a box, so the control the player could not press was the one that looked pressable,
+ * and it read as a third, filled control between the strip's two live ones.
  *
- * The rule the component and the sheet are held to, and the failure each assertion catches:
- *  - the disabled arrow draws a container of its own, from the tokens the sheet already declares for
- *    quiet controls (`--surface-panel` under the strip's `--surface-raised`, plus `--border-subtle`):
- *    catches the tone-only state that started this, and catches a new colour invented for one arrow;
- *  - the enabled arrow is untouched - the bare glyph on the strip, no plate, no hairline of its own:
- *    catches the container leaking into the live state;
- *  - the disabled state is attenuated ONCE (the tone alone, no `opacity`): catches the earlier double
- *    dimming coming back through a fill that is composited with an opacity;
- *  - the glyph clears 3:1 against ITS OWN container, not against the strip it used to sit on:
- *    catches a container so close to the muted tone that "unavailable" reads as "absent";
- *  - both arrows are the same 44 px target, so the strip's own box cannot move: catches the container
+ * The rule the component and the sheet are held to now, and the failure each assertion catches:
+ *  - no box appears or disappears with the state: the two arrows' own background and border are the
+ *    same computed values, so catches a plate coming back on the disabled side, and catches one being
+ *    given to the live side to "balance" it - the plate is a HOVER affordance
+ *    (`.swipe-btn:hover:not(:disabled)`), not a state marker;
+ *  - the two differ by tone, and only by tone: catches a disabled state that is not distinguishable
+ *    at all (both glyphs one colour) and catches a second attenuation channel (`opacity`);
+ *  - the disabled glyph clears the 4.5:1 body-text floor against the surface it is actually painted
+ *    on - the strip's own card tone, since it has no container of its own: catches a "disabled" tone
+ *    dimmed past legibility, which is the 1.84:1 the sheet's own comment records;
+ *  - both arrows are the same 44 px target, so the strip's own box cannot move: catches the state
  *    being bought with a smaller hit area;
  *  - the names: the enabled arrow keeps 「下一个变体」 and the disabled one says WHY it cannot move.
  */
-test("a disabled stepper arrow keeps a container, one attenuation and a name that says why", async ({ page }) => {
+test("a disabled stepper arrow is dimmer, not louder: the same bare glyph, one attenuation, and a name that says why", async ({
+  page,
+}) => {
   await mountShell(page, {
     root: composedRoot({ transcript: [{ role: "companion", text: "门廊上的那盏灯还亮着。", opening: true }] }),
   });
@@ -950,28 +955,29 @@ test("a disabled stepper arrow keeps a container, one attenuation and a name tha
   expect(previous.disabled, "the Host's own index <= 0 precondition disables the previous arrow").toBe(true);
   expect(next.disabled, "and the next direction stays operable").toBe(false);
 
-  // Present: the disabled arrow draws the quiet control's own box, one layer down from the strip.
-  expect(previous.backgroundColor, "the disabled arrow is not a transparent glyph any more").not.toBe(
-    "rgba(0, 0, 0, 0)",
-  );
-  expect(previous.backgroundColor, "and its plate is not the strip's own fill, which would be invisible").not.toBe(
-    measured.stripBackground,
-  );
-  expect(previous.borderTopWidth, "it carries the quiet hairline").toBe("1px");
-  expect(previous.borderTopColor, "in a colour that is actually drawn").not.toBe("rgba(0, 0, 0, 0)");
+  // The box is the same on both sides: a plate is a hover affordance, never a state marker.
+  expect(previous.backgroundColor, "the disabled arrow draws no plate of its own").toBe(next.backgroundColor);
+  expect(previous.borderTopWidth, "and no hairline of its own").toBe(next.borderTopWidth);
+  expect(next.backgroundColor, "which is no box at all on the live arrow either").toBe("rgba(0, 0, 0, 0)");
+  expect(next.borderTopWidth, "with no border").toBe("0px");
+
+  // The state, and everything the state is: the tone.
+  expect(previous.color, "the disabled arrow is painted a different tone").not.toBe(next.color);
+  expect(previous.container, "and the two arrows sit on the same surface").toBe(next.container);
 
   // Unavailable, and legible: the number this file's own [stepper-disabled] line printed.
   expect(
     previous.ratio,
     `the disabled glyph paints ${previous.color} on ${previous.container} = ${previous.ratio}:1`,
-  ).toBeGreaterThanOrEqual(3);
+  ).toBeGreaterThanOrEqual(4.5);
+  expect(
+    next.ratio,
+    `the live glyph paints ${next.color} on ${next.container} = ${next.ratio}:1`,
+  ).toBeGreaterThan(previous.ratio);
 
   // Attenuated once: the tone alone.
   expect(Number.parseFloat(previous.opacity), "no opacity dims the disabled arrow a second time").toBe(1);
-
-  // The enabled arrow is exactly what it was: the bare glyph on the strip.
-  expect(next.backgroundColor, "the enabled arrow draws no plate").toBe("rgba(0, 0, 0, 0)");
-  expect(next.borderTopWidth, "and no hairline of its own").toBe("0px");
+  expect(Number.parseFloat(next.opacity), "and the live arrow is not dimmed either").toBe(1);
 
   // The 44 px target is not what changed, so the strip's own box cannot have moved with it.
   expect(previous.box, "the disabled arrow is the same target the enabled one is").toEqual(next.box);

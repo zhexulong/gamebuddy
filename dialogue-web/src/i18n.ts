@@ -1,5 +1,20 @@
 export type Locale = "en" | "zh-CN";
 
+/**
+ * The first-paint cache of the interface language, and NOT its authority.
+ *
+ * The choice itself lives in the Host's one player-preference record (`uiLocale`, read and written
+ * through `/api/tavern/v1/settings/ui-language`), because this browser's storage cannot survive the
+ * Desktop: every launch serves the shell from an ephemeral `127.0.0.1` origin, so `localStorage` is
+ * a fresh, empty store at the next start. It was the ONLY home this choice had, which is why the
+ * interface language used to reset on every launch.
+ *
+ * What the key is still for is the first frame: the page is painted before any Host read can answer,
+ * and a player who chose Chinese should not watch one English render before it flips. The shell
+ * writes it when the Host confirms a choice and reads it here at mount; the Host's answer, when it
+ * arrives, wins and rewrites this cache. An unreadable or missing cache costs one frame, never the
+ * setting.
+ */
 const STORAGE_KEY = "gamebuddy.tavern.ui-locale";
 
 const en = {
@@ -336,6 +351,10 @@ const en = {
   languageUiField: "Interface language",
   languageUiHint: "The language of this management interface. It does not change what your companion speaks.",
   languageUnavailable: "The companion language preference is unavailable.",
+  // The interface language's own two absences. The route is the same Host record, so "unavailable"
+  // means this build's Host does not serve the interface-language group at all - and saying so is
+  // better than a select whose every change would be forgotten at the next launch.
+  languageUiUnavailable: "The interface language preference is unavailable.",
   appearanceSettings: "Appearance",
   appearanceHint: "How this window is drawn.",
   appearanceField: "Appearance",
@@ -1416,6 +1435,7 @@ const zh: Messages = {
   languageUiField: "界面语言",
   languageUiHint: "本管理界面使用的语言，不会改变伴侣说话的语言。",
   languageUnavailable: "伴侣语言偏好不可用。",
+  languageUiUnavailable: "界面语言偏好不可用。",
   appearanceSettings: "外观",
   appearanceHint: "这个窗口的配色。",
   appearanceField: "外观",
@@ -2070,6 +2090,13 @@ export function messages(locale: Locale): Messages {
   return locale === "zh-CN" ? zh : en;
 }
 
+/**
+ * The language this page paints itself in at first frame: the cached choice when there is one, else
+ * what the browser asks for.
+ *
+ * It is not the authority (see `STORAGE_KEY`): the shell re-reads the Host's record as soon as the
+ * session exists and adopts whatever that answer says, cache or no cache.
+ */
 export function resolveLocale(
   storage: Pick<Storage, "getItem"> | null = typeof localStorage !== "undefined" ? localStorage : null,
   nav: Pick<Navigator, "languages" | "language"> | null = typeof navigator !== "undefined" ? navigator : null,
@@ -2090,6 +2117,12 @@ export function applyDocumentLocale(
   }
 }
 
+/**
+ * Rewrites the first-paint cache with the language the Host just confirmed.
+ *
+ * Only a confirmed write lands here: a choice that the store refused is never cached, so the next
+ * launch's first frame cannot promise a language the Host does not hold.
+ */
 export function persistLocale(
   locale: Locale,
   storage: Pick<Storage, "setItem"> | null = typeof localStorage !== "undefined" ? localStorage : null,

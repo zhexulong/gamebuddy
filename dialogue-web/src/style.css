@@ -857,20 +857,19 @@
        other muted text in this strip (`.swipe-indicator`'s `--text-secondary`)
        sits beside, and because the button keeps `cursor: not-allowed`. */
     color: var(--text-disabled);
-    /* The tone alone was not yet a state. With no container the arrow read as
-       nothing at all rather than as an unavailable one, so the disabled button
-       draws the quiet control's own box - and it is the same pair the strip and
-       every sibling in it already wear, one layer down: `--surface-panel` is the
-       surface under the strip's `--surface-raised`, and `--border-subtle` is the
-       hairline `.swipe-controls`, `.regenerate-btn`, `.rewind-btn` and
-       `.edit-btn` all draw. No new colour is introduced; there is no token named
-       for "quiet inset", and this is the closest one the sheet declares. The
-       glyph is `--text-disabled` on that well at 5.2:1, so it is dimmer than the
-       live arrow and legible as an arrow. The box stays 44x44 (`border-box` is
-       global, `min-width`/`min-height` are `--touch-target-min`), so the strip's
-       own box does not move. */
-    background-color: var(--surface-panel);
-    border: 1px solid var(--border-subtle);
+    /* And ONLY the tone, for the same reason. With no container the arrow read as
+       nothing at all, so a previous pass gave the disabled button a plate of its
+       own (`--surface-panel` plus a `--border-subtle` hairline) while the live
+       arrow kept its bare `background: transparent; border: none` - which is the
+       defect this rule now states the opposite of: the box appeared exactly when
+       the control became unusable, so the arrow the player cannot press was the
+       one that looked like a button. The plate is gone, not added to the other
+       state: the live arrow draws a box only under the pointer
+       (`.swipe-btn:hover:not(:disabled)`), the unusable one draws none at all, and
+       the two differ by tone alone - 9.30:1 against 4.74:1 on the strip's card,
+       both clear of the 4.5:1 floor. The target is untouched: `min-width` and
+       `min-height` are `--touch-target-min` and `border-box` is global, so the
+       strip's own box does not move. */
     cursor: not-allowed;
   }
 
@@ -4428,6 +4427,12 @@
       gap: var(--space-1);
     }
 
+    /* The bar's own air is already at its floor; the companion block's inner gap
+     is what is left to give back to the name. */
+    .app-bar-companion {
+      gap: var(--space-1);
+    }
+
     .app-bar-status-label {
       display: none;
     }
@@ -5291,7 +5296,7 @@
   }
 
   /* ==========================================================================
-   The app bar's trailing peers fold behind one `More` on a 400 px strip
+   The app bar's trailing peers fold behind one `More` on a strip
    (conversation-surface lane block)
 
    Owner report: at 400 px the six peer entries take about 300 px of a 400 px
@@ -5301,11 +5306,23 @@
    but the rail: everything past the first two peers moves into one `More`
    disclosure, and the width that frees goes back to the name.
 
+   ONE WIDTH, NOT FOUR. This block used to fold at 480 px while the rail's own
+   labels retired at 860, the wordmark at 640 and the status word at 480 - and no
+   width measured where two of them disagreed. At 481 px the six icon-only peers
+   took 304 px of a 481 px bar (32 px of side padding, the 28 px mark, 6 x 44, 5 x 8),
+   the status word returned in the same breath, and the companion's name was left
+   5 px: measured `scrollWidth 127 / clientWidth 5`, a 122 px truncation, with 43 px
+   at 560 px. So the fold now happens at the width where the rail already stops
+   carrying its labels: below 860 px this bar has declared itself a strip, and the
+   rail is what a strip gives up. The two narrower rules (the wordmark at 640, the
+   status word and the bar's own air at 480) only ever hand more width back, so no
+   width between them can starve the name again - `app-bar-status-narrow.spec.ts`
+   sweeps 400 / 481 / 560 / 640 / 860 / 1440 and holds that.
+
    Wide bars are unchanged, and not by a duplicated rule: the wrapper is
    `display: contents`, so its children *are* the action row's own flex items,
    in the same order with the same gaps, and the trigger does not exist. Only the
-   480 px media query gives the wrapper a box at all. Appended block; the rules
-   above are untouched.
+   860 px media query gives the wrapper a box at all.
    ========================================================================== */
 
   .app-bar-more,
@@ -5317,7 +5334,7 @@
     display: none;
   }
 
-  @media (max-width: 480px) {
+  @media (max-width: 860px) {
     .app-bar-more {
       display: block;
       position: relative;
@@ -5359,12 +5376,6 @@
 
     .app-bar-more-menu .nav-button .nav-label {
       display: inline;
-    }
-
-    /* The bar's own air is already at its floor; the companion block's inner gap
-     is what is left to give back to the name. */
-    .app-bar-companion {
-      gap: var(--space-1);
     }
   }
 
