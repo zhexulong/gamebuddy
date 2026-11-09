@@ -163,6 +163,11 @@
       "kind": "mutation"
     },
     {
+      "kind": "mutation",
+      "id": "fish_here:isTimingCast",
+      "reason": "`isTimingCast` is the rod's own cast-animation timer: the engine writes it while the bar is timing and clears it inside the same cast, so nothing about the world changes when it moves. The action's outcome is published as `fish_caught`, its four pre-cast refusals are named, and the snapshot already carries the rod and its durability - an agent cannot act on the timer, and publishing it would be animation bookkeeping dressed as a decision input"
+    },
+    {
       "kind": "collection",
       "id": "backgroundLayers",
       "reason": "the Buildings-behind draw-order cache (`List<KeyValuePair<Layer, int>>`) `loadLayers` fills so `GameLocation.draw` paints the map's layers in order. It is a rendering index rebuilt from the map itself, and no action's outcome depends on which layer a sprite is painted in"
