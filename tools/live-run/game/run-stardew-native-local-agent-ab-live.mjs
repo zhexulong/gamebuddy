@@ -47,6 +47,7 @@ import {
   dailyTaskFor,
   overriddenFirstDayTask,
   runOffsetFor,
+  overriddenTaskForDay,
   sweepTaskPrompts,
 } from "../../lib/multiday-daily-tasks.mjs";
 import { judgeTaskPurpose } from "../../lib/task-purpose.mjs";
@@ -4147,11 +4148,15 @@ try {
   // `GAMEBUDDY_FIRST_DAY_TASK` names it; every later day keeps the rotation, so the override cannot
   // silently change what a series of runs covers.
   const firstDayTask = overriddenFirstDayTask(process.env.GAMEBUDDY_FIRST_DAY_TASK);
+  // A task pinned to a named day, for the capabilities whose own day a three-day run cannot otherwise reach. The pin is
+  // checked against the rotation by the reader, so an unknown id fails the launch instead of measuring another task.
+  const pinnedTaskForDay = overriddenTaskForDay(process.env.GAMEBUDDY_TASK_FOR_DAY);
   // Which task a day was ASKED for. Named once, because two readers need the same answer: the prompt that states the
   // task, and the criterion that decides whether it was accomplished. Two call sites would let the run be judged
   // against a task it was never asked to do.
   const taskForDay = (day) =>
-    day === 1 && firstDayTask !== undefined ? firstDayTask : dailyTaskFor(dailyRunOffset, day);
+    pinnedTaskForDay?.(day) ??
+    (day === 1 && firstDayTask !== undefined ? firstDayTask : dailyTaskFor(dailyRunOffset, day));
   const promptForDay = (day) => {
     const entry = SCENARIO_PROMPTS[SCENARIO][localeKey];
     if (typeof entry !== "function") return entry;

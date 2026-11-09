@@ -363,6 +363,41 @@ export function overriddenFirstDayTask(task) {
   }
   return task;
 }
+
+/**
+ * A task pinned to a named day, from `GAMEBUDDY_TASK_FOR_DAY="2:a_fish_from_the_water"`.
+ *
+ * <p>
+ * `overriddenFirstDayTask` can only move the FIRST day, and it deliberately does not touch the rotation offset - so
+ * forcing day 1 leaves day 2 wherever the offset already pointed. Measured 2026-11-09 (round42): day 1 was forced to
+ * `clear_and_plant_long_patch`, day 2 came out as `mine_delve`, and the fishing day that had just been added to the
+ * rotation could not appear in a run that lives two nights. A capability that needs its own day has to be nameable,
+ * not hoped for.
+ * </p>
+ * <p>
+ * The spec is `day:task` pairs, comma-separated. A malformed day, an id outside the rotation, or the same day twice is
+ * refused by name rather than silently ignored: a pin nobody applied is worse than no pin, because the run then
+ * measures a task nobody asked for. Returns a lookup (not a single task) so the caller keeps one answer per day.
+ * </p>
+ */
+export function overriddenTaskForDay(spec) {
+  if (spec === undefined || spec === null || String(spec).trim() === "") return undefined;
+  const pinned = new Map();
+  for (const part of String(spec).split(",")) {
+    const trimmed = part.trim();
+    if (trimmed === "") continue;
+    const separator = trimmed.indexOf(":");
+    if (separator <= 0) throw new RangeError(`GAMEBUDDY_TASK_FOR_DAY wants day:task, got ${trimmed}`);
+    const day = Number(trimmed.slice(0, separator));
+    const task = trimmed.slice(separator + 1).trim();
+    if (!Number.isInteger(day) || day < 1)
+      throw new RangeError(`GAMEBUDDY_TASK_FOR_DAY day must be a positive integer: ${trimmed}`);
+    if (!DAILY_TASK_ROTATION.includes(task)) throw new RangeError(`unknown daily task: ${task}`);
+    if (pinned.has(day)) throw new RangeError(`GAMEBUDDY_TASK_FOR_DAY pins day ${String(day)} twice`);
+    pinned.set(day, task);
+  }
+  return (day) => pinned.get(day);
+}
 export function dailyTaskFor(runOffset, day) {
   const offset = normalise(runOffset);
   // `day` is NOT normalised: it is a 1-based day number the runner owns, and `normalise` reduces modulo the
