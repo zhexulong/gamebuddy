@@ -193,7 +193,7 @@ public sealed class FarmhandForEachExpansionTests
                     requestId,
                     requestId,
                     target.ActionId,
-                    new BridgeExecutionArgs { X = target.X, Y = target.Y, ExpectedTargetId = target.TargetId },
+                    new BridgeExecutionArgs { X = target.X, Y = target.Y },
                     0,
                     60_000),
                 ledger,

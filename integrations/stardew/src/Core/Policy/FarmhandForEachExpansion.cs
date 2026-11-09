@@ -16,16 +16,22 @@ public sealed record FarmhandForEachRow(
     int? Y,
     int LocalColumn,
     int LocalRow,
-    IReadOnlyDictionary<string, FarmhandForEachValue> Fields,
-    string? TargetId = null);
+    IReadOnlyDictionary<string, FarmhandForEachValue> Fields);
 
 /// <summary>One decided target, on its way to the Mod's single dispatch table.</summary>
 ///
 /// <para>
 /// <see cref="Arguments"/> is the loop's own `do` arguments as the caller declared them (scalars only), plus the row's
-/// own coordinates and identity where the action needs them. Lifting those scalars into that action's DECLARED wire
-/// arguments needs the action catalog, which is the dispatcher's business and not this pass's: a pass that guessed a
-/// mapping would be a second action vocabulary beside the catalog.
+/// own coordinates where the action needs them. Lifting those scalars into that action's DECLARED wire arguments needs
+/// the action catalog, which is the dispatcher's business and not this pass's: a pass that guessed a mapping would be a
+/// second action vocabulary beside the catalog.
+/// </para>
+/// <para>
+/// THE TARGET IDENTITY IS NOT A FIELD HERE, and that is a fact about the form rather than an omission. Which family mints
+/// the identity is decided by the ACTION (<c>FarmhandActionDescriptor.TargetFamily</c>), and the action is not known when
+/// the row is read - `by_kind` resolves only at dispatch - so the identity is minted where both the action and the live
+/// tile are known: <c>RouteReenteringBodyProgramExecutor.TryBuildRowArguments</c>, from the world. A field here would be
+/// null on every row and would read as an identity somebody forgot to fill.
 /// </para>
 /// <para>
 /// <see cref="Kind"/> is the row's OWN word for what stands there, carried for the one caller that must answer
@@ -36,7 +42,6 @@ public sealed record FarmhandForEachTarget(
     string ActionId,
     int? X,
     int? Y,
-    string? TargetId,
     IReadOnlyDictionary<string, string>? Arguments,
     string? Kind = null);
 
@@ -222,7 +227,7 @@ public static class FarmhandForEachExpansion
                 targets.Add(Skipped(row, FarmhandForEachTargetOutcome.Stopped, "stopped"));
                 continue;
             }
-            var target = new FarmhandForEachTarget(effect.Action, row.X, row.Y, row.TargetId, effect.Arguments, KindOf(row));
+            var target = new FarmhandForEachTarget(effect.Action, row.X, row.Y, effect.Arguments, KindOf(row));
             string rowRequestId = RowIdentity(prefix, row, "req");
             string rowExecutionId = RowIdentity(prefix, row, "exec");
             FarmhandForEachTargetResult result = DispatchOne(target, row, rowRequestId, rowExecutionId, dispatch);

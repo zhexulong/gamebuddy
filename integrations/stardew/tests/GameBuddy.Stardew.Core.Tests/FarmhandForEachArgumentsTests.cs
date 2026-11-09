@@ -209,6 +209,19 @@ public sealed class FarmhandForEachArgumentsTests
     public void ADocumentThatIsNotAnObjectIsRefusedAsALoopFault(string document) => Refused(document, "for_each_invalid:loop");
 
     /// <summary>
+    /// THE ROW'S IDENTITY IS THE MOD'S, NOT THE CALLER'S. A `do` that names `expectedTargetId` is a statement about a
+    /// tile the caller cannot see - true only until the world differs - and the form fills it per row, so the declaration
+    /// is refused BY NAME instead of being silently overridden.
+    /// </summary>
+    [Theory]
+    [InlineData(
+        "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":{\"action\":\"water_crop\",\"expectedTargetId\":\"crop_0123456789abcdef\"}}")]
+    [InlineData(
+        "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":null,\"then\":[{\"do\":{\"action\":\"harvest_crop\",\"expectedQualifiedItemId\":\"(O)24\",\"expectedTargetId\":\"crop_0123456789abcdef\"}}]}")]
+    public void ARowIdentityTheCallerWroteIsRefusedByName(string document) =>
+        Refused(document, FarmhandForEachArguments.RowIdentityIsNotTheCallers);
+
+    /// <summary>
     /// The by-kind reference is a REFERENCE the Mod resolves, not an action id the caller may restate: it must survive the
     /// parse unchanged so the classifier beside the row reader is the only thing that names the action.
     /// </summary>

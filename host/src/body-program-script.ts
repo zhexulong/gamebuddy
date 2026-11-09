@@ -5,6 +5,7 @@ import {
   forEachRules,
   MAX_FOR_EACH_LOOP_DOCUMENT_CHARS,
   MAX_FOR_EACH_ROWS,
+  PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL,
   PLAN_FOR_EACH_SOURCES,
   type PlanForEachLoop,
   readForEachLoop,
@@ -743,7 +744,9 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     "for (const crop of snapshot.cropTargets) {\n" +
     "  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId });\n" +
     "}\n" +
-    'builder.for_each({ source, where, do }) is ONE loop over a collection of live world rows, expanded by the Mod on the game thread: `source` is exactly one of { area: { x, y, w, h } }, { family: "cropTargets" } or { query: { subject } }; `where` is a list of field tests ({ field: "kind", in: ["weed"] }, { field: "health", gt: 0 }) and/or position guards ({ col: { every: 3, offset: 0 } }, { row: { every: 2, offset: 1 } }); `do` is an action from the list above with its own arguments, or null for a row left deliberately alone (a path). Several for_each calls over the SAME source are the rules of that one pass, decided per row by the first rule that claims it - which is how an intercropped patch is one intent. The caller needs no observation first - no target id, no per-tile coordinate - because the rows are read live. A row no predicate claims is reported as no_rule_matched:<kind>@<x>,<y> rather than skipped, one loop addresses at most ' +
+    'builder.for_each({ source, where, do }) is ONE loop over a collection of live world rows, expanded by the Mod on the game thread: `source` is exactly one of { area: { x, y, w, h } }, { family: "cropTargets" } or { query: { subject } }; `where` is a list of field tests ({ field: "kind", in: ["weed"] }, { field: "health", gt: 0 }) and/or position guards ({ col: { every: 3, offset: 0 } }, { row: { every: 2, offset: 1 } }); `do` is an action from the list above with its own arguments, or null for a row left deliberately alone (a path). Several for_each calls over the SAME source are the rules of that one pass, decided per row by the first rule that claims it - which is how an intercropped patch is one intent. The caller needs no observation first - no target id, no per-tile coordinate - because the rows are read live. ' +
+    forEachRowIdentityText() +
+    "A row no predicate claims is reported as no_rule_matched:<kind>@<x>,<y> rather than skipped, one loop addresses at most " +
     String(MAX_FOR_EACH_ROWS) +
     " rows, and a loop inside a loop is refused by name. The Mod EXECUTES the loop: each row is decided against the world as it is at that moment and dispatched through the same action path a single step takes, so the node's answer carries `succeeded`/`failed`/`refused`/`left_alone`/`not_matched`/`deferred` counts and ONE ROW PER TILE with its own action, state and reasonCode. A tile that is not on the farm (not_on_farm), a kind `by_kind` cannot resolve (no_action_for_kind:<kind>), an action the live policy disables (row_action_not_enabled:<actionId>) and an argument the action declares that the loop cannot supply (row_argument_missing:<name>) are each NAMED PER ROW rather than skipped - a skipped row reads as a cleared patch. Only { area } is expanded today: { family } and { query } are refused by name as " +
     forEachSourcesUnavailableText() +
@@ -762,6 +765,17 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
 function forEachSourcesUnavailableText(): string {
   const unavailable = PLAN_FOR_EACH_SOURCES.filter((source) => source !== "area");
   return unavailable.map((source) => `for_each_source_unavailable:${source}`).join(", ");
+}
+
+/**
+ * The row identity the Mod mints, in the caller's own terms, printed in the description.
+ *
+ * The refusal's name comes from `PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL`, so the description cannot teach a code the compiler
+ * does not answer: a caller told one word and refused with another has been taught nothing. The second half is the other
+ * shape of the same fact - a row the world cannot name is a row that does not run, and it says which action and family.
+ */
+function forEachRowIdentityText(): string {
+  return `\`expectedTargetId\` is FILLED BY THE MOD for each row from the live tile, by the family that action's own descriptor declares, so never write one yourself: a \`do\` carrying it is refused as ${PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL}, and an action whose family cannot name that tile answers row_target_identity_unavailable:<actionId>:<family> for that row instead of running. `;
 }
 
 /** One line per family, its members comma-separated, in the order the surface declared them. */

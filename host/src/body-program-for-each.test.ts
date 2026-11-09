@@ -11,6 +11,7 @@ import {
   MAX_FOR_EACH_RULES,
   type PlanForEachLoop,
   type PlanForEachRule,
+  PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL,
   planFormExecutionUnavailableReason,
 } from "./body-program-for-each.js";
 import {
@@ -348,4 +349,44 @@ test("the rules of a pass are enumerated in the order they are decided, whatever
   const composed: PlanForEachLoop = { ...loop, then: [second] };
   assert.deepEqual(forEachRules(loop), [{ do: null }], "an absent predicate list means every row, not no rows");
   assert.deepEqual(forEachRules(composed), [{ do: null }, second]);
+});
+
+/**
+ * PROPERTY 4. THE ROW'S TARGET IDENTITY IS THE MOD'S TO MINT, and a `do` that names one is refused by name.
+ *
+ * A loop's rows are read live, so an id the caller wrote is a statement about a tile it has not seen: true only until
+ * the world differs, which is exactly the lie `expectedTargetId` exists to catch. The Mod fills the argument per row from
+ * the family the action's own descriptor declares, so a declaration of it here is a refusal and not a silent override.
+ *
+ * THE NAME IS ONE WORD ON BOTH SIDES. The code the Mod answers with is read out of the Mod's own constant rather than
+ * restated, because a caller told one word and refused with another has been taught nothing.
+ */
+test("a row identity the caller wrote is refused by name, and the name is the Mod's own", () => {
+  const declared = /RowIdentityIsNotTheCallers\s*=\s*"([a-z0-9_:]+)"/u.exec(readFileSync(MOD_ARGUMENTS_PATH, "utf8"));
+  assert.ok(
+    declared !== null,
+    "the Mod's loop reader must still declare the refusal's name; this gate reads it from there",
+  );
+  assert.equal(
+    PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL,
+    declared[1],
+    "the Host and the Mod must refuse the caller's own row identity with the same code",
+  );
+
+  const result = compile(
+    `builder.till_soil({ x: 60, y: 18 });
+     builder.for_each({ source: { area: ${PATCH} }, do: { action: "harvest_crop", expectedQualifiedItemId: "(O)24", expectedTargetId: "crop_0123456789abcdef" } });`,
+  );
+  assert.equal(result.ok, true, "the step the caller wrote beside the refused loop still compiles");
+  if (!result.ok) return;
+  assert.deepEqual(
+    result.rejected.map((entry) => entry.reasonCode),
+    [`plan_script_${PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL}:harvest_crop`],
+    "the refused call is named by the action whose row identity the caller tried to write",
+  );
+  assert.deepEqual(
+    nodesOf(result).map((node) => node.actionId),
+    ["till_soil"],
+    "the loop is dropped rather than dispatched with an identity nobody minted",
+  );
 });

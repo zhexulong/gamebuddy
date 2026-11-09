@@ -119,7 +119,11 @@ public static class BodyProgramJournalPersistence
             node.AttemptPolicyIdentity is null ? null : node.AttemptPolicyIdentity with { },
             node.ClaimOwnership is null ? null : BodyProgramValidation.FreezeMap(node.ClaimOwnership),
             node.DerivedDeadlineMs,
-            node.ReceiptId, node.Evidence, node.PostconditionVerification, node.RecoveryDiagnostic, node.RejectionCode, node.FailureCode)).ToArray()),
+            node.ReceiptId, node.Evidence, node.PostconditionVerification, node.RecoveryDiagnostic, node.RejectionCode, node.FailureCode,
+            // `Hint` is the LAST field of the record, and leaving it out here dropped it on EVERY persist: the journal held
+            // the hint, the projection to the wire read it, and the frozen state this authority keeps answering from did
+            // not. Measured while a failed `for_each` pass tried to state its per-reason counts - the counts never arrived.
+            node.Hint)).ToArray()),
         Array.AsReadOnly(program.Facts.Select(fact => new RuntimeFact(fact.ProgramId, fact.NodeId, fact.NodeAttempt, fact.FactName, BodyProgramValidation.FreezeMap(fact.Values))).ToArray()));
 
     internal static VerifiedBodyProgram FreezeVerified(VerifiedBodyProgram program) => new(program.ProgramId, program.CatalogRevision,

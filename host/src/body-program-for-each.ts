@@ -103,6 +103,24 @@ export const PLAN_FOR_EACH_COMPARISONS: readonly string[] = Object.freeze(["eq",
 export const PLAN_FOR_EACH_BY_KIND_ACTION = "by_kind";
 
 /**
+ * The one `do` argument the MOD fills per row, and a caller may never declare.
+ *
+ * A row's target identity is minted from the LIVE tile by the family the action's own descriptor declares
+ * (`FarmhandActionDescriptor.TargetFamily`), which is the whole reason a loop can address a patch it never observed. A
+ * caller that wrote one would be stating an id for a tile it cannot see - true only until the world differs - so it is
+ * refused rather than silently overridden. Mirrors `FarmhandForEachArguments.ExpectedTargetIdArgument`.
+ */
+export const PLAN_FOR_EACH_ROW_IDENTITY_ARGUMENT = "expectedTargetId";
+
+/**
+ * Why a `do` that names the row's own target identity is refused.
+ *
+ * Mirrors `FarmhandForEachArguments.RowIdentityIsNotTheCallers`; the Mod is the side that answers it on the game thread,
+ * and the compiler answers the same word so the caller cannot be told one code and refused with another.
+ */
+export const PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL = "for_each_row_identity_is_not_the_callers";
+
+/**
  * How many rows one loop may address.
  *
  * A per-INTENT bound, not a view radius: the point of the form is that a 3x20 row is bigger than the 13x13 an
@@ -410,6 +428,10 @@ function readEffect(value: unknown, actionIds: readonly string[] | null): Effect
   let named = 0;
   for (const [name, entry] of Object.entries(value)) {
     if (name === "action") continue;
+    // THE ROW'S IDENTITY IS THE MOD'S, minted per row from the live tile by the family the action declares. A caller that
+    // wrote one has declared an id for a tile it has not seen: true only until the world differs, which is exactly the
+    // lie `expectedTargetId` exists to catch. Refused by name rather than silently overridden.
+    if (name === PLAN_FOR_EACH_ROW_IDENTITY_ARGUMENT) return rejected(PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL, action);
     named += 1;
     if (named > MAX_FOR_EACH_EFFECT_ARGUMENTS) return rejected("loop_do_invalid", `${action}:too_many_arguments`);
     if (!isOpaqueId(name)) return rejected("loop_do_invalid", `${action}.${name}`);

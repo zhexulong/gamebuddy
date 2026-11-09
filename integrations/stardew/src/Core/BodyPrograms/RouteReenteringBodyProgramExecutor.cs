@@ -1,4 +1,7 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Text;
+using System.Text.Json;
 using GameBuddy.Stardew.Core.Abstractions;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
@@ -37,9 +40,19 @@ namespace GameBuddy.Stardew.Core.BodyPrograms;
 /// </summary>
 public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecutor
 {
+    /// <summary>
+    /// How many characters one pass's aggregate answer may occupy.
+    ///
+    /// `BodyProgramValidation.IsOpaqueTerminalProof` admits 4096 characters of evidence, which is the only free-text
+    /// channel a SUCCESSFUL node has (ADR-006: a failed node carries no evidence). The table is therefore bounded HERE,
+    /// at the producer, and it states the count it left out instead of being cut off by the journal's own gate.
+    /// </summary>
+    private const int MaximumAggregateChars = 4096;
+
     private readonly FarmhandActionRouter router;
     private readonly IExecutionLedger ledger;
     private readonly IReadOnlyDictionary<string, string> outputFactArgumentSources;
+    private readonly Func<string, IFarmhandForEachWorld?>? forEachWorld;
 
     /// <summary>
     /// Construction-private fact source table: declared output fact name → name
@@ -57,13 +70,18 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     public RouteReenteringBodyProgramExecutor(
         FarmhandActionRouter router,
         IExecutionLedger ledger,
-        IReadOnlyDictionary<string, string>? outputFactArgumentSources = null)
+        IReadOnlyDictionary<string, string>? outputFactArgumentSources = null,
+        Func<string, IFarmhandForEachWorld?>? forEachWorld = null)
     {
         ArgumentNullException.ThrowIfNull(router);
         ArgumentNullException.ThrowIfNull(ledger);
         this.router = router;
         this.ledger = ledger;
         this.outputFactArgumentSources = outputFactArgumentSources ?? DefaultOutputFactArgumentSources;
+        // ABSENT MEANS THE FORM IS NOT EXECUTABLE HERE, and the node answers `for_each_world_unavailable` rather than
+        // silently expanding over nothing: a pass with no world would report an empty table, which reads as a cleared
+        // patch.
+        this.forEachWorld = forEachWorld;
     }
 
     public BodyProgramTerminalResult? Execute(HostAdmissionGrant grant, NodeExecutionBinding execution)
@@ -77,6 +95,10 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         if (grant.ExecutionBinding is null || !Equals(execution, grant.ExecutionBinding))
             return Failed(execution, "execution_binding_mismatch");
 
+        // A PLAN FORM IS EXPANDED, NOT DISPATCHED. Its action id names no handler and never will: one node here is one
+        // pass over live rows, and each row goes through the SAME router a single node does (see `DispatchRow`).
+        if (FarmhandPlanFormCatalog.IsPlanForm(grant.ActionId)) return this.ExecuteForEach(grant, execution);
+
         if (!TryBuildExecutionRequest(grant, execution, out BridgeExecutionRequest? request, out string projectionReason))
             return Failed(execution, projectionReason);
 
@@ -87,9 +109,13 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     }
 
     /// <summary>A refusal before any native dispatch: it has a reason and no effect, so it carries the reason only.</summary>
-    private static BodyProgramTerminalResult Failed(NodeExecutionBinding execution, string reasonCode) =>
+    /// <param name="hint">
+    /// What the caller can act on when the reason alone is not enough - a failed `for_each` pass states its counts here,
+    /// because ADR-006 gives a failed node no evidence to carry them.
+    /// </param>
+    private static BodyProgramTerminalResult Failed(NodeExecutionBinding execution, string reasonCode, string? hint = null) =>
         new(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null,
-            BodyProgramValidation.IsReasonCode(reasonCode) ? reasonCode : null);
+            BodyProgramValidation.IsReasonCode(reasonCode) ? reasonCode : null, hint);
 
     /// <summary>
     /// Projects the validated canonical arguments onto the wire argument shape
@@ -108,6 +134,25 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     private bool TryBuildExecutionRequest(
         HostAdmissionGrant grant,
         NodeExecutionBinding execution,
+        out BridgeExecutionRequest? request,
+        out string reasonCode) =>
+        this.TryBuildExecutionRequest(
+            grant.CanonicalArguments, grant.ActionId, execution.RequestId, execution.IdempotencyKey, grant.DeadlineMs, out request, out reasonCode);
+
+    /// <summary>
+    /// The one projection from canonical arguments onto the wire's execution request, shared by a program node and by
+    /// one ROW of a `for_each` pass.
+    ///
+    /// They are the same projection because they are the same dispatch: a row's arguments are canonical values of the
+    /// row's action, and the router/handler below cannot tell the difference. A second mapping beside this one would be
+    /// the second action vocabulary the whole design exists to avoid.
+    /// </summary>
+    private bool TryBuildExecutionRequest(
+        IReadOnlyDictionary<string, BodyProgramCanonicalValue> canonicalArguments,
+        string actionId,
+        string requestId,
+        string idempotencyKey,
+        long deadlineMs,
         out BridgeExecutionRequest? request,
         out string reasonCode)
     {
@@ -135,14 +180,14 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         // int32 members, and an argument that silently fails to project is not a refusal: the handler
         // reads `?? 0` and acts on slot 0. So an out-of-range integer fails the whole projection closed
         // here, before any handler can run, instead of overflowing the tick from inside the mapping.
-        if (grant.CanonicalArguments.Any(pair => pair.Value.Kind == BodyProgramArgumentKind.Integer
+        if (canonicalArguments.Any(pair => pair.Value.Kind == BodyProgramArgumentKind.Integer
             && (!long.TryParse(pair.Value.CanonicalValue, out long parsedInteger) || parsedInteger is < int.MinValue or > int.MaxValue)))
         {
             request = null;
             reasonCode = "argument_out_of_range";
             return false;
         }
-        foreach (KeyValuePair<string, BodyProgramCanonicalValue> pair in grant.CanonicalArguments)
+        foreach (KeyValuePair<string, BodyProgramCanonicalValue> pair in canonicalArguments)
         {
             BodyProgramCanonicalValue value = pair.Value;
             switch (pair.Key)
@@ -220,7 +265,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
             }
         }
 
-        if (destination is null && grant.CanonicalArguments.ContainsKey("destination"))
+        if (destination is null && canonicalArguments.ContainsKey("destination"))
         {
             request = null;
             reasonCode = "invalid_destination_selector";
@@ -228,9 +273,9 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         }
 
         request = new BridgeExecutionRequest(
-            execution.RequestId,
-            execution.IdempotencyKey,
-            grant.ActionId,
+            requestId,
+            idempotencyKey,
+            actionId,
             new BridgeExecutionArgs
             {
                 X = x,
@@ -255,7 +300,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 Destination = destination,
             },
             this.ledger.CurrentRevision,
-            grant.DeadlineMs);
+            deadlineMs);
         reasonCode = "accepted";
         return true;
     }
@@ -348,6 +393,375 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null, receipt.ReasonCode, receipt.Hint);
         }
     }
+
+    /// <summary>
+    /// Expands one `for_each` node into a pass over the live rows its source yields.
+    ///
+    /// <para>
+    /// NOTHING IS DISPATCHED BY THE FORM. Every row is decided by <see cref="FarmhandForEachRules"/> against the world as
+    /// it is NOW and then handed to <see cref="FarmhandForEachExpansion"/> with a delegate that re-enters the SAME router
+    /// a single node uses - so a loop cannot reach a native body a flat request could not, and the handler's own gates
+    /// run exactly as they do for one action.
+    /// </para>
+    /// <para>
+    /// THE ANSWER IS THE AGGREGATE, one row per row: counts, the rows themselves, and the omissions the bounds made. A
+    /// success claims it only when every row that was not deliberately left alone did the thing and proved it.
+    /// </para>
+    /// </summary>
+    private BodyProgramTerminalResult? ExecuteForEach(HostAdmissionGrant grant, NodeExecutionBinding execution)
+    {
+        if (!FarmhandForEachArguments.TryParse(grant.CanonicalArguments, out FarmhandForEachLoop? loop, out string parseReasonCode))
+            return Failed(execution, parseReasonCode);
+        IFarmhandForEachWorld? world = this.forEachWorld?.Invoke(grant.ProgramId);
+        if (world is null) return Failed(execution, ForEachWorldUnavailable);
+
+        var rows = new List<FarmhandForEachRow>();
+        var outsideFarm = new List<(int LocalRow, int LocalColumn, string Json)>();
+        foreach ((int x, int y, int localColumn, int localRow) in FarmhandForEachRules.AreaRows(loop!.Source))
+        {
+            FarmhandForEachRow? row = world.ReadRow(x, y, localColumn, localRow);
+            if (row is not null)
+            {
+                rows.Add(row);
+                continue;
+            }
+            // A rectangle may reach past the farm's own edge. Such a tile is NOT a row - there is nothing there to act on -
+            // and it is still in the table by name, because a tile missing from the answer reads as one the pass forgot.
+            outsideFarm.Add((localRow, localColumn, RowJson(x, y, null, NotOnFarmState, TileOutsideFarmReason)));
+        }
+
+        FarmhandForEachDispatch dispatch = (FarmhandForEachTarget target, string requestId, string executionId, out LocalExecutionReceipt receipt, out string reasonCode) =>
+            this.DispatchRow(world, target, requestId, executionId, grant.DeadlineMs, out receipt, out reasonCode);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, execution.RequestId, rows, dispatch, () => world.StopRequested);
+
+        var table = new List<(int LocalRow, int LocalColumn, string Json)>(outsideFarm);
+        foreach (FarmhandForEachTargetResult result in pass.Targets)
+            table.Add((result.LocalRow, result.LocalColumn, RowJson(result.X, result.Y, result.Target?.ActionId, StateOf(result.Outcome), result.ReasonCode)));
+
+        // A PASS THAT HAS NOT FINISHED IS NOT AN ANSWER. The native body still owns the embodied actor, so the node stays
+        // bound-Running and a later tick re-enters this same pass: the row identities are deterministic, so the router
+        // answers the settled rows with the receipts it already recorded and the pass continues from the busy one.
+        if (pass.Deferred > 0 && pass.Failed == 0 && pass.Refused == 0 && !pass.Stopped) return null;
+        if (pass.Stopped)
+            return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Cancelled, Array.Empty<RuntimeFact>(), null, null, null, ForEachStoppedReason);
+        if (pass.Failed > 0 || pass.Refused > 0) return Failed(execution, DominantReason(pass), FailureHint(pass));
+        if (pass.Decided == 0) return Failed(execution, "for_each_no_rows", FailureHint(pass));
+        // A pass that matched no rule did nothing, and "0 rows" is not a success: the caller asked for a patch and the
+        // rows it addressed were all somebody else's. The dominant row code names what the rows actually said.
+        if (pass.Succeeded == 0 && pass.LeftAlone == 0) return Failed(execution, DominantReason(pass), FailureHint(pass));
+
+        int rowsOmitted = 0;
+        string aggregate = Aggregate(pass, table, ref rowsOmitted);
+        return new BodyProgramTerminalResult(
+            execution,
+            BodyProgramNodeOutcome.Succeeded,
+            Array.Empty<RuntimeFact>(),
+            // A pass that dispatched nothing (every row a deliberate path) has no row receipt, and its own dispatch
+            // identity is the lineage a reader needs to find this attempt.
+            LastReceiptId(pass) ?? execution.ExecutionId,
+            aggregate,
+            $"for_each_pass:decided={pass.Decided}:succeeded={pass.Succeeded}:left_alone={pass.LeftAlone}:omitted={pass.Omitted}");
+    }
+
+    /// <summary>
+    /// One row's native effect, through the router a single node uses.
+    ///
+    /// The three refusals that happen BEFORE the router are the ones the router cannot express: a `by_kind` the classifier
+    /// cannot resolve, an action the live policy does not enable, and an argument the action declares that this row
+    /// cannot supply. Each names the thing to fix, and each is a ROW answer - never a whole-plan rejection.
+    /// </summary>
+    private bool DispatchRow(
+        IFarmhandForEachWorld world,
+        FarmhandForEachTarget target,
+        string requestId,
+        string executionId,
+        long deadlineMs,
+        out LocalExecutionReceipt receipt,
+        out string reasonCode)
+    {
+        receipt = default!;
+        reasonCode = "for_each_row_unavailable";
+        string actionId = target.ActionId;
+        if (string.Equals(actionId, FarmhandForEachEffect.ByKindAction, StringComparison.Ordinal))
+        {
+            string kind = target.Kind ?? "unknown";
+            if (world.ActionForKind(kind) is not { Length: > 0 } resolved)
+            {
+                reasonCode = $"no_action_for_kind:{kind}";
+                return false;
+            }
+            actionId = resolved;
+        }
+        // A FORM IS ADMITTED, EACH ROW IS POLICY-CHECKED. The form bypasses the enabled set because it is not an action;
+        // the rows do not, because they are.
+        if (!world.IsActionEnabled(actionId))
+        {
+            reasonCode = $"row_action_not_enabled:{actionId}";
+            return false;
+        }
+        if (!TryBuildRowArguments(world, target, actionId, out IReadOnlyDictionary<string, BodyProgramCanonicalValue>? canonical, out reasonCode))
+            return false;
+        if (!this.TryBuildExecutionRequest(canonical!, actionId, requestId, requestId, deadlineMs, out BridgeExecutionRequest? request, out reasonCode))
+            return false;
+        return this.router.TryRoute(request!, this.ledger, executionId, out receipt, out reasonCode);
+    }
+
+    /// <summary>
+    /// One row's arguments, lifted onto the arguments the action DECLARES.
+    ///
+    /// <para>
+    /// The declared list is the action's own descriptor, so a row cannot name an argument the action does not take, and an
+    /// argument the row cannot supply is named instead of reaching the handler as null. `expectedTargetId` is the one
+    /// argument this pass MINTS rather than lifts: the family the descriptor declares answers the identity of THIS tile
+    /// from the world as it is now, which is the whole reason a loop can address a patch no observation ever carried.
+    /// </para>
+    /// <para>
+    /// THE IDENTITY IS RESOLVED AFTER THE ROW'S OWN SCALARS. A `do` that omits `slot` is told that, not told that the world
+    /// cannot name the tile - so the caller's arguments are lifted first and the identity is minted last, and a refusal
+    /// always names the thing the caller can fix.
+    /// </para>
+    /// <para>
+    /// A ROW THE WORLD CANNOT NAME IS REFUSED HERE, NOT DISPATCHED. The handler's own answer for a null identity
+    /// (`target_changed`, `crop_target_unavailable`) is a statement about a tile nobody changed, and it names nothing the
+    /// caller can act on; `row_target_identity_unavailable:&lt;actionId&gt;:&lt;family|none&gt;` names both halves.
+    /// </para>
+    /// </summary>
+    private static bool TryBuildRowArguments(
+        IFarmhandForEachWorld world,
+        FarmhandForEachTarget target,
+        string actionId,
+        out IReadOnlyDictionary<string, BodyProgramCanonicalValue>? canonical,
+        out string reasonCode)
+    {
+        canonical = null;
+        reasonCode = $"row_action_unavailable:{actionId}";
+        FarmhandActionDescriptor? descriptor = FarmhandActionCatalog.Registrations
+            .FirstOrDefault(registration => string.Equals(registration.ActionId, actionId, StringComparison.Ordinal))?.Descriptor;
+        if (descriptor is null) return false;
+
+        // The row's own address is not a caller argument: it comes from the row, and a `do` that also names it is refused
+        // rather than silently overridden. `expectedTargetId` is refused earlier and by its own name - the loop reader
+        // will not even parse a `do` that carries it (`for_each_row_identity_is_not_the_callers`) - and it is kept in this
+        // list so the dispatch seam states the same rule for a caller that reached it another way.
+        string[] derived = { "x", "y", ExpectedTargetIdArgument };
+        if (target.Arguments is not null)
+            foreach (string name in target.Arguments.Keys)
+                if (Array.IndexOf(derived, name) >= 0)
+                {
+                    reasonCode = $"row_argument_reserved:{name}";
+                    return false;
+                }
+
+        var values = new Dictionary<string, BodyProgramCanonicalValue>(StringComparer.Ordinal);
+        foreach (FarmhandActionArgument argument in descriptor.Arguments)
+        {
+            if (string.Equals(argument.Name, ExpectedTargetIdArgument, StringComparison.Ordinal)) continue;
+            if (argument.Name == "x" && target.X is { } x)
+            {
+                values[argument.Name] = IntegerValue(x);
+                continue;
+            }
+            if (argument.Name == "y" && target.Y is { } y)
+            {
+                values[argument.Name] = IntegerValue(y);
+                continue;
+            }
+            if (target.Arguments is not null && target.Arguments.TryGetValue(argument.Name, out string? text))
+            {
+                if (!TryCanonicalizeArgument(argument.Type, text, out BodyProgramCanonicalValue? value))
+                {
+                    reasonCode = $"row_argument_invalid:{argument.Name}";
+                    return false;
+                }
+                values[argument.Name] = value!;
+                continue;
+            }
+            reasonCode = $"row_argument_missing:{argument.Name}";
+            return false;
+        }
+        if (descriptor.Arguments.Any(argument => string.Equals(argument.Name, ExpectedTargetIdArgument, StringComparison.Ordinal)))
+        {
+            string? family = descriptor.TargetFamily;
+            string? targetId = family is null || target.X is not { } rowX || target.Y is not { } rowY
+                ? null
+                : world.TargetIdFor(family, rowX, rowY, target.Arguments);
+            if (targetId is not { Length: > 0 })
+            {
+                reasonCode = $"row_target_identity_unavailable:{actionId}:{family ?? NoTargetFamily}";
+                return false;
+            }
+            values[ExpectedTargetIdArgument] = new BodyProgramCanonicalValue(BodyProgramArgumentKind.String, targetId);
+        }
+        if (target.Arguments is not null)
+            foreach (string name in target.Arguments.Keys)
+                if (descriptor.Arguments.All(argument => !string.Equals(argument.Name, name, StringComparison.Ordinal)))
+                {
+                    reasonCode = $"row_argument_unknown:{name}";
+                    return false;
+                }
+        canonical = values;
+        reasonCode = "accepted";
+        return true;
+    }
+
+    private static bool TryCanonicalizeArgument(string declaredType, string text, out BodyProgramCanonicalValue? value)
+    {
+        value = declaredType switch
+        {
+            "integer" when long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long number)
+                => new BodyProgramCanonicalValue(BodyProgramArgumentKind.Integer, number.ToString(CultureInfo.InvariantCulture)),
+            "boolean" when text is "true" or "false" => new BodyProgramCanonicalValue(BodyProgramArgumentKind.Boolean, text),
+            "string" => new BodyProgramCanonicalValue(BodyProgramArgumentKind.String, text),
+            _ => null,
+        };
+        return value is not null;
+    }
+
+    private static BodyProgramCanonicalValue IntegerValue(int value) =>
+        new(BodyProgramArgumentKind.Integer, value.ToString(CultureInfo.InvariantCulture));
+
+    /// <summary>The one row's state word, in the same vocabulary every answer already uses.</summary>
+    private static string StateOf(FarmhandForEachTargetOutcome outcome) => outcome switch
+    {
+        FarmhandForEachTargetOutcome.Succeeded => "succeeded",
+        FarmhandForEachTargetOutcome.Failed => "failed",
+        FarmhandForEachTargetOutcome.Deferred => "deferred",
+        FarmhandForEachTargetOutcome.Refused => "refused",
+        FarmhandForEachTargetOutcome.LeftAlone => "left_alone",
+        FarmhandForEachTargetOutcome.Stopped => "stopped",
+        _ => "not_matched",
+    };
+
+    private static string RowJson(int? x, int? y, string? action, string state, string? reasonCode) =>
+        string.Create(CultureInfo.InvariantCulture,
+            $"{{\"x\":{x?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"y\":{y?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"action\":{JsonText(action)},\"state\":\"{state}\",\"reasonCode\":{JsonText(reasonCode)}}}");
+
+    private static string JsonText(string? value) => value is null ? "null" : JsonSerializer.Serialize(value);
+
+    /// <summary>
+    /// The pass's counts and rows, bounded to what a successful node's evidence may carry.
+    ///
+    /// The counts describe the PASS; <paramref name="rowsOmitted"/> describes THIS TABLE, so a reader can tell a short
+    /// table from a short pass. Nothing is dropped from the counts when the table is cut.
+    /// </summary>
+    private static string Aggregate(FarmhandForEachPassResult pass, IReadOnlyList<(int LocalRow, int LocalColumn, string Json)> table, ref int rowsOmitted)
+    {
+        string header = string.Create(CultureInfo.InvariantCulture,
+            $"{{\"state\":\"succeeded\",\"succeeded\":{pass.Succeeded},\"failed\":{pass.Failed},\"refused\":{pass.Refused},\"left_alone\":{pass.LeftAlone},\"not_matched\":{pass.NotMatched},\"deferred\":{pass.Deferred},\"omitted\":{pass.Omitted}");
+        var body = new StringBuilder();
+        foreach ((int _, int _, string json) in table.OrderBy(row => row.LocalRow).ThenBy(row => row.LocalColumn))
+        {
+            // The tail is `,"rowsOmitted":NN,"rows":[]}` - 40 characters covers it with room for a large count.
+            if (header.Length + body.Length + json.Length + 40 > MaximumAggregateChars)
+            {
+                rowsOmitted += 1;
+                continue;
+            }
+            if (body.Length > 0) body.Append(',');
+            body.Append(json);
+        }
+        return string.Create(CultureInfo.InvariantCulture, $"{header},\"rowsOmitted\":{rowsOmitted},\"rows\":[{body}]}}");
+    }
+
+    /// <summary>
+    /// The reason a pass that did not succeed answers with: the code MOST of its failing rows gave, ties going to the
+    /// first row that gave it, so the answer names the thing with the most occurrences to fix.
+    /// </summary>
+    private static string DominantReason(FarmhandForEachPassResult pass)
+    {
+        IReadOnlyList<(string Code, int Count)> reasons = ReasonsByCount(pass);
+        return reasons.Count == 0 ? PassIncompleteReason : reasons[0].Code;
+    }
+
+    /// <summary>
+    /// The reason codes a pass's non-success rows gave, most frequent first, ties going to the EARLIEST row.
+    ///
+    /// ONE enumeration for the two answers that need it - `FailureCode` and the hint's counts - because two groupings
+    /// would eventually disagree about which reason is dominant, and a reader could not tell which the pass decided with.
+    /// </summary>
+    private static IReadOnlyList<(string Code, int Count)> ReasonsByCount(FarmhandForEachPassResult pass)
+    {
+        var counted = new List<string>();
+        foreach (FarmhandForEachTargetResult result in pass.Targets)
+            if (result.Outcome is not (FarmhandForEachTargetOutcome.Succeeded or FarmhandForEachTargetOutcome.LeftAlone))
+                counted.Add(WireReason(result.ReasonCode, PassIncompleteReason));
+        // `OrderByDescending` is stable, so the first row that gave the winning count wins the tie.
+        return counted
+            .GroupBy(code => code, StringComparer.Ordinal)
+            .Select(group => (Code: group.Key, Count: group.Count()))
+            .OrderByDescending(entry => entry.Count)
+            .ToList();
+    }
+
+    /// <summary>
+    /// The counts a FAILED pass answers with, per reason.
+    ///
+    /// <para>
+    /// A failed node carries no evidence - `Evidence` is what licenses `succeeded` (ADR-006) - so the row table this pass
+    /// built would be dropped on exactly the answer a reader most needs it for. The hint is the field a failed node does
+    /// carry, and it is a COUNT, not a claim: "the pass refused every row for one reason" and "one row of sixty refused"
+    /// must not arrive as the same bare code.
+    /// </para>
+    /// <para>
+    /// The reasons come from <see cref="ReasonsByCount"/>, the same enumeration <see cref="DominantReason"/> reads, so the
+    /// code in `FailureCode` is always one of the counts here. The budget is enforced AT THE PRODUCER
+    /// (<see cref="BodyProgramValidation.MaximumNodeHintLength"/>): the journal refuses a longer hint, and a node refused
+    /// there would answer `InvalidInput` instead of the reason it was given.
+    /// </para>
+    /// </summary>
+    private static string FailureHint(FarmhandForEachPassResult pass)
+    {
+        var hint = new StringBuilder(128);
+        hint.Append(CultureInfo.InvariantCulture,
+            $"decided={pass.Decided};succeeded={pass.Succeeded};failed={pass.Failed};refused={pass.Refused};not_matched={pass.NotMatched};left_alone={pass.LeftAlone};deferred={pass.Deferred};stopped={pass.StopObserved};omitted={pass.Omitted}");
+        foreach ((string code, int count) in ReasonsByCount(pass))
+        {
+            string entry = string.Create(CultureInfo.InvariantCulture, $";{code}={count}");
+            if (hint.Length + entry.Length > BodyProgramValidation.MaximumNodeHintLength) break;
+            hint.Append(entry);
+        }
+        return hint.ToString();
+    }
+
+    /// <summary>
+    /// One row's reason code, projected onto the grammar a node's `FailureCode` must satisfy (`BodyProgramValidation.IsReasonCode`:
+    /// lowercase, digits, `_`, `:`, `-`).
+    ///
+    /// A row may name a tile (`no_rule_matched:rock@60,18`) or an action argument in its own camelCase
+    /// (`row_argument_missing:expectedTargetId`). Neither is legal in a node's reason code, so the row's spelling is
+    /// projected - the row table keeps it verbatim - and the projection is stated here rather than at each call site.
+    /// </summary>
+    private static string WireReason(string? reasonCode, string fallback)
+    {
+        if (reasonCode is null) return fallback;
+        var projected = new StringBuilder(Math.Min(reasonCode.Length, 128));
+        foreach (char character in reasonCode)
+        {
+            if (projected.Length >= 128) break;
+            char lowered = char.ToLowerInvariant(character);
+            projected.Append(lowered is >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or ':' or '-' ? lowered : '_');
+        }
+        return projected.Length == 0 ? fallback : projected.ToString();
+    }
+
+    private static string? LastReceiptId(FarmhandForEachPassResult pass) =>
+        pass.Targets.LastOrDefault(target => target.ExecutionId is { Length: > 0 })?.ExecutionId;
+
+    private const string ForEachWorldUnavailable = "for_each_world_unavailable";
+
+    private const string ForEachStoppedReason = "for_each_stopped";
+
+    private const string NotOnFarmState = "not_on_farm";
+
+    private const string TileOutsideFarmReason = "tile_outside_farm_map";
+
+    /// <summary>The one wire argument this pass MINTS per row, and the one a caller may never declare.</summary>
+    private const string ExpectedTargetIdArgument = "expectedTargetId";
+
+    /// <summary>What the identity refusal names when the action declares no target family at all.</summary>
+    private const string NoTargetFamily = "none";
+
+    private const string PassIncompleteReason = "for_each_pass_incomplete";
 
     /// <summary>
     /// Produces exactly the descriptor-declared output facts, each keyed by its

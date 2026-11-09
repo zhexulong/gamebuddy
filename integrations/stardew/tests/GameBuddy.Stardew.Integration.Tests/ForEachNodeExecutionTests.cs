@@ -134,23 +134,143 @@ public sealed class ForEachNodeExecutionTests
     }
 
     /// <summary>
-    /// An action that declares `expectedTargetId` is refused BY NAME per row. A null would reach the handler as "the target
-    /// changed", which is a lie about a tile nobody changed.
+    /// A ROW CARRIES THE IDENTITY ITS ACTION REQUIRES, and it is the one the family publishes for that tile.
+    ///
+    /// <para>
+    /// The measured defect: `plant_seed` and `harvest_crop` declare `expectedTargetId`, so a loop over a patch could not
+    /// run either - every row answered "the argument is missing" and the only way to plant twenty tiles was twenty nodes
+    /// naming twenty ids copied out of one observation. The row's identity is now minted from the LIVE tile by the
+    /// family's own function, which is what this asserts: the id each dispatch carries is the id
+    /// <see cref="ExecutionManager.BuildCropTargetId"/> answers for that tile, not a second hash that agrees today.
+    /// </para>
     /// </summary>
     [Fact]
-    public void AnActionThatNeedsATargetIdentityIsNamedInsteadOfDispatchedWithNull()
+    public void ARowWhoseActionNeedsATargetIdentityCarriesTheIdentityItsFamilyPublishesForThatTile()
     {
         using var harness = ForEachHarness.Create();
+        harness.PlaceCrop(10, 10, seedIndex: "472");
+        harness.PlaceCrop(11, 10, seedIndex: "473");
+
+        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":2,\"h\":1}},\"do\":{\"action\":\"harvest_crop\",\"expectedQualifiedItemId\":\"(O)24\"}}");
+
+        BodyProgramStatusSnapshot status = harness.Status();
+        status.State.Should().Be(BodyProgramState.Succeeded, harness.Diagnostic);
+        status.Nodes.Should().OnlyContain(node => node.State == BodyProgramNodeState.Succeeded);
+        harness.Handler.Requests.Should().HaveCount(2, "two crop tiles, two rows, from ONE node");
+
+        // ONE AUTHORITY PER FACT: the expectation is the family's own function called with the same live inputs, never a
+        // hash restated here - a second copy that agrees today is a disagreement scheduled for later.
+        string[] published =
+        {
+            ExecutionManager.BuildCropTargetId(harness.Farm, 10, 10, seedId: "472", harvestId: "24"),
+            ExecutionManager.BuildCropTargetId(harness.Farm, 11, 10, seedId: "473", harvestId: "24"),
+        };
+        harness.Handler.Requests.Select(request => request.Args.ExpectedTargetId).Should().BeEquivalentTo(
+            published,
+            "each row carries the identity its family publishes for its own tile");
+        harness.Handler.Requests.Should().OnlyContain(
+            request => request.Action == "harvest_crop" && request.Args.ExpectedQualifiedItemId == "(O)24",
+            "the caller's own declared arguments still ride along beside the minted identity");
+        harness.NodeEvidence().Should().Contain("\"succeeded\":2");
+    }
+
+    /// <summary>
+    /// A row whose family cannot name that tile is REFUSED BY NAME and never dispatched: a null identity would reach the
+    /// handler as "the target changed", which is a lie about a tile nobody changed, and the caller could not tell it from
+    /// a real race.
+    /// </summary>
+    [Fact]
+    public void ARowWhoseFamilyHasNoIdentityForThatTileIsRefusedByNameAndNotDispatched()
+    {
+        using var harness = ForEachHarness.Create();
+        // A tillable tile with NO crop on it: `water_crop` declares `cropTargets`, and that family has no identity for a
+        // tile that carries nothing.
         harness.SetDiggable(10, 10);
 
         harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":2,\"h\":1}},\"do\":{\"action\":\"water_crop\"}}");
 
         BodyProgramStatusSnapshot status = harness.Status();
-        status.State.Should().Be(BodyProgramState.Failed);
+        status.State.Should().Be(BodyProgramState.Failed, "no row ran, so the pass did nothing");
         status.Nodes.Single().FailureCode.Should().Be(
-            "row_argument_missing:expectedtargetid",
-            "the node's reason code carries the action's own argument, projected onto the reason grammar (lowercase)");
+            "row_target_identity_unavailable:water_crop:croptargets",
+            "the refusal names the action AND the family, projected onto the reason grammar (lowercase)");
         harness.Handler.Requests.Should().BeEmpty("nothing was dispatched with a null identity");
+        // A failed node carries no evidence (ADR-006), so the count per reason rides the hint rather than being lost. The
+        // code is the same projection `FailureCode` carries, so the two answers cannot disagree about the reason.
+        status.Nodes.Single().Hint.Should().Contain(
+            "refused=2",
+            "two rows refused, and the answer says how many");
+        status.Nodes.Single().Hint.Should().Contain(
+            "row_target_identity_unavailable:water_crop:croptargets=2",
+            "the count is PER REASON, named with the same code the failure carries");
+    }
+
+    /// <summary>
+    /// The same refusal for a family this pass cannot name a tile for AT ALL: `cut_weeds` declares `weedTargets`, and the
+    /// row identity seam has no arm for it, so every row is refused with the family the action itself declares.
+    /// </summary>
+    [Fact]
+    public void ARowWhoseActionFamilyTheSeamCannotDeriveIsRefusedWithThatFamilyName()
+    {
+        using var harness = ForEachHarness.Create();
+        harness.SetDiggable(10, 10);
+
+        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":2,\"h\":1}},\"do\":{\"action\":\"cut_weeds\",\"slot\":0}}");
+
+        BodyProgramStatusSnapshot status = harness.Status();
+        status.State.Should().Be(BodyProgramState.Failed);
+        status.Nodes.Single().FailureCode.Should().Be("row_target_identity_unavailable:cut_weeds:weedtargets");
+        harness.Handler.Requests.Should().BeEmpty("a row the world cannot name is not dispatched at all");
+    }
+
+    /// <summary>
+    /// THE SEAM'S POPULATION IS THE CATALOGUE'S OWN FAMILY DECLARATIONS, and the families it can name a tile for are
+    /// exactly the three whose identity the live tile and the row's declaration decide.
+    ///
+    /// <para>
+    /// Every other family is answered with null, which the row reports as
+    /// `row_target_identity_unavailable:&lt;actionId&gt;:&lt;family&gt;`. That is a boundary and not a hole: a family whose identity
+    /// is not reachable from the game thread is NAMED per row instead of being dispatched with an id this file invented.
+    /// </para>
+    /// <para>
+    /// WHY A GATE AND NOT THREE ASSERTIONS. The population is derived from `FarmhandActionDescriptor.TargetFamily`, so a
+    /// family added to the surface is examined the moment it exists, and a family that silently starts (or stops) being
+    /// derivable fails here BY NAME - which is the drift a hand-written list of three families could never catch.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheRowIdentitySeamAnswersOnlyTheFamiliesALiveTileDecides()
+    {
+        using var harness = ForEachHarness.Create();
+        harness.PlaceCrop(10, 10, seedIndex: "472");
+        List<string> declared = FarmhandActionCatalog.Registrations
+            .Select(registration => registration.Descriptor?.TargetFamily)
+            .Where(family => family is not null)
+            .Select(family => family!)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(family => family, StringComparer.Ordinal)
+            .ToList();
+        declared.Should().HaveCountGreaterThan(40, "the catalogue declares the families its actions consume");
+
+        // A seed target is (slot, tile, item), so the seed family is asked with the row's own declaration; every other
+        // family is asked with the same arguments and ignores them.
+        var seedArguments = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["slot"] = "0",
+            ["expectedQualifiedItemId"] = "(O)472",
+        };
+        List<string> answered = declared
+            .Where(family => harness.World.TargetIdFor(family, 10, 10, seedArguments) is not null)
+            .ToList();
+
+        answered.Should().BeEquivalentTo(
+            new[]
+            {
+                FarmhandForEachFarmWorld.CropTargetsFamily,
+                FarmhandForEachFarmWorld.HarvestTargetsFamily,
+                FarmhandForEachFarmWorld.SeedTargetsFamily,
+            },
+            "a crop tile is one identity published by two families, a seed target is one per stack, and every other family is refused by name");
     }
 
     /// <summary>
@@ -219,9 +339,9 @@ public sealed class ForEachNodeExecutionTests
             this.Handler = new RecordingNativeHandler();
             this.Router = new FarmhandActionRouter();
             // The REAL registration supplies the handler; the router is the production table, so a row takes exactly the
-            // path a single action takes. `water_crop` is registered too, because the row that names a missing identity must
-            // be refused BEFORE it reaches this table.
-            foreach (string actionId in new[] { "till_soil", "water_crop" })
+            // path a single action takes. `water_crop` and `harvest_crop` are registered too: their rows carry a minted
+            // identity, and a row the world cannot name must be refused BEFORE it reaches this table.
+            foreach (string actionId in new[] { "till_soil", "water_crop", "harvest_crop" })
             {
                 FarmhandActionRegistration registration = FarmhandActionCatalog.Registrations.Single(entry => entry.ActionId == actionId);
                 this.Router.Register(registration, this.Handler);
@@ -270,7 +390,7 @@ public sealed class ForEachNodeExecutionTests
         private xTile.Tiles.TileSheet sheet { get; }
 
         internal static ForEachHarness Create(IReadOnlyList<string>? enabledActions = null) =>
-            new(enabledActions ?? new[] { "till_soil", "cut_weeds", "cut_grass", "scythe_crop", "chop_stump", "water_crop" });
+            new(enabledActions ?? new[] { "till_soil", "cut_weeds", "cut_grass", "scythe_crop", "chop_stump", "water_crop", "harvest_crop" });
 
         /// <summary>The engine's own `Diggable` property on the Back layer, which is what the Hoe itself reads.</summary>
         internal void SetDiggable(int x, int y)
@@ -279,6 +399,25 @@ public sealed class ForEachNodeExecutionTests
             tile.Properties["Diggable"] = "T";
             this.Farm.map.GetLayer("Back").Tiles[x, y] = tile;
         }
+
+        /// <summary>
+        /// A hoed tile carrying a crop, built from the two fields the crop families' identity reads
+        /// (`netSeedIndex`/`indexOfHarvest`). `new Crop(id, ...)` needs `Data/Crops`, which this process never loads, so
+        /// the crop is an uninitialized instance with exactly those two fields seeded.
+        /// </summary>
+        internal void PlaceCrop(int x, int y, string seedIndex)
+        {
+            var crop = (StardewValley.Crop)FormatterServices.GetUninitializedObject(typeof(StardewValley.Crop));
+            SetInstanceField(crop, "netSeedIndex", new NetString(seedIndex));
+            SetInstanceField(crop, "indexOfHarvest", new NetString("24"));
+            var dirt = new HoeDirt { crop = crop };
+            this.Farm.terrainFeatures[new Vector2(x, y)] = dirt;
+        }
+
+        private static void SetInstanceField(object target, string name, object? value) =>
+            target.GetType()
+                .GetField(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic)!
+                .SetValue(target, value);
 
         /// <summary>Submits one loop node and pumps until the program stops moving.</summary>
         internal void Run(string loopDocument)

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Abstractions;
@@ -26,15 +27,36 @@ namespace GameBuddy.Stardew;
 /// same three the clearing planner reads, which is why a tile is called `weed` by both or by neither.
 /// </para>
 /// <para>
-/// A ROW CARRIES NO TARGET IDENTITY YET, and that is a stated boundary rather than an oversight: a published target id is
-/// minted per family from live state (<c>BuildWeedTargetId</c> and its siblings), and this pass does not derive it, so an
-/// action that declares <c>expectedTargetId</c> answers per row with <c>row_argument_missing:expectedTargetId</c> instead of
-/// running on a tile the handler would then refuse for a different reason. <c>till_soil</c> and every other action
-/// addressed by x/y alone runs today, which is the measured defect this unit exists to remove.
+/// A ROW'S TARGET IDENTITY IS MINTED HERE, by the family the row's action declares and with the function that family's own
+/// discovery publishes its rows with (<see cref="ExecutionManager.BuildCropTargetId"/>, <see cref="ExecutionManager.BuildSeedTargetId"/>).
+/// That is the whole reason an action declaring <c>expectedTargetId</c> can now run through a loop: the id comes from the LIVE
+/// tile at dispatch time, never from the observation the plan was written from, and never from a second hash here.
 /// </para>
 /// </summary>
 internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
 {
+    /// <summary>
+    /// The three families whose identity this pass can mint, by the wire names their actions' descriptors declare.
+    ///
+    /// `cropTargets` and `harvestTargets` publish the SAME identity for a crop tile - one function, one row - and
+    /// `seedTargets` publishes one per held stack and tile. Every other family is answered with null, which the row reports
+    /// as `row_target_identity_unavailable:&lt;actionId&gt;:&lt;family&gt;`: a family whose identity is not reachable from here is
+    /// NAMED, not guessed at with a hash of this file's own.
+    /// </summary>
+    internal const string CropTargetsFamily = "cropTargets";
+
+    internal const string HarvestTargetsFamily = "harvestTargets";
+
+    internal const string SeedTargetsFamily = "seedTargets";
+
+    /// <summary>
+    /// The seed family's own two row fields, read from the row's `do`: a seed target is (slot, tile, item), and the first
+    /// and third of those are the caller's declaration rather than anything the tile decides.
+    /// </summary>
+    private const string SeedSlotArgument = "slot";
+
+    private const string SeedItemArgument = "expectedQualifiedItemId";
+
     private readonly Farm farm;
     private readonly IReadOnlySet<string> enabledActionIds;
     private readonly Func<bool> stopRequested;
@@ -55,11 +77,46 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
 
     public bool IsActionEnabled(string actionId) => this.enabledActionIds.Contains(actionId);
 
+    public string? TargetIdFor(string family, int x, int y, IReadOnlyDictionary<string, string>? declaredArguments)
+    {
+        // Off the map is not a row, exactly as `ReadRow` says: there is no tile there to name.
+        if (!this.IsOnMap(x, y)) return null;
+        switch (family)
+        {
+            // A crop tile is ONE target with ONE identity, published by `cropTargets` and `harvestTargets` alike and
+            // recomputed by `water_crop` and `harvest_crop` before they act. Whether the crop is ready, already watered or
+            // taken by a scythe is an ADMISSION the handler owns - it decides whether the action runs, not what the tile
+            // is called - so it is deliberately not restated here.
+            case CropTargetsFamily:
+            case HarvestTargetsFamily:
+                return this.farm.terrainFeatures.TryGetValue(new Vector2(x, y), out TerrainFeature? feature)
+                    && feature is HoeDirt { crop: not null } dirt
+                        ? ExecutionManager.BuildCropTargetId(this.farm, x, y, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value)
+                        : null;
+            // A seed target is (slot, tile, item): the family publishes one per held stack, and `plant_seed` recomputes it
+            // from the slot it is told to spend. Whether the pack still holds that seed is the handler's answer
+            // (`seed_not_owned_in_slot`), and whether the tile is plantable is its `seed_target_unavailable`.
+            case SeedTargetsFamily:
+                return declaredArguments is not null
+                    && declaredArguments.TryGetValue(SeedSlotArgument, out string? slotText)
+                    && int.TryParse(slotText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int slot)
+                    && declaredArguments.TryGetValue(SeedItemArgument, out string? qualifiedItemId)
+                    && !string.IsNullOrWhiteSpace(qualifiedItemId)
+                        ? ExecutionManager.BuildSeedTargetId(this.farm, slot, x, y, qualifiedItemId)
+                        : null;
+            default:
+                return null;
+        }
+    }
+
+    private bool IsOnMap(int x, int y) =>
+        x >= 0 && y >= 0 && x < this.farm.map.Layers[0].LayerWidth && y < this.farm.map.Layers[0].LayerHeight;
+
     public FarmhandForEachRow? ReadRow(int x, int y, int localColumn, int localRow)
     {
         var tile = new Vector2(x, y);
         // Off the map is not a row: there is no tile there, and acting on one would be acting on nothing.
-        if (x < 0 || y < 0 || x >= this.farm.map.Layers[0].LayerWidth || y >= this.farm.map.Layers[0].LayerHeight) return null;
+        if (!this.IsOnMap(x, y)) return null;
 
         bool occupied = false;
         string kind = FarmhandForEachKindActions.GroundKind;

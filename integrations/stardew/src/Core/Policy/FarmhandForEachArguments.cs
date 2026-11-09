@@ -36,6 +36,24 @@ public static class FarmhandForEachArguments
     public const string LoopArgument = "loop";
 
     /// <summary>
+    /// The one `do` argument the MOD fills per row, and a caller may never declare.
+    ///
+    /// A row's target identity is minted from the LIVE tile by the family the action's own descriptor declares, which is
+    /// why a loop can address a patch no observation ever carried. A caller that wrote one would be stating an id for a
+    /// tile it has not seen - true only until the world differs - so it is refused instead of silently overridden.
+    /// Mirrors `PLAN_FOR_EACH_ROW_IDENTITY_ARGUMENT` (`host/src/body-program-for-each.ts`).
+    /// </summary>
+    public const string ExpectedTargetIdArgument = "expectedTargetId";
+
+    /// <summary>
+    /// Why a `do` that names the row's own target identity is refused.
+    ///
+    /// One word on both sides of the boundary: the compiler answers it before submission and this reader answers it on the
+    /// game thread, so a caller cannot be taught one code and refused with another.
+    /// </summary>
+    public const string RowIdentityIsNotTheCallers = "for_each_row_identity_is_not_the_callers";
+
+    /// <summary>
     /// How many characters the loop document may occupy.
     ///
     /// The wire's own bound on ONE canonical string value, spelled once on each side of the boundary
@@ -415,6 +433,15 @@ public static class FarmhandForEachArguments
         foreach (JsonProperty property in element.EnumerateObject())
         {
             if (property.Name == "action") continue;
+            // THE ROW'S IDENTITY IS THE MOD'S. `expectedTargetId` is minted per row from the live tile by the family the
+            // action declares; a caller that wrote one has declared an id for a tile it has not seen, and the pass would
+            // either have to override it (a declaration nobody honours) or dispatch it (a lie the moment the world
+            // differs). Both are refused here by name.
+            if (string.Equals(property.Name, ExpectedTargetIdArgument, StringComparison.Ordinal))
+            {
+                reasonCode = RowIdentityIsNotTheCallers;
+                return false;
+            }
             if (!BodyProgramValidation.IsIdentifier(property.Name)) return false;
             if (!TryReadScalarText(property.Value, out string? text)) return false;
             arguments ??= new Dictionary<string, string>(StringComparer.Ordinal);
