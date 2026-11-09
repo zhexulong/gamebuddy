@@ -1444,7 +1444,7 @@ export function isShopTargetFact(value: unknown): boolean {
 
 /**
  * One row about a plantable seed the actor HOLDS: the count she holds, and - when a shop stocks it - where it is sold,
- * what the menu charges and whether that shop's own hours query says it is open.
+ * what the menu charges, whether that shop's own hours query says it is open, and where in the world that shop IS.
  *
  * The nullable keys are the three-valued answers, and they are optional at the wire because the Mod omits a null
  * member. `heldCount` absent means the published stack rows did not cover the holding slots; `shopId` absent means NO
@@ -1453,6 +1453,12 @@ export function isShopTargetFact(value: unknown): boolean {
  * item as a query rather than literally; `hoursCondition` absent means the owner entry declares no trading window;
  * and `openNow` absent means the question could not be asked, with `openNowReason` naming why. `openNow` absent is
  * NOT `openNow: false` - one means the question could not be asked and the other means the shop is shut.
+ *
+ * The ADDRESS half is exactly one of three and is READ, never computed: `shopDestination` is the `shopTargets` row the
+ * Mod already published for this location, `shopLocation` names the room the counter is in when it is somewhere else,
+ * and `shopLocationUnknown` says why neither could be read. A row with two of them, or with none, is refused: two is a
+ * counter that is both here and elsewhere, and none is a price with no shop to walk to, which is the defect this half
+ * removes. The Host does not join the destination to `shopTargets` and does not turn a `shopLocation` into one.
  */
 export function isSeedSupplyTargetFact(value: unknown): boolean {
   return (
@@ -1470,6 +1476,9 @@ export function isSeedSupplyTargetFact(value: unknown): boolean {
       "currency",
       "openNow",
       "openNowReason",
+      "shopDestination",
+      "shopLocation",
+      "shopLocationUnknown",
     ]) &&
     isQualifiedItemId(value.qualifiedItemId) &&
     isBoundedNonEmptyString(value.displayName, 128) &&
@@ -1484,11 +1493,46 @@ export function isSeedSupplyTargetFact(value: unknown): boolean {
     (value.currency === undefined || isNonNegativeSafeInteger(value.currency)) &&
     (value.openNow === undefined || typeof value.openNow === "boolean") &&
     (value.openNowReason === undefined || isBoundedNonEmptyString(value.openNowReason, 64)) &&
+    // The three address keys, of which EXACTLY ONE is written on every row the Mod publishes.
+    (value.shopDestination === undefined || isShopDestinationFact(value.shopDestination)) &&
+    (value.shopLocation === undefined || isBoundedNonEmptyString(value.shopLocation, 256)) &&
+    (value.shopLocationUnknown === undefined || isBoundedNonEmptyString(value.shopLocationUnknown, 64)) &&
+    [value.shopDestination, value.shopLocation, value.shopLocationUnknown].filter((member) => member !== undefined)
+      .length === 1 &&
     // A shop half is all-or-nothing: a row that names a shop must also say what it charges, and a row that names no
     // shop must carry no half-answer about one. Otherwise a reader could see a price with no shop to walk to.
     (value.shopId === undefined
       ? value.price === undefined && value.currency === undefined && value.openNow === undefined
       : value.price !== undefined && value.currency !== undefined)
+  );
+}
+
+/**
+ * The id `shop_purchase` accepts for a shop counter, and the one spelling the `shopTargets` row it is copied from
+ * publishes. The destination carries that row's own id rather than one minted for this family, so a reader can hand it
+ * straight to the purchase.
+ */
+const SHOP_DESTINATION_TARGET_ID = /^shop_[a-f0-9]{16}$/u;
+
+/**
+ * The `shopTargets` row for the counter a supply row's shop trades at, copied into the seed family's own frame.
+ *
+ * Four members exactly, because a walk needs all four and a fifth would be a member the `shop_purchase` row does not
+ * publish: the room, the target id in it, the tile that target stands on, and the name to show while walking. The tile
+ * is the snapshot's own coordinate (`$defs.tile`), so a destination can be planned from without a second scale.
+ */
+function isShopDestinationFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["location", "targetId", "tile", "label"]) &&
+    isBoundedNonEmptyString(value.location, 256) &&
+    typeof value.targetId === "string" &&
+    SHOP_DESTINATION_TARGET_ID.test(value.targetId) &&
+    isRecord(value.tile) &&
+    hasExactKeys(value.tile, ["x", "y"]) &&
+    isTileCoordinate(value.tile.x) &&
+    isTileCoordinate(value.tile.y) &&
+    isBoundedNonEmptyString(value.label, 256)
   );
 }
 

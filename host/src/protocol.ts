@@ -1028,6 +1028,21 @@ export type Snapshot = Readonly<{
     openNow?: boolean;
     /** Why `openNow` could not be answered (`no_owner_entry`, `owner_condition_unreadable`). */
     openNowReason?: string;
+    /**
+     * Where the counter IS, when it is in the location the actor is standing in: the `shopTargets` row this shop's
+     * counter occupies, copied member for member (its id, its tile, its location) so `shop_purchase` resolves the same
+     * counter. EXACTLY ONE of this, `shopLocation` and `shopLocationUnknown` is written per row.
+     */
+    shopDestination?: Readonly<{
+      location: string;
+      targetId: string;
+      tile: Readonly<{ x: number; y: number }>;
+      label: string;
+    }>;
+    /** The room the counter is in when it is elsewhere - enough to head for, and deliberately not a destination. */
+    shopLocation?: string;
+    /** Why neither a destination nor a location could be read (`shop_location_unreadable`, `no_shop_stocks_this_seed`). */
+    shopLocationUnknown?: string;
   }>[];
   /** How many supply rows the Mod's cap left out, beside the family it truncates. */
   seedSupplyTargetsOmitted?: number;
@@ -4071,7 +4086,7 @@ export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freez
   { field: "baitCrabPotTargets", maxItems: 16, accepts: isBaitCrabPotTargetFact },
   { field: "baitCrabPotResultTargets", maxItems: 1, accepts: isBaitCrabPotTargetFact },
   { field: "shopTargets", maxItems: 32, accepts: isShopTargetFact },
-  { field: "seedSupplyTargets", maxItems: 8, accepts: isSeedSupplyTargetFact },
+  { field: "seedSupplyTargets", maxItems: 8, accepts: isSeedSupplyTargetFact, narrate: namedEntryReason },
   { field: "horseTargets", maxItems: 16, accepts: isHorseTargetFact },
   { field: "mineEntranceTargets", maxItems: 16, accepts: isMineEntranceTargetFact },
   { field: "animalDoorTargets", maxItems: 32, accepts: isAnimalDoorTargetFact },

@@ -8498,66 +8498,169 @@
       }
     },
     "seedSupplyTarget": {
+      "description": "One plantable seed the actor HOLDS: the count she holds, and - when a shop stocks it - what the menu charges, whether that shop's own hours query says it is open, and WHERE that shop is. The address half is EXACTLY ONE of `shopDestination` (the counter is in the location the actor stands in: the very `shopTargets` row `shop_purchase` resolves), `shopLocation` (the room the counter is in when it is elsewhere) and `shopLocationUnknown` (why neither could be read). A price and an open-now answer with none of the three would read as a shop she can walk to.",
+      "allOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "qualifiedItemId",
+            "displayName"
+          ],
+          "properties": {
+            "qualifiedItemId": {
+              "type": "string",
+              "pattern": "^\\([A-Z]+\\)[0-9]+$"
+            },
+            "displayName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "heldCount": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "shopId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "shopDisplayName": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "ownerName": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "hoursCondition": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "price": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "declaredPrice": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "currency": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "openNow": {
+              "type": "boolean"
+            },
+            "openNowReason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "shopDestination": {
+              "$ref": "#/$defs/shopDestination"
+            },
+            "shopLocation": {
+              "$ref": "#/$defs/shopLocationWord"
+            },
+            "shopLocationUnknown": {
+              "$ref": "#/$defs/shopLocationUnknownReason"
+            }
+          }
+        },
+        {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "shopDestination"
+              ],
+              "properties": {
+                "shopDestination": {
+                  "$ref": "#/$defs/shopDestination"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "shopLocation"
+              ],
+              "properties": {
+                "shopLocation": {
+                  "$ref": "#/$defs/shopLocationWord"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "shopLocationUnknown"
+              ],
+              "properties": {
+                "shopLocationUnknown": {
+                  "$ref": "#/$defs/shopLocationUnknownReason"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "shopDestination": {
+      "description": "Where a shop's counter IS, in the terms a walk can start from: the room, the exact `shop_purchase` target id in it, the tile that target stands on, and the name to show while walking. Every member is taken from the `shopTargets` row the Mod already publishes - never a second identity minted for this family - so this destination and the row `shop_purchase` resolves are one fact.",
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "qualifiedItemId",
-        "displayName"
+        "location",
+        "targetId",
+        "tile",
+        "label"
       ],
       "properties": {
-        "qualifiedItemId": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 128
-        },
-        "displayName": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 128
-        },
-        "heldCount": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "shopId": {
+        "location": {
           "type": "string",
           "minLength": 1,
           "maxLength": 256
         },
-        "shopDisplayName": {
+        "targetId": {
           "type": "string",
-          "maxLength": 256
+          "pattern": "^shop_[a-f0-9]{16}$"
         },
-        "ownerName": {
-          "type": "string",
-          "maxLength": 256
+        "tile": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "$ref": "#/$defs/tile"
+            },
+            "y": {
+              "$ref": "#/$defs/tile"
+            }
+          }
         },
-        "hoursCondition": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 256
-        },
-        "price": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "declaredPrice": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "currency": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "openNow": {
-          "type": "boolean"
-        },
-        "openNowReason": {
+        "label": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 64
+          "maxLength": 256
         }
       }
+    },
+    "shopLocationWord": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "shopLocationUnknownReason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
     },
     "fishPondTarget": {
       "type": "object",

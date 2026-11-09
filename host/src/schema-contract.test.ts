@@ -1837,3 +1837,50 @@ test("the language-neutral schema admits a whereabouts row with no tile and refu
     }
   }
 });
+
+test("the schema and the Host agree on the seed supply address half: exactly one of three", async () => {
+  // The Mod writes EXACTLY ONE of these three on every supply row, and the language-neutral schema is what a
+  // non-TypeScript consumer validates against - so a schema that admitted a row with none (or with two) would let a
+  // frame through that the Host then refuses whole, and a schema that refused one of the three would refuse a snapshot
+  // the Mod genuinely sends. Both ends are asserted over the same rows for that reason.
+  const validate = await schemaValidator();
+  const counter = { location: "SeedShop", targetId: "shop_0123456789abcdef", tile: { x: 12, y: 14 }, label: "Pierre" };
+  const seed = (address: Record<string, unknown>): Record<string, unknown> => ({
+    qualifiedItemId: "(O)472",
+    displayName: "Parsnip Seeds",
+    ...address,
+  });
+  const admitted = [
+    seed({ shopDestination: counter }),
+    seed({ shopLocation: "SeedShop" }),
+    seed({ shopLocationUnknown: "no_shop_stocks_this_seed" }),
+    // Both bounds at their edges: the tile's own 0..1000 and the two string bounds.
+    seed({ shopDestination: { ...counter, tile: { x: 0, y: 1000 } } }),
+    seed({ shopLocation: "s".repeat(256) }),
+    seed({ shopLocationUnknown: "s".repeat(64) }),
+  ];
+  for (const row of admitted) {
+    assert.equal(validate(snapshotWith("seedSupplyTargets", [row])), true, `${JSON.stringify(validate.errors)}`);
+    assert.equal(diagnoseBridgeMessage(snapshotWith("seedSupplyTargets", [row]), schemaContractScope), "accepted");
+  }
+  const refusedRows = [
+    ["no address at all", seed({})],
+    ["a destination and a location", seed({ shopLocation: "SeedShop", shopDestination: counter })],
+    ["a destination and a reason", seed({ shopDestination: counter, shopLocationUnknown: "shop_location_unreadable" })],
+    ["a minted id", seed({ shopDestination: { ...counter, targetId: "counter_0123456789abcdef" } })],
+    ["a short id", seed({ shopDestination: { ...counter, targetId: "shop_0123456789abcde" } })],
+    ["a tile below zero", seed({ shopDestination: { ...counter, tile: { x: -1, y: 14 } } })],
+    ["a tile above 1000", seed({ shopDestination: { ...counter, tile: { x: 1001, y: 14 } } })],
+    ["a fifth destination key", seed({ shopDestination: { ...counter, ownerTileX: 12 } })],
+    ["an empty location", seed({ shopLocation: "" })],
+    ["a 65-character reason", seed({ shopLocationUnknown: "s".repeat(65) })],
+  ] as const;
+  for (const [label, row] of refusedRows) {
+    assert.equal(validate(snapshotWith("seedSupplyTargets", [row])), false, `the schema admitted ${label}`);
+    assert.equal(
+      validateBridgeMessage(snapshotWith("seedSupplyTargets", [row]), schemaContractScope),
+      "invalid_snapshot",
+      `the Host admitted ${label}`,
+    );
+  }
+});
