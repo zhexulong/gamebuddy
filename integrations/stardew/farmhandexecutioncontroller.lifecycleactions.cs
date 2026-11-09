@@ -81,8 +81,13 @@ internal sealed partial class ExecutionManager
         // LIFECYCLE's own ceiling: a co-op night legitimately waits ten minutes, so the ordinary one-minute
         // action ceiling cannot cover it. That mismatch was the whole reason this site stayed forked, and the
         // ceiling is now a parameter of the shared admission rather than a reason to bypass it.
+        //
+        // The profile is the Overnight one because the engine's own bed prompt may already be standing when the request
+        // arrives: it is this action's precondition, and the lifecycle answers it. Refusing it here is how a night's
+        // intent was left for the Agent to discharge by answering the question itself, which crosses a day with no
+        // receipt (round41).
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs,
-                AdmissionActionabilityProfile.General, FarmhandActionCatalog.LifecycleWatchdogMs) is { } admissionRefusal)
+                AdmissionActionabilityProfile.Overnight, FarmhandActionCatalog.LifecycleWatchdogMs) is { } admissionRefusal)
             return admissionRefusal;
 
         SleepAndAdvanceDayLifecycleConfig config = new()
