@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CompanionLoop } from "./companion-loop.js";
 import { GAME_DELIVERY_PACING, selectReactionSound } from "./companion-delivery-pacing.js";
+import { CompanionLoop } from "./companion-loop.js";
 import { MAGIC_CONTEXT_REFUSED_TURN_ENTRY_TYPE } from "./companion-turn-refusal.js";
 
 /**
@@ -1792,4 +1792,108 @@ test("a failing volatile bind is a degraded turn, never a failed one", async () 
   });
   // The companion's own turn outranks one turn of extra background.
   assert.equal(await loop.flush(), "completed");
+});
+
+test("CompanionLoop prints one delivery account per turn: the parts it had, the parts it showed, and why the rest were withheld", async () => {
+  // The rule this measures: a piece the projection withholds must be COUNTED, and text that never
+  // reached the projection at all must not read as a companion who chose silence. MEASURED
+  // 2026-11-09 (round40, 34 minutes): 60 assistant text parts, 31 presented pieces, and nothing in
+  // any artifact that said 47 of the 60 had been lost on the way.
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const toolCall = { type: "toolCall", id: "tool_1", name: "action", arguments: {} };
+  const presented: { text: string }[] = [];
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(text: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+        for (const [id, parts, stopReason] of [
+          ["assistant_1", ["先出门去农场。"], "toolUse"],
+          // A stage beat is the surface's own withholding: it cannot draw `*...*`.
+          ["assistant_2", ["*转过身微笑*"], "toolUse"],
+          ["assistant_3", ["花椰菜给她了。"], "stop"],
+        ] as const) {
+          const snapshot = { id, role: "assistant", content: [], stopReason: "pending" };
+          emit({ type: "message_start", message: snapshot });
+          parts.forEach((value, index) => {
+            emit({
+              type: "message_update",
+              message: snapshot,
+              assistantMessageEvent: { type: "text_start", contentIndex: index, partial: snapshot },
+            });
+            emit({
+              type: "message_update",
+              message: snapshot,
+              assistantMessageEvent: { type: "text_delta", contentIndex: index, delta: value, partial: snapshot },
+            });
+          });
+          emit({
+            type: "message_end",
+            message: {
+              id,
+              role: "assistant",
+              content: [
+                ...parts.map((value) => ({ type: "text", text: value })),
+                ...(stopReason === "stop" ? [] : [toolCall]),
+              ],
+              stopReason,
+            },
+          });
+        }
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => {
+          listeners.delete(next);
+        };
+      },
+    } as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent(content) {
+        presented.push(content as { text: string });
+      },
+    },
+  );
+  const stderrWrite = process.stderr.write;
+  let printed = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    printed += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    loop.pump.enqueuePlayerInput({
+      source: "player_text",
+      inputId: "input_delivery",
+      eventId: "player_source_delivery",
+      text: "去把菜收了",
+      locale: "zh-CN",
+      timestampMs: 1,
+    });
+    await loop.flush();
+  } finally {
+    process.stderr.write = stderrWrite;
+  }
+
+  const sound = selectReactionSound("player_source_delivery", "zh-CN", GAME_DELIVERY_PACING.reaction!);
+  assert.deepEqual(
+    presented.map((entry) => entry.text),
+    [sound, "先出门去农场。", "花椰菜给她了。"],
+    "the beat-only message presents nothing, and every other message presents its whole text",
+  );
+  const line = printed.split("\n").find((entry) => entry.startsWith("NATIVE_COMPANION_TURN_DELIVERY "));
+  assert.notEqual(line, undefined, `no delivery account was printed; stderr was: ${printed}`);
+  assert.deepEqual(JSON.parse(line!.slice("NATIVE_COMPANION_TURN_DELIVERY ".length)), {
+    textParts: 3,
+    presented: 2,
+    suppressed: { empty_after_projection: 1 },
+    unaccounted: 0,
+  });
 });

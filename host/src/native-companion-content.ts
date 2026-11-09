@@ -3,9 +3,9 @@ import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-
 import {
   budgetedSpeechPieces,
   CHAT_DELIVERY_PACING,
+  type CompanionDeliveryPacing,
   selectReactionSound,
   typingDurationMs,
-  type CompanionDeliveryPacing,
 } from "./companion-delivery-pacing.js";
 import { createScaffoldingStreamProjection, removeModelScaffolding } from "./companion-scaffolding.js";
 import { dehydrateCompanionSpeech, isEmptyAfterDehydration } from "./companion-speech-dehydration.js";
@@ -141,6 +141,42 @@ export type NativeAssistantStopReason = "pending" | "stop" | "length" | "toolUse
  */
 export type NativeProviderFailureClass = ProviderFailureClass;
 
+/**
+ * Why one assistant message's text parts produced no piece, when the message carried some.
+ *
+ * One member per reason the projection deliberately withholds text, so an absent piece is a fact
+ * with a name rather than a silence. The population each reason counts is the message's own text
+ * parts (`textParts` on `onMessageText`), never a hand-kept list of messages.
+ *
+ * `blank_text` and `empty_after_projection` are the surface refusing to draw something a player
+ * cannot read; `unstreamed_text` is the paragraph lane meeting a message whose deltas never came;
+ * `intermediate_message` is a surface whose single-shot contract has nowhere to put a message that
+ * is not the turn's answer; `provider_error` and `aborted` are Pi's own ending of the message.
+ */
+export type NativeCompanionPartSuppression =
+  | "blank_text"
+  | "empty_after_projection"
+  | "unstreamed_text"
+  | "intermediate_message"
+  | "provider_error"
+  | "aborted";
+
+/**
+ * What became of one assistant message's text parts.
+ *
+ * One report per assistant message that carried text, in arrival order, whether that text reached
+ * the player or not. The caller's population is Pi's own message stream, so a message that never
+ * reached this observer at all is the caller's difference to compute - and that difference is the
+ * fact no artifact of a live run could state before this existed (measured 2026-11-09: 47 of a
+ * 34-minute run's 60 text parts never reached presentation, and nothing recorded why).
+ *
+ * `delivered` is not a second spelling of `suppression`: a message's parts are presented as one
+ * utterance, so a message either delivered all of its parts or withheld all of them.
+ */
+export type NativeCompanionMessageText =
+  | Readonly<{ textParts: number; suppression: null }>
+  | Readonly<{ textParts: number; suppression: NativeCompanionPartSuppression }>;
+
 export type NativeCompanionContentSinks = Readonly<{
   /**
    * Ephemeral player-visible streaming hint; it is never durable authority.
@@ -165,6 +201,11 @@ export type NativeCompanionContentSinks = Readonly<{
    * therefore says nothing rather than guessing from the text.
    */
   onFinalText(text: string, stopReason: NativeAssistantStopReason): void | Promise<void>;
+  /**
+   * What became of one assistant message's text parts. A surface that installs no sink here still
+   * presents and withholds exactly the same text - what it loses is the count, not the delivery.
+   */
+  onMessageText?(outcome: NativeCompanionMessageText): void | Promise<void>;
   /** No content is supplied to this sink. */
   onRejected(
     reason: "aborted" | "error" | "empty" | "empty_text" | "tool_only" | "unsupported_content" | "identity_mismatch",
@@ -293,6 +334,10 @@ export function attachNativeCompanionContent(
   // either while a message is still streaming (the silence timer below) or, when
   // a tool-use message ends sooner than that, from its first sentence.
   let workingRemarkReleased = false;
+  // Did anything from the message currently tracked reach a piece? The working remark is a piece
+  // from that message, so a message whose first sentence was spoken may legitimately leave an
+  // empty paragraph at `message_end`. Only a message that emitted nothing at all withheld text.
+  let trackedMessageSpoken = false;
   let callbackTail = Promise.resolve();
   let remarkTimer: ReturnType<typeof setTimeout> | undefined;
   let unsubscribe: (() => void) | undefined;
@@ -329,6 +374,33 @@ export function attachNativeCompanionContent(
   const splitForBudget = (text: string): readonly string[] => {
     if (lengthBudget === null || !incrementalActive) return [text];
     return budgetedSpeechPieces(text, lengthBudget);
+  };
+
+  /** How many text parts this message carried, blank ones included: the population a caller counts. */
+  const textPartCount = (message: AssistantMessage): number => message.content.filter(isTextContent).length;
+
+  /**
+   * Why one assistant message's text parts produced no piece, read from the message's own content
+   * through the same predicates the projection uses, so a message cannot be "empty" here and
+   * "speakable" there. `unstreamed_text` is the honest answer for text that exists in the message
+   * but never arrived as a delta: the paragraph lane is built from Pi's stream, not from the message.
+   */
+  const suppressionReasonFor = (message: AssistantMessage): NativeCompanionPartSuppression => {
+    const raw = message.content
+      .filter(isTextContent)
+      .map((entry) => entry.text)
+      .join("");
+    if (raw.trim().length === 0) return "blank_text";
+    return presentIsEmpty(raw) ? "empty_after_projection" : "unstreamed_text";
+  };
+
+  /** Names what became of one message's parts: the only per-message delivery fact a caller gets. */
+  const reportMessageText = (message: AssistantMessage, suppression: NativeCompanionPartSuppression | null): void => {
+    if (sinks.onMessageText === undefined) return;
+    const textParts = textPartCount(message);
+    if (textParts === 0) return;
+    const outcome: NativeCompanionMessageText = Object.freeze({ textParts, suppression });
+    dispatch(async () => await sinks.onMessageText?.(outcome));
   };
 
   /**
@@ -368,6 +440,7 @@ export function attachNativeCompanionContent(
           return;
         }
         workingRemarkReleased = true;
+        trackedMessageSpoken = true;
         const piece = present(first);
         await emitReaction();
         for (const part of splitForBudget(piece)) await sinks.onIncrementalText!(part);
@@ -397,6 +470,7 @@ export function attachNativeCompanionContent(
         clearRemarkTimer();
         incrementalAccumulator = new IncrementalSpeechAccumulator();
         pendingSentences = [];
+        trackedMessageSpoken = false;
         previewProjection?.reset();
       }
       return;
@@ -476,60 +550,55 @@ export function attachNativeCompanionContent(
       // must be able to flush the residual stream it never emitted as sentences.
       const messageAccumulator = incrementalAccumulator;
       const messageSentences = pendingSentences;
+      const messageSpoken = trackedMessageSpoken;
       tracked = undefined;
       trackedIdentity = undefined;
       trackedTextContentIndexes = new Set<number>();
       clearRemarkTimer();
       incrementalAccumulator = new IncrementalSpeechAccumulator();
       pendingSentences = [];
-      // Release the tail this message's last fragment boundary held back. A
-      // marker that never completed turned out to be ordinary prose, so it is
-      // previewed with the rest; text inside a frame that never closed stays
-      // dropped, because this stream saw it open. A tool-use message presents
-      // nothing at all, so its tail is not previewed either.
+      // Release the tail this message's last fragment boundary held back. A marker that never
+      // completed turned out to be ordinary prose, so it is previewed with the rest; text inside a
+      // frame that never closed stays dropped, because this stream saw it open. The turn's answer is
+      // previewed only through its own commit, so its tail is not sent twice.
       const previewTail = previewProjection?.flush() ?? "";
       if (previewTail.length > 0 && finalMessage.stopReason !== "toolUse")
         dispatch(async () => await sinks.onPreviewDelta(previewTail));
-      // A tool-use assistant message is an intermediate agent-loop result, not
-      // the player-visible final response. It may be followed by a typed Game
-      // action and another assistant message, so it must never terminalize this
-      // observer. Its text is the model's running commentary between actions:
-      // the non-incremental lane withholds it entirely, because that lane's
-      // single-shot contract has nowhere to put it.
+      // A tool-use assistant message is an intermediate agent-loop result, not the turn's answer:
+      // it may be followed by a typed Game action and another assistant message, so it must never
+      // terminalize this observer. Its text is the companion speaking while she works.
       //
-      // Under incremental activation (Game only) the surface is a sequence of
-      // short native expressions instead of one message, so a bounded remark
-      // from such a message is legitimate company while working -- and its
-      // absence is what left the player in silence for the whole task. The
-      // silence timer has already spent the turn's piece when the message
-      // outlived it, so this only covers a message that ended sooner.
-      //
-      // This stays a structural rule: one piece, from the first sentence, under
-      // a byte bound. It deliberately does NOT try to judge whether a short
-      // remark reads as company or as narration, because that is the conduct's
-      // job and a semantic filter here would be a detector whose recall we would
-      // have to trust. What the rule guarantees is that a multi-step checklist
-      // and a long report cannot reach the surface. Whether the surviving short
-      // pieces feel like company is measured by the live run, not asserted here.
+      // MEASURED 2026-11-09 (round40 `multiday_routine`, 34 minutes): this branch released at most
+      // ONE piece per turn, taken from the first sentence of the first such message. 41 of that
+      // turn's 60 assistant text parts sat in tool-use messages and 2 of them reached presentation,
+      // while 11 of the 19 that ended a turn did - a companion silent exactly while she works, and
+      // silent about the day's outcome. Delivery is the rule: every message's text, in arrival
+      // order, whether or not the message also asks for a tool. The surface still withholds
+      // something here (a blank part, a beat it cannot draw, a lane with no mid-message channel),
+      // and it names that through `onMessageText` instead of letting it read as silence.
       if (finalMessage.stopReason === "toolUse") {
-        if (!incrementalActive || workingRemarkReleased) return;
-        // Text of this intermediate message, already dehydrated at emission
-        // time below; the first piece of the stream is where a genuine
-        // "here I am / look at this" lands, so that is the one we take.
-        const remark = messageSentences[0] ?? messageAccumulator.flush();
-        if (presentIsEmpty(remark)) return;
-        const piece = present(remark);
-        if (piece.length === 0) return;
-        workingRemarkReleased = true;
+        if (!incrementalActive) {
+          // This lane's single-shot contract has nowhere to put a message that is not the answer.
+          reportMessageText(finalMessage, "intermediate_message");
+          return;
+        }
+        const paragraph = present([...messageSentences, messageAccumulator.flush()].join(""));
+        if (presentIsEmpty(paragraph)) {
+          if (!messageSpoken) reportMessageText(finalMessage, suppressionReasonFor(finalMessage));
+          return;
+        }
+        const pieces = splitForBudget(paragraph);
+        reportMessageText(finalMessage, null);
         dispatch(async () => {
           await emitReaction();
-          for (const part of splitForBudget(piece)) await sinks.onIncrementalText!(part);
+          for (const piece of pieces) await sinks.onIncrementalText!(piece);
         });
         return;
       }
       finalizing = true;
       const stopReason = readStopReason(finalMessage.stopReason);
       if (stopReason === "aborted") {
+        reportMessageText(finalMessage, "aborted");
         dispatch(async () => await sinks.onRejected("aborted"));
         return;
       }
@@ -539,6 +608,7 @@ export function attachNativeCompanionContent(
         // may cross, because that body is arbitrary bytes from an endpoint the player
         // chose.
         const providerFailureClass = classifyProviderFailure(finalMessage.errorMessage);
+        reportMessageText(finalMessage, "provider_error");
         dispatch(async () => await sinks.onRejected("error", providerFailureClass));
         return;
       }
@@ -550,18 +620,23 @@ export function attachNativeCompanionContent(
         // raw units before dehydrating keeps the space between two English
         // sentences, which per-unit dehydration would trim off.
         const paragraph = present([...messageSentences, messageAccumulator.flush()].join(""));
-        if (!presentIsEmpty(paragraph)) {
-          const pieces = splitForBudget(paragraph);
-          dispatch(async () => {
-            await emitReaction();
-            for (const piece of pieces.slice(0, -1)) await sinks.onIncrementalText!(piece);
-            await sinks.onFinalText(pieces[pieces.length - 1]!, stopReason);
-          });
+        if (presentIsEmpty(paragraph)) {
+          if (!messageSpoken) reportMessageText(finalMessage, suppressionReasonFor(finalMessage));
+          return;
         }
+        const pieces = splitForBudget(paragraph);
+        reportMessageText(finalMessage, null);
+        dispatch(async () => {
+          await emitReaction();
+          for (const piece of pieces.slice(0, -1)) await sinks.onIncrementalText!(piece);
+          await sinks.onFinalText(pieces[pieces.length - 1]!, stopReason);
+        });
         return;
       }
       const text = readSafeAssistantText(finalMessage, stripStageDirection, dropScaffolding);
       if (text === null) {
+        // The rejection below is this lane's name for an unreadable reply; a per-message reason here
+        // would spell the same fact twice.
         const hasText = finalMessage.content.some(isTextContent);
         const hasTool = finalMessage.content.some(
           (entry) => typeof entry === "object" && entry !== null && (entry as { type?: unknown }).type === "toolCall",
@@ -570,6 +645,7 @@ export function attachNativeCompanionContent(
         dispatch(async () => await sinks.onRejected(reason));
         return;
       }
+      reportMessageText(finalMessage, null);
       dispatch(async () => await sinks.onFinalText(text, stopReason));
     }
   };
@@ -700,8 +776,11 @@ function readSafeAssistantText(
  */
 export function readAssistantMessageFacts(
   message: unknown,
-): Readonly<{ hasText: boolean; hasToolCall: boolean; failed: boolean }> | undefined {
+): Readonly<{ hasText: boolean; hasToolCall: boolean; failed: boolean; textParts: number }> | undefined {
   if (!isAssistantLifecycleMessage(message)) return undefined;
+  // One spelling of "text part" for both readers: a content entry of type text, blank ones included. A
+  // blank part is what `blank_text` names, and it is the population the delivery accounting counts.
+  const textParts = message.content.filter(isTextContent).length;
   const hasText = message.content.some((entry) => isTextContent(entry) && entry.text.trim().length > 0);
   const hasToolCall = message.content.some(
     (entry) => typeof entry === "object" && entry !== null && (entry as { type?: unknown }).type === "toolCall",
@@ -709,7 +788,7 @@ export function readAssistantMessageFacts(
   // Pi's own classification of the message it ended on. `error` is a provider refusal (which has its own retry policy
   // and its own recorded class); `aborted` is a cancellation, which is the player's or Magic Context's decision.
   const failed = message.stopReason === "error" || message.stopReason === "aborted";
-  return Object.freeze({ hasText, hasToolCall, failed });
+  return Object.freeze({ hasText, hasToolCall, failed, textParts });
 }
 
 function readStopReason(value: unknown): NativeAssistantStopReason {

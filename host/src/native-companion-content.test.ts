@@ -298,7 +298,7 @@ test("skips intermediate tool-use assistant messages and commits the following n
   assert.deepEqual(finals, ["Action complete."]);
 });
 
-test("incremental activation releases at most one working remark per turn", async () => {
+test("incremental activation releases every intermediate message's text, in arrival order", async () => {
   // History: a real live run narrated the companion's plan to the player --
   // "我在屋子里，先出门去农场。" and "先摘一颗。" -- and the fix at the time was to
   // discard every intermediate tool-use message's text. Two later A/B runs of
@@ -307,15 +307,16 @@ test("incremental activation releases at most one working remark per turn", asyn
   // at all for the whole multi-action chain.
   //
   // Owner decision (2026-09-29): a companion should be able to say something
-  // while working, so the runtime no longer discards that text outright. The
-  // guard that replaces it is a SHAPE rule, not a semantic filter: at most one
-  // piece per Pi turn, taken from the first intermediate message that carries
-  // one. A step-by-step narration appears in every tool-use message, so it
-  // cannot use this seam to become a running commentary.
+  // while working, so the runtime no longer discards that text outright. It kept
+  // a SHAPE rule instead: at most one piece per Pi turn, taken from the first
+  // intermediate message that carried one.
   //
-  // Whether the surviving single piece reads as company or as narration is a
-  // wording question the conduct owns and the live-run audit measures; this
-  // test pins only the shape guarantee.
+  // That shape rule is what the 2026-11-09 measurement (round40 `multiday_routine`) retired: over 34
+  // minutes, 41 of the turn's 60 assistant text parts sat in tool-use messages and 2 of them reached
+  // presentation, so the player got a two-character interjection instead of the day's outcome while
+  // the companion worked. Delivery is now the rule, and it is a delivery rule, not a wording one:
+  // every message's text reaches the player in arrival order, and the conduct still owns whether
+  // that text reads as company or as narration.
   const fx = fakeSession();
   const inlines: string[] = [];
   const finals: string[] = [];
@@ -333,7 +334,8 @@ test("incremental activation releases at most one working remark per turn", asyn
   observer.openPreviews();
 
   // Three consecutive intermediate tool-use messages, each streaming a step of
-  // a running narration. Only the first may be released.
+  // the companion's own running account. All three are her words and all three
+  // reach the player.
   for (const step of ["先出门去农场。", "先摘一颗。", "再去找乔迪。"]) {
     const planning = assistant([text("")]);
     fx.emit({ type: "message_start", message: planning });
@@ -369,7 +371,7 @@ test("incremental activation releases at most one working remark per turn", asyn
   fx.emit({ type: "message_end", message: assistant([text("花椰菜给她了。")], "stop") });
   await observer.close();
 
-  assert.deepEqual(inlines, ["先出门去农场。"]);
+  assert.deepEqual(inlines, ["先出门去农场。", "先摘一颗。", "再去找乔迪。"]);
   assert.deepEqual(finals, ["花椰菜给她了。"]);
 });
 
@@ -635,7 +637,8 @@ test("releases the held first sentence as the turn's one working remark after th
   assert.deepEqual(inlines, ["先出门去农场。"]);
 
   // Sixteen more seconds of the same intermediate tool-use message, then its
-  // end. The turn's one working remark is spent, so the step report stays out.
+  // end: the sentence that completed after the silence breaker was spoken is
+  // still her text, so the paragraph that follows it carries the rest.
   t.mock.timers.tick(16_000);
   fx.emit({
     type: "message_update",
@@ -649,7 +652,7 @@ test("releases the held first sentence as the turn's one working remark after th
     message: assistant([thinking("plan"), text("先出门去农场。先摘一颗。"), toolCall], "toolUse"),
   });
   await flush();
-  assert.deepEqual(inlines, ["先出门去农场。"]);
+  assert.deepEqual(inlines, ["先出门去农场。", "先摘一颗。"]);
   await observer.close();
 });
 

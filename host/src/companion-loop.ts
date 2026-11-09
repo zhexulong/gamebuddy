@@ -1,5 +1,8 @@
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-attestation.js";
+import { isRefusedTurnEvent } from "./companion-turn-refusal.js";
+import { CompanionEventPump, type CompanionTurnOutcome, type DeliveryDisposition } from "./event-pump.js";
 import {
   attachNativeCompanionContent,
   NATIVE_BUBBLE_SCAFFOLDING,
@@ -7,9 +10,6 @@ import {
   type NativeCompanionContentObserver,
   readAssistantMessageFacts,
 } from "./native-companion-content.js";
-import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
-import { CompanionEventPump, type CompanionTurnOutcome, type DeliveryDisposition } from "./event-pump.js";
-import { isRefusedTurnEvent } from "./companion-turn-refusal.js";
 
 export type NativeGameCompanionContent = Readonly<{
   sourceEventId: string;
@@ -274,6 +274,22 @@ export class CompanionLoop {
     let producedToolCall = false;
     /** Did Pi report at least one assistant message for this turn? */
     let sawAssistantMessage = false;
+    /**
+     * How many assistant text parts this turn produced, how many reached the player, and why the
+     * rest did not.
+     *
+     * <p>
+     * `assistantTextParts` is Pi's own message stream - the population. `presentedTextParts` and
+     * `suppressedByReason` are the projection's answer for the messages it saw. Whatever is left
+     * over is text that never reached the projection at all, which is a different defect from a
+     * withheld piece and must not read as silence. That is exactly what the 2026-11-09 audit could
+     * not get from any artifact: 47 of a 34-minute run's 60 parts never reached presentation, and
+     * nothing in the bundle said which layer dropped them.
+     * </p>
+     */
+    let assistantTextParts = 0;
+    let presentedTextParts = 0;
+    const suppressedByReason = new Map<string, number>();
     /** Did Pi classify the message it ended on as a provider failure or a cancellation? Read from the raw stream. */
     let assistantFailed = false;
     try {
@@ -325,6 +341,7 @@ export class CompanionLoop {
           const assistantFacts = readAssistantMessageFacts(event.message);
           if (assistantFacts !== undefined) {
             sawAssistantMessage = true;
+            assistantTextParts += assistantFacts.textParts;
             if (assistantFacts.hasText) producedText = true;
             if (assistantFacts.hasToolCall) producedToolCall = true;
             if (assistantFacts.failed) assistantFailed = true;
@@ -404,6 +421,17 @@ export class CompanionLoop {
                     const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
                     if (presentation !== undefined) nativeContentFinal = presentation;
                     await presentation;
+                  },
+                  onMessageText: (outcome) => {
+                    // The projection's own answer for one message: its text parts, and the reason
+                    // none of them reached the player. Counting here is the whole point - a piece
+                    // withheld without a count reads exactly like a companion who said nothing.
+                    if (outcome.suppression === null) presentedTextParts += outcome.textParts;
+                    else
+                      suppressedByReason.set(
+                        outcome.suppression,
+                        (suppressedByReason.get(outcome.suppression) ?? 0) + outcome.textParts,
+                      );
                   },
                   onRejected: (reason) => {
                     // `aborted`/`error` are the transport-level endings; the remaining reasons are
@@ -566,6 +594,22 @@ export class CompanionLoop {
       return turnOutcome ?? "completed";
     } finally {
       this.pump.turnProducedWork = producedWork;
+      // One line per turn that had text to deliver: the population (this turn's own assistant text
+      // parts), how many of them the player was shown, and every part withheld with its reason.
+      // `unaccounted` is the rest - text that never reached the projection - printed rather than
+      // inferred, because that is the number no shipped artifact has ever carried.
+      if (assistantTextParts > 0) {
+        const suppressed = Object.fromEntries(suppressedByReason);
+        const named = Object.values(suppressed).reduce((total, count) => total + count, 0);
+        process.stderr.write(
+          `NATIVE_COMPANION_TURN_DELIVERY ${JSON.stringify({
+            textParts: assistantTextParts,
+            presented: presentedTextParts,
+            suppressed,
+            unaccounted: assistantTextParts - presentedTextParts - named,
+          })}\n`,
+        );
+      }
       if (batchId !== undefined) {
         try {
           this.volatileContext?.clear(batchId);
