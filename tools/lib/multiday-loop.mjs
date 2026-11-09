@@ -158,6 +158,9 @@ export async function watchRollover(
     dayBefore,
     timeoutMs,
     pollIntervalMs = POLL_INTERVAL_MS,
+    // How long an `event` hold may stand before it is a named stop rather than a world still loading. A day-start
+    // transition is the common case and clears in about two seconds.
+    eventWaitMs = 20_000,
     now = () => Date.now(),
     sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     // Asked first, every pass. A transport that died cannot support any claim about the night, so waiting out
@@ -173,6 +176,7 @@ export async function watchRollover(
   const deadline = now() + timeoutMs;
   // The hold under watch and the facts under it: how long the same menu has stood, how long NOTHING the Mod publishes
   // has changed, and whether the actor was ever free. Together these are what tells a slow night from one nothing is
+  let cutsceneSince = null;
   // closing, and the expiry at the bottom of this loop reports the difference by name.
   let holdUnderWatch = null;
   let actionableAtFirstObservation = null;
@@ -218,8 +222,29 @@ export async function watchRollover(
       menus.push({ menuType, decision: decision.kind });
     }
     if (decision.kind === "blocked") return Object.freeze({ crossed: false, reasonCode: decision.reasonCode, menus });
+    // A day-start transition publishes itself as an `event` hold, and the loop used to answer it at once - measured
+    // 2026-11-09 (round40): six seconds into day 6, while the world was still fading in (heartbeat `can_move=False`,
+    // `fade=0.76`, then `fade=-0.01` two seconds later), the run was declared `actor_held_by_cutscene` and stopped with
+    // one of two nights crossed. Nothing was wrong with the world; the watcher sampled a transition and called it a
+    // verdict. An event that clears on its own is a WAIT, and the bound below is what makes "it cleared" and "it never
+    // will" two different answers. `timeoutMs <= 0` keeps the old immediate answer, because a caller that asked for no
+    // waiting at all is asking a different question.
     const hold = classifyActorHold(snapshot);
-    if (hold.reasonCode !== null) return Object.freeze({ crossed: false, reasonCode: hold.reasonCode, menus });
+    if (hold.reasonCode !== null) {
+      const waitable = hold.hold === "cutscene" && timeoutMs > 0;
+      if (!waitable) return Object.freeze({ crossed: false, reasonCode: hold.reasonCode, menus });
+      if (cutsceneSince === null) cutsceneSince = observedNow;
+      const waitedMs = observedNow - cutsceneSince;
+      if (waitedMs >= eventWaitMs) {
+        return Object.freeze({
+          crossed: false,
+          reasonCode: `${hold.reasonCode}:waited_ms=${String(waitedMs)}`,
+          menus,
+        });
+      }
+    } else {
+      cutsceneSince = null;
+    }
 
     if (decision.kind === "respond_level_up") {
       // The ordinary/milestone split is the whole point: `confirm` takes no decision, a branch would.

@@ -4049,6 +4049,26 @@ try {
   // The promise the CURRENT day's turn settles on. The night watcher waits on it so "the night has not begun"
   // and "the companion will not sleep" are different answers instead of one timeout.
   let dayTurnSettled = Promise.resolve();
+  // Set when a day's scope had to be captured before the world finished arriving - published rather than swallowed,
+  // because a scope captured mid-transition is exactly the shape that produced round40's `crossings 0 of 2`.
+  let dayScopeCaptureProblem = null;
+  /**
+   * Wait for the world to say it is ready for a day, bounded.
+   *
+   * A new day arrives in pieces: the calendar moves first, then the fade, then the actor becomes actionable. A day
+   * scope captured in the middle is a statement about two different worlds, and `nightCrossedInScope` then answers
+   * "the night is over" for a day that has not begun - measured 2026-11-09 on round40.
+   */
+  const waitForSettledWorld = async ({ timeoutMs = 30_000, pollMs = 250 } = {}) => {
+    const startedAt = Date.now();
+    for (;;) {
+      const snapshot = client.state?.snapshot ?? null;
+      if (snapshot?.actionable === true && snapshot?.activeExecution == null && Number.isInteger(snapshot?.dayOfMonth))
+        return { settled: true, waitedMs: Date.now() - startedAt };
+      if (Date.now() - startedAt >= timeoutMs) return { settled: false, waitedMs: Date.now() - startedAt };
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+  };
   if (SCENARIO === "multiday_routine") {
     // Lane G0: the companion runs consecutive days and ends each one itself. The loop's `dayTurn` is an
     // ordinary agent turn; its `nightWatch` is the rollover observer, because the companion is blocked inside
@@ -4081,6 +4101,20 @@ try {
           // companion, and it never tells it to sleep: the companion's own dispatch of `sleep` is the only thing that
           // crosses the night, which is the behaviour this scenario exists to observe.
           let turns = 0;
+          // THE DAY SCOPE IS CAPTURED FROM A WORLD THAT HAS FINISHED ARRIVING.
+          //
+          // Measured 2026-11-09 (round40): day 1's scope was taken while the new-day transition was still in flight, so
+          // `dayOfMonth` was one day stale; `nightCrossedInScope` compares the captured day to the world's day with
+          // `!==`, so the correct value that arrived two seconds later read as "this day's night is already over". The
+          // loop then ran ZERO turns for day 2, its night watcher sampled the same fade and answered
+          // `actor_held_by_cutscene`, and a run that had crossed its first night stopped with `crossings 0 of 2`.
+          //
+          // Waiting for the world to be actionable is what makes the scope a fact about the day she wakes up in rather
+          // than about the frame the previous day ended on. It is bounded, and a world that never settles is named.
+          const settledWorld = await waitForSettledWorld();
+          if (!settledWorld.settled) {
+            dayScopeCaptureProblem = `day_scope_captured_while_transitioning:waited_ms=${String(settledWorld.waitedMs)}`;
+          }
           const dayScope = dayScopeFrom({
             clock: readWorldClock(),
             dayOfMonth: client.state?.snapshot?.dayOfMonth ?? null,
@@ -4228,6 +4262,9 @@ try {
     console.error("MULTIDAY_CROSSINGS", crossingSummary);
     multidayOutcome = Object.freeze({
       crossings: crossing.daysCrossed,
+      // A day scope captured while the world was still arriving makes every later reading of that day suspect, so it
+      // travels with the crossings instead of staying in this process.
+      dayScopeCaptureProblem,
       // What the RUN was asked for, next to what it achieved: judging the window against the achieved count made the
       // window rule unable to notice "asked for three nights, crossed two" (a review found this), because the two
       // numbers were the same by construction.

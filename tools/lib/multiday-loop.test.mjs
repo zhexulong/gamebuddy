@@ -448,3 +448,54 @@ test("a close the ENGINE owns is waited for instead of being counted as a failed
     assert.equal(outcome.dayAfter, 6);
   });
 });
+
+test("a day-start transition is WAITED for, not answered as a cutscene verdict", async () => {
+  // Measured 2026-11-09 (round40): six seconds into day 6 the world was still fading in - `can_move=False`,
+  // `fade=0.76`, `actorDispositionKind: event` - and the watcher declared `actor_held_by_cutscene`, ending a run that
+  // had crossed one of its two nights. The fade finished two seconds later, on its own. An event that clears itself is
+  // a wait; only an event that never clears is a stop, and then it must say how long it waited.
+  let clock = 0;
+  const advancing = { sleep: async () => {}, now: () => clock, pollIntervalMs: 0 };
+  const fading = [
+    { actionable: false, actorDispositionKind: "event", actorDispositionDetail: "new_day_transition", dayOfMonth: 6 },
+    { actionable: false, actorDispositionKind: "event", actorDispositionDetail: "new_day_transition", dayOfMonth: 7 },
+    free(7),
+  ];
+  const world = {
+    dismissed: [],
+    async observe() {
+      clock += 500;
+      return fading[Math.min(Math.floor(clock / 500) - 1, fading.length - 1)];
+    },
+    async dismiss(menuType) {
+      this.dismissed.push(menuType);
+      return { receipt: null, reasonCode: null };
+    },
+  };
+  const outcome = await watchRollover(world, { dayBefore: 6, timeoutMs: 60_000, ...advancing });
+  assert.equal(outcome.crossed, true, "the transition cleared, so the night was crossed after it");
+  assert.equal(outcome.dayAfter, 7);
+  assert.deepEqual(world.dismissed, [], "waiting is not dismissing: the event closes itself");
+});
+
+test("an event that never clears stops by name, with the time it was given", async () => {
+  let clock = 0;
+  const advancing = { sleep: async () => {}, now: () => clock, pollIntervalMs: 0 };
+  const stuck = {
+    async observe() {
+      clock += 1000;
+      return { actionable: false, actorDispositionKind: "event", actorDispositionDetail: "festival", dayOfMonth: 6 };
+    },
+    async dismiss() {
+      return { receipt: null, reasonCode: null };
+    },
+  };
+  const outcome = await watchRollover(stuck, { dayBefore: 6, timeoutMs: 600_000, eventWaitMs: 3000, ...advancing });
+  assert.equal(outcome.crossed, false);
+  assert.match(
+    String(outcome.reasonCode),
+    /^actor_held_by_cutscene:waited_ms=\d+$/u,
+    "the refusal must say it waited, and for how long - 'a cutscene is standing' is a different claim",
+  );
+  assert.ok(Number(String(outcome.reasonCode).split("waited_ms=")[1]) >= 3000);
+});
