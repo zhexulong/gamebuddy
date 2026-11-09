@@ -370,7 +370,13 @@
     "check:workflow-expressions": "node tools/check-workflow-expressions.mjs",
     "test:workflow-expressions": "node --test tools/check-workflow-expressions.test.mjs",
     "check:configuration-surfaces": "node tools/check-configuration-surfaces.mjs --fail",
-    "test:configuration-surfaces": "node --test tools/check-configuration-surfaces.test.mjs"
+    "test:configuration-surfaces": "node --test tools/check-configuration-surfaces.test.mjs",
+    "check:preset-macros": "node tools/check-preset-macros.mjs",
+    "check:preset-round-trip": "node tools/check-preset-round-trip.mjs",
+    "check:vendor-patches-apply": "node tools/check-vendor-patches-apply.mjs",
+    "test:preset-macros": "node --test tools/check-preset-macros.test.mjs",
+    "test:preset-round-trip": "node --test tools/check-preset-round-trip.test.mjs",
+    "test:vendor-patches-apply": "node --test tools/check-vendor-patches-apply.test.mjs"
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",
