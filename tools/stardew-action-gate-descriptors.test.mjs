@@ -194,9 +194,9 @@ test("descriptor runner identity names the native-local shared-harness runner fo
     use_mine_ladder: "run-stardew-native-local-player-use-mine-ladder-smoke.mjs",
     move_placed_furniture: "run-stardew-native-local-player-move-placed-furniture-smoke.mjs",
     pet_farm_animal: "run-stardew-native-local-player-pet-farm-animal-smoke.mjs",
-    use_mine_ladder: "run-stardew-native-local-player-use-mine-ladder-smoke.mjs",
-    move_placed_furniture: "run-stardew-native-local-player-move-placed-furniture-smoke.mjs",
-    pet_farm_animal: "run-stardew-native-local-player-pet-farm-animal-smoke.mjs",
+    // Published before its live run, so that a run CAN dispatch it at all: an Experimental action
+    // is off the agent surface and no evidence for it can ever exist.
+    fish_here: "run-stardew-native-local-player-fish-here-smoke.mjs",
   });
   // Obsolete parallel-route runner IDs that must never be re-selected.
   const forbiddenRouteIds = Object.freeze([
@@ -340,23 +340,11 @@ test("fixture-backed descriptor coverage is explicit rather than inferred", () =
       "talk_to_npc",
       "use_mine_ladder",
       "pet_farm_animal",
-      "use_mine_ladder",
-      "pet_farm_animal",
-      "use_mine_ladder",
-      "pet_farm_animal",
+      "fish_here",
     ],
   );
   assert.deepEqual(
     STARDEW_PUBLISHED_ACTION_GATES.filter((gate) => gate.fixtureScenario === null).map((gate) => gate.actionId),
-    [
-      "move_to_tile",
-      "equip_tool",
-      "travel",
-      "enter_exit",
-      "sleep",
-      "move_placed_furniture",
-      "move_placed_furniture",
-      "move_placed_furniture",
-    ],
+    ["move_to_tile", "equip_tool", "travel", "enter_exit", "sleep", "move_placed_furniture"],
   );
 });

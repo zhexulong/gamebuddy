@@ -1993,6 +1993,51 @@
         "handlerGroup": null
       },
       {
+        "actionId": "fish_here",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "fish_here",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            },
+            "expectedTargetId": {
+              "type": "string"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              },
+              {
+                "key": "tool:fishing_rod",
+                "value": "AnyUpgrade"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "fish_caught"
+          },
+          "approach": {
+            "relation": "self_walked"
+          },
+          "targetFamily": "waterTargets"
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "npc_relationship",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -4355,6 +4400,7 @@
       "refill_watering_can",
       "navigate_to_destination",
       "clear_debris",
+      "fish_here",
       "npc_relationship",
       "pet_animal",
       "pet_farm_animal",
@@ -4450,6 +4496,7 @@
       "refill_watering_can",
       "navigate_to_destination",
       "clear_debris",
+      "fish_here",
       "npc_relationship",
       "pet_animal",
       "pet_farm_animal",
@@ -4569,6 +4616,7 @@
       "face_direction",
       "feed_animal",
       "fertilize_tile",
+      "fish_here",
       "harvest_bush",
       "harvest_crop",
       "harvest_fruit_tree",
@@ -4672,6 +4720,7 @@
       "face_direction",
       "feed_animal",
       "fertilize_tile",
+      "fish_here",
       "harvest_bush",
       "harvest_crop",
       "harvest_fruit_tree",
@@ -4775,6 +4824,7 @@
       "face_direction",
       "feed_animal",
       "fertilize_tile",
+      "fish_here",
       "harvest_bush",
       "harvest_crop",
       "harvest_fruit_tree",
@@ -4878,6 +4928,7 @@
       "face_direction",
       "feed_animal",
       "fertilize_tile",
+      "fish_here",
       "harvest_bush",
       "harvest_crop",
       "harvest_fruit_tree",
@@ -4981,6 +5032,7 @@
       "face_direction",
       "feed_animal",
       "fertilize_tile",
+      "fish_here",
       "harvest_bush",
       "harvest_crop",
       "harvest_fruit_tree",
@@ -5084,6 +5136,7 @@
       "face_direction",
       "feed_animal",
       "fertilize_tile",
+      "fish_here",
       "harvest_bush",
       "harvest_crop",
       "harvest_fruit_tree",
@@ -5287,6 +5340,7 @@
       "face_direction",
       "feed_animal",
       "fertilize_tile",
+      "fish_here",
       "harvest_bush",
       "harvest_crop",
       "harvest_fruit_tree",
@@ -5449,6 +5503,7 @@
       "dye_clothing_with_item",
       "equip_tool",
       "equip_wearable",
+      "fish_here",
       "load_building_chest",
       "move_placed_furniture",
       "open_geode",
@@ -5942,6 +5997,11 @@
         "actionId": "pet_farm_animal",
         "runner": "run-stardew-native-local-player-pet-farm-animal-smoke.mjs",
         "fixtureScenario": "native_pet_farm_animal_v1"
+      },
+      {
+        "actionId": "fish_here",
+        "runner": "run-stardew-native-local-player-fish-here-smoke.mjs",
+        "fixtureScenario": "native_fish_here_v1"
       }
     ],
     "sharedHarnessImport": "from \"./lib/stardew-native-smoke-harness-v1.mjs\"",

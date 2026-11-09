@@ -395,7 +395,7 @@ public sealed partial class ModEntry : Mod
             return;
         }
         if (fixture.FixtureScenario is not ("native_till_soil_v1" or "native_water_crop_v1" or "native_crop_research_v1" or "native_plant_seed_v1" or "native_fertilize_tile_v1" or "native_harvest_crop_v1" or "native_pickup_forage_v1" or "native_pickup_item_v1" or "native_machine_inspect_v1" or "native_machine_coffee_load_v1" or "native_machine_coffee_collect_v1" or "native_machine_navigate_ab_v1" or "native_npc_relationship_v1" or "native_pet_animal_v1" or "native_water_crop_empty_can_recovery_v1" or "native_harvest_crop_inventory_full_recovery_v1" or "native_stamina_recovery_v1" or "native_water_pet_bowl_v1" or "native_water_slime_hutch_trough_v1" or "native_use_item_v1" or "native_refill_watering_can_v1" or "native_place_wood_fence_v1" or
- "native_world_object_v1" or "native_build_farm_building_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_open_geode_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_pet_farm_animal_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_cut_grass_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_ride_bus_v1" or "native_mine_elevator_v1" or "native_shop_purchase_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1" or "native_play_session_v1" or "native_wia_modal_interrupt_v1" or "native_wia_pass_out_v1" or "native_wia_modal_dismiss_chain_v1" or "native_wia_eat_interrupt_v1" or "native_wia_answer_question_v1" or "native_wia_tool_approach_interrupt_v1" or "native_wia_animal_product_interrupt_v1" or "native_wia_item_pickup_interrupt_v1" or "native_harvest_bush_v1" or "native_harvest_fruit_tree_v1" or "native_shake_tree_v1" or "native_take_pedestal_item_v1" or "native_toggle_fence_gate_v1" or "native_clear_cask_v1" or "native_dress_mannequin_v1" or "native_set_sign_display_v1" or "native_deposit_silo_hay_v1" or "native_withdraw_silo_hay_v1" or "native_toggle_animal_door_v1" or "native_clear_fish_pond_v1" or "native_accept_daily_quest_v1" or "native_color_placed_object_v1" or "native_name_entity_v1" or "native_prize_ticket_v1" or "native_tailoring_v1" or "native_farmhand_chat_v1" or "native_use_obelisk_v1" or "native_toggle_tool_light_v1" or "native_use_raft_v1" or "native_mount_transport_v1" or "native_enter_mine_v1" or "native_enter_exit_warp_action_v1" or "native_mine_enter_ladder_v1" or "native_mine_use_ladder_exit_v1" or "native_talk_to_npc_v1" or "native_talk_to_npc_multi_page_v1" or "native_equip_wearable_v1" or "native_unequip_wearable_v1" or "native_unequip_wearable_inventory_full_v1" or "native_dismount_transport_v1" or "native_building_chest_v1" or "native_building_chest_multistack_v1" or "native_use_warp_item_v1" or "native_pan_ore_v1" or "native_claim_mail_attachment_v1" or "native_accept_special_order_v1" or "native_claim_museum_reward_v1" or "native_farmhand_talk_to_npc_v1" or "native_move_ladder_v1" or "native_multi_day_v1" or "native_level_up_branch_v1" or "native_rotate_furniture_v1" or "native_remove_fence_v1" or "native_multi_day_play_session_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
+ "native_world_object_v1" or "native_build_farm_building_v1" or "native_chop_tree_source_v1" or "native_break_rock_source_v1" or "native_clear_hoedirt_v1" or "native_clear_debris_resource_clump_v1" or "native_open_geode_v1" or "native_feed_animal_v1" or "native_collect_animal_product_v1" or "native_pet_farm_animal_v1" or "native_dig_artifact_spot_v1" or "native_place_crab_pot_v1" or "native_bait_crab_pot_v1" or "native_chest_store_v1" or "native_chest_retrieve_v1" or "native_fridge_store_v1" or "native_fridge_retrieve_v1" or "native_ship_item_island_v1" or "native_chop_stump_v1" or "native_plant_sapling_v1" or "native_cut_weeds_v1" or "native_cut_grass_v1" or "native_scythe_crop_v1" or "native_ship_item_v1" or "native_interact_npc_with_item_v1" or "native_craft_item_v1" or "native_cook_recipe_v1" or "native_craft_item_partial_v1" or "native_crab_pot_collect_v1" or "native_jodi_harvest_deliver_v1" or "native_pass_out_v1" or "native_ride_minecart_v1" or "native_ride_bus_v1" or "native_mine_elevator_v1" or "native_shop_purchase_v1" or "native_move_stall_probe_pet_v1" or "native_move_stall_probe_npc_v1" or "native_strawberry_covenant_v1" or "native_play_session_v1" or "native_wia_modal_interrupt_v1" or "native_wia_pass_out_v1" or "native_wia_modal_dismiss_chain_v1" or "native_wia_eat_interrupt_v1" or "native_wia_answer_question_v1" or "native_wia_tool_approach_interrupt_v1" or "native_wia_animal_product_interrupt_v1" or "native_wia_item_pickup_interrupt_v1" or "native_harvest_bush_v1" or "native_harvest_fruit_tree_v1" or "native_shake_tree_v1" or "native_take_pedestal_item_v1" or "native_toggle_fence_gate_v1" or "native_clear_cask_v1" or "native_dress_mannequin_v1" or "native_set_sign_display_v1" or "native_deposit_silo_hay_v1" or "native_withdraw_silo_hay_v1" or "native_toggle_animal_door_v1" or "native_clear_fish_pond_v1" or "native_accept_daily_quest_v1" or "native_color_placed_object_v1" or "native_name_entity_v1" or "native_prize_ticket_v1" or "native_tailoring_v1" or "native_farmhand_chat_v1" or "native_use_obelisk_v1" or "native_toggle_tool_light_v1" or "native_use_raft_v1" or "native_mount_transport_v1" or "native_enter_mine_v1" or "native_enter_exit_warp_action_v1" or "native_mine_enter_ladder_v1" or "native_mine_use_ladder_exit_v1" or "native_talk_to_npc_v1" or "native_talk_to_npc_multi_page_v1" or "native_equip_wearable_v1" or "native_unequip_wearable_v1" or "native_unequip_wearable_inventory_full_v1" or "native_dismount_transport_v1" or "native_building_chest_v1" or "native_building_chest_multistack_v1" or "native_use_warp_item_v1" or "native_pan_ore_v1" or "native_claim_mail_attachment_v1" or "native_accept_special_order_v1" or "native_claim_museum_reward_v1" or "native_farmhand_talk_to_npc_v1" or "native_move_ladder_v1" or "native_multi_day_v1" or "native_level_up_branch_v1" or "native_rotate_furniture_v1" or "native_remove_fence_v1" or "native_fish_here_v1" or "native_multi_day_play_session_v1") || Game1.player is null || Game1.getFarm() is not Farm farm)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
             this.Monitor.Log("GameBuddy native-local-player fixture rejected an unsupported or unavailable pre-attachment scenario.", LogLevel.Error);
@@ -2249,6 +2249,64 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             return;
         }
 
+        if (fixture.FixtureScenario == "native_fish_here_v1")
+        {
+            // The declared Given, and nothing else: a rod that TAKES bait with bait in it, the actor's own stamina,
+            // and the actor standing on a tile next to a water tile the ENGINE says a rod may be cast at
+            // (`canFishHere` + `isTileFishable`, the pair `FishingRod.DoFunction` gates a cast on, FishingRod.cs:411;
+            // the standing half is the body's own rule, the same one discovery uses so it cannot publish a row the
+            // walk refuses).
+            //
+            // NOTHING IS CAST and no fish is placed. Production alone calls `beginUsing`/`DoFunction`; the engine
+            // alone decides which fish is here (`getFish`) and alone books the catch (`pullFishFromWater` ->
+            // `playerCaughtFishEndFunction` -> `farmer.caughtFish`, then `doneHoldingFish`).
+            if (farm.map is null || farm.map.Layers.Count == 0)
+                throw new InvalidOperationException("fixture_native_fish_here_map_missing");
+            if (!farm.canFishHere())
+                throw new InvalidOperationException("fixture_native_fish_here_location_cannot_fish");
+            Vector2? castTile = null;
+            Vector2 standingTile = Vector2.Zero;
+            for (int y = 0; y < farm.map.Layers[0].LayerHeight && castTile is null; y++)
+            for (int x = 0; x < farm.map.Layers[0].LayerWidth && castTile is null; x++)
+            {
+                if (!farm.isTileFishable(x, y)) continue;
+                foreach ((int nx, int ny) in new[] { (x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1) })
+                {
+                    Vector2 candidate = new(nx, ny);
+                    if (!StardewBodyController.IsStandableTile(farm, player, candidate)) continue;
+                    castTile = new Vector2(x, y);
+                    standingTile = candidate;
+                    break;
+                }
+            }
+            if (castTile is not { } water)
+                throw new InvalidOperationException("fixture_native_fish_here_cast_tile_missing");
+            // One cast of the day's own energy, from a full morning bar: the engine's gate is `Stamina > 1`
+            // (FishingRod.cs:1647), so a bar that is full is the world a morning gives.
+            player.Stamina = player.MaxStamina;
+            FishingRod? rod = player.Items.OfType<FishingRod>().FirstOrDefault();
+            if (rod is null)
+            {
+                // The smallest rod that takes bait (one attachment slot), so the bait half of the Given is real
+                // rather than an optional extra: bait consumption is one of the facts the receipt measures.
+                rod = ItemRegistry.Create<FishingRod>("(T)FiberglassRod");
+                if (player.addItemToInventory(rod) is not null)
+                    throw new InvalidOperationException("fixture_native_fish_here_rod_inventory_full");
+            }
+            if (rod.GetBait() is null)
+                rod.attach(ItemRegistry.Create<StardewValley.Object>("(O)685", 20));
+            if (rod.GetBait() is null)
+                throw new InvalidOperationException("fixture_native_fish_here_bait_not_attached");
+            player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)standingTile.X, (int)standingTile.Y, false));
+            this.nativeLocalPlayerFixtureInitialized = true;
+            this.Monitor.Log(
+                "GameBuddy native-local-player initialized the fish_here precondition before bridge attachment: "
+                    + $"location={farm.NameOrUniqueName};cast_tile={water.X},{water.Y};standing={(int)standingTile.X},{(int)standingTile.Y};"
+                    + $"rod={rod.QualifiedItemId};bait={rod.GetBait()?.Stack ?? 0};stamina={player.Stamina}; production alone casts and the engine alone credits the catch.",
+                LogLevel.Info);
+            return;
+        }
+
         if (fixture.FixtureScenario == "native_claim_mail_attachment_v1")
         {
             InitializeNativeLocalClaimMailAttachmentFixture(player, farm);
@@ -3485,6 +3543,16 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
             throw new InvalidOperationException("fixture_native_local_play_session_scythe_inventory_full");
         if (!player.Items.OfType<StardewValley.Tool>().Any(tool => tool.QualifiedItemId == scytheId))
             throw new InvalidOperationException("fixture_native_local_play_session_scythe_missing_after_add");
+        // THE ROD, and nothing beyond the rod. Vanilla hands the bamboo pole out on the farm's second morning, so a
+        // day that can be asked for a fish is a day with a rod in the pack: without one, a task naming `fish_here`
+        // is answered with `no_rod_in_inventory`, which measures this fixture rather than the companion. It is
+        // deliberately NOT equipped, NOT baited, and no water is prepared - finding water (`waterTargets`) and
+        // choosing to fish are the day's own decisions, not this Given's.
+        const string bambooPoleId = "(T)BambooPole";
+        if (!player.Items.OfType<FishingRod>().Any() && player.addItemToInventory(ItemRegistry.Create(bambooPoleId, 1)) is not null)
+            throw new InvalidOperationException("fixture_native_local_play_session_fishing_rod_inventory_full");
+        if (!player.Items.OfType<FishingRod>().Any())
+            throw new InvalidOperationException("fixture_native_local_play_session_fishing_rod_missing_after_add");
         const string cauliflowerSeedId = "(O)474";
         // CRAFTING MATERIALS, because one of the daily tasks is "build a machine and use it".
         //

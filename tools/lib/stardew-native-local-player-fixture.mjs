@@ -837,6 +837,9 @@ export function fixtureActions(action) {
   if (action === "collect_crab_pot_output") return ["collect_crab_pot_output"];
   if (action === "use_warp_item") return ["use_warp_item"];
   if (action === "pan_ore") return ["pan_ore"];
+  // `fish_here` alone: the fixture world arms the rod, the bait, the stamina and the water the engine calls
+  // castable, and production casts. No other capability is a prerequisite, which is why nothing else is published.
+  if (action === "fish_here") return ["fish_here"];
   if (action === "claim_mail_attachment") return ["claim_mail_attachment"];
   // The cross-day lifecycle is a real wire action now: the fixture publishes
   // sleep and production dispatches it. Its own route, native sleep answer
@@ -871,6 +874,10 @@ export function fixtureScenario(actions, action) {
   // world-object fallback below - a world whose actor is warped to the Farm, where no furniture
   // stands at all.
   if (action === "move_placed_furniture") return "";
+  // The fishing world is its own Given: a rod that takes bait with bait in it, the morning's stamina, and the
+  // actor beside water the ENGINE calls castable. Action-keyed before every `includes()` fallback because no other
+  // scenario carries either half.
+  if (action === "fish_here") return "native_fish_here_v1";
   // The rotation slice owns a world of its own: two pieces of the game's own furniture beside the
   // actor, one whose `rotations` allows a turn and one whose does not.
   if (action === "rotate_furniture") return "native_rotate_furniture_v1";

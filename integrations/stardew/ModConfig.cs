@@ -258,6 +258,11 @@ public sealed record NativeLocalPlayerFixtureConfig
         // The branch Given: the multi-day night precondition with ONE pending level-5 MILESTONE whose level-5
         // profession is left unchosen, so `respond_level_up`'s two profession branches are both live choices.
         "native_level_up_branch_v1",
+        // The fishing gate world: a rod that takes bait with bait in it, the morning's own stamina, and the actor
+        // standing beside water the ENGINE calls castable (canFishHere + isTileFishable). Nothing is cast here -
+        // production alone casts and the engine alone books the catch - so the gate can tell a refusal to fish from
+        // a fish that was caught.
+        "native_fish_here_v1",
 
     };
 

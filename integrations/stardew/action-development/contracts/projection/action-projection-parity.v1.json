@@ -1517,6 +1517,41 @@
         "targetFamily": "debrisTargets"
       },
       {
+        "actionId": "fish_here",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          },
+          "expectedTargetId": {
+            "type": "string"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            },
+            {
+              "key": "tool:fishing_rod",
+              "value": "AnyUpgrade"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "fish_caught"
+        },
+        "targetFamily": "waterTargets"
+      },
+      {
         "actionId": "npc_relationship",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -3377,6 +3412,7 @@
       "refill_watering_can",
       "navigate_to_destination",
       "clear_debris",
+      "fish_here",
       "npc_relationship",
       "pet_animal",
       "pet_farm_animal",
@@ -3505,6 +3541,7 @@
       "refill_watering_can",
       "navigate_to_destination",
       "clear_debris",
+      "fish_here",
       "npc_relationship",
       "pet_animal",
       "pet_farm_animal",

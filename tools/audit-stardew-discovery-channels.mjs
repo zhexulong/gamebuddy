@@ -131,6 +131,10 @@ export const TARGET_FIELD = Object.freeze({
   // publishes both ladder kinds under one opaque id family (`mine_entrance_<16 hex>`), because a caller
   // cannot tell the kinds apart. Declared here rather than adding a snapshot field the action never reads.
   use_mine_ladder: "MineEntranceTargets",
+  // `fish_here` names one water tile through the engine's own castable answer (`canFishHere` + `isTileFishable`),
+  // published as `waterTargets`; the id each row carries is the address the handler recomputes for that tile before
+  // it casts, so a stale row is refused by name rather than cast at.
+  fish_here: "WaterTargets",
   // Added by the minecart lane after this table was written; the audit caught the
   // omission rather than letting the action ship with an unverified discovery leg.
   ride_minecart: "MinecartTargets",

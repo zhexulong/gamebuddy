@@ -638,6 +638,22 @@ export const STARDEW_PUBLISHED_ACTION_GATES = Object.freeze([
     "farm_animal_petted",
     "native_pet_farm_animal_v1",
   ),
+  // PUBLISHED, and the live run is still owed (`published` on this ladder is the rung an action
+  // sits on when it is on the agent surface but no run has proven it; `live_verified` is the run
+  // that passed). Its runner is the gate that will prove three facts from the ENGINE's own objects
+  // rather than from the receipt's word:
+  //
+  //   1. the cast tile came from `waterTargets`, the engine's `canFishHere` + `isTileFishable`
+  //      answer, addressed by the id the handler recomputes for that tile before it casts;
+  //   2. the catch was CREDITED by the engine's win path - `pullFishFromWater` ->
+  //      `playerCaughtFishEndFunction` -> `farmer.fishCaught`, then `doneHoldingFish` handing the
+  //      fish to the pack - so a receipt that narrates a catch cannot pass on its own;
+  //   3. the cast COST what a cast costs, from the engine's own mutations: bait out of the rod,
+  //      stamina off the bar, and the rod's own durability answer.
+  //
+  // Its fixture world (`native_fish_here_v1`) arms exactly that Given and casts nothing: a rod
+  // that takes bait with bait in it, the morning's stamina, and the actor beside castable water.
+  gate("fish_here", 1, "run-stardew-native-local-player-fish-here-smoke.mjs", "fish_caught", "native_fish_here_v1"),
 ]);
 
 /**
