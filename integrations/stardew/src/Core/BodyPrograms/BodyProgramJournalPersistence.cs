@@ -132,8 +132,20 @@ public static class BodyProgramJournalPersistence
     private static bool ValidateProgram(BodyProgramJournalProgram program, BodyProgramPolicyIdentity journalPolicy, out string? refusal)
     {
         refusal = null;
-        if (program.Program is null || !IsValidVerified(program.Program) || HasUnorderedResourceConflict(program.Program.Nodes) || !Enum.IsDefined(program.State) || program.StopEpoch < 0
+        if (program.Program is null || !IsValidVerified(program.Program) || !Enum.IsDefined(program.State) || program.StopEpoch < 0
             || program.Nodes is null || program.Facts is null || program.Nodes.Count != program.Program.Nodes.Count) { refusal = "program_header"; return false; }
+        // The claim-ordering rule is the verifier's own rule (`BodyProgramGraphRules.UnorderedClaimPairs`), asked of the
+        // same graph the wire candidate was judged on. It answers PAIRS rather than a bool so this reader can name the node
+        // the way the wire refusal does instead of answering a bare header refusal that names nothing: the same document
+        // must not be `resource_conflict:<actionId>` when it is submitted and anonymous when it is persisted.
+        IReadOnlyList<BodyProgramGraphNode> graph = BodyProgramGraphRules.FromJournalNodes(program);
+        IReadOnlyList<(BodyProgramGraphNode First, BodyProgramGraphNode Second)> unordered = BodyProgramGraphRules.UnorderedClaimPairs(graph);
+        if (unordered.Count > 0)
+        {
+            BodyProgramGraphNode offender = unordered[0].Second;
+            refusal = $"resource_conflict:{program.Program.Nodes.Single(node => node.NodeId == offender.NodeId).ActionId}@{offender.NodeId}";
+            return false;
+        }
 
         Dictionary<string, BodyProgramJournalNode> nodes = new(StringComparer.Ordinal);
         foreach (BodyProgramJournalNode node in program.Nodes)
@@ -155,13 +167,14 @@ public static class BodyProgramJournalPersistence
                 || value is null || !BodyProgramValidation.IsValidCanonicalValue(value, value.Kind)) return false;
         }
 
+        IReadOnlyDictionary<string, BodyProgramNodeState> states = BodyProgramGraphRules.StatesOf(program);
         bool stateValid = program.State switch
         {
-            BodyProgramState.Active => HasExecutableWork(program)
+            BodyProgramState.Active => BodyProgramGraphRules.HasExecutableWork(graph, states)
                 && nodes.Values.All(node => node.State is not (BodyProgramNodeState.RecoveryRequired or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Abandoned)),
             BodyProgramState.Succeeded => nodes.Values.All(node => node.State == BodyProgramNodeState.Succeeded),
              BodyProgramState.Failed => nodes.Values.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected or BodyProgramNodeState.Abandoned)
-                 && !HasExecutableWork(program),
+                 && !BodyProgramGraphRules.HasExecutableWork(graph, states),
             BodyProgramState.Cancelled => nodes.Values.Any(node => node.State == BodyProgramNodeState.Cancelled),
             BodyProgramState.RecoveryRequired => nodes.Values.Any(node => node.State is BodyProgramNodeState.Pending or BodyProgramNodeState.RecoveryRequired)
                 && nodes.Values.All(node => node.State is BodyProgramNodeState.Pending or BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.RecoveryRequired)
@@ -278,14 +291,6 @@ public static class BodyProgramJournalPersistence
         }
     }
 
-      private static bool HasExecutableWork(BodyProgramJournalProgram program)
-      {
-          if (program.Nodes.Any(node => node.State is BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running)) return true;
-          Dictionary<string, BodyProgramJournalNode> nodes = program.Nodes.ToDictionary(node => node.NodeId, StringComparer.Ordinal);
-          return program.Program.Nodes.Any(descriptor => nodes[descriptor.NodeId].State == BodyProgramNodeState.Pending
-              && descriptor.DependsOn.All(dependency => nodes[dependency].State == BodyProgramNodeState.Succeeded));
-      }
-
       /// <summary>
       /// Rejection consistency for the durable admission-outcome contract. A
       /// `Rejected` node is a deterministic terminal veto: it can never succeed,
@@ -359,7 +364,6 @@ public static class BodyProgramJournalPersistence
       };
       private static bool IsValidEventKind(string? kind) => kind is "accepted" or "stopped" or "admission_challenge" or "admission_rejected"
           or "node_skipped" or "host_admitted" or "native_dispatch" or "node_completed" or "node_settled" or "abandoned";
-      private static bool IsTerminal(BodyProgramNodeState state) => state is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.Abandoned;
 
     internal static bool IsValidVerified(VerifiedBodyProgram? program) => program is not null && BodyProgramValidation.IsIdentifier(program.ProgramId) && program.CatalogRevision >= 0
         && program.Nodes is { Count: >= 1 and <= BodyProgramValidation.MaximumNodes } && program.Nodes.All(node => node is not null && BodyProgramValidation.IsIdentifier(node.NodeId) && BodyProgramValidation.IsIdentifier(node.ActionId)
@@ -397,7 +401,8 @@ public static class BodyProgramJournalPersistence
             if (journalNode.NodeAttempt > 0 && (!TryMaterializeArguments(journal, node, action!, out IReadOnlyDictionary<string, BodyProgramCanonicalValue>? materialized)
                 || materialized is null || journalNode.CanonicalBoundArguments is null || !BodyProgramCanonical.CanonicalMapsEqual(journalNode.CanonicalBoundArguments, materialized))) return false;
         }
-        return !HasCycle(nodes) && !HasUnorderedResourceConflict(program.Nodes);
+        IReadOnlyList<BodyProgramGraphNode> graph = BodyProgramGraphRules.FromVerified(program);
+        return !BodyProgramGraphRules.HasCycle(graph) && BodyProgramGraphRules.UnorderedClaimPairs(graph).Count == 0;
     }
 
     private static bool FactSetMatchesDescriptor(BodyProgramJournalProgram journal, VerifiedBodyProgramNode node, BodyProgramActionDescriptor action)
@@ -436,32 +441,6 @@ public static class BodyProgramJournalPersistence
         }
         materialized = BodyProgramValidation.FreezeMap(result);
         return true;
-    }
-
-    private static bool HasCycle(IReadOnlyDictionary<string, VerifiedBodyProgramNode> nodes)
-    {
-        HashSet<string> done = new(StringComparer.Ordinal), active = new(StringComparer.Ordinal);
-        bool Visit(string id) { if (!done.Add(id)) return active.Contains(id); active.Add(id); bool cycle = nodes[id].DependsOn.Any(Visit); active.Remove(id); return cycle; }
-        return nodes.Keys.Any(Visit);
-    }
-
-    private static bool HasUnorderedResourceConflict(IReadOnlyList<VerifiedBodyProgramNode> programNodes)
-    {
-        Dictionary<string, VerifiedBodyProgramNode> nodes = programNodes.ToDictionary(node => node.NodeId, StringComparer.Ordinal);
-        VerifiedBodyProgramNode[] all = programNodes.ToArray();
-        for (int index = 0; index < all.Length; index++)
-            for (int other = index + 1; other < all.Length; other++)
-                if (all[index].DerivedResourceClaims.Keys.Intersect(all[other].DerivedResourceClaims.Keys, StringComparer.Ordinal).Any()
-                    && !DependsTransitively(all[index].NodeId, all[other].NodeId, nodes)
-                    && !DependsTransitively(all[other].NodeId, all[index].NodeId, nodes)) return true;
-        return false;
-    }
-
-    private static bool DependsTransitively(string nodeId, string targetId, IReadOnlyDictionary<string, VerifiedBodyProgramNode> nodes)
-    {
-        HashSet<string> visited = new(StringComparer.Ordinal);
-        bool Visit(string id) => visited.Add(id) && nodes[id].DependsOn.Any(dependency => dependency == targetId || (nodes.ContainsKey(dependency) && Visit(dependency)));
-        return Visit(nodeId);
     }
 
     private static bool TryReadState(JsonElement root, out BodyProgramJournalState? state)

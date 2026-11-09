@@ -276,7 +276,7 @@ public sealed class OpenBodyProgramJournalAuthority
         if (!TryProgram(programId, out BodyProgramJournalProgram? program)) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.NotFound);
         if (stopEpoch <= program!.StopEpoch) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.InvalidInput);
         BodyProgramJournalProgram stopped = program with { State = BodyProgramState.Cancelled, StopEpoch = stopEpoch,
-            Nodes = Array.AsReadOnly(program.Nodes.Select(node => IsTerminal(node.State) ? node : node with
+            Nodes = Array.AsReadOnly(program.Nodes.Select(node => BodyProgramGraphRules.IsTerminal(node.State) ? node : node with
             {
                 State = BodyProgramNodeState.Cancelled,
                 GrantId = null,
@@ -320,7 +320,9 @@ public sealed class OpenBodyProgramJournalAuthority
                 : BodyProgramControllerResultCode.ProgramNotActive);
         BodyProgramPolicyIdentity policy = ObservePolicy();
         if (!PolicyMatches(policy, this.state.PolicyIdentity)) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.PolicyIdentityStale);
-        BodyProgramJournalNode? node = program!.Nodes.OrderBy(item => item.NodeId, StringComparer.Ordinal).FirstOrDefault(item => item.State == BodyProgramNodeState.Pending && DependenciesSatisfied(program, item.NodeId));
+        IReadOnlyList<BodyProgramGraphNode> graph = BodyProgramGraphRules.FromJournalNodes(program!);
+        IReadOnlyDictionary<string, BodyProgramNodeState> states = BodyProgramGraphRules.StatesOf(program!);
+        BodyProgramJournalNode? node = program!.Nodes.OrderBy(item => item.NodeId, StringComparer.Ordinal).FirstOrDefault(item => item.State == BodyProgramNodeState.Pending && BodyProgramGraphRules.EligibleToStart(graph, states, item.NodeId));
         if (node is null) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.NodeNotEligible);
         VerifiedBodyProgramNode descriptor = program.Program.Nodes.Single(item => item.NodeId == node.NodeId);
         // The watchdog budget is descriptor-owned; the Mod derives a fresh
@@ -660,7 +662,7 @@ public sealed class OpenBodyProgramJournalAuthority
             return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.InvalidInput);
 
         BodyProgramJournalNode[] settled = program.Nodes
-            .Select(node => IsTerminal(node.State)
+            .Select(node => BodyProgramGraphRules.IsTerminal(node.State)
                 ? node
                 : node.NodeAttempt >= 1
                     // The diagnostic the recovery settlement wrote is CLEARED: in this format a non-success terminal may not carry one, and the reason now lives in the program-level `abandoned` event.
@@ -716,7 +718,7 @@ public sealed class OpenBodyProgramJournalAuthority
         foreach (BodyProgramJournalProgram program in this.state.Programs.ToArray())
         {
             if (program.State != BodyProgramState.RecoveryRequired) continue;
-            BodyProgramJournalNode[] unknown = program.Nodes.Where(node => !IsTerminal(node.State) && node.NodeAttempt >= 1).ToArray();
+            BodyProgramJournalNode[] unknown = program.Nodes.Where(node => !BodyProgramGraphRules.IsTerminal(node.State) && node.NodeAttempt >= 1).ToArray();
             // `Abandoned` requires the retained execution binding, so a node fenced before its dispatch (an attempt with
             // no binding) is a shape this heal may not invent a meaning for: the whole program is left untouched.
             if (unknown.Length == 0 || unknown.Any(node => node.ExecutionBinding is null)) continue;
@@ -954,7 +956,6 @@ public sealed class OpenBodyProgramJournalAuthority
     private static BodyProgramJournalState AppendEvent(BodyProgramJournalState source, string programId, string kind, string? nodeId, int? attempt) { long cursor = source.EventHighWater + 1; long revision = source.Programs.Single(program => program.Program.ProgramId == programId).Program.CatalogRevision; return source with { EventHighWater = cursor, Events = Array.AsReadOnly(source.Events.Append(new BodyProgramJournalEvent(cursor, programId, kind, revision, nodeId, attempt, BodyProgramJournalClock.ElapsedMs)).ToArray()) }; }
     private static BodyProgramJournalState ReplaceProgram(BodyProgramJournalState source, BodyProgramJournalProgram replacement) => source with { Programs = Array.AsReadOnly(source.Programs.Select(item => item.Program.ProgramId == replacement.Program.ProgramId ? replacement : item).ToArray()) };
     private static BodyProgramJournalProgram ReplaceNode(BodyProgramJournalProgram source, BodyProgramJournalNode replacement) => source with { Nodes = Array.AsReadOnly(source.Nodes.Select(item => item.NodeId == replacement.NodeId ? replacement : item).ToArray()) };
-    private static bool DependenciesSatisfied(BodyProgramJournalProgram program, string nodeId) => program.Program.Nodes.Single(node => node.NodeId == nodeId).DependsOn.All(dependency => program.Nodes.Single(node => node.NodeId == dependency).State == BodyProgramNodeState.Succeeded);
     private bool ValidFactSet(VerifiedBodyProgramNode descriptor, HostAdmissionGrant grant, IReadOnlyList<RuntimeFact>? facts)
     {
         if (facts is null || !this.catalog.TryGetAction(descriptor.ActionId, out BodyProgramActionDescriptor? action) || facts.Count != action!.OutputFacts.Count) return false;
@@ -995,28 +996,20 @@ public sealed class OpenBodyProgramJournalAuthority
             ? parsed
             : null;
     private static NodeAdmissionChallenge Challenge(BodyProgramJournalProgram program, BodyProgramJournalNode node, VerifiedBodyProgramNode descriptor, BodyProgramPolicyIdentity policy, IReadOnlyDictionary<string, BodyProgramCanonicalValue> materialized) => new(program.Program.ProgramId, node.NodeId, node.NodeAttempt, node.AdmissionAttempt, program.StopEpoch, program.Program.CatalogRevision, policy, descriptor.ActionId, materialized, descriptor.DerivedResourceClaims, node.DerivedDeadlineMs ?? throw new InvalidOperationException("admission challenge without derived deadline"));
-    private static bool IsTerminal(BodyProgramNodeState state) => state is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.Abandoned;
-      private static bool HasExecutableWork(BodyProgramJournalProgram program)
-      {
-          if (program.Nodes.Any(node => node.State is BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running)) return true;
-          Dictionary<string, BodyProgramJournalNode> nodes = program.Nodes.ToDictionary(node => node.NodeId, StringComparer.Ordinal);
-          return program.Program.Nodes.Any(descriptor => nodes[descriptor.NodeId].State == BodyProgramNodeState.Pending
-              && descriptor.DependsOn.All(dependency => nodes[dependency].State == BodyProgramNodeState.Succeeded));
-      }
-      private static BodyProgramState RecomputeProgramState(BodyProgramJournalProgram program)
-      {
-          if (program.State == BodyProgramState.Cancelled || program.State == BodyProgramState.RecoveryRequired) return program.State;
-          if (HasExecutableWork(program)) return BodyProgramState.Active;
-          return program.Nodes.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected) ? BodyProgramState.Failed : BodyProgramState.Succeeded;
-      }
+    private static BodyProgramState RecomputeProgramState(BodyProgramJournalProgram program)
+    {
+        if (program.State == BodyProgramState.Cancelled || program.State == BodyProgramState.RecoveryRequired) return program.State;
+        if (BodyProgramGraphRules.HasExecutableWork(BodyProgramGraphRules.FromJournalNodes(program), BodyProgramGraphRules.StatesOf(program))) return BodyProgramState.Active;
+        return program.Nodes.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected) ? BodyProgramState.Failed : BodyProgramState.Succeeded;
+    }
     private static BodyProgramVerificationReport Rejected(string code, string? node, string path) => new(false, 0, null, new[] { new BodyProgramDiagnostic(BodyProgramDiagnosticSeverity.Error, code, node, path, code, BodyProgramVerifier.PreconditionForCode(code)) });
     private static ActionProgramCandidate ToCandidate(VerifiedBodyProgram program) => new(program.ProgramId, program.Nodes.Select(node => new ActionProgramCandidateNode(node.NodeId, node.ActionId, node.CanonicalArguments.ToDictionary(pair => pair.Key, pair => BodyProgramValidation.ToRuntimeValue(pair.Value), StringComparer.Ordinal), node.DependsOn, node.Bindings)).ToArray());
     private static BodyProgramJournalState RestartFence(BodyProgramJournalState persisted, out bool changed)
     {
         changed = persisted.Programs.Any(program => program.State != BodyProgramState.RecoveryRequired
-            && program.Nodes.Any(node => !IsTerminal(node.State)));
+            && program.Nodes.Any(node => !BodyProgramGraphRules.IsTerminal(node.State)));
         if (!changed) return persisted;
-        BodyProgramJournalProgram[] programs = persisted.Programs.Select(program => program.Nodes.All(node => IsTerminal(node.State))
+        BodyProgramJournalProgram[] programs = persisted.Programs.Select(program => program.Nodes.All(node => BodyProgramGraphRules.IsTerminal(node.State))
             ? program
             : program with
             {
@@ -1069,9 +1062,10 @@ internal static class BodyProgramVerifier
         foreach (ActionProgramCandidateNode node in nodes.Values)
             if (node.DependsOn.Distinct(StringComparer.Ordinal).Count() != node.DependsOn.Count || node.DependsOn.Any(dependency => !nodes.ContainsKey(dependency) || dependency == node.NodeId))
                 diagnostics.Add(Error("invalid_dependency", node.NodeId, "/nodes", "dependencies_exist_and_are_not_the_node_itself", string.Join(",", node.DependsOn)));
-        if (HasCycle(nodes)) diagnostics.Add(Error("cycle", null, "/nodes", "acyclic_dependency_graph", "cycle"));
+        IReadOnlyList<BodyProgramGraphNode> graph = BodyProgramGraphRules.FromCandidates(nodes, catalog);
+        if (BodyProgramGraphRules.HasCycle(graph)) diagnostics.Add(Error("cycle", null, "/nodes", "acyclic_dependency_graph", "cycle"));
         foreach (ActionProgramCandidateNode node in nodes.Values) ValidateBindings(node, nodes, catalog, diagnostics);
-        ValidateResourceConflicts(nodes, catalog, diagnostics);
+        ValidateResourceConflicts(graph, nodes, diagnostics);
         return diagnostics.Count > 0 ? Reject(catalog, diagnostics) : new(true, catalog.Revision, Canonicalize(candidate), Array.Empty<BodyProgramDiagnostic>());
     }
     internal static VerifiedBodyProgram Accept(ActionProgramCandidate candidate, BodyProgramActionCatalog catalog, BridgeScope scope) => new(candidate.ProgramId, catalog.Revision, Array.AsReadOnly(candidate.Nodes.Select(node => new VerifiedBodyProgramNode(node.NodeId, node.ActionId, CanonicalArguments(node, catalog), Array.AsReadOnly(node.DependsOn.OrderBy(id => id, StringComparer.Ordinal).ToArray()), BodyProgramValidation.FreezeMap(node.Bindings), DeriveClaims(catalog, node.ActionId, scope))).ToArray()));
@@ -1097,11 +1091,22 @@ internal static class BodyProgramVerifier
     }
     private static IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments(ActionProgramCandidateNode node, BodyProgramActionCatalog catalog) { BodyProgramActionCatalog _ = catalog; BodyProgramActionDescriptor action = catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? found) ? found! : throw new InvalidOperationException(); Dictionary<string, BodyProgramCanonicalValue> result = new(StringComparer.Ordinal); foreach (BodyProgramArgumentDescriptor argument in action.Arguments) { if (!node.Arguments.TryGetValue(argument.Name, out BodyProgramRuntimeValue? value) || !BodyProgramValidation.TryDecodeRuntimeValue(value, argument.Kind, out BodyProgramCanonicalValue? canonical) || !result.TryAdd(argument.Name, canonical!)) throw new InvalidOperationException(); } return new ReadOnlyDictionary<string, BodyProgramCanonicalValue>(result); }
     private static void ValidateBindings(ActionProgramCandidateNode node, IReadOnlyDictionary<string, ActionProgramCandidateNode> nodes, BodyProgramActionCatalog catalog, List<BodyProgramDiagnostic> diagnostics) { if (!catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? consumerAction)) { diagnostics.Add(Error(Named("invalid_binding", node.ActionId), node.NodeId, "/nodes")); return; } foreach ((string argument, ActionProgramBinding binding) in node.Bindings) { BodyProgramArgumentDescriptor? consumerArgument = consumerAction!.Arguments.SingleOrDefault(item => item.Name == argument); if (binding is null || !nodes.TryGetValue(binding.ProducerNodeId, out ActionProgramCandidateNode? producer) || !node.DependsOn.Contains(binding.ProducerNodeId, StringComparer.Ordinal) || !catalog.TryGetAction(producer.ActionId, out BodyProgramActionDescriptor? producerAction) || consumerArgument is null || !producerAction!.OutputFacts.Any(fact => fact.Name == binding.FactName && fact.Kind == consumerArgument.Kind)) diagnostics.Add(Error(Named("invalid_binding", node.ActionId), node.NodeId, "/nodes")); } }
-    private static void ValidateResourceConflicts(IReadOnlyDictionary<string, ActionProgramCandidateNode> nodes, BodyProgramActionCatalog catalog, List<BodyProgramDiagnostic> diagnostics) { ActionProgramCandidateNode[] all = nodes.Values.ToArray(); for (int index = 0; index < all.Length; index++) for (int other = index + 1; other < all.Length; other++) { if (!catalog.TryGetAction(all[index].ActionId, out BodyProgramActionDescriptor? left) || !catalog.TryGetAction(all[other].ActionId, out BodyProgramActionDescriptor? right)) continue; bool conflicts = left!.ResourceTemplate.Select(claim => claim.Key).Intersect(right!.ResourceTemplate.Select(claim => claim.Key), StringComparer.Ordinal).Any(); if (conflicts && !DependsTransitively(all[index].NodeId, all[other].NodeId, nodes) && !DependsTransitively(all[other].NodeId, all[index].NodeId, nodes)) diagnostics.Add(Error(Named("resource_conflict", all[other].ActionId), all[other].NodeId, "/nodes", $"'{all[other].ActionId}' claims the same resource as '{all[index].ActionId}' without depending on it; order them with dependsOn to group them in one program.")); } }
-    private static bool DependsTransitively(string nodeId, string targetId, IReadOnlyDictionary<string, ActionProgramCandidateNode> nodes) => nodes[nodeId].DependsOn.Any(dependency => dependency == targetId || (nodes.ContainsKey(dependency) && DependsTransitively(dependency, targetId, nodes)));
+    /// <summary>
+    /// Refuses a candidate whose nodes claim a shared resource without being ordered either way. The rule is
+    /// <see cref="BodyProgramGraphRules.UnorderedClaimPairs"/> - the same declaration the journal validator applies to a
+    /// document - and this reader owns only what a WIRE refusal says: the code names the action it cannot order, and the
+    /// node field names that node.
+    /// </summary>
+    private static void ValidateResourceConflicts(IReadOnlyList<BodyProgramGraphNode> graph, IReadOnlyDictionary<string, ActionProgramCandidateNode> nodes, List<BodyProgramDiagnostic> diagnostics)
+    {
+        foreach ((BodyProgramGraphNode first, BodyProgramGraphNode second) in BodyProgramGraphRules.UnorderedClaimPairs(graph))
+        {
+            string actionId = nodes[second.NodeId].ActionId;
+            diagnostics.Add(Error(Named("resource_conflict", actionId), second.NodeId, "/nodes", $"'{actionId}' claims the same resource as '{nodes[first.NodeId].ActionId}' without depending on it; order them with dependsOn to group them in one program."));
+        }
+    }
     private static IReadOnlyDictionary<string, string> DeriveClaims(BodyProgramActionCatalog catalog, string actionId, BridgeScope scope) => DeriveClaims(catalog.TryGetAction(actionId, out BodyProgramActionDescriptor? found) ? found! : throw new InvalidOperationException(), scope);
     private static IReadOnlyDictionary<string, string> DeriveClaims(BodyProgramActionDescriptor action, BridgeScope scope) { Dictionary<string, string> claims = new(StringComparer.Ordinal); foreach (BodyProgramResourceTemplateClaim claim in action.ResourceTemplate) if (!claims.TryAdd(claim.Key, claim.Value switch { BodyProgramResourceTemplateValue.ScopePlayer => scope.PlayerId, BodyProgramResourceTemplateValue.ActionId => action.ActionId, BodyProgramResourceTemplateValue.ToolAnyUpgrade or BodyProgramResourceTemplateValue.ToolBasicOnly => claim.Key, _ => throw new InvalidOperationException() })) throw new InvalidOperationException(); return new ReadOnlyDictionary<string, string>(claims); }
-    private static bool HasCycle(IReadOnlyDictionary<string, ActionProgramCandidateNode> nodes) { HashSet<string> visited = new(StringComparer.Ordinal), active = new(StringComparer.Ordinal); bool Visit(string id) { if (!visited.Add(id)) return active.Contains(id); active.Add(id); bool cycle = nodes[id].DependsOn.Any(dependency => nodes.ContainsKey(dependency) && Visit(dependency)); active.Remove(id); return cycle; } return nodes.Keys.Any(Visit); }
     private static ActionProgramCandidate Canonicalize(ActionProgramCandidate candidate) => new(candidate.ProgramId, Array.AsReadOnly(candidate.Nodes.OrderBy(node => node.NodeId, StringComparer.Ordinal).Select(node => new ActionProgramCandidateNode(node.NodeId, node.ActionId, BodyProgramValidation.FreezeMap(node.Arguments), Array.AsReadOnly(node.DependsOn.OrderBy(id => id, StringComparer.Ordinal).ToArray()), BodyProgramValidation.FreezeMap(node.Bindings))).ToArray()));
     private static BodyProgramDiagnostic Error(string code, string? node, string path) => new(BodyProgramDiagnosticSeverity.Error, code, node, path, code, PreconditionForCode(code));
     private static BodyProgramDiagnostic Error(string code, string? node, string path, string message) => new(BodyProgramDiagnosticSeverity.Error, code, node, path, message, PreconditionForCode(code));
