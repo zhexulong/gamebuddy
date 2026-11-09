@@ -246,15 +246,16 @@ export const EXEMPTIONS = Object.freeze([
   {
     path: "tools/audit-stardew-open-ground-claims.mjs",
     reason:
-      "debt: measured red at HEAD - `examined 16 call sites, 16 lies, 0 corroborated`, every one of them a Mod member that " +
-      'answers "can the body be on this tile?" with `GameLocation.isTilePassable` alone (GameLocation.cs:2898 reads the ' +
-      "map's Back and Buildings layers and nothing else, so a trellis crop, a rock or a chest reads as open ground) while " +
-      "the engine's own admission is `isCollidingPosition(..., pathfinding: true)` (PathFindController.cs:222). The sixteen " +
-      "are named file:line in the gate's own output; three of them sit in files another lane holds " +
-      "(`farmhandexecutioncontroller.buildfarmbuildingactions.cs`, `farmhandexecutioncontroller.cs`, `ModEntry.cs`), so " +
-      "wiring it into a rung today would stop the ladder on work this register is meant to report rather than on a defect " +
-      "the ladder can speak to",
-    runsIn: "on-demand",
+      "elsewhere: a static census over the Mod's runtime sources for members whose only walking answer is " +
+      "`GameLocation.isTilePassable`, plus the assertion that the one predicate it accepts in corroboration " +
+      "(`StardewBodyController.IsPlannerAdmissibleTile`) still performs `isCollidingPosition`; it runs on every push in " +
+      "the CI gates job through the derived `audit:*` set. Measured 2026-11-10 at HEAD: `examined 3 call sites, 0 lies, " +
+      "3 corroborated` - the fence tile's own placement ground, the engine's `onlyNeedsToBePassable` buildable arm and " +
+      "one refusal's published evidence, each beside the body's answer in the same member. It is red when a member " +
+      "answers walking from the map alone, or when the predicate it corroborates through is gutted. The sixteen members " +
+      "this entry used to report are gone: they now answer through the one predicate, and the reason that used to say " +
+      '"measured red at HEAD - 16 lies" expired with the corroboration test that demanded the literal spelling',
+    runsIn: "pnpm audit:stardew-open-ground-claims",
   },
   {
     path: "tools/audit-stardew-decision-closure.mjs",
