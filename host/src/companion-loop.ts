@@ -8,6 +8,7 @@ import {
   NATIVE_BUBBLE_SCAFFOLDING,
   NATIVE_BUBBLE_STAGE_DIRECTION,
   type NativeCompanionContentObserver,
+  type NativeCompanionPartSuppression,
   readAssistantMessageFacts,
 } from "./native-companion-content.js";
 
@@ -15,6 +16,20 @@ export type NativeGameCompanionContent = Readonly<{
   sourceEventId: string;
   text: string;
 }>;
+
+/**
+ * Why one of a turn's assistant text parts never reached the player.
+ *
+ * <p>
+ * Two layers can withhold a part, and each one names its own: the projection says what it
+deliberately withheld (`NativeCompanionPartSuppression`, carried on `onMessageText`), and this loop
+names the text no projection ever saw. `no_presentation_lease` is that second family's only member
+today - the turn carried no presentation source, so no projection was attached and nothing else could
+report its parts. It is declared here rather than in the projection's own enum because the projection
+can never produce it, and a member no code path sets is decoration.
+ * </p>
+ */
+export type CompanionTurnPartSuppression = NativeCompanionPartSuppression | "no_presentation_lease";
 
 /**
  * The ending of a turn whose assistant message carried neither text nor a tool call.
@@ -289,7 +304,7 @@ export class CompanionLoop {
      */
     let assistantTextParts = 0;
     let presentedTextParts = 0;
-    const suppressedByReason = new Map<string, number>();
+    const suppressedByReason = new Map<CompanionTurnPartSuppression, number>();
     /** Did Pi classify the message it ended on as a provider failure or a cancellation? Read from the raw stream. */
     let assistantFailed = false;
     try {
@@ -342,6 +357,16 @@ export class CompanionLoop {
           if (assistantFacts !== undefined) {
             sawAssistantMessage = true;
             assistantTextParts += assistantFacts.textParts;
+            // Nothing could have shown this message: the turn carried no presentation source, or the
+            // surface installed no presenter, so the observer that names its own withholdings was never
+            // attached. Naming it here is the whole difference between a measured omission and the
+            // remainder no artifact could explain (2026-11-09: 40 of a run's 79 parts, every one of them
+            // in a settlement-driven turn that this loop counted and no projection ever saw).
+            if (assistantFacts.textParts > 0 && nativeContentObserver === undefined)
+              suppressedByReason.set(
+                "no_presentation_lease",
+                (suppressedByReason.get("no_presentation_lease") ?? 0) + assistantFacts.textParts,
+              );
             if (assistantFacts.hasText) producedText = true;
             if (assistantFacts.hasToolCall) producedToolCall = true;
             if (assistantFacts.failed) assistantFailed = true;
@@ -595,9 +620,10 @@ export class CompanionLoop {
     } finally {
       this.pump.turnProducedWork = producedWork;
       // One line per turn that had text to deliver: the population (this turn's own assistant text
-      // parts), how many of them the player was shown, and every part withheld with its reason.
-      // `unaccounted` is the rest - text that never reached the projection - printed rather than
-      // inferred, because that is the number no shipped artifact has ever carried.
+      // parts), how many of them the player was shown, and every part withheld with its reason - the
+      // projection's own reasons and this loop's (`no_presentation_lease`). `unaccounted` is what is
+      // left when BOTH layers have named their parts; a non-zero one is now a claim that some text
+      // reached neither, and that is the number no shipped artifact has ever carried.
       if (assistantTextParts > 0) {
         const suppressed = Object.fromEntries(suppressedByReason);
         const named = Object.values(suppressed).reduce((total, count) => total + count, 0);

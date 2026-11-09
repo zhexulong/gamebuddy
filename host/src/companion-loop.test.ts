@@ -1897,3 +1897,106 @@ test("CompanionLoop prints one delivery account per turn: the parts it had, the 
     unaccounted: 0,
   });
 });
+
+test("a turn with no presentation source accounts for its text instead of leaving it in the remainder", async () => {
+  // MEASURED 2026-11-09 (round40 `multiday_routine`, 40 minutes): 75 turns printed a delivery account,
+  // 79 assistant text parts, 39 presented, and every one of the other 40 sat in `unaccounted` with
+  // `suppressed` empty. They were not withheld by the projection: their turns carried no presentation
+  // source at all (`canonicalPresentationSource` grants one only to a player input or a salient sensory
+  // world fact), so no projection was ever attached and nothing else could report them. This is that
+  // turn: a settlement-driven one, which is what most of that run's turns were.
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const toolCall = { type: "toolCall", id: "tool_1", name: "action", arguments: {} };
+  const presented: { text: string }[] = [];
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(text: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text }] } });
+        for (const [id, parts, stopReason] of [
+          ["assistant_1", ["先出门去农场。"], "toolUse"],
+          ["assistant_2", ["花椰菜给她了。"], "stop"],
+        ] as const) {
+          const snapshot = { id, role: "assistant", content: [], stopReason: "pending" };
+          emit({ type: "message_start", message: snapshot });
+          parts.forEach((value, index) => {
+            emit({
+              type: "message_update",
+              message: snapshot,
+              assistantMessageEvent: { type: "text_start", contentIndex: index, partial: snapshot },
+            });
+            emit({
+              type: "message_update",
+              message: snapshot,
+              assistantMessageEvent: { type: "text_delta", contentIndex: index, delta: value, partial: snapshot },
+            });
+          });
+          emit({
+            type: "message_end",
+            message: {
+              id,
+              role: "assistant",
+              content: [
+                ...parts.map((value) => ({ type: "text", text: value })),
+                ...(stopReason === "stop" ? [] : [toolCall]),
+              ],
+              stopReason,
+            },
+          });
+        }
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => {
+          listeners.delete(next);
+        };
+      },
+    } as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent(content) {
+        presented.push(content as { text: string });
+      },
+    },
+  );
+  const stderrWrite = process.stderr.write;
+  let printed = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    printed += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    loop.pump.enqueueFact({
+      source: "stardew_mod",
+      kind: "execution_receipt",
+      eventId: "receipt_harvest",
+      sourceEventId: "receipt_harvest",
+      correlationId: "receipt_harvest",
+      revision: 7,
+      executionId: "execution_harvest",
+      payload: { state: "succeeded", actionId: "harvest_crop", reasonCode: "crop_harvested", revision: 7 },
+    });
+    assert.equal(await loop.flush(), "completed");
+  } finally {
+    process.stderr.write = stderrWrite;
+  }
+  // Nothing could show these words, and the account says so by name rather than leaving them in the
+  // remainder: the sum invariant is `presented + Σsuppressed + unaccounted === textParts`, and the
+  // remainder of a turn that was measured is zero.
+  assert.deepEqual(presented, []);
+  const line = printed.split("\n").find((entry) => entry.startsWith("NATIVE_COMPANION_TURN_DELIVERY "));
+  assert.notEqual(line, undefined, `no delivery account was printed; stderr was: ${printed}`);
+  assert.deepEqual(JSON.parse(line!.slice("NATIVE_COMPANION_TURN_DELIVERY ".length)), {
+    textParts: 2,
+    presented: 0,
+    suppressed: { no_presentation_lease: 2 },
+    unaccounted: 0,
+  });
+});
