@@ -13,8 +13,8 @@
  * <p>
  * The two ends of one chain are asserted here. The value side: the player's BCP-47 companion locale reduced to the
  * single shape the vendor's validator accepts (its `isValidLanguageCode`: two letters that `Intl.DisplayNames` can
- * name), with a locale it would reject refused by NAME rather than written - a value that fails that refine fails
- * the read of the whole user config, taking the historian's model and the fold's thresholds with it. The file side:
+ * name), with a locale it would reject refused by NAME rather than written - the vendor would prune that key with a
+ * warning no player reads, leaving the summaries in the model's default language. The file side:
  * the value lands in the user-scope config through a real mount, and never in the project file, whose copy the
  * vendor deletes on load.
  * </p>

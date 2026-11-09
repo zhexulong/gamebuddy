@@ -13,8 +13,10 @@
  * (`isValidLanguageCode` in `packages/plugin/src/agents/language-directive.ts`, enforced by the schema's refine at
  * `packages/plugin/src/config/schema/magic-context.ts:1159-1178`). The player's companion locale is a BCP-47 tag
  * (`zh-CN`, `zh-Hant-TW`, `yue-Hant-TW`), so this maps the primary subtag - and REFUSES what the vendor's own
- * validator would reject instead of writing it: a value that fails that refine does not get ignored, it fails the
- * read of the whole user config, which would take the historian's model and the fold's thresholds down with it.
+ * validator would reject instead of writing it. The vendor would not honour a rejected value either: its loader
+ * prunes the invalid top-level key and keeps the rest of the file, with a warning no player reads
+ * (`packages/pi-plugin/src/config/index.ts:337-439`), which leaves the summaries in whatever language the model
+ * defaults to - the silent failure this module exists to remove.
  * The value is USER-scope only, the scope the runtime already owns: a project-tier copy is deleted on load
  * (`config/project-security.ts:432-437`).
  */
