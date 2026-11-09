@@ -26,7 +26,7 @@
  * as disabled instead of disappearing from the total.
  */
 import { assemblePreset } from "./tavern/preset-assembler.js";
-import { type MacroContext, PRESET_MACROS, presetMacroTokens } from "./tavern/preset-macros.js";
+import { type MacroContext, presetMacroEntryFor, presetMacroTokens } from "./tavern/preset-macros.js";
 import { type PresetDocument, validatePresetDocument } from "./tavern/preset-document.js";
 import {
   type SamplingRuntimeModel,
@@ -163,14 +163,20 @@ function presetSurfaceSampling(
  * - and attributes each spelling to the prompt entry (or the top-level document key) that carries it. An
  * implemented macro is not a finding; that is what keeps this list a list of what the player cannot rely on
  * rather than a list of every `{{...}}` in the file.
+ *
+ * Which entry governs a spelling is `presetMacroEntryFor`'s answer, never a lookup of the token's own text: a
+ * variable shorthand carries its variable's name where a named macro carries its word, so it is admitted by a
+ * FAMILY entry (`.varName`, `.varName = value`, `$varName`) whose own name no token can equal. Reading the table by
+ * token text instead reported every shorthand as a spelling no authority defines, while the evaluator resolved it
+ * and this repository's gate called it declared.
  */
 function presetSurfaceMacros(document: PresetDocument): readonly PresetAssemblyMacroV1[] {
   const found = new Map<string, { code: string; entries: Set<string> }>();
   const record = (text: string, owner: string): void => {
     for (const token of presetMacroTokens(text)) {
-      const implemented = MACRO_IMPLEMENTATION.get(token.name);
-      if (implemented === true) continue;
-      const code = implemented === undefined ? `macro_unknown:${token.name}` : `macro_not_implemented:${token.name}`;
+      const entry = presetMacroEntryFor(token.name);
+      if (entry?.implemented === true) continue;
+      const code = entry === undefined ? `macro_unknown:${token.name}` : `macro_not_implemented:${token.name}`;
       const row = found.get(token.name) ?? { code, entries: new Set<string>() };
       row.entries.add(owner);
       found.set(token.name, row);
@@ -199,8 +205,3 @@ function presetSurfaceMacros(document: PresetDocument): readonly PresetAssemblyM
       .sort((left, right) => left.code.localeCompare(right.code) || left.name.localeCompare(right.name)),
   );
 }
-
-/** The table's own answer for one macro name; absent means no authority defines the spelling. */
-const MACRO_IMPLEMENTATION: ReadonlyMap<string, boolean> = new Map(
-  PRESET_MACROS.map((entry) => [entry.name, entry.implemented]),
-);
