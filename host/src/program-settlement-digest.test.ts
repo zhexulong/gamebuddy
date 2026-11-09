@@ -13,7 +13,13 @@ import {
 } from "./program-settlement-digest.js";
 import type { PlanAnswerNode } from "./program-status-wait.js";
 
-type JournalNode = Readonly<{ nodeId: string; state: string; rejectionCode?: string; failureCode?: string }>;
+type JournalNode = Readonly<{
+  nodeId: string;
+  state: string;
+  rejectionCode?: string;
+  failureCode?: string;
+  hint?: string;
+}>;
 
 function planNode(nodeId: string, actionId = "move_to_tile", x = 5, y = 8): PlanAnswerNode {
   return {
@@ -33,11 +39,15 @@ function status(programId: string, state: string, nodes: readonly JournalNode[])
   };
 }
 
-test("a settled program reaches the pump as one ledger entry, and does not mint a turn", async () => {
+test("a settled program reaches the pump as one ledger entry, and opens a turn of its own", async () => {
   // THE DEFECT THIS CLOSES. Measured 2026-11-07 over 29 plan batches: every node entry was `pending`, because
   // `planBatchAnswer` reads the journal at submission and nothing ever carried the terminal states back. The assertion
   // is the property the companion asked for: after the Mod's journal stops, the pump holds a fact carrying the terminal
-  // rows - and it does not spend a turn of its own on them.
+  // rows.
+  //
+  // And it OPENS a turn: a settlement is an outcome, not progress that can be held until something else happens
+  // (`event-pump.ts:isHeldProgressFact`). While it was held, a plan that settled in a quiet field was announced only if
+  // the world did something else first, which is the silent ledger this digest exists to end.
   const compiled = [planNode("n01"), planNode("n02")];
   const pump = new CompanionEventPump();
   const reporter = createProgramSettlementReporter((fact) => pump.enqueueFact(fact));
@@ -63,17 +73,7 @@ test("a settled program reaches the pump as one ledger entry, and does not mint 
     maxMs: 60_000,
   });
   assert.equal(outcome, "settled");
-  // No turn of its own: a settlement is news for the next batch, not a reason to interrupt.
-  assert.equal(pump.hasPendingDelivery, false, "a settled digest never opens a turn by itself");
-  // It rides the next batch, and that batch's triggers do not name it (a held fact is not a trigger).
-  pump.enqueueFact({
-    source: "stardew_mod",
-    kind: "semantic_event",
-    correlationId: "day_started_1",
-    revision: 1,
-    payload: { kind: "day_started" },
-  });
-  assert.equal(pump.hasPendingDelivery, true);
+  assert.equal(pump.hasPendingDelivery, true, "an outcome is news, so it opens the next turn itself");
   const batches: string[] = [];
   await pump.flush({
     deliver: async (text) => {
@@ -99,7 +99,7 @@ test("a settled program reaches the pump as one ledger entry, and does not mint 
     (digest.payload.nodes as readonly Readonly<Record<string, unknown>>[]).map((row) => row.index),
     [0, 1],
   );
-  assert.equal(batch.triggerEventIds.includes("program_settled:plan_1"), false);
+  assert.equal(batch.triggerEventIds.includes("program_settled:plan_1"), true);
 });
 
 test("the digest is minted exactly once per program, and never for a program that has not stopped", async () => {
@@ -188,6 +188,82 @@ test("a plan that settled with one rejection names that node, its code, and the 
     ],
   );
   assert.deepEqual(payload.nodes[0]?.tile, { x: 61, y: 18 }, "the tile a refusal is read against still rides the row");
+});
+
+test("a refused move's reachability hint reaches the digest row and the text the model reads", async () => {
+  // THE HOP THIS PINS. A settled failure keeps its reason code and its hint, and nothing else: ADR-006 withholds the
+  // evidence of a node that proved nothing, so the hint is the ONE actionable part of a refusal that survives into the
+  // ledger. Every layer between the Mod's journal and the model was checked for a place that re-projects a node row -
+  // `planBatchAnswer` (the reader both the status tool and this digest answer with), the digest payload, and the pump's
+  // own serialization - and the fact has to be present in the last one, because that is the text a model actually reads.
+  const compiled = [planNode("n01", "move_to_tile", 49, 14)];
+  const pump = new CompanionEventPump();
+  const reporter = createProgramSettlementReporter((fact) => pump.enqueueFact(fact));
+  reporter.report({
+    programId: "plan_h",
+    settledAtMs: 3,
+    compiled,
+    status: status("plan_h", "failed", [
+      { nodeId: "n01", state: "failed", failureCode: "no_native_path", hint: "closest=49,14;closest_distance=1" },
+    ]),
+  });
+  const batches: string[] = [];
+  await pump.flush({
+    deliver: async (text) => {
+      batches.push(text);
+    },
+  });
+  const text = batches[0] ?? "";
+  assert.match(text, /"hint":"closest=49,14;closest_distance=1"/u, "the batch the model reads carries the hint");
+  const row = (
+    JSON.parse(text) as Readonly<{
+      worldFacts: readonly Readonly<{
+        payload: Readonly<{ nodes: readonly Readonly<Record<string, unknown>>[] }>;
+      }>[];
+    }>
+  ).worldFacts[0]?.payload.nodes[0];
+  assert.deepEqual(row, {
+    index: 0,
+    actionId: "move_to_tile",
+    state: "failed",
+    reasonCode: "no_native_path",
+    hint: "closest=49,14;closest_distance=1",
+    tile: { x: 49, y: 14 },
+  });
+});
+
+/**
+ * A node that failed with a next step must not answer the same way as one that failed without.
+ *
+ * The two are the same state and often the same reason code (`no_native_path` either way), and the difference is the
+ * whole of what a caller can do next: aim at the named tile, or give up on this target. Asserted on the payload AND on
+ * the serialized row, because the payload is what a later reader inspects and the row is what the model was handed.
+ */
+test("a node that failed with a next step is a different answer from one that failed without", () => {
+  const compiled = [planNode("n01", "move_to_tile", 49, 14)];
+  const hinted = programSettledDigest({
+    programId: "plan_with",
+    settledAtMs: 1,
+    compiled,
+    status: status("plan_with", "failed", [
+      { nodeId: "n01", state: "failed", failureCode: "no_native_path", hint: "closest=49,14;closest_distance=1" },
+    ]),
+  });
+  const bare = programSettledDigest({
+    programId: "plan_without",
+    settledAtMs: 1,
+    compiled,
+    status: status("plan_without", "failed", [{ nodeId: "n01", state: "failed", failureCode: "no_native_path" }]),
+  });
+  assert.ok(hinted !== undefined && bare !== undefined);
+  const hintedRow = (hinted.payload as Readonly<{ nodes: readonly Readonly<Record<string, unknown>>[] }>).nodes[0];
+  const bareRow = (bare.payload as Readonly<{ nodes: readonly Readonly<Record<string, unknown>>[] }>).nodes[0];
+  assert.equal(hintedRow?.hint, "closest=49,14;closest_distance=1");
+  assert.equal(Object.hasOwn(bareRow as object, "hint"), false, "a refusal with nothing to say has no hint key");
+  assert.notDeepEqual(hintedRow, bareRow, "the two failures must not read as one answer");
+  // The state and the reason are identical, so the difference above is the hint and not a coincidence of two worlds.
+  assert.equal(hintedRow?.state, bareRow?.state);
+  assert.equal(hintedRow?.reasonCode, bareRow?.reasonCode);
 });
 
 test("a node the journal said nothing about stays unreadable, and is never reported as a success", () => {

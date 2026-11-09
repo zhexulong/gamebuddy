@@ -144,6 +144,72 @@ test("bounded companion projection renders pet targets and their stationary flag
   assert.deepEqual(soil.pets, noPets.pets);
 });
 
+test("bounded companion projection says what she is carrying, and tells 'nothing but tools' apart from 'not measured'", () => {
+  // The projection kept the TOOL family only (`inventory.toolLabels`), so a companion holding forty parsnip seeds and no
+  // food planned as if both answers were "nothing": the wire publishes `inventoryItemFacts` (slot, item, name, stack,
+  // bounded to 36 by the Mod) and the hot context dropped it. Weather is deliberately NOT added here - the
+  // `<runtime-environment>` line already renders it every turn (`runtime-core.internal.ts:composeGameEnvironmentFacts`),
+  // and `snapshot-projection.test.ts` pins that this layer does not print it twice.
+  const carried = project({
+    ...baseSnapshot,
+    toolSlots: [{ slot: 0, label: "Axe" }],
+    inventoryItemFacts: [
+      { slot: 0, qualifiedItemId: "(T)Axe", displayName: "Axe", stack: 1 },
+      { slot: 7, qualifiedItemId: "(O)472", displayName: "Parsnip Seeds", stack: 40 },
+      { slot: 9, qualifiedItemId: "(O)378", displayName: "Copper Ore", stack: 5 },
+    ],
+  });
+  if (!carried.available) throw new Error("projection_unavailable");
+  assert.equal(carried.inventory.carrying.measured, true);
+  assert.deepEqual(
+    carried.inventory.carrying.rows.map((row) => [row.label, row.stack]),
+    [
+      ["Parsnip Seeds", 40],
+      ["Copper Ore", 5],
+    ],
+    "the tool slot is the Mod's own `toolSlots` answer and is not repeated here",
+  );
+  assert.match(carried.text, /Carrying: 40x Parsnip Seeds, 5x Copper Ore/u);
+
+  // Three different worlds, three different lines: carrying nothing but tools, and never having been told.
+  const toolsOnly = project({
+    ...baseSnapshot,
+    toolSlots: [{ slot: 0, label: "Axe" }],
+    inventoryItemFacts: [{ slot: 0, qualifiedItemId: "(T)Axe", displayName: "Axe", stack: 1 }],
+  });
+  if (!toolsOnly.available) throw new Error("projection_unavailable");
+  assert.equal(toolsOnly.inventory.carrying.measured, true);
+  assert.deepEqual(toolsOnly.inventory.carrying.rows, []);
+  assert.match(toolsOnly.text, /Carrying: nothing but tools/u);
+
+  const unmeasured = project(baseSnapshot);
+  if (!unmeasured.available) throw new Error("projection_unavailable");
+  assert.equal(unmeasured.inventory.carrying.measured, false, "the Mod published no inventory facts at all");
+  assert.match(unmeasured.text, /Carrying: not measured/u);
+  assert.notEqual(toolsOnly.text, unmeasured.text, "'nothing' and 'not measured' are different answers");
+});
+
+test("the carrying list is bounded, and what the bound left out is counted rather than dropped", () => {
+  const many = project({
+    ...baseSnapshot,
+    inventoryItemFacts: Array.from({ length: 12 }, (_, slot) => ({
+      slot: slot + 1,
+      qualifiedItemId: `(O)${String(slot + 1)}`,
+      displayName: `Item ${String(slot + 1)}`,
+      stack: slot + 1,
+    })),
+  });
+  if (!many.available) throw new Error("projection_unavailable");
+  const carrying = many.inventory.carrying;
+  assert.ok(carrying.rows.length < 12, "the hot context is a bound, not an inventory dump");
+  assert.equal(carrying.omitted, 12 - carrying.rows.length, "every row the bound left out is counted");
+  assert.match(many.text, new RegExp(`\\(\\+${String(carrying.omitted)} more\\)`, "u"));
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(many), "utf8") <= 4_096,
+    "a full farm inventory still fits the projection's own byte cap",
+  );
+});
+
 test("time and pet target fields reach the Agent only as an unfiltered observation dump", async () => {
   // This is the whole of the current Host-side consumption: `stardew_observe`
   // serializes the admitted snapshot verbatim. Nothing derives a decision,

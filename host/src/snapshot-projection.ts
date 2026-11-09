@@ -7,6 +7,10 @@ export const MAX_GAME_SNAPSHOT_PROJECTION_BYTES = 4_096;
 const MAX_PROJECTION_TEXT_BYTES = 1_024;
 const MAX_PROJECTION_STRING_BYTES = 128;
 const MAX_PROJECTION_TOOL_LABELS = 12;
+/** Carried non-tool stacks one projection may name. A hot context is a bound, not an inventory dump. */
+const MAX_PROJECTION_CARRYING_ROWS = 8;
+/** The carrying line's own share of the text, so a full inventory cannot crowd out the facts around it. */
+const MAX_PROJECTION_CARRYING_BYTES = 192;
 const MAX_PROJECTION_PETS = 12;
 const MAX_PROJECTION_PET_BOWLS = 8;
 // The Slime Hutch gate accepts exactly x == 16, y in 6..9, so at most 4 rows.
@@ -42,6 +46,29 @@ export interface InventoryContextProjection {
   readonly inventorySlots: number;
   readonly toolSlotsCount: number;
   readonly toolLabels: readonly string[];
+  readonly carrying: CarryingContextProjection;
+}
+
+/**
+ * What she is carrying that is NOT a tool.
+ *
+ * <p>
+ * The projection kept the tool family only (`toolSlots`), so a companion holding forty parsnip seeds and no food read
+ * both answers as "nothing". `inventoryItemFacts` is the Mod's own bounded inventory publication (36 rows: slot,
+ * qualified item id, name, stack), projected here minus the slots `toolSlots` already names - so the tool labels are
+ * not printed twice and the set of tool slots stays the Mod's own answer rather than a Host predicate.
+ * </p>
+ * <p>
+ * `measured` is the distinction the old answer could not make. `false` means the Mod published no inventory rows at
+ * all (the field is gated on the actions that read the inventory), which is a different statement from `rows: []` -
+ * "nothing but tools". `omitted` is always present for the same reason: "nothing was dropped" has to be a measurement.
+ * </p>
+ */
+export interface CarryingContextProjection {
+  readonly revision: number;
+  readonly measured: boolean;
+  readonly rows: readonly Readonly<{ slot: number; label: string; stack: number }>[];
+  readonly omitted: number;
 }
 
 export interface ClockContextProjection {
@@ -162,6 +189,40 @@ export function projectInventoryContext(snapshot: Snapshot): InventoryContextPro
     // Labels are situational context, not an inventory dump. Keep the
     // structured helper bounded before the combined projection is serialized.
     toolLabels: Object.freeze(toolSlots.slice(0, MAX_PROJECTION_TOOL_LABELS).map((t) => t.label)),
+    carrying: projectCarryingContext(snapshot, toolSlots),
+  });
+}
+
+/**
+ * The carried stacks, bounded by rows and by the bytes they cost the text line.
+ *
+ * Both bounds report what they cost (`omitted`), because a list that silently stops at eight reads as a complete
+ * inventory of eight. The byte bound is the one that matters: the line is joined into a text capped at
+ * `MAX_PROJECTION_TEXT_BYTES`, and a truncation there would cut a fact in half rather than drop a whole one.
+ */
+export function projectCarryingContext(
+  snapshot: Snapshot,
+  toolSlots: readonly Readonly<{ slot: number }>[],
+): CarryingContextProjection {
+  const published = snapshot.inventoryItemFacts;
+  if (published === undefined)
+    return Object.freeze({ revision: snapshot.revision, measured: false, rows: [], omitted: 0 });
+  const toolSlotNumbers = new Set(toolSlots.map((tool) => tool.slot));
+  const carried = published.filter((item) => !toolSlotNumbers.has(item.slot));
+  const rows: Readonly<{ slot: number; label: string; stack: number }>[] = [];
+  let bytes = 0;
+  for (const item of carried) {
+    const label = boundedUtf8(item.displayName, MAX_PROJECTION_STRING_BYTES);
+    const cost = Buffer.byteLength(`${String(item.stack)}x ${label}, `, "utf8");
+    if (rows.length >= MAX_PROJECTION_CARRYING_ROWS || bytes + cost > MAX_PROJECTION_CARRYING_BYTES) break;
+    bytes += cost;
+    rows.push(Object.freeze({ slot: item.slot, label, stack: item.stack }));
+  }
+  return Object.freeze({
+    revision: snapshot.revision,
+    measured: true,
+    rows: Object.freeze(rows),
+    omitted: carried.length - rows.length,
   });
 }
 
@@ -288,6 +349,7 @@ export function projectGameSnapshotContext(
         : []),
       `- Farming: Stamina=${snapshot.stamina}, Exhausted=${snapshot.exhausted === true}, Health=${snapshot.health}, SoilTiles=${farming.soilTilesCount}, CanTill=${farming.canTill}, CanWater=${farming.canWater}`,
       `- Tools: Slots=${inventory.inventorySlots}, Equipped=${currentTool}, Labels=${toolLabels.join(", ")}`,
+      `- Carrying: ${carryingText(inventory.carrying)}`,
       `- Pets: ${pets.length > 0 ? pets.map((pet) => `${pet.petType}(${pet.stationary ? "stationary" : "moving"})`).join(", ") : "none within range"}]`,
     ].join("\n"),
     MAX_PROJECTION_TEXT_BYTES,
@@ -312,6 +374,14 @@ export function projectGameSnapshotContext(
   if (Buffer.byteLength(JSON.stringify(projection), "utf8") > MAX_GAME_SNAPSHOT_PROJECTION_BYTES)
     return unavailableProjection("invalid");
   return projection;
+}
+
+/** The carrying line: three different answers, never one word for all of them. */
+function carryingText(carrying: CarryingContextProjection): string {
+  if (!carrying.measured) return "not measured";
+  if (carrying.rows.length === 0) return "nothing but tools";
+  const shown = carrying.rows.map((row) => `${String(row.stack)}x ${row.label}`).join(", ");
+  return `${shown}${carrying.omitted === 0 ? "" : ` (+${String(carrying.omitted)} more)`}`;
 }
 
 function unavailableProjection(reasonCode: "unavailable" | "invalid"): GameSnapshotContextProjection {
@@ -399,7 +469,20 @@ function isSnapshotInput(value: Snapshot): boolean {
         ))) &&
     (value.toolSlots === undefined ||
       (Array.isArray(value.toolSlots) &&
-        value.toolSlots.every((tool) => tool !== null && typeof tool === "object" && typeof tool.label === "string")))
+        value.toolSlots.every(
+          (tool) => tool !== null && typeof tool === "object" && typeof tool.label === "string",
+        ))) &&
+    (value.inventoryItemFacts === undefined ||
+      (Array.isArray(value.inventoryItemFacts) &&
+        value.inventoryItemFacts.every(
+          (item) =>
+            item !== null &&
+            typeof item === "object" &&
+            Number.isSafeInteger(item.slot) &&
+            typeof item.qualifiedItemId === "string" &&
+            typeof item.displayName === "string" &&
+            Number.isSafeInteger(item.stack),
+        )))
   );
 }
 
