@@ -19,6 +19,7 @@
 const REASON_COMPONENT = Object.freeze({
   // Observation layer: the snapshot did not expose enough to pick a valid target.
   soil_not_diggable: "observation",
+  no_standing_tile: "observation",
   no_native_path: "observation",
   target_out_of_reach: "observation",
   target_out_of_range: "observation",
@@ -36,6 +37,9 @@ const REASON_COMPONENT = Object.freeze({
   // `componentOf` matches the head literally.
   actor_held_by_modal: "native_state",
   cutscene_active: "native_state",
+  // A cutscene with no dialogue box: the modal family was admitted and found nothing to act on. Its own code because
+  // the countermeasure differs - this one clears by itself, and `cutscene_active` does not.
+  event_has_no_dialogue_box: "native_state",
   actor_passed_out: "native_state",
   transient_busy: "native_state",
   // The modal family's own refusals: the UI was not in a state where the requested modal action applies.

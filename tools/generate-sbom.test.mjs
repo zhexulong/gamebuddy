@@ -196,7 +196,12 @@ test("write refuses a lockfile that is not the committed one", async () => {
   const root = await fixture();
   try {
     await assert.rejects(
-      generateSbom({ root, output: path.join(root, "out.json"), run: () => JSON.stringify(inventory), committed: async () => Buffer.from("different lockfile\n") }),
+      generateSbom({
+        root,
+        output: path.join(root, "out.json"),
+        run: () => JSON.stringify(inventory),
+        committed: async () => Buffer.from("different lockfile\n"),
+      }),
       /sbom_lockfile_dirty/,
     );
   } finally {

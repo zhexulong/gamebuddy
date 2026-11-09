@@ -115,7 +115,7 @@ const FAMILY_MATCHERS = Object.freeze([
     "body",
     [
       /^(?:body_owned|body_release|actor_held_by)/u,
-      /^(?:actor_passed_out|cutscene_active|transient_busy|player_not_actionable)$/u,
+      /^(?:actor_passed_out|cutscene_active|transient_busy|player_not_actionable|event_has_no_dialogue_box)$/u,
     ],
   ],
   ["tool", [/(?:tool)|(?:equipped)/u, /^golden_scythe_grab_override$/u]],

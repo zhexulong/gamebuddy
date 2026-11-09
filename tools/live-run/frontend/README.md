@@ -81,7 +81,7 @@ entry), and it carries no duration because no selection was ever made.
 ## Which drivers observe, and which do not
 
 Every driver that changes surface or sends a turn now calls `observe()`: a, b, c, d, e, f, g, h, i, j,
-k, l, m, n, o, p, q, r, s, t. Each records `observationStart(page)` at its start and passes it as
+k, l, m, n, o, p, q, r, s, t, u. Each records `observationStart(page)` at its start and passes it as
 `sinceMs`, because the mark buffer belongs to the PAGE and the drivers share one page: without a
 baseline the last driver to read would report every earlier driver's turn and switch as its own — the
 same misattribution that made `PAINT` report one firstPaint on every driver.
@@ -191,7 +191,7 @@ commit whose launcher lacks the exports the kit uses), never rewrites it, and
 
 ## Capture
 
-Eleven drivers under `capture/`, run over CDP against the mounted product tab. Each writes its
+Twenty-one drivers under `capture/`, run over CDP against the mounted product tab. Each writes its
 per-item fact file (`<out>/<driver>.txt`) with **measured numbers and quoted strings — never a class
 name, never a pixel**: the driver is the only observer of the PNGs and reports computed layout facts
 through the browser's own engine (`getBoundingClientRect`, `getComputedStyle`, `elementFromPoint`,

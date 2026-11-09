@@ -42,6 +42,10 @@ const DRIVERS = [
   // The Game surface's installation-discovery panel: its sentence against the Host's own answer for the
   // same moment, read through the product's own route (see the driver's own header).
   { key: "t-installation-discovery", file: "t-installation-discovery.cjs", out: "t-installation-discovery.txt" },
+  // The read-only preset surface: the entry switch, the markers with no content source, the macros this
+  // product will not evaluate, the depth injection and the sampling in force — read out of the DOM the
+  // product painted and held against the preset document the checkout carries (see the driver's header).
+  { key: "u-preset-assembly", file: "u-preset-assembly.cjs", out: "u-preset-assembly.txt" },
 ];
 
 async function exists(path) {

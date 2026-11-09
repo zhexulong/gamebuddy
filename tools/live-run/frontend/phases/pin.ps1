@@ -144,6 +144,31 @@ if (Test-Path $recSrc) {
   Log ("  NO main-checkout .dist to copy; the build phase must build it")
 }
 
+Log "=== 4c2. native helper NuGet caches (copied; the builds restore into them) ==="
+# Five helper builds publish `--self-contained win-x64` with `NUGET_PACKAGES` pointed at
+# `<repo>/.tmp/<helper>/nuget-packages` (host/scripts/build-windows-{bootstrap-guardian,reparse-inspector,
+# stale-lock-reclaimer,stardew-folder-picker,...}.mjs) and bound each `dotnet` call at 5 minutes. Those directories are
+# gitignored, so a pinned worktree starts with empty ones and every run restores the whole runtime pack per helper.
+# Measured 2026-11-08: with a warm cache the same build ran in 10s in the main checkout; in the worktree the first run
+# died as `windows_bootstrap_guardian_process_timeout` (300s) and, once that cache was copied, the very next helper died
+# as `windows_reparse_dotnet_timeout`. That is the shape of a class, so the population is every `.tmp/*/nuget-packages`
+# on disk rather than a hand-written list - a sixth helper joins on its own.
+$copied = 0
+foreach ($cacheDir in @(Get-ChildItem (Join-Path $Repo ".tmp") -Directory -ErrorAction SilentlyContinue)) {
+  $src = Join-Path $cacheDir.FullName "nuget-packages"
+  if (-not (Test-Path $src)) { continue }
+  $dst = Join-Path (Join-Path $Worktree ".tmp") (Join-Path $cacheDir.Name "nuget-packages")
+  New-Item -ItemType Directory -Force $dst | Out-Null
+  robocopy $src $dst /E /NFL /NDL /NJH /NJS /NP | Out-Null
+  Log ("  " + $cacheDir.Name + " -> package dirs=" + @(Get-ChildItem $dst -ErrorAction SilentlyContinue).Count)
+  $copied += 1
+}
+if ($copied -eq 0) {
+  Log "  no warm helper caches in the main checkout; each build restores cold (slow path, may exceed its 5-minute bound)"
+} else {
+  Log ("  copied " + $copied + " helper cache(s)")
+}
+
 Log "=== 4d. launcher authority exports (the tracked seam the kit consumes) ==="
 $launcherFile = Join-Path $Worktree "tools\desktop-composition-launch.mjs"
 if (-not (Test-Path $launcherFile)) { Log "  LAUNCHER MISSING IN WORKTREE"; Log "DONE-PIN-FAIL"; exit 1 }

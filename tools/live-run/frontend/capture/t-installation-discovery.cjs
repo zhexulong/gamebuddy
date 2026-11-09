@@ -132,10 +132,18 @@ const readPanel = () => {
     statusParagraphs,
     candidates: [...panel.querySelectorAll(".installation-candidate")].map((li) => {
       const confirm = li.querySelector("button");
+      // The mod loader is a wire fact the panel turns into a chip, and this reader did not record it - so a run could
+      // only ever report "no data-mod-loader in the artifact", which says nothing about the DOM. Measured 2026-11-08: I
+      // read that absence as "the chip did not render" while the panel had been rendering it all along
+      // (`StardewInstallationDiscovery.tsx:312`). An instrument that cannot see a fact must not be the reason it looks
+      // absent.
+      const loader = li.querySelector(".installation-mod-loader");
       return {
         label: (li.querySelector(".installation-candidate-label")?.textContent ?? "").trim(),
         source: (li.querySelector(".installation-source")?.textContent ?? "").trim(),
         hint: (li.querySelector(".installation-hint")?.textContent ?? "").trim() || null,
+        modLoader: loader === null ? null : loader.getAttribute("data-mod-loader"),
+        modLoaderText: loader === null ? null : (loader.textContent ?? "").trim(),
         confirmName: confirm === null ? null : (confirm.textContent ?? "").trim(),
         confirmDisabled: confirm === null ? null : disabledOf(confirm),
       };

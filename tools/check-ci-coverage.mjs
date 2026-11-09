@@ -173,6 +173,12 @@ const REGISTER = Object.freeze([
     detail: "requires --report <direct-inspector-report.json>",
   },
   {
+    script: "check:stardew-execution-terminal-uniqueness",
+    reason: "arguments",
+    detail:
+      "requires --artifact <path> to one finished run's receipt reading (the frames its fact listeners emitted and the answers its caller received), so there is nothing to compare before a run exists",
+  },
+  {
     script: "check:stardew-native-mechanism-review-register",
     reason: "arguments",
     detail: "requires --mechanism-report, --register and --source-root",
