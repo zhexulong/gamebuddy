@@ -7,6 +7,8 @@ import type { ComposedTavernProfile } from "../browser-contract/index.js";
 import {
   isComposedTavernProfile,
   TAVERN_BROWSER_API_VERSION,
+  TAVERN_LOREBOOK_EXPORT_FORMAT,
+  type WorldInfoExportV1,
   TavernBrowserValidatorsV1,
 } from "../browser-contract/index.js";
 import {
@@ -21,6 +23,7 @@ import type {
   UpdateWorldInfoRequest,
   WorldInfoManagementRepository,
 } from "../world-info-management/world-info-management.js";
+import { exportTavernLorebook } from "../world-info-management/tavern-lorebook-exporter.js";
 import { createManagedWorldInfoBindingResolver } from "./managed-world-info-binding.js";
 
 /**
@@ -113,6 +116,11 @@ export type WorldInfoBindingManagementService = Readonly<{
    * every service stub in the repository.
    */
   importLorebook?(command: WorldInfoImportCommandV1): Promise<WorldInfoStateV1>;
+  /**
+   * Writes one exact library item as the external lorebook file the import above reads back.
+   * OPTIONAL for the same reason: it is the export route's only consumer.
+   */
+  exportLorebook?(command: WorldInfoItemCommandV1): Promise<WorldInfoExportV1>;
   update(command: WorldInfoUpdateCommandV1): Promise<WorldInfoStateV1>;
   delete(command: WorldInfoItemCommandV1): Promise<WorldInfoStateV1>;
   close(): Promise<void>;
@@ -368,6 +376,42 @@ export function createWorldInfoBindingManagementService(
   };
 
   /**
+   * Writes one exact library item as the external lorebook file the import reads back.
+   *
+   * The item is named by an opaque handle from the exact current projection, exactly like
+   * `detail`: the file a player takes away must be the item they were looking at, never a
+   * latest-resolving guess. The translation itself lives in the library's own exporter, so the
+   * format this writes and the format the importer reads are one module apart, not two ideas.
+   */
+  const exportLorebook = async (command: WorldInfoItemCommandV1): Promise<WorldInfoExportV1> => {
+    assertOpen();
+    validateItemCommand(command);
+    if (!isCurrentMountedChatRuntimeLease(lease)) throw unavailable();
+    const projection = currentProjection;
+    if (projection === null || projection.revisionHandle !== command.expectedRevision) throw conflict();
+    const source = projection.sources.get(command.itemHandle);
+    if (source === undefined) throw conflict();
+    try {
+      const item = await repository.detail(source.publicTitle);
+      assertLeaseAfterDurableRead();
+      // The handle was current, so a missing item is a library fact: another writer removed it
+      // since this projection was minted.
+      if (item === null) throw new Error("world_info_not_found");
+      const exported = exportTavernLorebook(item);
+      return Object.freeze({
+        apiVersion: TAVERN_BROWSER_API_VERSION,
+        format: TAVERN_LOREBOOK_EXPORT_FORMAT,
+        itemHandle: command.itemHandle,
+        entryCount: exported.entryCount,
+        fileName: exported.fileName,
+        document: exported.document,
+      });
+    } catch (error) {
+      throw rethrowLibraryError(error);
+    }
+  };
+
+  /**
    * Replaces one exact library item's content. `item.expectedRevision` is the
    * library's own CAS revision. Renaming an item the mounted Chat is bound to is
    * refused, because a managed binding resolves the item by its public title.
@@ -422,6 +466,7 @@ export function createWorldInfoBindingManagementService(
     detail,
     create,
     importLorebook,
+    exportLorebook,
     update,
     delete: remove,
     async close(): Promise<void> {

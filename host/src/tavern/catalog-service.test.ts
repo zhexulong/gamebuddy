@@ -1749,3 +1749,147 @@ test("a standard macro costs her the closing direction, named, instead of the wh
     await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
+
+/**
+ * A switched-off entry is honoured by BOTH halves of the catalog, for her own reviewed book.
+ *
+ * Her book becomes the stable `lorebook_constant` source plus per-turn candidates, and a switch
+ * honoured in one of those two places and not the other leaves the entry riding into the assembled
+ * prompt through the seam that forgot - with nothing to say so.
+ */
+test("a switched-off entry of her own world book reaches neither half of the Game catalog", async () => {
+  const binding = {
+    continuityId: "continuity",
+    sessionId: "game-session",
+    surface: "game" as const,
+    threadId: "game",
+    profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+  };
+  const book = validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "worldbook_switched",
+    revision: 1,
+    alwaysOnPremise: "农场的清晨。",
+    entries: [
+      {
+        entryId: "wb-const-on",
+        title: "SENTINEL-BOOK-CONSTANT-ON",
+        content: "SENTINEL-BOOK-CONSTANT-ON 的内容。",
+        scope: "setting",
+        provenance: "reviewed-import",
+        tokenBudget: "small",
+        constant: true,
+      },
+      {
+        entryId: "wb-const-off",
+        title: "SENTINEL-BOOK-CONSTANT-OFF",
+        content: "SENTINEL-BOOK-CONSTANT-OFF 的内容。",
+        scope: "setting",
+        provenance: "reviewed-import",
+        tokenBudget: "small",
+        constant: true,
+        enabled: false,
+      },
+      {
+        entryId: "wb-key-on",
+        title: "SENTINEL-BOOK-KEY-ON",
+        content: "SENTINEL-BOOK-KEY-ON 的内容。",
+        scope: "setting",
+        provenance: "reviewed-import",
+        tokenBudget: "small",
+      },
+      {
+        entryId: "wb-key-off",
+        title: "SENTINEL-BOOK-KEY-OFF",
+        content: "SENTINEL-BOOK-KEY-OFF 的内容。",
+        scope: "setting",
+        provenance: "reviewed-import",
+        tokenBudget: "small",
+        enabled: false,
+      },
+    ],
+  });
+  const ownBook = buildGameSurfaceAuthoredCatalog(binding, { book, metadata: worldBookMetadata(book) });
+  const ownStable = ownBook.stableSources.map((source) => source.content).join("\n");
+  const ownVolatile = ownBook.volatileSources.map((source) => source.content).join("\n");
+  assert.equal(ownStable.includes("SENTINEL-BOOK-CONSTANT-ON"), true, "control: an enabled always-on entry is carried");
+  assert.equal(ownStable.includes("SENTINEL-BOOK-CONSTANT-OFF"), false, "a switched-off always-on entry is not");
+  assert.equal(ownVolatile.includes("SENTINEL-BOOK-KEY-ON"), true, "control: an enabled keyword entry is a candidate");
+  assert.equal(ownVolatile.includes("SENTINEL-BOOK-KEY-OFF"), false, "a switched-off keyword entry is not");
+});
+
+/**
+ * The same rule for the OTHER authority, through the two derivations the Chat surface shares.
+ *
+ * Driven from the library's REAL output - `createWorldInfoManagementRepository` → `bindExact` /
+ * `resolve` - because the entry's shape is what crosses into the catalog, and a hand-written copy
+ * of that JSON could agree with a catalog that no longer reads the field.
+ */
+test("a switched-off entry of the activated library item reaches neither derivation", async () => {
+  const root = await canonicalTestRoot("gamebuddy-entry-enabled-managed-");
+  const binding = {
+    continuityId: "continuity",
+    sessionId: "game-session",
+    surface: "game" as const,
+    threadId: "game",
+    profile: { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) },
+  };
+  const repository = createWorldInfoManagementRepository(root);
+  await repository.create({
+    publicTitle: "雨天的约定",
+    summary: "雨天的事。",
+    entries: [
+      {
+        scope: "setting",
+        publicTitle: "SENTINEL-MANAGED-CONSTANT-ON",
+        summary: "SENTINEL-MANAGED-CONSTANT-ON 的内容。",
+        constant: true,
+      },
+      {
+        scope: "setting",
+        publicTitle: "SENTINEL-MANAGED-CONSTANT-OFF",
+        summary: "SENTINEL-MANAGED-CONSTANT-OFF 的内容。",
+        constant: true,
+        enabled: false,
+      },
+      { scope: "setting", publicTitle: "SENTINEL-MANAGED-KEY-ON", summary: "SENTINEL-MANAGED-KEY-ON 的内容。" },
+      {
+        scope: "setting",
+        publicTitle: "SENTINEL-MANAGED-KEY-OFF",
+        summary: "SENTINEL-MANAGED-KEY-OFF 的内容。",
+        enabled: false,
+      },
+    ],
+  });
+  const resolver = createManagedWorldInfoBindingResolver(repository);
+  const activated = await resolver.resolve(await resolver.bindExact("雨天的约定", 1));
+  const managed = buildGameSurfaceAuthoredCatalog(binding, undefined, { char: null }, undefined, activated);
+  const managedStable = managed.stableSources.map((source) => source.content).join("\n");
+  const managedVolatile = managed.volatileSources.map((source) => source.content).join("\n");
+  assert.equal(
+    managedStable.includes("SENTINEL-MANAGED-CONSTANT-ON"),
+    true,
+    "control: the item's enabled always-on entry is carried",
+  );
+  assert.equal(
+    managedStable.includes("SENTINEL-MANAGED-CONSTANT-OFF"),
+    false,
+    "the item's switched-off always-on entry is not carried",
+  );
+  assert.equal(
+    managedVolatile.includes("SENTINEL-MANAGED-KEY-ON"),
+    true,
+    "control: the item's enabled keyword entry is a candidate",
+  );
+  assert.equal(
+    managedVolatile.includes("SENTINEL-MANAGED-KEY-OFF"),
+    false,
+    "the item's switched-off keyword entry is not a candidate",
+  );
+  // The item itself still holds all four: the switch parks an entry, it does not delete it.
+  const listed = await repository.detail("雨天的约定");
+  assert.deepEqual(
+    listed?.entries.map((entry) => entry.enabled === false),
+    [false, true, false, true],
+  );
+});

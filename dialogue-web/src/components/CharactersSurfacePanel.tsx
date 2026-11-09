@@ -171,22 +171,6 @@ function CompanionCardExportSection({
 
   if (target === null) return null;
 
-  /**
-   * Saves the Host's own card bytes through the browser's download surface: one
-   * object URL, one click on an anchor carrying the Host's filename, and the URL
-   * released on a later task so the download has already begun reading it.
-   */
-  const download = (fileName: string, blob: Blob): void => {
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = fileName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-  };
-
   const exportCard = (format: "json" | "png"): void => {
     if (target === "absent" || busy) return;
     const handle = target.handle;
@@ -199,8 +183,8 @@ function CompanionCardExportSection({
         // The Host's own bytes, in the Host's own file kind: the JSON card is its
         // text, the PNG card is the whole file the Host built.
         if (card.format === "png")
-          download(card.fileName, new Blob([base64Bytes(card.cardFileBase64)], { type: "image/png" }));
-        else download(card.fileName, new Blob([card.card], { type: "application/json" }));
+          downloadFile(card.fileName, new Blob([base64Bytes(card.cardFileBase64)], { type: "image/png" }));
+        else downloadFile(card.fileName, new Blob([card.card], { type: "application/json" }));
         next = { ok: true, text: labels.exportSaved.replace("{{file}}", card.fileName) };
       } catch (error) {
         next = { ok: false, text: exportRefusal(labels, error, messages(locale)) };
@@ -309,6 +293,25 @@ function exportRefusal(labels: CharacterLabels, error: unknown, problemLabels: M
  * - one draft with its revision and its rows - so the rows keep their own `rowId` and cannot
  * land on each other.
  */
+/**
+ * Saves the Host's own bytes through the browser's download surface: one object URL, one click on
+ * an anchor carrying the Host's own file name, and the URL released on a later task so the download
+ * has already begun reading it.
+ *
+ * Both downloads on this surface - her card and a library item's lorebook - go through here, so the
+ * file name is always the Host's and there is one place that knows how a file leaves the browser.
+ */
+function downloadFile(fileName: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 type CompanionWorldBookView =
   | Readonly<{ kind: "loading" }>
   | Readonly<{ kind: "absent" }>
@@ -339,6 +342,8 @@ type CompanionWorldBookEntryDraft = Readonly<{
   title: string;
   keys: string;
   constant: boolean;
+  /** The switch that decides whether this entry takes part; a switched-off one stays in the book. */
+  enabled: boolean;
   content: string;
 }>;
 
@@ -376,6 +381,7 @@ function toCompanionWorldBookEntryDraft(entry: CompanionWorldBookV1["entries"][n
     title: entry.title,
     keys: entry.keys.join(", "),
     constant: entry.constant,
+    enabled: entry.enabled,
     content: entry.content,
   };
 }
@@ -387,6 +393,7 @@ function newCompanionWorldBookEntryDraft(): CompanionWorldBookEntryDraft {
     title: "",
     keys: "",
     constant: false,
+    enabled: true,
     content: "",
   };
 }
@@ -524,6 +531,7 @@ function CompanionWorldBookSection({
       title: entry.title.trim(),
       keys: parseTriggerWords(entry.keys),
       constant: entry.constant,
+      enabled: entry.enabled,
       content: entry.content,
     }));
     setSaving(true);
@@ -624,6 +632,9 @@ function CompanionWorldBookSection({
                         entry.keys.join(labels.companionWorldBookKeySeparator),
                       )}
                 </p>
+                {/* A switched-off entry is still hers and still listed; saying so is the whole
+                    difference between an entry she parked and one the book lost. */}
+                {!entry.enabled && <p data-companion-world-book-entry-disabled>{labels.companionWorldBookDisabled}</p>}
                 {/* The entry's own text. It is what the player came to read: a row
                     that shows which words reach it but not what it says is a row
                     they can deliberately reach and still cannot read. Folded shut
@@ -767,6 +778,19 @@ function CompanionWorldBookEditor({
               onChange={(event) => updateEntry(index, { ...entry, constant: event.target.checked })}
             />
             <span>{labels.companionWorldBookAlwaysOn}</span>
+          </label>
+          {/* The other switch about the same entry, and the one that decides whether it is read
+              at all: switched off, the entry stays here (and in her book) and reaches nothing. */}
+          <label className="companion-world-book-constant">
+            <input
+              id={`companion-world-book-entry-${index}-enabled`}
+              className="companion-world-book-constant-box"
+              type="checkbox"
+              data-companion-world-book-entry-enabled
+              checked={entry.enabled}
+              onChange={(event) => updateEntry(index, { ...entry, enabled: event.target.checked })}
+            />
+            <span>{labels.worldBookEntryEnabled}</span>
           </label>
           <label className="management-settings-label" htmlFor={`companion-world-book-entry-${index}-body`}>
             {labels.companionWorldBookEntryBody}
@@ -937,6 +961,11 @@ type WorldBookEntryDraft = Readonly<{
    * from one that names AND ANY, so the form's "no choice" has to send neither.
    */
   selectiveLogic: 0 | 1 | 2 | 3 | null;
+  /**
+   * Whether the entry takes part at all. It is always sent (the switch is always drawn), so the
+   * library never has to guess whether an absent field meant "on" or "not published here".
+   */
+  enabled: boolean;
 }>;
 
 /**
@@ -955,6 +984,7 @@ function newWorldBookEntryDraft(): WorldBookEntryDraft {
     keys: "",
     secondaryKeys: "",
     selectiveLogic: null,
+    enabled: true,
   };
 }
 
@@ -1061,6 +1091,9 @@ function CharacterWorldBookPanel({
     lorebook: Record<string, unknown>;
   }> | null>(null);
   const [importing, setImporting] = useState(false);
+  // The item whose export is in flight. One at a time, so the row that was pressed is the row that
+  // reports, and a second press cannot download the same book twice.
+  const [exporting, setExporting] = useState<string | null>(null);
   const lorebookInputRef = useRef<HTMLInputElement>(null);
 
   const readOnce = useCallback(async (): Promise<WorldBookView> => {
@@ -1177,6 +1210,7 @@ function CharacterWorldBookPanel({
           keys: (entry.keys ?? []).join(labels.companionWorldBookKeySeparator),
           secondaryKeys: (entry.secondaryKeys ?? []).join(labels.companionWorldBookKeySeparator),
           selectiveLogic: entry.selectiveLogic ?? null,
+          enabled: entry.enabled !== false,
         })),
       });
       setArmed(null);
@@ -1211,6 +1245,7 @@ function CharacterWorldBookPanel({
           // tells "no gate" from "AND ANY", which are 0 and nothing.
           ...(secondaryKeys.length === 0 ? {} : { secondaryKeys }),
           ...(entry.selectiveLogic === null ? {} : { selectiveLogic: entry.selectiveLogic }),
+          enabled: entry.enabled,
         };
       }),
     };
@@ -1336,6 +1371,42 @@ function CharacterWorldBookPanel({
     })();
   };
 
+  /**
+   * Saves one item as the lorebook file the import reads back.
+   *
+   * The file is the Host's own bytes under the Host's own name, so the round trip is the Host's
+   * round trip: what the player keeps is exactly what this product would import, and this side
+   * never re-serializes a book it did not author.
+   */
+  const exportItem = (itemHandle: string): void => {
+    if (view.kind !== "ready" || exporting !== null) return;
+    const expectedRevision = view.worldInfo.revision;
+    setExporting(itemHandle);
+    void (async () => {
+      let failure: string | null = null;
+      let saved: string | null = null;
+      try {
+        const exported = await api.exportWorldInfo({
+          apiVersion: 1,
+          selectionGeneration: generation,
+          expectedRevision,
+          itemHandle,
+        });
+        downloadFile(exported.fileName, new Blob([exported.document], { type: "application/json" }));
+        saved = exported.fileName;
+      } catch (error) {
+        failure = problemTextWithCode(labels.worldBookExportFailed, error, problemLabels);
+      } finally {
+        setExporting(null);
+      }
+      setNotice(
+        failure === null
+          ? { kind: "success", text: labels.worldBookExportSaved.replace("{{file}}", saved ?? "") }
+          : { kind: "failure", text: failure },
+      );
+    })();
+  };
+
   if (view.kind === "loading") return null;
   if (view.kind === "error") {
     return (
@@ -1411,10 +1482,12 @@ function CharacterWorldBookPanel({
               item={item}
               opened={opened !== null && opened.handle === item.handle ? opened.content : null}
               isArmed={armed === item.handle}
+              exporting={exporting}
               labels={labels}
               onBind={bind}
               onToggleEntries={toggleEntries}
               onBeginEdit={beginEdit}
+              onExport={exportItem}
               onArm={() => setArmed(item.handle)}
               onDisarm={() => setArmed(null)}
               onRemove={remove}
@@ -1516,10 +1589,12 @@ function WorldBookItemRow({
   item,
   opened,
   isArmed,
+  exporting,
   labels,
   onBind,
   onToggleEntries,
   onBeginEdit,
+  onExport,
   onArm,
   onDisarm,
   onRemove,
@@ -1527,10 +1602,13 @@ function WorldBookItemRow({
   item: WorldInfoStateV1["items"][number];
   opened: WorldInfoContentV1 | null;
   isArmed: boolean;
+  /** The item whose export is in flight, or null. */
+  exporting: string | null;
   labels: ReturnType<typeof characterLabels>;
   onBind: (sourceHandle: string | null) => void;
   onToggleEntries: (itemHandle: string) => void;
   onBeginEdit: (itemHandle: string) => void;
+  onExport: (itemHandle: string) => void;
   onArm: () => void;
   onDisarm: () => void;
   onRemove: (itemHandle: string) => void;
@@ -1614,6 +1692,16 @@ function WorldBookItemRow({
             {labels.worldBookEdit}
           </button>
           <button
+            type="button"
+            className="small-button"
+            data-world-book-export
+            aria-label={`${labels.worldBookExport}: ${item.title}`}
+            disabled={exporting !== null}
+            onClick={() => onExport(item.handle)}
+          >
+            {exporting === item.handle ? labels.worldBookExportBusy : labels.worldBookExport}
+          </button>
+          <button
             ref={removal.triggerRef}
             type="button"
             className="small-button"
@@ -1656,6 +1744,11 @@ function WorldBookItemRow({
                       ? ` - ${labels.companionWorldBookAlwaysOn}`
                       : ` - ${labels.worldBookEntryKeys}: ${entry.keys.join(labels.companionWorldBookKeySeparator)}`}
                   </p>
+                  {entry.enabled === false && (
+                    <p className="management-settings-hint" data-world-book-entry-disabled>
+                      {labels.companionWorldBookDisabled}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
@@ -1800,6 +1893,20 @@ function WorldBookDraftEditor({
             <option value="3">{labels.worldBookEntrySelectiveLogicAndAll}</option>
           </select>
           <p className="management-settings-hint">{labels.worldBookEntrySelectiveLogicHint}</p>
+          {/* The switch that decides whether the entry takes part at all. A switched-off entry
+              stays in the item and in this list, and reaches neither the always-on block nor a
+              per-turn candidate, which is how a player parks it without losing it. */}
+          <label className="companion-world-book-constant">
+            <input
+              id={`world-book-entry-${index}-enabled`}
+              className="companion-world-book-constant-box"
+              type="checkbox"
+              data-world-book-entry-enabled
+              checked={entry.enabled}
+              onChange={(event) => updateEntry(index, { ...entry, enabled: event.target.checked })}
+            />
+            <span>{labels.worldBookEntryEnabled}</span>
+          </label>
           <div className="composer-actions">
             <button
               type="button"

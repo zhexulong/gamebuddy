@@ -24,6 +24,15 @@ export type PublicWorldInfoEntry = Readonly<{
   secondaryKeys?: readonly string[];
   selectiveLogic?: 0 | 1 | 2 | 3;
   constant?: boolean;
+  /**
+   * Whether this entry is part of the item at all. Absent means enabled.
+   *
+   * SillyTavern's own flag, carried through the importer instead of being resolved there, so a
+   * switched-off entry stays in the library where the player can switch it back on. A disabled
+   * entry reaches no assembled context: not the item's always-on block, not the per-turn
+   * candidates.
+   */
+  enabled?: boolean;
 }>;
 export type PublicWorldInfoProjection = Readonly<{
   revision: number;
@@ -473,6 +482,9 @@ function entriesCarryingSelection(
     return Object.freeze({
       ...entry,
       ...(entry.constant === undefined && carried.constant !== undefined ? { constant: carried.constant } : {}),
+      // `enabled: false` is a decision someone made about this entry, so a surface that does not
+      // name the field must not switch it back on by omission.
+      ...(entry.enabled === undefined && carried.enabled !== undefined ? { enabled: carried.enabled } : {}),
       ...(entry.secondaryKeys === undefined && carried.secondaryKeys !== undefined
         ? { secondaryKeys: carried.secondaryKeys }
         : {}),
@@ -529,12 +541,22 @@ function validateArtifact(value: unknown): ManagedArtifact {
   const entries = value.entries.map((entry) => {
     if (
       !record(entry) ||
-      !only(entry, ["scope", "publicTitle", "summary", "keys", "constant", "secondaryKeys", "selectiveLogic"]) ||
+      !only(entry, [
+        "scope",
+        "publicTitle",
+        "summary",
+        "keys",
+        "constant",
+        "enabled",
+        "secondaryKeys",
+        "selectiveLogic",
+      ]) ||
       (entry.scope !== "companion" && entry.scope !== "setting") ||
       !titleText(entry.publicTitle, MAX_TITLE) ||
       !summaryText(entry.summary, MAX_SUMMARY) ||
       (entry.keys !== undefined && !keysValue(entry.keys)) ||
       (entry.constant !== undefined && typeof entry.constant !== "boolean") ||
+      (entry.enabled !== undefined && typeof entry.enabled !== "boolean") ||
       (entry.secondaryKeys !== undefined && !keysValue(entry.secondaryKeys)) ||
       (entry.selectiveLogic !== undefined &&
         !(
@@ -548,6 +570,7 @@ function validateArtifact(value: unknown): ManagedArtifact {
       summary: entry.summary,
       ...(entry.keys === undefined ? {} : { keys: Object.freeze([...entry.keys]) }),
       ...(entry.constant === undefined ? {} : { constant: entry.constant }),
+      ...(entry.enabled === undefined ? {} : { enabled: entry.enabled as boolean }),
       ...(entry.secondaryKeys === undefined ? {} : { secondaryKeys: Object.freeze([...entry.secondaryKeys]) }),
       ...(entry.selectiveLogic === undefined ? {} : { selectiveLogic: entry.selectiveLogic as 0 | 1 | 2 | 3 }),
     });

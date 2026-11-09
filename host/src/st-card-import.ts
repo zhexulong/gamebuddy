@@ -760,12 +760,11 @@ function extractCharacterBook(
   const omittedEntries: StCardImportOmittedEntry[] = [];
   entries.forEach((raw, index) => {
     if (!isRecord(raw)) return;
-    // The card's own `enabled: false` is the author saying "this entry does not
-    // ship". Honouring it is not a loss - nothing the card wanted is dropped - so
-    // nothing is recorded against it; shipping it would import a setting the
-    // author switched off, and a keyword-gated entry would then fire on its own
-    // trigger words and ride into her context.
-    if (raw.enabled === false) return;
+    // The card's own `enabled: false` is the author switching one entry off. That is a state
+    // of the entry, not a reason to lose it: the reviewed book is the player's too, and an
+    // entry dropped here could never be switched back on. It is imported disabled, and a
+    // disabled entry reaches no context at all (`worldbook.ts`, `catalog-service.ts`).
+    const disabled = raw.enabled === false;
     const content = boundedMultilineText(raw.content, ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes);
     if (content === undefined) {
       // Content the card DID write but this import cannot read: beyond the
@@ -799,7 +798,7 @@ function extractCharacterBook(
     // without it dropped a legitimate entry as "renderable never" when the truth was "this probe
     // did not look".
     const probe = renderWorldBookText(content, { char: charName, scenario });
-    if (hasUnrenderedMacro(probe)) {
+    if (!disabled && hasUnrenderedMacro(probe)) {
       unrenderableContent += 1;
       if (omittedEntries.length < MAX_REPORTED_OMITTED_ENTRIES)
         omittedEntries.push(
@@ -853,6 +852,9 @@ function extractCharacterBook(
         // materializes into the m[0] lorebook_constant source. Keyword-gated
         // entries (constant false) stay behind the lookup tools.
         ...(raw.constant === true ? { constant: true } : {}),
+        // Absent means enabled, so only the switched-off state is stored: an entry the card
+        // shipped live carries no field to disagree with it.
+        ...(disabled ? { enabled: false } : {}),
         ...(keys.length === 0 ? {} : { keys }),
         ...(secondaryKeys.length === 0 ? {} : { secondaryKeys }),
         ...(selectiveLogic === undefined ? {} : { selectiveLogic }),

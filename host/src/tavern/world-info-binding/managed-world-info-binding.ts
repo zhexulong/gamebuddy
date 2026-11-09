@@ -86,14 +86,11 @@ function canonicalProjection(projection: PublicWorldInfoProjection) {
     revision: projection.revision,
     publicTitle: projection.publicTitle,
     summary: projection.summary,
-    entries: projection.entries.map((entry) => ({
-      scope: entry.scope,
-      publicTitle: entry.publicTitle,
-      summary: entry.summary,
-      ...(entry.keys === undefined ? {} : { keys: entry.keys }),
-      ...(entry.constant === undefined ? {} : { constant: entry.constant }),
-      ...(entry.secondaryKeys === undefined ? {} : { secondaryKeys: entry.secondaryKeys }),
-      ...(entry.selectiveLogic === undefined ? {} : { selectiveLogic: entry.selectiveLogic }),
-    })),
+    // The entry IS the authority for its own fields: spelled out by hand, every fact added to
+    // `PublicWorldInfoEntry` (`enabled`, and the next one) was silently dropped here - stored by
+    // the library, accepted by the contract, and invisible to the model. `canonicalJson` sorts
+    // keys, so the published bytes and their hash are unchanged for an entry that carries nothing
+    // new.
+    entries: projection.entries.map((entry) => ({ ...entry })),
   };
 }

@@ -608,6 +608,40 @@ test("an entry with a secondary gate exports the flag that makes another client 
   }
 });
 
+/**
+ * The card export carries the switch too, and only when it is off.
+ *
+ * A durable entry may be one the player switched off, so a card written without the switch would
+ * bring that entry back LIVE on any re-import - her parked setting silently shipping again. The live
+ * entry writes nothing at all, because "absent" is what the spec means by enabled.
+ */
+test("a switched-off world-book entry exports `enabled: false`, and a live one writes no flag", () => {
+  const entryOf = (value: Partial<WorldBook["entries"][number]>) =>
+    Object.freeze({
+      entryId: value.entryId ?? "e1",
+      title: value.title ?? "温室",
+      content: value.content ?? "温室是她修好的。",
+      scope: "setting" as const,
+      provenance: "st-card-import" as const,
+      tokenBudget: "small" as const,
+      ...value,
+    });
+  const book: WorldBook = Object.freeze({
+    schemaVersion: 1 as const,
+    worldBookId: "worldbook-switched",
+    revision: 1,
+    alwaysOnPremise: "",
+    entries: Object.freeze([entryOf({ entryId: "off", enabled: false }), entryOf({ entryId: "on" })]),
+  });
+  const entries = buildCompanionCard({ name: "Amber", worldBook: book }).data.character_book!.entries;
+  assert.equal(entries[0]?.enabled, false, "the parked entry says it is parked");
+  assert.equal(
+    Object.hasOwn(entries[1]!, "enabled"),
+    false,
+    "a live entry states nothing, which is what enabled means",
+  );
+});
+
 test("an export refuses by name when a record will not fit the importer's own card bounds", () => {
   const tooLongEntry = "x".repeat(ST_CARD_DECODER_LIMITS_V1.characterBookEntryBytes + 1);
   assert.throws(

@@ -80,6 +80,11 @@ type TavernCardBookEntry = Readonly<{
   selectiveLogic?: 0 | 1 | 2 | 3;
   /** Always-on membership; absent when the entry is keyword-gated. */
   constant?: boolean;
+  /**
+   * The spec's switch for this entry. Written only for an entry that is OFF: absent means the
+   * entry ships, which is what every live entry is.
+   */
+  enabled?: boolean;
 }>;
 
 /** The V2/V3 `character_book`: the entries plus the book's declared scan depth. */
@@ -290,9 +295,13 @@ function examplesToMesExample(examples: readonly Readonly<{ user: string; compan
  * The entry fields this product has no fact for are left out rather than defaulted,
  * because a default is an authorial claim: `insertion_order` and `position` (where
  * in the prompt the entry goes: `WorldBookEntry` has no placement, and its trigger
- * words are matched per turn instead), `extensions.depth`/`role` (the same, for a
- * depth-injected entry) and `enabled`/`disable` (every durable entry is one the
- * import kept, so `enabled: false` would be a lie and `enabled: true` a tautology).
+ * words are matched per turn instead) and `extensions.depth`/`role` (the same, for a
+ * depth-injected entry).
+ *
+ * `enabled` IS written, and only when it is false. A durable entry may now be one the player
+ * switched off (`worldbook.ts`), so exporting it without the switch would hand the card back as a
+ * book where that entry ships - a re-import would then carry a setting she had parked. The live
+ * entry writes nothing, because "absent" is exactly what the spec means by enabled.
  */
 function bookOf(book: WorldBook | null | undefined): TavernCardBook | undefined {
   if (book === null || book === undefined || book.entries.length === 0) return undefined;
@@ -318,6 +327,7 @@ function bookOf(book: WorldBook | null | undefined): TavernCardBook | undefined 
               }),
           ...(entry.selectiveLogic === undefined ? {} : { selectiveLogic: entry.selectiveLogic }),
           ...(entry.constant === true ? { constant: true } : {}),
+          ...(entry.enabled === false ? { enabled: false } : {}),
         }),
       ),
     ),

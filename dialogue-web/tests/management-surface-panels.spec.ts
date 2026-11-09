@@ -81,6 +81,34 @@ function json200(body: unknown) {
 }
 
 /**
+ * The interface-language field group of the one Host record.
+ *
+ * The select is bound to what this record holds and only adopts a write the store answered with, so a
+ * journey that moves the interface language has to serve the read and the CAS-protected write - the
+ * same way the companion language and the voice groups are served below. `revision` is read from the
+ * caller's own stub because the record is ONE record: the other groups in the same journey write it
+ * too, and a second counter here would refuse a revision the panel legitimately holds.
+ */
+async function stubUiLanguage(
+  page: Page,
+  options: Readonly<{ revision: () => number; locale?: "en" | "zh-CN" | null }>,
+): Promise<void> {
+  let locale: "en" | "zh-CN" | null = options.locale ?? null;
+  await page.route("**/api/tavern/v1/settings/ui-language", async (route) => {
+    if (route.request().method() === "GET") return await route.fulfill(json200({ revision: options.revision(), locale }));
+    const command = route.request().postDataJSON() as { expectedRevision: number; locale: "en" | "zh-CN" };
+    if (command.expectedRevision !== options.revision())
+      return await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({ code: "settings_revision_conflict" }),
+      });
+    locale = command.locale;
+    return await route.fulfill(json200({ revision: options.revision() + 1, locale }));
+  });
+}
+
+/**
  * The composed root the shell reads, with its Chat half carrying `worldInfo`.
  *
  * The Characters surface reads the World Info library from this snapshot - the same
@@ -549,7 +577,7 @@ test("the product Settings surface shows the real settings panels and moves both
   );
   await page.route("**/api/tavern/v1/settings/language", async (route) => {
     if (route.request().method() === "GET") {
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ revision: 0, locale: null }) });
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ revision: 1, locale: null }) });
       return;
     }
     languageWrites.push(route.request().postDataJSON());
@@ -563,6 +591,7 @@ test("the product Settings surface shows the real settings panels and moves both
       body: JSON.stringify({ revision: 1, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null }),
     }),
   );
+  await stubUiLanguage(page, { revision: () => languageWrites.length });
   await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>
     route.fulfill({
       status: 200,
@@ -582,10 +611,11 @@ test("the product Settings surface shows the real settings panels and moves both
   await expect(surface).toBeVisible();
 
   // The never-configured companion language is seeded once from the display
-  // language and the control shows the durable read-back.
+  // language and the control shows the durable read-back. The revision it CASes on is the one
+  // record's - these stubs answer revision 1 for every group of it, because it IS one record.
   await expect(surface.locator("#companion-language")).toHaveValue("en-US");
   await expect.poll(() => languageWrites.length).toBe(1);
-  expect(languageWrites[0]).toEqual({ expectedRevision: 0, locale: "en-US" });
+  expect(languageWrites[0]).toEqual({ expectedRevision: 1, locale: "en-US" });
   await expect(surface.locator("[data-voice-settings]")).toContainText("Cloud TTS consent");
   await expect(surface.locator("[data-voice-settings]")).toContainText("Not decided");
   // An undecided consent leaves the disclosure version null: the row names that
@@ -1650,6 +1680,7 @@ test("the Settings field groups keep a form measure and the app's own select tre
   await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>
     route.fulfill(json200({ devices: [], defaultSelectable: true })),
   );
+  await stubUiLanguage(page, { revision: () => 1 });
   await page.route("**/api/tavern/v1/settings/connection", (route) =>
     route.fulfill(json200({ apiVersion: 1, revision: 1, active: null, connections: [], providers: [escapeHatch] })),
   );
@@ -2245,6 +2276,7 @@ test("the Settings surface moves the companion voice persona through the consent
   await page.route("**/api/tavern/v1/settings/voice-devices", (route) =>
     route.fulfill(json200({ devices: [], defaultSelectable: true })),
   );
+  await stubUiLanguage(page, { revision: () => revision });
   for (const absent of ["settings/connection", "settings/profiles"]) {
     await page.route(`**/api/tavern/v1/${absent}`, (route) =>
       route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "unavailable" }) }),

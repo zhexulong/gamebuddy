@@ -283,6 +283,46 @@ test("a card that wrote only `personality` keeps it as `personality`, in the pro
  * value. Both halves are asserted here, and the second is the one that would pass a careless fix - a
  * decoder that stopped rendering entirely would keep `{{unknown_macro}}` and lose the drop.
  */
+/**
+ * The card's own switch, carried as a switch.
+ *
+ * `enabled: false` used to be resolved at the import: the entry was dropped, and nothing recorded
+ * against it - which read as "the card does not ship this". The book is the player's too, though,
+ * and an entry dropped here could never be switched back on. So the entry is imported OFF, it
+ * still counts as an entry, and the two facts a switch needs are both present: it is in the list,
+ * and it is stated as off.
+ */
+test("a card's `enabled: false` entry is imported switched off rather than dropped", () => {
+  const preview = previewStCard({
+    spec: "chara_card_v3",
+    data: {
+      name: "Switched Rae",
+      description: "calm",
+      character_book: {
+        entries: [
+          { comment: "Shipped", content: "This one ships.", keys: ["farm"] },
+          { comment: "Parked", content: "The author switched this one off.", keys: ["barn"], enabled: false },
+        ],
+      },
+    },
+  });
+  const entries = preview.worldBookCandidates;
+  assert.deepEqual(
+    entries.map((entry) => [entry.title, entry.enabled === false]),
+    [
+      ["Shipped", false],
+      ["Parked", true],
+    ],
+    "both entries are in the book, and the parked one says so",
+  );
+  // A switched-off entry is not a loss, because nothing the card wanted was dropped: no ledger
+  // entry is recorded for it, and the count of entries the import could not keep stays at zero.
+  assert.deepEqual(
+    preview.losses.filter((loss) => loss.field === "character_book.entries"),
+    [],
+  );
+});
+
 test("imported character-book entries keep the author's macros, and an unrenderable entry is dropped", () => {
   // The failure this catches, in both directions: the worldbook candidate used to carry the
   // rendering instead of the authored text (so it could not be exported back), and a fix that
@@ -1479,7 +1519,7 @@ const GOLDEN_NO_VOICE_PROMPT = `You are Plain, accompanying the player.
 Reply as Plain would, in the first person, directly to the player.
 Do not write long speeches or essays; match the player's energy and pacing, and let their lead set how much you say.
 Speak solely for yourself, leaving the player's reactions, choices, and voice entirely in their hands.
-Consistently converse in the player's language, keeping the dialogue grounded in the shared scene.
+Consistently think, reason, and converse in the player's language, keeping the dialogue grounded in the shared scene.
 Do not remind the player this is a game, fiction, or roleplay.
 Never fall back on customer-service phrasing ("How can I help you?", "Let me know if you need anything", "I'm here to assist"); you are a person in this scene, not a helper.
 Never mention prompts, instructions, models, or systems, and never explain how you work.

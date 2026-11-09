@@ -471,7 +471,9 @@ function deriveStableWorldInfoContent(sourceValue: TavernWorldInfoSource): strin
   if (!isRecord(parsed) || !Array.isArray(parsed.entries)) return rawContent;
   const publicTitle = typeof parsed.publicTitle === "string" ? parsed.publicTitle : undefined;
   const summary = typeof parsed.summary === "string" ? parsed.summary : undefined;
-  const constantEntries = parsed.entries.filter((entry) => isRecord(entry) && entry.constant === true);
+  const constantEntries = parsed.entries.filter(
+    (entry) => isRecord(entry) && entry.constant === true && entry.enabled !== false,
+  );
   if (constantEntries.length === 0) return authoredProse([authoredHeading(publicTitle), summary]);
   return authoredProse([
     authoredHeading(publicTitle),
@@ -598,7 +600,8 @@ function deriveVolatileWorldInfoSources(
   return Object.freeze(
     parsed.entries.flatMap((entry, index) => {
       if (!isRecord(entry)) throw new Error("tavern_volatile_context_invalid_source");
-      if (entry.constant === true) return [];
+      // An always-on entry rides the stable source, and a disabled one rides nothing.
+      if (entry.constant === true || entry.enabled === false) return [];
       if (typeof entry.publicTitle !== "string" || typeof entry.summary !== "string")
         throw new Error("tavern_volatile_context_invalid_source");
       const content = entry.summary;
@@ -703,6 +706,9 @@ export function buildGameSurfaceAuthoredCatalog(
     // with a raw `{{...}}` placeholder as the companion's authored context. The
     // rule covers both halves: the always-on entries and the keyword-gated ones.
     const renderedEntries = worldBook.book.entries.flatMap((entry) => {
+      // A disabled entry is background the player switched off: it stays in her book and reaches
+      // neither the always-on block nor the per-turn candidates.
+      if (entry.enabled === false) return [];
       const title = renderWorldBookText(entry.title, macros);
       const content = renderWorldBookText(entry.content, macros);
       return hasUnrenderedMacro(title) || hasUnrenderedMacro(content) ? [] : [Object.freeze({ entry, title, content })];

@@ -30,6 +30,10 @@ import { TavernProblemError, TavernProtocolError } from "./reference-pipeline-ap
 // re-spells every other frozen union. The authority is the Host contract's `TavernAppearanceChoiceV1Schema`, and a
 // test in this package holds the guard to the members that schema declares.
 import type { AppearanceChoice } from "./appearance";
+// The interface language is the catalogue's own union, imported as a TYPE for the same reason the appearance is: this
+// module emits nothing for it and keeps its runtime closure. The guard below re-spells the members the catalogue
+// declares, and `i18n-parity-gate` holds the two to each other.
+import type { Locale } from "./i18n";
 
 const TAVERN_BROWSER_API_VERSION = 1 as const;
 const TAVERN_BROWSER_CONTRACT = "tavern_browser_api/v1" as const;
@@ -103,6 +107,8 @@ type TavernBrowserOperationV1 = Readonly<{
     | "settings.game-prompt.update"
     | "settings.appearance.read"
     | "settings.appearance.update"
+    | "settings.ui-language.read"
+    | "settings.ui-language.update"
     | "settings.connection.read"
     | "settings.connection.create"
     | "settings.connection.test"
@@ -164,6 +170,8 @@ type TavernBrowserOperationV1 = Readonly<{
     | "tavern.operation.settings.game-prompt.update"
     | "tavern.operation.settings.appearance.read"
     | "tavern.operation.settings.appearance.update"
+    | "tavern.operation.settings.ui-language.read"
+    | "tavern.operation.settings.ui-language.update"
     | "tavern.operation.settings.connection.read"
     | "tavern.operation.settings.connection.create"
     | "tavern.operation.settings.connection.test"
@@ -231,6 +239,8 @@ export type WorldInfoEntryV1 = Readonly<{
   secondaryKeys?: readonly string[];
   selectiveLogic?: 0 | 1 | 2 | 3;
   constant?: boolean;
+  /** Whether the entry takes part at all. Absent means enabled, exactly as the library stores it. */
+  enabled?: boolean;
 }>;
 /** One managed library item's own content at one exact revision, as `world-info.detail` returns it. */
 export type WorldInfoContentV1 = Readonly<{
@@ -273,6 +283,21 @@ export type WorldInfoImportCommandV1 = Readonly<{
   selectionGeneration: number;
   expectedRevision: string;
   lorebook: Readonly<Record<string, unknown>>;
+}>;
+/**
+ * `world-info.export`: one library item written back as an external lorebook file.
+ *
+ * `document` is the file itself - the Host's own bytes, in the shape its own importer reads - so
+ * the download saves exactly what the Host exported and this side never re-serializes a book it
+ * did not author. `format` names the shape, so the player knows what they are holding.
+ */
+export type WorldInfoExportV1 = Readonly<{
+  apiVersion: 1;
+  format: "sillytavern-lorebook/v1";
+  itemHandle: string;
+  entryCount: number;
+  fileName: string;
+  document: string;
 }>;
 /**
  * `chat.export`: one Chat's transcript as a SillyTavern chat file. `jsonl` is the file itself, so
@@ -342,6 +367,12 @@ export type CompanionWorldBookEntryV1 = Readonly<{
   keys: readonly string[];
   /** Always-on background, carried whatever is said, so it has no trigger words. */
   constant: boolean;
+  /**
+   * Whether the entry takes part at all. A switched-off entry stays in the book,
+   * stays listed here and reaches no assembled context, which is what makes it
+   * something the player can switch back on rather than something they lost.
+   */
+  enabled: boolean;
   /** The entry's text, as the Host rendered it: macros resolved, bounded. */
   content: string;
 }>;
@@ -720,6 +751,26 @@ export type TavernAppearancePreferenceV1 = Readonly<{
 export type TavernAppearancePreferenceCommandV1 = Readonly<{
   expectedRevision: number;
   appearance: AppearanceChoice;
+}>;
+
+/**
+ * Mirrors the Host's TavernUiLanguagePreferenceV1: the language this browser paints its own interface
+ * in.
+ *
+ * Not the companion language beside it in the same Host record: that one is an open bounded BCP-47
+ * tag and says what she speaks, while this one is closed - the catalogues `i18n.ts` ships - and says
+ * what the player reads here. `null` is never chosen, and the page then follows the browser's own
+ * language, exactly as it did before this was stored at all.
+ */
+export type TavernUiLanguagePreferenceV1 = Readonly<{
+  revision: number;
+  locale: Locale | null;
+}>;
+
+/** Mirrors the Host's TavernUiLanguagePreferenceCommandV1. */
+export type TavernUiLanguagePreferenceCommandV1 = Readonly<{
+  expectedRevision: number;
+  locale: Locale;
 }>;
 
 /**
@@ -1181,6 +1232,8 @@ const OPERATION_IDS = [
   "settings.game-prompt.update",
   "settings.appearance.read",
   "settings.appearance.update",
+  "settings.ui-language.read",
+  "settings.ui-language.update",
   "settings.connection.read",
   "settings.connection.create",
   "settings.connection.test",
@@ -1254,6 +1307,8 @@ const MANAGEMENT_LABEL_KEYS = [
   "tavern.operation.settings.game-prompt.update",
   "tavern.operation.settings.appearance.read",
   "tavern.operation.settings.appearance.update",
+  "tavern.operation.settings.ui-language.read",
+  "tavern.operation.settings.ui-language.update",
   "tavern.operation.settings.connection.read",
   "tavern.operation.settings.connection.create",
   "tavern.operation.settings.connection.test",
@@ -1528,6 +1583,8 @@ const GAME_PROMPT_ADDITION_KEYS = ["revision", "addition"] as const;
 const GAME_PROMPT_ADDITION_COMMAND_KEYS = ["expectedRevision", "addition"] as const;
 const APPEARANCE_PREFERENCE_KEYS = ["revision", "appearance"] as const;
 const APPEARANCE_PREFERENCE_COMMAND_KEYS = ["expectedRevision", "appearance"] as const;
+const UI_LANGUAGE_PREFERENCE_KEYS = ["revision", "locale"] as const;
+const UI_LANGUAGE_PREFERENCE_COMMAND_KEYS = ["expectedRevision", "locale"] as const;
 const VOICE_PREFERENCE_KEYS = [
   "revision",
   "disclosureVersion",
@@ -1859,13 +1916,14 @@ function isWorldInfoEntry(value: unknown): value is WorldInfoEntryV1 {
   if (!isRecord(value)) return false;
   const keys = Object.keys(value);
   if (!WORLD_INFO_ENTRY_KEYS.every((key) => keys.includes(key))) return false;
-  // The four additive optional entry facts; any subset is legal.
-  const optionalKeys = ["keys", "secondaryKeys", "selectiveLogic", "constant"] as const;
+  // The five additive optional entry facts; any subset is legal.
+  const optionalKeys = ["keys", "secondaryKeys", "selectiveLogic", "constant", "enabled"] as const;
   if (keys.length !== WORLD_INFO_ENTRY_KEYS.length + optionalKeys.filter((key) => key in value).length) return false;
   if ("keys" in value && !isWorldInfoKeyList(value.keys)) return false;
   if ("secondaryKeys" in value && !isWorldInfoKeyList(value.secondaryKeys)) return false;
   if ("selectiveLogic" in value && !isWorldInfoSelectiveLogic(value.selectiveLogic)) return false;
   if ("constant" in value && typeof value.constant !== "boolean") return false;
+  if ("enabled" in value && typeof value.enabled !== "boolean") return false;
   return (
     (value.scope === "companion" || value.scope === "setting") &&
     isLengthBoundedString(value.publicTitle, 1, 128) &&
@@ -1961,6 +2019,30 @@ function isWorldInfoImportCommand(value: unknown): value is WorldInfoImportComma
   );
 }
 
+const WORLD_INFO_EXPORT_KEYS = ["apiVersion", "format", "itemHandle", "entryCount", "fileName", "document"] as const;
+const WORLD_INFO_EXPORT_FORMAT = "sillytavern-lorebook/v1" as const;
+// Mirrors the contract's own file-name pattern: the characters no filesystem accepts.
+const EXPORT_FILE_NAME_PATTERN = /^[^\\/:*?"<>|\u0000-\u001f]+$/u;
+/**
+ * One exported lorebook file. `document` carries no length ceiling, mirroring the contract: the
+ * library's own revision envelope bounds an item, and a mirror bound below it would refuse a book
+ * the player legally holds.
+ */
+function isWorldInfoExport(value: unknown): value is WorldInfoExportV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, WORLD_INFO_EXPORT_KEYS) &&
+    value.apiVersion === TAVERN_BROWSER_API_VERSION &&
+    value.format === WORLD_INFO_EXPORT_FORMAT &&
+    isOpaqueHandle(value.itemHandle) &&
+    isNonNegativeSafeInteger(value.entryCount) &&
+    isLengthBoundedString(value.fileName, 1, 128) &&
+    EXPORT_FILE_NAME_PATTERN.test(value.fileName) &&
+    typeof value.document === "string" &&
+    value.document.length > 0
+  );
+}
+
 const COMPANION_LIST_KEYS = ["apiVersion", "companions"] as const;
 const COMPANION_LIST_ENTRY_KEYS = ["handle", "name", "isCurrent"] as const;
 const COMPANION_DETAIL_KEYS = ["apiVersion", "name"] as const;
@@ -2044,7 +2126,7 @@ function isCompanionCharacterVoice(value: unknown): value is CompanionCharacterV
 }
 
 const COMPANION_WORLD_BOOK_KEYS = ["apiVersion", "present", "revision", "entries"] as const;
-const COMPANION_WORLD_BOOK_ENTRY_KEYS = ["title", "keys", "constant", "content"] as const;
+const COMPANION_WORLD_BOOK_ENTRY_KEYS = ["title", "keys", "constant", "enabled", "content"] as const;
 /**
  * The companion's own world book, read once per mount. The browser may not widen
  * what the Host bounded: an entry's title is `worldbook.ts`'s own title bound, its
@@ -2070,6 +2152,7 @@ function isCompanionWorldBookEntry(value: unknown): value is CompanionWorldBookE
     hasExactKeys(value, COMPANION_WORLD_BOOK_ENTRY_KEYS) &&
     isLengthBoundedString(value.title, 1, 256) &&
     typeof value.constant === "boolean" &&
+    typeof value.enabled === "boolean" &&
     // The Host bounds the rendered body; the mirror may not widen it.
     isLengthBoundedString(value.content, 0, 4_096) &&
     Array.isArray(value.keys) &&
@@ -2953,6 +3036,37 @@ function isAppearanceChoice(value: unknown): value is AppearanceChoice {
   return value === "system" || value === "light" || value === "dark";
 }
 
+export function validateUiLanguagePreference(value: unknown): TavernUiLanguagePreferenceV1 {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, UI_LANGUAGE_PREFERENCE_KEYS) ||
+    !isNonNegativeSafeInteger(value.revision) ||
+    !(value.locale === null || isUiLocale(value.locale))
+  )
+    throw new TavernProtocolError();
+  return value as TavernUiLanguagePreferenceV1;
+}
+
+function isUiLanguagePreferenceCommand(value: unknown): value is TavernUiLanguagePreferenceCommandV1 {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, UI_LANGUAGE_PREFERENCE_COMMAND_KEYS) &&
+    isNonNegativeSafeInteger(value.expectedRevision) &&
+    isUiLocale(value.locale)
+  );
+}
+
+/**
+ * The two catalogues this browser ships, exactly - a third language is a protocol fault.
+ *
+ * The authority is `i18n.ts`'s own `Locale` union (itself held to the Host's
+ * `TavernUiLocaleV1Schema`); this re-spelling is what makes the validator total at runtime, the
+ * same way every other frozen union in this module is re-spelled.
+ */
+function isUiLocale(value: unknown): value is Locale {
+  return value === "en" || value === "zh-CN";
+}
+
 // The companion language is the player's own BCP-47 tag: the shape is bounded and the
 // set is open. Mirrors the Host's COMPANION_LOCALE_PATTERN (settings/player-preference-store.ts),
 // spelled as a literal because this module is deliberately dependency-free; a test in
@@ -3387,6 +3501,11 @@ export function validateChatExport(value: unknown): ChatExportV1 {
   return value;
 }
 
+export function validateWorldInfoExport(value: unknown): WorldInfoExportV1 {
+  if (!isWorldInfoExport(value)) throw new TavernProtocolError();
+  return value;
+}
+
 export function validateProfileBackupExport(value: unknown): ProfileBackupExportV1 {
   if (!isProfileBackupExport(value)) throw new TavernProtocolError();
   return value;
@@ -3571,6 +3690,12 @@ export type ManagementPipelineApi = Readonly<{
    * business - this client uploads the player's file as-is and never translates its entries.
    */
   importWorldInfo(command: WorldInfoImportCommandV1, csrfToken: string): Promise<WorldInfoStateV1>;
+  /**
+   * GET /api/tavern/v1/world-info/export: one library item as the external lorebook file the
+   * import above reads back, addressed by the same opaque handle the item read takes (browser
+   * session; no CSRF header).
+   */
+  exportWorldInfo(command: WorldInfoItemCommandV1): Promise<WorldInfoExportV1>;
   /** GET /api/tavern/v1/settings/language (browser session; no CSRF header). */
   readLanguagePreference(): Promise<TavernLanguagePreferenceV1>;
   /**
@@ -3623,6 +3748,16 @@ export type ManagementPipelineApi = Readonly<{
     command: TavernAppearancePreferenceCommandV1,
     csrfToken: string,
   ): Promise<TavernAppearancePreferenceV1>;
+  /**
+   * GET /api/tavern/v1/settings/ui-language (browser session; no CSRF header): the language this
+   * browser paints its own interface in, or null when the player never chose one.
+   */
+  readUiLanguagePreference(): Promise<TavernUiLanguagePreferenceV1>;
+  /** PUT /api/tavern/v1/settings/ui-language with browser-session CSRF protection. */
+  updateUiLanguagePreference(
+    command: TavernUiLanguagePreferenceCommandV1,
+    csrfToken: string,
+  ): Promise<TavernUiLanguagePreferenceV1>;
   /** GET /api/tavern/v1/settings/voice-preference (browser session; no CSRF header). */
   readVoicePreference(): Promise<TavernVoicePreferenceV1>;
   /** GET /api/tavern/v1/settings/voice-devices (browser-session read). */
@@ -4018,6 +4153,22 @@ export function createManagementPipelineApi(
       observe("world-info.import", "passed", result.revision);
       return result;
     },
+    async exportWorldInfo(command: WorldInfoItemCommandV1): Promise<WorldInfoExportV1> {
+      if (!isWorldInfoItemCommand(command)) throw new TavernProtocolError();
+      const params = new URLSearchParams({
+        apiVersion: String(TAVERN_BROWSER_API_VERSION),
+        selectionGeneration: String(command.selectionGeneration),
+        expectedRevision: command.expectedRevision,
+        itemHandle: command.itemHandle,
+      });
+      return exchange(
+        fetchLike,
+        "GET",
+        `/api/tavern/v1/world-info/export?${params.toString()}`,
+        200,
+        validateWorldInfoExport,
+      );
+    },
     async readVoicePreference(): Promise<TavernVoicePreferenceV1> {
       return exchange(fetchLike, "GET", "/api/tavern/v1/settings/voice-preference", 200, validateVoicePreference);
     },
@@ -4101,6 +4252,24 @@ export function createManagementPipelineApi(
         command,
       );
       return result;
+    },
+    async readUiLanguagePreference(): Promise<TavernUiLanguagePreferenceV1> {
+      return exchange(fetchLike, "GET", "/api/tavern/v1/settings/ui-language", 200, validateUiLanguagePreference);
+    },
+    async updateUiLanguagePreference(
+      command: TavernUiLanguagePreferenceCommandV1,
+      csrfToken: string,
+    ): Promise<TavernUiLanguagePreferenceV1> {
+      if (!isUiLanguagePreferenceCommand(command) || !isOpaqueHandle(csrfToken)) throw new TavernProtocolError();
+      return await exchange(
+        fetchLike,
+        "PUT",
+        "/api/tavern/v1/settings/ui-language",
+        200,
+        validateUiLanguagePreference,
+        { "Content-Type": "application/json", "x-csrf-token": csrfToken },
+        command,
+      );
     },
     async updateVoicePreference(
       command: TavernVoicePreferenceConsentCommandV1,

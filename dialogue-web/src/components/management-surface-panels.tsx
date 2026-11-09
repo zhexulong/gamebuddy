@@ -59,6 +59,7 @@ import {
   type TavernConnectionProviderV1,
   type TavernGamePromptAdditionV1,
   type TavernModelProfilesV1,
+  type TavernUiLanguagePreferenceV1,
   type TavernVoiceDevicesV1,
 } from "../management-pipeline-api";
 import {
@@ -77,6 +78,7 @@ import {
   ModelProfilesPanel,
   type ModelProfilesView,
   modelProfileProblemText,
+  type UiLanguageView,
   VoiceSettingsPanel,
   type VoiceView,
 } from "./management-panels";
@@ -1488,6 +1490,7 @@ export function SettingsSurfacePanel({
   onNotice?: (notice: ManagementSurfaceNotice) => void;
 }>): ReactElement {
   const [languageView, setLanguageView] = useState<LanguageView>({ kind: "loading" });
+  const [uiLanguageView, setUiLanguageView] = useState<UiLanguageView>({ kind: "loading" });
   const [appearanceView, setAppearanceView] = useState<AppearanceView>({ kind: "loading" });
   const [voiceView, setVoiceView] = useState<VoiceView>({ kind: "loading" });
   const [connectionView, setConnectionView] = useState<ConnectionView>({ kind: "loading" });
@@ -1520,9 +1523,21 @@ export function SettingsSurfacePanel({
     "settings.game-prompt-addition",
     promptAdditionView.kind === "ready" ? promptAdditionView.record.addition : "",
   );
-  // The one Host-owned preference record's revision, shared by both settings
-  // field groups (see the header).
+  // The one Host-owned preference record's revision, shared by every settings
+  // field group (see the header).
   const settingsRevisionRef = useRef(0);
+  /**
+   * Adopts the shared record's revision from a read or a write of it.
+   *
+   * Every group answers the same revision, and this panel issues its reads one after another while
+   * the player can already use the groups that have answered - so a read that was computed BEFORE a
+   * write this panel has already committed can land after it. Assigning that answer would move the
+   * panel's copy backwards and CAS the next write on a revision the record has passed. The revision
+   * only ever advances, so the newest value this panel has seen is the largest one.
+   */
+  const adoptRevision = (revision: number): void => {
+    settingsRevisionRef.current = Math.max(settingsRevisionRef.current, revision);
+  };
   // The display language the surface was mounted with, used once to seed a
   // never-configured companion language. Later display-language changes are the
   // mount's own concern and never re-run this load.
@@ -1544,7 +1559,7 @@ export function SettingsSurfacePanel({
           devices = null;
         }
         if (!active) return;
-        settingsRevisionRef.current = preference.revision;
+        adoptRevision(preference.revision);
         setVoiceView({ kind: "ready", preference, devices, pending: false });
       } catch {
         // A mounted profile without the voice extension group does not publish
@@ -1561,7 +1576,7 @@ export function SettingsSurfacePanel({
         // language and the UI's own language are separate choices, so reading one
         // never rewrites the other.
         if (preference.locale === null) {
-          settingsRevisionRef.current = preference.revision;
+          adoptRevision(preference.revision);
           try {
             const written = await api.updateLanguagePreference(
               {
@@ -1571,7 +1586,7 @@ export function SettingsSurfacePanel({
               csrfToken,
             );
             if (!active) return;
-            settingsRevisionRef.current = written.revision;
+            adoptRevision(written.revision);
             setLanguageView({ kind: "ready", locale: written.locale, pending: false });
           } catch {
             // A lost race (another tab chose first) is not a panel failure: the
@@ -1579,7 +1594,7 @@ export function SettingsSurfacePanel({
             if (active) setLanguageView({ kind: "ready", locale: preference.locale, pending: false });
           }
         } else {
-          settingsRevisionRef.current = preference.revision;
+          adoptRevision(preference.revision);
           setLanguageView({ kind: "ready", locale: preference.locale, pending: false });
         }
       } catch {
@@ -1644,10 +1659,21 @@ export function SettingsSurfacePanel({
       try {
         const record: TavernAppearancePreferenceV1 = await api.readAppearancePreference();
         if (!active) return;
-        settingsRevisionRef.current = record.revision;
+        adoptRevision(record.revision);
         setAppearanceView({ kind: "ready", appearance: record.appearance, pending: false });
       } catch {
         if (active) setAppearanceView({ kind: "unavailable" });
+      }
+      // The interface language's read, beside it and from the same record: the shell applied whatever
+      // this holds at mount (so the page is already in that language), and this read is what the select
+      // shows and the revision its write CASes on.
+      try {
+        const record: TavernUiLanguagePreferenceV1 = await api.readUiLanguagePreference();
+        if (!active) return;
+        adoptRevision(record.revision);
+        setUiLanguageView({ kind: "ready", locale: record.locale, pending: false });
+      } catch {
+        if (active) setUiLanguageView({ kind: "unavailable" });
       }
     })();
     return () => {
@@ -1672,7 +1698,7 @@ export function SettingsSurfacePanel({
           { expectedRevision: settingsRevisionRef.current, locale: tag },
           csrfToken,
         );
-        settingsRevisionRef.current = written.revision;
+        adoptRevision(written.revision);
         setLanguageView({ kind: "ready", locale: written.locale, pending: false });
         report({ kind: "success", text: labels.success });
       } catch (error) {
@@ -1680,7 +1706,7 @@ export function SettingsSurfacePanel({
         // hits the revision conflict), so re-read the authority before reverting.
         try {
           const preference = await api.readLanguagePreference();
-          settingsRevisionRef.current = preference.revision;
+          adoptRevision(preference.revision);
           setLanguageView({ kind: "ready", locale: preference.locale, pending: false });
         } catch {
           setLanguageView({ kind: "error" });
@@ -1690,12 +1716,45 @@ export function SettingsSurfacePanel({
     })();
   };
 
-  /** The mount's display language, plus the one-time seed the companion language needs. */
-  const selectUiLocale = (locale: Locale): void => {
-    onSelectUiLocale(locale);
-    if (languageView.kind === "ready" && languageView.locale === null) {
-      mutateCompanionLanguage(companionLocaleForUiLocale(locale));
-    }
+  /**
+   * Writes the interface language to the one Host record, then hands the confirmed value to the shell.
+   *
+   * The order is the appearance's for the same reason: the page repaints in the language the store
+   * ANSWERED with, never in the one the select just showed, so a refused or lost write leaves the
+   * interface in the language the Host still holds. The first-paint cache in the shell is rewritten
+   * from that same confirmed value.
+   */
+  const mutateUiLocale = (locale: Locale): void => {
+    if (uiLanguageView.kind !== "ready" || uiLanguageView.pending) return;
+    if (locale === uiLanguageView.locale) return;
+    setUiLanguageView({ ...uiLanguageView, pending: true });
+    void (async () => {
+      try {
+        const written = await api.updateUiLanguagePreference(
+          { expectedRevision: settingsRevisionRef.current, locale },
+          csrfToken,
+        );
+        adoptRevision(written.revision);
+        setUiLanguageView({ kind: "ready", locale: written.locale, pending: false });
+        onSelectUiLocale(written.locale ?? locale);
+        // The companion language is a separate choice and is never rewritten by this one; the seed
+        // below only covers a companion language nobody has chosen yet, as the local-only path did.
+        if (languageView.kind === "ready" && languageView.locale === null) {
+          mutateCompanionLanguage(companionLocaleForUiLocale(written.locale ?? locale));
+        }
+        report({ kind: "success", text: labels.success });
+      } catch (error) {
+        // A rejection can still hide a committed change, so re-read the authority before reporting.
+        try {
+          const record = await api.readUiLanguagePreference();
+          adoptRevision(record.revision);
+          setUiLanguageView({ kind: "ready", locale: record.locale, pending: false });
+        } catch {
+          setUiLanguageView({ kind: "error" });
+        }
+        report({ kind: "failure", text: problemTextWithCode(labels.failure, error, labels) });
+      }
+    })();
   };
 
   /**
@@ -1712,14 +1771,14 @@ export function SettingsSurfacePanel({
           { expectedRevision: settingsRevisionRef.current, appearance },
           csrfToken,
         );
-        settingsRevisionRef.current = written.revision;
+        adoptRevision(written.revision);
         setAppearanceView({ kind: "ready", appearance: written.appearance, pending: false });
         onSelectAppearance(written.appearance);
       } catch (error) {
         // A rejection can still hide a committed change, so re-read the authority before reporting.
         try {
           const record = await api.readAppearancePreference();
-          settingsRevisionRef.current = record.revision;
+          adoptRevision(record.revision);
           setAppearanceView({ kind: "ready", appearance: record.appearance, pending: false });
           onSelectAppearance(record.appearance);
         } catch {
@@ -1758,7 +1817,7 @@ export function SettingsSurfacePanel({
         // re-reads the written file and compares it before projecting), so the
         // selector always shows the persisted selection, never the local choice.
         const preference = await api.updateVoicePreference(command, csrfToken);
-        settingsRevisionRef.current = preference.revision;
+        adoptRevision(preference.revision);
         setVoiceView({ kind: "ready", preference, devices: voice.devices, pending: false });
         report({ kind: "success", text: labels.success });
       } catch (error) {
@@ -1768,7 +1827,7 @@ export function SettingsSurfacePanel({
         // the durable store did not accept.
         try {
           const preference = await api.readVoicePreference();
-          settingsRevisionRef.current = preference.revision;
+          adoptRevision(preference.revision);
           setVoiceView({ kind: "ready", preference, devices: voice.devices, pending: false });
         } catch {
           setVoiceView({ kind: "error" });
@@ -1977,10 +2036,11 @@ export function SettingsSurfacePanel({
       )}
       <LanguageSettingsPanel
         languageView={languageView}
+        uiLanguageView={uiLanguageView}
         uiLocale={uiLocale}
         labels={labels}
         onSelectLanguage={mutateCompanionLanguage}
-        onSelectUiLanguage={selectUiLocale}
+        onSelectUiLanguage={mutateUiLocale}
       />
       <AppearanceSettingsPanel appearanceView={appearanceView} labels={labels} onSelectAppearance={mutateAppearance} />
       {modelProfilesView.kind === "ready" && (

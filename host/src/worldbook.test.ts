@@ -342,3 +342,62 @@ test("WorldBook tools never echo always-on content back (S3: it already rides Ti
   const viaId = await execute(query, { entryId: "kohaku-entry-1" });
   assert.equal(JSON.parse((viaId.content[0]! as { text: string }).text).entries[0].entryId, "kohaku-entry-1");
 });
+
+/**
+ * A switched-off entry is a row the player can switch back on, so it must stay IN the book and
+ * leave ONLY the ways it could reach the model. Both are asserted together because the two are
+ * separate rules: the book keeps it (nothing was deleted on the player's behalf) and neither
+ * lookup tool serves it ("switched off" is not merely a word in a form).
+ */
+test("a switched-off WorldBook entry stays in the book and reaches neither lookup tool", async () => {
+  const switchedBook = validateWorldBook({
+    schemaVersion: 1,
+    worldBookId: "worldbook_switched",
+    revision: 1,
+    alwaysOnPremise: "A small reviewed premise.",
+    entries: [
+      {
+        entryId: "entry-on",
+        title: "雨天的安排",
+        content: "雨天喜欢在门廊煮热茶。",
+        scope: "setting",
+        provenance: "authored",
+        tokenBudget: "small",
+      },
+      {
+        entryId: "entry-off",
+        title: "晴天的安排",
+        content: "晴天喜欢去河边散步。",
+        scope: "setting",
+        provenance: "authored",
+        tokenBudget: "small",
+        enabled: false,
+      },
+    ],
+  });
+  assert.equal(switchedBook.entries.length, 2, "the switched-off entry is still hers: nothing was deleted");
+  assert.equal(switchedBook.entries[1]?.enabled, false, "the switch is a durable fact of the entry");
+  const [catalog, query] = createWorldBookTools({ metadata: worldBookMetadata(switchedBook), book: switchedBook });
+  const catalogBody = await publishedJson(catalog, {});
+  assert.deepEqual(
+    catalogBody.entries.map((entry: { entryId: string }) => entry.entryId),
+    ["entry-on"],
+    "the catalog lists only the entries that take part",
+  );
+  assert.deepEqual(
+    (await publishedJson(query, { topic: "晴天" })).entries,
+    [],
+    "a switched-off entry is not reachable by its own words either",
+  );
+  assert.deepEqual(
+    (await publishedJson(query, { entryId: "entry-off" })).entries,
+    [],
+    "nor by the id the catalog stopped listing",
+  );
+});
+
+/** One tool call's published JSON, which is what the model actually receives. */
+async function publishedJson(tool: ToolDefinition | undefined, params: unknown): Promise<any> {
+  const result = await executeQuery(tool, params);
+  return JSON.parse((result.content[0]! as { text: string }).text);
+}

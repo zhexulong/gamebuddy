@@ -36,6 +36,16 @@ export type WorldBookEntry = Readonly<{
   provenance: WorldBookProvenance;
   tokenBudget: "small" | "medium";
   /**
+   * Whether this entry is part of her background at all. Absent means enabled.
+   *
+   * SillyTavern's own `enabled`/`disable` pair, carried through the reviewed import instead of
+   * being resolved there: an author's switched-off entry is still part of the book the player
+   * may switch back on, and dropping it at import made "disabled" and "never written" the same
+   * row. A disabled entry is kept, listed and editable, and reaches nothing: not the always-on
+   * block, not the per-turn candidates, not the lookup tools.
+   */
+  enabled?: boolean;
+  /**
    * Reviewed always-on membership (from an imported card's `constant` flag).
    * Constant entries are background the companion always carries and are the
    * only entry class eligible for the m[0] `lorebook_constant` stable source;
@@ -212,11 +222,14 @@ export function createWorldBookTools(
 function visibleEntries(book: WorldBook, scope?: WorldBookQueryScope): readonly WorldBookEntry[] {
   return book.entries.filter(
     (entry) =>
-      entry.scope === "companion" ||
-      entry.scope === "setting" ||
-      (scope !== undefined &&
-        entry.integrationId === scope.integrationId &&
-        (entry.scope === "integration" || (entry.saveId === scope.saveId && entry.worldId === scope.worldId))),
+      // A disabled entry is background the player switched off: it stays in the book, and it
+      // reaches neither the assembled context nor a lookup tool result.
+      entry.enabled !== false &&
+      (entry.scope === "companion" ||
+        entry.scope === "setting" ||
+        (scope !== undefined &&
+          entry.integrationId === scope.integrationId &&
+          (entry.scope === "integration" || (entry.saveId === scope.saveId && entry.worldId === scope.worldId)))),
   );
 }
 
@@ -276,6 +289,7 @@ function validateEntry(value: unknown): WorldBookEntry {
     !isProvenance(value.provenance) ||
     (value.tokenBudget !== "small" && value.tokenBudget !== "medium") ||
     (value.constant !== undefined && typeof value.constant !== "boolean") ||
+    (value.enabled !== undefined && typeof value.enabled !== "boolean") ||
     (value.keys !== undefined &&
       (!Array.isArray(value.keys) ||
         value.keys.length === 0 ||
@@ -307,6 +321,7 @@ function validateEntry(value: unknown): WorldBookEntry {
     provenance: value.provenance,
     tokenBudget: value.tokenBudget,
     ...(value.constant === undefined ? {} : { constant: value.constant as boolean }),
+    ...(value.enabled === undefined ? {} : { enabled: value.enabled as boolean }),
     // The card's trigger words survive the projection: the volatile per-turn selection matches them against
     // what the player actually said, so dropping them here would make keyword-gated entries unreachable.
     ...(Array.isArray(value.keys)

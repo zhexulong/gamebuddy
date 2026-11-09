@@ -187,7 +187,6 @@ export type TavernLorebookImportOptions = Readonly<{
   fallbackTitle?: string;
   fallbackSummary?: string;
   maxEntries?: number;
-  filterDisabled?: boolean;
 }>;
 
 /**
@@ -270,8 +269,10 @@ export function importTavernLorebook(raw: unknown, options: TavernLorebookImport
   for (const rawEntry of rawList) {
     if (adaptedEntries.length >= maxEntries) break;
 
-    const isDisabled = rawEntry.disable === true || rawEntry.enabled === false;
-    if (options.filterDisabled && isDisabled) continue;
+    // The card's own switch for this entry. It is a fact of the entry, so it is carried instead
+    // of being resolved here: an author's switched-off entry stays in the book where the player
+    // can switch it back on, and the assembly skips it while it is off.
+    const disabled = rawEntry.disable === true || rawEntry.enabled === false;
 
     const titleCandidate =
       rawEntry.comment ??
@@ -331,6 +332,9 @@ export function importTavernLorebook(raw: unknown, options: TavernLorebookImport
         ...(secondaryKeys.length === 0 ? {} : { secondaryKeys: Object.freeze(secondaryKeys) }),
         ...(selectiveLogic !== undefined ? { selectiveLogic } : {}),
         ...(constant ? { constant: true } : {}),
+        // Absent means enabled: only the switched-off state is stored, so a live entry carries
+        // no field to disagree with it.
+        ...(disabled ? { enabled: false } : {}),
       }),
     );
     declaredOrders.push(declaredEntryOrder(rawEntry) ?? adaptedEntries.length - 1);
