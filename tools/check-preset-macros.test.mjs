@@ -20,6 +20,12 @@ import { auditPresetMacros, FIXTURE_PRESET, PRESET_SEGMENTS, presetStrings } fro
  * [ 'macro_not_implemented:time', 'macro_tail_only_in_segment:time:before' ]`; and the `tokens.length === 0`
  * block removed -> `a preset with no macro is blocked, never passed` failed with `actual: 'passed', expected:
  * 'blocked'`.
+ *
+ * Family red-proof: the reading's `name` taken from `token.name` instead of the resolved entry -> `a shorthand is
+ * judged by the family that declares it` failed with `actual: [ '.mood', '.mood = calm' ], expected: [ '.varName',
+ * '.varName = value' ]`, and `the global shorthand fails the run under its family name` failed with `actual:
+ * 'passed', expected: 'failed'`; restored, green. `$varName` declared `implemented: true` -> the same global test
+ * reported status `passed`; restored, green.
  */
 
 const GATE = fileURLToPath(new URL("./check-preset-macros.mjs", import.meta.url));
@@ -93,6 +99,23 @@ test("a macro absent from the table is reported as unknown, not as unimplemented
   const audit = await auditPresetMacros({ preset: presetWith("write to {{support_email}}") });
   assert.equal(audit.status, "failed");
   assert.deepEqual(codes(audit), ["macro_unknown:support_email"]);
+});
+
+test("a shorthand is judged by the family that declares it, never as unknown", async () => {
+  const audit = await auditPresetMacros({
+    preset: presetWith("Mood: {{.mood}}. Then {{.mood = calm}} and {{.mood}}."),
+  });
+  assert.equal(audit.status, "passed", JSON.stringify(audit.violations));
+  assert.equal(audit.examined, 3);
+  assert.deepEqual(audit.names, [".varName", ".varName = value"]);
+  assert.deepEqual(codes(audit), []);
+});
+
+test("the global shorthand fails the run under its family name", async () => {
+  const audit = await auditPresetMacros({ preset: presetWith("Global: {{$mood}}.") });
+  assert.equal(audit.status, "failed");
+  assert.deepEqual(audit.names, ["$varName"]);
+  assert.deepEqual(codes(audit), ["macro_not_implemented:$varName"]);
 });
 
 test("a tail-only macro in the before segment is reported with its segment", async () => {

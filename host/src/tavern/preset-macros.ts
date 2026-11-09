@@ -39,11 +39,26 @@ export type MacroOutcome = {
 /** `tail-only` macros read state that changes every turn, so the stable prefix must not carry them. */
 export type PresetMacroSegmentPolicy = "any" | "tail-only";
 
+/** `read` renders a variable and `assign` writes one: the two forms A4 §7.2 gives the local shorthand. */
+export type PresetMacroForm = "read" | "assign";
+
+/**
+ * What admits a token to a FAMILY entry: a shorthand's token body IS the variable's name, so the entry cannot be
+ * a word. The sigil opens the family and the form decides what the token does with the variable it carries.
+ */
+export type PresetMacroFamily = {
+  /** The character the token body opens with; the variable's name follows it. */
+  readonly sigil: "." | "$";
+  readonly form: PresetMacroForm;
+};
+
 export type PresetMacroTableEntry = {
   readonly name: string;
   readonly implemented: boolean;
   readonly segmentPolicy: PresetMacroSegmentPolicy;
   readonly reason: string;
+  /** Present on a family entry: the pattern that admits the tokens no fixed name can carry. */
+  readonly family?: PresetMacroFamily;
 };
 
 function presetMacro(
@@ -55,6 +70,16 @@ function presetMacro(
   return Object.freeze({ name, implemented, segmentPolicy, reason });
 }
 
+function presetMacroFamily(
+  name: string,
+  implemented: boolean,
+  segmentPolicy: PresetMacroSegmentPolicy,
+  reason: string,
+  family: PresetMacroFamily,
+): PresetMacroTableEntry {
+  return Object.freeze({ name, implemented, segmentPolicy, reason, family });
+}
+
 /**
  * Every macro name this product has a position on. A preset may spell any of them; only the entries whose
  * `implemented` is true are evaluated, and the rest are reported by name instead of disappearing.
@@ -62,6 +87,10 @@ function presetMacro(
  * The population is A4 §7.2: every macro name that guide's table lists has an entry here, either implemented or
  * declared unimplemented with the concrete blocker in `reason`. `unknown` is therefore reserved for a spelling no
  * authority defines - a typo - and never for a macro this product has read and declined.
+ *
+ * Three entries are FAMILIES rather than names: A4 §7.2's variable shorthands (`{{.varName}}`,
+ * `{{.varName = value}}`, `{{$varName}}`) put the variable's own identifier where a named macro puts its word, so
+ * the entry declares the sigil and form that admit a member and the variable is read from the token itself.
  *
  * The table is also the population `tools/check-preset-macros.mjs` judges a real preset against, so a name that is
  * absent here is a name the gate reports as unknown rather than one that silently renders empty.
@@ -83,6 +112,20 @@ export const PRESET_MACROS: readonly PresetMacroTableEntry[] = Object.freeze([
   ),
   presetMacro("getvar", true, "any", "Reads the assembly-scoped variable table; an unset name reads empty."),
   presetMacro("addvar", true, "any", "Appends to the assembly-scoped variable table (§2.6)."),
+  presetMacroFamily(
+    ".varName",
+    true,
+    "any",
+    "`getvar`'s shorthand: reads the same assembly-scoped variable table, so an unset name reads empty.",
+    { sigil: ".", form: "read" },
+  ),
+  presetMacroFamily(
+    ".varName = value",
+    true,
+    "any",
+    "`setvar`'s shorthand: writes the same assembly-scoped variable table, which dies with the call (§2.6).",
+    { sigil: ".", form: "assign" },
+  ),
   presetMacro(
     "random",
     true,
@@ -129,6 +172,13 @@ export const PRESET_MACROS: readonly PresetMacroTableEntry[] = Object.freeze([
   presetMacro("name", false, "any", "Instruct-track only; this product has no Instruct track (A4 §1)."),
 
   // requires_persistent_vars - a store that outlives one assembly, which §2.6 forbids this evaluator to have.
+  presetMacroFamily(
+    "$varName",
+    false,
+    "any",
+    "`getglobalvar`'s shorthand: reads a global variable from SillyTavern's settings, a value that outlives the chat.",
+    { sigil: "$", form: "read" },
+  ),
   presetMacro(
     "getglobalvar",
     false,
@@ -256,9 +306,61 @@ export const PRESET_MACROS: readonly PresetMacroTableEntry[] = Object.freeze([
   ),
 ]);
 
+/** Named entries only: a family entry is admitted by its pattern, so it can never be found by spelling it. */
 const PRESET_MACRO_BY_NAME: ReadonlyMap<string, PresetMacroTableEntry> = new Map(
-  PRESET_MACROS.map((entry) => [entry.name, entry]),
+  PRESET_MACROS.filter((entry) => entry.family === undefined).map((entry) => [entry.name, entry]),
 );
+
+/** A family entry beside the pattern that admits its members. */
+type PresetMacroFamilyMember = {
+  readonly family: PresetMacroFamily;
+  readonly entry: PresetMacroTableEntry;
+};
+
+const PRESET_MACRO_FAMILIES: readonly PresetMacroFamilyMember[] = Object.freeze(
+  PRESET_MACROS.flatMap((entry) => (entry.family === undefined ? [] : [{ family: entry.family, entry }])),
+);
+
+/**
+ * Where the `=` of an assigning shorthand sits, counting only the top level: an `=` inside a nested `{{...}}`
+ * belongs to the macro that spelled it, not to the shorthand around it.
+ */
+function assignmentIndex(body: string): number {
+  let depth = 0;
+  for (let index = 0; index < body.length; index++) {
+    if (body.startsWith("{{", index)) depth++;
+    else if (body.startsWith("}}", index)) depth--;
+    else if (depth === 0 && body[index] === "=") return index;
+  }
+  return -1;
+}
+
+/**
+ * The family that admits one token body, or `undefined` for a body opening with neither sigil.
+ *
+ * The rule reads source text only - the sigil, then the presence of a top-level `=` - so the evaluator and the
+ * preset gate classify a shorthand the same way, before anything is evaluated.
+ */
+function familyOf(body: string): PresetMacroFamilyMember | undefined {
+  const trimmed = body.trimStart();
+  const sigil = trimmed.charAt(0);
+  if (sigil !== "." && sigil !== "$") return undefined;
+  const form: PresetMacroForm = sigil === "." && assignmentIndex(trimmed) >= 0 ? "assign" : "read";
+  return PRESET_MACRO_FAMILIES.find((member) => member.family.sigil === sigil && member.family.form === form);
+}
+
+/**
+ * The table entry governing a token name as `presetMacroTokens` reports it: the exact name of a named macro, or
+ * the family a shorthand belongs to.
+ *
+ * The evaluator and `tools/check-preset-macros.mjs` both read this one resolution, so a shorthand the gate calls
+ * declared is a shorthand the evaluator acts on.
+ */
+export function presetMacroEntryFor(name: string): PresetMacroTableEntry | undefined {
+  const exact = PRESET_MACRO_BY_NAME.get(name.trim().toLowerCase());
+  if (exact !== undefined) return exact;
+  return familyOf(name)?.entry;
+}
 
 /** A `{{...}}` token as the preset wrote it, with the name this evaluator looks up. */
 export type PresetMacroToken = {
@@ -406,23 +508,88 @@ function applyMacro(
   }
 }
 
-function renderToken(raw: string, body: string, ctx: MacroContext, state: EvaluationState, depth: number): string {
-  const name = macroName(body);
-  const entry = PRESET_MACRO_BY_NAME.get(name);
-  if (entry === undefined) return record(state.unknown, name, raw);
-  if (!entry.implemented || depth >= MAX_NESTING_DEPTH) return record(state.unresolved, name, raw);
-  // Arguments are evaluated first, which is what makes `{{getvar::{{char}}_mood}}` legal (A4 §7.1): the inner
-  // macro lands in the argument before the outer one reads it.
+type MacroResolution = {
+  readonly entry: PresetMacroTableEntry;
+  /** Where the entry's arguments start: after a named macro's word, after a shorthand's one-character sigil. */
+  readonly rest: string;
+};
+
+/** The entry one token body is governed by, and the part of the body that entry has yet to read. */
+function resolveMacro(body: string): MacroResolution | undefined {
+  const trimmed = body.trimStart();
+  const name = macroName(trimmed);
+  const entry = presetMacroEntryFor(name);
+  if (entry === undefined) return undefined;
+  return { entry, rest: trimmed.slice(entry.family === undefined ? name.length : 1) };
+}
+
+/**
+ * A named macro: its arguments are evaluated first, which is what makes `{{getvar::{{char}}_mood}}` legal
+ * (A4 §7.1) - the inner macro lands in the argument before the outer one reads it.
+ */
+function renderNamed(
+  raw: string,
+  entry: PresetMacroTableEntry,
+  rest: string,
+  ctx: MacroContext,
+  state: EvaluationState,
+  depth: number,
+): string {
   const reportedBefore = state.unresolved.length;
-  const args = evaluateText(body.trimStart().slice(name.length), ctx, state, depth + 1)
-    .split("::")
-    .slice(1);
+  const argumentText = evaluateText(rest, ctx, state, depth + 1);
+  const args = argumentText.split("::").slice(1);
   // An argument that still carries a macro AND that left a name unresolved was not readable: reading it would
   // substitute an empty value for a name this evaluator never resolved, which is the silent blanking the table
   // forbids. Braces that arrived from the context are data, and a value is never re-evaluated.
   const argumentUnresolved = state.unresolved.length > reportedBefore && args.some((arg) => arg.includes("{{"));
-  if (argumentUnresolved) return record(state.unresolved, name, raw);
-  return applyMacro(name, args, ctx, state, raw);
+  if (argumentUnresolved) return record(state.unresolved, entry.name, raw);
+  return applyMacro(entry.name, args, ctx, state, raw);
+}
+
+/**
+ * A variable shorthand: the body after the sigil is the variable's name, or its name and new value when the form
+ * assigns.
+ *
+ * Both parts are evaluated inside-out exactly like a named macro's argument - `{{.{{char}}_mood}}` is a key -
+ * and the seam is the `=` the SOURCE spells, so a value that renders an `=` cannot move it. The read is
+ * `getvar`'s and the write is `setvar`'s: one assembly-scoped table (§2.6), and the same "never blank an
+ * unresolved name" rule as above when the variable itself was spelled with a macro this evaluator declined.
+ */
+function renderShorthand(
+  raw: string,
+  entry: PresetMacroTableEntry,
+  family: PresetMacroFamily,
+  expression: string,
+  ctx: MacroContext,
+  state: EvaluationState,
+  depth: number,
+): string {
+  const assignmentAt = family.form === "assign" ? assignmentIndex(expression) : -1;
+  const reportedBefore = state.unresolved.length;
+  const key = evaluateText(
+    assignmentAt < 0 ? expression : expression.slice(0, assignmentAt),
+    ctx,
+    state,
+    depth + 1,
+  ).trim();
+  const value =
+    assignmentAt < 0 ? undefined : evaluateText(expression.slice(assignmentAt + 1), ctx, state, depth + 1).trim();
+  const unreadable =
+    state.unresolved.length > reportedBefore && (key.includes("{{") || (value?.includes("{{") ?? false));
+  if (unreadable || key.length === 0) return record(state.unresolved, entry.name, raw);
+  if (value === undefined) return state.vars.get(key) ?? "";
+  state.vars.set(key, value);
+  return "";
+}
+
+function renderToken(raw: string, body: string, ctx: MacroContext, state: EvaluationState, depth: number): string {
+  const resolved = resolveMacro(body);
+  if (resolved === undefined) return record(state.unknown, macroName(body), raw);
+  const { entry, rest } = resolved;
+  if (!entry.implemented || depth >= MAX_NESTING_DEPTH) return record(state.unresolved, entry.name, raw);
+  const family = entry.family;
+  if (family !== undefined) return renderShorthand(raw, entry, family, rest, ctx, state, depth);
+  return renderNamed(raw, entry, rest, ctx, state, depth);
 }
 
 function evaluateText(text: string, ctx: MacroContext, state: EvaluationState, depth: number): string {

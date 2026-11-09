@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { evaluatePresetText, type MacroContext, PRESET_MACROS, presetMacroTokens } from "./preset-macros.js";
+import {
+  evaluatePresetText,
+  type MacroContext,
+  PRESET_MACROS,
+  presetMacroEntryFor,
+  presetMacroTokens,
+} from "./preset-macros.js";
 
 /**
  * red-proof: `EvaluationState`'s `vars` was made a module-level `Map` (the assembly scope lost) -> `two calls
@@ -49,19 +55,19 @@ const A4_MACRO_NAMES: readonly string[] = [
 ];
 
 /**
- * The three A4 §7.2 spellings this table cannot key: `{{.varName}}`, `{{.varName = value}}` and `{{$varName}}`
- * carry the variable's own name inside the token, so there is no fixed word to look up - the whole body becomes the
- * name. Declaring them needs the shorthand parsed into a family name, a change to the token grammar rather than an
- * entry in this table; the test below keeps that gap named, so the exclusion here cannot outlive it.
+ * The three A4 §7.2 spellings this table cannot key by word: `{{.varName}}`, `{{.varName = value}}` and
+ * `{{$varName}}` put the variable's own identifier where a named macro puts its name, so the table declares them
+ * as FAMILIES - a sigil plus a form - and the variable is read from the token itself.
  */
 const A4_SHORTHAND_SPELLINGS: readonly string[] = ["{{.varName}}", "{{.varName = value}}", "{{$varName}}"];
 
 /**
  * red-proof: `weekday` removed from `PRESET_MACROS` -> `nothing A4 §7.2 defines is reported unknown` failed with
- * `A4 §7.2 names absent from PRESET_MACROS: weekday`; restored, green. A `.varname` entry added to the table ->
- * `the variable shorthands A4 §7.2 lists are not table-keyed names` failed with `actual: [ '.varname' ], expected:
- * []`; removed, green. `renderToken`'s `unknown` branch made to return "" -> the same test failed with `{{.varName}}
- * must not be silently emptied`; restored, green.
+ * `A4 §7.2 names absent from PRESET_MACROS: weekday`; restored, green.
+ *
+ * Family red-proof: `familyOf` made to `return undefined` -> 11 failures, among them `a shorthand key is evaluated
+ * inside-out, so `{{.{{char}}_mood}}` names a variable` with actual
+ * `'{{.{{char}}_mood = calm}}{{.{{char}}_mood}}'`, expected `'calm'`; restored, green.
  */
 
 const context: MacroContext = {
@@ -111,23 +117,87 @@ test("nothing A4 §7.2 defines is reported unknown: the table carries every name
   assert.deepEqual(outcome.unknown, [], `unknown A4 §7.2 names: ${outcome.unknown.join(", ")}`);
 });
 
-test("the variable shorthands A4 §7.2 lists are not table-keyed names, and each is still reported", () => {
-  const names = A4_SHORTHAND_SPELLINGS.map((spelling) => presetMacroTokens(spelling)[0]?.name);
-  assert.deepEqual(names, [".varname", ".varname = value", "$varname"]);
-  // A shorthand's token name IS the variable it reads, so no fixed entry can carry it. The day an entry claims one,
-  // the exclusion above has to be revisited rather than quietly kept.
+test("the variable shorthands A4 §7.2 lists are declared as family entries", () => {
+  const families = PRESET_MACROS.filter((entry) => entry.family !== undefined);
   assert.deepEqual(
-    PRESET_MACROS.filter((entry) => entry.name.startsWith(".") || entry.name.startsWith("$")).map(
-      (entry) => entry.name,
-    ),
-    [],
+    families.map((entry) => entry.name),
+    [".varName", ".varName = value", "$varName"],
+    "the family entries must be exactly the three A4 §7.2 shorthands",
   );
+  const entryFor = (spelling: string) => presetMacroEntryFor(presetMacroTokens(spelling)[0]?.name ?? "");
   for (const spelling of A4_SHORTHAND_SPELLINGS) {
-    const tokenName = presetMacroTokens(spelling)[0]?.name;
-    const outcome = evaluatePresetText(spelling, context);
-    assert.equal(outcome.text.includes(spelling), true, `${spelling} must not be silently emptied`);
-    assert.deepEqual([...outcome.unknown, ...outcome.unresolved], [tokenName], `${spelling} must be reported by name`);
+    const entry = entryFor(spelling);
+    assert.equal(entry?.family === undefined, false, `${spelling} must be declared by a family entry, not by a name`);
   }
+  const [readSpelling, assignSpelling, globalSpelling] = A4_SHORTHAND_SPELLINGS;
+  assert.equal(entryFor(readSpelling ?? "")?.implemented, true, `${readSpelling} must render`);
+  assert.equal(entryFor(assignSpelling ?? "")?.implemented, true, `${assignSpelling} must render`);
+  assert.equal(
+    entryFor(globalSpelling ?? "")?.implemented,
+    false,
+    `${globalSpelling} needs a variable store §2.6 rules out`,
+  );
+});
+
+test("the local shorthand writes and reads the assembly variable table, and dies with the call", () => {
+  const outcome = evaluatePresetText("{{.x = calm}}{{.x}}", context);
+  assert.equal(outcome.text, "calm");
+  assert.deepEqual(outcome.unresolved, []);
+  assert.deepEqual(outcome.unknown, []);
+  // §2.6: a variable lives inside one assembly, so the next call reads an empty table.
+  const nextCall = evaluatePresetText("{{.x}}", context);
+  assert.equal(nextCall.text, "");
+  assert.deepEqual(nextCall.unresolved, []);
+  assert.deepEqual(nextCall.unknown, []);
+});
+
+test("the shorthand and the double-colon pair are one variable table, in both directions", () => {
+  assert.equal(evaluatePresetText("{{setvar::mood::calm}}{{.mood}}", context).text, "calm");
+  assert.equal(evaluatePresetText("{{.mood = calm}}{{getvar::mood}}", context).text, "calm");
+});
+
+test("a shorthand reads an unset variable as empty rather than reporting it", () => {
+  const outcome = evaluatePresetText("mood: {{.never_set}}.", context);
+  assert.equal(outcome.text, "mood: .");
+  assert.deepEqual(outcome.unresolved, []);
+});
+
+test("a shorthand key is evaluated inside-out, so `{{.{{char}}_mood}}` names a variable", () => {
+  const text = "{{.{{char}}_mood = calm}}{{.{{char}}_mood}}";
+  const outcome = evaluatePresetText(text, context);
+  assert.equal(outcome.text, "calm");
+  assert.deepEqual(outcome.unresolved, []);
+});
+
+test("the assignment seam is the `=` the source spells, and a value is text, never re-evaluated", () => {
+  assert.equal(evaluatePresetText("{{.x = a=b}}{{.x}}", context).text, "a=b");
+  assert.equal(evaluatePresetText("{{.x = {{user}}}}{{.x}}", { ...context, user: "{{char}}" }).text, "{{char}}");
+});
+
+test("the global shorthand is declared and reported by its family, not as unknown", () => {
+  const outcome = evaluatePresetText("mood {{$x}}", context);
+  assert.equal(outcome.text, "mood {{$x}}");
+  assert.deepEqual(outcome.unresolved, ["$varName"]);
+  assert.deepEqual(outcome.unknown, []);
+});
+
+test("a preset spelling `{{.mood}}` is no longer reported unknown", () => {
+  const outcome = evaluatePresetText("Mood: {{.mood}}.", context);
+  assert.equal(outcome.text, "Mood: .");
+  assert.deepEqual(outcome.unknown, []);
+  assert.deepEqual(outcome.unresolved, []);
+});
+
+test("a shorthand with no variable name is reported instead of reading an empty name", () => {
+  const outcome = evaluatePresetText("{{.}}", context);
+  assert.equal(outcome.text, "{{.}}");
+  assert.deepEqual(outcome.unresolved, [".varName"]);
+});
+
+test("a shorthand whose key holds an unimplemented macro stays literal and names both", () => {
+  const outcome = evaluatePresetText("{{.{{time}}_mood}}", context);
+  assert.equal(outcome.text, "{{.{{time}}_mood}}");
+  assert.deepEqual(outcome.unresolved, ["time", ".varName"]);
 });
 
 test("the context macros render, case-insensitively and with spaces inside the braces", () => {

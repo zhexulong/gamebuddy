@@ -19,6 +19,11 @@
  *   paraphrased), so this gate cannot drift from the evaluator: a name added to the table is covered the same
  *   run, and a name removed from it is reported here as unknown.
  *
+ *   A shorthand - `{{.x}}`, `{{.x = value}}`, `{{$x}}` - carries the variable's own name instead of a macro
+ *   word, so it is judged by the FAMILY entry that admits it, and the name this report carries is the family's:
+ *   every name in `names` is therefore a declared table name, and `macro_unknown` stays reserved for a spelling
+ *   no entry admits.
+ *
  * Usage:
  *   node tools/check-preset-macros.mjs                          # the shipped fixture preset
  *   node tools/check-preset-macros.mjs --preset <path>          # a real preset JSON
@@ -149,9 +154,16 @@ export function presetStrings(value) {
 async function loadMacroModule() {
   try {
     const module = await import(MACRO_MODULE.href);
-    if (!Array.isArray(module.PRESET_MACROS) || typeof module.presetMacroTokens !== "function")
-      return { error: "the module exported no PRESET_MACROS table and no presetMacroTokens reader" };
-    return { table: module.PRESET_MACROS, tokens: module.presetMacroTokens };
+    if (
+      !Array.isArray(module.PRESET_MACROS) ||
+      typeof module.presetMacroTokens !== "function" ||
+      typeof module.presetMacroEntryFor !== "function"
+    )
+      return {
+        error:
+          "the module exported no PRESET_MACROS table, no presetMacroTokens reader and no presetMacroEntryFor resolver",
+      };
+    return { tokens: module.presetMacroTokens, resolve: module.presetMacroEntryFor };
   } catch (error) {
     return { error: `${error.message}` };
   }
@@ -174,10 +186,10 @@ export async function auditPresetMacros({ preset = FIXTURE_PRESET, segment } = {
       blocked: { code: "preset_macros_table_unreadable", detail: loaded.error },
     };
 
-  const byName = new Map(loaded.table.map((entry) => [entry.name, entry]));
   const tokens = presetStrings(preset).flatMap((value) => loaded.tokens(value));
   const violations = [];
   const reported = new Set();
+  const names = [];
   const report = (kind, name, extra) => {
     const code = extra === undefined ? `${kind}:${name}` : `${kind}:${name}:${extra}`;
     if (reported.has(code)) return;
@@ -186,16 +198,19 @@ export async function auditPresetMacros({ preset = FIXTURE_PRESET, segment } = {
   };
 
   for (const token of tokens) {
-    const entry = byName.get(token.name);
-    if (entry === undefined) report("macro_unknown", token.name);
-    else if (!entry.implemented) report("macro_not_implemented", token.name);
+    // A shorthand's token name IS the variable it carries, so it is governed by the family entry that admits it
+    // and reported under that entry's name; a name no entry admits keeps its own spelling as the unknown name.
+    const entry = loaded.resolve(token.name);
+    const name = entry === undefined ? token.name : entry.name;
+    if (!names.includes(name)) names.push(name);
+    if (entry === undefined) report("macro_unknown", name);
+    else if (!entry.implemented) report("macro_not_implemented", name);
     // §4.2's third row: a per-turn macro is legal in the tail and at a depth slot, and refused in the stable
     // prefix the cache is built on. The segment is the one the caller passed, so the gate says which it read.
     if (entry !== undefined && entry.segmentPolicy === "tail-only" && segment === "before")
-      report("macro_tail_only_in_segment", token.name, segment);
+      report("macro_tail_only_in_segment", name, segment);
   }
 
-  const names = [...new Set(tokens.map((token) => token.name))];
   if (tokens.length === 0)
     return {
       examined: 0,
