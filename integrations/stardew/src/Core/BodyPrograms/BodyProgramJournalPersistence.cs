@@ -10,7 +10,7 @@ namespace GameBuddy.Stardew.Core.BodyPrograms;
 ///
 /// <para>
 /// The class name and ADR-006 still call the authority `BodyProgramJournal/v1`; <see cref="SchemaVersion"/> is the
-/// PAYLOAD SHAPE number and moves independently of that name. It is 3 as of the event `atMs` key.
+/// PAYLOAD SHAPE number and moves independently of that name. It is 4 as of the node `orderedAfter` key.
 /// </para>
 /// </summary>
 public static class BodyProgramJournalPersistence
@@ -19,14 +19,20 @@ public static class BodyProgramJournalPersistence
     /// The durable journal's shape version.
     ///
     /// <para>
-    /// RAISED 2026-10-31 from 1, which does not cover a node's `failureCode` key, and again to 3 for the event `atMs`
-    /// key. ADR-006 requires a codec change to be an explicit schema-version decision rather than a silent
-    /// reinterpretation of the old shape: a v1 payload has no `failureCode` key and must not be read as if it did, and a
-    /// v2 payload has no `atMs` on its events and must not be read as if its executions were timed. There is no
-    /// migration/dual-read path here by design - an unreadable journal is fail-closed (`Corrupt`).
+    /// RAISED 2026-10-31 from 1, which does not cover a node's `failureCode` key, again to 3 for the event `atMs` key, and
+    /// to 4 for the node `orderedAfter` key. ADR-006 requires a codec change to be an explicit schema-version decision
+    /// rather than a silent reinterpretation of the old shape: a v1 payload has no `failureCode` key and must not be read
+    /// as if it did, a v2 payload has no `atMs` on its events and must not be read as if its executions were timed, and a
+    /// v3 payload has no `orderedAfter` on its nodes and must not be read as if every ordering edge were a dependency.
+    /// </para>
+    /// <para>
+    /// There is no migration/dual-read path here by design, and the two directions are NOT the same fact. An OLDER journal
+    /// is superseded: counted, set aside intact, and replaced by a fresh writable one (<see cref="TryReadSchemaVersion"/>).
+    /// A NEWER one stays fail-closed (`Corrupt`), because a downgrade must never destroy records it cannot read - that is
+    /// the difference between "this build cannot use this data" and "this build may throw it away".
     /// </para>
     /// </summary>
-    public const int SchemaVersion = 3;
+    public const int SchemaVersion = 4;
     private static readonly JsonSerializerOptions WriteOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public static string Encode(BodyProgramJournalState state, BodyProgramActionCatalog? catalog = null, BridgeScope? expectedScope = null)
@@ -37,6 +43,54 @@ public static class BodyProgramJournalPersistence
             throw new ArgumentException("Body Program journal state is malformed.", nameof(state));
         return JsonSerializer.Serialize(state, WriteOptions);
     }
+
+    /// <summary>
+    /// The shape an older journal was written in, and the LENGTHS of what it held - no other field of it is read.
+    ///
+    /// <para>
+    /// This is the whole read path for a payload this build is not going to interpret: <c>schemaVersion</c>, the number of
+    /// programs, and the total number of node objects. Nothing is decoded, so no node - and therefore no `orderedAfter` -
+    /// can be constructed from a shape that did not have one. The counts exist so the supersede can be published as a fact
+    /// rather than as prose: "a fresh journal started" is not an operational statement without "and this is what it set
+    /// aside".
+    /// </para>
+    /// <para>
+    /// A payload whose version is unreadable, or whose program/node lists are not lists, answers false: that is a
+    /// corruption, not a version, and the caller reads it as `Corrupt`.
+    /// </para>
+    /// </summary>
+    internal static bool TryReadSchemaVersion(string? encoded, out int schemaVersion, out int programs, out long nodes)
+    {
+        schemaVersion = 0; programs = 0; nodes = 0;
+        if (string.IsNullOrEmpty(encoded)) return false;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(encoded, new JsonDocumentOptions { MaxDepth = 16 });
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("schemaVersion", out JsonElement version) || !version.TryGetInt32(out schemaVersion)
+                || !document.RootElement.TryGetProperty("programs", out JsonElement list) || list.ValueKind != JsonValueKind.Array) return false;
+            programs = list.GetArrayLength();
+            foreach (JsonElement program in list.EnumerateArray())
+            {
+                if (program.ValueKind != JsonValueKind.Object || !program.TryGetProperty("nodes", out JsonElement programNodes)
+                    || programNodes.ValueKind != JsonValueKind.Array) return false;
+                nodes += programNodes.GetArrayLength();
+            }
+            return true;
+        }
+        catch (JsonException) { return false; }
+        catch (InvalidOperationException) { return false; }
+    }
+
+    /// <summary>
+    /// The name an older journal's bytes are kept under, beside the journal they were replaced in.
+    ///
+    /// <para>
+    /// One declaration, because two readers need the same spelling: the authority asks the store to keep the bytes under
+    /// this name, and the test that proves the bytes survived looks for exactly this file.
+    /// </para>
+    /// </summary>
+    internal static string SupersededFileName(int fromSchema) => $"journal.superseded-schema-{fromSchema}.json";
 
     public static bool TryDecode(string? encoded, BodyProgramActionCatalog catalog, BridgeScope expectedScope, out BodyProgramJournalState? state)
     {
@@ -127,7 +181,10 @@ public static class BodyProgramJournalPersistence
         Array.AsReadOnly(program.Facts.Select(fact => new RuntimeFact(fact.ProgramId, fact.NodeId, fact.NodeAttempt, fact.FactName, BodyProgramValidation.FreezeMap(fact.Values))).ToArray()));
 
     internal static VerifiedBodyProgram FreezeVerified(VerifiedBodyProgram program) => new(program.ProgramId, program.CatalogRevision,
-        Array.AsReadOnly(program.Nodes.Select(node => new VerifiedBodyProgramNode(node.NodeId, node.ActionId, BodyProgramValidation.FreezeMap(node.CanonicalArguments), Array.AsReadOnly(node.DependsOn.ToArray()), BodyProgramValidation.FreezeMap(node.Bindings), BodyProgramValidation.FreezeMap(node.DerivedResourceClaims))).ToArray()));
+        Array.AsReadOnly(program.Nodes.Select(node => new VerifiedBodyProgramNode(node.NodeId, node.ActionId, BodyProgramValidation.FreezeMap(node.CanonicalArguments), Array.AsReadOnly(node.DependsOn.ToArray()), BodyProgramValidation.FreezeMap(node.Bindings), BodyProgramValidation.FreezeMap(node.DerivedResourceClaims))
+        {
+            OrderedAfter = Array.AsReadOnly(node.OrderedAfter.ToArray()),
+        }).ToArray()));
 
     private static bool ValidateProgram(BodyProgramJournalProgram program, BodyProgramPolicyIdentity journalPolicy, out string? refusal)
     {
@@ -370,6 +427,8 @@ public static class BodyProgramJournalPersistence
             && node.CanonicalArguments is { Count: <= 32 } && node.DependsOn is { Count: <= 8 } && node.Bindings is { Count: <= 4 } && node.DerivedResourceClaims is { Count: <= 16 }
             && node.CanonicalArguments.All(pair => BodyProgramValidation.IsIdentifier(pair.Key) && pair.Value is not null && BodyProgramValidation.IsValidCanonicalValue(pair.Value, pair.Value.Kind))
             && node.DependsOn.All(BodyProgramValidation.IsIdentifier) && node.DependsOn.Distinct(StringComparer.Ordinal).Count() == node.DependsOn.Count
+            && node.OrderedAfter is { Count: <= 8 } && node.OrderedAfter.All(BodyProgramValidation.IsIdentifier)
+            && node.OrderedAfter.Distinct(StringComparer.Ordinal).Count() == node.OrderedAfter.Count
             && node.Bindings.All(pair => BodyProgramValidation.IsIdentifier(pair.Key) && pair.Value is not null && BodyProgramValidation.IsIdentifier(pair.Value.ProducerNodeId) && BodyProgramValidation.IsIdentifier(pair.Value.FactName))
             && node.DerivedResourceClaims.All(pair => BodyProgramValidation.IsResourceClaimKey(pair.Key) && pair.Value is { Length: <= 4096 }))
         && program.Nodes.Select(node => node.NodeId).Distinct(StringComparer.Ordinal).Count() == program.Nodes.Count;
@@ -385,6 +444,9 @@ public static class BodyProgramJournalPersistence
         {
             if (!catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? action) || !BodyProgramVerifier.ArgumentsMatch(node.CanonicalArguments, action!) || !BodyProgramVerifier.ResourceClaimsMatch(node.DerivedResourceClaims, action!, scope)) return false;
             if (node.DependsOn.Any(dependency => !nodes.ContainsKey(dependency) || dependency == node.NodeId)) return false;
+            // An ordering-only predecessor is an edge of the SAME graph: it must exist and it must not be this node. Whether
+            // the union is acyclic is the shared rule's question (`BodyProgramGraphRules.HasCycle`, below).
+            if (node.OrderedAfter.Any(predecessor => !nodes.ContainsKey(predecessor) || predecessor == node.NodeId)) return false;
             foreach ((string argument, ActionProgramBinding binding) in node.Bindings)
             {
                 BodyProgramArgumentDescriptor? consumer = action!.Arguments.SingleOrDefault(item => item.Name == argument);
@@ -473,12 +535,14 @@ public static class BodyProgramJournalPersistence
     private static bool ReadVerifiedNode(JsonElement value, out VerifiedBodyProgramNode? node)
     {
         node = null;
-        if (!Exact(value, "nodeId", "actionId", "canonicalArguments", "dependsOn", "bindings", "derivedResourceClaims")
+        if (!Exact(value, "nodeId", "actionId", "canonicalArguments", "dependsOn", "orderedAfter", "bindings", "derivedResourceClaims")
             || !ReadString(value.GetProperty("nodeId"), out string? id) || !ReadString(value.GetProperty("actionId"), out string? action)
             || !ReadCanonicalMap(value.GetProperty("canonicalArguments"), out IReadOnlyDictionary<string, BodyProgramCanonicalValue>? arguments)
-            || !ReadStringArray(value.GetProperty("dependsOn"), out string[] dependsOn) || !ReadBindings(value.GetProperty("bindings"), out IReadOnlyDictionary<string, ActionProgramBinding>? bindings)
+            || !ReadStringArray(value.GetProperty("dependsOn"), out string[] dependsOn) || !ReadStringArray(value.GetProperty("orderedAfter"), out string[] orderedAfter)
+            || !ReadBindings(value.GetProperty("bindings"), out IReadOnlyDictionary<string, ActionProgramBinding>? bindings)
             || !ReadStringMap(value.GetProperty("derivedResourceClaims"), out IReadOnlyDictionary<string, string>? claims)) return false;
-        node = new(id!, action!, arguments!, dependsOn, bindings!, claims!); return true;
+        node = new(id!, action!, arguments!, dependsOn, bindings!, claims!) { OrderedAfter = Array.AsReadOnly(orderedAfter) };
+        return true;
     }
 
     private static bool ReadNode(JsonElement value, out BodyProgramJournalNode? node)

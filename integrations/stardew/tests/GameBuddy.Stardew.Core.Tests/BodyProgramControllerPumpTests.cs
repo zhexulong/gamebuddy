@@ -223,24 +223,21 @@ public sealed class BodyProgramControllerPumpTests
     [Fact]
     public void AStepThatSharesTheActorWithANeighbourItDoesNotDependOnIsRefusedByTheModelItself()
     {
-        // THIS IS WHAT THE 21.7% IS MADE OF, PINNED WHERE IT IS ENFORCED.
+        // THIS IS WHAT THE 21.7% WAS MADE OF, PINNED WHERE IT IS ENFORCED.
         //
-        // `dependsOn` is the model's ONLY relation, and it carries two meanings at once. `BodyProgramVerifier.
-        // ValidateResourceConflicts` requires every pair of nodes claiming the same resource to be transitively ordered
-        // by it, and every published action claims `embodied_actor`. So two INDEPENDENT steps can only be submitted as
-        // a chain - which makes the second a dependent that a failure of the first skips - or not at all.
+        // `dependsOn` used to be the model's ONLY relation, and it carries two meanings at once: the claim-ordering rule
+        // requires every pair of nodes claiming the same resource to be transitively ordered by it, and every published
+        // action claims `embodied_actor`. So two INDEPENDENT steps could only be submitted as a chain - which made the
+        // second a dependent that a failure of the first skipped - or not at all.
         //
-        // That is why a compiled script is a chain, and why the chain cannot simply be dropped at the producer:
-        // measured over one 34-minute run, 102 of 469 nodes were `skipped_dependency` (21.7%), with one
-        // `no_native_path` failure skipping 15 nodes of a 16-node plan (`plan_1661`). The amplification is in the
-        // model, not in the compiler or in the skip rule: nothing in it can say "run this after that, but not because
+        // That is why a compiled script is a chain: measured over one 34-minute run, 102 of 469 nodes were
+        // `skipped_dependency` (21.7%), with one `no_native_path` failure skipping 15 nodes of a 16-node plan
+        // (`plan_1661`). The amplification was in the model: nothing in it could say "run this after that, but not because
         // of it".
         //
-        // The Host side of the same rule is `planResourceConflictCodes` (`host/src/body-program-script.ts`), and the
-        // case that drives it with this same three-step shape is
-        // `body-program-script.test.ts` "the Host reads the ordering conflict the Mod refuses, in the Mod's own code".
-        // This case fails the day a second, ordering-only relation exists - and then it must be re-derived from that
-        // relation rather than deleted.
+        // WHAT THIS CASE IS NOW. An unordered neighbour is still refused - that half is not a bug and must not regress
+        // into "anything goes" - but the same three steps with the ordering-only edge are accepted, which is the half the
+        // second relation buys. The case is re-derived from that relation rather than deleted, as it asked to be.
         OpenBodyProgramJournalAuthority authority = Open();
 
         BodyProgramSubmitResult submitted = authority.Submit(MachineProgramWithIndependentNeighbour());
@@ -253,6 +250,11 @@ public sealed class BodyProgramControllerPumpTests
         submitted.Verification.Diagnostics.Should().HaveCount(2);
         submitted.Verification.Diagnostics.Select(diagnostic => diagnostic.Code)
             .Should().AllSatisfy(code => code.Should().StartWith("resource_conflict:"));
+
+        // The same neighbour, ordered: the claim rule reads the union of both relations, so an edge that only orders is
+        // exactly enough to group them in one program.
+        BodyProgramSubmitResult ordered = authority.Submit(MachineProgramWithOrderedNeighbour());
+        ordered.Code.Should().Be(BodyProgramSubmitCode.Accepted, string.Join(";", ordered.Verification.Diagnostics.Select(diagnostic => diagnostic.Code)));
     }
 
     [Fact]
@@ -924,6 +926,19 @@ public sealed class BodyProgramControllerPumpTests
         new ActionProgramCandidateNode("neighbour", "machine_load", Args(("x", "integer", "6"), ("y", "integer", "6"), ("slot", "integer", "9"), ("expectedQualifiedItemId", "string", "(O)24"), ("expectedTargetId", "string", "neighbour-target")), Array.Empty<string>(), Bindings()),
     });
 
+    private static ActionProgramCandidate MachineProgramWithOrderedNeighbour() => new("ordered", new[]
+    {
+        new ActionProgramCandidateNode("inspect", "machine_inspect", Args(("x", "integer", "1"), ("y", "integer", "1"), ("expectedTargetId", "string", "candidate-target|1")), Array.Empty<string>(), Bindings()),
+        new ActionProgramCandidateNode("load", "machine_load", Args(("x", "integer", "1"), ("y", "integer", "1"), ("slot", "integer", "5"), ("expectedQualifiedItemId", "string", "(O)433"), ("expectedTargetId", "string", "placeholder-target")), new[] { "inspect" }, Bindings("expectedTargetId", new ActionProgramBinding("inspect", "machine_target_id"))),
+        // The same neighbour as above, ordered after `load` and still consuming nothing from it: the claim rule reads
+        // the union, so ordering after the chain's LAST step puts this node after both of them, while a failure of
+        // `inspect` would leave it runnable - which is the difference the second relation exists to express.
+        new ActionProgramCandidateNode("neighbour", "machine_load", Args(("x", "integer", "6"), ("y", "integer", "6"), ("slot", "integer", "9"), ("expectedQualifiedItemId", "string", "(O)24"), ("expectedTargetId", "string", "neighbour-target")), Array.Empty<string>(), Bindings())
+        {
+            OrderedAfter = new[] { "load" },
+        },
+    });
+
     private sealed class ImmediateAdmissionTransport : IBodyProgramAdmissionTransport
     {
         private readonly Dictionary<(string ProgramId, string NodeId, int NodeAttempt, int AdmissionAttempt), HostAdmissionGrant> grants = new();
@@ -1158,7 +1173,7 @@ public sealed class BodyProgramControllerPumpTests
         public BodyProgramJournalReadResult Read() => this.value is null
             ? new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Empty, null)
             : new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, this.value);
-        public bool TryWrite(string encodedState) { this.value = encodedState; return true; }
+        public bool TryWrite(string encodedState, string? replacedSiblingFileName = null) { this.value = encodedState; return true; }
     }
 
     private sealed class FailSettleWriteStore : IBodyProgramJournalStore
@@ -1169,7 +1184,7 @@ public sealed class BodyProgramControllerPumpTests
         public BodyProgramJournalReadResult Read() => this.value is null
             ? new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Empty, null)
             : new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, this.value);
-        public bool TryWrite(string encodedState)
+        public bool TryWrite(string encodedState, string? replacedSiblingFileName = null)
         {
             // Refuse only the settle write (node_settled event): every other
             // write (program accepted, challenge, host-admitted, native-dispatch,

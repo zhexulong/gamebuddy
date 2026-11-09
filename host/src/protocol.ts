@@ -4656,7 +4656,10 @@ export function validateBodyProgramCandidateRequest(value: Record<string, unknow
 function isBodyProgramNode(value: unknown): boolean {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ["nodeId", "actionId", "arguments", "dependsOn", "bindings"]) ||
+    // `orderedAfter` is the SECOND, ordering-only edge: "do not start before these predecessors are terminal, do not skip me
+    // if one fails". It is optional because absent is exactly what a node said before the edge existed - nothing is
+    // reinterpreted - and it is named here so a frame carrying it is not refused as an unknown key.
+    !hasExactKeysOrOptional(value, ["nodeId", "actionId", "arguments", "dependsOn", "bindings"], ["orderedAfter"]) ||
     !isOpaqueId(value.nodeId) ||
     !isOpaqueId(value.actionId) ||
     !isRecord(value.arguments) ||
@@ -4664,6 +4667,7 @@ function isBodyProgramNode(value: unknown): boolean {
     !Array.isArray(value.dependsOn) ||
     value.dependsOn.length > 8 ||
     !value.dependsOn.every(isOpaqueId) ||
+    !isOrderingPredecessors(value.orderedAfter) ||
     !isRecord(value.bindings) ||
     !hasUniqueKeys(value.bindings) ||
     Object.keys(value.bindings).length > MAX_BODY_PROGRAM_BINDINGS_PER_NODE
@@ -4675,6 +4679,12 @@ function isBodyProgramNode(value: unknown): boolean {
     ) &&
     Object.entries(value.bindings).every(([name, binding]) => isOpaqueId(name) && isBodyProgramFactReference(binding))
   );
+}
+
+/** An absent `orderedAfter` is an empty edge; a present one is bounded exactly like `dependsOn`. */
+function isOrderingPredecessors(value: unknown): boolean {
+  if (value === undefined) return true;
+  return Array.isArray(value) && value.length <= 8 && value.every(isOpaqueId);
 }
 function isBodyProgramRuntimeValue(value: unknown): boolean {
   if (!isRecord(value) || typeof value.type !== "string") return false;

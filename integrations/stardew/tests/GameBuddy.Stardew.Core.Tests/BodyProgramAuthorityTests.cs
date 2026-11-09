@@ -1773,6 +1773,7 @@ public sealed class BodyProgramAuthorityTests
             ["ActionId"] = "projected as actionId",
             ["CanonicalArguments"] = "projected as x/y when both are integer tile arguments; both absent otherwise",
             ["DependsOn"] = "not projected: the graph is the Mod's own and a caller re-reads it from its own script",
+            ["OrderedAfter"] = "not projected, for the same reason as DependsOn and one more: an ordering edge never skips a node, so no wire fact is owed to it",
             ["Bindings"] = "not projected: a binding is the Mod's internal fact plumbing, never a caller's input",
             ["DerivedResourceClaims"] = "not projected: claims are ownership the Mod enforces, never a caller's input",
         };
@@ -1922,7 +1923,7 @@ public sealed class BodyProgramAuthorityTests
          public BodyProgramJournalReadResult Read() => this.ReadResult ?? (this.Value is null
              ? new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Empty, null)
              : new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, this.Value));
-         public bool TryWrite(string encodedState) { this.WriteCount++; this.Value = encodedState; return true; }
+         public bool TryWrite(string encodedState, string? replacedSiblingFileName = null) { this.WriteCount++; this.Value = encodedState; return true; }
          internal void Set(string value) { this.ReadResult = null; this.Value = value; }
      }
 }

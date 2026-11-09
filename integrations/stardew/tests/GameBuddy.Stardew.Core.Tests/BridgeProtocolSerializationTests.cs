@@ -1041,6 +1041,37 @@ public sealed class BridgeBodyProgramProtocolTests
         reason.Should().Be("invalid_body_program_request");
     }
 
+    /// <summary>
+    /// The ordering-only edge is a SECOND relation, and it has to arrive as itself.
+    ///
+    /// <para>
+    /// `dependsOn` carries two meanings today - "run after this" and "skip me if it fails" - and every published action
+    /// claims `embodied_actor`, so a program that wants two independent steps must chain them and accept the skip. The
+    /// new key is optional: absent is exactly what an older Host said (no ordering-only edges existed), so nothing in a
+    /// 5-key node is reinterpreted. Present, it names predecessors that order the node without feeding it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void CandidateAdapterReadsTheOrderingOnlyPredecessorOfANode()
+    {
+        const string payload = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{},\"dependsOn\":[],\"bindings\":{}},{\"nodeId\":\"second\",\"actionId\":\"navigate\",\"arguments\":{},\"dependsOn\":[],\"orderedAfter\":[\"first\"],\"bindings\":{}}]}";
+        BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(Prefix + payload + "}", out BridgeEnvelope<ActionProgramCandidate>? envelope, out string reason).Should().BeTrue(reason);
+        ActionProgramCandidateNode second = envelope!.Payload.Nodes.Single(node => node.NodeId == "second");
+        second.OrderedAfter.Should().Equal("first");
+        second.DependsOn.Should().BeEmpty("ordering is not consumption: the second node consumes nothing from the first");
+        envelope.Payload.Nodes.Single(node => node.NodeId == "first").OrderedAfter.Should().BeEmpty("an absent key is an empty edge, not an unknown shape");
+    }
+
+    [Fact]
+    public void CandidateAdapterStillRefusesAKeyTheNodeShapeDoesNotName()
+    {
+        // `additionalProperties: false` keeps its meaning: adding one optional key must not turn the node into an open
+        // record that carries anything the sender likes.
+        const string payload = "{\"programId\":\"program_1\",\"nodes\":[{\"nodeId\":\"first\",\"actionId\":\"navigate\",\"arguments\":{},\"dependsOn\":[],\"orderedAfterTwin\":[],\"bindings\":{}}]}";
+        BridgeProtocol.TryDeserializeBodyProgramSubmitRequest(Prefix + payload + "}", out _, out string reason).Should().BeFalse();
+        reason.Should().Be("invalid_body_program_request");
+    }
+
     [Theory]
     [InlineData("07")]
     [InlineData("9223372036854775808")]

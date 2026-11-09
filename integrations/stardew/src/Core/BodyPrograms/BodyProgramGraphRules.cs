@@ -10,9 +10,9 @@ namespace GameBuddy.Stardew.Core.BodyPrograms;
 /// projectors at the top of the rules class are the only place a concrete shape is read.
 /// </para>
 /// <para>
-/// <see cref="OrderedAfter"/> is always empty in this build: an ordering-only edge exists on neither node record yet, so
-/// both projectors answer it empty. It is declared here so the ordering, cycle and eligibility rules are written once,
-/// against the shape they will keep when the field arrives, instead of being rewritten in three readers at once.
+/// <see cref="OrderedAfter"/> is the second edge: a node must not start before these predecessors are terminal, and is not
+/// skipped when one of them fails. It is projected from the wire candidate and from the durable record, which are the only
+/// two places a graph is read from.
 /// </para>
 /// </summary>
 internal sealed record BodyProgramGraphNode(
@@ -41,7 +41,7 @@ internal static class BodyProgramGraphRules
         Array.AsReadOnly(nodes.Values.Select(node => new BodyProgramGraphNode(
             node.NodeId,
             node.DependsOn,
-            Array.Empty<string>(),
+            node.OrderedAfter,
             catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? action)
                 ? Array.AsReadOnly(action!.ResourceTemplate.Select(claim => claim.Key).ToArray())
                 : Array.Empty<string>())).ToArray());
@@ -51,7 +51,7 @@ internal static class BodyProgramGraphRules
         Array.AsReadOnly(program.Nodes.Select(node => new BodyProgramGraphNode(
             node.NodeId,
             node.DependsOn,
-            Array.Empty<string>(),
+            node.OrderedAfter,
             Array.AsReadOnly(node.DerivedResourceClaims.Keys.ToArray()))).ToArray());
 
     /// <summary>The graph of a durable journal program - the same nodes a verified program carries.</summary>

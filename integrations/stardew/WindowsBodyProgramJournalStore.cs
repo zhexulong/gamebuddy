@@ -166,18 +166,18 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore,
         return new(BodyProgramJournalReadStatus.ReadFailed, null);
     }
 
-    public bool TryWrite(string encodedState)
+    public bool TryWrite(string encodedState, string? replacedSiblingFileName = null)
     {
         ArgumentNullException.ThrowIfNull(encodedState);
         lock (this.lifecycleGate)
         {
             if (this.closed)
                 return false;
-            return this.TryWriteCore(encodedState);
+            return this.TryWriteCore(encodedState, replacedSiblingFileName);
         }
     }
 
-    private bool TryWriteCore(string encodedState)
+    private bool TryWriteCore(string encodedState, string? replacedSiblingFileName)
     {
         string? temporaryPath = null;
         try
@@ -218,10 +218,25 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore,
             // recorded here rather than hidden, and it is left open because
             // closing it needs handle-relative NtCreateFile opens, a native
             // boundary this store does not own.
+            string? backupPath = null;
+            if (replacedSiblingFileName is not null)
+            {
+                if (!IsSiblingFileName(replacedSiblingFileName) || directory.Length + 1 + replacedSiblingFileName.Length > MaximumPathLength
+                    || !TryGetSafeTarget(Path.Combine(directory, replacedSiblingFileName), out _))
+                    return false;
+                backupPath = Path.Combine(directory, replacedSiblingFileName);
+            }
+
             if (!TryGetSafeTarget(this.targetPath, out bool targetExists))
                 return false;
 
-            if (targetExists)
+            // `File.Replace` moves the bytes it replaces to the backup in the SAME commit, so a caller setting an
+            // unreadable record aside never leaves an instant in which neither version exists. A store that ignored the
+            // sibling would still answer true here and silently destroy the only record - which is the one thing a
+            // supersede must not do.
+            if (targetExists && backupPath is not null)
+                File.Replace(temporaryPath, this.targetPath, backupPath);
+            else if (targetExists)
                 File.Replace(temporaryPath, this.targetPath, destinationBackupFileName: null);
             else
                 File.Move(temporaryPath, this.targetPath);
@@ -282,6 +297,14 @@ internal sealed class WindowsBodyProgramJournalStore : IBodyProgramJournalStore,
             return false;
         }
     }
+
+    /// <summary>
+    /// A sibling name is a NAME, never a path: the set-aside file lives beside the journal it replaces, so anything that
+    /// could address another directory fails closed instead of being resolved.
+    /// </summary>
+    private static bool IsSiblingFileName(string name) =>
+        name.Length > 0 && name is not ("." or "..") && string.Equals(Path.GetFileName(name), name, StringComparison.Ordinal)
+        && name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0;
 
     private static bool TryGetSafeTarget(string path, out bool exists)
     {

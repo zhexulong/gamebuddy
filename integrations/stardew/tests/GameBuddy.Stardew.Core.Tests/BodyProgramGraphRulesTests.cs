@@ -143,6 +143,6 @@ public sealed class BodyProgramGraphRulesTests
         public BodyProgramJournalReadResult Read() => this.value is null
             ? new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Empty, null)
             : new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, this.value);
-        public bool TryWrite(string encodedState) => true;
+        public bool TryWrite(string encodedState, string? replacedSiblingFileName = null) => true;
     }
 }

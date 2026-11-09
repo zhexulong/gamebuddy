@@ -81,7 +81,21 @@ public sealed record BodyProgramCanonicalValue(
 /// <summary>Strict Host transport candidate. Program-level deadline and resources are deliberately absent from the frozen wire contract.</summary>
 public sealed record ActionProgramCandidate(string ProgramId, IReadOnlyList<ActionProgramCandidateNode> Nodes);
 public sealed record ActionProgramCandidateNode(string NodeId, string ActionId, IReadOnlyDictionary<string, BodyProgramRuntimeValue> Arguments,
-    IReadOnlyList<string> DependsOn, IReadOnlyDictionary<string, ActionProgramBinding> Bindings);
+    IReadOnlyList<string> DependsOn, IReadOnlyDictionary<string, ActionProgramBinding> Bindings)
+{
+    /// <summary>
+    /// Predecessors this node must wait for WITHOUT consuming anything from them: it does not start before they are
+    /// terminal, and it is NOT skipped when one of them fails.
+    ///
+    /// <para>
+    /// <see cref="DependsOn"/> carried both meanings alone, and every published action claims <c>embodied_actor</c>, so the
+    /// claim-ordering rule forced two independent steps into a chain - which made the second a dependent that a failure of
+    /// the first skipped. Absent is the older meaning exactly (no ordering-only edges existed), so a 5-key node is not
+    /// reinterpreted; present, this edge orders without feeding.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<string> OrderedAfter { get; init; } = Array.Empty<string>();
+}
 public sealed record ActionProgramBinding(string ProducerNodeId, string FactName);
 
 public enum BodyProgramDiagnosticSeverity { Error = 1 }
@@ -185,7 +199,19 @@ public sealed record BodyProgramTerminalResult(NodeExecutionBinding Execution, B
     string? ReceiptId, string? Evidence, string? PostconditionVerification, string? FailureCode = null, string? Hint = null);
 
 public sealed record VerifiedBodyProgramNode(string NodeId, string ActionId, IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments,
-    IReadOnlyList<string> DependsOn, IReadOnlyDictionary<string, ActionProgramBinding> Bindings, IReadOnlyDictionary<string, string> DerivedResourceClaims);
+    IReadOnlyList<string> DependsOn, IReadOnlyDictionary<string, ActionProgramBinding> Bindings, IReadOnlyDictionary<string, string> DerivedResourceClaims)
+{
+    /// <summary>
+    /// The ordering-only predecessors of this node, persisted rather than derived.
+    ///
+    /// <para>
+    /// The durable record is compared against a fresh candidate on every re-submission (<c>BodyProgramCanonical.
+    /// CandidateEquals</c>), and `programId` is Host-chosen, so dropping this key would answer `Idempotent` for a
+    /// different graph - or `Conflict` for the same one after a reload.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<string> OrderedAfter { get; init; } = Array.Empty<string>();
+}
 public sealed record VerifiedBodyProgram(string ProgramId, long CatalogRevision, IReadOnlyList<VerifiedBodyProgramNode> Nodes);
 
 /// <summary>Exact diagnostic projection for one accepted node attempt. Claim
@@ -308,7 +334,29 @@ public sealed record BodyNodeAdmissionUnavailableResult(NodeAdmissionChallenge C
 
 public enum BodyProgramJournalReadStatus { Empty, Present, ReadFailed }
 public sealed record BodyProgramJournalReadResult(BodyProgramJournalReadStatus Status, string? Payload);
-public interface IBodyProgramJournalStore { BodyProgramJournalReadResult Read(); bool TryWrite(string encodedState); }
+
+/// <summary>
+/// An older journal that was set aside rather than read: the shape it was written in, and the lengths of what was in it.
+///
+/// <para>
+/// Counts, not contents: the operation is published once so that "a fresh journal started" is a fact the operator can see,
+/// while nothing of the old document becomes an input. The condition has no <see cref="BodyProgramJournalOpenStatus"/>
+/// member on purpose - that enum is a WRITABILITY statement, and a superseded journal is writable.
+/// </para>
+/// </summary>
+public sealed record BodyProgramJournalSupersede(int FromSchema, int DiscardedPrograms, long DiscardedNodes);
+
+public interface IBodyProgramJournalStore
+{
+    BodyProgramJournalReadResult Read();
+
+    /// <summary>
+    /// Commits <paramref name="encodedState"/>. When <paramref name="replacedSiblingFileName"/> is given, the bytes this
+    /// write REPLACES are kept under that name in the same commit, so a caller that is setting an unreadable record aside
+    /// never leaves an instant in which neither exists.
+    /// </summary>
+    bool TryWrite(string encodedState, string? replacedSiblingFileName = null);
+}
 public enum BodyProgramJournalOpenStatus { Empty, Opened, RecoveryRequired, Corrupt, PersistenceReadFailed, PersistenceWriteFailed }
 public enum BodyProgramControllerResultCode { Succeeded, NotFound, InvalidInput, ProgramNotActive, NodeNotEligible, PolicyIdentityStale, GrantMismatch, ExecutionBindingMismatch, FactProvenanceMismatch, InvalidFact, TerminalProofMissing, RecoveryRequired, PersistenceWriteFailed, DeadlineExpired }
 public readonly record struct BodyProgramControllerResult<T>(BodyProgramControllerResultCode Code, T? Value) where T : class { public bool IsSuccess => this.Code == BodyProgramControllerResultCode.Succeeded && this.Value is not null; }

@@ -1174,14 +1174,16 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         List<ActionProgramCandidateNode> nodes = new();
         foreach (JsonElement node in value.GetProperty("nodes").EnumerateArray())
         {
-            if (node.ValueKind != JsonValueKind.Object || !HasExactProperties(node, "nodeId", "actionId", "arguments", "dependsOn", "bindings")
+            if (node.ValueKind != JsonValueKind.Object
+                || !HasExactPropertiesOrOptional(node, new[] { "nodeId", "actionId", "arguments", "dependsOn", "bindings" }, new[] { "orderedAfter" })
                 || !ReadOpaqueString(node.GetProperty("nodeId"), out string? nodeId)
                 || !ReadOpaqueString(node.GetProperty("actionId"), out string? actionId)
                 || !TryReadRuntimeArguments(node.GetProperty("arguments"), out IReadOnlyDictionary<string, BodyProgramRuntimeValue>? arguments)
                 || !TryReadIdentifierList(node.GetProperty("dependsOn"), 8, out IReadOnlyList<string>? dependsOn)
+                || !TryReadOptionalIdentifierList(node, "orderedAfter", 8, out IReadOnlyList<string> orderedAfter)
                 || !TryReadBodyProgramBindings(node.GetProperty("bindings"), out IReadOnlyDictionary<string, ActionProgramBinding>? bindings))
                 return false;
-            nodes.Add(new ActionProgramCandidateNode(nodeId!, actionId!, arguments!, dependsOn!, bindings!));
+            nodes.Add(new ActionProgramCandidateNode(nodeId!, actionId!, arguments!, dependsOn!, bindings!) { OrderedAfter = orderedAfter });
         }
         candidate = new ActionProgramCandidate(value.GetProperty("programId").GetString()!, Array.AsReadOnly(nodes.ToArray()));
         return true;
@@ -1247,6 +1249,24 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         List<string> result = new();
         foreach (JsonElement item in value.EnumerateArray()) if (!ReadOpaqueString(item, out string? id)) return false; else result.Add(id!);
         values = Array.AsReadOnly(result.ToArray()); return true;
+    }
+
+    /// <summary>
+    /// An optional identifier list: absent reads as an EMPTY list, never as an unknown shape.
+    ///
+    /// <para>
+    /// This is the one property the optional key has. A 5-key node is what every Host sent before an ordering-only edge
+    /// existed, so an absent `orderedAfter` means exactly what it said then: nothing is ordered by it. A key that is
+    /// present but malformed fails the whole frame, the way every other malformed field does.
+    /// </para>
+    /// </summary>
+    private static bool TryReadOptionalIdentifierList(JsonElement node, string name, int maximum, out IReadOnlyList<string> values)
+    {
+        values = Array.Empty<string>();
+        if (!node.TryGetProperty(name, out JsonElement value)) return true;
+        if (!TryReadIdentifierList(value, maximum, out IReadOnlyList<string>? read) || read is null) return false;
+        values = read;
+        return true;
     }
 
     private static bool TryReadBodyProgramBindings(JsonElement value, out IReadOnlyDictionary<string, ActionProgramBinding>? bindings)
@@ -1595,7 +1615,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     /// tail. It mirrors the Host's <c>hasExactKeysOrOptional</c> so the two sides state the same rule once.
     /// </para>
     /// </summary>
-    private static bool HasExactPropertiesOrOptional(JsonElement value, string[] required, string[] optional)
+    internal static bool HasExactPropertiesOrOptional(JsonElement value, string[] required, string[] optional)
     {
         if (value.ValueKind != JsonValueKind.Object) return false;
         HashSet<string> requiredNames = new(required, StringComparer.Ordinal);

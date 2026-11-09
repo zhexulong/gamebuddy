@@ -184,6 +184,46 @@ public sealed class WindowsBodyProgramJournalStoreTests : IDisposable
         File.ReadAllText(abortedTemp).Should().Be("aborted-before-rename");
     }
 
+    /// <summary>
+    /// Setting a record aside keeps the bytes it replaces in the SAME commit.
+    ///
+    /// <para>
+    /// This is the whole reason `IBodyProgramJournalStore.TryWrite` takes the sibling name: `File.Replace` moves the
+    /// destination's bytes to the backup, so after one call there is never an instant in which neither version exists. A
+    /// store that accepted the argument and ignored it would answer true here and destroy the only record - the exact
+    /// failure a supersede may not have.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheBytesAReplacementSetsAsideSurviveTheSameCommit()
+    {
+        BridgeScope scope = Scope("save");
+        WindowsBodyProgramJournalStore store = this.Store(scope);
+        store.TryWrite("journal-of-an-older-shape").Should().BeTrue();
+        string directory = this.ScopeDirectory("save");
+
+        store.TryWrite("fresh-journal", BodyProgramJournalPersistence.SupersededFileName(3)).Should().BeTrue();
+
+        File.ReadAllText(Path.Combine(directory, "journal.json")).Should().Be("fresh-journal");
+        File.ReadAllText(Path.Combine(directory, BodyProgramJournalPersistence.SupersededFileName(3))).Should().Be("journal-of-an-older-shape");
+        this.Store(scope).Read().Should().Be(new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, "fresh-journal"));
+    }
+
+    /// <summary>A sibling name is a name: a path is refused, and nothing is written on either side.</summary>
+    [Fact]
+    public void ASetAsideNameThatIsAPathIsRefusedAndLeavesBothFilesAlone()
+    {
+        BridgeScope scope = Scope("save");
+        WindowsBodyProgramJournalStore store = this.Store(scope);
+        store.TryWrite("committed").Should().BeTrue();
+        string directory = this.ScopeDirectory("save");
+
+        store.TryWrite("fresh", Path.Combine("..", "escape.json")).Should().BeFalse();
+
+        File.ReadAllText(Path.Combine(directory, "journal.json")).Should().Be("committed");
+        File.Exists(Path.Combine(directory, "escape.json")).Should().BeFalse();
+    }
+
     public void Dispose()
     {
         foreach (WindowsBodyProgramJournalStore store in this.stores)

@@ -1007,6 +1007,14 @@ public sealed partial class ModEntry : Mod
                         // The controller is composed after the authenticated bridge and
                         // its pipe are created below, so its admission transport is never
                         // accidentally left null in production.
+                        //
+                        // THE ONE OPERATIONAL FACT OF A SUPERSEDE, published at the open site: a journal written by an older
+                        // shape was set aside intact and a fresh writable one started. Counts, never contents - nothing of
+                        // the old payload was read, and nothing of it became an input to this session.
+                        if (bodyProgramAuthority.Superseded is { } superseded)
+                            this.Monitor.Log(
+                                $"body_program_journal_superseded fromSchema={superseded.FromSchema};discardedPrograms={superseded.DiscardedPrograms};discardedNodes={superseded.DiscardedNodes}",
+                                LogLevel.Warn);
                     }
                     else
                     {

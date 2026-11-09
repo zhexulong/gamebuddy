@@ -232,7 +232,7 @@ public sealed class RecoveryScopeTests
         public BodyProgramJournalReadResult Read() => this.value is null
             ? new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Empty, null)
             : new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, this.value);
-        public bool TryWrite(string encodedState)
+        public bool TryWrite(string encodedState, string? replacedSiblingFileName = null)
         {
             if (this.FailWrites) return false;
             this.value = encodedState;

@@ -527,7 +527,7 @@ public sealed class ForEachNodeExecutionTests
             ? new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Empty, null)
             : new BodyProgramJournalReadResult(BodyProgramJournalReadStatus.Present, this.value);
 
-        public bool TryWrite(string encodedState)
+        public bool TryWrite(string encodedState, string? replacedSiblingFileName = null)
         {
             this.value = encodedState;
             return true;
