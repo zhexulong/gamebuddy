@@ -53,6 +53,40 @@ public sealed class ModalAnswerDialogueTests
     }
 
     [Fact]
+    public void Answer_IsRejected_ForTheEnginesOwnBedPrompt()
+    {
+        // MEASURED 2026-11-09 (round41): answering `Yes` to the bed prompt crossed a day with no execution behind it, and
+        // the still-pending `sleep` intent crossed a second one 9 s later. `advance_day` is the action that crosses a
+        // night WITH a receipt, so the crossing is never this seam's.
+        var location = new AnswerRecordingLocation(acceptAnswer: true) { lastQuestionKey = NativeSleepPrompt.QuestionKey };
+        RunWithGameState(CreateBedPrompt(), location, () =>
+        {
+            LocalExecutionReceipt receipt = InvokeAnswer(CreateManager(1001), "req_answer_bed_prompt", "Yes");
+
+            receipt.State.Should().Be(ExecutionState.Rejected);
+            receipt.ReasonCode.Should().Be("native_sleep_prompt_owned_by_advance_day");
+            location.AnsweredResponse.Should().BeNull("the answer that ends a day must never reach the engine from here");
+        });
+    }
+
+    [Fact]
+    public void DecliningTheBedPrompt_IsStillAnswerable()
+    {
+        // The other half of the same ruling: `No` crosses nothing, and refusing it too would leave the prompt holding the
+        // actor with no forward action at all - the zero-forward-path defect, in the one state whose only exits are
+        // "sleep" and "not tonight".
+        var location = new AnswerRecordingLocation(acceptAnswer: true) { lastQuestionKey = NativeSleepPrompt.QuestionKey };
+        RunWithGameState(CreateBedPrompt(), location, () =>
+        {
+            LocalExecutionReceipt receipt = InvokeAnswer(CreateManager(1001), "req_decline_bed_prompt", "No");
+
+            receipt.State.Should().Be(ExecutionState.Succeeded);
+            receipt.ReasonCode.Should().Be("answer_dialogue_answered");
+            location.AnsweredResponse!.responseKey.Should().Be("No");
+        });
+    }
+
+    [Fact]
     public void Answer_IsRejected_ForAnInformationalDialogue()
     {
         RunWithGameState(CreateDialogue(isQuestion: false), new AnswerRecordingLocation(acceptAnswer: true), () =>
@@ -208,6 +242,10 @@ public sealed class ModalAnswerDialogueTests
             receipt.ReasonCode.Should().Be("world_not_ready");
         });
     }
+
+    /// <summary>The engine's own bed prompt: `GameLocation.cs:3765` draws it with `createYesNoResponses()`.</summary>
+    private static DialogueBox CreateBedPrompt() =>
+        CreateDialogue(isQuestion: true, new Response("Yes", "Yes"), new Response("No", "No"));
 
     private static DialogueBox CreateDialogue(bool isQuestion, params Response[] responses)
     {

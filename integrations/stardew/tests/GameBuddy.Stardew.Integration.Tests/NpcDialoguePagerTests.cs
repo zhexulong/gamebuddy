@@ -251,6 +251,70 @@ public sealed class NpcDialoguePagerTests
     }
 
     [Fact]
+    public void Observe_DoesNotOfferTheEnginesOwnBedPromptToTheAgent()
+    {
+        // MEASURED 2026-11-09 (round41, `.live-runs/game-ladder/2026-11-09T18-26-53-581Z-multiday_routine`): the bed
+        // prompt went out as `npc_dialogue_46345_19` at 21:00 (`question=true`), the Agent answered `Yes`, the day crossed
+        // at 02:42:20, and the still-pending `sleep` intent crossed ANOTHER day at 02:42:29 - six `day_started` facts for
+        // three nights. Answering that question IS a calendar crossing (`GameLocation.cs:3763-3765`, `Sleep_Yes`), and
+        // `advance_day` is the action that crosses a night with a receipt, so the prompt is never the pager's to present.
+        using var game = new GameStateScope();
+        ScriptedDialogueBox box = CreateScriptedDialogueBox("Do you want to go to sleep?");
+        box.isQuestion = true;
+        box.responses = new[] { new Response("Yes", "Yes"), new Response("No", "No") };
+        game.SetActiveMenu(box);
+        BridgeSession session = CreateSession();
+        var sink = new OutboundSink();
+        session.SetOutboundSink(sink.Capture);
+        Authenticate(session);
+        var pager = new NpcDialoguePager(new DummyMonitor(), () => 6);
+        Func<string?>? keyBefore = NativeSleepPrompt.QuestionKeyProvider;
+
+        try
+        {
+            NativeSleepPrompt.QuestionKeyProvider = () => NativeSleepPrompt.QuestionKey;
+            pager.Observe(session);
+            pager.Observe(session);
+        }
+        finally
+        {
+            NativeSleepPrompt.QuestionKeyProvider = keyBefore;
+        }
+
+        sink.Emissions.Should().Be(0, "answering this question ends a day, and `advance_day` is the action that receipts that");
+    }
+
+    [Fact]
+    public void Observe_StillOffersAQuestionThatIsNotTheBedPrompt()
+    {
+        // The control for the case above: the pager must stay silent on ONE identity, not on questions in general -
+        // a gate that stopped presenting every question would read identically on the run it was written for.
+        using var game = new GameStateScope();
+        ScriptedDialogueBox box = CreateScriptedDialogueBox("Sell me this old building?");
+        box.isQuestion = true;
+        box.responses = new[] { new Response("Yes", "Yes"), new Response("No", "No") };
+        game.SetActiveMenu(box);
+        BridgeSession session = CreateSession();
+        var sink = new OutboundSink();
+        session.SetOutboundSink(sink.Capture);
+        Authenticate(session);
+        var pager = new NpcDialoguePager(new DummyMonitor(), () => 6);
+        Func<string?>? keyBefore = NativeSleepPrompt.QuestionKeyProvider;
+
+        try
+        {
+            NativeSleepPrompt.QuestionKeyProvider = () => "fork1";
+            pager.Observe(session);
+        }
+        finally
+        {
+            NativeSleepPrompt.QuestionKeyProvider = keyBefore;
+        }
+
+        sink.Emissions.Should().Be(1, "only the engine's own bed prompt is the overnight's business");
+    }
+
+    [Fact]
     public void Observe_DoesNotDriveAnAlreadyReportedBoxAgain()
     {
         // The same re-tracking, on a non-question box, is worse than a duplicate fact: re-tracking runs the native
