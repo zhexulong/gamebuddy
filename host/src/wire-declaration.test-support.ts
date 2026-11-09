@@ -6,9 +6,14 @@
  * DOMAINS. Both must read the same two sources the same way, or the two gates can disagree about what a record
  * declares and neither reading is authority. This module is that one reader.
  * </p>
+ *
+ * <p>
+ * Every reader accepts its SOURCE as an argument defaulting to the real file, and every one of them THROWS when it
+ * reads nothing. A reader that returned an empty population would agree perfectly with an empty comparison, so a
+ * missing reading is an error at the reader - `blocked` at the gate - and never a clean tree.
+ * </p>
  */
 
-import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,6 +68,64 @@ const ALL_TS = `${FACTS}\n${PROTOCOL}`;
 export interface ModField {
   readonly type: string;
   readonly name: string;
+}
+
+/**
+ * The content between the bracket at `open` and its matching partner.
+ *
+ * Comments are SKIPPED rather than counted. A declaration's parameter list carries `(` and `//` inside its own
+ * comments, so counting them closes a group the code does not close there and the slice ends in the middle of a
+ * declaration - which is how `modFamilies()` came to read past the end of `BridgeSnapshot` and into the record
+ * declared after it.
+ */
+function bracketed(source: string, open: number, what: string): string {
+  let depth = 0;
+  for (let index = open; index < source.length; index += 1) {
+    const character = source[index] ?? "";
+    if (character === "/" && source[index + 1] === "/") {
+      const lineEnd = source.indexOf("\n", index);
+      index = lineEnd < 0 ? source.length : lineEnd;
+      continue;
+    }
+    if (character === "/" && source[index + 1] === "*") {
+      const commentEnd = source.indexOf("*/", index + 2);
+      if (commentEnd < 0) throw new Error(`${what}: a block comment never closes`);
+      index = commentEnd + 1;
+      continue;
+    }
+    if ("([{".includes(character)) depth += 1;
+    else if (")]}".includes(character)) {
+      depth -= 1;
+      if (depth === 0) return source.slice(open + 1, index);
+    }
+  }
+  throw new Error(`${what}: the bracket opened at ${open} never closes`);
+}
+
+/** Every `{ ... }` group at the top level of a source slice, in source order. */
+function topLevelObjects(source: string): readonly string[] {
+  const objects: string[] = [];
+  let depth = 0;
+  let start = -1;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index] ?? "";
+    if (character === "{") {
+      if (depth === 0) start = index;
+      depth += 1;
+    } else if (character === "}") {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        objects.push(source.slice(start, index + 1));
+        start = -1;
+      }
+    }
+  }
+  return objects;
+}
+
+/** Every quoted literal in a source slice, in order. */
+function quotedLiterals(source: string): readonly string[] {
+  return [...source.matchAll(/"([^"]+)"/gu)].map((entry) => captured(entry, 1, "a quoted literal"));
 }
 
 /**
@@ -122,13 +185,13 @@ function readParameter(parameter: string, record: string): ModField | null {
 }
 
 /** `record` name -> its declared fields, from one-line and multi-line record declarations alike. */
-export function modRecords(): Map<string, readonly ModField[]> {
+export function modRecords(source: string = MODELS): Map<string, readonly ModField[]> {
   const records = new Map<string, readonly ModField[]>();
   // The parameter list ends at a `)` followed by the record's own `;` OR by a body `{`. Anchoring on `);` alone read
   // `BridgeScope` - whose declaration is followed by an `IsValid` body - as one enormous parameter, because the first
   // `);` after it is inside that body. It is not a snapshot family, so the name-only gate never noticed; a DOMAIN gate
   // would have attributed its fields to the wrong record.
-  for (const record of MODELS.matchAll(/public sealed record (Bridge\w+)\(([\s\S]*?)\)\s*(?:;|\{)/g)) {
+  for (const record of source.matchAll(/public sealed record (Bridge\w+)\(([\s\S]*?)\)\s*(?:;|\{)/g)) {
     const name = captured(record, 1, "a Bridge record name");
     const body = withoutComments(captured(record, 2, `the \`${name}\` record body`));
     const fields = splitTopLevel(body)
@@ -140,27 +203,85 @@ export function modRecords(): Map<string, readonly ModField[]> {
   return records;
 }
 
-/** family field name -> the record type it publishes. From `BridgeSnapshot`'s own declaration. */
-export function modFamilies(): Map<string, string> {
-  const declaration = MODELS.indexOf("public sealed record BridgeSnapshot(");
-  assert.ok(declaration >= 0, "BridgeSnapshot must be findable by its declaration");
-  // The declaration's own text is what tells the parser where its parameter list ends, so an unreadable end is a
-  // parser failure named here rather than a slice that silently starts from 0.
-  const declaredAt = MODELS.indexOf("\n)", declaration);
-  if (declaredAt < 0)
-    throw new Error("BridgeSnapshot's declaration has no end: the C# source is not the shape this reads");
-  const parameters = splitTopLevel(
-    MODELS.slice(declaration + "public sealed record BridgeSnapshot(".length, declaredAt),
+/**
+ * What one member of `BridgeSnapshot` IS, which decides what the Host has to declare about it.
+ *
+ * `family` publishes rows of a record; `elementFamily` publishes a list of primitives; `nestedRecord` publishes ONE
+ * record; `scalar` publishes a primitive. The last two are the members a family-shaped comparison never reached - and
+ * a member outside the family table is exactly where `sceneTarget` lived: the Host admitted the key and no validator
+ * named it, so a value of any shape was accepted.
+ */
+export type SnapshotMemberKind = "family" | "elementFamily" | "nestedRecord" | "scalar";
+
+export interface SnapshotMember {
+  /** The C# parameter name. */
+  readonly name: string;
+  /** The key the snapshot carries: the parameter name with a lowercased first letter. */
+  readonly wireName: string;
+  /** The declared C# type, attributes stripped. */
+  readonly declaredType: string;
+  readonly kind: SnapshotMemberKind;
+  /** The record this member publishes, for a `family` or a `nestedRecord`. */
+  readonly record: string | null;
+}
+
+const SNAPSHOT_DECLARATION = "public sealed record BridgeSnapshot(";
+
+/**
+ * EVERY member of the Mod's snapshot record, in declaration order.
+ *
+ * This is the population the declaration gate compares, and it is derived from the declaration itself rather than
+ * from a list: a member added to the record is covered without editing a gate. The parameter list's own end comes
+ * from bracket matching rather than from the next `\n)` in the file, because that reader read past the end of
+ * `BridgeSnapshot` and into the record declared after it.
+ */
+export function modSnapshotMembers(source: string = MODELS): readonly SnapshotMember[] {
+  const declaration = source.indexOf(SNAPSHOT_DECLARATION);
+  if (declaration < 0)
+    throw new Error(`BridgeSnapshot is not declared as \`${SNAPSHOT_DECLARATION}\`: the C# scan found nothing`);
+  const body = withoutComments(
+    bracketed(source, declaration + SNAPSHOT_DECLARATION.length - 1, "BridgeSnapshot's declaration"),
   );
-  const families = new Map<string, string>();
-  for (const parameter of parameters) {
-    const match = /IReadOnlyList<Bridge(\w+)>\?\s+(\w+)/.exec(parameter);
-    if (match !== null)
-      families.set(
-        captured(match, 2, "a BridgeSnapshot family name"),
-        `Bridge${captured(match, 1, "a BridgeSnapshot family type")}`,
-      );
+  const members: SnapshotMember[] = [];
+  for (const parameter of splitTopLevel(body)) {
+    const field = readParameter(parameter, "BridgeSnapshot");
+    if (field !== null) members.push(describeMember(field));
   }
+  if (members.length === 0)
+    throw new Error("BridgeSnapshot's declaration yielded no member: the C# scan is broken, not the tree");
+  return members;
+}
+
+function describeMember(field: ModField): SnapshotMember {
+  const wireName = lowerFirst(field.name);
+  const recordList = /^IReadOnlyList<(Bridge\w+)>\??$/u.exec(field.type);
+  if (recordList !== null)
+    return {
+      name: field.name,
+      wireName,
+      declaredType: field.type,
+      kind: "family",
+      record: captured(recordList, 1, `the \`${field.name}\` family record`),
+    };
+  if (/^IReadOnlyList<\w+>\??$/u.test(field.type))
+    return { name: field.name, wireName, declaredType: field.type, kind: "elementFamily", record: null };
+  const nested = /^(Bridge\w+)\??$/u.exec(field.type);
+  if (nested !== null)
+    return {
+      name: field.name,
+      wireName,
+      declaredType: field.type,
+      kind: "nestedRecord",
+      record: captured(nested, 1, `the \`${field.name}\` nested record`),
+    };
+  return { name: field.name, wireName, declaredType: field.type, kind: "scalar", record: null };
+}
+
+/** family field name -> the record type it publishes. From `BridgeSnapshot`'s own declaration. */
+export function modFamilies(source: string = MODELS): Map<string, string> {
+  const families = new Map<string, string>();
+  for (const member of modSnapshotMembers(source))
+    if (member.kind === "family" && member.record !== null) families.set(member.name, member.record);
   return families;
 }
 
@@ -170,10 +291,25 @@ export interface HostValidator {
   readonly body: string;
 }
 
+/**
+ * function name -> its body, for every function declared in the Host's two protocol sources.
+ *
+ * Not only the `is*` predicates: the snapshot's nested records are decided by functions named `validate*` and
+ * `is*SummaryFact`, and a reader that only knew the `is*: boolean` shape left every one of those unchecked.
+ */
+export function hostFunctionBodies(source: string = ALL_TS): Map<string, string> {
+  const bodies = new Map<string, string>();
+  for (const match of source.matchAll(/function (\w+)\s*\([^)]*\)[^{]*\{([\s\S]*?)\n\}/gu)) {
+    const name = captured(match, 1, "a Host function name");
+    if (!bodies.has(name)) bodies.set(name, captured(match, 2, `the \`${name}\` body`));
+  }
+  return bodies;
+}
+
 /** predicate function name -> its key list (null when it names none). */
-export function hostValidators(): Map<string, HostValidator | null> {
+export function hostValidators(source: string = ALL_TS): Map<string, HostValidator | null> {
   const validators = new Map<string, HostValidator | null>();
-  for (const match of ALL_TS.matchAll(/function (is\w+)\([^)]*\): boolean \{([\s\S]*?)\n\}/g)) {
+  for (const match of source.matchAll(/function (is\w+)\([^)]*\): boolean \{([\s\S]*?)\n\}/g)) {
     const name = captured(match, 1, "a Host snapshot validator name");
     const body = captured(match, 2, `the \`${name}\` validator body`);
     // Three helpers, and all three are honest field lists: `hasExactKeys` demands exact equality, `hasOnlyKeys` allows a
@@ -197,26 +333,100 @@ export function hostValidators(): Map<string, HostValidator | null> {
   return validators;
 }
 
+/**
+ * Every member name the Host's functions actually NAME, as `value.<name>`.
+ *
+ * This is the guarantee available for a scalar: the bridge admits the key (`SNAPSHOT_KEYS`) and something in the
+ * validators reads it. A member the Host admits and never names is accepted with any value of any type - which is
+ * the `sceneTarget` shape one level up, and the reason this set exists rather than a second key list.
+ */
+export function hostNamedMembers(source: string = ALL_TS): Set<string> {
+  const named = new Set<string>();
+  for (const body of hostFunctionBodies(source).values())
+    for (const match of body.matchAll(/\bvalue\.(\w+)/gu)) named.add(captured(match, 1, "a named snapshot member"));
+  return named;
+}
+
 /** Every key the Host's snapshot validator admits at all, from `SNAPSHOT_KEYS`. */
-export function hostSnapshotKeys(): Set<string> {
-  const declaration = PROTOCOL.indexOf("const SNAPSHOT_KEYS");
+export function hostSnapshotKeys(source: string = PROTOCOL): Set<string> {
+  const declaration = source.indexOf("const SNAPSHOT_KEYS");
   if (declaration < 0) throw new Error("SNAPSHOT_KEYS is not declared in protocol.ts: this gate reads it by name");
-  const end = PROTOCOL.indexOf("]", declaration);
-  if (end < 0) throw new Error("SNAPSHOT_KEYS has no closing bracket: the declaration is not the shape this reads");
-  const block = PROTOCOL.slice(declaration, end);
-  const keys = new Set<string>();
-  for (const match of block.matchAll(/"([^"]+)"/g)) keys.add(captured(match, 1, "a SNAPSHOT_KEYS entry"));
+  const open = source.indexOf("[", declaration);
+  if (open < 0) throw new Error("SNAPSHOT_KEYS has no array: the declaration is not the shape this reads");
+  const keys = new Set<string>(quotedLiterals(bracketed(source, open, "SNAPSHOT_KEYS")));
+  if (keys.size === 0) throw new Error("SNAPSHOT_KEYS declares no key: the admission boundary is unreadable");
   return keys;
 }
 
-/** `field` -> the `accepts:` predicate name, from the Host's own family table. */
-export function hostFamilyRules(): Map<string, string> {
-  const rules = new Map<string, string>();
-  for (const match of PROTOCOL.matchAll(/\{ field: "(\w+)", maxItems: \d+, accepts: (\w+) \}/g))
-    rules.set(
-      captured(match, 1, "a snapshot family field"),
-      captured(match, 2, `the \`accepts\` predicate of \`${captured(match, 1, "a snapshot family field")}\``),
+/**
+ * One entry of the Host's `SNAPSHOT_FAMILY_RULES`: the field it decides, and the predicate it hands each entry to.
+ *
+ * `accepts` is kept as WRITTEN rather than as a name, because a rule's predicate may be an inline arrow. The previous
+ * reader matched only `{ field: "x", maxItems: N, accepts: isX }` exactly, so it silently dropped every entry carrying
+ * a `narrate:` or an inline predicate - nine of the eighty-seven - and the declaration gate turned that drop into a
+ * pass. Reading the entry structurally is what makes the omission impossible rather than merely noted.
+ */
+export interface HostFamilyRule {
+  readonly field: string;
+  readonly accepts: string;
+  /** True when `accepts` is an inline function, so no named key list exists to compare against. */
+  readonly inline: boolean;
+}
+
+function readRuleEntry(object: string): HostFamilyRule {
+  const field = /\bfield:\s*"(\w+)"/u.exec(object);
+  if (field === null) throw new Error(`a SNAPSHOT_FAMILY_RULES entry names no field: "${object.slice(0, 120)}"`);
+  const name = captured(field, 1, "a snapshot family field");
+  const accepts = /\baccepts:\s*/u.exec(object);
+  if (accepts === null) throw new Error(`the SNAPSHOT_FAMILY_RULES entry for \`${name}\` names no accepts predicate`);
+  const expression = readRuleExpression(object, accepts.index + accepts[0].length);
+  return { field: name, accepts: expression, inline: !/^\w+$/u.test(expression) };
+}
+
+/** The expression starting at `start`, ending at the entry's own top-level `,` or its closing `}`. */
+function readRuleExpression(object: string, start: number): string {
+  let depth = 0;
+  let expression = "";
+  for (let index = start; index < object.length; index += 1) {
+    const character = object[index] ?? "";
+    if ("([{".includes(character)) depth += 1;
+    else if (")]}".includes(character)) {
+      if (depth === 0) break;
+      depth -= 1;
+    } else if (character === "," && depth === 0) break;
+    expression += character;
+  }
+  const trimmed = expression.trim();
+  if (trimmed.length === 0)
+    throw new Error(`a SNAPSHOT_FAMILY_RULES entry has an empty accepts expression: "${object.slice(0, 120)}"`);
+  return trimmed;
+}
+
+/** EVERY entry of the Host's family table, in declaration order. */
+export function hostFamilyRuleEntries(source: string = PROTOCOL): readonly HostFamilyRule[] {
+  const declaration = source.indexOf("export const SNAPSHOT_FAMILY_RULES");
+  if (declaration < 0)
+    throw new Error("SNAPSHOT_FAMILY_RULES is not declared in protocol.ts: this gate reads it by name");
+  const frozen = source.indexOf("Object.freeze(", declaration);
+  if (frozen < 0)
+    throw new Error(
+      "SNAPSHOT_FAMILY_RULES is not an Object.freeze([...]) literal: the declaration is not the shape this reads",
     );
+  const list = withoutComments(bracketed(source, source.indexOf("[", frozen), "SNAPSHOT_FAMILY_RULES"));
+  const entries = topLevelObjects(list).map(readRuleEntry);
+  if (entries.length === 0)
+    throw new Error("SNAPSHOT_FAMILY_RULES declares no entry: the Host's rule table is unreadable");
+  return entries;
+}
+
+/** `field` -> its rule, from the Host's own family table. */
+export function hostFamilyRules(source: string = PROTOCOL): Map<string, HostFamilyRule> {
+  const rules = new Map<string, HostFamilyRule>();
+  for (const entry of hostFamilyRuleEntries(source)) {
+    if (rules.has(entry.field))
+      throw new Error(`\`${entry.field}\` is declared twice in SNAPSHOT_FAMILY_RULES: a field is decided once`);
+    rules.set(entry.field, entry);
+  }
   return rules;
 }
 
@@ -233,17 +443,68 @@ export const lowerFirst = (value: string): string => `${value.charAt(0).toLowerC
  */
 export function validatorFor(
   family: string,
-  rules: ReadonlyMap<string, string>,
+  rules: ReadonlyMap<string, HostFamilyRule>,
   predicates: ReadonlyMap<string, HostValidator | null>,
 ): Readonly<{ missing: string }> | Readonly<{ name: string; validator: HostValidator }> {
   const rule = rules.get(family);
   if (rule === undefined) return { missing: `the Host declares no rule for ${family}, so it is never validated` };
-  const predicate = predicates.get(rule);
+  if (rule.inline)
+    return {
+      missing: `the Host's rule for ${family} hands each entry to \`${rule.accepts}\`, which names no key list, so its field set is not checkable`,
+    };
+  const predicate = predicates.get(rule.accepts);
   if (predicate === undefined)
     return {
-      missing: `the Host's rule for ${family} accepts \`${rule}\`, which is not defined in protocol-target-facts.ts`,
+      missing: `the Host's rule for ${family} accepts \`${rule.accepts}\`, which is not defined in protocol-target-facts.ts`,
     };
   if (predicate === null)
-    return { missing: `\`${rule}\` (${family}) names no key list, so its field set is not checkable` };
-  return { name: rule, validator: predicate };
+    return { missing: `\`${rule.accepts}\` (${family}) names no key list, so its field set is not checkable` };
+  return { name: rule.accepts, validator: predicate };
+}
+
+/**
+ * The readers the Host binds to one NON-family snapshot member.
+ *
+ * Two shapes exist and both are read: a key list written on the member itself (`hasExactKeys(value.tile, ["x", "y"])`),
+ * and every function called with it (`validateActiveExecution(value.activeExecution)`). ALL of the call sites are
+ * returned, not the first one: `diagnoseSnapshot` guards `activeExecution` with the generic `isRecord` before it hands
+ * the same value to `validateActiveExecution`, and a reader that stopped at the first match reported every field of
+ * that record as unexamined. A member with no reader at all is admitted by `SNAPSHOT_KEYS` and read by nothing, which
+ * is the state this returns an empty list for.
+ */
+export interface MemberReader {
+  /** The function name, or the inline check, that reads the member. */
+  readonly name: string;
+  /** The keys it names, or null when it names none (a `hasOnlyKeys(value, [...CONST])`, or a body-only reader). */
+  readonly keys: readonly string[] | null;
+  /** The reader's body, so a member whose key list is a constant can still be checked field by field. */
+  readonly body: string;
+}
+
+export function hostMemberReaders(wireName: string, source: string = ALL_TS): readonly MemberReader[] {
+  const inline = new RegExp(
+    `has(?:Exact|Only)Keys(?:OrOptional)?\\(\\s*value\\.${wireName}\\s*,\\s*\\[([\\s\\S]*?)\\]`,
+    "u",
+  ).exec(source);
+  if (inline !== null)
+    return [
+      {
+        name: `hasExactKeys(value.${wireName})`,
+        keys: quotedLiterals(captured(inline, 1, `the \`${wireName}\` inline key list`)),
+        body: "",
+      },
+    ];
+  const bodies = hostFunctionBodies(source);
+  const readers: MemberReader[] = [];
+  const seen = new Set<string>();
+  for (const call of source.matchAll(new RegExp(`(\\w+)\\(\\s*value\\.${wireName}\\s*\\)`, "gu"))) {
+    const name = captured(call, 1, `a reader bound to \`${wireName}\``);
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const body = bodies.get(name) ?? "";
+    const listed = /has(?:Exact|Only)Keys(?:OrOptional)?\(\s*value\s*,\s*\[([\s\S]*?)\]/u.exec(body);
+    const keys = listed === null ? [] : quotedLiterals(captured(listed, 1, `the \`${name}\` key list`));
+    readers.push({ name, keys: keys.length === 0 ? null : keys, body });
+  }
+  return readers;
 }
