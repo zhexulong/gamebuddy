@@ -3970,7 +3970,7 @@ export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freez
   { field: "itemTargets", maxItems: 64, accepts: isItemTargetFact },
   { field: "wateringCanFacts", maxItems: 36, accepts: isWateringCanFact },
   { field: "refillWateringCanTargets", maxItems: 8, accepts: isRefillWateringCanTargetFact },
-  { field: "cropTargets", maxItems: 64, accepts: isCropTargetFact },
+  { field: "cropTargets", maxItems: 64, accepts: isCropTargetFact, narrate: namedEntryReason },
   { field: "petBowlTargets", maxItems: 8, accepts: isPetBowlTargetFact },
   { field: "slimeHutchTroughTargets", maxItems: 4, accepts: isSlimeHutchTroughTargetFact },
   { field: "harvestTargets", maxItems: 64, accepts: isHarvestTargetFact },
@@ -4057,9 +4057,15 @@ function namedEntryReason(targets: unknown, rule: SnapshotFamilyRule): string {
   if (targets.length > rule.maxItems) return `invalid_snapshot:${rule.field}:count=${targets.length}`;
   const index = targets.findIndex((entry) => !rule.accepts(entry));
   const entry: unknown = targets[index];
+  // WHICH FIELD is what the reader needs. A null is the failure this family actually had (measured 2026-11-09: a
+  // nullable C# member serialised as `"daysToHarvest": null` and the whole snapshot was refused), and naming only the
+  // entry's key set left the reader to diff two lists. The null keys are printed by name.
+  const nullKeys = isRecord(entry)
+    ? Object.keys(entry).filter((key) => (entry as Record<string, unknown>)[key] === null)
+    : [];
   return `invalid_snapshot:${rule.field}:entry${index}:keys=${
     isRecord(entry) ? Object.keys(entry).join("|") : typeof entry
-  }`;
+  }${nullKeys.length > 0 ? `:nulls=${nullKeys.join("|")}` : ""}`;
 }
 
 /** The first family its table rule refuses, or null when every family is acceptable. */

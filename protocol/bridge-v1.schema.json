@@ -1704,8 +1704,8 @@
         },
         "regrowDays": {
           "type": "integer",
-          "minimum": 0,
-          "description": "`CropData.RegrowDays`; zero is a single-harvest crop."
+          "minimum": -1,
+          "description": "`CropData.RegrowDays` as the engine reports it: -1 means the crop does not regrow (the common case), 0 means it regrows the day it is picked."
         },
         "harvestMethod": {
           "type": "string",

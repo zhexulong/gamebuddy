@@ -192,6 +192,15 @@ export function isSlimeHutchTroughTargetFact(value: unknown): boolean {
   );
 }
 
+/**
+ * `CropData.RegrowDays` as the engine reports it: -1 means the crop does not regrow at all, 0 means it regrows on the
+ * day it is picked, and a positive number is the gap between harvests. The Host accepts the engine's range instead of a
+ * normalised copy of it - the copy is what refused a real farm for 131 seconds.
+ */
+function isRegrowDays(value: unknown): boolean {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= -1;
+}
+
 export function isCropTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
@@ -230,7 +239,11 @@ export function isCropTargetFact(value: unknown): boolean {
     // (`cropFactsUnknown: "crop_data_missing"`), so absence is a stated fact rather than a default: a row may not carry a
     // number here and no data, and it may not carry the gap token and a number.
     (value.daysToHarvest === undefined || isNonNegativeSafeInteger(value.daysToHarvest)) &&
-    (value.regrowDays === undefined || isNonNegativeSafeInteger(value.regrowDays)) &&
+    // `CropData.RegrowDays` is **-1** for a crop that does not regrow; zero is a different answer (the engine's own
+    // "regrows on day 0", which a modded crop may use). Measured 2026-11-09: a runner rejected a whole snapshot because
+    // this validator demanded `>= 0` while the Mod published the engine's -1 faithfully (named at last as
+    // `invalid_snapshot:cropTargets:entry0:keys=...`). The engine's range is the contract; a normalised copy of it is not.
+    (value.regrowDays === undefined || isRegrowDays(value.regrowDays)) &&
     (value.harvestMethod === undefined || isBoundedNonEmptyString(value.harvestMethod, 32)) &&
     (value.isRaised === undefined || typeof value.isRaised === "boolean") &&
     (value.seasons === undefined || isCropSeasons(value.seasons)) &&

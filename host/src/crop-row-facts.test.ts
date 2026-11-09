@@ -126,3 +126,14 @@ test("a season list longer than the engine's own vocabulary is refused at the wi
   const frame = frameOf([{ ...trellisRow, seasons: ["spring", "summer", "fall", "winter", "spring"] }]);
   assert.match(diagnoseBridgeMessage(frame, scope, now) ?? "", /^invalid_snapshot:cropTargets/u);
 });
+
+test("the engine's own -1 regrowDays is accepted, and -2 is not the engine's range", () => {
+  // Measured 2026-11-09: `CropData.RegrowDays` is -1 for a crop that never regrows, which is the common case. The Host
+  // demanded `>= 0` (a normalised copy of the engine's range), refused a whole snapshot at 131 seconds, and the run died
+  // as `turn_unsettled`. The engine's range IS the contract.
+  const frame = frameOf([{ ...trellisRow, regrowDays: -1 }]);
+  assert.equal(diagnoseBridgeMessage(frame, scope, now), "accepted", "-1 is the engine's 'does not regrow'");
+
+  const impossible = frameOf([{ ...trellisRow, regrowDays: -2 }]);
+  assert.match(diagnoseBridgeMessage(impossible, scope, now) ?? "", /^invalid_snapshot:cropTargets/u);
+});
