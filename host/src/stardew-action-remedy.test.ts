@@ -64,6 +64,56 @@ test("a hold with no countermeasure says so instead of naming a tool", () => {
   }
 });
 
+test("a cutscene points at the tool that acts on the box it is showing", () => {
+  // A cutscene is not one state. Two handlers act on its own dialogue box, and the evidence says which box is on
+  // screen - the same fact the modal hold publishes. The dead end this replaces: one sentence for both, telling a run
+  // that could have advanced the box that no action can run (four retries over twenty minutes).
+  const question = remedyForBodyHold(
+    "cutscene_active",
+    "event_up=true;dialogue_box=true;is_question=true;admissible_actions=answer_dialogue,dismiss_modal;can_move=false",
+  );
+  assert.equal(question?.action, "stardew_answer_dialogue");
+  assert.match(question?.guidance ?? "", /stardew_answer_dialogue/);
+  assert.match(question?.guidance ?? "", /stardew_dismiss_modal/, "the way to learn the offered keys must be named");
+
+  const informational = remedyForBodyHold(
+    "cutscene_active",
+    "event_up=true;dialogue_box=true;is_question=false;admissible_actions=answer_dialogue,dismiss_modal;can_move=false",
+  );
+  assert.equal(informational?.action, "stardew_dismiss_modal");
+  assert.match(informational?.guidance ?? "", /stardew_dismiss_modal/);
+  assert.match(
+    informational?.guidance ?? "",
+    /stardew_answer_dialogue/,
+    "a question box must name the action that answers it",
+  );
+
+  // No box: nothing to act on, and the guidance must not name a tool that would be refused.
+  const bare = remedyForBodyHold(
+    "cutscene_active",
+    "event_up=true;dialogue_box=false;admissible_actions=none;next_step=wait_for_event_to_advance;can_move=false",
+  );
+  assert.equal(bare?.action, null);
+  assert.match(bare?.guidance ?? "", /Do not issue actions until the scene ends/);
+});
+
+test("a cutscene with nothing to act on is its own code, with its own answer", () => {
+  // The modal family was admitted into the cutscene and found no box. That is a wait which ends by itself, not the
+  // anonymous cutscene hold whose countermeasure a run is still looking for.
+  const remedy = remedyForBodyHold(
+    "event_has_no_dialogue_box",
+    "event_up=true;dialogue_box=false;admissible_actions=none;next_step=wait_for_event_to_advance;can_move=false",
+  );
+  assert.equal(remedy?.action, null, "no tool advances an event's own command program");
+  assert.match(remedy?.guidance ?? "", /no dialogue box on screen/);
+  assert.match(remedy?.guidance ?? "", /advances on its own/);
+  assert.notEqual(
+    remedy?.guidance,
+    remedyForBodyHold("cutscene_active", null)?.guidance,
+    "two different facts must not read as one sentence",
+  );
+});
+
 test("every named body owner gets actionable guidance, and no two owners read the same", () => {
   const owners = [
     "body_owned_by_navigation",

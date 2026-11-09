@@ -709,6 +709,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal const string BodyOwnedByActivity = "body_owned_by_activity";
 
     /// <summary>
+    /// The named refusal for the one shape of cutscene the modal family cannot act on: the event is running with
+    /// nothing on screen to answer or dismiss.
+    ///
+    /// It exists because `cutscene_active` answered two different questions with one word. For a world action the
+    /// cutscene IS the hold and waiting is all there is; for the modal family the hold is usually a `cutscene_active`
+    /// that a dismiss or an answer would have cleared, so a run reading one code for both could not tell "this scene
+    /// has a box I can advance" from "this scene has nothing and I must wait" - and waiting was all it ever did.
+    /// </summary>
+    internal const string EventHasNoDialogueBox = "event_has_no_dialogue_box";
+
+    /// <summary>
     /// The reason code a MODEL-initiated stop carries. It exists so the Mod can tell a stop it may REFUSE from the
     /// two cancellations it must not: the player's STOP and the worker's own teardown. Those two keep their existing
     /// semantics deliberately - an interruption after a native side effect is `Uncertain`, never a refusal, because
@@ -921,7 +932,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// require the body to be Idle; the Modal profile (modal-handling family)
     /// requires the modal to actually be present — the open modal is its
     /// working precondition — and is exempt from the body-lease check, while
-    /// deadline and identity/scope/revision checks stay unchanged.
+    /// deadline and identity/scope/revision checks stay unchanged. A running
+    /// event is a refusal for every action EXCEPT the modal family's two
+    /// event-acting members, whose working precondition a cutscene's own
+    /// dialogue box is.
     ///
     /// Returns <see langword="null"/> when the request is admitted. Otherwise it
     /// returns the terminal rejection, whose reasonCode is byte-identical to the
@@ -961,8 +975,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // A cutscene is the one thing that outranks a mounted modal (WorldModel.Classify gives Modal
         // precedence over PassOut and Transient), and the explicit eventUp clause keeps that true even if
         // the precedence ever changes.
+        //
+        // ...but a cutscene is not one obstacle. Two of the modal family's three handlers act on the cutscene's OWN
+        // dialogue box - `dismiss_modal` closes it (the native close advances the event, DialogueBox.cs:230-235) and
+        // `answer_dialogue` answers a question raised inside it (`Event.answerDialogue`) - so refusing the family here
+        // refused the only actions that can end a cutscene, which is the deadlock a live run spent twenty minutes
+        // retrying (`cutscene_active` x4: "Persistent cutscene ... I just wait."). The ruling is therefore per ACTION,
+        // read from the identity the dispatch path bound to this request, and everything without an event path keeps
+        // the named hold it always had.
+        bool eventRunning = disposition == LocalDispositionKind.Event || Game1.eventUp;
+        bool actsOnRunningEvent = eventRunning && this.RequestHasEventPath(requestId);
         bool notActionable = profile is AdmissionActionabilityProfile.Modal
-            ? disposition == LocalDispositionKind.Event || Game1.eventUp
+            ? eventRunning && !actsOnRunningEvent
             : disposition != LocalDispositionKind.Idle;
         if (notActionable)
         {
@@ -995,6 +1019,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, holdCode, holdEvidence);
         }
 
+        // The event-acting half, refused by a DIFFERENT name. A modal is these actions' working precondition in a
+        // cutscene exactly as it is outside one: with nothing on screen there is no box to answer or dismiss, and no
+        // action in the catalog advances an event's command program. Refusing that here is what keeps the two facts
+        // apart - the cutscene hold every other action reads, and the missing box these two need.
+        if (actsOnRunningEvent && !WorldModel.HasMountedModal(admissionFacts))
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                EventHasNoDialogueBox,
+                WorldModel.DescribeBodyHold(admissionDisposition, admissionFacts, boundActor.CanMove));
+
         if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + maxDurationMs)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
 
@@ -1018,6 +1054,20 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         return null;
     }
+
+    /// <summary>
+    /// Whether THIS request's action is one whose handler acts on a running event
+    /// (<see cref="FarmhandActionCatalog.EventActingActionIds"/>), read from the action identity the dispatch path bound
+    /// to the request before the handler ran.
+    ///
+    /// The bound lineage, not a parameter: `FarmhandActionRouter` writes `request.Action` into the ledger before it
+    /// hands the request to a handler, so this is the same identity the receipt carries and a handler cannot claim to
+    /// be an action it is not. An unbound request (a direct in-process call outside the router) answers false, which
+    /// is the behaviour every caller had before this gate.
+    /// </summary>
+    private bool RequestHasEventPath(string requestId) =>
+        this.actionIdsByRequestId.TryGetValue(requestId, out string? boundActionId)
+        && FarmhandActionCatalog.IsEventActing(boundActionId);
 
     /// <summary>
     /// Parks one request whose body is held and answers it with the marker the bridge reads as "still waiting", instead
@@ -4468,14 +4518,73 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             .ThenBy(pair => pair.Key.Y);
 
     /// <summary>
-    /// The one diggable-tile predicate shared by discovery and tilling preconditions,
-    /// so an offered tile is always an acceptable target once the player is adjacent.
+    /// Why this tile cannot be hoed, as one member of a CLOSED set, or null when it can.
+    ///
+    /// <para>
+    /// The receipt used to say `soil_not_diggable` and nothing else, so a companion told "this ground is dead hard"
+    /// read it as "wrong tile for now" and re-aimed. Measured 2026-11-09: four live refusals about ground that can
+    /// never be hoed arrived as one `soil_not_diggable` and three `target_out_of_range` (with a distance attached).
+    /// The answer has exactly as many shapes as this predicate has branches, so the words are DERIVED here rather
+    /// than written at the call sites: a branch added to the check and not to the message would be the drift this
+    /// shape exists to prevent.
+    /// </para>
+    /// <para>
+    /// The order is permanent facts before removable ones. Water and the map's own `Diggable` property are what the
+    /// tile IS; an occupant is only asked about ground that would otherwise be farmable, so a reader is never sent to
+    /// clear a chest off ground that could not be hoed anyway. `HoeDirt` is deliberately NOT an occupant: a tilled
+    /// tile has its own answer one gate earlier (`soil_already_tilled`), and naming it here would call the one state
+    /// the hoe exists for "blocked".
+    /// </para>
     /// </summary>
-    private static bool IsDiggableSoilTile(StardewValley.GameLocation? location, int x, int y)
+    internal static string? DescribeSoilRefusal(StardewValley.GameLocation? location, int x, int y)
     {
-        return location is not null
-            && location.doesTileHaveProperty(x, y, "Diggable", "Back") is not null
-            && !location.isWaterTile(x, y);
+        if (location is null)
+            return "not_map_diggable";
+        if (location.isWaterTile(x, y))
+            return "water";
+        if (location.doesTileHaveProperty(x, y, "Diggable", "Back") is null)
+            return "not_map_diggable";
+        Vector2 tile = new(x, y);
+        if (location.objects.TryGetValue(tile, out StardewValley.Object? placed))
+            return $"occupied:{DescribeOccupantKind(placed)}";
+        if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
+            && feature is not StardewValley.TerrainFeatures.HoeDirt)
+            return $"occupied:{DescribeOccupantKind(feature)}";
+        return null;
+    }
+
+    /// <summary>
+    /// The reason code one soil refusal carries: the action's word plus the predicate's own reason, so the token set
+    /// and the message cannot be two spellings of one fact.
+    /// </summary>
+    internal static string DescribeSoilRefusalCode(string refusal) => $"soil_not_diggable:{refusal}";
+
+    /// <summary>
+    /// The engine's own name for whatever occupies a tile, kept inside the reasonCode alphabet
+    /// (`^[a-z0-9_:-]{1,128}$`, `FarmhandExecutionJournal.IsValidReasonCode`).
+    ///
+    /// <para>
+    /// The word is the runtime type's name rather than a list written here: `chest` is something to move and `tree`
+    /// is something to chop, and a modded occupant is named as itself instead of falling into "unknown".
+    /// `unspecified` is the honest answer when the name does not survive the trip - a wrong noun sends the caller to
+    /// fix the wrong thing.
+    /// </para>
+    /// </summary>
+    private static string DescribeOccupantKind(object occupant)
+    {
+        var bounded = new System.Text.StringBuilder(24);
+        foreach (char character in occupant.GetType().Name)
+        {
+            char lower = char.ToLowerInvariant(character);
+            if (lower is >= 'a' and <= 'z' or >= '0' and <= '9')
+                bounded.Append(lower);
+            else if (bounded.Length > 0 && bounded[^1] != '_')
+                bounded.Append('_');
+        }
+        string kind = bounded.ToString().Trim('_');
+        if (kind.Length > 32)
+            kind = kind[..32].Trim('_');
+        return kind.Length == 0 ? "unspecified" : kind;
     }
 
     private static bool IsFeedTroughTargetInRange(Farmer player, int targetX, int targetY)
@@ -4674,7 +4783,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return result;
     }
 
-    private static string BuildSeedTargetId(StardewValley.GameLocation location, int slot, int x, int y, string qualifiedItemId)
+    /// <summary>
+    /// The one identity a seed target has: (location, slot, tile, item).
+    ///
+    /// `internal` because a `for_each` row mints it too: a loop's rows are read live, so the row's `expectedTargetId` is
+    /// this function's answer for that tile rather than an id the caller copied out of an observation. `plant_seed`
+    /// recomputes it from the same four values before it acts, so the two cannot disagree.
+    /// </summary>
+    internal static string BuildSeedTargetId(StardewValley.GameLocation location, int slot, int x, int y, string qualifiedItemId)
     {
         string raw = $"{location.NameOrUniqueName}:{slot}:{x},{y}:{qualifiedItemId}";
         return $"seed_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";

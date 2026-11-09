@@ -160,21 +160,6 @@ public sealed class ModalDismissActionTests
     }
 
     [Fact]
-    public void Dismiss_IsRejected_WhileAnEventHoldsTheActor()
-    {
-        RunWithGameState(dialogue: CreateDialogue(isQuestion: false), eventUp: true, action: () =>
-        {
-            ExecutionManager manager = CreateManager(1001);
-
-            InvokeDismiss(manager, "req_dismiss_event")
-                // An absorbed cutscene outranks the modal (WIA 4.1/4.2) - and the code now says WHICH hold
-                // that is. The Agent needs the distinction: a cutscene cannot be dismissed by any tool,
-                // while a mounted dialogue can.
-                .ReasonCode.Should().Be("cutscene_active");
-        });
-    }
-
-    [Fact]
     public void Dismiss_IsRejected_ForAMenuOutsideTheAuditedWhitelist()
     {
         RunWithGameState(menu: new GameMenuStub(), dialogueUp: true, action: () =>
@@ -395,25 +380,22 @@ public sealed class ModalDismissActionTests
         throw new InvalidOperationException($"unbalanced body for {declaration}");
     }
 
-    private static void RunWithGameState(DialogueBox? dialogue = null, IClickableMenu? menu = null, bool dialogueUp = false, bool eventUp = false, Action action = null!)
+    private static void RunWithGameState(DialogueBox? dialogue = null, IClickableMenu? menu = null, bool dialogueUp = false, Action action = null!)
     {
         FieldInfo menuField = typeof(Game1).GetField("_activeClickableMenu", BindingFlags.NonPublic | BindingFlags.Static)!;
         object? menuBefore = menuField.GetValue(null);
         bool dialogueUpBefore = Game1.dialogueUp;
-        bool eventUpBefore = Game1.eventUp;
         int timeOfDayBefore = Game1.timeOfDay;
         try
         {
             menuField.SetValue(null, (object?)dialogue ?? menu);
             Game1.dialogueUp = dialogueUp;
-            Game1.eventUp = eventUp;
             action();
         }
         finally
         {
             menuField.SetValue(null, menuBefore);
             Game1.dialogueUp = dialogueUpBefore;
-            Game1.eventUp = eventUpBefore;
             Game1.timeOfDay = timeOfDayBefore;
         }
     }

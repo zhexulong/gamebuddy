@@ -1,3 +1,4 @@
+using GameBuddy.Stardew.Core.Policy;
 using StardewValley;
 using StardewValley.Menus;
 
@@ -130,13 +131,13 @@ internal static class WorldModel
             return new ActorDisposition(ActorDispositionKind.Event, null, false, null);
         }
 
-        if (facts.MenuType is { } menuType)
+        if (HasMountedModal(facts))
         {
-            return new ActorDisposition(ActorDispositionKind.Modal, menuType, OwnedByAction(), null);
-        }
+            if (facts.MenuType is { } menuType)
+            {
+                return new ActorDisposition(ActorDispositionKind.Modal, menuType, OwnedByAction(), null);
+            }
 
-        if (facts.DialogueUp)
-        {
             // A dialogue can briefly outlive its menu (page turns / SMAPI
             // micro-timing) with activeClickableMenu already null; the dialogue
             // is still modal. Same defense as
@@ -166,6 +167,15 @@ internal static class WorldModel
 
         return ActorDisposition.Idle;
     }
+
+    /// <summary>
+    /// Whether something modal is on screen: a menu, or a dialogue the engine still reports as up.
+    ///
+    /// One definition, because two different questions read it: <see cref="Classify"/> asks whether the MODAL hold
+    /// outranks the rest, and the admission asks whether a cutscene has anything on screen for the modal family to act
+    /// on. Two spellings would let the gate admit a request whose working precondition the disposition says is absent.
+    /// </summary>
+    internal static bool HasMountedModal(in ActorWorldFacts facts) => facts.MenuType is not null || facts.DialogueUp;
 
     /// <summary>Computes the actor's disposition ONCE per tick on the game
     /// thread. The common (Idle) path allocates nothing.</summary>
@@ -262,7 +272,7 @@ internal static class WorldModel
             ActorDispositionKind.Modal =>
                 $"modal_type={disposition.ModalType ?? "unknown"};action_owned={Bool(disposition.ModalActionOwned)}"
                 + $";is_question={BoolOrUnknown(modalIsQuestion)};can_move={canMoveText}",
-            ActorDispositionKind.Event => $"event_up=true;can_move={canMoveText}",
+            ActorDispositionKind.Event => DescribeEventHold(facts, canMove, modalIsQuestion),
             ActorDispositionKind.PassOut =>
                 $"stamina={facts.Stamina.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
                 + $";time_of_day={facts.TimeOfDay};can_move={canMoveText}",
@@ -286,10 +296,37 @@ internal static class WorldModel
         in ActorWorldFacts facts,
         bool canMove)
     {
+        // Read from the LIVE modal whatever the disposition kind is: a cutscene outranks a mounted modal in
+        // `Classify`, so the box a cutscene is showing is only reachable from here. That answer-to-owed-versus-
+        // informational fact is what lets the evidence say which modal action applies, and guessing it would tell the
+        // Agent to dismiss a box that is waiting for an answer (or to answer one that asks nothing).
         bool? isQuestion = null;
-        if (disposition.Kind == ActorDispositionKind.Modal && Game1.activeClickableMenu is DialogueBox dialogue)
+        if (Game1.activeClickableMenu is DialogueBox dialogue)
             isQuestion = dialogue.isQuestion;
         return (HoldReasonCode(disposition.Kind), DescribeBodyHold(disposition, facts, canMove, isQuestion));
+    }
+
+    /// <summary>
+    /// A cutscene's evidence NAMES what the Agent can do about it, because a hold with no countermeasure is a hold an
+    /// Agent can only retry. Measured from a live run's transcript: four retries over twenty minutes against
+    /// `cutscene_active`, while the two actions that end a cutscene's own dialogue box were the two the gate refused.
+    ///
+    /// The three facts are the engine's own: whether a box is on screen at all (<see cref="HasMountedModal"/>), and
+    /// whether that box asks a question (`DialogueBox.isQuestion`, filled from the live modal by
+    /// <see cref="DescribeCurrentBodyHold"/>). `admissible_actions` is the catalog's event-acting family, so the list
+    /// can never name an action the admission would refuse; `next_step` states the one option that is left when there
+    /// is nothing to act on, which is what a run needs in order to stop retrying.
+    /// </summary>
+    private static string DescribeEventHold(in ActorWorldFacts facts, bool canMove, bool? modalIsQuestion)
+    {
+        string canMoveText = Bool(canMove);
+        if (!HasMountedModal(facts))
+            return $"event_up=true;dialogue_box=false;admissible_actions=none"
+                + $";next_step=wait_for_event_to_advance;can_move={canMoveText}";
+
+        return $"event_up=true;dialogue_box=true;is_question={BoolOrUnknown(modalIsQuestion)}"
+            + $";admissible_actions={string.Join(",", FarmhandActionCatalog.EventActingActionIds.OrderBy(actionId => actionId, StringComparer.Ordinal))}"
+            + $";can_move={canMoveText}";
     }
 
     private static string Bool(bool value) => value ? "true" : "false";

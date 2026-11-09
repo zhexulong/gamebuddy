@@ -103,19 +103,6 @@ public sealed class ModalAnswerDialogueTests
     }
 
     [Fact]
-    public void Answer_IsRejected_WhileAnEventHoldsTheActor()
-    {
-        RunWithGameState(CreateDialogue(isQuestion: true, new Response("Yes", "Yes")), new AnswerRecordingLocation(acceptAnswer: true), eventUp: true, action: () =>
-        {
-            LocalExecutionReceipt receipt = InvokeAnswer(CreateManager(1001), "req_answer_event", "Yes");
-
-            receipt.State.Should().Be(ExecutionState.Rejected);
-            // A cutscene, named: it outranks the modal and no tool can clear it.
-            receipt.ReasonCode.Should().Be("cutscene_active");
-        });
-    }
-
-    [Fact]
     public void Answer_IsRejected_WhenTheBoundActorIsUnavailable()
     {
         RunWithGameState(CreateDialogue(isQuestion: true, new Response("Yes", "Yes")), new AnswerRecordingLocation(acceptAnswer: true), () =>
@@ -194,13 +181,11 @@ public sealed class ModalAnswerDialogueTests
     private static void RunWithGameState(
         DialogueBox? dialogue,
         GameLocation location,
-        Action action,
-        bool eventUp = false)
+        Action action)
     {
         FieldInfo menuField = typeof(Game1).GetField("_activeClickableMenu", BindingFlags.NonPublic | BindingFlags.Static)!;
         object? menuBefore = menuField.GetValue(null);
         bool dialogueUpBefore = Game1.dialogueUp;
-        bool eventUpBefore = Game1.eventUp;
         Game1? gameBefore = Game1.game1;
         GameLocation? locationBefore = gameBefore?.instanceGameLocation;
         ISoundsHelper? soundsBefore = Game1.sounds;
@@ -212,14 +197,12 @@ public sealed class ModalAnswerDialogueTests
             Game1.sounds = new SilentSoundsHelper();
             menuField.SetValue(null, dialogue);
             Game1.dialogueUp = dialogue is not null;
-            Game1.eventUp = eventUp;
             action();
         }
         finally
         {
             menuField.SetValue(null, menuBefore);
             Game1.dialogueUp = dialogueUpBefore;
-            Game1.eventUp = eventUpBefore;
             Game1.sounds = soundsBefore;
             if (gameBefore is null)
                 Game1.game1 = null!;

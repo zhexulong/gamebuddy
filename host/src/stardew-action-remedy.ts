@@ -90,12 +90,49 @@ export function remedyForBodyHold(reasonCode: string | null, detail: string | nu
           `rather than changing the target.`,
       };
     }
-    case "cutscene_active":
+    // The cutscene hold. The evidence decides whether there is anything to ACT ON, because a cutscene is not one
+    // state: two modal-family handlers act on its own dialogue box (`dismiss_modal` closes it and the native close
+    // advances the event; `answer_dialogue` answers a question raised inside it), and with no box on screen no action
+    // at all can move the scene along. One sentence covered both, so a run that met a box it could have advanced read
+    // "no action can run" and retried until it gave up - measured: four retries over twenty minutes, then
+    // "Persistent cutscene ... I just wait."
+    case "cutscene_active": {
+      const dialogueBox = evidenceField(detail, "dialogue_box");
+      const isQuestion = evidenceField(detail, "is_question");
+      if (dialogueBox === "true" && isQuestion === "true")
+        return {
+          action: "stardew_answer_dialogue",
+          guidance:
+            "A cutscene is holding the farmhand and its dialogue is waiting for an answer. Call " +
+            "'stardew_answer_dialogue' with the responseKey the box offers - and if you do not have the keys, call " +
+            "'stardew_dismiss_modal' once: it refuses a question box and that refusal lists the keys and the question.",
+        };
+      if (dialogueBox === "true")
+        return {
+          action: "stardew_dismiss_modal",
+          guidance:
+            "A cutscene is holding the farmhand and its dialogue box is on screen. Call 'stardew_dismiss_modal' to " +
+            "advance it; if the box is asking a question that call is refused with the offered response keys, which " +
+            "is what 'stardew_answer_dialogue' needs.",
+        };
       return {
         action: null,
         guidance:
           "A cutscene currently holds the farmhand, so no action can run. Do not issue actions until the " +
           "scene ends; if the player is watching, this is a good moment to narrate rather than to act.",
+      };
+    }
+    // The modal family was admitted into the cutscene and found nothing to act on: the event is running with no
+    // dialogue box, so there is no box to dismiss or answer and nothing in the catalog advances an event's own
+    // command program. Named separately from `cutscene_active` because the answer is different: this is a wait that
+    // ends by itself, not a hold whose countermeasure the Agent has not found yet.
+    case "event_has_no_dialogue_box":
+      return {
+        action: null,
+        guidance:
+          "A cutscene is holding the farmhand and it has no dialogue box on screen, so no tool can move it along. " +
+          "Do not retry now: the scene advances on its own until its next dialogue, and the request can be re-issued " +
+          "once the cutscene ends.",
       };
     case "actor_passed_out":
       return {

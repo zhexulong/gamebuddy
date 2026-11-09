@@ -672,6 +672,52 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// <summary>Whether an action's working precondition is an open modal. Unknown ids are not.</summary>
     public static bool IsModalResolving(string? actionId) => actionId is not null && ModalResolvingActionIds.Contains(actionId);
 
+    /// <summary>
+    /// The modal-family members whose HANDLER has an event path: called while an event runs, they act on the event's
+    /// own dialogue box instead of waiting for the scene to end.
+    ///
+    /// <para>
+    /// WHY THIS EXISTS. The admission admitted the modal family only while a modal was mounted AND no cutscene was
+    /// running, so a cutscene refused the family - and a cutscene's own dialogue box is the ONE thing two of its three
+    /// handlers exist to close. Measured from a live run's transcript: four retries over twenty minutes against
+    /// `cutscene_active`, ending in "Persistent cutscene ... I just wait." and <c>镇上好像有事件正演着，我的脚被定住了，动不了。</c>
+    /// The agent was right about the mechanism and had no action to try.
+    /// </para>
+    /// <para>
+    /// Membership is a CLAIM about the handler, so it is not derivable from the catalog row: `CutsceneModalAdmissionTests`
+    /// reads each member's handler body and each member's own event seam (`Game1.eventUp` for a branch,
+    /// `DialogueBox.closeDialogue` for the native close that advances an event), failing by name when a member here has
+    /// lost that seam - or when a handler grows one without joining here. Every other modal-family member must be
+    /// declared in <see cref="ModalFamilyActionsWithoutAnEventPath"/> instead, so a new row cannot stay undecided.
+    /// </para>
+    /// </summary>
+    public static readonly IReadOnlySet<string> EventActingActionIds = new HashSet<string>(
+        new[]
+        {
+            // Answers a question raised inside the cutscene, on the event itself (`Event.answerDialogue`).
+            "answer_dialogue",
+            // Closes the cutscene's informational box through the native close, which advances the event.
+            "dismiss_modal",
+        },
+        StringComparer.Ordinal);
+
+    /// <summary>
+    /// The modal-family members whose handler has NO event path, each with the native reason. An entry here is a
+    /// decision, not an omission: the action stays refused while an event runs (`cutscene_active`) because nothing its
+    /// handler does can reach the event.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> ModalFamilyActionsWithoutAnEventPath =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["respond_level_up"] =
+                "its handler requires Game1.activeClickableMenu to BE a LevelUpMenu, and the engine raises that menu only "
+                + "from the overnight rollover (Game1.cs:9121-9134), never from an event: no event branch exists and a "
+                + "cutscene holding a LevelUpMenu is not a state the engine produces",
+        };
+
+    /// <summary>Whether an action's handler acts on a RUNNING event. Unknown ids, and ids with no event path, are not.</summary>
+    public static bool IsEventActing(string? actionId) => actionId is not null && EventActingActionIds.Contains(actionId);
+
     static FarmhandActionCatalog() { if (Registrations.Select(x => x.ActionId).Distinct(StringComparer.Ordinal).Count() != Registrations.Count) throw new InvalidOperationException("Farmhand action registrations must have unique action IDs."); }
     private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published, string? targetFamily = null) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, targetFamily is null ? descriptor : descriptor with { TargetFamily = targetFamily });
 

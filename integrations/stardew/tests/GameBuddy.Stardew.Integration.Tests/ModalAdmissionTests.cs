@@ -93,16 +93,38 @@ public sealed class ModalAdmissionTests
     }
 
     [Fact]
-    public void Modal_IsRejected_WhileAnEventHoldsTheActor()
+    public void AModalFamilyMemberWithNoEventPath_IsStillRejected_WhileAnEventHoldsTheActor()
     {
         RunWithGameState(menuOpen: true, eventUp: true, action: () =>
         {
             ExecutionManager manager = CreateManager(1001);
 
-            Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Modal)!
-                // A cutscene is the one hold that outranks a mounted modal, and it is the one the modal family
-                // can do nothing about - so the code has to differ from a mounted menu's.
+            // `respond_level_up` is the ONE modal-family member whose handler has no event branch
+            // (FarmhandActionCatalog.ModalFamilyActionsWithoutAnEventPath): the menu it settles is raised by the
+            // overnight rollover, never by a cutscene. A cutscene therefore keeps refusing it, and the code says which
+            // hold that is rather than borrowing the anonymous `player_not_actionable` it once shared.
+            Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Modal, actionId: "respond_level_up")!
                 .ReasonCode.Should().Be("cutscene_active");
+        });
+    }
+
+    /// <summary>
+    /// The OTHER two members are admitted: `dismiss_modal` closes a cutscene's informational box and `answer_dialogue`
+    /// answers a question raised inside it, so a cutscene is their working precondition rather than an obstacle. The
+    /// behaviour each one performs is driven in <see cref="CutsceneModalAdmissionTests"/>; this pin is that admission
+    /// itself no longer refuses them.
+    /// </summary>
+    [Theory]
+    [InlineData("answer_dialogue")]
+    [InlineData("dismiss_modal")]
+    public void TheModalFamilysEventActingMembers_AreAdmitted_WhileAnEventHoldsTheActor(string actionId)
+    {
+        RunWithGameState(menuOpen: true, eventUp: true, action: () =>
+        {
+            ExecutionManager manager = CreateManager(1001);
+
+            Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Modal, actionId: actionId)
+                .Should().BeNull("a cutscene's own dialogue box is what this family acts on, so the cutscene is not its obstacle");
         });
     }
 
@@ -351,9 +373,15 @@ public sealed class ModalAdmissionTests
         ExecutionManager manager,
         ExecutionManager.AdmissionActionabilityProfile profile,
         long deadlineDeltaMs = 30_000,
-        long maxDurationMs = FarmhandActionCatalog.OrdinaryActionCeilingMs)
+        long maxDurationMs = FarmhandActionCatalog.OrdinaryActionCeilingMs,
+        string? actionId = null)
     {
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        string requestId = $"req_{Guid.NewGuid():N}";
+        // The admission decides on the action identity the dispatch path binds to the request, so a probe that wants a
+        // specific action's ruling binds it the same way `FarmhandActionRouter` does before the handler runs.
+        if (actionId is not null)
+            ((IExecutionLedger)manager).BindAction(requestId, actionId);
         // AdmitExecution is deliberately private (pre-WIA source pin
         // ToolApproachContractTests pins the `private` form); the test drives
         // it through reflection, the same pattern the class already uses for
@@ -362,7 +390,7 @@ public sealed class ModalAdmissionTests
             .GetMethod("AdmitExecution", BindingFlags.NonPublic | BindingFlags.Instance)!
             .Invoke(manager, new object?[]
             {
-                $"req_{Guid.NewGuid():N}",
+                requestId,
                 $"exec_{Guid.NewGuid():N}",
                 nowMs + deadlineDeltaMs,
                 nowMs,

@@ -98,6 +98,42 @@ public sealed class BodyHoldAttributionTests
         unknown.Should().Contain("is_question=unknown");
     }
 
+    /// <summary>
+    /// A cutscene's evidence names what the Agent can do about it, which is the whole difference between a hold and a
+    /// dead end. Measured from a live run's transcript: four retries over twenty minutes read only that the body was
+    /// held, while the two actions that end a cutscene's own dialogue box were the two the gate refused.
+    ///
+    /// The FACTS (a box is on screen; is it asking something) decide which action applies, and they are published next
+    /// to the hold rather than inferred by the reader. With nothing on screen there is no action at all, and the
+    /// evidence says so: `admissible_actions=none` plus the one step that is left.
+    /// </summary>
+    [Fact]
+    public void TheCutsceneEvidenceNamesWhatTheAgentCanDoAboutIt()
+    {
+        ActorWorldFacts withBox = Facts(eventUp: true, menuType: "DialogueBox", dialogueUp: true);
+        ActorDisposition cutscene = WorldModel.Classify(withBox);
+        cutscene.Kind.Should().Be(ActorDispositionKind.Event);
+
+        string informational = WorldModel.DescribeBodyHold(cutscene, withBox, canMove: false, modalIsQuestion: false);
+        informational.Should().Contain("event_up=true");
+        informational.Should().Contain("dialogue_box=true");
+        informational.Should().Contain("is_question=false");
+        // The admissible set is the catalog's own event-acting family, sorted, so the evidence cannot name an action the
+        // admission would refuse.
+        informational.Should().Contain("admissible_actions=answer_dialogue,dismiss_modal");
+
+        string question = WorldModel.DescribeBodyHold(cutscene, withBox, canMove: false, modalIsQuestion: true);
+        question.Should().Contain("is_question=true");
+
+        ActorWorldFacts withoutBox = Facts(eventUp: true);
+        string bare = WorldModel.DescribeBodyHold(WorldModel.Classify(withoutBox), withoutBox, canMove: false);
+        bare.Should().Contain("dialogue_box=false");
+        bare.Should().Contain("admissible_actions=none");
+        bare.Should().Contain(
+            "next_step=wait_for_event_to_advance",
+            "with nothing on screen, waiting is the only option and the hold has to say so or the Agent retries");
+    }
+
     [Fact]
     public void TheTransientEvidenceNamesTheLockAndTheRealRetryWindow()
     {
