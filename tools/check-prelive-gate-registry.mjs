@@ -114,6 +114,16 @@ export const REASON_CLASSES = Object.freeze({
  */
 export const EXEMPTIONS = Object.freeze([
   {
+    path: "tools/check-presentation-delivery-account.mjs",
+    reason:
+      "arguments: it reconciles ONE finished run's bundle - `--run-dir DIR` or the newest under `.live-runs` - so before a" +
+      " run exists there is nothing for it to examine, and it says so with `delivery_account_not_measured` (exit 2) rather" +
+      " than passing on an empty population. Its verdict is also an arm of every run's own rung in the runner" +
+      " (`deliveryAccountClause`), which is what keeps a bundle whose pieces and account disagree from being published as" +
+      " passed without anyone remembering to run this entry",
+    runsIn: "on-demand",
+  },
+  {
     path: "tools/audit-action-breadth.mjs",
     reason:
       "arguments: requires `--result <bundle>/result.json` from one FINISHED live run and, for the concentration, the" +

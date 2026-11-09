@@ -1896,6 +1896,10 @@ test("CompanionLoop prints one delivery account per turn: the parts it had, the 
     presented: 2,
     suppressed: { empty_after_projection: 1 },
     unaccounted: 0,
+    // Three pieces reached the player: this turn's reaction sound, its one working remark (the first paragraph, released
+    // mid-message after a real silence), and the paragraph that committed at the end. The beat-only message is the
+    // withheld part, so it contributes no piece at all.
+    pieces: { text: 1, ahead: 2 },
   });
 });
 
@@ -1999,6 +2003,7 @@ test("a turn with no presentation source accounts for its text instead of leavin
     presented: 0,
     suppressed: { no_presentation_lease: 2 },
     unaccounted: 0,
+    pieces: { text: 0, ahead: 0 },
   });
 });
 
@@ -2118,7 +2123,15 @@ test("a settled program opens a presentation lease, because an outcome nobody wa
     "the settlement's own identity is the lease the turn presents under",
   );
   assert.equal(presented.map((entry) => entry.text).join(""), text, "and the answer reaches the player");
-  assert.deepEqual(account, { textParts: 1, presented: 1, suppressed: {}, unaccounted: 0 });
+  assert.deepEqual(account, {
+    textParts: 1,
+    presented: 1,
+    suppressed: {},
+    unaccounted: 0,
+    // One paragraph and no sound: a settlement batch carries no locale, so the reaction vocabulary has nothing to
+    // speak and the surface correctly emits nothing ahead of the words.
+    pieces: { text: 1, ahead: 0 },
+  });
 });
 
 test("an ordinary execution outcome still opens no lease, so volume cannot creep", async () => {
@@ -2146,5 +2159,87 @@ test("an ordinary execution outcome still opens no lease, so volume cannot creep
   const account = await turnAccount(() => loop.flush());
 
   assert.deepEqual(presented, []);
-  assert.deepEqual(account, { textParts: 1, presented: 0, suppressed: { no_presentation_lease: 1 }, unaccounted: 0 });
+  assert.deepEqual(account, {
+    textParts: 1,
+    presented: 0,
+    suppressed: { no_presentation_lease: 1 },
+    unaccounted: 0,
+    pieces: { text: 0, ahead: 0 },
+  });
+});
+
+test("the account names every piece the player was shown, not only the message parts behind them", async () => {
+  // MEASURED 2026-11-09 (round41 `multiday_routine`): `presentation.pieceCount` 59, `AGENT_PRESENTATION_PIECE` 59 lines,
+  // `sessionTurns[].spokenLines` 59 - and 13 `NATIVE_COMPANION_TURN_DELIVERY` records accounting `textParts` 46,
+  // `presented` 46, `unaccounted` 0. The account's population was the message PARTS and the run's population was the
+  // committed PIECES: the 59 were 11 reaction sounds (one per paced turn, `companion-delivery-pacing.ts`
+  // `GAME_DELIVERY_PACING.reaction` -> `native-companion-content.ts` `emitReaction`), 46 paragraphs, and 2 extra pieces
+  // from a paragraph the length budget split. A reader comparing the two numbers could only conclude that thirteen
+  // pieces - a whole turn's worth - had no record at all, which is how this was reported. The pieces belong in the
+  // account that claims to be a partition.
+  const text = "先出门去农场。";
+  const presented: { text: string }[] = [];
+  const loop = new CompanionLoop(sessionSaying(text) as never, {
+    beginPlayerBatch() {},
+    endBatch() {},
+    async presentNativeAssistantContent(content) {
+      presented.push(content as { text: string });
+    },
+  });
+  const account = await turnAccount(async () => {
+    loop.pump.enqueuePlayerInput({
+      source: "player_text",
+      inputId: "input_piece_account",
+      eventId: "player_source_piece_account",
+      text: "去把菜收了",
+      locale: "zh-CN",
+      timestampMs: 1,
+    });
+    await loop.flush();
+  });
+
+  const sound = selectReactionSound("player_source_piece_account", "zh-CN", GAME_DELIVERY_PACING.reaction!);
+  assert.deepEqual(
+    presented.map((entry) => entry.text),
+    [sound, text],
+    "this turn presented two pieces: the sound, then the paragraph",
+  );
+  // The parts partition and the pieces stay two separate facts, both published: one message part was presented, and it
+  // reached the player as one piece BEHIND the sound this turn opened with. `pieces.text + pieces.ahead` is what the
+  // presentation port committed, which is the number a run's `presentation.pieceCount` adds up.
+  assert.equal(account.textParts, 1, "the population the suppressor reasons count");
+  assert.equal(account.presented, 1, "and how many of those parts the player was shown");
+  assert.deepEqual(account.pieces, { text: 1, ahead: 1 }, "the pieces, named by where they came from");
+});
+
+test("a turn that ran with no projection is named, so its text is never an unexplained remainder", async () => {
+  // The other half of the same requirement: a turn the observer never attached to must carry its own reason word rather
+  // than vanish from the log. `no_presentation_lease` is that word, and this pins that a turn with NO presentation
+  // source still prints an account - the alternative reading of round41 was "a turn produced text and no record", which
+  // would be indistinguishable from a lost turn.
+  const loop = new CompanionLoop(sessionSaying("草割完了。") as never, {
+    beginPlayerBatch() {},
+    endBatch() {},
+    async presentNativeAssistantContent() {},
+  });
+  const account = await turnAccount(async () => {
+    loop.pump.enqueueFact({
+      source: "stardew_mod",
+      kind: "semantic_event",
+      eventId: "execution_settled_account",
+      sourceEventId: "execution_settled_account",
+      correlationId: "execution_settled_account",
+      revision: 11,
+      occurredAtMs: 5,
+      payload: { kind: "execution_settled_succeeded", executionId: "execution_account" },
+    });
+    await loop.flush();
+  });
+  assert.deepEqual(account, {
+    textParts: 1,
+    presented: 0,
+    suppressed: { no_presentation_lease: 1 },
+    unaccounted: 0,
+    pieces: { text: 0, ahead: 0 },
+  });
 });

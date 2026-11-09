@@ -324,6 +324,14 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   "check-game-historian-rubric.mjs",
   "check-live-run-failure-dump.mjs",
   "check-live-run-multiday-baseline.mjs",
+  // Its default run prints `{gate:"presentation-delivery-account", status, examined, checks[]}` and reads whatever
+  // bundle it is pointed at, so the report is the gate's own verdict rather than prose. Its falsifier is
+  // tools/lib/presentation-delivery-account.test.mjs: 59 pieces against an account of 46 parts is reconciled as 46 text
+  // parts and 13 pieces emitted ahead, 15 pieces against 2 named ones is blocked with the two numbers named, a bundle
+  // that predates `presentation.deliveryAccount` is blocked rather than passed, a hand-written sum that does not hold is
+  // refused even when its own `blocked` field is null, and pieces with no records at all are `delivery_account_absent`.
+  // Red on real history: round41's own bundle, which carried `pieceCount: 59` and thirteen records, exits 1 here.
+  "check-presentation-delivery-account.mjs",
   "check-live-run-silence.mjs",
   // Prints `preset_macros examined N macros violations M status ...` on every run, which is the report the conformance
   // suite reads; its falsifier is tools/check-preset-macros.test.mjs, which injects a module-level variable table (the

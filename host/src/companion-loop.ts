@@ -305,6 +305,27 @@ export class CompanionLoop {
     let assistantTextParts = 0;
     let presentedTextParts = 0;
     const suppressedByReason = new Map<CompanionTurnPartSuppression, number>();
+    /**
+     * How many PIECES this turn's presentation committed, and where each came from.
+     *
+     * <p>
+     * `presentedTextPieces` is the paragraphs the surface handed to the player; `aheadPieces` is what a paced surface
+     * emits BEFORE one - this turn's one reaction sound and its one working remark (`companion-delivery-pacing.ts`,
+     * `native-companion-content.ts`). The parts above cannot express those: a part is a block of model text, while a
+     * piece is one commit the player saw, and one part can be shown as several pieces or behind a sound.
+     * </p>
+     * <p>
+     * MEASURED 2026-11-09 (round41 `multiday_routine`): `presentation.pieceCount` 59, `AGENT_PRESENTATION_PIECE` 59
+     * lines, `sessionTurns[].spokenLines` 59, and 13 delivery records accounting `textParts` 46 / `presented` 46 /
+     * `unaccounted` 0. Both numbers were right and the account could not say why they differ. The 59 pieces were 11
+     * reaction sounds (one per paced turn), 46 paragraphs, and 2 extra pieces from a paragraph the length budget split
+     * - so 13 pieces that are not assistant text parts. A reader comparing the two numbers could only report thirteen
+     * pieces - a whole turn - with no record at all. The pieces are counted here so the run's own total is reconcilable
+     * against what this account claims.
+     * </p>
+     */
+    let presentedTextPieces = 0;
+    let aheadPieces = 0;
     /** Did Pi classify the message it ended on as a provider failure or a cancellation? Read from the raw stream. */
     let assistantFailed = false;
     try {
@@ -422,7 +443,9 @@ export class CompanionLoop {
                   // text, in arrival order, and is never re-chunked.
                   onIncrementalText: async (piece) => {
                     const content = Object.freeze({ sourceEventId, text: piece });
-                    await this.#turnObserver?.presentNativeAssistantContent?.(content);
+                    const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
+                    if (presentation !== undefined) aheadPieces += 1;
+                    await presentation;
                   },
                   onFinalText: async (text) => {
                     // One message's text is one paragraph, committed once. The
@@ -444,7 +467,10 @@ export class CompanionLoop {
                     }
                     const content = Object.freeze({ sourceEventId, text });
                     const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
-                    if (presentation !== undefined) nativeContentFinal = presentation;
+                    if (presentation !== undefined) {
+                      presentedTextPieces += 1;
+                      nativeContentFinal = presentation;
+                    }
                     await presentation;
                   },
                   onMessageText: (outcome) => {
@@ -624,7 +650,13 @@ export class CompanionLoop {
       // projection's own reasons and this loop's (`no_presentation_lease`). `unaccounted` is what is
       // left when BOTH layers have named their parts; a non-zero one is now a claim that some text
       // reached neither, and that is the number no shipped artifact has ever carried.
-      if (assistantTextParts > 0) {
+      //
+      // `pieces` is the second population, in the unit the run reports: `text` paragraphs the surface committed and
+      // the `ahead` pieces a paced surface committed before them. `textParts` and `pieces` are different counts of
+      // different things on purpose - a part is a block of model text, a piece is one commit the player saw - and
+      // publishing both is what lets a run reconcile its own `presentation.pieceCount` against this account instead
+      // of reading the difference as missing turns (see the measurement above).
+      if (assistantTextParts > 0 || presentedTextPieces > 0 || aheadPieces > 0) {
         const suppressed = Object.fromEntries(suppressedByReason);
         const named = Object.values(suppressed).reduce((total, count) => total + count, 0);
         process.stderr.write(
@@ -633,6 +665,7 @@ export class CompanionLoop {
             presented: presentedTextParts,
             suppressed,
             unaccounted: assistantTextParts - presentedTextParts - named,
+            pieces: { text: presentedTextPieces, ahead: aheadPieces },
           })}\n`,
         );
       }
