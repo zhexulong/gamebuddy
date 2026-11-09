@@ -509,9 +509,14 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         E("break_resource_clump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(Target(), FarmhandClearingCost.TargetDecidesTool, ClumpOccupants), FarmhandActionLifecycle.Experimental, "debrisTargets"),
         // Fishing. `waterTargets` is the engine's own castable-tile answer (`GameLocation.canFishHere` + `isTileFishable`),
         // and the postcondition is `fish_caught` because that is the fact the receipt measures a before/after of
-        // (`fish_caught_before`/`fish_caught_after` around `Farmer.fishCaught`). `experimental` and not `live_verified`:
-        // promotion needs a real target-version run, and the run comes after the action exists.
-        E("fish_here", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(A(null, ToolResource("fishing_rod", FarmhandResourceTemplateValue.AnyUpgrade), "fish_caught", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string"))), FarmhandActionLifecycle.Experimental, "waterTargets"),
+        // (`fish_caught_before`/`fish_caught_after` around `Farmer.fishCaught`).
+        //
+        // `Published`, NOT `Experimental`: an experimental action is off the agent surface, so no run can dispatch it and
+        // no live evidence is ever obtainable for it - a task naming it can never be satisfied (the task table's own
+        // falsifier says so: "reads fish_here, which the Mod registers Experimental - no run can dispatch it"). The
+        // missing half is the Host's, and it is the promotion gate that names it field by field; `LiveVerified` stays
+        // for the run that proves the catch is credited by the engine.
+        E("fish_here", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(A(null, ToolResource("fishing_rod", FarmhandResourceTemplateValue.AnyUpgrade), "fish_caught", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string"))), FarmhandActionLifecycle.Published, "waterTargets"),
         E("npc_relationship", "npc_social", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "npcRelationshipTargets"),
         E("pet_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "petTargets"),
         E("pet_farm_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "farmAnimalPetTargets"),

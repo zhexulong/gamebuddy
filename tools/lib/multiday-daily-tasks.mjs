@@ -129,6 +129,10 @@ const SCENARIO_TASK_ACTION_HINTS = Object.freeze({
     "plant_seed",
     "water_crop",
   ]),
+  // THE ONLY TASK THAT ASKS FOR A WATER ACTION. `fish_here` is published and no task named it, which is the same
+  // coverage hole `enter_mine` was in: an action can be finished, gated, and never exercised because nothing asked.
+  // One action, deliberately - the task is "did she go and fish", not a quota of fish.
+  a_fish_from_the_water: Object.freeze(["fish_here"]),
 });
 
 /**
@@ -316,6 +320,9 @@ export const DAILY_TASK_ROTATION = Object.freeze([
   // stay the tail of the rotation. A day that has to till sixty tiles should not be what the first run of a series
   // begins with, and `runOffsetFor` still walks the whole list one first-day per run.
   "clear_and_plant_long_patch",
+  // APPENDED beside the long patch for the same reason it was: the first days belong to what a bare farm can satisfy,
+  // and a fishing day depends on water she has to walk to. The action exists and no task had ever asked for it.
+  "a_fish_from_the_water",
   // The sweep tasks come LAST, deliberately. The nineteen above are a coverage plan somebody argued for, in an
   // order that puts what a bare farm can satisfy first; appending rather than interleaving keeps that plan intact
   // and makes the new days the tail of the rotation rather than a silent reordering of every run that came before.

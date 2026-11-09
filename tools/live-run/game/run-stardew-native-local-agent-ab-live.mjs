@@ -502,6 +502,9 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   // one snapshot sees, so the far end is only ever in her head after the first walk. No crop is named - choosing it is
   // hers - and no instruction about how to plan it is appended, because the shape is the task.
   clear_and_plant_long_patch: "门前横着开一条长地，三格宽、二十格长，清出来种上。",
+  // No number of fish and no destination: `waterTargets` is the world's own answer to "where is water I can fish",
+  // and picking a spot here would be a second one.
+  a_fish_from_the_water: "找片水，钓条鱼回来。",
   tidy_and_repair: "把地里和院子里残留的杂物清一清，没用的东西收掉。",
   tend_the_animals: "去看看牲口，该摸的摸，该喂的喂，有东西就收。",
   dress_and_display: "给自己换身衣裳，把屋里摆出点样子来。",
@@ -529,6 +532,7 @@ const DAILY_TASK_PROMPT_EN = Object.freeze({
   till_and_sow: "turn the bare ground, put seeds in it, and water them. ",
   clear_and_plant_long_patch:
     "open up a long strip out front - three tiles wide, twenty long - clear it and plant it. ",
+  a_fish_from_the_water: "find some water and bring a fish back from it. ",
   tidy_and_repair: "clear what is left lying around the field and the yard, and put away what is not needed. ",
   tend_the_animals: "look in on the animals - pet what wants petting, feed what wants feeding, collect what is there. ",
   dress_and_display: "put on something else, and make the house look like somebody lives in it. ",

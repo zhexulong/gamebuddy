@@ -152,6 +152,13 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
       croppedBy: [tileProof("plant_seed", "tile"), tileProof("water_crop", "tile")],
     },
   ),
+  // Two steps, because the purpose is not "an action succeeded": it is that she went to water and came back with a
+  // fish. `navigate_to_destination`/`travel` is how a day reaches water `waterTargets` named, and `fish_here` is the
+  // catch; a one-step criterion would be a single success standing in for the whole purpose.
+  a_fish_from_the_water: criterion("she went to the water and came back with a fish", [
+    anyOf("navigate_to_destination", "travel"),
+    step("fish_here"),
+  ]),
   home_and_hearth: gap(
     "the house was tidied and a few things put out so it feels lived in",
     "`place_owned_object` publishes the one object it set down and the map it landed on, and nothing publishes what the room now holds - the note's own end state ('so it feels lived in') has no fact behind it, and 'tidy it up' names no action with a postcondition.",
