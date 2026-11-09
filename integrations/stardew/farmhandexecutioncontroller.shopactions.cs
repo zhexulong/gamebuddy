@@ -95,7 +95,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 bool inReach = Utility.tileWithinRadiusOfPlayer(
                     npc.TilePoint.X, npc.TilePoint.Y, ShopOwnerInteractionRadius, player);
 
-                ReadShopStock(shopId, shopData, out int stockCount, out List<string> stockItemIds);
+                ReadShopStock(shopId, shopData, out int stockCount, out List<string> stockItemIds, out _);
 
                 targets.Add(new BridgeShopTarget(
                     ShopTargetId(shopId, owner.Name),
@@ -123,26 +123,48 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// What a shop can actually sell right now, so a caller does not have to guess an item
     /// id. Same call the purchase itself uses, so discovery and execution cannot disagree
     /// about what is on offer.
+    ///
+    /// <para>
+    /// <c>priceByQualifiedItemId</c> is the COMPLETE stock with what the menu would charge for each entry
+    /// (<c>ItemStockInformation.Price</c>, after the shop's and the entry's own modifiers). This method is the ONE
+    /// reader of shop stock in this class: the shortage fact's supply half calls it too, rather than asking
+    /// <c>ShopBuilder</c> a second time and risking two answers about one shop. <c>stockItemIds</c> stays the bounded
+    /// list a target row publishes, so the two readers cannot drift about what is on offer.
+    /// </para>
     /// </summary>
-    private static void ReadShopStock(string shopId, ShopData shopData, out int stockCount, out List<string> stockItemIds)
+    private static void ReadShopStock(
+        string shopId,
+        ShopData shopData,
+        out int stockCount,
+        out List<string> stockItemIds,
+        out Dictionary<string, int> priceByQualifiedItemId)
     {
         stockCount = 0;
         stockItemIds = new List<string>();
+        priceByQualifiedItemId = new Dictionary<string, int>(StringComparer.Ordinal);
         try
         {
             Dictionary<ISalable, ItemStockInformation>? here = ShopBuilder.GetShopStock(shopId, shopData);
             if (here is null)
                 return;
             stockCount = here.Count;
-            foreach (ISalable item in here.Keys)
+            foreach (KeyValuePair<ISalable, ItemStockInformation> entry in here)
             {
-                if (!string.IsNullOrEmpty(item.QualifiedItemId) && stockItemIds.Count < 16)
-                    stockItemIds.Add(item.QualifiedItemId);
+                string qualifiedItemId = entry.Key.QualifiedItemId;
+                if (string.IsNullOrEmpty(qualifiedItemId))
+                    continue;
+                // First entry wins: two rows can resolve to the same item id, and the menu sells the first of them at
+                // that price. Overwriting would publish the last row's number as if it were the only one.
+                priceByQualifiedItemId.TryAdd(qualifiedItemId, entry.Value.Price);
+                if (stockItemIds.Count < 16)
+                    stockItemIds.Add(qualifiedItemId);
             }
         }
         catch (Exception)
         {
             stockCount = 0;
+            stockItemIds.Clear();
+            priceByQualifiedItemId.Clear();
         }
     }
 
@@ -191,7 +213,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     || !seen.Add(shopId))
                     continue;
 
-                ReadShopStock(shopId, shopData, out int stockCount, out List<string> stockItemIds);
+                ReadShopStock(shopId, shopData, out int stockCount, out List<string> stockItemIds, out _);
                 found++;
                 yield return new BridgeShopTarget(
                     ShopTargetId(shopId, string.Empty),
@@ -755,5 +777,307 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Uncertain, "purchase_partial", evidence);
 
         return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Failed, "purchase_not_effective", evidence);
+    }
+}
+
+/// <summary>
+/// `seedSupplyTargets`: where the seeds this actor HOLDS are sold, what the menu would charge, and whether the shop's
+/// own hours query says it is open right now.
+///
+/// <para>
+/// Measured 2026-11-09: a day whose task was a three-wide strip twenty long, two seed stacks in the pack, four tiles
+/// planted, and then "种子就这些了，想铺满二十格还得再买种" - and asked afterwards, the companion had never considered
+/// buying seed. The shortage was discoverable and the supply was not. `shopTargets` publishes only shops whose owner
+/// stands in the CURRENT location, so on the farm at 06:00 it published nothing at all, and no field anywhere carried a
+/// price or a trading window. This family is that missing half, published so the shortage and its source arrive
+/// together instead of the companion having to think of a shop that nothing had mentioned.
+/// </para>
+/// <para>
+/// The population is the inventory `plant_seed` already publishes from - an <c>Object</c> in the engine's seeds
+/// category - so no list of seed ids lives here, and a seed she does not hold is not a row. The world's shop set is
+/// <c>Data/Shops</c> read through <c>ReadShopStock</c>, the same reader the shop targets use, so "no shop sells it" is a
+/// measurement rather than a guess.
+/// </para>
+/// </summary>
+internal sealed partial class ExecutionManager
+{
+    /// <summary>The Host's published cap on `seedSupplyTargets` (host/src/protocol.ts), which the snapshot contract
+    /// enforces; exceeding it invalidates the WHOLE snapshot.</summary>
+    private const int MaxSeedSupplyRows = 8;
+
+    /// <summary>
+    /// The stock scan behind `seedSupplyTargets`, cached per in-game day and per set of held seeds.
+    ///
+    /// `ReadShopStock` resolves every shop's item queries and touches the team's synchronized shop stock, so asking all
+    /// of `Data/Shops` on every snapshot would put that cost on the game thread once per observation, for a fact that
+    /// changes once a day. What is NOT cached is `OpenNow`: that is the engine's answer about the clock, it moves with
+    /// the hour, and freezing it at 06:00 would be the one thing this fact exists to prevent.
+    /// </summary>
+    private static int seedSupplyScanDay = int.MinValue;
+    private static string seedSupplyScanKey = string.Empty;
+    private static IReadOnlyList<(string QualifiedItemId, string ShopId, int Price)> seedSupplyScan =
+        Array.Empty<(string QualifiedItemId, string ShopId, int Price)>();
+
+    /// <summary>
+    /// Every (held seed, shop that stocks it) pair, as the game states it. Null only when the caller decided not to
+    /// measure; an empty array is the measured answer "this actor holds no plantable seed".
+    /// </summary>
+    private IReadOnlyList<BridgeSeedSupplyTarget> DiscoverSeedSupplyTargets(
+        Farmer player,
+        IReadOnlyList<BridgeInventoryItemFact>? inventoryItemFacts,
+        out int omitted)
+    {
+        omitted = 0;
+        List<string> seedIds = new();
+        Dictionary<string, List<int>> slotsBySeed = new(StringComparer.Ordinal);
+        foreach ((StardewValley.Item? item, int slot) in player.Items.Select((item, slot) => (item, slot)))
+        {
+            if (item is not StardewValley.Object held
+                || held.Category != StardewValley.Object.SeedsCategory
+                || string.IsNullOrEmpty(held.QualifiedItemId))
+                continue;
+            if (!slotsBySeed.TryGetValue(held.QualifiedItemId, out List<int>? slots))
+            {
+                slots = new List<int>();
+                slotsBySeed[held.QualifiedItemId] = slots;
+                seedIds.Add(held.QualifiedItemId);
+            }
+            slots.Add(slot);
+        }
+        if (seedIds.Count == 0)
+            return Array.Empty<BridgeSeedSupplyTarget>();
+
+        string scanKey = string.Join(",", seedIds);
+        int day = Game1.Date?.TotalDays ?? -1;
+        if (seedSupplyScanDay != day || !string.Equals(seedSupplyScanKey, scanKey, StringComparison.Ordinal))
+        {
+            seedSupplyScan = ScanSeedSupply(seedIds);
+            seedSupplyScanDay = day;
+            seedSupplyScanKey = scanKey;
+        }
+
+        Dictionary<string, ShopData> shops;
+        try
+        {
+            shops = DataLoader.Shops(Game1.content);
+        }
+        catch (Exception)
+        {
+            // An unreadable content table is "the shops could not be read", which the empty list states honestly: the
+            // companion is told there is no known source, not that the seed does not exist.
+            return Array.Empty<BridgeSeedSupplyTarget>();
+        }
+
+        List<BridgeSeedSupplyTarget> rows = new();
+        foreach (string seedId in seedIds)
+        {
+            int? heldCount = HeldSeedCount(inventoryItemFacts, seedId, slotsBySeed[seedId]);
+            string displayName = RequireDisplayName(seedId);
+            bool stockedSomewhere = false;
+            foreach ((string QualifiedItemId, string ShopId, int Price) entry in seedSupplyScan)
+            {
+                if (!string.Equals(entry.QualifiedItemId, seedId, StringComparison.Ordinal))
+                    continue;
+                if (!shops.TryGetValue(entry.ShopId, out ShopData? shopData) || shopData is null)
+                    continue;
+                stockedSomewhere = true;
+                IReadOnlyList<ShopOwnerData>? eligibleOwners;
+                try
+                {
+                    eligibleOwners = ShopBuilder.GetCurrentOwners(shopData).ToArray();
+                }
+                catch (Exception)
+                {
+                    // The condition could not be evaluated. That is NOT "closed": the row carries no answer and names
+                    // the reason, so a companion cannot read a failed query as a shop she need not walk to.
+                    eligibleOwners = null;
+                }
+                rows.Add(SeedSupplyRow(
+                    seedId,
+                    displayName,
+                    heldCount,
+                    entry.ShopId,
+                    ShopDisplayName(entry.ShopId),
+                    shopData,
+                    entry.Price,
+                    eligibleOwners));
+            }
+            // A seed nobody stocks still gets a row: the absent shop half IS the answer ("no known source"), and it
+            // must not be confused with no row at all (she holds no plantable seed) or with no family (nothing was
+            // measured).
+            if (!stockedSomewhere)
+                rows.Add(SeedWithoutSupplyRow(seedId, displayName, heldCount));
+        }
+        omitted = Math.Max(0, rows.Count - MaxSeedSupplyRows);
+        return rows.Count > MaxSeedSupplyRows ? rows.GetRange(0, MaxSeedSupplyRows) : rows;
+    }
+
+    /// <summary>
+    /// Which shops stock which of the held seeds, with what the menu would charge, for the given day.
+    ///
+    /// One pass over `Data/Shops` through `ReadShopStock`, which is the reader the shop targets already use: a second
+    /// `ShopBuilder` call site could disagree with it about what a shop offers, and then a fact would name a shop the
+    /// purchase action would refuse.
+    /// </summary>
+    private static IReadOnlyList<(string QualifiedItemId, string ShopId, int Price)> ScanSeedSupply(
+        IReadOnlyList<string> seedIds)
+    {
+        List<(string QualifiedItemId, string ShopId, int Price)> found = new();
+        Dictionary<string, ShopData> shops;
+        try
+        {
+            shops = DataLoader.Shops(Game1.content);
+        }
+        catch (Exception)
+        {
+            return found;
+        }
+        foreach ((string shopId, ShopData shopData) in shops)
+        {
+            if (shopData is null)
+                continue;
+            ReadShopStock(shopId, shopData, out _, out _, out Dictionary<string, int> priceByQualifiedItemId);
+            foreach (string seedId in seedIds)
+            {
+                if (priceByQualifiedItemId.TryGetValue(seedId, out int price))
+                    found.Add((seedId, shopId, price));
+            }
+        }
+        return found;
+    }
+
+    /// <summary>
+    /// One row for a seed the actor holds and NO shop in `Data/Shops` stocks: the seed and its count, and no shop half.
+    /// </summary>
+    internal static BridgeSeedSupplyTarget SeedWithoutSupplyRow(string qualifiedItemId, string displayName, int? heldCount) =>
+        new(qualifiedItemId, displayName, heldCount, null, null, null, null, null, null, null, null, null);
+
+    /// <summary>
+    /// One supply row, projected from the shop's OWN data: the declared owner and its hours query, the price the menu
+    /// charges, the row's declared price, and the engine's open-now answer.
+    ///
+    /// <c>openNow</c> is three-valued on purpose. <c>null</c> means the question could not be asked - the shop declares
+    /// no owner entry (<c>no_owner_entry</c>) or its condition could not be evaluated
+    /// (<c>owner_condition_unreadable</c>) - and a reader must not see that as "closed".
+    /// </summary>
+    internal static BridgeSeedSupplyTarget SeedSupplyRow(
+        string qualifiedItemId,
+        string displayName,
+        int? heldCount,
+        string shopId,
+        string shopDisplayName,
+        ShopData shopData,
+        int price,
+        IReadOnlyList<ShopOwnerData>? eligibleOwners)
+    {
+        List<ShopOwnerData> owners = shopData.Owners ?? new List<ShopOwnerData>();
+        ShopOwnerData? owner = owners.FirstOrDefault(
+                candidate => candidate is not null
+                    && candidate.Type == ShopOwnerType.NamedNpc
+                    && !string.IsNullOrWhiteSpace(candidate.Name))
+            ?? owners.FirstOrDefault(candidate => candidate is not null);
+        string ownerName = owner?.Name ?? string.Empty;
+        string? hoursCondition = string.IsNullOrWhiteSpace(owner?.Condition) ? null : owner!.Condition;
+        bool? openNow;
+        string? openNowReason;
+        if (owner is null)
+        {
+            openNow = null;
+            openNowReason = "no_owner_entry";
+        }
+        else if (eligibleOwners is null)
+        {
+            openNow = null;
+            openNowReason = "owner_condition_unreadable";
+        }
+        else
+        {
+            openNow = eligibleOwners.Any(
+                candidate => candidate is not null
+                    && candidate.Type == owner.Type
+                    && string.Equals(candidate.Name, ownerName, StringComparison.Ordinal));
+            openNowReason = null;
+        }
+        return new BridgeSeedSupplyTarget(
+            qualifiedItemId,
+            displayName,
+            heldCount,
+            shopId,
+            shopDisplayName,
+            ownerName,
+            hoursCondition,
+            price,
+            DeclaredSeedPrice(shopData, qualifiedItemId),
+            shopData.Currency,
+            openNow,
+            openNowReason);
+    }
+
+    /// <summary>
+    /// How many of this seed the actor holds, summed from the PUBLISHED stack rows for the slots that hold it.
+    ///
+    /// Null - never 0 - when those rows were not published, or do not cover every holding slot. A zero derived from an
+    /// absence would answer "you have none" about a pack nobody read, which is the defect class this field must not
+    /// join: the same shape as a null key and a default that reads as truth.
+    /// </summary>
+    private static int? HeldSeedCount(
+        IReadOnlyList<BridgeInventoryItemFact>? inventoryItemFacts,
+        string qualifiedItemId,
+        List<int> slots)
+    {
+        if (inventoryItemFacts is null)
+            return null;
+        int total = 0;
+        int covered = 0;
+        foreach (BridgeInventoryItemFact fact in inventoryItemFacts)
+        {
+            if (!slots.Contains(fact.Slot)
+                || !string.Equals(fact.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal))
+                continue;
+            total += fact.Stack;
+            covered += 1;
+        }
+        return covered == slots.Count ? total : null;
+    }
+
+    /// <summary>
+    /// The `Data/Shops` row's own declared price for this item, or null when no entry names it literally.
+    ///
+    /// Only a literal id can be matched: vanilla writes many entries as item QUERIES (`ALL_ITEMS`, the seasonal forms),
+    /// and the id a query resolves to is not the row's <c>ItemId</c>. Null is that fact - "this row states no price for
+    /// this item" - and it is never the charged price written a second time.
+    /// </summary>
+    private static int? DeclaredSeedPrice(ShopData shopData, string qualifiedItemId)
+    {
+        string unqualified = qualifiedItemId.StartsWith("(O)", StringComparison.Ordinal)
+            ? qualifiedItemId[3..]
+            : qualifiedItemId;
+        foreach (ShopItemData entry in shopData.Items ?? new List<ShopItemData>())
+        {
+            if (entry is null || string.IsNullOrEmpty(entry.ItemId))
+                continue;
+            if (!string.Equals(entry.ItemId, qualifiedItemId, StringComparison.Ordinal)
+                && !string.Equals(entry.ItemId, unqualified, StringComparison.Ordinal))
+                continue;
+            return entry.Price < 0f ? null : (int)entry.Price;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The shop's own name as the game localizes it, or empty when the id names no map at all (a stall, the casino, a
+    /// festival shop). Empty is that fact; the caller still has `shopId`.
+    /// </summary>
+    private static string ShopDisplayName(string shopId)
+    {
+        try
+        {
+            StardewValley.GameLocation? location = Game1.getLocationFromName(shopId);
+            return location is null ? string.Empty : location.DisplayName;
+        }
+        catch (Exception)
+        {
+            return string.Empty;
+        }
     }
 }

@@ -168,6 +168,12 @@ export const DISCOVERY_COLLECTIONS = Object.freeze({
   },
   DiscoverWarpItemTargets: { mustRead: [], why: "publishes the warp totems in the actor's own pack" },
   DiscoverLanternSlots: { mustRead: [], why: "publishes the actor's own held tool lights (slot state)" },
+  // The shortage's supply half: a `Data/Shops` row joined to the seed stacks in the actor's own pack. No location
+  // entity is published - the rows name a shop id and what the menu charges, not a tile to walk to.
+  DiscoverSeedSupplyTargets: {
+    mustRead: [],
+    why: "joins the actor's own pack (the seeds held) to `Data/Shops` stock, and the shop's own hours query",
+  },
 
   // Buildings.
   DiscoverAnimalDoorTargets: { mustRead: ["buildings"] },

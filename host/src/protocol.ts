@@ -67,6 +67,7 @@ import {
   isRefillWateringCanTargetFact,
   isRockSourceTargetFact,
   isScytheCropTargetFact,
+  isSeedSupplyTargetFact,
   isSeedTargetFact,
   isShippingBinTargetFact,
   isShopTargetFact,
@@ -996,6 +997,40 @@ export type Snapshot = Readonly<{
     /** What the shop can sell right now, so callers do not have to guess an id. */
     stockItemIds: readonly string[];
   }>[];
+  /**
+   * Where the seeds this actor HOLDS are sold, what the menu charges, and whether the shop's own hours query says it is
+   * open now. One row per (held plantable seed x shop that stocks it).
+   *
+   * This is the SUPPLY half of a shortage and it exists because `shopTargets` cannot answer it: that family publishes
+   * only shops whose owner stands in the CURRENT location, so on the farm at 06:00 it is empty, and no field anywhere
+   * carried a price or a trading window. `hoursCondition` is the shop row's own game-state query verbatim and `openNow`
+   * is the engine's answer to it; `openNow` absent means the question could not be asked, never "closed".
+   *
+   * Absent means NOT MEASURED (`plant_seed` was not advertised); an empty array is the measured answer "this actor holds
+   * no plantable seed".
+   */
+  seedSupplyTargets?: readonly Readonly<{
+    qualifiedItemId: string;
+    displayName: string;
+    /** Summed from the published `inventoryItemFacts` rows for the slots that hold this seed; absent = not measured. */
+    heldCount?: number;
+    /** The shop that stocks it. Absent = no shop in `Data/Shops` stocks this seed (no known source). */
+    shopId?: string;
+    shopDisplayName?: string;
+    ownerName?: string;
+    /** The owner entry's own hours query, verbatim (vanilla spells the trading window this way). */
+    hoursCondition?: string;
+    /** What the menu would charge now (`ItemStockInformation.Price`, after the shop's and the entry's modifiers). */
+    price?: number;
+    /** The `Data/Shops` row's declared number, when that row names this item literally. */
+    declaredPrice?: number;
+    currency?: number;
+    openNow?: boolean;
+    /** Why `openNow` could not be answered (`no_owner_entry`, `owner_condition_unreadable`). */
+    openNowReason?: string;
+  }>[];
+  /** How many supply rows the Mod's cap left out, beside the family it truncates. */
+  seedSupplyTargetsOmitted?: number;
   mineElevatorFloorTargets?: readonly Readonly<{
     targetId: string;
     floor: number;
@@ -2078,6 +2113,8 @@ export const SNAPSHOT_KEYS = [
   "cookingRecipeTargets",
   "cookingStationTargets",
   "shopTargets",
+  "seedSupplyTargets",
+  "seedSupplyTargetsOmitted",
   "mineElevatorFloorTargets",
   "animalDoorTargets",
   "fishPondTargets",
@@ -4028,6 +4065,7 @@ export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freez
   { field: "baitCrabPotTargets", maxItems: 16, accepts: isBaitCrabPotTargetFact },
   { field: "baitCrabPotResultTargets", maxItems: 1, accepts: isBaitCrabPotTargetFact },
   { field: "shopTargets", maxItems: 32, accepts: isShopTargetFact },
+  { field: "seedSupplyTargets", maxItems: 8, accepts: isSeedSupplyTargetFact },
   { field: "horseTargets", maxItems: 16, accepts: isHorseTargetFact },
   { field: "mineEntranceTargets", maxItems: 16, accepts: isMineEntranceTargetFact },
   { field: "animalDoorTargets", maxItems: 32, accepts: isAnimalDoorTargetFact },

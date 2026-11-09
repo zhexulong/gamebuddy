@@ -3256,6 +3256,20 @@
           },
           "maxItems": 32
         },
+        "seedSupplyTargets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/seedSupplyTarget"
+          },
+          "maxItems": 8
+        },
+        "seedSupplyTargetsOmitted": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
         "fishPondTargets": {
           "type": "array",
           "items": {
@@ -8480,6 +8494,68 @@
             "maxLength": 256
           },
           "maxItems": 256
+        }
+      }
+    },
+    "seedSupplyTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "qualifiedItemId",
+        "displayName"
+      ],
+      "properties": {
+        "qualifiedItemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "heldCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "shopId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "shopDisplayName": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "ownerName": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "hoursCondition": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "price": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "declaredPrice": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "currency": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "openNow": {
+          "type": "boolean"
+        },
+        "openNowReason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
         }
       }
     },

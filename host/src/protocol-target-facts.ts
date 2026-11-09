@@ -1442,6 +1442,56 @@ export function isShopTargetFact(value: unknown): boolean {
   );
 }
 
+/**
+ * One row about a plantable seed the actor HOLDS: the count she holds, and - when a shop stocks it - where it is sold,
+ * what the menu charges and whether that shop's own hours query says it is open.
+ *
+ * The nullable keys are the three-valued answers, and they are optional at the wire because the Mod omits a null
+ * member. `heldCount` absent means the published stack rows did not cover the holding slots; `shopId` absent means NO
+ * shop in `Data/Shops` stocks this seed (a different answer from no row at all, which means she holds no plantable
+ * seed, and from no family, which means nothing was measured); `declaredPrice` absent means the shop row names this
+ * item as a query rather than literally; `hoursCondition` absent means the owner entry declares no trading window;
+ * and `openNow` absent means the question could not be asked, with `openNowReason` naming why. `openNow` absent is
+ * NOT `openNow: false` - one means the question could not be asked and the other means the shop is shut.
+ */
+export function isSeedSupplyTargetFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, [
+      "qualifiedItemId",
+      "displayName",
+      "heldCount",
+      "shopId",
+      "shopDisplayName",
+      "ownerName",
+      "hoursCondition",
+      "price",
+      "declaredPrice",
+      "currency",
+      "openNow",
+      "openNowReason",
+    ]) &&
+    isQualifiedItemId(value.qualifiedItemId) &&
+    isBoundedNonEmptyString(value.displayName, 128) &&
+    (value.heldCount === undefined || isNonNegativeSafeInteger(value.heldCount)) &&
+    (value.shopId === undefined || isBoundedNonEmptyString(value.shopId, 256)) &&
+    (value.shopDisplayName === undefined ||
+      (typeof value.shopDisplayName === "string" && value.shopDisplayName.length <= 256)) &&
+    (value.ownerName === undefined || (typeof value.ownerName === "string" && value.ownerName.length <= 256)) &&
+    (value.hoursCondition === undefined || isBoundedNonEmptyString(value.hoursCondition, 256)) &&
+    (value.price === undefined || isNonNegativeSafeInteger(value.price)) &&
+    (value.declaredPrice === undefined || isNonNegativeSafeInteger(value.declaredPrice)) &&
+    (value.currency === undefined || isNonNegativeSafeInteger(value.currency)) &&
+    (value.openNow === undefined || typeof value.openNow === "boolean") &&
+    (value.openNowReason === undefined || isBoundedNonEmptyString(value.openNowReason, 64)) &&
+    // A shop half is all-or-nothing: a row that names a shop must also say what it charges, and a row that names no
+    // shop must carry no half-answer about one. Otherwise a reader could see a price with no shop to walk to.
+    (value.shopId === undefined
+      ? value.price === undefined && value.currency === undefined && value.openNow === undefined
+      : value.price !== undefined && value.currency !== undefined)
+  );
+}
+
 export function isFishPondTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&

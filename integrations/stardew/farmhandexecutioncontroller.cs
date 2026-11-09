@@ -2417,6 +2417,21 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // with no tree must not answer the same thing, and neither must "not measured" and "nothing withheld".
         bool exclusionFamilyAdvertised = ExclusionReportingCapabilities
             .Any(entry => advertisedCapabilities.Contains(entry.Capability, StringComparer.Ordinal));
+        // The stack rows the inventory families publish. Hoisted because TWO readers need the same rows: the positional
+        // argument below, and the seed-supply fact's `heldCount` - which sums THESE rows rather than counting the pack a
+        // second time, so the two cannot disagree about how many seeds she holds. Null when no such capability is
+        // advertised, and the supply row then says the count is unknown instead of zero.
+        IReadOnlyList<BridgeInventoryItemFact>? inventoryItemFacts =
+            advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("redeem_prize_ticket", StringComparer.Ordinal) || advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("put_item_in_fish_tank", StringComparer.Ordinal) || advertisedCapabilities.Contains("place_item_on_pedestal", StringComparer.Ordinal) || advertisedCapabilities.Contains("open_geode", StringComparer.Ordinal)
+                ? DiscoverInventoryItemFacts(player)
+                : null;
+        // The shortage fact's SUPPLY half, published only while the action whose day it belongs to is advertised: a
+        // companion that cannot sow a tile has no shortage, and a family published for an unadvertised action would be a
+        // fact about a world it cannot act in.
+        IReadOnlyList<BridgeSeedSupplyTarget>? seedSupplyTargets = null;
+        int seedSupplyTargetsOmitted = 0;
+        if (advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal))
+            seedSupplyTargets = DiscoverSeedSupplyTargets(player, inventoryItemFacts, out seedSupplyTargetsOmitted);
         BridgeSnapshot snapshot = new BridgeSnapshot(
             this.revision,
             player.currentLocation?.NameOrUniqueName ?? "unknown",
@@ -2501,7 +2516,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             chestsSummary,
             // `put_item_in_fish_tank` and `place_item_on_pedestal` name the PACK SLOT their item is taken from, and this row is where that number and the
             // item identity beside it are published - the tank's own `worldObjectTargets` row carries the tile, never the slot.
-            (advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("redeem_prize_ticket", StringComparer.Ordinal) || advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("put_item_in_fish_tank", StringComparer.Ordinal) || advertisedCapabilities.Contains("place_item_on_pedestal", StringComparer.Ordinal) || advertisedCapabilities.Contains("open_geode", StringComparer.Ordinal)) ? DiscoverInventoryItemFacts(player) : null,
+            inventoryItemFacts,
             advertisedCapabilities.Contains("use_item", StringComparer.Ordinal) ? DiscoverFoodTargets(player) : null,
             advertisedCapabilities.Contains("ship_item", StringComparer.Ordinal) ? this.DiscoverShippingBinTargets(player) : null,
             advertisedCapabilities.Contains("craft_item", StringComparer.Ordinal) ? DiscoverCraftingRecipeTargets(player) : null,
@@ -2593,7 +2608,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // The cap on `farmBuildingTargets` is 8 `built` rows; the count of what it left out rides beside the
             // family for the same reason `soilTilesOmitted` does. A farm with more buildings than the bound answered
             // "eight" whether it had eight or eighty.
-            FarmBuildingTargetsOmitted: farmBuildingTargets is null ? null : farmBuildingTargetsOmitted
+            FarmBuildingTargetsOmitted: farmBuildingTargets is null ? null : farmBuildingTargetsOmitted,
+            SeedSupplyTargets: seedSupplyTargets,
+            SeedSupplyTargetsOmitted: seedSupplyTargets is null ? null : seedSupplyTargetsOmitted
         );
         // The rows are read AFTER every family above has walked the world and recorded into the same recorder, so this
         // is one publication of one measurement rather than a second pass over the map.

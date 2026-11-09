@@ -169,6 +169,10 @@ const WITHHELD_SCALAR_KEYS: Readonly<Record<string, string>> = Object.freeze({
     "The number of distinct (family, reason) rows the Mod's cap left out of `discoveryExclusions`, paired with the register it counts. Without it a bounded register reads as a complete one - the same defect `soilTilesOmitted` exists for, one layer out. Delivered by `stardew_observe`.",
   currentToolSlotItem:
     "The qualified item id in the current tool slot; `currentTool` and `toolSlots[].label` already publish the tool identity, which the environment line renders as a tool word, so this would be a second spelling of a fact already in the prompt.",
+  seedSupplyTargets:
+    "Where the seeds the actor HOLDS are sold, for how much, and whether the shop's own hours query says it is open. Read by the live harness, which is the layer that knows the DAY's task: the shortage is `task patch tiles` minus `heldCount`, and the Host's per-turn fact block has no task to subtract from. Publishing it into the environment line would state a supply with no shortage beside it, once per turn, for a fact that changes once a day. Delivered by `stardew_observe` to the harness.",
+  seedSupplyTargetsOmitted:
+    "The number of supply rows the Mod's cap left out, paired with the family it counts. The harness reads it beside the rows for the same reason `soilTilesOmitted` exists: a bounded list without its omission count reads as a complete world.",
 });
 
 /**

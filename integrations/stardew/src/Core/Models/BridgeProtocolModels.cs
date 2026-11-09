@@ -931,7 +931,14 @@ public sealed record BridgeSnapshot(
     // exactly as `soilTiles` null differs from `soilTiles: []`.
     // Defaulted and LAST for the same reason as its siblings above: the positional list is already closed.
     IReadOnlyList<BridgeDiscoveryExclusion>? DiscoveryExclusions = null,
-    int? DiscoveryExclusionsOmitted = null);
+    int? DiscoveryExclusionsOmitted = null,
+    // The seed-shortage SUPPLY fact, beside the family it answers: one row per (plantable seed the actor HOLDS x shop
+    // whose stock sells it), carrying the charged price, the row's declared price, the owner's own hours condition and
+    // the engine's open-now answer. Published only while `plant_seed` is advertised and bounded to eight rows, with the
+    // count the cap left out beside it. Null means NOT MEASURED; an empty array is the measured answer "she holds no
+    // plantable seed", exactly as `soilTiles` null differs from `soilTiles: []`.
+    IReadOnlyList<BridgeSeedSupplyTarget>? SeedSupplyTargets = null,
+    int? SeedSupplyTargetsOmitted = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,
@@ -1232,6 +1239,57 @@ public sealed record BridgeShopTarget(
     // field can be omitted is one the Host's exact-key check rejects — which is exactly how
     // the first live attempt failed. An empty list is a legal value and is still written.
     IReadOnlyList<string> StockItemIds);
+
+/// <summary>
+/// One (seed the actor holds) x (shop whose stock sells it) pair: the SUPPLY half of "can this day's patch be sown",
+/// as the game itself states it.
+///
+/// <para>
+/// Why this is published at all. Measured 2026-11-09: a day whose task was a three-wide strip twenty long, two seed
+/// stacks in the pack, four tiles planted, then "种子就这些了，想铺满二十格还得再买种" - and asked afterwards, the
+/// companion had never considered buying seed. The shortage was discoverable and the supply was not: `shopTargets`
+/// publishes only shops whose owner stands in the CURRENT location (empty on the farm at 06:00), and nothing published
+/// a price or an opening hour. This family is that fact, so the shortage and its source arrive together.
+/// </para>
+/// <para>
+/// <c>Price</c> is what the menu would actually charge (<c>ShopBuilder.GetShopStock</c>'s
+/// <c>ItemStockInformation.Price</c>, which applies the shop's and the entry's modifiers), and <c>DeclaredPrice</c> is
+/// the <c>Data/Shops</c> row's own declared number when that row names this item literally. Both are published rather
+/// than one being chosen: two numbers that agree today are a disagreement scheduled for later, and the reader can see
+/// which one the game will charge.
+/// </para>
+/// <para>
+/// <c>HoursCondition</c> is the owner entry's own game-state query, verbatim (vanilla writes the trading window that
+/// way - `!TIME 900 2100`), and <c>OpenNow</c> is <c>ShopBuilder.GetCurrentOwners</c>' answer to that same query at
+/// this moment. "Closed" without the condition would be a state the companion cannot learn from. When the condition
+/// cannot be evaluated at all, <c>OpenNow</c> is null with <c>OpenNowReason</c> naming why - never false.
+/// </para>
+/// <para>
+/// <c>HeldCount</c> is summed from the published <c>inventoryItemFacts</c> rows for the slots that hold this seed, so
+/// it is the same reader that already knows stacks rather than a second counter. It is null - not 0 - when those rows
+/// were not published or do not cover the holding slots: an absence read as a zero is the defect this field must not
+/// repeat.
+/// </para>
+/// <para>
+/// A row exists for EVERY plantable seed the actor holds, and the shop half is present only when a shop stocks it: a
+/// seed nobody sells is a row with the seed and no <c>ShopId</c>, which is a different answer from no row at all (no
+/// seed held) and from no family at all (nothing was measured). The three are the difference between "walking to town
+/// is worth it" and "it is not".
+/// </para>
+/// </summary>
+public sealed record BridgeSeedSupplyTarget(
+    string QualifiedItemId,
+    string DisplayName,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? HeldCount,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ShopId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ShopDisplayName,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OwnerName,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? HoursCondition,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Price,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? DeclaredPrice,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Currency,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? OpenNow,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OpenNowReason);
 
 public sealed record BridgeExecutionRequest(
     string RequestId,
