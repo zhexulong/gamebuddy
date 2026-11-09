@@ -3,8 +3,22 @@ using StardewValley;
 using StardewValley.Characters;
 using StardewValley.Pathfinding;
 using GameBuddy.Stardew.Core;
+using GameBuddy.Stardew.Core.Policy;
 
 namespace GameBuddy.Stardew;
+
+/// <summary>
+/// Answers the target id the published frame carries for one occupant of one snapshot family on one tile, or null when
+/// that frame could not have carried a row for it.
+///
+/// <para>
+/// A delegate rather than a call because the frame is assembled from the `Discover*` projections, which live beside the
+/// ExecutionManager that owns the live world and the capability publication - and this controller deliberately holds no
+/// discovery, no tool and no action dispatcher (see `TheWalkNeverCallsAClearingAction`). What crosses is one answer
+/// about one tile, so an absent lookup is an honest "nothing was published" rather than a second snapshot.
+/// </para>
+/// </summary>
+internal delegate string? PublishedTargetIdLookup(Farmer localPlayer, string targetFamily, int x, int y);
 
 /// <summary>
 /// Client-local, game-thread controller for the native Farmhand represented by
@@ -20,6 +34,8 @@ namespace GameBuddy.Stardew;
 internal sealed class StardewBodyController
 {
     private readonly Action<ExecutionState, string, string?> transition;
+    /// <summary>Where a blocker's published identity comes from, or null when no frame is reachable from here.</summary>
+    private readonly PublishedTargetIdLookup? publishedTargetId;
     private LocalMoveSpec? active;
     private PathFindController? pathController;
     private Vector2 lastTile;
@@ -82,9 +98,10 @@ internal sealed class StardewBodyController
     /// fresh window. Only the transient window logic reads or writes it.</summary>
     private long transientSinceMs;
 
-    public StardewBodyController(Action<ExecutionState, string, string?> transition)
+    public StardewBodyController(Action<ExecutionState, string, string?> transition, PublishedTargetIdLookup? publishedTargetId = null)
     {
         this.transition = transition;
+        this.publishedTargetId = publishedTargetId;
     }
 
     public bool HasActiveExecution => this.active is not null;
@@ -259,7 +276,7 @@ internal sealed class StardewBodyController
     /// property of the request the caller made, and the request must not have to carry the Mod's clearing
     /// vocabulary to be served.
     /// </summary>
-    private sealed record ClearApproach(LocalMoveSpec Requested, (int X, int Y) BlockerTile);
+    internal sealed record ClearApproach(LocalMoveSpec Requested, (int X, int Y) BlockerTile);
 
     private ClearApproach? clearApproach;
 
@@ -356,6 +373,32 @@ internal sealed class StardewBodyController
     }
 
     /// <summary>
+    /// What stands on the blocker's tile, which of our actions clears it, and the id the published frame carries for it.
+    ///
+    /// <para>
+    /// Empty when the tile is no longer priced by the clearing search - the one state in which this function has no
+    /// name to give. It runs on the arrival re-plan's own read of the world, through the SAME <see cref="ClearableAt"/> the
+    /// plan was made with, so the occupant it names and the blocker the plan resolved cannot be two different things.
+    /// </para>
+    /// <para>
+    /// It decides nothing. Which action to dispatch, and whether to dispatch one at all, stays the caller's - this
+    /// only stops the caller having to guess.
+    /// </para>
+    /// </summary>
+    internal string DescribeBlocker(Farmer localPlayer, (int X, int Y) blockerTile)
+    {
+        if (localPlayer.currentLocation is not { } location)
+            return string.Empty;
+        if (ClearableAt(location, localPlayer, new Vector2(blockerTile.X, blockerTile.Y)) is not { } priced)
+            return string.Empty;
+        string? targetId = this.publishedTargetId?.Invoke(localPlayer, priced.TargetFamily, blockerTile.X, blockerTile.Y);
+        return ClearingEvidence.DescribeBlocker(
+            priced.Occupant,
+            targetId,
+            ClearingActionSurface.ActionsThatClear(priced.Occupant, FarmhandActionCatalog.Registrations));
+    }
+
+    /// <summary>
     /// Handles the tick a clear-approach walk reaches <c>stand_at</c>, or says false when this tick is not one.
     /// </summary>
     private bool TryCompleteClearApproach(LocalMoveSpec walk, Vector2 currentTile, Farmer localPlayer, int tick)
@@ -374,7 +417,7 @@ internal sealed class StardewBodyController
     /// The arrival re-plan: blocker still there means refuse by name with the step attached again; blocker gone
     /// means continue to the tile the caller actually asked for.
     /// </summary>
-    private void CompleteClearApproachArrival(ClearApproach arrived, Vector2 currentTile, Farmer localPlayer, int tick)
+    internal void CompleteClearApproachArrival(ClearApproach arrived, Vector2 currentTile, Farmer localPlayer, int tick)
     {
         this.clearApproach = null;
         ClearStepOffer? fresh = this.ResolveClearStep(localPlayer, arrived.Requested.TargetTile);
@@ -383,9 +426,17 @@ internal sealed class StardewBodyController
             // The blocker is still there, so this walk achieved nothing but a better position. Naming the step
             // again - with the whole idea's size - is what lets the caller decide whether to clear it. Clearing
             // from here would be the walk making a destructive decision it was never given.
+            //
+            // The step alone was not enough to decide WITH: measured `round40` attempt 2, one weed on a four-way route
+            // was the run's only failed action, and a receipt that named the tile and the price but not which action
+            // swings at a weed ended it. `DescribeBlocker` adds the engine's name for the occupant, the action of ours
+            // whose declared kind accepts it and the id the frame published for it, so the caller's next plan can be
+            // the plan that clears it. The refusal is still a refusal: nothing was swung at, removed or persisted.
+            string blockerFacts = this.DescribeBlocker(localPlayer, arrived.BlockerTile);
             this.Fail(
                 ClearStepBlockedReasonCode,
-                $"tile={FormatTile(currentTile)};requested={FormatTile(arrived.Requested.TargetTile)};clear_step_walk=arrived;blocker={arrived.BlockerTile.X},{arrived.BlockerTile.Y};{fresh!.Evidence}");
+                $"tile={FormatTile(currentTile)};requested={FormatTile(arrived.Requested.TargetTile)};clear_step_walk=arrived;blocker={arrived.BlockerTile.X},{arrived.BlockerTile.Y};{fresh!.Evidence}"
+                    + (blockerFacts.Length == 0 ? string.Empty : $";{blockerFacts}"));
             return;
         }
 
@@ -1535,7 +1586,7 @@ internal sealed class StardewBodyController
     /// in the engine's order - resourceClumps, objects, terrainFeatures - because a tile holds at most one of them.
     /// </para>
     /// </summary>
-    private static (string Kind, int Cost)? ClearableAt(
+    private static (string Kind, int Cost, string Occupant, string TargetFamily)? ClearableAt(
         StardewValley.GameLocation location,
         Farmer localPlayer,
         Vector2 tile)
@@ -1558,16 +1609,23 @@ internal sealed class StardewBodyController
                 toolPower,
                 clumpKind == "stump" ? foraging : mining,
                 efficient: false);
-            return clumpCost is { } paid ? (clumpKind, paid) : null;
+            // A clump's row is published by ONE family whichever clump it is, because "which tool removes this" is a
+            // property of the clump and `debrisTargets` carries it as a field rather than as a separate list.
+            return clumpCost is { } paid ? (clumpKind, paid, ClumpOccupant(clump.parentSheetIndex.Value), "debrisTargets") : null;
         }
 
         if (location.objects.TryGetValue(tile, out StardewValley.Object? item) && item is not null)
         {
+            // The object's own word for itself, which is also what `ClearableKind` prices: `(O)2` is the engine's stone
+            // and `Object.IsWeeds()` is the engine's weed (Object.cs:6117). Naming the occupant from a SECOND test here
+            // would let the priced tile and the named tile be different tiles.
             string detail = item.QualifiedItemId == "(O)2" ? "stone" : item.IsWeeds() ? "weed" : string.Empty;
             if (ClearableKind.Map("object", detail) is not { } objectKind)
                 return null;
             int? objectCost = ClearCostTable.Cost(objectKind, toolPower, mining, efficient: false);
-            return objectCost is { } paid ? (objectKind, paid) : null;
+            if (objectCost is not { } paid)
+                return null;
+            return (objectKind, paid, detail, detail == "weed" ? "weedTargets" : "rockSourceTargets");
         }
 
         if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
@@ -1582,11 +1640,45 @@ internal sealed class StardewBodyController
             if (ClearableKind.Map("terrain", detail) is not { } terrainKind)
                 return null;
             int? terrainCost = ClearCostTable.Cost(terrainKind, toolPower, farming, efficient: false);
-            return terrainCost is { } paid ? (terrainKind, paid) : null;
+            if (terrainCost is not { } paid)
+                return null;
+            return (terrainKind, paid, detail, detail == "grass" ? "grassTargets" : "scytheCropTargets");
         }
 
         return null;
     }
+
+    /// <summary>
+    /// The ENGINE's own name for one resource clump, from the constants its own type declares
+    /// (<c>ResourceClump.cs:15-35</c>): <c>stumpIndex</c>, <c>hollowLogIndex</c>, <c>meteoriteIndex</c>,
+    /// <c>boulderIndex</c>, <c>quarryBoulderIndex</c> and the four <c>mineRock*Index</c> rows.
+    ///
+    /// <para>
+    /// Named from the engine rather than from the costing table because the two answer different questions and a
+    /// refusal has to answer the caller's: `rock` is what a quarry boulder COSTS to remove, and "a quarry boulder" is
+    /// what is standing there. Written against the constants, not their values, so a target-version change to the
+    /// native table lands here as a compile-time rename rather than as a silently wrong word.
+    /// </para>
+    /// <para>
+    /// The fallback is unreachable for a PRICED clump (<c>TryGetDebrisToolRequirement</c> prices exactly these nine),
+    /// and it is kept because the honest answer to "a clump was priced but this function has no name for it" is a word
+    /// no action declares - which the refusal reports as `no_published_action_clears:resource_clump` - rather than a
+    /// name borrowed from a neighbour. A future engine constant therefore announces itself instead of lying.
+    /// </para>
+    /// </summary>
+    internal static string ClumpOccupant(int parentSheetIndex) => parentSheetIndex switch
+    {
+        StardewValley.TerrainFeatures.ResourceClump.stumpIndex => "stump",
+        StardewValley.TerrainFeatures.ResourceClump.hollowLogIndex => "hollow_log",
+        StardewValley.TerrainFeatures.ResourceClump.meteoriteIndex => "meteorite",
+        StardewValley.TerrainFeatures.ResourceClump.boulderIndex => "boulder",
+        StardewValley.TerrainFeatures.ResourceClump.quarryBoulderIndex => "quarry_boulder",
+        StardewValley.TerrainFeatures.ResourceClump.mineRock1Index => "mine_rock_1",
+        StardewValley.TerrainFeatures.ResourceClump.mineRock2Index => "mine_rock_2",
+        StardewValley.TerrainFeatures.ResourceClump.mineRock3Index => "mine_rock_3",
+        StardewValley.TerrainFeatures.ResourceClump.mineRock4Index => "mine_rock_4",
+        _ => "resource_clump",
+    };
     private static ReachabilityVerdict? AssessNativeReachability(Farmer localPlayer, LocalMoveSpec specification, bool findClosestReachable = false)
     {
         GameLocation? location = localPlayer.currentLocation;

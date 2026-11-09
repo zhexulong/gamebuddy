@@ -307,7 +307,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             throw new ArgumentException("Durable execution journal and scope must be supplied together.");
         this.executionJournal = executionJournal;
         this.executionScope = executionScope;
-        this.controller = new StardewBodyController(this.RecordControllerTransition);
+        this.controller = new StardewBodyController(this.RecordControllerTransition, PublishedBlockerTargetId);
         // WIA §4.2 owner arbitration (review #3, 2026-10-02): the L0 binary
         // "is the current modal the current action's own modal" is answered by
         // THIS ledger's single-field lease. Production is single-ExecutionManager
@@ -3587,6 +3587,33 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         string localItemId = StardewValley.ItemRegistry.GetMetadata(qualifiedItemId)?.LocalItemId ?? qualifiedItemId;
         return location.CanPlantTreesHere(localItemId, x, y, out _);
     }
+
+    /// <summary>
+    /// The target id the published frame carries for one occupant of one family on one tile, or null when that frame
+    /// could not have carried a row for it.
+    ///
+    /// <para>
+    /// It asks the FAMILY's own discovery - the same `Discover*` that publishes the rows the Agent reads - rather than
+    /// rebuilding the hash beside it, so an id it returns is one a caller can satisfy, and an id it withholds is one the
+    /// frame genuinely did not carry: out of the family's radius, past its cap, or filtered by its own admission (a
+    /// resource clump no tool in her pack can break is never published at all). A rebuilt hash in that last case would
+    /// hand out an identity no request can ever match.
+    /// </para>
+    /// <para>
+    /// Only the families that publish a ROUTE BLOCKER are answered here - the occupants `ClearableAt` prices. A family
+    /// outside the list answers null, which the refusal reports as `blocker_not_published`; that is the honest answer
+    /// for a tile nothing was asked about, never a claim that the frame was empty.
+    /// </para>
+    /// </summary>
+    internal static string? PublishedBlockerTargetId(Farmer player, string targetFamily, int x, int y) => targetFamily switch
+    {
+        "weedTargets" => DiscoverWeedTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+        "grassTargets" => DiscoverGrassTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+        "rockSourceTargets" => DiscoverRockSourceTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+        "debrisTargets" => DiscoverDebrisTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+        "scytheCropTargets" => DiscoverScytheCropTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+        _ => null,
+    };
 
     private static bool IsTreeSaplingTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, 1);
 

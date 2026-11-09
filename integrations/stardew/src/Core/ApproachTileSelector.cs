@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace GameBuddy.Stardew.Core;
 
@@ -61,15 +62,56 @@ public static class ApproachTileSelector
         Func<(int X, int Y), bool> isReachable)
     {
         if (targetTiles is null || targetTiles.Count == 0) return null;
-
-        // Standing on the target is not approaching it: a rock, a crop or a machine occupies the tile, and the actor
-        // works from beside it. Every occupied tile is excluded, not just the anchor.
-        HashSet<(int X, int Y)> occupied = new(targetTiles);
         (int X, int Y) anchor = targetTiles[0];
 
         (int X, int Y)? best = null;
         int bestDistance = int.MaxValue;
         bool bestIsBehind = true;
+
+        foreach ((int X, int Y) candidate in StandableCandidates(targetTiles, isStandable))
+        {
+            if (!isReachable(candidate)) continue;
+
+            int distance = Math.Abs(candidate.X - actor.X) + Math.Abs(candidate.Y - actor.Y);
+            // Behind means: travelling away from the anchor on the way to the candidate.
+            bool behind =
+                Math.Abs(candidate.X - actor.X) + Math.Abs(candidate.Y - actor.Y)
+                > Math.Abs(anchor.X - actor.X) + Math.Abs(anchor.Y - actor.Y);
+            // Strictly better distance wins; equal distance prefers the near face.
+            if (best is not null && (distance > bestDistance || (distance == bestDistance && !(bestIsBehind && !behind))))
+                continue;
+
+            best = candidate;
+            bestDistance = distance;
+            bestIsBehind = behind;
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// Every tile beside the target that the actor could STAND on, in the declared candidate order, with no question
+    /// asked about whether it can be walked to.
+    ///
+    /// <para>
+    /// This is the enumeration <see cref="Select"/> chooses from, split out because a refusal needs the same answer
+    /// twice in one breath: "is there anywhere to stand at all?" is a count, and "which one can I walk to?" is the
+    /// choice. A second enumeration of the same ring here is how the two start disagreeing about a tile that exists.
+    /// </para>
+    /// </summary>
+    public static IReadOnlyList<(int X, int Y)> StandableCandidates(
+        IReadOnlyList<(int X, int Y)> targetTiles,
+        Func<(int X, int Y), bool> isStandable)
+    {
+        List<(int X, int Y)> candidates = new();
+        if (targetTiles is null || targetTiles.Count == 0) return candidates;
+
+        // Standing on the target is not approaching it: a rock, a crop or a machine occupies the tile, and the actor
+        // works from beside it. Every occupied tile is excluded, not just the anchor.
+        HashSet<(int X, int Y)> occupied = new(targetTiles);
+        // Two footprint tiles share neighbours, so a candidate can be reached from two of them; the declared order keeps
+        // the first, and the count stays the number of TILES rather than the number of ways to reach one.
+        HashSet<(int X, int Y)> offered = new();
 
         foreach ((int X, int Y) occupiedTile in occupied)
         {
@@ -78,23 +120,12 @@ public static class ApproachTileSelector
                 (int X, int Y) candidate = (occupiedTile.X + dx, occupiedTile.Y + dy);
                 if (occupied.Contains(candidate)) continue;
                 if (!isStandable(candidate)) continue;
-                if (!isReachable(candidate)) continue;
+                if (!offered.Add(candidate)) continue;
 
-                int distance = Math.Abs(candidate.X - actor.X) + Math.Abs(candidate.Y - actor.Y);
-                // Behind means: travelling away from the anchor on the way to the candidate.
-                bool behind =
-                    Math.Abs(candidate.X - actor.X) + Math.Abs(candidate.Y - actor.Y)
-                    > Math.Abs(anchor.X - actor.X) + Math.Abs(anchor.Y - actor.Y);
-                // Strictly better distance wins; equal distance prefers the near face.
-                if (best is not null && (distance > bestDistance || (distance == bestDistance && !(bestIsBehind && !behind))))
-                    continue;
-
-                best = candidate;
-                bestDistance = distance;
-                bestIsBehind = behind;
+                candidates.Add(candidate);
             }
         }
 
-        return best;
+        return candidates;
     }
 }
