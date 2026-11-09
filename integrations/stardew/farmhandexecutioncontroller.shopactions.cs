@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.Policy;
 using StardewValley;
 using StardewValley.GameData.Shops;
 using StardewValley.Internal;
@@ -53,6 +54,87 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// <summary>How many tile-opened shops one location may contribute.</summary>
     private const int MaxTileShopTargets = 8;
 
+    /// <summary>
+    /// The owner entry that would RUN this shop's counter right now, resolved the way
+    /// <c>Utility.TryOpenShopMenu</c> resolves it: from <c>ShopBuilder.GetCurrentOwners</c> (the entries whose
+    /// <c>Condition</c> matches today), by <paramref name="ownerName"/> with the engine's own <c>IsValid</c> and
+    /// NamedNpc-first ordering (<c>Utility.cs:4212-4214</c>), or - for a counter with no NPC - the first
+    /// <c>AnyOrNone</c>/<c>None</c> entry (<c>Utility.cs:4271</c>). Null when no entry matches, which is the engine's
+    /// "nobody here can run it" too.
+    ///
+    /// <para>
+    /// This is the ONE resolution: discovery, the purchase's own re-read and the seed-supply fact all ask it, so a row
+    /// the snapshot publishes and a counter the action opens cannot be two different counters.
+    /// </para>
+    /// </summary>
+    internal static ShopOwnerData? ResolveCurrentShopOwner(ShopData? shopData, string ownerName)
+    {
+        IEnumerable<ShopOwnerData> owners;
+        try
+        {
+            owners = shopData is null
+                ? Array.Empty<ShopOwnerData>()
+                : ShopBuilder.GetCurrentOwners(shopData);
+        }
+        catch (Exception)
+        {
+            // A malformed content pack must not take the whole snapshot down. "Could not be resolved" is stated by the
+            // caller as a null answer, never as "closed".
+            return null;
+        }
+
+        return SelectCurrentShopOwner(owners.ToArray(), ownerName);
+    }
+
+    /// <summary>
+    /// The selection half of <see cref="ResolveCurrentShopOwner"/>, split out so the rule can be asserted on real
+    /// <see cref="ShopOwnerData"/> rows without a world (the condition evaluation in
+    /// <c>ShopBuilder.GetCurrentOwners</c> needs the game).
+    /// </summary>
+    internal static ShopOwnerData? SelectCurrentShopOwner(IReadOnlyList<ShopOwnerData> currentOwners, string ownerName)
+    {
+        if (currentOwners is null || currentOwners.Count == 0)
+            return null;
+
+        if (string.IsNullOrEmpty(ownerName))
+        {
+            return currentOwners.FirstOrDefault(entry => entry is not null
+                && (entry.Type == ShopOwnerType.AnyOrNone || entry.Type == ShopOwnerType.None));
+        }
+
+        return currentOwners
+            .Where(entry => entry is not null)
+            .OrderByDescending(entry => entry.Type == ShopOwnerType.NamedNpc)
+            .FirstOrDefault(entry => entry.IsValid(ownerName));
+    }
+
+    /// <summary>
+    /// The verdict half: the engine opens a counter unless the entry that would run it carries a
+    /// <c>ClosedMessage</c>, which it draws instead (<c>Utility.cs:4305-4317</c>).
+    /// </summary>
+    internal static bool OpensNow(ShopOwnerData? resolvedOwner) => resolvedOwner is { ClosedMessage: null };
+
+    /// <summary>
+    /// Whether the game would OPEN this shop's counter today for <paramref name="ownerName"/>.
+    ///
+    /// <para>
+    /// The fact the snapshot needs and did not have. An owner entry being currently ELIGIBLE (its game-state-query
+    /// condition matches) is half the engine's decision; the other half is the entry's own <c>ClosedMessage</c>, which
+    /// the location overload draws instead of opening a menu (<c>Utility.cs:4305-4317</c>). Measured round41: a
+    /// festival day published <c>DesertFestival_Pierre</c> and <c>SeedShop</c> on the SAME tile (4,17) - Pierre's own -
+    /// because both shops' owner entries name him and both conditions matched, while the store behind him was shut. A
+    /// row published for the shut one is a counter the caller can walk to and never buy from.
+    /// </para>
+    /// <para>
+    /// A tile-opened counter answers TRUE by construction and does not come through here: the two forms this action
+    /// dispatches for those tiles (the fixed selectors' string overload, and <c>OpenShop</c> with <c>forceOpen</c>) both
+    /// open with a <c>ClosedMessage</c> entry - the string overload ignores the field, and <c>forceOpen</c> skips such
+    /// entries (<c>Utility.cs:4247-4250</c>).
+    /// </para>
+    /// </summary>
+    internal static bool IsShopOpenNow(ShopData? shopData, string ownerName) =>
+        OpensNow(ResolveCurrentShopOwner(shopData, ownerName));
+
     internal static string ShopTargetId(string shopId, string ownerName) =>
         $"shop_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(shopId + "\u0000" + ownerName))).ToLowerInvariant()[..16]}";
 
@@ -60,7 +142,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// Every shop whose owner is eligible AND physically present in the actor's current
     /// location. Empty is the honest answer everywhere else.
     /// </summary>
-    private IReadOnlyList<BridgeShopTarget> DiscoverShopTargets(Farmer player)
+    private IReadOnlyList<BridgeShopTarget> DiscoverShopTargets(Farmer player, DiscoveryExclusionRecorder? exclusions)
     {
         GameLocation? location = player.currentLocation;
         if (location is null)
@@ -91,6 +173,16 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     c is not null && string.Equals(c.Name, owner.Name, StringComparison.Ordinal));
                 if (npc is null)
                     continue;
+
+                // The counter is here, but the game will not open it today (the resolved owner entry carries
+                // `ClosedMessage`, Utility.cs:4305-4317). Omit the row - a caller that walked to it could never buy -
+                // and SAY it was withheld, so an empty family never reads as "no shop in this room".
+                if (!IsShopOpenNow(shopData, owner.Name))
+                {
+                    if (exclusions is not null)
+                        exclusions.Record("shopTargets", DiscoveryExclusionReasons.ShopClosedToday);
+                    continue;
+                }
 
                 bool inReach = Utility.tileWithinRadiusOfPlayer(
                     npc.TilePoint.X, npc.TilePoint.Y, ShopOwnerInteractionRadius, player);
@@ -299,12 +391,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         {
             if (!DataLoader.Shops(Game1.content).TryGetValue(shopId, out ShopData? shopData) || shopData is null)
                 return null;
-            foreach (ShopOwnerData owner in ShopBuilder.GetCurrentOwners(shopData))
-            {
-                if (owner.Type == ShopOwnerType.NamedNpc &&
-                    string.Equals(owner.Name, ownerName, StringComparison.Ordinal))
-                    return owner.ClosedMessage;
-            }
+            // The same resolution the discovery gate uses: one answer about which entry runs this counter.
+            return ResolveCurrentShopOwner(shopData, ownerName)?.ClosedMessage;
         }
         catch (Exception)
         {
@@ -393,13 +481,15 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         if (quantity < 1)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "invalid_quantity", $"quantity={quantity}");
 
-        // Re-resolve the target from live state: the client's opaque id is only matched
-        // against a set derived here, never parsed.
+        // Re-resolve the target from live state: the client's opaque id is only matched against a set derived here,
+        // never parsed. It is the SAME enumeration `shopTargets` publishes from (`exclusions: null` - a purchase
+        // publishes no discovery rows), so a counter this action cannot open today is absent from both by construction
+        // instead of by two checks that happen to agree.
         GameLocation? location = actor.currentLocation;
         if (location is null)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
 
-        IReadOnlyList<BridgeShopTarget> targets = this.DiscoverShopTargets(actor);
+        IReadOnlyList<BridgeShopTarget> targets = this.DiscoverShopTargets(actor, exclusions: null);
         BridgeShopTarget? target = targets.FirstOrDefault(t => string.Equals(t.TargetId, targetId, StringComparison.Ordinal));
         if (target is null)
         {
@@ -1007,10 +1097,11 @@ internal sealed partial class ExecutionManager
         }
         else
         {
-            openNow = eligibleOwners.Any(
-                candidate => candidate is not null
-                    && candidate.Type == owner.Type
-                    && string.Equals(candidate.Name, ownerName, StringComparison.Ordinal));
+            // The SAME rule `shopTargets` gates its rows on, applied to the eligible set this row was handed: the
+            // engine's answer about whether the counter opens today (`OpensNow` over the entry that would run it), not a
+            // second reading of the conditions alone. A supply row that said "open now" for the counter the shop family
+            // just withheld is the two-spellings defect this fact exists to avoid.
+            openNow = OpensNow(SelectCurrentShopOwner(eligibleOwners, ownerName));
             openNowReason = null;
         }
         (BridgeSeedSupplyDestination? Destination, string? Location, string? Unknown) address = ResolveShopAddress(

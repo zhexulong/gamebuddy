@@ -2376,6 +2376,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         ("load_building_chest", "buildingChestTargets"),
         ("clear_fish_pond", "fishPondTargets"),
         ("use_obelisk", "obeliskTargets"),
+        // A shop whose counter is here and whose resolved owner entry carries `ClosedMessage` is withheld: the engine
+        // refuses to open it today (Utility.cs:4305-4317), so a row for it is a counter the caller walks to and cannot
+        // buy from - measured round41, two shops published on one tile on a festival day.
+        ("shop_purchase", "shopTargets"),
     };
 
     /// <summary>Explicit Phase 2 wire DTO; call only on the SMAPI game thread while a world is ready.</summary>
@@ -2432,7 +2436,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         IReadOnlyList<BridgeShopTarget>? shopTargetsHere =
             advertisedCapabilities.Contains("shop_purchase", StringComparer.Ordinal)
             || advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal)
-                ? this.DiscoverShopTargets(player)
+                ? this.DiscoverShopTargets(player, discoveryExclusions)
                 : null;
         // The shortage fact's SUPPLY half, published only while the action whose day it belongs to is advertised: a
         // companion that cannot sow a tile has no shortage, and a family published for an unadvertised action would be a

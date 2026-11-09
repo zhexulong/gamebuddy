@@ -72,6 +72,7 @@ export const STATE_MEMBERS = Object.freeze({
   not_ready: ["readyForHarvest()", "daysOfConstructionLeft.Value"],
   wrong_harvest_method: ["GetHarvestMethod()"],
   already_baited: ["bait.Value"],
+  shop_closed_today: ["ClosedMessage"],
 });
 
 /** Every `.cs` file whose `Discover*` declarations form the population. */

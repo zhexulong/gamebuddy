@@ -99,6 +99,17 @@ public static class DiscoveryExclusionReasons
     /// </summary>
     public const string AlreadyBaited = "already_baited";
 
+    /// <summary>
+    /// The shop exists and its counter is here, but the game will not open it today: the resolved owner entry carries
+    /// <c>ClosedMessage</c>, which <c>Utility.TryOpenShopMenu</c>'s location overload draws instead of opening a menu
+    /// (<c>Utility.cs:4305-4317</c>: <c>if (shopOwnerData != null &amp;&amp; shopOwnerData.ClosedMessage != null)</c> →
+    /// <c>Game1.drawObjectDialogue(text); return false;</c>). The entry that carries the message is the one
+    /// <c>ShopBuilder.GetCurrentOwners</c> left standing after its <c>Condition</c> matched - which is exactly why an
+    /// entry being "eligible" is NOT the same fact as the shop being open, and why `shopTargets` used to publish a
+    /// festival-closed store beside the stall that replaced it.
+    /// </summary>
+    public const string ShopClosedToday = "shop_closed_today";
+
     /// <summary>Every admitted reason. The population the Host's validator and this class are compared against.</summary>
     public static readonly IReadOnlyList<string> All = Array.AsReadOnly(new[]
     {
@@ -111,6 +122,7 @@ public static class DiscoveryExclusionReasons
         NotReady,
         WrongHarvestMethod,
         AlreadyBaited,
+        ShopClosedToday,
     });
 
     /// <summary>Whether <paramref name="reason"/> is one of the admitted reasons.</summary>

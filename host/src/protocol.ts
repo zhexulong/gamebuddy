@@ -3980,6 +3980,9 @@ export const DISCOVERY_EXCLUSION_REASONS = Object.freeze([
   "wrong_harvest_method",
   // `CrabPot.NeedsBait` false because `bait.Value != null` (CrabPot.cs:64-71), and the drop-in is gated on it (:239).
   "already_baited",
+  // The shop's resolved owner entry carries `ClosedMessage`: `Utility.TryOpenShopMenu` draws it and opens nothing
+  // (Utility.cs:4305-4317), over the entries `ShopBuilder.GetCurrentOwners` left after their condition matched.
+  "shop_closed_today",
 ] as const);
 
 /**

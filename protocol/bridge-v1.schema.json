@@ -1493,6 +1493,7 @@
             "buildingChestTargets",
             "fishPondTargets",
             "obeliskTargets",
+            "shopTargets",
             "harvestWhereabouts",
             "wateringWhereabouts"
           ],
@@ -1508,7 +1509,8 @@
             "already_watered",
             "not_ready",
             "wrong_harvest_method",
-            "already_baited"
+            "already_baited",
+            "shop_closed_today"
           ],
           "description": "One of the closed vocabulary of reasons a family withheld subjects it could see. A reason is admitted only when the engine itself refuses the same action on the same subject today; a filter the engine does not share is a defect in discovery, not a reason."
         },
