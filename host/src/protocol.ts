@@ -1044,8 +1044,12 @@ export type Snapshot = Readonly<{
     /** Why neither a destination nor a location could be read (`shop_location_unreadable`, `no_shop_stocks_this_seed`). */
     shopLocationUnknown?: string;
   }>[];
-  /** How many supply rows the Mod's cap left out, beside the family it truncates. */
-  seedSupplyTargetsOmitted?: number;
+  /**
+   * How many supply rows the Mod's cap left out of `seedSupplyTargets`, beside the family it truncates, so a cap of
+   * eight rows says so instead of reading as the whole seed supply. Absent on a Mod older than the field; null when the
+   * family itself was not measured (`plant_seed` not advertised).
+   */
+  seedSupplyTargetsOmitted?: number | null;
   mineElevatorFloorTargets?: readonly Readonly<{
     targetId: string;
     floor: number;
@@ -4238,6 +4242,15 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     !isNonNegativeSafeInteger(value.discoveryExclusionsOmitted)
   )
     return "invalid_snapshot:discoveryExclusionsOmitted";
+  // The same count for the seed supply family, whose cap is the eight rows its rule declares: the harness reads the
+  // shortage as `task patch tiles` minus the rows it holds, so a row the cap withheld and no count beside it is a supply
+  // that reads as complete - and a count that is not a non-negative integer is a number nobody can subtract.
+  if (
+    value.seedSupplyTargetsOmitted !== undefined &&
+    value.seedSupplyTargetsOmitted !== null &&
+    !isNonNegativeSafeInteger(value.seedSupplyTargetsOmitted)
+  )
+    return "invalid_snapshot:seedSupplyTargetsOmitted";
   // A scalar record, not a family, so it is checked here rather than by `SNAPSHOT_FAMILY_RULES`. Absent means the Mod did
   // not measure it (the container actions were not advertised); a present one must be the whole shape.
   if (value.chestsSummary !== undefined && !isChestsSummaryFact(value.chestsSummary))
@@ -4308,6 +4321,12 @@ function snapshotDecisionScalarsAccepted(value: Record<string, unknown>): boolea
     (value.soilTilesOmitted === undefined ||
       value.soilTilesOmitted === null ||
       isNonNegativeSafeInteger(value.soilTilesOmitted)) &&
+    (value.farmBuildingTargetsOmitted === undefined ||
+      value.farmBuildingTargetsOmitted === null ||
+      isNonNegativeSafeInteger(value.farmBuildingTargetsOmitted)) &&
+    (value.seedSupplyTargetsOmitted === undefined ||
+      value.seedSupplyTargetsOmitted === null ||
+      isNonNegativeSafeInteger(value.seedSupplyTargetsOmitted)) &&
     (value.discoveryExclusionsOmitted === undefined ||
       value.discoveryExclusionsOmitted === null ||
       isNonNegativeSafeInteger(value.discoveryExclusionsOmitted)) &&
