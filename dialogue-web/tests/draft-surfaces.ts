@@ -439,6 +439,8 @@ export const OPENER_EXEMPTIONS: Readonly<Record<string, string>> = {
  * premise moved and the surface is walked like the rest.
  */
 export const SURFACE_EXEMPTIONS: Readonly<Record<string, string>> = {
+  [catalogue.presetsPanel]:
+    "the surface is read-only by design: a preset is imported once and read from then on (design/architecture/tavern-preset-compatibility.md §2.1), so it renders no text field at all - this gate measures 0 - and there is no draft a player could type and lose",
   [catalogue.gamePanel]:
     "every field the Game surface renders is inside its own creation form, which is a disclosure the player opens deliberately and answers with one Create; the creation form's binding id is the one text field there and is gated by game-presentation, not by a draft that outlives a surface",
 };
