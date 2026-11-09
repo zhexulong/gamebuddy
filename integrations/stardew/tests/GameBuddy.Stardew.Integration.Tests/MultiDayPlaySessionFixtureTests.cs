@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using FluentAssertions;
 using Xunit;
 
@@ -148,8 +149,27 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
         given.Should().Contain("fixture_native_local_multi_day_bin_standing_tile_missing:");
         // BOTH places the day needs are checked, and the field is one of them: checking home-bin alone would not
         // have caught g4, because both are engine geometry while the FIELD is where the fixture's own props go.
-        given.Should().Contain("AssertReachable(door, binStandingTile, Walkable, \"bin\");");
-        given.Should().Contain("AssertReachable(door, field, Walkable, \"field\");");
+        //
+        // The calls are READ out of the given rather than spelled here. 2026-11-09 lifted the predicate out of a local
+        // function (`Walkable`) into `NativeLocalMultiDayWalkable(farm)`, and an assertion that quotes the delegate's
+        // name pins a spelling instead of the property: it was green before that commit and red after it while the
+        // checks themselves were unchanged. The property is that each place is checked against the place it belongs
+        // to, and that ONE predicate answers for both - two copies of the rule is what severed the door->field route.
+        var reachabilityCalls = Regex.Matches(given, @"AssertReachable\(door, (?<target>\w+), (?<walkable>\w+), ""(?<what>\w+)""\);")
+            .Cast<Match>()
+            .ToArray();
+        reachabilityCalls
+            .Select(call => $"{call.Groups["what"].Value}={call.Groups["target"].Value}")
+            .Should()
+            .BeEquivalentTo(
+                new[] { "bin=binStandingTile", "field=field" },
+                "the arm-time check covers both places the day needs, each against its own tile");
+        var predicates = reachabilityCalls.Select(call => call.Groups["walkable"].Value).Distinct().ToArray();
+        predicates.Should().ContainSingle(
+            "one predicate answers for both places, so an arm-time refusal and a mid-run no_native_path cannot disagree");
+        var sharedFactory = Regex.Match(given, @"Func<Point, bool> (?<name>\w+) = NativeLocalMultiDayWalkable\(farm\);");
+        sharedFactory.Success.Should().BeTrue("the predicate is the shared rule, not a private copy of it");
+        predicates[0].Should().Be(sharedFactory.Groups["name"].Value, "both calls are handed that one delegate");
         given.Should().Contain("this.nativeLocalPlaySessionStartTile is not { } fieldTile");
         // The session's start tile is the one it actually used, not one re-derived after the props exist.
         File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "ModEntry.Fixtures.cs")))

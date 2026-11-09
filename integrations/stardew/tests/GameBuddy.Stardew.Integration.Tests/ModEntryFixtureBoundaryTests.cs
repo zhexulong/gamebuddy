@@ -51,9 +51,12 @@ public sealed class ModEntryFixtureBoundaryTests
         "InstallNativeLocalUseMineLadderFixture",
         "InitializeNativeLocalMoveLadderFixture",
         "InitializeNativeLocalMultiDayFixture",
-    // The composed multi-day world's own two members: the door's standing spot (the tile the session's start must be
-    // able to reach) and the shared reachability refusal the composed branch reads.
+    // The composed multi-day world's own members: the door's standing spot (the tile the session's start must be
+    // able to reach), the shared reachability refusal the composed branch reads, and the ONE walkability rule both it
+    // and the animal Given ask - lifted out of a local function on 2026-11-09 so a second, private copy of the rule
+    // cannot sever the door->field route again.
     "NativeLocalMultiDayDoorStandingSpot", "AssertNativeLocalMultiDayHomeReachable", "AssertReachable",
+    "NativeLocalMultiDayWalkable",
         "InstallNativeLocalTailoringFixture",
         "InitializeNativeLocalColorPlacedObjectFixture",
         // The furniture-and-decoration wave: a placed piece with at least two rotations, and a fence the declared tool
@@ -73,8 +76,10 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativeLocalInteractNpcWithItemFixture", "InitializeNativeLocalJodiHarvestDeliverFixture",
         "InitializeNativeLocalStrawberryCovenantFixture",
         "InitializeNativeLocalPlaySessionFixture", "InitializeNativeLocalNpcRelationshipFixture",
-        // The play-session world's animal Given: the coop it places and the one adult animal inside it.
+        // The play-session world's animal Given: the coop it places and the one adult animal inside it - plus the
+        // question that keeps that coop off the door->field route, asked with the multi-day predicate above.
         "InstallNativeLocalPlaySessionAnimalGiven", "TryFindNativeLocalPlaySessionAnimalSite",
+        "RejectsTheMultiDayRoute",
         // The play-session world's hay Given: the one pack stack that makes the coop's troughs published targets.
         "InstallNativeLocalPlaySessionHayGiven",
         "InitializeNativeLocalPetFixture", "InitializeNativeLocalMoveStallProbeFixture",
