@@ -24,6 +24,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// with a weed on its 19th, which leaves the actor an 18-tile component - the live count, reproduced literally.
 /// </para>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the two route cases drive the real refusal path in a headless world, while the arrival case projects one evidence string through `ClearingEvidence.DescribeRouteHint` and the terminal case reads `farmhandexecutioncontroller.cs`, because WHERE a hint is minted cannot be observed from a receipt a headless runner cannot produce.
 public sealed class RouteRefusalHintTests
 {
     /// <summary>
@@ -94,11 +95,12 @@ public sealed class RouteRefusalHintTests
         code.Should().Be(StardewBodyController.ClearStepBlockedReasonCode);
         string? hint = ClearingEvidence.DescribeRouteHint(evidence);
         hint.Should().NotBeNull("the evidence it projects is not empty, so a null hint would be a fact lost on the way");
-        hint!.Should().Contain("blocker_occupant=weed@6,3", "the thing still standing, named where it stands");
-        hint.Should().Contain("clears_with=cut_weeds", "and the published action that removes it");
-        hint.Should().Contain("stand_at=5,3", "and the tile the walk already stands on to swing from");
-        hint.Should().Contain("remaining_clears=1", "and that this is the head of ONE clear, not of an authorised chain");
-        hint.Length.Should().BeLessThanOrEqualTo(BodyProgramValidation.MaximumNodeHintLength,
+        string described = hint!;
+        described.Should().Contain("blocker_occupant=weed@6,3", "the thing still standing, named where it stands");
+        described.Should().Contain("clears_with=cut_weeds", "and the published action that removes it");
+        described.Should().Contain("stand_at=5,3", "and the tile the walk already stands on to swing from");
+        described.Should().Contain("remaining_clears=1", "and that this is the head of ONE clear, not of an authorised chain");
+        described.Length.Should().BeLessThanOrEqualTo(BodyProgramValidation.MaximumNodeHintLength,
             "the journal and the wire both refuse a longer hint, so a hint nobody can persist is not a hint");
     }
 
