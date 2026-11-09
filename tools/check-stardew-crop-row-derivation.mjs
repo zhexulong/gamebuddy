@@ -49,6 +49,15 @@ const CONTENT_DATA_PATH = "integrations/stardew/ContentDataQuery.cs";
 const EXECUTION_CONTROLLER_PATH = "integrations/stardew/farmhandexecutioncontroller.cs";
 const PROTOCOL_PATH = "host/src/protocol.ts";
 const VALIDATOR_PATH = "host/src/protocol-target-facts.ts";
+/**
+ * The Host build a live run actually loads.
+ *
+ * A parity check that reads only the SOURCE answers a question nobody runs: measured 2026-11-09, this gate was green on
+ * source while the deployed `dist-test` was 8 minutes older, and the next run died 58s in with
+ * `invalid_snapshot:cropTargets`. The same shape as round38's `artifact_content_mismatch` - a gate measuring the wrong
+ * copy of the contract.
+ */
+const DEPLOYED_VALIDATOR_PATH = "host/dist-test/protocol-target-facts.js";
 const SCHEMA_PATH = "protocol/bridge-v1.schema.json";
 
 /** The row record (`BridgeCropTarget`) and the data answer (`CropRow`) this gate joins. */
@@ -407,6 +416,36 @@ export function checkStardewCropRowDerivation({
       push("exemption_stale", field, `${CONTENT_DATA_PATH} no longer publishes this field; delete the exemption`);
     else if (snapshotSet.has(field))
       push("exemption_stale", field, "the crop row now publishes this field; delete the exemption");
+  }
+
+  // 2b. The DEPLOYED validator, not only its source. A live run loads `dist-test`; a green source check beside a stale
+  // build is the exact shape that killed a run at 58 seconds (`invalid_snapshot:cropTargets`).
+  let deployedFields = null;
+  try {
+    deployedFields = extractValidatorRowFields(read(DEPLOYED_VALIDATOR_PATH));
+  } catch (error) {
+    push(
+      "deployed_host_absent",
+      DEPLOYED_VALIDATOR_PATH,
+      `the Host build a live run loads could not be read (${error?.message ?? "unknown"}); the wire check above measured source only`,
+    );
+  }
+  if (deployedFields !== null) {
+    const deployed = new Set(deployedFields);
+    for (const field of new Set([...validatorFields, ...deployedFields])) {
+      if (deployed.has(field) && !validatorFields.includes(field))
+        push(
+          "deployed_host_stale",
+          field,
+          "the deployed build names a key the source validator does not; rebuild Host",
+        );
+      if (!deployed.has(field) && validatorFields.includes(field))
+        push(
+          "deployed_host_stale",
+          field,
+          "the deployed build is missing a key the source validator names; rebuild Host",
+        );
+    }
   }
 
   // 2. Wire parity, both directions: four copies of one contract.

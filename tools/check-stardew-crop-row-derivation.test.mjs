@@ -23,6 +23,7 @@ const CONTENT_DATA_PATH = "integrations/stardew/ContentDataQuery.cs";
 const EXECUTION_CONTROLLER_PATH = "integrations/stardew/farmhandexecutioncontroller.cs";
 const PROTOCOL_PATH = "host/src/protocol.ts";
 const VALIDATOR_PATH = "host/src/protocol-target-facts.ts";
+const DEPLOYED_VALIDATOR_PATH = "host/dist-test/protocol-target-facts.js";
 const SCHEMA_PATH = "protocol/bridge-v1.schema.json";
 
 /** The tree as it is, with one source replaced by an in-memory edit. */
@@ -140,4 +141,32 @@ test("the worker row is read from the pair list the projection really writes", (
   assert.ok(fields.includes("isRaised"));
   assert.ok(fields.includes("daysToHarvest"));
   assert.ok(!fields.includes("displayName"), "a field the engine row does not project must not appear");
+});
+
+test("a stale DEPLOYED validator is a finding, because that is the copy a live run loads", () => {
+  // Measured 2026-11-09: this gate was green reading `host/src`, the deployed `dist-test` was eight minutes older, and
+  // the next run died at 58s with `invalid_snapshot:cropTargets`. A source-only parity check answers a question nobody
+  // runs, so the deployed build is now part of the population.
+  const source = sourceOf(VALIDATOR_PATH);
+  const stale = source.replace(/\n\s*"isRaised",/u, "\n");
+  assert.notEqual(stale, source, "the fixture must actually remove a key, or this test proves nothing");
+  const result = checkStardewCropRowDerivation({
+    overrides: { [DEPLOYED_VALIDATOR_PATH]: stale },
+  });
+  assert.ok(
+    result.findings.some((finding) => finding.code === "deployed_host_stale" && finding.member === "isRaised"),
+    `expected a deployed_host_stale finding for isRaised; got ${JSON.stringify(result.findings)}`,
+  );
+});
+
+test("an unreadable deployed build is named, not silently skipped", () => {
+  const result = checkStardewCropRowDerivation({
+    overrides: { [DEPLOYED_VALIDATOR_PATH]: "export function isCropTargetFact() {}" },
+  });
+  assert.ok(
+    result.findings.some(
+      (finding) => finding.code === "deployed_host_stale" || finding.code === "deployed_host_absent",
+    ),
+    `an empty deployed validator must be named, not passed; got ${JSON.stringify(result.findings)}`,
+  );
 });
