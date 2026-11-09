@@ -12,10 +12,10 @@ import {
 
 /**
  * Scoped Tavern persistence seam. It owns only a ChatThread's visible opening,
- * append-only messages, swipe variants, and turn lifecycle; it neither reads
- * Pi/Magic Context state nor implements message edit/branch or any Game operation.
+ * append-only messages, swipe variants, turn lifecycle, and where a branch was cut
+ * from; it neither reads Pi/Magic Context state nor implements any Game operation.
  */
-export const CHAT_THREAD_SCHEMA_VERSION = 10 as const;
+export const CHAT_THREAD_SCHEMA_VERSION = 11 as const;
 export const CHAT_THREAD_SELECTION_SCHEMA_VERSION = 1 as const;
 
 /** Individual message text remains bounded; normalized transcripts have no entry ceiling. */
@@ -103,6 +103,12 @@ export type ChatThread = Readonly<{
   trashRestoreStatus?: "active" | "archived";
   /** The first non-opening event makes either opening choice immutable. */
   openingLockedAtEventId: string | null;
+  /**
+   * Where this Chat was cut from, when it was: the exact origin thread and the row its copied prefix
+   * ended at. A fork leaves the origin byte-identical, so this record is the only thing that says the
+   * two threads are two views of one conversation - it is never derived by comparing transcripts.
+   */
+  forkedFrom?: Readonly<{ chatThreadId: string; messageId: string }>;
 }>;
 
 export type ChatThreadMessage = Readonly<{
@@ -686,6 +692,26 @@ export type CreateChatThreadRequest = Readonly<{
   opening: "blank" | Readonly<{ messageId: string; text: string; source: GreetingSource }>;
 }>;
 
+/**
+ * A fork: the SAME conversation from the start up to one row, as a second thread.
+ *
+ * The origin is named by the row the copied prefix ends at, not by a position: a fork takes a prefix
+ * of an append-only transcript, so `messages.slice(0, index + 1)` is the whole derivation and a row
+ * that moved still means the same thing (unlike a rewind, which deletes rows the player may not be
+ * looking at and therefore needs the position it was read at). The new thread gets its own identity
+ * and its own fresh Pi surface session; the store mints neither.
+ */
+export type ForkChatThreadRequest = Readonly<{
+  originChatThreadId: string;
+  /**
+   * The row the copied prefix ends at. It is copied, together with everything before it; the origin
+   * keeps every row it had.
+   */
+  originMessageId: string;
+  chatThreadId: string;
+  chatSurfaceSessionId: string;
+}>;
+
 export type IdentityProfileMetadataReader = Readonly<{
   readExact(): Promise<Readonly<{ profileId: string; revision: number; canonicalHash: string }>>;
 }>;
@@ -813,6 +839,31 @@ export type ChatThreadStore = Readonly<{
     chatThreadId: string,
     input: Readonly<{ messageId: string; expectedOrder: number }>,
   ): Promise<ChatThreadState>;
+  /**
+   * The durable half of a branch: the conversation from its start up to one row, as a NEW thread.
+   *
+   * The origin is left byte-identical - not one row is added, moved or removed - which is what makes
+   * this different from a rewind and the reason it needs no second authority to agree with: there is
+   * nothing to shorten in Pi's session, and no leaf to move. What the new thread does need is
+   * everything a thread is, so this copies the origin's own facts rather than inventing them: the
+   * companion, the continuity, the persona and scenario, the stable artifact bindings, both World
+   * Info slots, and the profile pin. The pin is copied and not re-read from the profile file because
+   * the fork is a view of ONE conversation: `refreshCompanionProfileBinding` moves every thread of a
+   * companion pinned to the revision it replaces, so an origin and its forks keep ageing together. A
+   * fork re-pinned to a newer revision than its origin would be the one pair the next save could
+   * split.
+   *
+   * No turn rows are copied. A turn is the ledger of a provider run that happened in the origin; a
+   * branch has none, so the new thread's current turn is `null` and its first submission starts a
+   * fresh one.
+   *
+   * Refused by name, the three facts that make a fork point meaningless: a row this thread does not
+   * carry (`chat_fork_target_not_found`), an origin whose current turn has not reached a terminal
+   * state (`chat_fork_turn_active`, because a reply in flight names rows the player has not seen
+   * yet), and the opening itself (`chat_fork_opening_retained`, the same target a rewind refuses - a
+   * branch of nothing but the greeting is not a second view of the exchange).
+   */
+  forkThread?(request: ForkChatThreadRequest): Promise<ChatThreadState>;
   /**
    * The durable half of an in-place edit: the player's own message, or her reply, or the greeting the
    * Chat opened on, carries different text from now on. Like the rewind, the caller names the exact row
@@ -1575,6 +1626,24 @@ const DROP_OPENING_SEAL_COLUMN_V10 = `
     ALTER TABLE tavern_threads DROP COLUMN opening_locked_at_event_id;
 `;
 
+/**
+ * v11 records where a branch was cut from: one row per forked thread naming the origin thread and the
+ * row its copied prefix ended at.
+ *
+ * It is a child table rather than two columns on `tavern_threads` for the reason v9's reply targets are:
+ * a v10 root keeps every thread, message, swipe, turn and binding and gains one empty table, and no
+ * thread that was not forked carries a null pair that could disagree with the rows it holds. The origin
+ * thread is referenced without a cascade, so the branch's provenance cannot be erased underneath it -
+ * which is also the one hard delete this store never performs.
+ */
+const THREAD_FORKS_TABLE_V11 = `
+    CREATE TABLE IF NOT EXISTS tavern_thread_forks (
+      thread_id TEXT PRIMARY KEY REFERENCES tavern_threads(thread_id) ON DELETE CASCADE,
+      origin_thread_id TEXT NOT NULL REFERENCES tavern_threads(thread_id),
+      origin_message_id TEXT NOT NULL
+    );
+`;
+
 function initSchema(db: DatabaseSync): void {
   const versionRow = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
   const version = Number(versionRow?.user_version ?? 0);
@@ -1587,13 +1656,15 @@ function initSchema(db: DatabaseSync): void {
   // and could only guess from a position. v6 adds the binding; v7 adds the
   // generation's own stop fact to the presentation record; v8 adds the classified
   // provider cause to the terminalization record; v9 adds the row a reply-target
-  // turn answers; v10 drops the opening's seal, which the transcript derives.
+  // turn answers; v10 drops the opening's seal, which the transcript derives; v11 adds the record of
+  // where a branch was cut from.
   if (version === 5) {
     db.exec(MESSAGE_ENTRIES_TABLE_V6);
     db.exec(TURN_PRESENTATION_TRUNCATION_V7);
     db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
     db.exec(TURN_REPLY_TARGETS_TABLE_V9);
     db.exec(DROP_OPENING_SEAL_COLUMN_V10);
+    db.exec(THREAD_FORKS_TABLE_V11);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1603,6 +1674,7 @@ function initSchema(db: DatabaseSync): void {
     db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
     db.exec(TURN_REPLY_TARGETS_TABLE_V9);
     db.exec(DROP_OPENING_SEAL_COLUMN_V10);
+    db.exec(THREAD_FORKS_TABLE_V11);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1611,6 +1683,7 @@ function initSchema(db: DatabaseSync): void {
     db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
     db.exec(TURN_REPLY_TARGETS_TABLE_V9);
     db.exec(DROP_OPENING_SEAL_COLUMN_V10);
+    db.exec(THREAD_FORKS_TABLE_V11);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1618,12 +1691,20 @@ function initSchema(db: DatabaseSync): void {
   if (version === 8) {
     db.exec(TURN_REPLY_TARGETS_TABLE_V9);
     db.exec(DROP_OPENING_SEAL_COLUMN_V10);
+    db.exec(THREAD_FORKS_TABLE_V11);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
   }
   if (version === 9) {
     db.exec(DROP_OPENING_SEAL_COLUMN_V10);
+    db.exec(THREAD_FORKS_TABLE_V11);
+    db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
+    assertNormalizedSchema(db);
+    return;
+  }
+  if (version === 10) {
+    db.exec(THREAD_FORKS_TABLE_V11);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1638,6 +1719,8 @@ function initSchema(db: DatabaseSync): void {
     db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
     db.exec(TURN_REPLY_TARGETS_TABLE_V9);
     db.exec(DROP_OPENING_SEAL_COLUMN_V10);
+    db.exec(THREAD_FORKS_TABLE_V11);
+    db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
   }
@@ -1751,6 +1834,8 @@ ${MESSAGE_ENTRIES_TABLE_V6}
     );
 
 ${WORLD_INFO_BINDINGS_TABLE_V5}
+
+${THREAD_FORKS_TABLE_V11}
 
     CREATE TABLE tavern_turns (
       turn_id TEXT PRIMARY KEY,
@@ -1899,6 +1984,13 @@ ${WORLD_INFO_BINDINGS_TABLE_V5}
  * moves into (`world_book` -> `companion`, `managed_world_info` -> `managed`),
  * so no durable binding is dropped and the companion's book keeps reaching the
  * mounted Chat catalog.
+ *
+ * It deliberately does NOT stamp `user_version`. It is the FIRST step of the v4 chain and the stamp
+ * is the chain's last, because a stamp written here claims a file is current while five steps
+ * (v6..v11) have not run: a later step that then fails leaves a root whose version names the
+ * current shape while its tables do not have it, and the next open runs `assertNormalizedSchema` -
+ * a current-version reader - against an incomplete root and refuses it as `chat_thread_schema_mismatch`
+ * instead of reporting the step that actually failed.
  */
 function migrateWorldInfoBindingsToSlots(db: DatabaseSync): void {
   db.exec(`
@@ -1915,7 +2007,6 @@ function migrateWorldInfoBindingsToSlots(db: DatabaseSync): void {
       applied_revision, applied_canonical_hash, applied_public_title, applied_world_book_id
     FROM tavern_thread_world_info_bindings_v4;
     DROP TABLE tavern_thread_world_info_bindings_v4;
-    PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION};
   `);
 }
 
@@ -1927,6 +2018,7 @@ function assertNormalizedSchema(db: DatabaseSync): void {
     "tavern_message_entries",
     "tavern_thread_stable_artifact_bindings",
     "tavern_thread_world_info_bindings",
+    "tavern_thread_forks",
     "tavern_turns",
     "tavern_turn_variants",
     "tavern_turn_reply_targets",
@@ -1996,6 +2088,11 @@ function assertNormalizedSchema(db: DatabaseSync): void {
     (db.prepare("PRAGMA table_info(tavern_thread_world_info_bindings)").all() as any[]).map((column) => column.name),
   );
   if (!bindingColumns.has("slot") || bindingColumns.has("source")) throw new Error("chat_thread_schema_mismatch");
+  const forkColumns = new Set(
+    (db.prepare("PRAGMA table_info(tavern_thread_forks)").all() as any[]).map((column) => column.name),
+  );
+  if (["thread_id", "origin_thread_id", "origin_message_id"].some((column) => !forkColumns.has(column)))
+    throw new Error("chat_thread_schema_mismatch");
 }
 
 function runInTransaction<T>(db: DatabaseSync, fn: () => T): T {
@@ -2629,6 +2726,89 @@ export function createChatThreadStore(
         const readBack = readStateFromDb(db, chatThreadId);
         if (readBack.messages.length !== index + 1) throw new Error("chat_rewind_readback_mismatch");
         return readBack;
+      });
+    },
+
+    async forkThread(request): Promise<ChatThreadState> {
+      assertId("originChatThreadId", request.originChatThreadId);
+      assertId("originMessageId", request.originMessageId);
+      assertId("chatThreadId", request.chatThreadId);
+      assertId("chatSurfaceSessionId", request.chatSurfaceSessionId);
+      return withDb((db) => {
+        if (db.prepare("SELECT 1 FROM tavern_threads WHERE thread_id = ?").get(request.chatThreadId) !== undefined)
+          throw new ExactThreadAlreadyExistsError();
+        const origin = readStateFromDb(db, request.originChatThreadId);
+        const index = origin.messages.findIndex((message) => message.messageId === request.originMessageId);
+        if (index < 0) throw new Error("chat_fork_target_not_found");
+        const ledger = origin.turnLedger;
+        if (ledger !== null && !isTerminalLedger(ledger)) throw new Error("chat_fork_turn_active");
+        const target = origin.messages[index]!;
+        // The opening is the one row a branch of nothing but itself would be: a fork at it copies the
+        // greeting and no exchange, which is what the rewind refuses at the same row for the same reason.
+        if (target.kind === "opening") throw new Error("chat_fork_opening_retained");
+        const copied = origin.messages.slice(0, index + 1);
+        const originRow = db
+          .prepare("SELECT * FROM tavern_threads WHERE thread_id = ?")
+          .get(request.originChatThreadId) as any;
+        const timestamp = now();
+        // The opening record is the origin's, and it still describes the copied rows: row zero is in
+        // every prefix, and it is the only row an opening record can name.
+        db.prepare(
+          `INSERT INTO tavern_threads (
+              thread_id, companion_id, continuity_id, title, persona_id, scenario_id,
+              chat_surface_session_id, profile_id, profile_revision, profile_canonical_hash,
+              lifecycle_status, management_revision, created_at_ms, updated_at_ms,
+              opening_kind, opening_message_id, greeting_set_id, greeting_source_revision, greeting_canonical_hash,
+              greeting_variant_id, greeting_profile_revision, greeting_scenario_revision
+            ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          request.chatThreadId,
+          originRow.companion_id,
+          originRow.continuity_id,
+          originRow.persona_id ?? null,
+          originRow.scenario_id ?? null,
+          request.chatSurfaceSessionId,
+          originRow.profile_id,
+          originRow.profile_revision,
+          originRow.profile_canonical_hash,
+          timestamp,
+          timestamp,
+          originRow.opening_kind,
+          originRow.opening_message_id,
+          originRow.greeting_set_id,
+          originRow.greeting_source_revision,
+          originRow.greeting_canonical_hash,
+          originRow.greeting_variant_id,
+          originRow.greeting_profile_revision,
+          originRow.greeting_scenario_revision,
+        );
+        db.prepare(
+          `INSERT INTO tavern_thread_stable_artifact_bindings (thread_id, kind, source_id, revision, canonical_hash)
+           SELECT ?, kind, source_id, revision, canonical_hash
+             FROM tavern_thread_stable_artifact_bindings WHERE thread_id = ?`,
+        ).run(request.chatThreadId, request.originChatThreadId);
+        // Both World Info slots move as they stand, desired and applied together: they are metadata about
+        // which sources this conversation reads, and a branch reads the same ones.
+        db.prepare(
+          `INSERT INTO tavern_thread_world_info_bindings (
+              thread_id, slot, world_book_id, public_title, revision, canonical_hash, provenance,
+              applied_revision, applied_canonical_hash, applied_public_title, applied_world_book_id
+            )
+            SELECT ?, slot, world_book_id, public_title, revision, canonical_hash, provenance,
+                   applied_revision, applied_canonical_hash, applied_public_title, applied_world_book_id
+              FROM tavern_thread_world_info_bindings WHERE thread_id = ?`,
+        ).run(request.chatThreadId, request.originChatThreadId);
+        db.prepare(
+          "INSERT INTO tavern_thread_forks (thread_id, origin_thread_id, origin_message_id) VALUES (?, ?, ?)",
+        ).run(request.chatThreadId, request.originChatThreadId, request.originMessageId);
+        for (const message of copied) insertMessage(db, request.chatThreadId, message);
+        db.prepare(
+          `INSERT INTO tavern_drafts (thread_id, draft_content, revision, updated_at_ms) VALUES (?, NULL, 0, ?)`,
+        ).run(request.chatThreadId, timestamp);
+        // The read-back is the assertion: it re-runs every integrity gate a normal read runs (opening
+        // consistency, parent presence, ledger), so a copied transcript that disagrees with its own
+        // opening record rolls the whole transaction back instead of committing a contradiction.
+        return readStateFromDb(db, request.chatThreadId);
       });
     },
 
@@ -3601,6 +3781,7 @@ function rowToThread(db: DatabaseSync, row: any): ChatThread {
     managedSlot === undefined ? undefined : managedWorldInfoBindingFromRow(managedSlot, false);
   const appliedManagedWorldInfoBinding =
     managedSlot === undefined ? undefined : managedWorldInfoBindingFromRow(managedSlot, true);
+  const forkRow = db.prepare("SELECT * FROM tavern_thread_forks WHERE thread_id = ?").get(row.thread_id) as any;
   return freezeThread({
     schemaVersion: CHAT_THREAD_SCHEMA_VERSION,
     chatThreadId: row.thread_id,
@@ -3625,6 +3806,11 @@ function rowToThread(db: DatabaseSync, row: any): ChatThread {
     managementRevision: validateManagementRevision(row.management_revision),
     ...(row.trash_restore_status ? { trashRestoreStatus: validateTrashRestoreStatus(row.trash_restore_status) } : {}),
     openingLockedAtEventId: openingLockedAtEventIdOf(db, row.thread_id),
+    ...(forkRow === undefined
+      ? {}
+      : {
+          forkedFrom: Object.freeze({ chatThreadId: forkRow.origin_thread_id, messageId: forkRow.origin_message_id }),
+        }),
   });
 }
 

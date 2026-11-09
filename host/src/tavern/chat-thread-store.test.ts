@@ -797,6 +797,9 @@ test("a v4 root keeps the companion's own book and the attached managed item acr
       -- goes back to being absent as well. The fixture is a v4 file, not a current one with a lower
       -- version stamp.
       ALTER TABLE tavern_turn_terminalizations DROP COLUMN provider_failure;
+      -- Unlike those, the opening's seal is a column a v4 root HAS: schema v10 drops it because the
+      -- transcript derives the same fact, so putting it back is what makes this a real old shape.
+      ALTER TABLE tavern_threads ADD COLUMN opening_locked_at_event_id TEXT;
       PRAGMA user_version = 4;
     `);
     } finally {
