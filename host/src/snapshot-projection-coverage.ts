@@ -48,6 +48,14 @@ export const REQUIRED_PROJECTED_KEYS = Object.freeze([
   // The current map's live kitchen: the per-turn line answers "is there a stove here" from it, which is what
   // the farmhouse's own form is (it gains its kitchen with its upgrade). Measured 2026-11-05.
   "cookingStationTargets",
+  // The water a rod may be cast at on this map, read by the "fishable water" line of `snapshot-hud.ts`.
+  //
+  // `DiscoverWaterTargets` is a whole-map scan of the engine's own `canFishHere` + `isTileFishable` pair, so the family
+  // is a property of the MAP: only its order and its cap depend on where the actor stands. And `fish_here` refuses
+  // unless `expectedTargetId` names this exact tile (`water_not_fishable:target_changed`,
+  // `farmhandexecutioncontroller.fishingactions.cs:123`), so an id this family does not publish cannot be derived from
+  // the tile - which is why this cannot be withheld with "ask the observation instead" as its reason. Measured 2026-11-10.
+  "waterTargets",
 ]);
 
 /**

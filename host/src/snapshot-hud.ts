@@ -114,7 +114,27 @@ type SnapshotHudLine = Readonly<{
       // rows first and caps the list, so a line that printed all eight would pay ~300 bytes every turn for one call.
       name: "refill water",
       fields: ["refillWateringCanTargets", "tile"],
-      render: refillWaterOf,
+      render: (snapshot) => nearestWaterOf(snapshot.refillWateringCanTargets ?? [], snapshot.tile),
+    },
+    {
+      // WATER A ROD MAY BE CAST AT - the same quadrant, and CARRIED rather than withheld for a reason a reader can check.
+      //
+      // `waterTargets` is `DiscoverWaterTargets` (`farmhandexecutioncontroller.fishingactions.cs:62`): a whole-map scan of
+      // the engine's own `canFishHere` + `isTileFishable` pair, kept only where a cardinal neighbour is a tile the body can
+      // stand on, then sorted nearest-first and capped. Nothing about the SET depends on where the actor stands or what it
+      // just did - only the order and the cap do - so a per-turn line is the right shape for it.
+      //
+      // Why not withheld, decided by what the agent would use instead: `fish_here` refuses unless `expectedTargetId` names
+      // this exact tile (it recomputes the hash and rejects `water_not_fishable:target_changed`), so `x`/`y` alone are not
+      // an address and the id has to be visible. The only other family over water is `refillWateringCanTargets`: same row
+      // shape, different predicate (`CanRefillWateringCanOnTile`) and a different id (`watering_can_refill_...`), so a
+      // refill row is refused by the cast. With no substitute to name, the alternative to this line is a whole-map observe
+      // before the first cast of the day.
+      //
+      // One row, the nearest by the actor's own tile, with the rest counted - the shape the refill line beside it uses.
+      name: "fishable water",
+      fields: ["waterTargets", "tile"],
+      render: (snapshot) => nearestWaterOf(snapshot.waterTargets ?? [], snapshot.tile),
     },
     {
       // A SHOP IS A PLACE, NOT A DISCOVERY.
@@ -261,20 +281,25 @@ function mailboxOf(snapshot: Snapshot): string {
 }
 
 /**
- * The refill-water line: the nearest water tile on this map and the id `refill_watering_can` takes.
+ * Both water lines: the nearest row of one water family and the id the action that takes it binds.
+ *
+ * Shared because the row is shared: `refillWateringCanTargets` and `waterTargets` carry the same `{ targetId, x, y }`
+ * (`host/src/protocol-target-facts.ts` says so by construction, one validator), and both lines answer the same question -
+ * where the nearest water on this map is. They differ in which action reads the id, so they stay two lines.
  *
  * Two shapes, each said plainly:
  *
  *   water on this map   `nearest (12, 20) watering_can_refill_0123456789abcdef (+7 more)`
- *   none                `none here` - a fact, not an absence: this map has no tile the engine will refill from
+ *   none                `none here` - a fact, not an absence: this map has no tile the engine answers yes for
  *
  * The nearest row is DERIVED from the actor's tile by the same rule the Mod sorts by (Chebyshev distance, then x, then
  * y), never taken from the wire array's own order: a reordered array is the same world, and the block is folded into the
  * cached history, so it must render the same bytes.
  */
-function refillWaterOf(snapshot: Snapshot): string {
-  const rows = snapshot.refillWateringCanTargets ?? [];
-  const actor = snapshot.tile;
+function nearestWaterOf(
+  rows: readonly Readonly<{ targetId: string; x: number; y: number }>[],
+  actor: Readonly<{ x: number; y: number }>,
+): string {
   const distance = (row: Readonly<{ x: number; y: number }>): number =>
     Math.max(Math.abs(row.x - actor.x), Math.abs(row.y - actor.y));
   const [nearest] = [...rows].sort(

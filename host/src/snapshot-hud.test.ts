@@ -81,6 +81,7 @@ test("the state block is byte-identical for two turns in the same world", () => 
       "- mine ladders: none here",
       "- mailbox: none here",
       "- refill water: none here",
+      "- fishable water: none here",
       "- shop: none here",
       "- mine floors: none here",
       "]",
@@ -195,6 +196,9 @@ test("every printed field is a declared snapshot field, and no line reads an und
     ["mineEntranceTargets", [{ targetId: "mine_entrance_0123456789abcdef", x: 12, y: 3 }]],
     ["mailboxTargets", [{ targetId: "mailbox_0123456789abcdef", location: "Farm", x: 3, y: 4, pendingCount: 2 }]],
     ["refillWateringCanTargets", [{ targetId: "watering_can_refill_0123456789abcdef", x: 12, y: 3 }]],
+    // The water a rod may be cast at. The id is what `fish_here` demands verbatim, so the probe is the whole row: an
+    // empty array would only prove the line exists.
+    ["waterTargets", [{ targetId: "water_0123456789abcdef", x: 12, y: 3 }]],
     [
       "shopTargets",
       [
@@ -546,4 +550,70 @@ test("a map with no water states it, and states it in the same bytes twice", () 
     Buffer.byteLength(lineValues(one).get("refill water") ?? "", "utf8") < 90,
     "one row plus a count, bound at the source",
   );
+});
+
+/**
+ * The fishable-water line: the fourth map-fixed family an action targets, and the one whose id cannot be derived.
+ *
+ * `waterTargets` is `DiscoverWaterTargets` - a whole-map scan of the engine's own `canFishHere` + `isTileFishable` pair,
+ * kept where a cardinal neighbour is standable - and `fish_here` refuses a cast unless `expectedTargetId` names the tile
+ * it was handed. So a snapshot that does not print the id leaves a fishing day with no address until a whole-map observe.
+ * Unlike the crop lines there is no second family whose value would do: `refillWateringCanTargets` covers the same water
+ * with a different hash, and the cast recomputes and compares its own.
+ */
+const waterSnapshot: Snapshot = {
+  ...baseSnapshot,
+  waterTargets: [
+    { targetId: "water_ffffffffffffffff", x: 40, y: 41 },
+    { targetId: "water_0123456789abcdef", x: 6, y: 12 },
+  ],
+};
+
+test("the nearest castable water is named every turn, by the actor's tile rather than the wire's order", () => {
+  assert.equal(
+    lineValues(formatSnapshotHud(waterSnapshot)).get("fishable water"),
+    "nearest (6, 12) water_0123456789abcdef (+1 more)",
+    "the id is what `fish_here` takes, and the nearest is the actor's own tile's answer",
+  );
+
+  // One unchanged world, the wire array the other way round: the block is folded into the cached history, so it must
+  // render the same bytes.
+  const reordered = formatSnapshotHud({
+    ...waterSnapshot,
+    waterTargets: [...(waterSnapshot.waterTargets ?? [])].reverse(),
+  });
+  assert.equal(reordered, formatSnapshotHud(waterSnapshot));
+});
+
+test("no castable water is stated as a fact, and the two water lines stay two facts", () => {
+  const none = formatSnapshotHud({ ...baseSnapshot, waterTargets: [] });
+  assert.equal(lineValues(none).get("fishable water"), "none here");
+  // Absent and empty are one world: the Mod sends the family only while `fish_here` is advertised.
+  assert.equal(formatSnapshotHud(baseSnapshot), none);
+
+  // Both lines read the nearest row of their OWN family: they are not two spellings of one tile, because the ids are
+  // hashed by different actions and only one of the two is accepted by a cast.
+  const both = lineValues(
+    formatSnapshotHud({
+      ...waterSnapshot,
+      refillWateringCanTargets: [{ targetId: "watering_can_refill_aaaaaaaaaaaaaaaa", x: 9, y: 11 }],
+    }),
+  );
+  assert.equal(both.get("fishable water"), "nearest (6, 12) water_0123456789abcdef (+1 more)");
+  assert.equal(both.get("refill water"), "nearest (9, 11) watering_can_refill_aaaaaaaaaaaaaaaa");
+});
+
+test("the fishable-water line is bounded at one row, whatever the family's own cap sends", () => {
+  // The Mod caps `waterTargets` at 32 and the Host validates that cap, so the widest world this line can be handed is 32
+  // rows: printing them would pay ~700 bytes every turn for one cast.
+  const atCap = Array.from({ length: 32 }, (_, index) => ({
+    targetId: `water_${String(index).padStart(16, "0")}`,
+    x: index,
+    y: 0,
+  }));
+  const text = formatSnapshotHud({ ...baseSnapshot, waterTargets: atCap });
+  const line = lineValues(text).get("fishable water") ?? "";
+  assert.match(line, /\(\+31 more\)$/u, "one row printed, thirty-one counted - never silently dropped");
+  assert.ok(Buffer.byteLength(line, "utf8") < 90, `one row plus a count, bound at the source; got ${line}`);
+  assert.ok(Buffer.byteLength(text, "utf8") <= MAX_SNAPSHOT_HUD_BYTES);
 });
