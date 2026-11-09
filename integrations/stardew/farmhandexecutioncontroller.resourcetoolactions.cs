@@ -517,23 +517,25 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "till_soil", toolRefusal));
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
         {
-            // Distinguish "wrong tile" from "right tile, too far to act on". A
-            // non-diggable tile means pick a different target and stays refused at any
-            // distance; a diggable one means walk there first, which is exactly what the
-            // native click path requires the player to do (Game1.cs:11509 gates
-            // checkAction on tileWithinRadiusOfPlayer(grabTile, 1)).
-            string distance = ChebyshevDistance(Game1.player, targetX, targetY).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            // THE SOIL FIRST, and it is the same question at any distance. This branch used to answer a far tile that
+            // cannot be hoed with `target_out_of_range;target=x,y;distance=<n>`, so the one fact that could not help
+            // was the only one published: measured 2026-11-09, three such refusals in a run where the companion was
+            // saying the ground was dead hard. `distance` is deliberately absent from this refusal - a tile whose
+            // ground the map itself refuses is dead beside her and dead nine tiles away.
             StardewValley.GameLocation distantLocation = Game1.player.currentLocation;
-            if (!IsDiggableSoilTile(distantLocation, targetX, targetY))
+            if (DescribeSoilRefusal(distantLocation, targetX, targetY) is { } soilRefusal)
             {
                 return this.RememberTerminal(
                     requestId,
                     executionId,
                     ExecutionState.Rejected,
-                    "target_out_of_range",
-                    $"target={targetX},{targetY};distance={distance}");
+                    DescribeSoilRefusalCode(soilRefusal),
+                    $"target={targetX},{targetY}");
             }
 
+            // Farmable ground: the only question left is where the actor must stand, and the approach leg answers it
+            // with the one selector every tool family uses. The action names its own answer here rather than
+            // translating the leg's refusal afterwards - the leg owns the geometry, the action owns what it calls it.
             return this.TryBeginToolApproach(
                 requestId,
                 executionId,
@@ -544,7 +546,8 @@ internal sealed partial class ExecutionManager
                 $"till_soil_{targetX}_{targetY}",
                 (arrivalExecutionId, arrivalRequestId) => this.ExecuteTillSoil(arrivalExecutionId, arrivalRequestId, targetX, targetY, requestedDeadlineMs),
                 nowMs,
-                requestedDeadlineMs);
+                requestedDeadlineMs,
+                noStandingTileCodePrefix: NoStandingTileCodePrefix);
         }
 
         return this.ExecuteTillSoil(executionId, requestId, targetX, targetY, requestedDeadlineMs);
@@ -561,8 +564,8 @@ internal sealed partial class ExecutionManager
         StardewValley.GameLocation location = Game1.player.currentLocation;
         if (location.GetHoeDirtAtTile(tile) is not null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "soil_already_tilled", $"target={targetX},{targetY}");
-        if (!IsDiggableSoilTile(location, targetX, targetY))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "soil_not_diggable", $"target={targetX},{targetY}");
+        if (DescribeSoilRefusal(location, targetX, targetY) is { } soilRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, DescribeSoilRefusalCode(soilRefusal), $"target={targetX},{targetY}");
         // Selection facts are deliberately NOT published here: this action takes the hoe its own claim declares and
         // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it
         // (`hasTillSoilCompletionEvidence`) compares an EXACT evidence-key set. Whoever adds those keys must extend that
@@ -1478,6 +1481,11 @@ internal sealed partial class ExecutionManager
     /// </para>
     /// </summary>
     /// <param name="actionId">The wire action id, republished in snapshots.</param>
+    /// <param name="noStandingTileCodePrefix">
+    /// The caller's own name for "this target has nowhere to stand", when it has one. The verdict, the evidence and the
+    /// hint are the leg's either way; only the reason code changes, because `no_reachable_approach:&lt;x&gt;:&lt;y&gt;`
+    /// names the PLACEMENT while an action that has just asked the soil question is naming the STANDING tile.
+    /// </param>
     private LocalExecutionReceipt TryBeginToolApproach(
         string requestId,
         string executionId,
@@ -1488,7 +1496,8 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         Func<string, string, LocalExecutionReceipt> onArrival,
         long nowMs,
-        long requestedDeadlineMs)
+        long requestedDeadlineMs,
+        string? noStandingTileCodePrefix = null)
     {
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((requestedDeadlineMs - nowMs) * 60d / 1000d));
         // WHERE the actor stands is decided BEFORE the walk is committed.
@@ -1553,8 +1562,8 @@ internal sealed partial class ExecutionManager
             // node keeps that line and not the evidence, so a refusal without one is a verdict the model can only answer
             // by aiming again.
             (string refusalCode, string refusalEvidence, string refusalHint) = DescribeNoReachableApproach(
-                anchor, actor, isStandable, footprint);
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusalCode, refusalEvidence + DescribeApproachRange(targetX: anchor.X, targetY: anchor.Y), hint: refusalHint);
+                anchor, actor, isStandable, footprint, noStandingTileCodePrefix);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusalCode, refusalEvidence + DescribeApproachRange(targetX: anchor.X, targetY: anchor.Y, standingTileAsked: noStandingTileCodePrefix is not null), hint: refusalHint);
         }
         (int X, int Y) goal = standingTile.Value;
         // The tile the arrival must be measured against: for a single-tile target the target itself, so every existing
@@ -1616,13 +1625,15 @@ internal sealed partial class ExecutionManager
         string steppedOut = actorOnTarget
             ? $";stepped_out_from={actor.X},{actor.Y};stepped_out_to={goal.X},{goal.Y}"
             : string.Empty;
+        // `stand_at` is `goal` - the tile above, chosen once and dispatched to. A second selection here could publish a
+        // coordinate the walk does not use, and a caller told to stand somewhere it is not is worse than one told nothing.
         LocalExecutionReceipt accepted = new(
             executionId,
             requestId,
             ExecutionState.Accepted,
             "accepted",
             this.revision,
-            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};distance={distance};reach=1;approach=adjacent;standing={goal.X},{goal.Y}{reached}{steppedOut}");
+            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};distance={distance};reach=1;approach=adjacent;stand_at={goal.X},{goal.Y}{reached}{steppedOut}");
         this.Remember(accepted);
         this.AddTrace(accepted);
         return accepted;
@@ -1642,7 +1653,8 @@ internal sealed partial class ExecutionManager
         string expectedTargetId,
         Func<string, string, LocalExecutionReceipt> onArrival,
         long nowMs,
-        long requestedDeadlineMs) =>
+        long requestedDeadlineMs,
+        string? noStandingTileCodePrefix = null) =>
         this.TryBeginToolApproach(
             requestId,
             executionId,
@@ -1653,25 +1665,30 @@ internal sealed partial class ExecutionManager
             expectedTargetId,
             onArrival,
             nowMs,
-            requestedDeadlineMs);
+            requestedDeadlineMs,
+            noStandingTileCodePrefix);
 
     /// <summary>
     /// The layer an approach-leg refusal carries on `blocked_by`: `range`, with the detail the geometry decided.
     ///
     /// <para>
     /// The leg exists because the actor is outside the native interaction radius, so the usual answer is
-    /// `range:reach:&lt;n&gt;` - the distance to the interaction tile. The other answer is `range:standability`: the actor
-    /// is ALREADY inside the radius (or standing on the target) and no ring tile can be stood on, so no distance
-    /// explains the refusal - the ring does, and `hollow_ring_no_step_out` is that same fact as a reason code.
+    /// `range:reach:&lt;n&gt;` - the distance to the interaction tile. The other answer is `range:standability`, for the two
+    /// cases where no distance explains the refusal: the actor is ALREADY inside the radius (or standing on the target)
+    /// and no ring tile can be stood on, which `hollow_ring_no_step_out` states as a reason code; or the caller asked the
+    /// STANDING question itself (`standingTileAsked`), so the placement is settled and the ring is what refused.
     /// </para>
     /// <para>
     /// The radius is not restated here: it is the one <c>IsTileWithinChebyshevRadius</c> already takes, and the distance
     /// is the same Chebyshev the receipts publish as `reach=1` and `distance=`. Two readers of one geometry.
     /// </para>
     /// </summary>
-    private static string DescribeApproachRange(int targetX, int targetY)
+    private static string DescribeApproachRange(int targetX, int targetY, bool standingTileAsked = false)
     {
-        string detail = IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1)
+        // `standingTileAsked` is the caller saying its placement question is already answered, so the only thing that
+        // can still refuse is the tile to stand on. Reporting `reach:<n>` there would be the same
+        // distance-answer-instead-of-cause this refusal exists to replace.
+        string detail = standingTileAsked || IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1)
             ? "standability"
             : $"reach:{ChebyshevDistance(Game1.player, targetX, targetY).ToString(CultureInfo.InvariantCulture)}";
         return $";blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, detail).Format()}";
