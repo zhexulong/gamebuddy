@@ -15,14 +15,22 @@ import {
   type PublishedPlanAction,
 } from "../body-program-script.js";
 import { planFormExecutionUnavailableReason } from "../body-program-for-each.js";
-import { bodyProgramPreflightRefusal } from "../body-program-preflight.js";
+import {
+  type BodyProgramNodeCatalogue,
+  bodyProgramNodeAdmissionRefusal,
+  bodyProgramPreflightRefusal,
+} from "../body-program-preflight.js";
 import { Type } from "typebox";
 import {
   createStableGameRuntimeBindingIdentity,
   createStardewRecoveryBindingContext,
   readStardewRecoveryBindingContext,
 } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
-import { HostNodeAdmissionService, type HostNodeAdmissionResult } from "../action-execution-coordinator.internal.js";
+import {
+  type HostNodeAdmissionResult,
+  type HostNodeAdmissionValidator,
+  HostNodeAdmissionService,
+} from "../action-execution-coordinator.internal.js";
 import { materializeAuthenticatedStardewLaunchPorts } from "../stardew-integration-launcher-body-program.internal.js";
 import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
 import type { LiveSourceAttester } from "../companion-live-source-attestation.js";
@@ -45,6 +53,7 @@ import {
 import type {
   GameIntegrationAdapter,
   IntegrationActionPolicy,
+  IntegrationActionRegistration,
   IntegrationStateView,
 } from "../game-integration-adapter.js";
 import type { GameConnection } from "../game-connection.js";
@@ -951,24 +960,91 @@ function assertFreshBodyProgramPreflight(
   if (!isStateView(state) || !state.connected || state.registrations === undefined)
     throw new Error("integration_not_ready");
   assertCurrentBodyProgramPolicyIdentity(state, retainedPolicyIdentity);
-  const visible = connection.module.actionCatalog.visibleActions(
+  // Asked in ONE place (`body-program-preflight.ts`), because what may appear in a node is answered by four layers - the
+  // preflight, the plan compiler's builder vocabulary, node admission and the Mod's own verifier - and a decision that
+  // lives inline in the layer that also reads the connection cannot be tested, so it drifts. Admission asks the same
+  // decision on the same catalogue and is measured to do so (`body-node-admission.test.ts`).
+  const catalogue = readBodyProgramCatalogue(
+    connection,
+    mountedPolicy,
     state.registrations,
     state.enabledActionIds ?? [],
-    mountedPolicy,
   );
-  // Asked in ONE place (`body-program-preflight.ts`), because what may appear in a node is answered by three layers - the
-  // preflight, the plan compiler's builder vocabulary and the Mod's own admission - and a decision that lives inline in
-  // the layer that also reads the connection cannot be tested, so it drifts.
-  //
-  // The classification reads two facts and re-derives neither: `visible` is what this connection offers now (asked of
-  // `visibleActionsFromModCatalog`, never recomputed clause by clause - an earlier message that recomputed it reported
-  // every clause passing for `cut_weeds` while `visible` refused it), and the registrations are what the attached Mod
-  // publishes at all. Neither is a hand-written subset of the other.
-  const refusal = bodyProgramPreflightRefusal(request.nodes, {
-    visibleActionIds: visible.map((registration) => registration.actionId),
-    registeredActionIds: state.registrations.map((registration) => registration.actionId),
-  });
+  const refusal = bodyProgramPreflightRefusal(request.nodes, catalogue);
   if (refusal !== null) throw new Error(refusal);
+}
+
+/**
+ * What the one node decision is asked of, projected ONCE: the ids this connection offers now, and every id the attached
+ * Mod publishes at all.
+ *
+ * The projection is the adapter's own (`actionCatalog.visibleActions`, never a clause-by-clause recomputation - an earlier
+ * message that recomputed it reported every clause passing for `cut_weeds` while `visible` refused it), and both gates
+ * that ask the decision read it from here, so neither can hand the decision a catalogue the other would not.
+ */
+function readBodyProgramCatalogue(
+  connection: GameConnection,
+  mountedPolicy: IntegrationActionPolicy,
+  registrations: readonly IntegrationActionRegistration[],
+  enabledActionIds: readonly string[],
+): BodyProgramNodeCatalogue {
+  const visible = connection.module.actionCatalog.visibleActions(registrations, enabledActionIds, mountedPolicy);
+  return Object.freeze({
+    visibleActionIds: Object.freeze(visible.map((registration) => registration.actionId)),
+    registeredActionIds: Object.freeze(registrations.map((registration) => registration.actionId)),
+  });
+}
+
+/**
+ * The Host's answer to one node's admission challenge, against the connection as it is NOW.
+ *
+ * THREE DIFFERENT FAILURES SHARED ONE CODE, so the Mod could only answer "unavailable" and the model could only retry:
+ * measured 2026-10-26, every program that reached admission came back unavailable in the same second it was sent, and the
+ * cause was unreadable from either end. Each cause is named apart.
+ *
+ * WHAT THE NODE MAY BE IS NOT DECIDED HERE. Whether the challenge's action id is a legal member of a program - a form
+ * admitted as a form, its rows answering to the live policy - is `bodyProgramNodeAdmissionRefusal`, the same decision the
+ * submission preflight asks, on the same projection of this connection. Measured 2026-11-10: admission tested the action id
+ * against the action catalogue itself, so the run's only `for_each` was answered `policy_denied` after the preflight had
+ * admitted it. What IS decided here is whether this node may START now: the gate, a readable attachment, and the identity
+ * the preflight also saw.
+ */
+export function createStardewBodyNodeAdmissionValidator(
+  connection: GameConnection,
+  mountedPolicy: IntegrationActionPolicy,
+  retainedPolicyIdentity: FarmhandPolicyIdentity,
+): HostNodeAdmissionValidator {
+  return (challenge) => {
+    if (connection.executionGate?.executable !== true)
+      return { result: "unavailable", code: "admission_unavailable:gate_not_executable" };
+    let state: IntegrationStateView;
+    try {
+      state = connection.module.readState(connection);
+    } catch {
+      return { result: "unavailable", code: "admission_unavailable:read_state_threw" };
+    }
+    if (!isStateView(state)) return { result: "unavailable", code: "admission_unavailable:state_malformed" };
+    if (!state.connected) return { result: "unavailable", code: "admission_unavailable:not_connected" };
+    if (state.registrations === undefined)
+      return { result: "unavailable", code: "admission_unavailable:no_registrations" };
+    assertCurrentBodyProgramPolicyIdentity(state, retainedPolicyIdentity);
+    const refusal = bodyProgramNodeAdmissionRefusal(
+      challenge,
+      readBodyProgramCatalogue(connection, mountedPolicy, state.registrations, state.enabledActionIds ?? []),
+    );
+    if (refusal !== null) return { result: "rejected", code: refusal };
+    if (challenge.catalogRevision !== state.catalogRevision) return { result: "rejected", code: "catalog_stale" };
+    if (
+      challenge.policyIdentity.value !== retainedPolicyIdentity.value ||
+      challenge.policyIdentity.capabilityRevision !== retainedPolicyIdentity.capabilityRevision
+    )
+      return { result: "rejected", code: "policy_identity_mismatch" };
+    return {
+      result: "granted",
+      attachmentGeneration: state.sessionId ?? "",
+      policyRevision: retainedPolicyIdentity.value,
+    };
+  };
 }
 
 function readBodyProgramPolicyIdentity(connection: GameConnection): FarmhandPolicyIdentity {
@@ -1147,42 +1223,10 @@ export function createHostGameRuntimeMaterializer(
             scope: recoveryIdentity,
           }),
         );
-        const bodyProgramAdmission = new HostNodeAdmissionService(recoveryJournal, (challenge) => {
-          // Three different failures shared one code, so the Mod could only answer "unavailable" and the model could only
-          // retry. Measured 2026-10-26: every program that reached admission came back unavailable in the same second it was
-          // sent, and the cause was unreadable from either end.
-          if (execution.connection.executionGate?.executable !== true)
-            return { result: "unavailable", code: "admission_unavailable:gate_not_executable" };
-          let state: IntegrationStateView;
-          try {
-            state = execution.connection.module.readState(execution.connection);
-          } catch {
-            return { result: "unavailable", code: "admission_unavailable:read_state_threw" };
-          }
-          if (!isStateView(state)) return { result: "unavailable", code: "admission_unavailable:state_malformed" };
-          if (!state.connected) return { result: "unavailable", code: "admission_unavailable:not_connected" };
-          if (state.registrations === undefined)
-            return { result: "unavailable", code: "admission_unavailable:no_registrations" };
-          assertCurrentBodyProgramPolicyIdentity(state, retainedPolicyIdentity);
-          const visible = execution.connection.module.actionCatalog.visibleActions(
-            state.registrations,
-            state.enabledActionIds ?? [],
-            mountedPolicy,
-          );
-          const action = visible.find((registration) => registration.actionId === challenge.actionId);
-          if (action === undefined) return { result: "rejected", code: "policy_denied" };
-          if (challenge.catalogRevision !== state.catalogRevision) return { result: "rejected", code: "catalog_stale" };
-          if (
-            challenge.policyIdentity.value !== retainedPolicyIdentity.value ||
-            challenge.policyIdentity.capabilityRevision !== retainedPolicyIdentity.capabilityRevision
-          )
-            return { result: "rejected", code: "policy_identity_mismatch" };
-          return {
-            result: "granted",
-            attachmentGeneration: state.sessionId ?? "",
-            policyRevision: retainedPolicyIdentity.value,
-          };
-        });
+        const bodyProgramAdmission = new HostNodeAdmissionService(
+          recoveryJournal,
+          createStardewBodyNodeAdmissionValidator(execution.connection, mountedPolicy, retainedPolicyIdentity),
+        );
         const ports = materializeAuthenticatedStardewLaunchPorts(
           execution,
           admission,

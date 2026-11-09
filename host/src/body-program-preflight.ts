@@ -27,6 +27,14 @@ import { isRecord } from "./protocol-target-facts.js";
  * publishes nowhere, an id this connection does not offer, a loop under an id the Host does not declare a form, and a loop
  * whose row names an action the policy does not offer.
  * </p>
+ * <p>
+ * THE SAME DECISION ANSWERS ADMISSION. `refusalsForNode` is the only implementation of "may this node be a member of a
+ * program against this catalogue"; the two exported entries differ only in HOW they read the loop out of a node - the
+ * preflight reads the compiled node's argument, admission reads the canonical string the Mod sends back in the challenge -
+ * and in what they answer with. Measured 2026-11-10: the preflight was taught this in `d66d86d4` and admission still
+ * tested the node's action id against the action catalogue, so the one `for_each` of the run was answered
+ * `rejected: policy_denied` at node admission - a fourth gate judging the same question with a second implementation.
+ * </p>
  */
 
 /** What one submission is judged against: the ids this connection offers, and every id the attached Mod publishes. */
@@ -36,6 +44,14 @@ export type BodyProgramNodeCatalogue = Readonly<{
   /** Every id the attached Mod registers, offered or not - what tells a typo from a policy refusal. */
   registeredActionIds: readonly string[];
 }>;
+
+/**
+ * The Mod's own word for a loop whose row names an action the live policy does not offer.
+ *
+ * Spelled once, because it is both a preflight reason and the admission refusal's prefix: a caller told
+ * `row_action_not_enabled:till_soil` in one layer and refused with another word in the next has been taught nothing.
+ */
+const ROW_ACTION_NOT_ENABLED = "row_action_not_enabled";
 
 /**
  * Why one node may not be submitted, in the caller's terms.
@@ -49,7 +65,7 @@ type NodeRefusalReason =
   | "unknown_action"
   | "action_not_enabled"
   | "plan_form_not_declared"
-  | "row_action_not_enabled";
+  | typeof ROW_ACTION_NOT_ENABLED;
 
 type NodeRefusal = Readonly<{
   nodeId: string;
@@ -71,6 +87,9 @@ const MAX_REPORTED_NODE_REFUSALS = 8;
 /** The placeholders a malformed node is answered with - id-shaped, so a refusal is always one readable code. */
 const NO_NODE_ID = "no_node_id";
 const NO_ACTION_ID = "no_action_id";
+
+/** The one argument a plan form's node carries; the same name the compiler writes and the Mod declares. */
+const LOOP_ARGUMENT = "loop";
 
 const REFUSAL_PREFIX = "body_program_preflight_rejected";
 
@@ -101,6 +120,32 @@ function refusalText(refusal: NodeRefusal): string {
 }
 
 /**
+ * The refusal code one node's admission is answered with, or `null` when it may be admitted.
+ *
+ * This is the preflight's decision - `refusalsForNode` - asked of the node as the Mod's ADMISSION CHALLENGE carries it, so
+ * a form cannot be admitted by one gate and refused by the next. The only difference is how the loop is read: the
+ * challenge carries it as the canonical STRING the form's one argument declares, because an argument on the frozen wire is
+ * a scalar (or a destination selector) rather than a declaration.
+ *
+ * `policy_denied` stays the word for everything but a refused row, which is answered `row_action_not_enabled:<actionId>`
+ * and names the row: the form is not what the policy judged, so it must not be what the refusal blames.
+ */
+export function bodyProgramNodeAdmissionRefusal(
+  challenge: Readonly<{ actionId: string; canonicalBoundArgs: Readonly<Record<string, unknown>> }>,
+  catalogue: BodyProgramNodeCatalogue,
+): string | null {
+  const refusal = refusalsForNode(
+    NO_NODE_ID,
+    challenge.actionId,
+    planFormLoopOfBoundArguments(challenge.canonicalBoundArgs),
+    new Set(catalogue.visibleActionIds),
+    new Set(catalogue.registeredActionIds),
+  )[0];
+  if (refusal === undefined) return null;
+  return refusal.rowActionId === undefined ? "policy_denied" : `${ROW_ACTION_NOT_ENABLED}:${refusal.rowActionId}`;
+}
+
+/**
  * Every refusal one node contributes: none when it may be submitted, one for an ordinary refusal, one per refused ROW for
  * a loop.
  *
@@ -118,10 +163,26 @@ function nodeRefusals(
   const actionId = node.actionId;
   if (typeof actionId !== "string" || actionId.length === 0)
     return [Object.freeze({ nodeId, actionId: NO_ACTION_ID, reason: "no_action_id" as const })];
-  const loop = planFormLoopOf(node);
+  return refusalsForNode(nodeId, actionId, planFormLoopOf(node), visible, registered);
+}
+
+/**
+ * THE ONE DECISION: may this action id be a member of a program against this catalogue, and if it is a form, are its rows
+ * offered?
+ *
+ * Every reader of it supplies the same four facts and re-derives none of them: the action id, the loop document (or
+ * `null` when the node carries none), what this connection offers now, and what the attached Mod publishes at all.
+ */
+function refusalsForNode(
+  nodeId: string,
+  actionId: string,
+  loop: PlanForEachLoop | null,
+  visible: ReadonlySet<string>,
+  registered: ReadonlySet<string>,
+): readonly NodeRefusal[] {
   if (PLAN_FORM_ACTION_IDS.includes(actionId))
     return refusedRowActions(loop, visible).map((rowActionId) =>
-      Object.freeze({ nodeId, actionId, reason: "row_action_not_enabled" as const, rowActionId }),
+      Object.freeze({ nodeId, actionId, reason: ROW_ACTION_NOT_ENABLED, rowActionId }),
     );
   // A plan-form DOCUMENT under an id the Host does not declare a form. The document is the evidence: no catalogue can
   // make it runnable, because the Mod dispatches an action and nothing dispatches an undeclared form.
@@ -137,6 +198,28 @@ function nodeRefusals(
 }
 
 /**
+ * The loop document one ADMISSION CHALLENGE carries, or `null` when it carries none this Host can read.
+ *
+ * A form's document crosses back as the canonical string its one declared argument is (the Mod's
+ * `FarmhandForEachArguments.TryCanonicalize` drops the wire tag at the one boundary that knows it), because a canonical
+ * argument on the frozen wire is a scalar or a destination selector. Reading it is a decode, not a second decision: the
+ * grammar below is the same `readForEachLoop` the compiler writes the document with, and an unreadable one leaves the
+ * node admitted as a form - the Mod has already verified the document it admitted.
+ */
+function planFormLoopOfBoundArguments(boundArgs: Readonly<Record<string, unknown>>): PlanForEachLoop | null {
+  const value = boundArgs[LOOP_ARGUMENT];
+  if (!isRecord(value) || value.type !== "string" || typeof value.canonicalValue !== "string") return null;
+  let document: unknown;
+  try {
+    document = JSON.parse(value.canonicalValue);
+  } catch {
+    return null;
+  }
+  const reading = readForEachLoop(document, null);
+  return reading.ok ? reading.loop : null;
+}
+
+/**
  * The loop one node carries, or `null` when the node carries none this Host can read.
  *
  * The `loop` runtime value is the document plus its own wire tag, and the tag is a WIRE fact rather than part of the
@@ -145,7 +228,7 @@ function nodeRefusals(
 function planFormLoopOf(node: Record<string, unknown>): PlanForEachLoop | null {
   const arguments_ = node.arguments;
   if (!isRecord(arguments_)) return null;
-  const value = arguments_.loop;
+  const value = arguments_[LOOP_ARGUMENT];
   if (!isRecord(value) || value.type !== "loop") return null;
   const { type, ...document } = value;
   void type;
