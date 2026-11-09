@@ -27,7 +27,7 @@ public sealed class DiscoveryExclusionVocabularyTests
     [Fact]
     public void EveryPublishedTokenIsAdmitted()
     {
-        DiscoveryExclusionReasons.All.Should().HaveCount(9);
+        DiscoveryExclusionReasons.All.Should().HaveCount(10);
         foreach (string token in DiscoveryExclusionReasons.All)
         {
             DiscoveryExclusionReasons.IsKnown(token).Should().BeTrue($"'{token}' is published by All");
@@ -51,6 +51,7 @@ public sealed class DiscoveryExclusionVocabularyTests
             DiscoveryExclusionReasons.NotReady,
             DiscoveryExclusionReasons.WrongHarvestMethod,
             DiscoveryExclusionReasons.AlreadyBaited,
+            DiscoveryExclusionReasons.ShopClosedToday,
         });
         DiscoveryExclusionReasons.All.Distinct(StringComparer.Ordinal).Should().HaveCount(DiscoveryExclusionReasons.All.Count);
     }
