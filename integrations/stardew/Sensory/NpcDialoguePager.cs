@@ -22,7 +22,9 @@ namespace GameBuddy.Stardew.Sensory;
 /// question page therefore does not flip a page at all, it chooses an answer
 /// nobody chose. A question belongs to the Agent through <c>answer_dialogue</c>,
 /// which is the same line <c>dismiss_modal</c> draws
-/// (farmhandexecutioncontroller.modalactions.cs:82).
+/// (farmhandexecutioncontroller.modalactions.cs:82) - with one exception, the
+/// engine's own bed prompt, which is <c>advance_day</c>'s seam and never a
+/// dialogue to present (<see cref="NativeSleepPrompt"/>).
 ///
 /// Everything this reader touches is public on <see cref="DialogueBox"/>:
 /// <c>dialogues</c> (:12), <c>characterDialoguesBrokenUp</c> (:16),
@@ -192,6 +194,26 @@ internal sealed class NpcDialoguePager
             // nor its identity (it was spent), and re-tracking it would also re-run the native click on its lines.
             if (ReferenceEquals(box, this.reportedBox))
                 return;
+            // THE ENGINE'S OWN BED PROMPT IS NOT A DIALOGUE TO PRESENT.
+            //
+            // `GameLocation.cs:3763-3765` raises it as the `Sleep` touch action, and answering it `Yes` IS a calendar
+            // crossing. `advance_day` crosses a night WITH a receipt, so offering the question here handed the Agent a
+            // second way to end the day: measured 2026-11-09 (`round41`), the Agent answered `Yes`, the day crossed
+            // behind the still-pending `sleep` intent, and that intent then crossed ANOTHER one 9 s later - six
+            // `day_started` facts for three nights (`day_count_disagrees_with_the_world:2 != 6`).
+            //
+            // The box is marked spent rather than merely skipped: a rollover blinks `activeClickableMenu` out for a
+            // tick, and re-tracking it afterwards is how the same question was offered again under a fresh identity.
+            if (NativeSleepPrompt.IsStanding(box))
+            {
+                this.reportedBox = box;
+                this.monitor?.Log(
+                    "GameBuddy pager left the engine's own bed prompt to advance_day: "
+                        + $"question_key={NativeSleepPrompt.QuestionKey};day={this.currentDay()}.",
+                    LogLevel.Trace);
+                return;
+            }
+
             // Taking over a dialogue is a real world mutation (the native click runs the lines' side effects), so it
             // happens only when the fact it produces can actually leave on the authenticated bridge. Without that,
             // the box is a player's dialogue and is left alone.

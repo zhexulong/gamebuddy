@@ -436,7 +436,9 @@ internal sealed class SleepAndAdvanceDayLifecycle
                 // would fight the native animation for the same actor.
                 if (this.YieldToNativePassOut())
                     return false;
-                if (this.WalkToBed())
+                // The prompt may already be standing (the walk finished on an earlier attempt): there is no walk left to
+                // do, and the box is this lifecycle's to answer.
+                if (NativeSleepPrompt.IsStanding(Game1.activeClickableMenu as DialogueBox) || this.WalkToBed())
                     this.phase = Phase.AwaitingModal;
                 return false;
 
@@ -511,8 +513,15 @@ internal sealed class SleepAndAdvanceDayLifecycle
         if (Game1.newDay) { reason = "already_new_day"; return false; }
         if (!Game1.shouldTimePass()) { reason = "time_paused"; return false; }
         if (Game1.player.passedOut) { reason = "passed_out"; return false; }
-        if (Game1.activeClickableMenu is not null) { reason = "menu_open"; return false; }
-        if (Game1.dialogueUp) { reason = "dialogue_up"; return false; }
+        // THE ENGINE'S OWN BED PROMPT IS THIS ACTION'S WORKING PRECONDITION, NOT AN OBSTACLE.
+        //
+        // The companion can arrive at the bed on an earlier attempt and leave the `Sleep` prompt standing - the pager
+        // no longer offers it to the Agent, so nobody else answers it. `AwaitingModal` exists to answer exactly this
+        // box, so refusing `menu_open` / `dialogue_up` for it kept the ONE action that can answer it permanently
+        // ineligible, and the only route left was the answer that crosses a day with no receipt behind it.
+        bool ownSleepPrompt = NativeSleepPrompt.IsStanding(Game1.activeClickableMenu as DialogueBox);
+        if (Game1.activeClickableMenu is not null && !ownSleepPrompt) { reason = "menu_open"; return false; }
+        if (Game1.dialogueUp && !ownSleepPrompt) { reason = "dialogue_up"; return false; }
         if (Game1.eventUp) { reason = "event_up"; return false; }
         // Cabin derives from FarmHouse, so this admits the AI Farmhand's own
         // cabin as well as the host's farmhouse.
@@ -1004,9 +1013,9 @@ internal sealed class SleepAndAdvanceDayLifecycle
         if (!this.answerDispatched)
         {
             Response? yes = dialogueBox.responses?.FirstOrDefault(
-                    response => string.Equals(response.responseKey, "Yes", StringComparison.Ordinal))
+                    response => string.Equals(response.responseKey, NativeSleepPrompt.AcceptResponseKey, StringComparison.Ordinal))
                 ?? Game1.questionChoices?.FirstOrDefault(
-                    response => string.Equals(response.responseKey, "Yes", StringComparison.Ordinal));
+                    response => string.Equals(response.responseKey, NativeSleepPrompt.AcceptResponseKey, StringComparison.Ordinal));
             if (yes is null)
             {
                 this.Finish("blocked", "yes_choice_missing", null);

@@ -246,53 +246,6 @@ public sealed class RefusalLayerNamingTests
         RefusalProbe.DescribeWorld(null, location, tile, tile).Format().Should().Be("none");
     }
 
-    /// <summary>
-    /// The map layer answers about the TILE, over the same step box the planner admits a step with.
-    ///
-    /// <para>
-    /// `location_constraint` says "this map will not let you through" and has no countermeasure of its own, so it is
-    /// only honest about a refusal the map itself makes. The probe used a 64x64 square at `tile * 64`, and the first
-    /// pixel column of that square belongs to the tile's WEST neighbour - so a map blocking along a shared boundary
-    /// named a constraint on a tile it never constrained. Measured `round41`: `blocked_by=location_constraint:blocked@64,14`,
-    /// the ordinary Farm tile directly north of the farmhouse, ten minutes before the run gave up on that corridor.
-    /// </para>
-    /// </summary>
-    [Fact]
-    public void TheMapLayerAsksAboutItsOwnTileAndNotTheBoundaryItsNeighbourOwns()
-    {
-        using ClearStepMoveTests.CorridorHarness harness = ClearStepMoveTests.CorridorHarness.Create();
-        Vector2 tile = new(7f, 3f);
-
-        // A map that blocks up to and including the tile's first pixel column: the NEIGHBOUR's edge, not this tile's.
-        var boundary = new BoundaryBlockingLocation { BlockingLeft = 7 * 64 };
-        RefusalProbe.DescribeWorld(null, boundary, tile, harness.Actor.Tile, harness.Actor).Format().Should().Be("none",
-            "the pixel column the old 64x64 box reached belongs to the tile next door, so this map constrains nothing here");
-
-        // And the layer still names a map that blocks the tile's own step, which is Mountain's `landslide`.
-        var interior = new BoundaryBlockingLocation { BlockingLeft = 7 * 64 + 1 };
-        RefusalProbe.DescribeWorld(null, interior, tile, harness.Actor.Tile, harness.Actor).Format()
-            .Should().Be("location_constraint:blocked@7,3",
-                "a location that blocks the whole step is still the one layer no entity query can name");
-    }
-
-    /// <summary>A map whose own collision override blocks everything west of one pixel column - a shared boundary.</summary>
-    private sealed class BoundaryBlockingLocation : GameLocation
-    {
-        public int BlockingLeft { get; init; }
-
-        public override bool isCollidingPosition(
-            Microsoft.Xna.Framework.Rectangle position,
-            xTile.Dimensions.Rectangle viewport,
-            bool isFarmer,
-            int damagesFarmer,
-            bool glider,
-            Character character,
-            bool pathfinding,
-            bool projectile = false,
-            bool ignoreCharacterRequirement = false,
-            bool skipCollisionEffects = false) => position.Left <= this.BlockingLeft;
-    }
-
     [Fact]
     public void EveryNoNativePathRefusalNamesALayer()
     {

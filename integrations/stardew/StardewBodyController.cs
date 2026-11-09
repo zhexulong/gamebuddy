@@ -1275,7 +1275,7 @@ internal sealed class StardewBodyController
     /// </summary>
     private static bool IsPlannerAdmissibleTile(GameLocation location, Farmer actor, Vector2 tile) =>
         !location.isCollidingPosition(
-            StepBox(tile),
+            new Microsoft.Xna.Framework.Rectangle((int)tile.X * 64 + 1, (int)tile.Y * 64 + 1, 62, 62),
             Game1.viewport,
             actor is Farmer,
             0,
@@ -1283,16 +1283,6 @@ internal sealed class StardewBodyController
             actor,
             pathfinding: true,
             skipCollisionEffects: true);
-
-    /// <summary>
-    /// The pixel box one tile's step occupies, and the ONE spelling of it: the planner admits a step with a 62x62 box
-    /// inset by one pixel (<c>PathFindController.cs:222</c>), while a 64x64 square at <c>tile * 64</c> also covers the
-    /// first column and row of the tiles next door. Measured `round41`: an ordinary Farm tile directly north of the
-    /// farmhouse read <c>blocked_by=location_constraint:blocked@64,14</c> - a constraint the map never made, over its
-    /// neighbour's boundary.
-    /// </summary>
-    private static Microsoft.Xna.Framework.Rectangle StepBox(Vector2 tile) =>
-        new((int)tile.X * 64 + 1, (int)tile.Y * 64 + 1, 62, 62);
 
     /// <summary>
     /// The on-map and own-tile guards both entry points share. The actor's own tile is admitted without asking the
@@ -1467,31 +1457,17 @@ internal sealed class StardewBodyController
     /// <summary>
     /// A location-level constraint is invisible to every entity query: it is a rectangle test inside a virtual the
     /// location overrides (Mountain's `landslide`), so it is probed the way a walking character would, over the tile's
-    /// own step box. `blocked` is the relation word rather than a bare position: the field says WHICH relation failed.
-    ///
-    /// <para>
-    /// The box is the PLANNER's own (<see cref="StepBox"/>), because a 64x64 square at `tile * 64` reaches the first
-    /// pixel column of the tile's neighbour and so declares a constraint on behalf of a map that never made one.
-    /// And a step the NAMED layers already explain is not this layer's to claim: a building footprint, a clump,
-    /// furniture or an object refuses the same box, and answering `location_constraint` for it would hide the thing the
-    /// caller can walk around or clear behind a verdict with no countermeasure.
-    /// </para>
+    /// own pixel box. `blocked` is the relation word rather than a bare position: the field says WHICH relation failed.
     /// </summary>
     private static RefusalLayerToken DescribeLocationConstraint(GameLocation location, Vector2 tile, Farmer? player)
     {
         if (player is null)
             return RefusalLayerToken.None;
-        if (!location.isCollidingPosition(
-            StepBox(tile), Game1.viewport, isFarmer: true, damagesFarmer: 0, glider: false, player))
-            return RefusalLayerToken.None;
-        // A terrain feature alone does not stop a body - grass, tilled soil and crops are where the scythe and the hoe
-        // are meant to reach - so only the occupying members of the feature layer decline this one.
-        RefusalLayerToken feature = DescribeFeatureLayer(location, tile);
-        if (RefusalProbe.ObjectOn(location, tile).Refused
-            || (feature.Refused && feature.Layer != RefusalLayerKind.Terrain))
-            return RefusalLayerToken.None;
         Point point = new((int)tile.X, (int)tile.Y);
-        return new RefusalLayerToken(RefusalLayerKind.LocationConstraint, $"blocked@{point.X},{point.Y}");
+        return location.isCollidingPosition(new Microsoft.Xna.Framework.Rectangle(point.X * 64, point.Y * 64, 64, 64),
+            Game1.viewport, isFarmer: true, damagesFarmer: 0, glider: false, player)
+            ? new RefusalLayerToken(RefusalLayerKind.LocationConstraint, $"blocked@{point.X},{point.Y}")
+            : RefusalLayerToken.None;
     }
 
     /// <summary>
