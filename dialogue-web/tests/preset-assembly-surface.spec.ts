@@ -340,9 +340,43 @@ function expectNamed(actual: readonly string[], expected: readonly string[], wha
   ).toEqual([...expected].sort());
 }
 
-/** One viewport's reading, asserted against the producer's own output. */
-async function expectPresetReadout(page: Page, viewport: Readonly<{ width: number; height: number }>): Promise<void> {
+/**
+ * What the panel must READ at any window: the four headline facts, in the player's words.
+ *
+ * Derived from the producer's own output and the catalogue's own sentences rather than written out, so a fixture
+ * that changes its preset cannot leave this expectation behind - and so the two viewport journeys below assert the
+ * same readings instead of each carrying their own copy of them.
+ */
+function expectedReadout(): Readonly<{
+  entriesLine: string;
+  unfilled: readonly string[];
+  macros: readonly string[];
+  depthLine: string;
+}> {
   const catalogue = messages("en");
+  return {
+    entriesLine: catalogue.presetEntriesLine
+      .replace("{{total}}", String(SURFACE.entries.total))
+      .replace("{{enabled}}", String(SURFACE.entries.enabled))
+      .replace("{{disabled}}", String(SURFACE.entries.disabled)),
+    unfilled: [...SURFACE.unfilledMarkers],
+    macros: SURFACE.macros.map((macro) => macro.code),
+    depthLine: catalogue.presetDepthLine
+      .replace("{{count}}", String(SURFACE.depth.count))
+      .replace("{{depths}}", SURFACE.depth.depths.join(", ")),
+  };
+}
+
+/**
+ * One viewport's reading: mount the panel, keep the fixture honest, and assert the per-item detail.
+ *
+ * The headline facts - the entries line, the marker names, the macro codes, the depth line and where each readout
+ * sits - are asserted by the journey that opened this window, because they are the claim its title makes.
+ */
+async function expectPresetReadout(
+  page: Page,
+  viewport: Readonly<{ width: number; height: number }>,
+): Promise<RenderedFacts> {
   await page.setViewportSize(viewport);
   await stubPresetSurface(page, [SURFACE]);
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=presets`);
@@ -352,23 +386,14 @@ async function expectPresetReadout(page: Page, viewport: Readonly<{ width: numbe
   const rendered = await readRendered(page);
   console.log(`[preset-surface ${viewport.width}x${viewport.height}] ${JSON.stringify(rendered)}`);
 
-  // 1. The switch is observable: the total, and the disabled entries by name.
-  const expectedEntries = catalogue.presetEntriesLine
-    .replace("{{total}}", String(SURFACE.entries.total))
-    .replace("{{enabled}}", String(SURFACE.entries.enabled))
-    .replace("{{disabled}}", String(SURFACE.entries.disabled));
-  expect(
-    rendered.entriesLine,
-    `the entries line does not state the assembly's own counts (${JSON.stringify(SURFACE.entries)})`,
-  ).toBe(expectedEntries);
+  // 1. The switch is observable: the disabled entries are listed by name, not hidden.
   expect(SURFACE.entries.disabled, "the fixture really carries a switched-off entry").toBeGreaterThan(0);
   expectNamed(rendered.disabled, SURFACE.disabledEntries, "switched-off entries");
   for (const identifier of SURFACE.disabledEntries)
     await expect(page.locator(`[data-preset-disabled-entry="${identifier}"]`), `"${identifier}" is listed as switched off`).toBeVisible();
 
-  // 2. Every marker with no content source is named, one line each.
+  // 2. Every marker with no content source carries its own line, named as the marker it is.
   expect(SURFACE.unfilledMarkers.length, "the fixture really leaves a marker unfilled").toBeGreaterThan(0);
-  expectNamed(rendered.unfilled, SURFACE.unfilledMarkers, "markers with no content source");
   for (const marker of SURFACE.unfilledMarkers) {
     await expect(page.locator(`[data-preset-marker="${marker}"]`), `the unfilled marker "${marker}" is named`).toBeVisible();
     await expect(page.locator(`[data-preset-marker="${marker}"]`)).toHaveText(marker);
@@ -376,20 +401,14 @@ async function expectPresetReadout(page: Page, viewport: Readonly<{ width: numbe
 
   // 3. Every macro this product cannot evaluate is named beside its own code.
   expect(SURFACE.macros.length, "the fixture really spells a macro this product cannot evaluate").toBeGreaterThan(0);
-  expectNamed(rendered.macros, SURFACE.macros.map((macro) => macro.code), "macros this product cannot evaluate");
   for (const macro of SURFACE.macros)
     await expect(
       page.locator(`[data-preset-macro="${macro.code}"] code`),
       `"${macro.name}" is reported with its code ${macro.code}`,
     ).toHaveText(macro.code);
 
-  // 4. Depth injection is visible as a count, as its depths, and as the blocks that land there.
+  // 4. Depth injection names the blocks that land there, so its count is not the only reading.
   expect(SURFACE.depth.count, "the fixture really injects at a depth").toBeGreaterThan(0);
-  expect(rendered.depthLine, "the depth line does not state the assembly's own count and depths").toBe(
-    catalogue.presetDepthLine
-      .replace("{{count}}", String(SURFACE.depth.count))
-      .replace("{{depths}}", SURFACE.depth.depths.join(", ")),
-  );
   expectNamed(
     rendered.blocks.map((block) => block.replace(/ · \d+$/u, "")),
     SURFACE.depth.blocks.map((block) => block.identifier),
@@ -413,17 +432,6 @@ async function expectPresetReadout(page: Page, viewport: Readonly<{ width: numbe
       rendered.macros.some((code) => code.endsWith(`:${implemented}`)),
       `{{${implemented}}} is implemented, so it must not be reported as a macro this product cannot evaluate`,
     ).toBe(false);
-  }
-
-  // The four facts are inside the window the player has, with the region at its top - on the baseline mobile
-  // viewport as well as the wide one.
-  expect(rendered.regionScrollTop, "the region is at its top when this is measured").toBe(0);
-  for (const rect of rendered.rects) {
-    expect(
-      rect.top >= 0 && rect.bottom <= rendered.windowHeight,
-      `the ${rect.readout} is outside the ${viewport.width}x${viewport.height} window at the top of its own ` +
-        `scroll: it reads top ${rect.top}, bottom ${rect.bottom}, window ${rendered.windowHeight} px`,
-    ).toBe(true);
   }
 
   // 5. Sampling: the value each sampler key is really sent as, and the layer that decided it. The preset writes
@@ -485,6 +493,8 @@ async function expectPresetReadout(page: Page, viewport: Readonly<{ width: numbe
       `"${row.key}" is decided by ${row.source}, so the panel must not show the preset's written ${written}`,
     ).not.toContain(`= ${written} (`);
   }
+
+  return rendered;
 }
 
 /**
@@ -551,11 +561,50 @@ test("a preset with nothing to report says so on all four counts", async ({ page
 test("the preset surface names the entry switch, the unfilled markers, the unusable macros, the depths and the sampling in force at 400x800", async ({
   page,
 }) => {
-  await expectPresetReadout(page, { width: 400, height: 800 });
+  const rendered = await expectPresetReadout(page, { width: 400, height: 800 });
+  const expected = expectedReadout();
+  // The switch as the player reads it: the total, how many entries are on, and how many are off.
+  expect(rendered.entriesLine, "the entries line does not state the assembly's own split").toBe(expected.entriesLine);
+  // The markers with no content source, by the name each is listed under.
+  expect(rendered.unfilled, "the panel lists other markers than the assembly left without a content source").toEqual([
+    ...expected.unfilled,
+  ]);
+  // The macros this product will not evaluate, by the code the reader has to search for.
+  expect(rendered.macros, "the panel lists other macro codes than the assembly refused").toEqual([...expected.macros]);
+  // Depth injection as one line: the count and the depths it names.
+  expect(rendered.depthLine, "the depth line does not state the assembly's own count and depths").toBe(
+    expected.depthLine,
+  );
+  // Where they sit: every readout inside the 400x800 window, with the region at the top of its own scroll.
+  expect(rendered.regionScrollTop, "the region is at its top when this is measured").toBe(0);
+  for (const rect of rendered.rects)
+    expect(
+      rect.top >= 0 && rect.bottom <= rendered.windowHeight,
+      `the ${rect.readout} is outside the 400x800 window: it reads top ${rect.top}, bottom ${rect.bottom}, ` +
+        `window ${rendered.windowHeight} px`,
+    ).toBe(true);
 });
 
 test("the same five facts are named at 1440x900", async ({ page }) => {
-  await expectPresetReadout(page, { width: 1440, height: 900 });
+  const rendered = await expectPresetReadout(page, { width: 1440, height: 900 });
+  const expected = expectedReadout();
+  // The same five facts, at the wide window: the panel states them in the same words rather than widening them into
+  // a summary, so a player on a desktop reads what a player on a phone reads.
+  expect(rendered.entriesLine, "the entries line does not state the assembly's own split").toBe(expected.entriesLine);
+  expect(rendered.unfilled, "the panel lists other markers than the assembly left without a content source").toEqual([
+    ...expected.unfilled,
+  ]);
+  expect(rendered.macros, "the panel lists other macro codes than the assembly refused").toEqual([...expected.macros]);
+  expect(rendered.depthLine, "the depth line does not state the assembly's own count and depths").toBe(
+    expected.depthLine,
+  );
+  expect(rendered.regionScrollTop, "the region is at its top when this is measured").toBe(0);
+  for (const rect of rendered.rects)
+    expect(
+      rect.top >= 0 && rect.bottom <= rendered.windowHeight,
+      `the ${rect.readout} is outside the 1440x900 window: it reads top ${rect.top}, bottom ${rect.bottom}, ` +
+        `window ${rendered.windowHeight} px`,
+    ).toBe(true);
 });
 
 /**

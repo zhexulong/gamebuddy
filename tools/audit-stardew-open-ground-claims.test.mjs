@@ -3,6 +3,13 @@
 // The gate is red at the commit it lands, so the proof that matters is not "it is red" but "it goes RED FOR THE RIGHT
 // MEMBER and green for a site that asks the collision test". Both directions are driven here on synthetic sources, plus
 // the zero-population rule, which must be blocked rather than green.
+//
+// The census was also driven once on the real tree: a member added to the Mod's own `ModEntry.cs` whose only walking
+// answer was `isTilePassable` was named by file and member, and reverting it took the count back to 16.
+//
+// red-proof: inject  a member added to integrations/stardew/ModEntry.cs whose only walking answer is
+//            `farm.isTilePassable(tile)` -> `examined 17` and an
+//            `engine_open_ground_lie:integrations/stardew/ModEntry.cs:848 in IsOpenGroundForProbe` line.
 import assert from "node:assert/strict";
 import test from "node:test";
 
