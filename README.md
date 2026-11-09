@@ -13,6 +13,8 @@
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D24.13.0-green.svg)](https://nodejs.org/)
 [![pnpm](https://img.shields.io/badge/pnpm-11.x-orange.svg)](https://pnpm.io/)
 
+> Node.js 与 pnpm 是从源码开发/构建要求；玩家使用自包含安装包时不需要预装它们。
+
 [为什么](#-为什么是-gamebuddy) • [能力边界](#-当前能力边界) • [安装](#-安装) • [从源码运行](#-从源码运行) • [架构](#-架构) • [路线图](#-路线图) • [致谢](#-致敬与参考)
 
 </div>
@@ -55,7 +57,7 @@ GameBuddy 围绕 **AIRP（AI Role-Play）长会话**来搭建：角色不是某�
 | 长期 Memory：章节折叠、语义记忆、跨会话召回 | ✅ |
 | 跨表面连续性（Chat ↔ Game 同一身份） | ✅ 绑定同一 continuity 时 |
 | 语音（PTT / ASR / TTS） | 🚧 开发中：ASR 与 TTS 仍在推进，不作为独立产品表面 |
-| Windows 安装包（per-user、免 Node/.NET 运行时） | 🚧 可构建并通过干净机沙箱验收；签名公开发行通道仍在收敛 |
+| Windows 安装包（per-user、免 Node/.NET 运行时） | ✅ 安装到首次 authenticated action（同一 lineage terminal receipt）路径已验收；签名公开发行与自动更新仍在收敛 |
 | 多游戏 / 社区 Connector | ⬜ 尚未支持（Host 已留 integration seam，但不是通用游戏协议） |
 | macOS / Linux | ⬜ 尚未支持 |
 
@@ -71,12 +73,11 @@ GameBuddy 围绕 **AIRP（AI Role-Play）长会话**来搭建：角色不是某�
 
 1. 运行 `GameBuddy.Setup.exe`，按向导完成安装。
 2. 启动 GameBuddy，在「游戏安装」中选择你的《星露谷物语》文件夹。
-3. 如果该文件夹还没有模组加载器，按界面提示让 GameBuddy 安装自带的 SMAPI；随后安装伴侣 Mod。
+3. 如果该文件夹还没有 SMAPI，请先从 [SMAPI](https://smapi.io/) 安装；SMAPI 属于它自己的项目，GameBuddy 不附带或替换它。随后让 GameBuddy 检测并部署伴侣 Mod。
 4. 在「设置 → 连接与模型」中填入你自己的 provider、模型与 API key。
 5. 按「与伙伴一起玩」启动游戏会话；如果存档里还没有可用小屋，按提示选择一间。
 
-完整的首次运行、数据位置、卸载与排障说明见 **[玩家安装与首次运行](guides/player-install.md)**。
-检查与安装更新见 **[检查与安装更新](guides/updating.md)**。
+完整的首次运行、数据位置、卸载与排障说明见 **[玩家安装与首次运行](guides/player-install.md)**。安装器 → 自定义 Stardew 路径 → Mod 部署 → 首次 authenticated action（同一 lineage terminal receipt）的玩家路径已验收；对应的阶段入口见 [`run-stardew-lifecycle-cold-session.mjs`](tools/run-stardew-lifecycle-cold-session.mjs)。
 
 > 当前公开渠道的签名安装包与自动更新仍在收敛；在它开放之前，可以用下面的命令构建本地预览安装包。预览包未签名，Windows SmartScreen 可能提示，不用于分发。
 
@@ -212,7 +213,8 @@ ai-game-companion/
   - [x] Chat / Game 共享 continuity 的跨表面连续性
 - [ ] **发布收敛**
   - [ ] 签名公开发行通道与自动更新
-  - [ ] 安装 → 识别游戏 → 部署 Mod → 首次真实行动 的完整玩家旅程验收
+  - [x] 安装 → 自定义路径识别 → 部署 Mod → 首次 authenticated action（同一 lineage terminal receipt）的玩家旅程验收
+  - [ ] 关闭、游戏存活、重新 attachment 与 fresh observation sync 的完整玩家尾段验收
   - [ ] 语音链路：ASR / TTS、设备路径与完整语音体验验收
 - [ ] **生态**
   - [ ] 社区游戏 Connector

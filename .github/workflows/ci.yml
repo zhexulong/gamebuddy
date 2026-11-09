@@ -51,15 +51,13 @@ jobs:
       # Build the vendored source before pnpm packages the local dependency.
       # Host production build hashes the packaged artifact against this output.
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
-      # `npm_config_verify_deps_before_run` is load-bearing, not tidiness. pnpm 11 verifies and completes
-      # dependencies before it runs a script, so `pnpm build:magic-context` installed the whole workspace FIRST
-      # (measured 2026-11-07 in CI: 18:12:04 `Scope: all 5 workspace projects` .. 18:12:20 `Done in 16.3s`), and
-      # only then ran `bun run ... build` at 18:12:20. Both `file:` dependencies were imported from trees whose
-      # gitignored `dist/` did not exist yet, the later `pnpm install --frozen-lockfile` said `Lockfile is up to
-      # date, resolution step is skipped`, and `host build:test` failed with 32 TS2307 for those two packages.
-      - run: pnpm build:magic-context
-        env:
-          npm_config_verify_deps_before_run: "false"
+      # NOT `pnpm build:magic-context`. pnpm 11 verifies and completes dependencies before it runs a script, so that
+      # spelling installed the whole workspace FIRST (measured 2026-11-07, run 42463460197: 08:35:39 `Scope: all 5
+      # workspace projects` .. 08:35:55 `Done in 16.9s`, then `$ bun run ... build` at 08:35:56), importing both
+      # `file:` dependencies from trees whose gitignored `dist/` did not exist yet. Setting
+      # `npm_config_verify_deps_before_run: "false"` on the step did not stop it - the install still ran - so the
+      # ordering is fixed structurally: this script calls `bun` directly and no pnpm process decides anything first.
+      - run: node tools/build-magic-context.mjs
       # pi-koe is the Voice repository mounted as vendor/pi-koe (git submodule)
       # and is a pnpm workspace of its own, so the root install does not install
       # it. Its protocol package must exist BEFORE the root install: the root
@@ -70,13 +68,13 @@ jobs:
       - run: pnpm --dir vendor/pi-koe install --frozen-lockfile
       - run: pnpm run build
         working-directory: vendor/pi-koe/packages/voice-protocol
-      # The gate, at the seam where the accident was: after both vendored packages are built and BEFORE the
-      # install that imports them. It names the subpath and the file, so a checkout that cannot resolve
-      # `@cortexkit/pi-magic-context/tavern` says so here instead of 32 TS2307 lines at `host build:test`.
-      - run: node tools/check-vendor-build-artifacts.mjs
-        env:
-          npm_config_verify_deps_before_run: "false"
+      # The gate runs AFTER the install, because the installed copy is what the compiler reads and it does not exist
+      # before the install. Before the fix, pnpm installed the workspace ahead of the vendor build, so that copy was
+      # captured from a tree with no `dist/` - measured in run 42463460197, where a gate reading the SOURCE tree said
+      # `0 violations` at 08:36:11 and `host build:test` failed one second later with 32 TS2307. Both trees are read
+      # now, and the install above is the one after the build.
       - run: pnpm install --frozen-lockfile
+      - run: node tools/check-vendor-build-artifacts.mjs
       - run: pnpm check:host-windows-test-preflight
       - run: pnpm test:host-windows-test-preflight
       # Knip reachability runs ahead of format:check and lint, so the formatter that held the
@@ -212,18 +210,23 @@ jobs:
         timeout-minutes: 90
         env:
           GAMEBUDDY_BUN_EXECUTABLE: ${{ steps.bun.outputs.bun-path }}
-      # THE TWO GATES THAT COMPARE THE BRIDGE'S TWO DECLARATIONS, wired where a commit cannot skip them.
+      # THE GATES THAT COMPARE THE BRIDGE'S DECLARATIONS AGAINST EACH OTHER, wired where a commit cannot skip them.
       #
       # `snapshot-loopback` exists precisely for "the Mod publishes what the Host rejects", and it WAS red on
       # 2026-11-01 (`rockSourceTargets` carried an id with `:` and `,` that `opaqueId` can never match) while a live
       # run died at 64s with `invalid_snapshot:rockSourceTargets`. Nobody ran it, because neither script was invoked by
-      # any job or hook - and `pnpm test` does not reach them either, since they live in `host/src` as `.test.ts` rather
-      # than in the compiled `dist-test` corpus. A gate nobody runs is a comment.
+      # any job or hook. A gate nobody runs is a comment.
       #
-      # Both run through `bun test` (the same shape `test:stardew-completion-evidence` uses): they import `./protocol.js`
-      # and `./wire-declaration.test-support.js`, which are the ESM specifiers the COMPILED tree resolves, and Bun maps
-      # them onto the `.ts` sources. `node --test --experimental-strip-types` does not, which is why the two scripts were
-      # green-in-name-only for as long as they were.
+      # The step below names its files ONE BY ONE rather than globbing, because the corpus it runs is a decision: the
+      # three declaration pairs (the Mod's records against the Host's predicates, their numeric domains, and the
+      # language-neutral schema against both) plus the catalog and reachability gates. `host/src/schema-contract.test.ts`
+      # was reachable only through `pnpm test`'s 90-minute compiled corpus, so its verdict had no name a developer could
+      # run alone; it has one here.
+      #
+      # All of them run through `bun test` (the same shape `test:stardew-completion-evidence` uses): they import
+      # `./protocol.js` and `./wire-declaration.test-support.js`, which are the ESM specifiers the COMPILED tree
+      # resolves, and Bun maps them onto the `.ts` sources. `node --test --experimental-strip-types` does not, which is
+      # why the scripts were green-in-name-only for as long as they were.
       - run: pnpm test:stardew-wire-agreement
       - run: pnpm test:stardew-snapshot-loopback
       # The composed runtime's launch contract: the environment block the launcher hands the Host child
@@ -304,16 +307,14 @@ jobs:
       # the protocol package has to be BUILT before that install runs, or the snapshot has no `dist/` and the
       # compile fails with `Cannot find module '@gamebuddy/voice-protocol'`.
       - run: bun install --cwd vendor/magic-context --frozen-lockfile
-      - run: pnpm build:magic-context
-        env:
-          # See the `host` job: without this, pnpm installs the workspace before running the build, and the
-          # `file:` dependencies are imported from trees that have no `dist/` yet.
-          npm_config_verify_deps_before_run: "false"
+      # See the `host` job: `pnpm build:magic-context` installs the workspace before the build it depends on.
+      - run: node tools/build-magic-context.mjs
       - run: pnpm --dir vendor/pi-koe install --frozen-lockfile
       - run: pnpm run build
         working-directory: vendor/pi-koe/packages/voice-protocol
-      - run: node tools/check-vendor-build-artifacts.mjs
       - run: pnpm install --frozen-lockfile
+      # See the `host` job: the gate reads the installed copy, which the install above creates.
+      - run: node tools/check-vendor-build-artifacts.mjs
       # The two gates that need it. `pnpm build:test` under host is the locked entry (`build-test-artifact`),
       # which is what `assertLiveRunArtifactFresh` in the harness loader requires.
       - run: pnpm --dir host build:test
