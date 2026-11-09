@@ -177,6 +177,34 @@ internal static class WorldModel
     /// </summary>
     internal static bool HasMountedModal(in ActorWorldFacts facts) => facts.MenuType is not null || facts.DialogueUp;
 
+    /// <summary>
+    /// The engine's own type name for the one modal a dialogue answer or close can act on. The target version declares
+    /// no subclass of `DialogueBox`, so the name and the type test the handlers perform (`Game1.activeClickableMenu is
+    /// DialogueBox`) are the same set.
+    /// </summary>
+    internal const string DialogueBoxTypeName = "DialogueBox";
+
+    /// <summary>
+    /// Whether the modal on screen is the BOX the event-acting family acts on, which is a narrower question than
+    /// <see cref="HasMountedModal"/>: `answer_dialogue` answers `DialogueBox`, `dismiss_modal` closes `DialogueBox` (or an
+    /// audited operation menu). A `ShopMenu`, a `LetterViewerMenu` or the morning summary satisfy "a modal is up" and
+    /// satisfy neither handler, so publishing that word as `dialogue_box` handed the caller two actions the same request
+    /// would then refuse.
+    /// </summary>
+    internal static bool HasDialogueBox(in ActorWorldFacts facts) => facts.MenuType is DialogueBoxTypeName;
+
+    /// <summary>
+    /// The event-acting family member that ANSWERS a question, whose sibling closes an informational box.
+    ///
+    /// <para>
+    /// The split is this file's, because it is this file that publishes what the caller may do; the id itself is the
+    /// catalog's, and the assertion that the two agree is a test rather than a comment
+    /// (<c>BodyHoldAttributionTests.TheCutsceneBoxIsTheBoxAnswerDialogueNeeds_NotAnyMountedModal</c> derives the answering
+    /// member from the registration's own `responseKey` argument).
+    /// </para>
+    /// </summary>
+    internal const string DialogueAnswerActionId = "answer_dialogue";
+
     /// <summary>Computes the actor's disposition ONCE per tick on the game
     /// thread. The common (Idle) path allocates nothing.</summary>
     public static ActorDisposition ComputeDisposition(Farmer? player)
@@ -379,22 +407,29 @@ internal static class WorldModel
     /// Agent can only retry. Measured from a live run's transcript: four retries over twenty minutes against
     /// `cutscene_active`, while the two actions that end a cutscene's own dialogue box were the two the gate refused.
     ///
-    /// The three facts are the engine's own: whether a box is on screen at all (<see cref="HasMountedModal"/>), and
-    /// whether that box asks a question (`DialogueBox.isQuestion`, filled from the live modal by
-    /// <see cref="DescribeCurrentBodyHold"/>). `admissible_actions` is the catalog's event-acting family, so the list
-    /// can never name an action the admission would refuse; `next_step` states the one option that is left when there
-    /// is nothing to act on, which is what a run needs in order to stop retrying.
+    /// The three facts are the engine's own: whether the box `answer_dialogue` needs is mounted (<see cref="HasDialogueBox"/>,
+    /// the handlers' own `is DialogueBox` read), whether that box asks a question (`DialogueBox.isQuestion`, filled from
+    /// the live modal by <see cref="DescribeCurrentBodyHold"/>), and what that answer means for what is admissible.
+    /// `admissible_actions` is the catalog's event-acting family filtered by the question flag - `answer_dialogue` answers
+    /// a question, `dismiss_modal` closes an informational box, and BOTH are named while the flag is unreadable - so the
+    /// list cannot name an action the handler would refuse. `next_step` states the one option that is left when there is
+    /// no box at all, which is what a run needs in order to stop retrying.
     /// </summary>
     private static string DescribeEventHold(in ActorWorldFacts facts, bool canMove, bool? modalIsQuestion)
     {
         string canMoveText = Bool(canMove);
-        if (!HasMountedModal(facts))
+        if (!HasDialogueBox(facts))
             return $"event_up=true;dialogue_box=false;admissible_actions=none"
                 + $";next_step=wait_for_event_to_advance;can_move={canMoveText}";
 
+        string admissible = string.Join(
+            ",",
+            FarmhandActionCatalog.EventActingActionIds
+                .Where(actionId => modalIsQuestion is not bool question
+                    || (actionId == DialogueAnswerActionId) == question)
+                .OrderBy(actionId => actionId, StringComparer.Ordinal));
         return $"event_up=true;dialogue_box=true;is_question={BoolOrUnknown(modalIsQuestion)}"
-            + $";admissible_actions={string.Join(",", FarmhandActionCatalog.EventActingActionIds.OrderBy(actionId => actionId, StringComparer.Ordinal))}"
-            + $";can_move={canMoveText}";
+            + $";admissible_actions={admissible};can_move={canMoveText}";
     }
 
     private static string Bool(bool value) => value ? "true" : "false";

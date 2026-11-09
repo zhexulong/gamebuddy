@@ -159,6 +159,33 @@ public sealed class ModalDismissActionTests
         });
     }
 
+    /// <summary>
+    /// A question refusal hands the caller the KEYS and the PROMPT, in the field that actually reaches it.
+    ///
+    /// <para>
+    /// Measured 2026-11-09 (`round41`): the Mod's own timeline carried
+    /// `modal_not_dismissible ... response_keys=Yes,No;text=今晚要睡了吗？` while the companion received
+    /// `{"failureCode":"modal_not_dismissible","actionId":"dismiss_modal"}` - no keys, no question - because the
+    /// evidence is withheld for a failed node and no hint was set. It then guessed at `answer_dialogue` four times.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Dismiss_OfAQuestion_PublishesTheOfferedKeysAndThePrompt()
+    {
+        DialogueBox question = CreateDialogue(isQuestion: true);
+        question.responses = new[] { new Response("Yes", "Yes"), new Response("No", "No") };
+        RunWithGameState(dialogue: question, action: () =>
+        {
+            LocalExecutionReceipt receipt = InvokeDismiss(CreateManager(1001), "req_dismiss_question_keys");
+
+            receipt.ReasonCode.Should().Be("modal_not_dismissible");
+            receipt.Evidence.Should().Contain("response_keys=Yes,No");
+            receipt.Hint.Should().Be(
+                "offered_keys=Yes,No",
+                "the hint is the only field a failed node can carry, so the keys the caller must choose from ride it");
+        });
+    }
+
     [Fact]
     public void Dismiss_IsRejected_ForAMenuOutsideTheAuditedWhitelist()
     {

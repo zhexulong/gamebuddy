@@ -53,8 +53,9 @@ public sealed class NavigationHoldEvidenceTests
         hold.Should().Contain("held_by=cutscene_active");
         hold.Should().Contain("dialogue_box=true");
         hold.Should().Contain(
-            "admissible_actions=answer_dialogue,dismiss_modal",
-            "the two actions that end a cutscene's own dialogue box are the two the caller has to be told about");
+            "admissible_actions=dismiss_modal;",
+            "an informational cutscene box is closed by the native close; `answer_dialogue` refuses that same box by "
+            + "name, so naming it here is what made the caller try an action that could not run");
 
         NavigationOutcome outcome = Decide(hold);
         outcome.TerminalReasonCode.Should().Be("destination_locked");

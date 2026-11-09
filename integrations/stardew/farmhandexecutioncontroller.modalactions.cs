@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Sensory;
 using Microsoft.Xna.Framework;
 using StardewValley;
@@ -94,6 +95,60 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         return single.Length <= Maximum ? single : single.Substring(0, Maximum) + "...";
     }
 
+    /// <summary>
+    /// The keys a box offers, in the ENGINE's spelling, joined exactly as the receipts have always printed them.
+    ///
+    /// One reader for the evidence and the hint, because the two answer the same question to two different consumers:
+    /// a receipt's evidence is read on the Mod's own timeline, and the hint is the only field that survives into the
+    /// node status the companion sees (ADR-006 withholds a failed node's evidence).
+    /// </summary>
+    internal static string OfferedResponseKeys(IEnumerable<Response> offered) =>
+        string.Join(",", offered.Select(response => response.responseKey));
+
+    /// <summary>
+    /// What the open box asks and which keys answer it, as the bounded hint a failed node can still carry.
+    ///
+    /// <para>
+    /// This is the field that was missing, and its absence cost a live run 27 minutes (round41). The Mod's own timeline
+    /// recorded `modal_not_dismissible ... response_keys=Yes,No;text=今晚要睡了吗？`, while the companion received
+    /// `{"failureCode":"modal_not_dismissible","actionId":"dismiss_modal"}` - no keys, no prompt - and then guessed
+    /// `yes`, `是`, `next` and `1` before landing on `Yes` by luck. A required string argument whose accepted values
+    /// exist and are not published is an invitation to guess.
+    /// </para>
+    /// <para>
+    /// Bounded by <see cref="BodyProgramValidation.MaximumNodeHintLength"/>, the same ceiling the journal and the wire
+    /// enforce: a hint that overran it would make the whole node unreadable, which is worse than a truncated prompt. The
+    /// prompt is cut FIRST, so the keys - the part the caller must act on - always survive.
+    /// </para>
+    /// </summary>
+    internal static string OfferedResponseHint(Response[] offered, string? promptText)
+    {
+        const int Bound = BodyProgramValidation.MaximumNodeHintLength;
+        string keys = OfferedResponseKeys(offered);
+        string head = keys.Length == 0 ? "offered_keys=none" : "offered_keys=" + keys;
+        if (head.Length > Bound)
+            return head.Substring(0, Bound);
+        if (string.IsNullOrWhiteSpace(promptText))
+            return head;
+        int room = Bound - head.Length - ";text=".Length;
+        if (room <= 0)
+            return head;
+        string text = BoundedModalText(promptText!);
+        return head + ";text=" + (text.Length <= room ? text : text.Substring(0, room));
+    }
+
+    /// <summary>
+    /// The keys the box offers: its own `responses`, or `Game1.questionChoices` when the engine kept them there - the
+    /// same pair the native click path reads (DialogueBox.cs:296-340).
+    ///
+    /// ONE reader, because `dismiss_modal`'s refusal and `answer_dialogue`'s match must offer the caller the same list:
+    /// a caller told `Yes,No` and then refused for sending `Yes` would be the two-spellings defect in its cruellest form.
+    /// </summary>
+    internal static Response[] OfferedResponses(DialogueBox dialogue) =>
+        dialogue.responses is { Length: > 0 } responses
+            ? responses
+            : Game1.questionChoices?.ToArray() ?? Array.Empty<Response>();
+
     public LocalExecutionReceipt RequestLocalDismissModal(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
@@ -135,9 +190,11 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 // `answer_dialogue` takes a `responseKey`, and the only way to choose one is to know what was asked and
                 // which keys are offered. The refusal used to say `question=true;require_answer_dialogue=true` and stop -
                 // which tells a caller to use another action without telling it anything it could use that action WITH.
-                string offered = dialogue.responses is { Length: > 0 } offeredResponses
-                    ? string.Join(",", offeredResponses.Select(response => response.responseKey))
-                    : string.Join(",", (Game1.questionChoices ?? new List<Response>()).Select(response => response.responseKey));
+                //
+                // The same two facts ride the HINT as well, because the evidence never reaches the companion: a failed
+                // node carries no evidence (ADR-006) and only its bounded hint survives, so `response_keys` alone left
+                // the caller reading `{failureCode, actionId}` and guessing at the box (round41, 27 minutes).
+                Response[] offeredResponses = OfferedResponses(dialogue);
                 string? questionText = NpcDialoguePager.CurrentTextOrNull(dialogue);
                 return this.RememberTerminal(
                     request.RequestId,
@@ -145,8 +202,9 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     ExecutionState.Rejected,
                     "modal_not_dismissible",
                     "modal_type=DialogueBox;question=true;require_answer_dialogue=true"
-                        + ";response_keys=" + offered
-                        + (questionText is null or "" ? string.Empty : ";text=" + BoundedModalText(questionText)));
+                        + ";response_keys=" + OfferedResponseKeys(offeredResponses)
+                        + (questionText is null or "" ? string.Empty : ";text=" + BoundedModalText(questionText)),
+                    hint: OfferedResponseHint(offeredResponses, questionText));
             }
         }
         else if (!IsDismissibleOperationModalType(modalType))
@@ -311,28 +369,69 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 "modal_not_answerable",
                 "modal_type=DialogueBox;question=false");
 
-        string? responseKey = request.Args.ResponseKey;
-        if (string.IsNullOrWhiteSpace(responseKey) || responseKey.Length > 128)
+        string? requestedKey = request.Args.ResponseKey;
+        if (string.IsNullOrWhiteSpace(requestedKey) || requestedKey.Length > 128)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "invalid_response_key", null);
 
-        Response[] offeredResponses = dialogue.responses is { Length: > 0 }
-            ? dialogue.responses
-            : Game1.questionChoices?.ToArray() ?? Array.Empty<Response>();
-        if (!offeredResponses.Any(response => string.Equals(response.responseKey, responseKey, StringComparison.Ordinal)))
+        Response[] offeredResponses = OfferedResponses(dialogue);
+        // THE ENGINE'S OWN SPELLING WINS. A caller that sends `yes` answers the box that offers `Yes`, because the key
+        // names a line on screen rather than an entry in a dictionary, and a case-sensitive compare turned the one
+        // obvious spelling into `response_key_not_offered` (round41: `yes`, then `是`, `next`, `1`, and `Yes` accepted
+        // 27 minutes later). Nothing else is forgiven - `是` must still be refused against a box offering `Yes,No` - and
+        // that refusal now LISTS what the box does offer, in the hinted field the companion can actually read.
+        int offeredIndex = Array.FindIndex(
+            offeredResponses,
+            offered => string.Equals(
+                (offered.responseKey ?? string.Empty).Trim(),
+                requestedKey.Trim(),
+                StringComparison.OrdinalIgnoreCase));
+        string? promptText = NpcDialoguePager.CurrentTextOrNull(dialogue);
+        if (offeredIndex < 0)
         {
             return this.RememberTerminal(
                 request.RequestId,
                 executionId,
                 ExecutionState.Rejected,
                 "response_key_not_offered",
-                $"modal_type=DialogueBox;question=true;response_key={responseKey}");
+                $"modal_type=DialogueBox;question=true;response_key={requestedKey}"
+                    + $";offered_keys={OfferedResponseKeys(offeredResponses)}",
+                hint: OfferedResponseHint(offeredResponses, promptText));
         }
+
+        // THE DAY THIS QUESTION ENDS BELONGS TO `advance_day`, WHICH RECEIPTS IT.
+        //
+        // `Yes` on the engine's bed prompt runs `Sleep_Yes` -> `startSleep` -> `NewDay` (`GameLocation.cs:3763-3765`):
+        // a calendar crossing with no execution behind it. Measured 2026-11-09 (`round41`): such an answer crossed a
+        // day, the still-pending `sleep` intent crossed a second one 9 s later, and neither the run's tally nor the
+        // Agent could tell the two apart. `No` stays answerable - declining crosses nothing - because refusing the
+        // whole prompt would leave it holding the actor with no forward action at all.
+        if (offeredIndex >= 0
+            && NativeSleepPrompt.IsStanding(dialogue)
+            && string.Equals(
+                (offeredResponses[offeredIndex].responseKey ?? string.Empty).Trim(),
+                NativeSleepPrompt.AcceptResponseKey,
+                StringComparison.Ordinal))
+        {
+            return this.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Rejected,
+                "native_sleep_prompt_owned_by_advance_day",
+                $"modal_type=DialogueBox;question=true;response_key={offeredResponses[offeredIndex].responseKey}"
+                    + $";question_key={NativeSleepPrompt.QuestionKey};owning_action=sleep",
+                hint: "Answering Yes here ends the day. Dispatch `sleep` instead - it crosses the night with a receipt.");
+        }
+
+        // The offered response ITSELF, key and text together: it is the object the native click path answers with
+        // (DialogueBox.cs:387-401), and rebuilding it from the caller's spelling would hand the location or the event a
+        // key the engine never offered.
+        Response answer = offeredResponses[offeredIndex];
+        string responseKey = answer.responseKey;
 
         if (!this.TryGetBoundActor(out Farmer? actor, out _) || actor is null || Game1.currentLocation is null)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
 
         bool answered = false;
-        Response answer = new Response(responseKey, responseKey);
         try
         {
             if (dialogue.characterDialogue is not null)
@@ -347,7 +446,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 // A question raised inside a cutscene is answered on the event, by the offered index (DialogueBox.cs:387).
                 Game1.currentLocation.currentEvent.answerDialogue(
                     Game1.currentLocation.lastQuestionKey,
-                    Array.FindIndex(offeredResponses, offered => string.Equals(offered.responseKey, responseKey, StringComparison.Ordinal)));
+                    offeredIndex);
                 answered = true;
             }
             else

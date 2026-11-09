@@ -74,6 +74,58 @@ public sealed class ModalAdmissionTests
     }
 
     [Fact]
+    public void Overnight_IsAdmitted_WhileItsOwnBedPromptStands()
+    {
+        // MEASURED 2026-11-09 (round41): the companion reached her bed, `GameLocation.cs:3763-3765` raised the `Sleep`
+        // question, and the `sleep` request that would have answered it was refused `actor_held_by_modal`. The one action
+        // that crosses a night WITH a receipt could not start, so the Agent answered the question itself and the day
+        // crossed with no execution behind it - and then a fresh `sleep` crossed a second one.
+        RunWithGameState(
+            dialogueBox: BedPromptBox(),
+            action: () =>
+            {
+                ExecutionManager manager = CreateManager(1001);
+
+                Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Overnight)
+                    .Should().BeNull("the engine's own bed prompt is the overnight's working precondition, not an obstacle");
+            },
+            location: QuestionKeyLocation(NativeSleepPrompt.QuestionKey));
+    }
+
+    [Fact]
+    public void Overnight_IsStillRejected_WhileAnotherQuestionStands()
+    {
+        // The exemption is ONE identity, not "a question is up": another question is not what `advance_day` answers.
+        RunWithGameState(
+            dialogueBox: BedPromptBox(),
+            action: () =>
+            {
+                ExecutionManager manager = CreateManager(1001);
+
+                Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Overnight)!
+                    .ReasonCode.Should().Be("actor_held_by_modal");
+            },
+            location: QuestionKeyLocation("fork1"));
+    }
+
+    [Fact]
+    public void Overnight_IsStillRejected_WhileACutsceneHoldsTheActor()
+    {
+        // A night never outranks an event, whatever prompt is standing.
+        RunWithGameState(
+            dialogueBox: BedPromptBox(),
+            eventUp: true,
+            action: () =>
+            {
+                ExecutionManager manager = CreateManager(1001);
+
+                Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Overnight)!
+                    .ReasonCode.Should().Be("cutscene_active");
+            },
+            location: QuestionKeyLocation(NativeSleepPrompt.QuestionKey));
+    }
+
+    [Fact]
     public void Modal_IsRejected_WhenNoModalIsPresent()
     {
         RunWithGameState(action: () =>
@@ -113,13 +165,18 @@ public sealed class ModalAdmissionTests
     /// answers a question raised inside it, so a cutscene is their working precondition rather than an obstacle. The
     /// behaviour each one performs is driven in <see cref="CutsceneModalAdmissionTests"/>; this pin is that admission
     /// itself no longer refuses them.
+    ///
+    /// The box it mounts is an actual `DialogueBox`, because that is the precondition being claimed: the admission asks
+    /// the handlers' own question (`WorldModel.HasDialogueBox` - `activeClickableMenu is DialogueBox`), so a bare
+    /// `MenuStub` here would be pinning "some menu is up" against a gate that no longer accepts it - and the receipt
+    /// would then rightly read `event_has_no_dialogue_box` while the test's own because-clause said otherwise.
     /// </summary>
     [Theory]
     [InlineData("answer_dialogue")]
     [InlineData("dismiss_modal")]
     public void TheModalFamilysEventActingMembers_AreAdmitted_WhileAnEventHoldsTheActor(string actionId)
     {
-        RunWithGameState(menuOpen: true, eventUp: true, action: () =>
+        RunWithGameState(dialogueBox: CutsceneBox(), eventUp: true, action: () =>
         {
             ExecutionManager manager = CreateManager(1001);
 
@@ -461,7 +518,7 @@ public sealed class ModalAdmissionTests
     /// timeOfDay); save and restore them around each probe, matching the
     /// ScopeBoundActorAdmissionTests convention.
     /// </summary>
-    private static void RunWithGameState(bool menuOpen = false, bool eventUp = false, int timeOfDay = 600, Action action = null!)
+    private static void RunWithGameState(bool menuOpen = false, bool eventUp = false, int timeOfDay = 600, Action action = null!, DialogueBox? dialogueBox = null, GameLocation? location = null)
     {
         // The public Game1.activeClickableMenu setter runs real game logic
         // (player.Halt / textEntry) that a headless test process cannot run,
@@ -472,9 +529,19 @@ public sealed class ModalAdmissionTests
         object? menuBefore = menuField.GetValue(null);
         bool eventUpBefore = Game1.eventUp;
         int timeOfDayBefore = Game1.timeOfDay;
+        Game1? gameBefore = Game1.game1;
+        GameLocation? locationBefore = gameBefore?.instanceGameLocation;
+        // A location is seeded only when the case names one: `Game1.currentLocation` is the raw field behind it, and the
+        // cases that do not ask about a question key must keep reading a world the test did not invent.
+        Game1? gameStub = location is null ? null : gameBefore ?? (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
         try
         {
-            menuField.SetValue(null, menuOpen ? new MenuStub() : null);
+            if (location is not null)
+            {
+                Game1.game1 = gameStub!;
+                gameStub!.instanceGameLocation = location;
+            }
+            menuField.SetValue(null, (object?)dialogueBox ?? (menuOpen ? new MenuStub() : null));
             Game1.eventUp = eventUp;
             Game1.timeOfDay = timeOfDay;
             action();
@@ -484,7 +551,43 @@ public sealed class ModalAdmissionTests
             menuField.SetValue(null, menuBefore);
             Game1.eventUp = eventUpBefore;
             Game1.timeOfDay = timeOfDayBefore;
+            if (location is not null)
+            {
+                if (gameBefore is null)
+                    Game1.game1 = null!;
+                else
+                {
+                    Game1.game1 = gameBefore;
+                    gameBefore.instanceGameLocation = locationBefore!;
+                }
+            }
         }
+    }
+
+    /// <summary>The engine's own bed prompt, raised by `GameLocation.cs:3765` with `createYesNoResponses()`.</summary>
+    private static DialogueBox BedPromptBox()
+    {
+        var box = (DialogueBox)FormatterServices.GetUninitializedObject(typeof(DialogueBox));
+        box.isQuestion = true;
+        box.responses = new[] { new Response("Yes", "Yes"), new Response("No", "No") };
+        box.transitioning = false;
+        box.transitioningBigger = true;
+        return box;
+    }
+
+    /// <summary>A location whose last question was raised under <paramref name="questionKey"/> - `lastQuestionKey` is what `answerDialogue` dispatches from.</summary>
+    private static GameLocation QuestionKeyLocation(string questionKey) =>
+        new() { lastQuestionKey = questionKey };
+
+    /// <summary>An event's own box, without the native constructor a headless process cannot run.</summary>
+    private static DialogueBox CutsceneBox()
+    {
+        var box = (DialogueBox)FormatterServices.GetUninitializedObject(typeof(DialogueBox));
+        box.isQuestion = false;
+        box.responses = Array.Empty<Response>();
+        box.transitioning = false;
+        box.transitioningBigger = true;
+        return box;
     }
 
     /// <summary>A real menu cannot be constructed headless; the stub pins the

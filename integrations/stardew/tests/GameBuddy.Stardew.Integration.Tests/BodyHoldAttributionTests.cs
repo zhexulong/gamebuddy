@@ -1,4 +1,5 @@
 using FluentAssertions;
+using GameBuddy.Stardew.Core.Policy;
 using Xunit;
 
 namespace GameBuddy.Stardew.Integration.Tests;
@@ -118,12 +119,13 @@ public sealed class BodyHoldAttributionTests
         informational.Should().Contain("event_up=true");
         informational.Should().Contain("dialogue_box=true");
         informational.Should().Contain("is_question=false");
-        // The admissible set is the catalog's own event-acting family, sorted, so the evidence cannot name an action the
-        // admission would refuse.
-        informational.Should().Contain("admissible_actions=answer_dialogue,dismiss_modal");
+        // The admissible set is the catalog's own event-acting family FILTERED by the question flag, so the evidence
+        // cannot name an action the handler would refuse: a close for an informational box, an answer for a question.
+        informational.Should().Contain("admissible_actions=dismiss_modal;");
 
         string question = WorldModel.DescribeBodyHold(cutscene, withBox, canMove: false, modalIsQuestion: true);
         question.Should().Contain("is_question=true");
+        question.Should().Contain("admissible_actions=answer_dialogue;");
 
         ActorWorldFacts withoutBox = Facts(eventUp: true);
         string bare = WorldModel.DescribeBodyHold(WorldModel.Classify(withoutBox), withoutBox, canMove: false);
@@ -132,6 +134,75 @@ public sealed class BodyHoldAttributionTests
         bare.Should().Contain(
             "next_step=wait_for_event_to_advance",
             "with nothing on screen, waiting is the only option and the hold has to say so or the Agent retries");
+    }
+
+    /// <summary>
+    /// `dialogue_box` answers the ONE question the event-acting family asks: can `answer_dialogue` reach a box - the
+    /// handler's own read (`Game1.activeClickableMenu is DialogueBox`), not "some modal is mounted".
+    ///
+    /// <para>
+    /// It was answered by `menuType is not null || dialogueUp`, so a cutscene with a `ShopMenu`, a `LetterViewerMenu` or
+    /// any other menu on screen published `dialogue_box=true` and `admissible_actions=answer_dialogue,dismiss_modal`
+    /// beside it, and the handlers then refused both of the actions the evidence had just named. A fact published as a
+    /// precondition has to BE the handler's read, or the admission and the handler disagree about one word.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheCutsceneBoxIsTheBoxAnswerDialogueNeeds_NotAnyMountedModal()
+    {
+        ActorWorldFacts menuOnScreen = Facts(eventUp: true, menuType: "ShopMenu");
+        string heldByAMenu = WorldModel.DescribeBodyHold(
+            WorldModel.Classify(menuOnScreen), menuOnScreen, canMove: false, modalIsQuestion: null);
+        heldByAMenu.Should().Contain("dialogue_box=false", "a ShopMenu is not a box answer_dialogue can answer");
+        heldByAMenu.Should().Contain("admissible_actions=none;next_step=wait_for_event_to_advance");
+
+        // An event's own NPC box, with NO farmer-level dialogue: `Game1.dialogueUp` is the flag the farmer's talk sets,
+        // and an event's line reaches the screen through `Event.Speak` -> `Game1.drawDialogue` -> a DialogueBox on
+        // `Game1.activeClickableMenu` (`Game1.cs:9539-9545`), which is the object both handlers read.
+        ActorWorldFacts eventBox = Facts(eventUp: true, menuType: "DialogueBox", dialogueUp: false);
+        string question = WorldModel.DescribeBodyHold(
+            WorldModel.Classify(eventBox), eventBox, canMove: false, modalIsQuestion: true);
+        question.Should().Contain("dialogue_box=true");
+        question.Should().Contain(
+            "admissible_actions=answer_dialogue;can_move=false",
+            "a question box is answered, and dismiss_modal refuses the same box by name");
+
+        string informational = WorldModel.DescribeBodyHold(
+            WorldModel.Classify(eventBox), eventBox, canMove: false, modalIsQuestion: false);
+        informational.Should().Contain("dialogue_box=true");
+        informational.Should().Contain(
+            "admissible_actions=dismiss_modal;can_move=false",
+            "an informational box is closed by the native close, and answer_dialogue refuses it by name");
+
+        string unread = WorldModel.DescribeBodyHold(WorldModel.Classify(eventBox), eventBox, canMove: false);
+        unread.Should().Contain("is_question=unknown");
+        unread.Should().Contain(
+            "admissible_actions=answer_dialogue,dismiss_modal;can_move=false",
+            "an unreadable question flag must not hide the only two actions there are");
+    }
+
+    /// <summary>
+    /// The split above is tied to the catalog rather than remembered here: the family member this file treats as the one
+    /// that ANSWERS is the one whose own registration requires a `responseKey` argument, and the other member closes.
+    ///
+    /// A renamed or re-registered id must fail HERE, by action id, instead of quietly publishing an admissible action
+    /// the handler would refuse - which is the whole defect this episode is about.
+    /// </summary>
+    [Fact]
+    public void TheCutsceneAdmissibleSplit_IsDerivedFromTheCatalog()
+    {
+        string[] answering = FarmhandActionCatalog.EventActingActionIds
+            .Where(actionId => FarmhandActionCatalog.Registrations
+                .Single(registration => registration.ActionId == actionId)
+                .Descriptor!.Arguments.Any(argument => argument.Name == "responseKey"))
+            .ToArray();
+
+        answering.Should().BeEquivalentTo(
+            new[] { WorldModel.DialogueAnswerActionId },
+            "the event-acting member whose own registration requires a response key is the one that answers a question");
+        FarmhandActionCatalog.EventActingActionIds.Should().HaveCount(
+            2,
+            "the family is one question to answer and one informational box to close; a third member needs a decision here");
     }
 
     [Fact]

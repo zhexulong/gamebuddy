@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.Serialization;
 using FluentAssertions;
 using GameBuddy.Stardew.Core;
+using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using Netcode;
@@ -100,6 +101,94 @@ public sealed class ModalAnswerDialogueTests
             receipt.State.Should().Be(ExecutionState.Rejected);
             receipt.ReasonCode.Should().Be("response_key_not_offered");
         });
+    }
+
+    /// <summary>
+    /// A key the box DOES offer answers it even when it is typed the way a player would - another case, stray spaces -
+    /// and the engine receives its own spelling, not the caller's.
+    ///
+    /// <para>
+    /// Measured 2026-11-09 (`round41`): the bed prompt `今晚要睡了吗？` offered `Yes,No`; the companion sent `yes` and was
+    /// refused `response_key_not_offered` with no hint, tried `是`, `next` and `1`, and only got through 27 minutes later
+    /// with `Yes`. The comparison was `StringComparison.Ordinal`, on the one interface where the value is a word on a
+    /// screen rather than an identifier.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("yes")]
+    [InlineData("YES")]
+    [InlineData("  Yes  ")]
+    public void Answer_AcceptsAnOfferedKeyTypedAsAPlayerWould(string typed)
+    {
+        var location = new AnswerRecordingLocation(acceptAnswer: true);
+        DialogueBox dialogue = CreateDialogue(isQuestion: true, new Response("Yes", "Yes"), new Response("No", "No"));
+        RunWithGameState(dialogue, location, () =>
+        {
+            LocalExecutionReceipt receipt = InvokeAnswer(CreateManager(1001), $"req_answer_typed_{Guid.NewGuid():N}", typed);
+
+            receipt.State.Should().Be(ExecutionState.Succeeded, receipt.Evidence);
+            receipt.Evidence.Should().Contain(
+                "response_key=Yes",
+                "the receipt names the key the BOX offered, which is the one the engine received");
+            location.AnsweredResponse.Should().NotBeNull();
+            location.AnsweredResponse!.responseKey.Should().Be(
+                "Yes",
+                "a location question matches on the offered key, so the caller's spelling must never reach the engine");
+        });
+    }
+
+    /// <summary>
+    /// A key the box does NOT offer is still refused - `是` is not a fuzzy match for `Yes,No` - and the refusal carries
+    /// the keys the box does offer, in the HINT as well as the evidence.
+    ///
+    /// <para>
+    /// The hint is the load-bearing half: ADR-006 withholds a failed node's evidence, so the `response_keys` this refusal
+    /// had always computed never reached the companion. It saw `{"failureCode":"response_key_not_offered"}` and had
+    /// nothing to choose from.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Answer_RefusesAForeignKey_AndPublishesTheKeysTheBoxOffers()
+    {
+        RunWithGameState(
+            CreateDialogue(isQuestion: true, new Response("Yes", "Yes"), new Response("No", "No")),
+            new AnswerRecordingLocation(acceptAnswer: true),
+            () =>
+            {
+                LocalExecutionReceipt receipt = InvokeAnswer(CreateManager(1001), "req_answer_foreign_key", "是");
+
+                receipt.State.Should().Be(ExecutionState.Rejected);
+                receipt.ReasonCode.Should().Be(
+                    "response_key_not_offered",
+                    "a key nobody offered must not be accepted by resemblance; only case and padding are forgiven");
+                receipt.Evidence.Should().Contain("offered_keys=Yes,No", "the refusal names what the box does offer");
+                receipt.Hint.Should().Be(
+                    "offered_keys=Yes,No",
+                    "the hint is the only field that survives into the node status the companion reads");
+            });
+    }
+
+    /// <summary>
+    /// The hinted form of the offered keys is BOUNDED and keeps the keys when it truncates.
+    /// </summary>
+    [Fact]
+    public void TheOfferedKeyHint_KeepsTheKeysAndBoundsThePrompt()
+    {
+        var offered = new[] { new Response("Yes", "Yes"), new Response("No", "No") };
+        var longPrompt = new string('睡', 400);
+
+        string hint = ExecutionManager.OfferedResponseHint(offered, longPrompt);
+
+        hint.Length.Should().BeLessThanOrEqualTo(
+            BodyProgramValidation.MaximumNodeHintLength,
+            "a longer hint is refused by the journal and by the wire, which would make the whole node unreadable");
+        hint.Should().StartWith(
+            "offered_keys=Yes,No;text=",
+            "the keys are published first, so truncation can only ever cost prompt text");
+        ExecutionManager.OfferedResponseHint(offered, null).Should().Be("offered_keys=Yes,No");
+        ExecutionManager.OfferedResponseHint(Array.Empty<Response>(), null).Should().Be(
+            "offered_keys=none",
+            "a box the engine left no responses on must say so rather than publish an empty list");
     }
 
     [Fact]
