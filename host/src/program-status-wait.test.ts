@@ -543,6 +543,45 @@ test("a node's reason is the receipt's own word, and its reachability hint trave
   assert.equal(answer.nodes[0]?.hint, "closest=49,14;closest_distance=1");
 });
 
+test("a skipped node names the producers it waited on that did not come good", () => {
+  // The graph is the compiled one: a door depends on the walk written for it (`n001_approach`), nothing else has an
+  // edge, and `n004` waits on the door. Read against the Mod's own states, that is a 1:1 skip for one failure and one
+  // transitive skip two steps down - and an independent neighbour (`n003`) that ran.
+  const answer = planBatchAnswer(
+    [
+      { nodeId: "n001_approach", actionId: "move_to_tile", arguments: {}, dependsOn: [] },
+      { nodeId: "n002", actionId: "enter_exit", arguments: {}, dependsOn: ["n001_approach"] },
+      { nodeId: "n003", actionId: "harvest_crop", arguments: {}, dependsOn: [] },
+      { nodeId: "n004", actionId: "plant_seed", arguments: {}, dependsOn: ["n002"] },
+      // No producer at all: the shape the Mod's abandon path writes for a node that never attempted.
+      { nodeId: "n005", actionId: "water_crop", arguments: {} },
+    ],
+    {
+      nodes: [
+        { nodeId: "n001_approach", state: "failed", failureCode: "no_native_path" },
+        { nodeId: "n002", state: "skipped_dependency" },
+        { nodeId: "n003", state: "succeeded" },
+        { nodeId: "n004", state: "skipped_dependency" },
+        { nodeId: "n005", state: "skipped_dependency" },
+      ],
+    },
+  );
+  // "skipped" alone is a state with no subject. The walk is named, with the walk's own word for why it stopped.
+  assert.deepEqual(answer.nodes[1]?.skippedBecause, [{ nodeId: "n001_approach", reasonCode: "no_native_path" }]);
+  // A skip two steps down names the node it ACTUALLY waited on, which carries its own answer about the walk.
+  assert.deepEqual(answer.nodes[3]?.skippedBecause, [{ nodeId: "n002", reasonCode: "skipped_dependency" }]);
+  assert.equal("skippedBecause" in (answer.nodes[2] as object), false, "the neighbour that ran waits on nothing");
+  assert.equal(
+    "skippedBecause" in (answer.nodes[4] as object),
+    false,
+    "a skip this graph cannot explain stays unexplained instead of borrowing someone else's reason",
+  );
+  assert.deepEqual(
+    answer.nodes.map((node) => node.state),
+    ["failed", "skipped_dependency", "succeeded", "skipped_dependency", "skipped_dependency"],
+  );
+});
+
 test("a tile rides only on a node whose own arguments name one", () => {
   const answer = planBatchAnswer(
     [

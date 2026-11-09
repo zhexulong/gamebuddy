@@ -494,6 +494,9 @@ public sealed class BodyProgramControllerPumpTests
 
         authority.Status("program").Snapshot!.State.Should().Be(BodyProgramState.Cancelled);
         authority.Status("program").Snapshot!.Nodes.Should().OnlyContain(node => node.State == BodyProgramNodeState.Cancelled);
+        // A STOP is not a dependency skip and must not read as one: the remaining nodes are cancelled with the stop's
+        // own cause, so nothing writes a `node_skipped` event and no node borrows the word for "what I needed failed".
+        authority.Events("program", 0, 32).Events.Should().NotContain(@event => @event.Kind == "node_skipped");
         executor.Runs.Should().BeEmpty();
     }
 

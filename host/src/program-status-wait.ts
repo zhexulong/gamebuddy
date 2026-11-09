@@ -284,6 +284,20 @@ interface PlanNodeAnswer {
    * "running for twelve seconds" is a fact the caller can size against "queued for twelve seconds".
    */
   readonly elapsedMs?: number;
+  /**
+   * WHY a node was skipped, named: the producers this node waits on that stopped without succeeding.
+   *
+   * Present only on `skipped_dependency`, and only when the compiled graph names such a producer. `skipped_dependency`
+   * is the one state that says nothing on its own - it is `skipped` because of ANOTHER node, and a caller told only the
+   * token has to guess which step to fix. Measured 2026-11-09: 102 of 469 nodes over one run, where a single
+   * `no_native_path` failure skipped 15 (`plan_1661`); a caller reading "15 skipped" without the name learns nothing
+   * about the one tile to avoid.
+   *
+   * Absent is a fact too, and not the same one: the Mod also settles every never-attempted node as
+   * `skipped_dependency` when a program is abandoned, and a skip whose producers are not in the graph (or are still
+   * running) names nothing rather than guessing one.
+   */
+  readonly skippedBecause?: readonly Readonly<{ nodeId: string; reasonCode: string }>[];
 }
 
 /** A plan's per-node answer, and the batch statement that goes with it. */
@@ -297,12 +311,16 @@ export interface PlanBatchAnswer {
 
 /**
  * The node a plan answer has to name, as the Host compiled it: the id the Mod's journal will carry it under, the
- * action, and the arguments the caller wrote.
+ * action, the arguments the caller wrote, and the nodes it waits on.
+ *
+ * `dependsOn` is the compiled graph's own CONSUMPTION edge (`body-program-script.ts` `emitPlanNode`), which is what
+ * lets this answer say which producer a skip is owed to instead of only that it happened.
  */
 export interface PlanAnswerNode {
   readonly nodeId: string;
   readonly actionId: string;
   readonly arguments: Readonly<Record<string, Readonly<{ type: string; canonicalValue?: string }>>>;
+  readonly dependsOn?: readonly string[];
 }
 
 /**
@@ -318,8 +336,8 @@ const PLAN_NODE_STATE_UNREADABLE = "unknown";
  * What became of each node the caller wrote, joined on the identity the frame carries.
  *
  * <p>
- * THE JOIN IS THE NODE ID, and it has to be: `plan_work` compiles the ids itself (`n01`, `n02`, ... and
- * `auto_walk_03` for a walk the compiler inserts before a door), and the Mod's journal accepts the candidate's own ids
+ * THE JOIN IS THE NODE ID, and it has to be: `plan_work` compiles the ids itself (`n001`, `n002`, ... and
+ * `n003_approach` for a walk the compiler inserts before a door), and the Mod's journal accepts the candidate's own ids
  * verbatim (`OpenBodyProgramJournalAuthority.Accept` -> `new VerifiedBodyProgramNode(node.NodeId, ...)`), so
  * `nodes[].nodeId` on the status snapshot is the same string the Host compiled. Nothing here reads array position, so
  * a snapshot that lists its nodes in another order - or a node the Mod re-attempts - cannot be reported against the
@@ -347,6 +365,7 @@ export function planBatchAnswer(
     const hint = row?.hint ?? null;
     const tile = planNodeTile(node.arguments);
     const clock = NODE_STATES_SETTLED.has(state) ? undefined : elapsed.get(node.nodeId);
+    const skippedBecause = state === "skipped_dependency" ? producersThatSkipped(node.dependsOn, journal) : [];
     return Object.freeze({
       index,
       actionId: node.actionId,
@@ -355,10 +374,38 @@ export function planBatchAnswer(
       ...(hint === null ? {} : { hint }),
       ...(tile === undefined ? {} : { tile }),
       ...(clock === undefined ? {} : { elapsedMs: clock }),
+      ...(skippedBecause.length === 0 ? {} : { skippedBecause }),
     });
   });
   const remaining = nodes.filter((node) => !NODE_STATES_SETTLED.has(node.state)).length;
   return Object.freeze({ nodes: Object.freeze(nodes), settled: remaining === 0, remaining });
+}
+
+/**
+ * The producers of a skipped node that stopped without succeeding, named with the reason each stopped.
+ *
+ * Derived from TWO facts the answer already holds - the compiled graph's edges and the Mod's own states - and from
+ * nothing else: a producer is named only when the journal says it is settled and not `succeeded`, so a skip this graph
+ * cannot explain stays unexplained instead of borrowing someone else's reason. A transitive skip (`c` depends on `b`,
+ * `b` on `a`) names `b`, the node actually waited on, because `b` carries its own answer about `a`.
+ */
+function producersThatSkipped(
+  dependsOn: readonly string[] | undefined,
+  journal: ReadonlyMap<string, PlanJournalNode>,
+): readonly Readonly<{ nodeId: string; reasonCode: string }>[] {
+  if (dependsOn === undefined) return [];
+  const named: { nodeId: string; reasonCode: string }[] = [];
+  for (const producerId of dependsOn) {
+    const producer = journal.get(producerId);
+    if (producer === undefined || producer.state === "succeeded" || !NODE_STATES_SETTLED.has(producer.state)) continue;
+    named.push(
+      Object.freeze({
+        nodeId: producerId,
+        reasonCode: producer.rejectionCode ?? producer.failureCode ?? producer.state,
+      }),
+    );
+  }
+  return Object.freeze(named);
 }
 
 /** One journal row as a plan answer reads it: the Mod's state, and the reasons that may ride with it. */
