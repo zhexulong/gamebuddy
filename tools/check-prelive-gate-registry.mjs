@@ -209,6 +209,17 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "on-demand",
   },
   {
+    path: "tools/audit-preset-macro-frequency.mjs",
+    reason:
+      "environment: the population is presets, and the only real ones in this tree live in the design/library mount - " +
+      "`ref/` supplies the SillyTavern checkout whose `default/content/presets/openai/Default.json` is the single " +
+      "member, so a checkout without that mount reads zero presets and the census BLOCKS with " +
+      "`preset_macro_frequency_no_presets` by design rather than passing; measured 2026-11-09 with the mount: " +
+      "`examined 1 preset file(s), 4 macro occurrences` (char 3, user 1, and neither `{{if}}` nor `{{random}}`), 1087 " +
+      "json document(s) read and 1033 rejected by the preset shape",
+    runsIn: "on-demand",
+  },
+  {
     path: "tools/audit-stardew-action-admission-ledger.mjs",
     reason:
       "report: re-derives the ledger of design/architecture/stardew-action-execution-kernel.md and prints the drift " +

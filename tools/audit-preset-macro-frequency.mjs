@@ -83,7 +83,7 @@ import { fileURLToPath } from "node:url";
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /** The roots this checkout has. A root that is absent is reported, never silently skipped into a pass. */
-export const PRESET_ROOTS = Object.freeze(["ref", "tools/fixtures", "host/src"]);
+export const PRESET_ROOTS = Object.freeze(["ref", "tools/fixtures", "host/src", "assets"]);
 
 /** Transient output: a run's artifacts and another lane's scratch must not move a census of the tree. */
 export const SKIPPED_DIRECTORIES = Object.freeze([
