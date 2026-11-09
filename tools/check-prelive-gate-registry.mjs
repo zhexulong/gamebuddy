@@ -134,6 +134,20 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:vendored-bundle-leaks",
   },
   {
+    path: "tools/check-preset-macros.mjs",
+    runsIn: "pnpm check:preset-macros",
+    reason:
+      "elsewhere: reads a SillyTavern preset document and asks whether every macro it spells is declared in PRESET_MACROS, which is a judgement about a source file that exists before any install or build." +
+      " It runs through its `pnpm check:` script in the derived gate corpus, not in a prelive rung.",
+  },
+  {
+    path: "tools/check-preset-round-trip.mjs",
+    runsIn: "pnpm check:preset-round-trip",
+    reason:
+      "elsewhere: imports a preset, exports it and re-imports it to prove nothing was dropped on the way through the store, which needs no rung and no environment." +
+      " It runs through its `pnpm check:` script in the derived gate corpus, not in a prelive rung.",
+  },
+  {
     path: "tools/check-vendor-build-artifacts.mjs",
     reason:
       "elsewhere: asks whether the files the workspace's `file:` dependencies promise exist, so it must run AFTER " +
@@ -187,6 +201,19 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/audit-stardew-admission-fork-delta.mjs",
     reason: "elsewhere: static audit of the forked admission sites, runs on every push in the CI gates job",
     runsIn: "pnpm audit:stardew-admission-fork-delta",
+  },
+  {
+    path: "tools/audit-stardew-open-ground-claims.mjs",
+    reason:
+      "debt: measured red at HEAD - `examined 16 call sites, 16 lies, 0 corroborated`, every one of them a Mod member that " +
+      'answers "can the body be on this tile?" with `GameLocation.isTilePassable` alone (GameLocation.cs:2898 reads the ' +
+      "map's Back and Buildings layers and nothing else, so a trellis crop, a rock or a chest reads as open ground) while " +
+      "the engine's own admission is `isCollidingPosition(..., pathfinding: true)` (PathFindController.cs:222). The sixteen " +
+      "are named file:line in the gate's own output; three of them sit in files another lane holds " +
+      "(`farmhandexecutioncontroller.buildfarmbuildingactions.cs`, `farmhandexecutioncontroller.cs`, `ModEntry.cs`), so " +
+      "wiring it into a rung today would stop the ladder on work this register is meant to report rather than on a defect " +
+      "the ladder can speak to",
+    runsIn: "on-demand",
   },
   {
     path: "tools/audit-stardew-decision-closure.mjs",
