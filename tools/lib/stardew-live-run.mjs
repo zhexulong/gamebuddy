@@ -20,7 +20,7 @@
 import { spawn } from "node:child_process";
 import { assertLiveRunArtifactFresh } from "./live-run-artifact-freshness.mjs";
 import { killProcessTree } from "./windows-process-tree.mjs";
-import { createWriteStream, mkdirSync, readdirSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 
 // ── Window-mode mirror (authority: host/src/live-run/window-mode.ts) ──────
@@ -64,10 +64,32 @@ function isPipeListening(pipeName) {
   }
 }
 
-async function waitForPipe(pipeName, timeoutMs) {
+/**
+ * The Mod's own arm-time refusal, read out of the SMAPI log this launch is writing.
+ *
+ * WHY THIS EXISTS. Measured 2026-11-09: a fixture Given dropped a building that severed the farm's door→field route, so
+ * the Mod refused the world with `fixture setup failed: ... fixture_native_local_multi_day_home_unreachable` at second
+ * 17 - and the launcher went on waiting for a bridge that could never open, reporting `stardew_pipe_not_listening` two
+ * minutes later. The Mod had already said, by name, why the world was impossible; nobody was reading it. A refusal that
+ * is only discoverable by timeout is a refusal the operator has to guess at.
+ *
+ * Pure so a test can drive it with the exact text, and matched on the marker alone: the rest of the line is the Mod's
+ * reason and belongs in the message verbatim.
+ */
+export function fixtureSetupFailureIn(text) {
+  for (const line of String(text).split("\n")) {
+    const at = line.indexOf("fixture setup failed:");
+    if (at >= 0) return line.slice(at).trim();
+  }
+  return null;
+}
+
+async function waitForPipe(pipeName, timeoutMs, readModLog = () => "") {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (isPipeListening(pipeName)) return;
+    const refused = fixtureSetupFailureIn(readModLog());
+    if (refused !== null) throw new Error(`stardew_fixture_setup_failed:${refused}`);
     if (Date.now() >= deadline) throw new Error(`stardew_pipe_not_listening:${pipeName}`);
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
@@ -178,7 +200,19 @@ export async function launchStardewLiveRun({
   });
 
   try {
-    await Promise.race([waitForPipe(pipeName, timeoutMs), spawnError]);
+    // The Mod's own arm-time refusal ends the wait immediately instead of costing the full pipe timeout: measured
+    // 2026-11-09, a fixture that severed the farm's route was reported by the Mod at second 17 and by this launcher
+    // two minutes later as `stardew_pipe_not_listening`, which names the wrong component.
+    const modLog = join(process.env.APPDATA ?? "", "StardewValley", "ErrorLogs", "SMAPI-latest.txt");
+    const modLogStart = existsSync(modLog) ? readFileSync(modLog, "utf8").length : 0;
+    const readNewModLog = () => {
+      try {
+        return existsSync(modLog) ? readFileSync(modLog, "utf8").slice(modLogStart) : "";
+      } catch {
+        return "";
+      }
+    };
+    await Promise.race([waitForPipe(pipeName, timeoutMs, readNewModLog), spawnError]);
   } catch (error) {
     killProcessTree(pid);
     // The lane log is closed here too: a launch that refused still leaves a file an operator will open to see WHY,

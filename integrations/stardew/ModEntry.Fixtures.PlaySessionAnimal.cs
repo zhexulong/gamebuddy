@@ -57,6 +57,47 @@ public sealed partial class ModEntry
     /// this initializer emits no receipt.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Whether the building just placed is what the multi-day arm-time assertion will refuse, asked the same way.
+    ///
+    /// Returns null when the route survives, or a named reason when it does not. The authority is
+    /// <see cref="StardewBodyController.AssessReachability"/> through <see cref="NativeLocalMultiDayWalkable"/>, from the
+    /// same porch spot the assertion starts at, so this cannot pass a world that assertion would reject.
+    /// </summary>
+    private static string? RejectsTheMultiDayRoute(
+        Farmer player,
+        Farm farm,
+        Vector2 startTile,
+        Vector2? mustRemainReachable,
+        Point door)
+    {
+        Point from;
+        try
+        {
+            from = NativeLocalMultiDayDoorStandingSpot(player, farm);
+        }
+        catch (InvalidOperationException)
+        {
+            // No porch spot to measure from yet: the multi-day assertion will name it, and this Given is not the place
+            // that decides the day cannot start.
+            return null;
+        }
+        Func<Point, bool> walkable = NativeLocalMultiDayWalkable(farm);
+        Point target = mustRemainReachable is { } anchor
+            ? new Point((int)anchor.X, (int)anchor.Y)
+            : new Point((int)startTile.X, (int)startTile.Y);
+        ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
+            from,
+            target,
+            walkable,
+            maxVisited: 8000,
+            findClosestReachable: true);
+        if (verdict is not { } assessed) return $"route_unknown:door={door.X},{door.Y};target={target.X},{target.Y}";
+        return assessed.TargetEnclosed
+            ? $"severed_route:door={door.X},{door.Y};target={target.X},{target.Y};component_tiles={assessed.ComponentTiles}"
+            : null;
+    }
+
     private void InstallNativeLocalPlaySessionAnimalGiven(Farmer player, Farm farm, Vector2 startTile, Vector2? mustRemainReachable)
     {
         Building coop = new(PlaySessionAnimalBuildingType, Vector2.Zero);
@@ -96,11 +137,13 @@ public sealed partial class ModEntry
         // The site search SIMULATES the footprint; these two are the same questions asked of the real building. A
         // simulation that disagreed with the world must not cost the day its ground or its way home, so the house goes
         // back off the farm and the world carries one animal fewer - named, not silently.
+        //
+        // The route question is asked with the SAME predicate the multi-day arm-time assertion uses (measured
+        // 2026-11-09: this method's private reachability check let a Coop through whose footprint severed door→field,
+        // and the whole run died waiting for a bridge the fixture had made impossible).
         string? rejected = approach is null
             ? $"door_unreachable:door={door.X},{door.Y}"
-            : mustRemainReachable is { } anchor && !IsReachableFromStart(farm, startTile, anchor)
-                ? $"severed_route:door={door.X},{door.Y};anchor={anchor.X},{anchor.Y}"
-                : null;
+            : RejectsTheMultiDayRoute(player, farm, startTile, mustRemainReachable, door);
         if (rejected is not null)
         {
             farm.buildings.Remove(coop);

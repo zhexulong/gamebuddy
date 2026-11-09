@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 
 import {
+  fixtureSetupFailureIn,
   isLiveRunWindowMode,
   launchStardewLiveRun,
   normalizeLiveRunWindowMode,
@@ -161,4 +162,21 @@ test("a named lane log receives the console stream the drain would otherwise dis
   assert.match(text, /stderr line/u);
   // And the no-log path still drains: an unread console pipe is what froze the game thread.
   assert.match(source, /if \(laneLog === null\) child\.stdout\?\.resume\(\);/u);
+});
+
+test("the Mod's arm-time refusal is read out of the log instead of waiting for a pipe that cannot open", async () => {
+  // Measured 2026-11-09: a fixture Given severed the farm's door→field route, the Mod said so by name at second 17,
+  // and the launcher reported `stardew_pipe_not_listening` two minutes later - naming a component that was fine.
+  const line =
+    "[14:35:31 ERROR GameBuddy] GameBuddy native-local-player fixture setup failed: " +
+    "scenario=native_multi_day_play_session_v1; error=fixture_native_local_multi_day_home_unreachable";
+  assert.equal(
+    fixtureSetupFailureIn(line),
+    "fixture setup failed: scenario=native_multi_day_play_session_v1; error=fixture_native_local_multi_day_home_unreachable",
+    "the reason must survive verbatim, because it is the only thing that says which given was impossible",
+  );
+  // A healthy log is not a failure, and a log that mentions the phrase in prose is not one either: only the marker on
+  // the Mod's own line counts.
+  assert.equal(fixtureSetupFailureIn("[14:35:20 INFO  SMAPI] Loading mods..."), null);
+  assert.equal(fixtureSetupFailureIn(""), null);
 });

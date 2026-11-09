@@ -51,20 +51,7 @@ public sealed partial class ModEntry
         //
         // The authority is the SAME probe the refusal receipts publish (AssessReachability), so an arm-time refusal
         // and a mid-run `no_native_path` cannot disagree about what "reachable" means.
-        var layer = farm.map.Layers[0];
-        bool Walkable(Point tile) =>
-            tile.X >= 0
-            && tile.Y >= 0
-            && tile.X < layer.LayerWidth
-            && tile.Y < layer.LayerHeight
-            // The fixture's OWN placements count as blockers. Asking only the engine's walkability made this
-            // assertion near self-proving: the start was CHOSEN for reaching the door, and a prop the fixture
-            // itself dropped on the door-field route would have been invisible to the probe certifying that route
-            // (found by review). With objects and terrain features included, the check is about the world that
-            // exists when the companion wakes up.
-            && !farm.objects.ContainsKey(new Vector2(tile.X, tile.Y))
-            && !farm.terrainFeatures.ContainsKey(new Vector2(tile.X, tile.Y))
-            && StardewBodyController.IsWalkableTile(farm, Game1.player, new Vector2(tile.X, tile.Y));
+        Func<Point, bool> walkable = NativeLocalMultiDayWalkable(farm);
 
         // The other place the day needs: the tile the actor stands on to use the shipping bin. A farm where home and
         // the bin are in different walkable components cannot support a day that ends - and a bin with no standing
@@ -87,8 +74,34 @@ public sealed partial class ModEntry
             throw new InvalidOperationException("fixture_native_local_multi_day_play_session_start_tile_unrecorded");
         Point field = new((int)fieldTile.X, (int)fieldTile.Y);
 
-        AssertReachable(door, binStandingTile, Walkable, "bin");
-        AssertReachable(door, field, Walkable, "field");
+        AssertReachable(door, binStandingTile, walkable, "bin");
+        AssertReachable(door, field, walkable, "field");
+    }
+
+    /// <summary>
+    /// What "walkable" means for this scenario, in ONE place, because two answers to it already cost a run.
+    ///
+    /// The rule is the engine's walkability PLUS the fixture's own placements: asking only the engine made the
+    /// arm-time assertion near self-proving (the start was chosen for reaching the door, and a prop the fixture had
+    /// just dropped was invisible to the probe certifying that route).
+    ///
+    /// Measured 2026-11-09: the play-session animal Given asked its own private reachability question and dropped a
+    /// Coop whose footprint severed the door→field route. The arm-time assertion then refused the whole run - the
+    /// launcher sat waiting for a bridge that a fixture had made impossible, and reported `stardew_pipe_not_listening`
+    /// two minutes later. The two predicates differed only in what they counted as a blocker, which is exactly the
+    /// class this method exists to end.
+    /// </summary>
+    internal static Func<Point, bool> NativeLocalMultiDayWalkable(Farm farm)
+    {
+        var layer = farm.map.Layers[0];
+        return tile =>
+            tile.X >= 0
+            && tile.Y >= 0
+            && tile.X < layer.LayerWidth
+            && tile.Y < layer.LayerHeight
+            && !farm.objects.ContainsKey(new Vector2(tile.X, tile.Y))
+            && !farm.terrainFeatures.ContainsKey(new Vector2(tile.X, tile.Y))
+            && StardewBodyController.IsWalkableTile(farm, Game1.player, new Vector2(tile.X, tile.Y));
     }
 
     /// <summary>The Farm tile the actor stands on when it comes out of its own home, refused by name if unusable.</summary>
