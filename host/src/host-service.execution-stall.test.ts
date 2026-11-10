@@ -44,8 +44,8 @@ function stallHarness() {
     pump,
     async flush() {
       return await pump.flush({
-        async deliver(text) {
-          prompts.push(text);
+        async deliver(batch) {
+          prompts.push(batch.text);
         },
       });
     },
@@ -107,8 +107,8 @@ test("a silent execution wakes a turn at the bound, and the turn carries the sta
   await drain();
   assert.equal(harness.prompts.length, 1, "the bound is where the silence becomes a turn");
   const prompt = harness.prompts[0] ?? "";
-  assert.match(prompt, /execution_stalled/u, "the turn is triggered by, and carries, the stall fact");
-  assert.match(prompt, /exec_sleep/u, "and it names which execution is stuck");
+  assert.match(prompt, /sleep 卡住不动了/u, "the turn is triggered by, and carries, the stall fact");
+  assert.match(prompt, /最后一条 execution_receipt:running/u, "and it names the last thing the stuck execution said");
   harness.service.close();
 });
 
@@ -141,7 +141,7 @@ test("ten minutes of one stalled execution is two stall turns, not seven", async
   t.mock.timers.tick(EXECUTION_STALL_BOUND_MS);
   await drain();
 
-  const stallTurns = harness.prompts.filter((prompt) => prompt.includes("execution_stalled"));
+  const stallTurns = harness.prompts.filter((prompt) => prompt.includes("卡住不动了"));
   assert.equal(
     stallTurns.length,
     2,

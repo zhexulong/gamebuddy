@@ -1,24 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CompanionEventPump, type WorldFact } from "./event-pump.js";
+import { CompanionEventPump, type PendingBatch, type WorldFact } from "./event-pump.js";
 import { CompanionHostService } from "./host-service.js";
 import type { LocalStardewBridgeFact } from "./local-stardew-bridge.js";
 import type { Scope, Snapshot } from "./protocol.js";
-import { formatSnapshotHud } from "./snapshot-hud.js";
 import { toWorldFact } from "./stardew-integration-launcher-body-program.internal.js";
 
 /**
- * The state block has to reach the model on EVERY turn, including a turn whose only news is a receipt.
+ * The world block has to reach the model on EVERY turn, including a turn whose only news is a receipt.
  *
- * This is where the defect lived: the pump holds a snapshot as latest state and hands it to the next batch, so
- * the block is present exactly once and then absent for every turn until the world is observed again. The Host
- * re-states the snapshot before composing each turn (`CompanionHostService.#restateWorldSnapshot`), and these
- * two turns are the assertion - the second one has no observation of its own.
+ * <p>
+ * This is where the defect lived. The pump holds a snapshot as latest state and hands it to the next batch, so the
+ * state was present exactly once and then absent for every turn until the world was observed again. Measured on
+ * `round44`: 102 of 109 delivered batches carried a snapshot at all, and the seven that carried none left the model
+ * with only its own memory of the last one it saw.
+ * </p>
  *
- * A re-stated block also has to admit that it is a re-statement: nothing refreshes a snapshot between turns, so a
- * block that reads like the current world is a three-turn-old clock presented as now (`snapshot-hud.test.ts` pins
- * the wording). Here the assertion is that the age is the ONLY thing a re-statement changes.
+ * <p>
+ * So the block is composed from the pump's own retained reading (`CompanionEventPump#lastSnapshot`) rather than from
+ * the batch's snapshot slot, and it says WHICH reading it is: the revision, and whether this turn brought it. A
+ * re-statement must not read as the current world.
+ * </p>
  */
 
 const scope: Scope = Object.freeze({
@@ -102,13 +105,13 @@ function harness() {
     },
   };
   const pump = new CompanionEventPump();
-  const batches: string[] = [];
+  const batches: PendingBatch[] = [];
   const loop = {
     pump,
     async flush() {
       return await pump.flush({
-        async deliver(text) {
-          batches.push(text);
+        async deliver(batch) {
+          batches.push(batch);
         },
       });
     },
@@ -132,30 +135,28 @@ function tick(): Promise<void> {
   return new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
-function batchAt(batches: readonly string[], index: number) {
-  return JSON.parse(batches[index] ?? "{}") as {
-    worldFacts: ReadonlyArray<{ kind: string; payload: Readonly<Record<string, unknown>> }>;
-  };
+/** The `<world-state>` block of one delivered batch, or a failure that names what is missing. */
+function worldStateOf(batch: PendingBatch | undefined): string {
+  const text = batch?.text ?? "";
+  const matched = /<world-state>\n([\s\S]*?)\n<\/world-state>/u.exec(text);
+  assert.ok(
+    matched !== null,
+    `the world block is missing from a batch whose text is: ${JSON.stringify(text.slice(0, 200))}`,
+  );
+  return matched[1] ?? "";
 }
 
-function hudOf(batch: ReturnType<typeof batchAt>): string {
-  const snapshot = batch.worldFacts.find((fact) => fact.kind === "snapshot");
-  const hud = snapshot?.payload.hud;
-  assert.equal(typeof hud, "string", "the delivered batch carried no state block");
-  return hud as string;
+/** The block with the age clause removed: a re-statement may state its age and nothing else differently. */
+function withoutAge(state: string): string {
+  return state.replace(/（这是 \d+ 轮之前看到的，世界已经不一样了）(；)?/gu, "");
 }
 
-/**
- * The block with any age clause removed.
- *
- * A re-stated block is allowed to say how old the reading is - it is NOT allowed to say anything else differently,
- * which is what this makes assertable byte for byte.
- */
-function withoutAge(hud: string): string {
-  return hud.replace(/ \(observed \d+ turns? ago - not the current world\)/gu, "");
+/** The block's BODY: everything after the first line, which names the revision and the freshness. */
+function bodyOf(state: string): string {
+  return withoutAge(state).split("\n").slice(1).join("\n");
 }
 
-test("a turn that carries an event and a turn that carries none both carry the same state block", async () => {
+test("a turn that carries an event and a turn that carries none both carry the same world block", async () => {
   const testHarness = harness();
   const service = new CompanionHostService(testHarness.loop as never, testHarness.events);
 
@@ -164,42 +165,63 @@ test("a turn that carries an event and a turn that carries none both carry the s
   await tick();
 
   assert.equal(testHarness.batches.length, 1, "the observation and the receipt coalesced into one turn");
-  const first = batchAt(testHarness.batches, 0);
+  const first = testHarness.batches[0];
   assert.ok(
-    first.worldFacts.some((fact) => fact.kind === "execution_receipt"),
+    first?.facts.some((fact) => fact.kind === "execution_receipt"),
     "the first turn was supposed to carry an event",
   );
-  const firstHud = hudOf(first);
-  assert.equal(firstHud, formatSnapshotHud(worldSnapshot));
-  assert.match(firstHud, /stamina: 82/u);
+  const firstState = worldStateOf(first);
+  assert.match(firstState, /^世界（revision 7，刚刚更新）$/mu, "the block names the reading and that it is new");
+  assert.match(firstState, /体力: 82/u, "and states the world it read");
+  assert.match(firstState, /待浇水的作物 \(4,10\)/u, "including the objects she acts on, with their tiles");
 
-  // No observation of its own: the only news is a receipt. The state must still be there, and it must say that it is
+  // No observation of its own: the only news is a receipt. The world must still be there, and it must say that it is
   // a reading from one turn back rather than present itself as the world as it stands.
   testHarness.emit(receiptFact("exec_watered_2", 8));
   await tick();
 
   assert.equal(testHarness.batches.length, 2);
-  const second = batchAt(testHarness.batches, 1);
+  const second = testHarness.batches[1];
   assert.equal(
-    second.worldFacts.some((fact) => fact.kind === "execution_receipt"),
+    second?.facts.some((fact) => fact.kind === "execution_receipt"),
     true,
     "the second turn was supposed to carry an event and no observation",
   );
-  assert.equal(withoutAge(hudOf(second)), firstHud, "the age clause is the only difference a re-statement may make");
-  assert.match(hudOf(second), /^- time: 06:20 \(observed 1 turn ago - not the current world\)$/mu);
+  const secondState = worldStateOf(second);
+  assert.match(secondState, /^世界（revision 7，本轮无新观察）$/mu, "a re-stated reading says so on its first line");
+  assert.match(secondState, /（这是 1 轮之前看到的，世界已经不一样了）/u, "and how old it is");
+  assert.equal(
+    bodyOf(secondState),
+    bodyOf(firstState),
+    "the age is the only difference a re-statement makes: the block's body is byte for byte the same",
+  );
 
-  // "Nothing to say": the player spoke, the world did not. No event fact enters this turn at all, and the
-  // state still arrives - otherwise the model answers from whatever it remembers.
+  // "Nothing to say": the player spoke, the world did not.
   await service.acceptPlayerText("看看农场", "zh-CN", 1);
   assert.equal(testHarness.batches.length, 3);
-  const third = batchAt(testHarness.batches, 2);
+  const third = testHarness.batches[2];
   assert.deepEqual(
-    third.worldFacts.map((fact) => fact.kind),
+    third?.facts.map((fact) => fact.kind),
     ["snapshot"],
     "the third turn was supposed to carry state and no event",
   );
-  assert.equal(withoutAge(hudOf(third)), firstHud);
-  assert.match(hudOf(third), /^- time: 06:20 \(observed 2 turns ago - not the current world\)$/mu);
+  const thirdState = worldStateOf(third);
+  assert.match(thirdState, /^世界（revision 7，本轮无新观察）$/mu);
+  assert.match(thirdState, /（这是 2 轮之前看到的，世界已经不一样了）/u);
+
+  service.close();
+});
+
+test("a session that has never been observed says so, and never invents a world", async () => {
+  const testHarness = harness();
+  const service = new CompanionHostService(testHarness.loop as never, testHarness.events);
+
+  testHarness.emit(receiptFact("exec_before_any_observation", 1));
+  await tick();
+
+  assert.equal(testHarness.batches.length, 1);
+  const state = worldStateOf(testHarness.batches[0]);
+  assert.equal(state, "世界：尚未收到观察", "the absence of a reading is stated as an absence, in the same block");
 
   service.close();
 });

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import { isTerminalExecutionState } from "./execution-correlation-ledger.js";
-import type { ExecutionState } from "./protocol.js";
+import { composeFactBrief, type WorldStateReading } from "./fact-brief.js";
+import type { ExecutionState, Snapshot } from "./protocol.js";
 
 export type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" | "world_fact";
 export type WorldFact = Readonly<{
@@ -37,6 +38,7 @@ export type PlayerInput = Readonly<{
 }>;
 
 export type DeliveryDisposition = "steer" | "follow_up" | "hold";
+
 /**
  * How one delivered turn ENDED, as observed by whoever ran it.
  *
@@ -55,17 +57,29 @@ export type DeliveryDisposition = "steer" | "follow_up" | "hold";
  * "nobody looked" must not be spelled the same way as "it worked".
  */
 export type CompanionTurnOutcome = "completed" | "aborted" | "error" | "refused" | "unobserved";
+
+/**
+ * One delivered batch: the model-facing TEXT, and the frame its readers hang on it.
+ *
+ * <p>
+ * The text is `composeFactBrief`'s four blocks of prose (`fact-brief.ts`). It is one string and nothing parses it: what
+ * a reader needs structurally - the batch identity, the inputs' locales, the presentation events - is a field here, so
+ * there is exactly one spelling of each and no JSON envelope inside the model's user message.
+ * </p>
+ */
 export type PendingBatch = Readonly<{
   batchId: string;
   disposition: Exclude<DeliveryDisposition, "hold">;
   triggerEventIds: readonly string[];
   inputs: readonly PlayerInput[];
   facts: readonly WorldFact[];
-  /** Immutable delivery frame retained verbatim if the sink rejects it. */
-  serialized: string;
+  /** The presentation events, in delivery order - what `canonicalPresentationSource` reads. */
+  events: readonly NormalizedEvent[];
+  /** The exact model-facing text. Retained verbatim if the sink rejects it. */
+  text: string;
 }>;
 
-type NormalizedEvent = Readonly<{
+export type NormalizedEvent = Readonly<{
   eventId: string;
   occurredAtMs: number;
   source: string;
@@ -75,6 +89,8 @@ type NormalizedEvent = Readonly<{
   executionId?: string;
   requestId?: string;
   sourceEventId?: string;
+  /** The Mod's own semantic identity of a `world_fact`; the presentation lease is granted on it. */
+  semanticKind?: string;
   observedTick?: number;
   payload?: Readonly<Record<string, unknown>>;
   input?: PlayerInput;
@@ -210,6 +226,14 @@ export function deriveMaxBatchBytes(foldChunkTokens: number): number {
  */
 export const MAX_BATCH_BYTES = deriveMaxBatchBytes(HISTORIAN_CHUNK_FALLBACK_TOKENS);
 
+/**
+ * The language the brief is composed in when no player input rides the batch.
+ *
+ * Every block is Chinese (`fact-brief.ts`), and the shipped card, world book and player are Chinese: this names the
+ * absence of a player utterance, not a preference. A batch that does carry player input passes its own locale.
+ */
+const DEFAULT_BRIEF_LOCALE = "zh-CN";
+
 /** What the stall watch knows about one execution: when it last spoke, and what it said. */
 export type WatchedExecution = Readonly<{
   executionId: string;
@@ -258,12 +282,28 @@ export interface CompanionTurnSink {
    * Deliver one batch. The return value is how the turn ended; an adapter that cannot observe it returns
    * nothing, which callers must read as `unobserved` rather than as success.
    */
-  deliver(text: string, disposition: Exclude<DeliveryDisposition, "hold">): Promise<CompanionTurnOutcome | void>;
+  deliver(batch: PendingBatch): Promise<CompanionTurnOutcome | void>;
 }
 
 /** Product-neutral Host event pump. It forwards labelled facts; it never plans or interprets receipts. */
 export class CompanionEventPump {
+  /** The snapshot slot the next batch TAKES: consumed by `takeBatch`, so a batch carries a snapshot once. */
   #snapshot: WorldFact | undefined;
+  /**
+   * The world as LAST HEARD, for rendering `<world-state>` on every batch.
+   *
+   * <p>
+   * Written whenever a snapshot is admitted, and never cleared by `takeBatch`: the slot above is latest-wins and
+   * consumed, so measured `round44` carried a snapshot in only 102 of 109 batches and a block composed from it would
+   * be absent from the rest. This field is the vertical slice of state that answers "what world was she last told
+   * about", and nothing else reads it - the facts a batch delivers are unchanged.
+   * </p>
+   */
+  #lastSnapshot: WorldFact | undefined;
+  /** The snapshot revision the model has already been shown, so a re-statement cannot read as a fresh observation. */
+  #lastSnapshotDeliveredRevision: number | undefined;
+  /** `#deliveredBatches` when that revision was composed into a batch; the difference is the age `<world-state>` states. */
+  #lastSnapshotDeliveredBatch = 0;
   readonly #receipts = new Map<string, WorldFact>();
   readonly #semanticEvents = new Map<string, WorldFact>();
   readonly #lifecycle = new Map<string, WorldFact>();
@@ -319,6 +359,7 @@ export class CompanionEventPump {
     this.#observeExecutionProgress(frozen);
     if (fact.kind === "snapshot") {
       if (this.#snapshot === undefined || fact.revision >= this.#snapshot.revision) this.#snapshot = frozen;
+      if (this.#lastSnapshot === undefined || fact.revision >= this.#lastSnapshot.revision) this.#lastSnapshot = frozen;
       return;
     }
     // An execution that has SETTLED can publish no further progress, so its record is dead weight. Dropping
@@ -435,6 +476,9 @@ export class CompanionEventPump {
   public clear(): void {
     this.#generation++;
     this.#snapshot = undefined;
+    this.#lastSnapshot = undefined;
+    this.#lastSnapshotDeliveredRevision = undefined;
+    this.#lastSnapshotDeliveredBatch = 0;
     this.#receipts.clear();
     this.#semanticEvents.clear();
     this.#lifecycle.clear();
@@ -764,7 +808,7 @@ export class CompanionEventPump {
     const pending = this.#retryBatch ?? this.takeBatch();
     this.#retryBatch = undefined;
     try {
-      const outcome = (await sink.deliver(pending.serialized, pending.disposition)) ?? undefined;
+      const outcome = (await sink.deliver(pending)) ?? undefined;
       this.#deliveredBatches += 1;
       return outcome;
     } catch (error) {
@@ -803,7 +847,7 @@ export class CompanionEventPump {
     }
     const expiring = this.takeExpiringOnly();
     if (expiring === undefined) return false;
-    this.#steerInFlight = sink.deliver(expiring.serialized, "steer").then(
+    this.#steerInFlight = sink.deliver(expiring).then(
       () => true,
       () => false,
     );
@@ -850,27 +894,22 @@ export class CompanionEventPump {
       const { contextProjection: _contextProjection, ...factWithoutProjection } = fact;
       return Object.freeze({ ...factWithoutProjection, payload: projection });
     });
-    const events = deliveredFacts
-      .filter((fact) => fact.kind !== undefined)
-      .map((fact) => normalizeFact(fact))
-      .sort(compareEvents);
     const triggerEventIds = Object.freeze(expiring.map(factEventId));
-    const serialized = JSON.stringify({
-      kind: "gamebuddy_fact_batch",
-      batchId: randomUUID(),
-      disposition: "steer",
-      triggerEventIds,
-      playerInputs: Object.freeze([]),
-      worldFacts: deliveredFacts,
-      events,
-    });
     return Object.freeze({
       batchId: randomUUID(),
       disposition: "steer" as const,
       triggerEventIds,
       inputs: Object.freeze([]),
       facts: Object.freeze(deliveredFacts),
-      serialized,
+      events: Object.freeze([]),
+      // A steer states the world it is already carrying: the turn it joins has `<world-state>` from its own batch, and
+      // this one repeats the same reading rather than leaving the model with no state at all.
+      text: composeFactBrief({
+        inputs: [],
+        snapshot: this.#worldStateReading(false),
+        events: expiring,
+        locale: DEFAULT_BRIEF_LOCALE,
+      }),
     });
   }
 
@@ -928,6 +967,15 @@ export class CompanionEventPump {
     const batchId = randomUUID();
     const batchInputs = Object.freeze(inputs);
     const normalizedInputs = batchInputs.map((input) => normalizeInput(input));
+    // Whether this batch BROUGHT the observation, which is a different question from whether a reading exists: the
+    // Host re-states the last snapshot before every turn (`CompanionHostService.#restateWorldSnapshot`), so a batch
+    // almost always carries one - and a block that called every re-statement `刚刚更新` would be claiming a freshness
+    // nothing observed.
+    const broughtObservation =
+      snapshot !== undefined &&
+      (this.#lastSnapshotDeliveredRevision === undefined || snapshot.revision > this.#lastSnapshotDeliveredRevision);
+    const worldState = this.#worldStateReading(broughtObservation);
+    const locale = batchInputs.at(-1)?.locale ?? DEFAULT_BRIEF_LOCALE;
 
     // Fit the batch to MAX_BATCH_BYTES by dropping the OLDEST facts, and hand back whatever did not fit.
     //
@@ -945,22 +993,9 @@ export class CompanionEventPump {
         const { contextProjection: _contextProjection, ...factWithoutProjection } = fact;
         return Object.freeze({ ...factWithoutProjection, payload: projection });
       });
-      // `events` is the PRESENTATION projection, not a second copy of the facts.
-      //
-      // Its only production consumer is `canonicalPresentationSource`
-      // (`host/src/companion-loop.ts:537`), which reads exactly two things: `player_input` entries, and
-      // `world_fact` entries whose semantic kind is salient. Measured 2026-10-27: a 131KB batch carried 58KB
-      // of `worldFacts` and the SAME 58KB again under `events`, both 88 semantic events that consumer never
-      // looks at. `input` reached 466,568 tokens and the model answered `output: 1, stopReason: "length"`
-      // twelve times.
-      //
-      // What stays: the snapshot (it is the state the rest of the batch describes, and its bounded projection
-      // is already the model-facing form) and `world_fact`. What goes: `semantic_event` and
-      // `execution_receipt`, which the consumer never reads and which arrive in bulk.
-      //
-      // `worldFacts` is untouched and still carries every fact: that is the model-facing authoritative list.
-      // `triggerEventIds` is untouched: it is the Host's delivery correlation, and a fact still present in
-      // `worldFacts` must not lose its trigger identity.
+      // `events` is the PRESENTATION projection: the two kinds `canonicalPresentationSource`
+      // (`host/src/companion-loop.ts`) reads, plus the player inputs it attributes a turn to. A `semantic_event` or an
+      // `execution_receipt` in it would be a second copy of a fact nothing reads there.
       const presentationKinds = new Set(["snapshot", "world_fact"]);
       const events = [
         ...normalizedInputs,
@@ -968,25 +1003,17 @@ export class CompanionEventPump {
           .filter((fact) => fact.kind !== undefined && presentationKinds.has(fact.kind))
           .map((fact) => normalizeFact(fact)),
       ].sort(compareEvents);
-      const serialized = JSON.stringify({
-        kind: "gamebuddy_fact_batch",
-        batchId,
-        disposition,
-        triggerEventIds: Object.freeze([
-          ...inputs.map((input) => input.eventId ?? input.inputId),
-          ...triggersForBatch.map(factEventId),
-        ]),
-        playerInputs: batchInputs,
-        worldFacts: deliveredFacts,
-        events,
-      });
+      const text = composeFactBrief({ inputs: batchInputs, snapshot: worldState, events: batchFacts, locale });
+      const triggerEventIds = Object.freeze([
+        ...inputs.map((input) => input.eventId ?? input.inputId),
+        ...triggersForBatch.map(factEventId),
+      ]);
       return Object.freeze({
         batchFacts,
-        serialized,
-        triggerEventIds: Object.freeze([
-          ...inputs.map((input) => input.eventId ?? input.inputId),
-          ...triggersForBatch.map(factEventId),
-        ]),
+        deliveredFacts,
+        events,
+        triggerEventIds,
+        text,
       });
     };
 
@@ -995,7 +1022,7 @@ export class CompanionEventPump {
       chosen,
       chosen.filter((fact) => !isHeldFact(fact)),
     );
-    while (composed.serialized.length > MAX_BATCH_BYTES && chosen.length > 1) {
+    while (composed.text.length > MAX_BATCH_BYTES && chosen.length > 1) {
       chosen = chosen.slice(1);
       composed = compose(
         chosen,
@@ -1009,6 +1036,14 @@ export class CompanionEventPump {
     const dropped = facts.slice(0, facts.length - chosen.length);
     for (const fact of dropped) this.#readmit(fact);
 
+    // This batch was shown the observation, so the next one counts its age from here. Recorded at composition, not at
+    // acceptance: a rejected batch is retried with this exact text ("刚刚更新"), and the only error this can make is
+    // aging a reading too far - the safe direction for a block whose whole job is to not look fresher than it is.
+    if (broughtObservation && snapshot !== undefined) {
+      this.#lastSnapshotDeliveredRevision = snapshot.revision;
+      this.#lastSnapshotDeliveredBatch = this.#deliveredBatches;
+    }
+
     // Remember what the model was just told by each held progress slot. Recorded for what the batch actually
     // CARRIES: a fact the byte bound pushed into a later batch was not delivered and must still go out.
     for (const fact of composed.batchFacts) {
@@ -1021,8 +1056,26 @@ export class CompanionEventPump {
       disposition,
       triggerEventIds: composed.triggerEventIds,
       inputs: batchInputs,
-      facts: composed.batchFacts,
-      serialized: composed.serialized,
+      facts: composed.deliveredFacts,
+      events: composed.events,
+      text: composed.text,
+    });
+  }
+
+  /**
+   * The world as `<world-state>` states it: the last reading, its own revision, and how many delivered turns old it is.
+   *
+   * `broughtObservation` is the batch's fact, not this method's inference: a re-stated snapshot leaves the revision it
+   * already showed, and that is the difference between `刚刚更新` and `本轮无新观察`.
+   */
+  #worldStateReading(broughtObservation: boolean): WorldStateReading | undefined {
+    const fact = this.#lastSnapshot;
+    if (fact === undefined) return undefined;
+    const age = this.#deliveredBatches - this.#lastSnapshotDeliveredBatch;
+    return Object.freeze({
+      snapshot: fact.payload as unknown as Snapshot,
+      revision: fact.revision,
+      ageTurns: broughtObservation ? 0 : Math.max(1, age),
     });
   }
 

@@ -4,12 +4,7 @@ import test from "node:test";
 import { CompanionLoop } from "./companion-loop.js";
 import type { WorldFact } from "./event-pump.js";
 import { CompanionHostService } from "./host-service.js";
-import {
-  MAX_REMEMBERED_NATIVE_NOTICES,
-  NATIVE_NOTICE_SEMANTIC_KIND,
-  NATIVE_NOTICE_SOURCE,
-  NativeNoticeLedger,
-} from "./native-notice-fact.js";
+import { MAX_REMEMBERED_NATIVE_NOTICES, NATIVE_NOTICE_SOURCE, NativeNoticeLedger } from "./native-notice-fact.js";
 
 function reducedSession(sendUserMessage: (text: string) => Promise<void> | void) {
   return { sendUserMessage, async abort() {}, clearQueue() {}, async waitForIdle() {} };
@@ -92,10 +87,7 @@ const receiptFact = (
   },
 });
 
-const noticesIn = (batch: string): readonly Readonly<Record<string, unknown>>[] =>
-  (JSON.parse(batch) as { worldFacts: readonly Readonly<Record<string, unknown>>[] }).worldFacts.filter(
-    (fact) => fact.semanticKind === NATIVE_NOTICE_SEMANTIC_KIND,
-  );
+const noticesIn = (text: string): number => text.split("游戏里冒出个提示").length - 1;
 
 test("an idle companion learns the clock: a notice reaches the conversation once, as the game's words, with nothing in flight", async () => {
   const adapter = eventHarness();
@@ -123,21 +115,16 @@ test("an idle companion learns the clock: a notice reaches the conversation once
     await settle();
 
     assert.equal(delivered.length, 1, "the notice alone wakes the companion exactly one turn");
-    const batch = JSON.parse(delivered[0]!) as Readonly<Record<string, unknown>>;
-    assert.equal(batch.kind, "gamebuddy_fact_batch");
-    // Not shaped as the player speaking: the fact batch's player-input lane is empty, and the notice travels as a
-    // world fact of its own rather than as a receipt field or a player message.
-    assert.deepEqual(batch.playerInputs, [], "the notice is not player text");
-    const notices = noticesIn(delivered[0]!);
-    assert.equal(notices.length, 1, "the notice appears once, with its own identity");
-    const notice = notices[0]!;
-    const payload = notice.payload as Readonly<Record<string, unknown>>;
-    assert.equal(payload.notice, "It's getting late...", "the game's own words are quoted verbatim");
+    const text = delivered[0] ?? "";
+    // Not shaped as the player speaking: the batch carries no <player-note> block, and the notice travels as a world
+    // fact of its own rather than as a receipt field or a player message.
+    assert.doesNotMatch(text, /<player-note>/u, "the notice is not player text");
+    assert.equal(noticesIn(text), 1, "the notice appears once, with its own identity");
+    assert.match(text, /「It's getting late\.\.\.」/u, "the game's own words are quoted verbatim");
     // No imperative: the notice reports the hour and names who showed it - it never tells her what to do.
-    assert.equal(payload.text, "The game's own notice: It's getting late...");
-    assert.doesNotMatch(String(payload.text), /\b(go|head in|should|must|need to|bed|sleep)\b/iu);
+    assert.doesNotMatch(text, /\b(go|head in|should|must|need to|bed|sleep)\b/iu);
     // The whitelist is what lets her answer reach the chat: the notice opens its own presentation lease.
-    assert.deepEqual(opened, [String(notice.sourceEventId)]);
+    assert.equal(opened.length, 1, "the notice opens its own presentation lease");
     assert.match(opened[0]!, /^[A-Za-z0-9_-]{1,128}$/u);
   } finally {
     service.close();
@@ -172,7 +159,7 @@ test("one delivery per identity: a repeated notice is not re-announced, and the 
     adapter.emit(receiptFact("exec_late_4", "running", ["It's getting late..."]));
     await settle();
     assert.equal(delivered.length, 2, "the next night's identical line is delivered again");
-    assert.equal(noticesIn(delivered[1]!).length, 1);
+    assert.equal(noticesIn(delivered[1] ?? ""), 1);
 
     // A receipt that captured no notice adds nothing, which is the ordinary case for most actions.
     const before = delivered.length;

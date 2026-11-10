@@ -5,6 +5,7 @@ import {
   MAX_PENDING_RECEIPTS,
   MAX_PENDING_SEMANTIC_EVENTS,
   MAX_PENDING_WORLD_FACTS,
+  type PendingBatch,
   type WorldFact,
 } from "./event-pump.js";
 
@@ -26,9 +27,8 @@ function worldFact(eventId: string, observedTick: number): WorldFact {
 async function deliverWorldFactIds(pump: CompanionEventPump): Promise<string[]> {
   const delivered: string[] = [];
   await pump.flush({
-    async deliver(text) {
-      const batch = JSON.parse(text) as { worldFacts: Array<{ eventId?: string }> };
-      for (const fact of batch.worldFacts) {
+    async deliver(batch) {
+      for (const fact of batch.facts) {
         if (fact.eventId !== undefined) delivered.push(fact.eventId);
       }
     },
@@ -66,7 +66,7 @@ test("a settled programme is news: the digest alone asks for a turn", async () =
 
 test("event pump steers player input and attaches the latest snapshot", async () => {
   const pump = new CompanionEventPump();
-  const delivered: Array<{ text: string; disposition: string }> = [];
+  const delivered: PendingBatch[] = [];
   pump.enqueueFact({
     source: "stardew_mod",
     kind: "snapshot",
@@ -89,31 +89,25 @@ test("event pump steers player input and attaches the latest snapshot", async ()
     timestampMs: 1,
   });
   await pump.flush({
-    async deliver(text, disposition) {
-      delivered.push({ text, disposition });
+    async deliver(batch) {
+      delivered.push(batch);
     },
   });
   assert.equal(delivered[0]?.disposition, "steer");
-  const batch = JSON.parse(delivered[0]?.text ?? "{}") as {
-    disposition: string;
-    triggerEventIds: string[];
-    playerInputs: Array<{ text: string }>;
-    worldFacts: Array<{ revision: number }>;
-  };
-  assert.equal(batch.disposition, "steer");
+  const batch = delivered[0]!;
   assert.deepEqual(batch.triggerEventIds, ["voice_1"]);
   assert.deepEqual(
-    batch.playerInputs.map((input) => input.text),
+    batch.inputs.map((input) => input.text),
     ["去镇上"],
   );
   assert.deepEqual(
-    batch.worldFacts.map((fact) => fact.revision),
+    batch.facts.map((fact) => fact.revision),
     [2],
   );
   assert.equal(pump.pendingCount, 0);
 });
 
-test("event pump serializes a bounded context projection without replacing authoritative fact payload", async () => {
+test("event pump delivers a bounded context projection without replacing authoritative fact payload", async () => {
   const pump = new CompanionEventPump();
   const authoritativePayload = { revision: 7, activeExecution: { requestId: "request_secret" } };
   const contextProjection = Object.freeze({
@@ -132,26 +126,23 @@ test("event pump serializes a bounded context projection without replacing autho
   });
   pump.enqueuePlayerInput({ source: "player_text", inputId: "input", text: "继续", locale: "zh-CN", timestampMs: 1 });
 
-  const delivered: string[] = [];
+  const delivered: PendingBatch[] = [];
   await pump.flush({
-    async deliver(text) {
-      delivered.push(text);
+    async deliver(batch) {
+      delivered.push(batch);
     },
   });
 
-  const batch = JSON.parse(delivered[0] ?? "{}") as {
-    worldFacts: Array<{ payload: Record<string, unknown> }>;
-    events: Array<{ payload: Record<string, unknown> }>;
-  };
-  assert.deepEqual(batch.worldFacts[0]?.payload, contextProjection);
-  assert.deepEqual(batch.events.find((event) => event.payload.schema !== undefined)?.payload, contextProjection);
-  assert.equal(JSON.stringify(batch).includes("request_secret"), false);
-  assert.equal("contextProjection" in (batch.worldFacts[0] ?? {}), false);
+  const batch = delivered[0]!;
+  assert.deepEqual(batch.facts[0]?.payload, contextProjection);
+  assert.deepEqual(batch.events.find((event) => event.payload?.schema !== undefined)?.payload, contextProjection);
+  assert.equal(batch.text.includes("request_secret"), false, "the model-facing text never carries the raw payload");
+  assert.equal("contextProjection" in (batch.facts[0] ?? {}), false);
 });
 
 test("event pump holds snapshot and meaningful progress until an ordinary trigger arrives", async () => {
   const pump = new CompanionEventPump();
-  const delivered: Array<{ text: string; disposition: string }> = [];
+  const delivered: PendingBatch[] = [];
   pump.enqueueFact({
     source: "stardew_mod",
     kind: "snapshot",
@@ -167,8 +158,8 @@ test("event pump holds snapshot and meaningful progress until an ordinary trigge
     payload: { state: "running" },
   });
   await pump.flush({
-    async deliver(text, disposition) {
-      delivered.push({ text, disposition });
+    async deliver(batch) {
+      delivered.push(batch);
     },
   });
   assert.equal(delivered.length, 0);
@@ -182,18 +173,15 @@ test("event pump holds snapshot and meaningful progress until an ordinary trigge
     payload: { kind: "location_changed" },
   });
   await pump.flush({
-    async deliver(text, disposition) {
-      delivered.push({ text, disposition });
+    async deliver(batch) {
+      delivered.push(batch);
     },
   });
   assert.equal(delivered[0]?.disposition, "follow_up");
-  const batch = JSON.parse(delivered[0]?.text ?? "{}") as {
-    triggerEventIds: string[];
-    worldFacts: Array<{ kind: string; payload: { state?: string }; revision: number }>;
-  };
+  const batch = delivered[0]!;
   assert.deepEqual(batch.triggerEventIds, ["event_1"]);
   assert.deepEqual(
-    batch.worldFacts.map((fact) => [fact.kind, fact.payload.state ?? "", fact.revision]),
+    batch.facts.map((fact) => [fact.kind, fact.payload.state ?? "", fact.revision]),
     [
       ["snapshot", "", 4],
       ["execution_receipt", "running", 4],
@@ -227,16 +215,15 @@ test("event pump follows up ordinary facts and preserves an exact failed batch r
       }),
     /sink_down/,
   );
-  const delivered: Array<{ text: string; disposition: string }> = [];
+  const delivered: PendingBatch[] = [];
   await pump.flush({
-    async deliver(text, disposition) {
-      delivered.push({ text, disposition });
+    async deliver(batch) {
+      delivered.push(batch);
     },
   });
   assert.equal(delivered[0]?.disposition, "follow_up");
-  const batch = JSON.parse(delivered[0]?.text ?? "{}") as { worldFacts: Array<{ correlationId: string }> };
   assert.deepEqual(
-    batch.worldFacts.map((item) => item.correlationId),
+    delivered[0]?.facts.map((item) => item.correlationId),
     ["execution_a", "execution_b"],
   );
 });
@@ -267,7 +254,7 @@ test("only a delivery a turn accepted ages the state the Host re-states", async 
   assert.equal(pump.deliveredBatches, 1);
 });
 
-test("event pump retries the exact serialized batch without replaying a newer or mutated payload", async () => {
+test("event pump retries the exact composed text without replaying a newer or mutated payload", async () => {
   const pump = new CompanionEventPump();
   const payload = { nested: { value: "original" } };
   pump.enqueueFact({ source: "stardew_mod", kind: "snapshot", correlationId: "s", revision: 1, payload });
@@ -276,8 +263,8 @@ test("event pump retries the exact serialized batch without replaying a newer or
   await assert.rejects(
     () =>
       pump.flush({
-        async deliver(text) {
-          firstFrame = text;
+        async deliver(batch) {
+          firstFrame = batch.text;
           payload.nested.value = "mutated";
           throw new Error("down");
         },
@@ -285,13 +272,13 @@ test("event pump retries the exact serialized batch without replaying a newer or
     /down/,
   );
   pump.enqueueFact({ source: "stardew_mod", kind: "snapshot", correlationId: "s", revision: 2, payload: {} });
-  const delivered: string[] = [];
+  const delivered: PendingBatch[] = [];
   await pump.flush({
-    async deliver(text) {
-      delivered.push(text);
+    async deliver(batch) {
+      delivered.push(batch);
     },
   });
-  assert.equal(delivered[0], firstFrame);
+  assert.equal(delivered[0]?.text, firstFrame);
   // A later held snapshot must wait for a new trigger; it must not be replayed
   // into the frozen retry batch nor manufacture a Pi turn by itself.
   pump.enqueuePlayerInput({
@@ -302,18 +289,19 @@ test("event pump retries the exact serialized batch without replaying a newer or
     timestampMs: 2,
   });
   await pump.flush({
-    async deliver(text) {
-      delivered.push(text);
+    async deliver(batch) {
+      delivered.push(batch);
     },
   });
-  const batches = delivered.map(
-    (text) => JSON.parse(text) as { worldFacts: { revision: number; payload: { nested?: { value: string } } }[] },
-  );
   assert.deepEqual(
-    batches.map((batch) => batch.worldFacts.map((fact) => fact.revision)),
+    delivered.map((batch) => batch.facts.map((fact) => fact.revision)),
     [[1], [2]],
   );
-  assert.equal(batches[0]?.worldFacts[0]?.payload.nested?.value, "original");
+  assert.equal(
+    delivered[0]?.text,
+    firstFrame,
+    "the retried message is the exact text composed before the caller mutated its own payload object",
+  );
 });
 
 test("event pump clear revokes an in-flight rejected delivery without retrying it", async () => {
@@ -389,20 +377,18 @@ test("event pump clear revokes an in-flight rejected fact delivery and preserves
   rejectDelivery?.(new Error("sink_down"));
   await assert.rejects(() => inFlight, /sink_down/);
 
-  const delivered: string[] = [];
+  const delivered: PendingBatch[] = [];
   await pump.flush({
-    async deliver(text) {
+    async deliver(batch) {
       deliveries++;
-      delivered.push(text);
+      delivered.push(batch);
     },
   });
 
   assert.equal(deliveries, 2);
-  const batch = JSON.parse(delivered[0] ?? "{}") as {
-    worldFacts: Array<{ eventId: string; payload: { value: string } }>;
-  };
+  const batch = delivered[0]!;
   assert.deepEqual(
-    batch.worldFacts.map((fact) => [fact.eventId, fact.payload.value]),
+    batch.facts.map((fact) => [fact.eventId, fact.payload.value]),
     [["fresh_event", "fresh"]],
   );
   assert.equal(pump.pendingCount, 0);
@@ -437,17 +423,16 @@ test("event pump follows up a blocked terminal receipt without waiting for an un
     revision: 1,
     payload: { state: "blocked", reasonCode: "precondition_failed" },
   });
-  const delivered: Array<{ text: string; disposition: string }> = [];
+  const delivered: PendingBatch[] = [];
   await pump.flush({
-    async deliver(text, disposition) {
-      delivered.push({ text, disposition });
+    async deliver(batch) {
+      delivered.push(batch);
     },
   });
   assert.equal(delivered.length, 1);
   assert.equal(delivered[0]?.disposition, "follow_up");
-  const batch = JSON.parse(delivered[0]?.text ?? "{}") as { worldFacts: Array<{ payload: { state?: string } }> };
   assert.deepEqual(
-    batch.worldFacts.map((fact) => fact.payload.state),
+    delivered[0]?.facts.map((fact) => fact.payload.state),
     ["blocked"],
   );
 });
@@ -677,30 +662,27 @@ test("event pump delivers an npc_dialogue_presented world fact to the Agent's co
   // correlation is still one fact; only the Host's world-fact key decides identity.
   pump.enqueueFact({ ...fact, correlationId: "transport_retry" });
 
-  const delivered: string[] = [];
+  const delivered: PendingBatch[] = [];
   await pump.flush({
-    async deliver(text) {
-      delivered.push(text);
+    async deliver(batch) {
+      delivered.push(batch);
     },
   });
 
   assert.equal(delivered.length, 1);
-  const batch = JSON.parse(delivered[0] ?? "{}") as {
-    triggerEventIds: string[];
-    worldFacts: Array<{ semanticKind?: string; payload: Record<string, unknown> }>;
-    events: Array<{ kind: string; semanticKind?: string; payload: Record<string, unknown> }>;
-  };
+  const batch = delivered[0]!;
   assert.deepEqual(batch.triggerEventIds, ["npc_dialogue_marnie_7"]);
-  // The Mod's payload IS the model-facing text: the Host keeps the readable
+  // The Mod's payload IS the model-facing content: the Host keeps the readable
   // speaker/pages/isQuestion/choices verbatim and adds no reinterpretation, so
   // these assertions are on agent-visible content, not on an internal code.
-  const worldFact = batch.worldFacts.find((candidate) => candidate.semanticKind === "npc_dialogue_presented");
+  const worldFact = batch.facts.find((candidate) => candidate.semanticKind === "npc_dialogue_presented");
   assert.deepEqual(worldFact?.payload, payload);
   assert.equal("contextProjection" in (worldFact ?? {}), false);
+  assert.match(batch.text, /Marnie说：「早安，今天也要加油哦。 你这阵子都没来看我。」/u);
   const event = batch.events.find((candidate) => candidate.semanticKind === "npc_dialogue_presented");
   assert.equal(event?.kind, "world_fact");
-  assert.equal(event?.payload.speaker, "Marnie");
-  assert.deepEqual(event?.payload.pages, ["早安，今天也要加油哦。", "你这阵子都没来看我。"]);
+  assert.equal(event?.payload?.speaker, "Marnie");
+  assert.deepEqual(event?.payload?.pages, ["早安，今天也要加油哦。", "你这阵子都没来看我。"]);
 });
 
 test("a body owned by a world transition holds the facts until the day starts", async () => {
@@ -720,8 +702,8 @@ test("a body owned by a world transition holds the facts until the day starts", 
   });
   const delivered: string[] = [];
   const sink = {
-    async deliver(text: string) {
-      delivered.push(text);
+    async deliver(batch: PendingBatch) {
+      delivered.push(batch.text);
     },
   };
 
@@ -757,7 +739,7 @@ test("a body owned by a world transition holds the facts until the day starts", 
 
   await pump.flush(sink);
   assert.equal(delivered.length, 1, "everything she missed arrives together, with the fact that explains the new day");
-  assert.match(delivered[0] ?? "", /night_ended_pass_out/u, "including the pass-out she was never awake for");
+  assert.match(delivered[0] ?? "", /夜里没撑住/u, "including the pass-out she was never awake for");
   assert.match(delivered[0] ?? "", /day_started/u, "and the new day");
 });
 
@@ -790,9 +772,8 @@ test("a time milestone steers into a running turn while flush is blocked by it",
   const delivered: Array<{ disposition: string; kinds: string[] }> = [];
   let releaseFirst: () => void = () => undefined;
   const runningTurn = pump.flush({
-    async deliver(text, disposition) {
-      const parsed = JSON.parse(text) as { worldFacts: Array<{ semanticKind?: string }> };
-      delivered.push({ disposition, kinds: parsed.worldFacts.map((fact) => fact.semanticKind ?? "?") });
+    async deliver(batch) {
+      delivered.push({ disposition: batch.disposition, kinds: batch.facts.map((fact) => fact.semanticKind ?? "?") });
       await new Promise<void>((resolve) => {
         releaseFirst = resolve;
       });
@@ -804,9 +785,8 @@ test("a time milestone steers into a running turn while flush is blocked by it",
   // The milestone arrives mid-turn. `flush` cannot carry it - it is already delivering - so `steer` does.
   pump.enqueueFact(milestone("1200"));
   const steered = await pump.steer({
-    async deliver(text, disposition) {
-      const parsed = JSON.parse(text) as { worldFacts: Array<{ semanticKind?: string }> };
-      delivered.push({ disposition, kinds: parsed.worldFacts.map((fact) => fact.semanticKind ?? "?") });
+    async deliver(batch) {
+      delivered.push({ disposition: batch.disposition, kinds: batch.facts.map((fact) => fact.semanticKind ?? "?") });
     },
   });
 
@@ -835,8 +815,8 @@ test("flush never steers, whatever is pending: a steer is not a turn", async () 
 
   const dispositions: string[] = [];
   await pump.flush({
-    async deliver(_text, disposition) {
-      dispositions.push(disposition);
+    async deliver(batch) {
+      dispositions.push(batch.disposition);
     },
   });
 

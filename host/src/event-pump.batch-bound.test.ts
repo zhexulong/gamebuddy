@@ -5,7 +5,9 @@ import {
   FACT_BATCH_CHARS_PER_TOKEN_MIN,
   FACT_BATCH_SHARE_OF_CHUNK,
   MAX_BATCH_BYTES,
+  MAX_PENDING_WORLD_FACTS,
   deriveMaxBatchBytes,
+  type PendingBatch,
 } from "./event-pump.js";
 
 /**
@@ -21,35 +23,42 @@ import {
  * They do not bound the SIZE: 685 facts of roughly 700 bytes each sits comfortably inside those windows
  * and is still a megabyte.
  *
- * The invariant: one delivery carries at most MAX_BATCH_BYTES characters, and whatever does not fit is
- * delivered LATER rather than dropped.
+ * The invariant: one delivery carries at most MAX_BATCH_BYTES characters of MODEL-FACING TEXT, and whatever
+ * does not fit is delivered LATER rather than dropped. The lever below is prose that renders in full - a dialogue
+ * line quotes the Mod's pages verbatim - because a receipt line, a target family or a `<world-facts>` row is already
+ * bounded where the sentences are composed.
  */
 test("a batch is bounded by bytes, and the overflow is delivered in a later batch", async () => {
   const pump = new CompanionEventPump();
-  const delivered: string[] = [];
+  const delivered: PendingBatch[] = [];
   const sink = {
-    async deliver(text: string): Promise<void> {
-      delivered.push(text);
+    async deliver(batch: PendingBatch): Promise<void> {
+      delivered.push(batch);
     },
   };
 
-  // 300 receipts of ~900 bytes is ~270k of payload: well inside the 512-entry window, well over any
-  // sane byte bound. This fails on SIZE, not on the count limit that already existed.
-  const padding = "x".repeat(900);
-  for (let index = 0; index < 300; index += 1) {
+  // 30 dialogues of ~1,340 rendered characters is far over any sane byte bound, and the `<world-facts>` line cap does
+  // not save it: the composer names at most 24 rows, which is already ~32k. Inside the 30-entry world-fact window, so
+  // this fails on SIZE, not on the count limit that already existed.
+  const page = "今天天气不错，要不要一起去山里走走？".repeat(70);
+  for (let index = 0; index < MAX_PENDING_WORLD_FACTS - 2; index += 1) {
     pump.enqueueFact({
       source: "stardew_mod",
-      kind: "execution_receipt",
-      correlationId: `receipt_${String(index)}`,
+      kind: "world_fact",
+      eventId: `npc_dialogue_${String(index)}`,
+      sourceEventId: `npc_dialogue_${String(index)}`,
+      correlationId: `npc_dialogue_${String(index)}`,
       revision: index,
-      payload: { detail: padding, index },
+      observedTick: index,
+      semanticKind: "npc_dialogue_presented",
+      payload: { speaker: "Marnie", pages: [page], choices: [] },
     });
   }
 
   await pump.flush(sink);
 
   assert.equal(delivered.length, 1, "one flush delivers one batch");
-  const first = delivered[0] ?? "";
+  const first = delivered[0]?.text ?? "";
   assert.ok(
     first.length <= MAX_BATCH_BYTES,
     `the first batch is ${String(first.length)} characters, over the ${String(MAX_BATCH_BYTES)} bound`,
@@ -68,19 +77,18 @@ test("a batch is bounded by bytes, and the overflow is delivered in a later batc
   assert.ok(guard < 100, "the pump drained within a bounded number of batches");
 
   const seen = new Set<string>();
-  for (const text of delivered) {
-    const batch = JSON.parse(text) as { worldFacts: Array<{ correlationId: string }> };
-    for (const fact of batch.worldFacts) seen.add(fact.correlationId);
+  for (const batch of delivered) {
+    for (const fact of batch.facts) if (fact.correlationId !== undefined) seen.add(fact.correlationId);
   }
-  assert.equal(seen.size, 300, "every enqueued fact must be delivered exactly once");
+  assert.equal(seen.size, MAX_PENDING_WORLD_FACTS - 2, "every enqueued fact must be delivered exactly once");
 });
 
 test("a batch of ordinary size is not split", async () => {
   const pump = new CompanionEventPump();
-  const delivered: string[] = [];
+  const delivered: PendingBatch[] = [];
   const sink = {
-    async deliver(text: string): Promise<void> {
-      delivered.push(text);
+    async deliver(batch: PendingBatch): Promise<void> {
+      delivered.push(batch);
     },
   };
   for (let index = 0; index < 5; index += 1) {
@@ -103,10 +111,10 @@ test("the snapshot is never separated from the batch that triggers it", async ()
   // A snapshot is the world the rest of the batch describes. Splitting it off would make the delivered
   // facts describe a state the model cannot see.
   const pump = new CompanionEventPump();
-  const delivered: string[] = [];
+  const delivered: PendingBatch[] = [];
   const sink = {
-    async deliver(text: string): Promise<void> {
-      delivered.push(text);
+    async deliver(batch: PendingBatch): Promise<void> {
+      delivered.push(batch);
     },
   };
   pump.enqueueFact({
@@ -128,9 +136,9 @@ test("the snapshot is never separated from the batch that triggers it", async ()
 
   await pump.flush(sink);
 
-  const first = JSON.parse(delivered[0] ?? "{}") as { worldFacts: Array<{ kind: string }> };
+  const first = delivered[0]!;
   assert.ok(
-    first.worldFacts.some((fact) => fact.kind === "snapshot"),
+    first.facts.some((fact) => fact.kind === "snapshot"),
     "the snapshot belongs to the batch it was captured for",
   );
 });

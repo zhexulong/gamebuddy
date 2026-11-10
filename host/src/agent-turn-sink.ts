@@ -1,27 +1,18 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import type { CompanionTurnSink, DeliveryDisposition } from "./event-pump.js";
+import type { CompanionTurnSink, PendingBatch } from "./event-pump.js";
 
 /**
- * A deliberately thin ordinary-turn adapter. It passes source-labelled batches
+ * A deliberately thin ordinary-turn adapter. It passes the composed batch text
  * unchanged to Pi; it is not a planner and does not synthesize world facts.
+ *
+ * The text is the whole message: `composeFactBrief`'s four prose blocks. What this sink used to do - parse a JSON
+ * envelope to prove it was a fact batch - is now a property of the type it is handed, so the only translation left is
+ * the disposition, which Pi spells differently ("followUp").
  */
 export function createAgentTurnSink(session: Pick<AgentSession, "sendUserMessage">): CompanionTurnSink {
   return Object.freeze({
-    async deliver(text: string, disposition: Exclude<DeliveryDisposition, "hold">): Promise<void> {
-      const batch: unknown = JSON.parse(text);
-      if (
-        typeof batch !== "object" ||
-        batch === null ||
-        (batch as { kind?: unknown }).kind !== "gamebuddy_fact_batch" ||
-        !isDeliveryDisposition((batch as { disposition?: unknown }).disposition) ||
-        (batch as { disposition: DeliveryDisposition }).disposition !== disposition
-      )
-        throw new Error("invalid_agent_fact_batch");
-      await session.sendUserMessage(text, { deliverAs: disposition === "steer" ? "steer" : "followUp" });
+    async deliver(batch: PendingBatch): Promise<void> {
+      await session.sendUserMessage(batch.text, { deliverAs: batch.disposition === "steer" ? "steer" : "followUp" });
     },
   });
-}
-
-function isDeliveryDisposition(value: unknown): value is Exclude<DeliveryDisposition, "hold"> {
-  return value === "steer" || value === "follow_up";
 }

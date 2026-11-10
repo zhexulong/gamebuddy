@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { CompanionEventPump } from "./event-pump.js";
+import { CompanionEventPump, type PendingBatch } from "./event-pump.js";
 import {
   createProgramSettlementReporter,
   MAX_SETTLED_DIGEST_NODES,
@@ -79,18 +79,15 @@ test("a settled program reaches the pump as one ledger entry, and opens a turn o
   });
   assert.equal(outcome, "settled");
   assert.equal(pump.hasPendingDelivery, true, "an outcome is news, so it opens the next turn itself");
-  const batches: string[] = [];
+  const batches: PendingBatch[] = [];
   await pump.flush({
-    deliver: async (text) => {
-      batches.push(text);
+    deliver: async (batch) => {
+      batches.push(batch);
     },
   });
   assert.equal(batches.length, 1);
-  const batch = JSON.parse(batches[0] ?? "{}") as Readonly<{
-    worldFacts: readonly Readonly<{ eventId?: string; payload: Readonly<Record<string, unknown>> }>[];
-    triggerEventIds: readonly string[];
-  }>;
-  const digest = batch.worldFacts.find((fact) => fact.eventId === "program_settled_plan_1");
+  const batch = batches[0]!;
+  const digest = batch.facts.find((fact) => fact.eventId === "program_settled_plan_1");
   assert.ok(digest !== undefined, "the batch carries the settled digest");
   assert.equal(digest.payload.programId, "plan_1");
   assert.equal(digest.payload.settledAtMs, 4_242);
@@ -105,6 +102,7 @@ test("a settled program reaches the pump as one ledger entry, and opens a turn o
     [0, 1],
   );
   assert.equal(batch.triggerEventIds.includes("program_settled_plan_1"), true);
+  assert.match(batch.text, /2\/2 步做成了/u, "and the model reads the settlement as one sentence");
 });
 
 test("the digest is minted exactly once per program, and never for a program that has not stopped", async () => {
@@ -212,21 +210,19 @@ test("a refused move's reachability hint reaches the digest row and the text the
       { nodeId: "n01", state: "failed", failureCode: "no_native_path", hint: "closest=49,14;closest_distance=1" },
     ]),
   });
-  const batches: string[] = [];
+  const batches: PendingBatch[] = [];
   await pump.flush({
-    deliver: async (text) => {
-      batches.push(text);
+    deliver: async (batch) => {
+      batches.push(batch);
     },
   });
-  const text = batches[0] ?? "";
-  assert.match(text, /"hint":"closest=49,14;closest_distance=1"/u, "the batch the model reads carries the hint");
+  const text = batches[0]?.text ?? "";
+  assert.match(text, /closest=49,14;closest_distance=1/u, "the batch the model reads carries the hint");
   const row = (
-    JSON.parse(text) as Readonly<{
-      worldFacts: readonly Readonly<{
-        payload: Readonly<{ nodes: readonly Readonly<Record<string, unknown>>[] }>;
-      }>[];
+    batches[0]?.facts[0]?.payload as Readonly<{
+      nodes: readonly Readonly<Record<string, unknown>>[];
     }>
-  ).worldFacts[0]?.payload.nodes[0];
+  ).nodes[0];
   assert.deepEqual(row, {
     index: 0,
     actionId: "move_to_tile",
@@ -406,22 +402,20 @@ test("a refused shop purchase reaches the model with the reason the counter gave
     ]),
   });
   assert.ok(reported !== undefined, "a failed plan is still a settled plan, and owes a ledger");
-  const batches: string[] = [];
+  const batches: PendingBatch[] = [];
   await pump.flush({
-    deliver: async (text) => {
-      batches.push(text);
+    deliver: async (batch) => {
+      batches.push(batch);
     },
   });
-  const text = batches[0] ?? "";
+  const text = batches[0]?.text ?? "";
   assert.match(text, /shop_counter_out_of_reach/u, "the reason code still arrives");
   assert.match(text, /owner_tile=4,17;actor_tile=4,19;radius=1/u, "and so does the sentence that makes it actionable");
   const row = (
-    JSON.parse(text) as Readonly<{
-      worldFacts: readonly Readonly<{
-        payload: Readonly<{ nodes: readonly Readonly<Record<string, unknown>>[] }>;
-      }>[];
+    batches[0]?.facts[0]?.payload as Readonly<{
+      nodes: readonly Readonly<Record<string, unknown>>[];
     }>
-  ).worldFacts[0]?.payload.nodes[0];
+  ).nodes[0];
   assert.equal(row?.reasonDetail, detail, "carried verbatim, never re-rendered");
   assert.equal("tile" in (row as object), false, "`shop_purchase` names no tile, so the row invents none");
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CompanionEventPump } from "./event-pump.js";
+import { CompanionEventPump, type PendingBatch } from "./event-pump.js";
 import {
   type BridgeMessage,
   type Envelope,
@@ -256,19 +256,16 @@ test("event pump keeps one world fact per stable eventId even when the transport
   });
   assert.equal(pump.pendingCount, 1);
 
-  const delivered: Array<{ text: string }> = [];
+  const delivered: PendingBatch[] = [];
   await pump.flush({
-    async deliver(text) {
-      delivered.push({ text });
+    async deliver(batch) {
+      delivered.push(batch);
     },
   });
-  const batch = JSON.parse(delivered[0]?.text ?? "{}") as {
-    worldFacts: Array<{ eventId: string; revision: number }>;
-    events: Array<{ eventId: string; revision: number }>;
-  };
-  assert.equal(batch.worldFacts.length, 1);
-  assert.equal(batch.worldFacts[0]?.eventId, eventId);
-  assert.equal(batch.worldFacts[0]?.revision, 2);
+  const batch = delivered[0]!;
+  assert.equal(batch.facts.length, 1);
+  assert.equal(batch.facts[0]?.eventId, eventId);
+  assert.equal(batch.facts[0]?.revision, 2);
   assert.deepEqual(
     batch.events.map((entry) => entry.eventId),
     [eventId],
@@ -429,20 +426,17 @@ test("event pump sorts world facts deterministically by observedTick -> revision
     payload: { name: "d1" },
   });
 
-  const delivered: Array<{ text: string; disposition: string }> = [];
+  const delivered: PendingBatch[] = [];
   await pump.flush({
-    async deliver(text, disposition) {
-      delivered.push({ text, disposition });
+    async deliver(batch) {
+      delivered.push(batch);
     },
   });
 
   assert.equal(delivered.length, 1);
   assert.equal(delivered[0]?.disposition, "follow_up");
 
-  const batch = JSON.parse(delivered[0]?.text ?? "{}") as {
-    worldFacts: Array<{ eventId: string; observedTick: number; revision: number }>;
-    events: Array<{ eventId: string; observedTick?: number; revision: number }>;
-  };
+  const batch = delivered[0]!;
 
   const expectedEventIds = [
     "fact_a", // tick 100
@@ -454,7 +448,7 @@ test("event pump sorts world facts deterministically by observedTick -> revision
   ];
 
   assert.deepEqual(
-    batch.worldFacts.map((f) => f.eventId),
+    batch.facts.map((f) => f.eventId),
     expectedEventIds,
   );
   assert.deepEqual(
@@ -506,24 +500,21 @@ test("world-only fact triggers follow_up disposition and held snapshot/progress 
   });
   assert.equal(pump.hasPendingDelivery, true);
 
-  const deliveries: Array<{ text: string; disposition: string }> = [];
+  const deliveries: PendingBatch[] = [];
   await pump.flush({
-    async deliver(text, disposition) {
-      deliveries.push({ text, disposition });
+    async deliver(batch) {
+      deliveries.push(batch);
     },
   });
 
   assert.equal(deliveries.length, 1);
   assert.equal(deliveries[0]?.disposition, "follow_up");
 
-  const batch = JSON.parse(deliveries[0]?.text ?? "{}") as {
-    triggerEventIds: string[];
-    worldFacts: Array<{ kind: string }>;
-  };
+  const batch = deliveries[0]!;
 
   assert.deepEqual(batch.triggerEventIds, ["day_started_day_1"]);
   assert.deepEqual(
-    batch.worldFacts.map((f) => f.kind),
+    batch.facts.map((f) => f.kind),
     ["snapshot", "execution_receipt", "world_fact"],
   );
   assert.equal(pump.pendingCount, 0);
@@ -550,10 +541,10 @@ test("player input elevates batch disposition to steer with world facts present"
     timestampMs: baseTimestampMs,
   });
 
-  const deliveries: Array<{ text: string; disposition: string }> = [];
+  const deliveries: PendingBatch[] = [];
   await pump.flush({
-    async deliver(text, disposition) {
-      deliveries.push({ text, disposition });
+    async deliver(batch) {
+      deliveries.push(batch);
     },
   });
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CompanionEventPump, type WorldFact } from "./event-pump.js";
+import { CompanionEventPump, type PendingBatch, type WorldFact } from "./event-pump.js";
 
 /**
  * A held PROGRESS fact that has not changed says nothing the model does not already have.
@@ -20,10 +20,8 @@ import { CompanionEventPump, type WorldFact } from "./event-pump.js";
 /** The three semantic kinds the pump treats as progress (`isProgressSemanticEvent`). */
 const PROGRESS_KINDS = ["execution_started", "route_progress", "body_idle"];
 
-interface DeliveredBatch {
-  readonly text: string;
-  readonly worldFacts: ReadonlyArray<Readonly<{ kind: string; payload: Readonly<Record<string, unknown>> }>>;
-}
+/** The two things these tests read off a delivered batch: its text, and the facts it carries. */
+type DeliveredBatch = Pick<PendingBatch, "text" | "facts">;
 
 /** One re-observation of a state that has not changed: same tile, same body, new counters. */
 function routeProgress(executionId: string, tile: { x: number; y: number }, tick: number): WorldFact {
@@ -93,10 +91,8 @@ function ordinaryTick(index: number): WorldFact {
   };
 }
 
-function progressFactsOf(
-  batch: DeliveredBatch,
-): ReadonlyArray<Readonly<{ payload: Readonly<Record<string, unknown>> }>> {
-  return batch.worldFacts.filter(
+function progressFactsOf(batch: DeliveredBatch): readonly WorldFact[] {
+  return batch.facts.filter(
     (fact) => fact.kind === "semantic_event" && PROGRESS_KINDS.includes(String(fact.payload.kind)),
   );
 }
@@ -104,9 +100,8 @@ function progressFactsOf(
 async function collect(pump: CompanionEventPump): Promise<DeliveredBatch[]> {
   const batches: DeliveredBatch[] = [];
   await pump.flush({
-    async deliver(text) {
-      const parsed = JSON.parse(text) as Omit<DeliveredBatch, "text">;
-      batches.push({ text, worldFacts: parsed.worldFacts });
+    async deliver(batch) {
+      batches.push(batch);
     },
   });
   return batches;
@@ -136,7 +131,7 @@ test("an unchanged held progress fact is delivered once, not in every later batc
   );
   // The ordinary fact is never suppressed: it is not progress, so nothing here may touch it.
   assert.equal(
-    delivered.every((batch) => batch.worldFacts.length > 0),
+    delivered.every((batch) => batch.facts.length > 0),
     true,
   );
 });
@@ -197,7 +192,7 @@ test("a nonterminal progress receipt is held until its state changes", async () 
   delivered.push(...(await collect(pump)));
 
   assert.deepEqual(
-    delivered.map((batch) => batch.worldFacts.filter((fact) => fact.kind === "execution_receipt").length),
+    delivered.map((batch) => batch.facts.filter((fact) => fact.kind === "execution_receipt").length),
     [1, 0, 0, 1],
   );
 });
@@ -220,7 +215,7 @@ test("the snapshot keeps riding every batch: only PROGRESS facts are held once",
     delivered.push(...(await collect(pump)));
   }
   assert.deepEqual(
-    delivered.map((batch) => batch.worldFacts.filter((fact) => fact.kind === "snapshot").length),
+    delivered.map((batch) => batch.facts.filter((fact) => fact.kind === "snapshot").length),
     [1, 1, 1],
   );
 });

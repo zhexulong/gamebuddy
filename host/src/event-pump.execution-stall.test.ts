@@ -40,14 +40,10 @@ function receipt(state: string, executionId: string, extra: Readonly<Record<stri
 async function deliver(pump: CompanionEventPump): Promise<{ eventIds: string[]; triggers: string[] }> {
   let carried: { eventIds: string[]; triggers: string[] } = { eventIds: [], triggers: [] };
   await pump.flush({
-    async deliver(text) {
-      const batch = JSON.parse(text) as {
-        triggerEventIds: string[];
-        worldFacts: Array<{ eventId?: string }>;
-      };
+    async deliver(batch) {
       carried = {
-        eventIds: batch.worldFacts.flatMap((fact) => (fact.eventId === undefined ? [] : [fact.eventId])),
-        triggers: batch.triggerEventIds,
+        eventIds: batch.facts.flatMap((fact) => (fact.eventId === undefined ? [] : [fact.eventId])),
+        triggers: [...batch.triggerEventIds],
       };
     },
   });

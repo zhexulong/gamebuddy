@@ -85,14 +85,11 @@ test("CompanionLoop explicitly steers player input and includes the latest snaps
   await loop.flush();
   assert.equal(received.length, 1);
   assert.equal(received[0]?.deliverAs, "steer");
-  const batch = JSON.parse(received[0]?.text ?? "{}") as {
-    disposition?: string;
-    worldFacts?: unknown[];
-    playerInputs?: unknown[];
-  };
-  assert.equal(batch.disposition, "steer");
-  assert.equal(batch.worldFacts?.length, 1);
-  assert.equal(batch.playerInputs?.length, 1);
+  const text = received[0]?.text ?? "";
+  // The message is the composed prose, not an envelope: the player's own words are a block of their own, and the
+  // reading rides beside it.
+  assert.match(text, /<player-note>\n我们去哪里？\n<\/player-note>/u);
+  assert.match(text, /<world-state>\n世界（revision 3，刚刚更新）/u);
 });
 
 test("CompanionLoop chooses the deterministic final player trigger as presentation lineage", async () => {
@@ -879,8 +876,7 @@ test("CompanionLoop delivers an npc_dialogue_presented fact to Pi without mintin
   // dialogue (e.g. answer_dialogue) but cannot voice a spoken reaction to it.
   assert.equal(received.length, 1);
   assert.deepEqual(lineage, []);
-  const batch = JSON.parse(received[0] ?? "{}") as { worldFacts: Array<{ payload: { speaker?: string } }> };
-  assert.equal(batch.worldFacts[0]?.payload.speaker, "Pierre");
+  assert.match(received[0] ?? "", /Pierre说：「欢迎光临！」/u);
 });
 
 test("CompanionLoop grants a bounded presentation lease to salient sensory world facts", async () => {
@@ -1768,10 +1764,10 @@ test("CompanionLoop binds the turn's volatile authored context to the delivered 
   assert.deepEqual(order, ["bind", "deliver", "clear"]);
   assert.equal(bound.length, 1);
   assert.equal(bound[0]?.text, delivered);
-  const batchId = (JSON.parse(delivered ?? "{}") as { batchId?: string }).batchId;
-  assert.equal(typeof batchId, "string");
-  assert.equal(bound[0]?.turnId, batchId);
-  assert.deepEqual(cleared, [batchId]);
+  const turnId = bound[0]?.turnId;
+  assert.equal(typeof turnId, "string");
+  assert.equal(turnId?.length !== 0, true, "the turn is bound to the batch identity the pump minted");
+  assert.deepEqual(cleared, [turnId]);
 });
 
 test("a failing volatile bind is a degraded turn, never a failed one", async () => {

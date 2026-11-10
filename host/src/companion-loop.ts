@@ -3,7 +3,12 @@ import { createCompanionActivityIndicator } from "./companion-activity.js";
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-attestation.js";
 import { isRefusedTurnEvent } from "./companion-turn-refusal.js";
-import { CompanionEventPump, type CompanionTurnOutcome, type DeliveryDisposition } from "./event-pump.js";
+import {
+  CompanionEventPump,
+  type CompanionTurnOutcome,
+  type DeliveryDisposition,
+  type PendingBatch,
+} from "./event-pump.js";
 import {
   attachNativeCompanionContent,
   NATIVE_BUBBLE_SCAFFOLDING,
@@ -188,17 +193,16 @@ export class CompanionLoop {
    */
   public async flush(): Promise<CompanionTurnOutcome | undefined> {
     return await this.#pump.flush({
-      deliver: async (batch, disposition) => {
+      deliver: async (batch) => {
         // Only the real Pi-consumed batch may activate presentation lineage.
-        const parsed = JSON.parse(batch) as SerializedBatch;
-        const sourceEventId = canonicalPresentationSource(parsed);
-        const batchId = isOpaqueSource(parsed.batchId) ? parsed.batchId : undefined;
+        const sourceEventId = canonicalPresentationSource(batch);
+        const batchId = isOpaqueSource(batch.batchId) ? batch.batchId : undefined;
         const completion = this.#deliverAndObserve(
-          batch,
-          disposition,
+          batch.text,
+          batch.disposition,
           sourceEventId,
           batchId,
-          canonicalTurnLocale(parsed),
+          canonicalTurnLocale(batch),
         );
         this.#inFlight = completion;
         try {
@@ -227,9 +231,9 @@ export class CompanionLoop {
    */
   public async steer(): Promise<boolean> {
     return await this.#pump.steer({
-      deliver: async (batch, disposition) => {
-        await this.session.sendUserMessage(batch, {
-          deliverAs: disposition === "steer" ? "steer" : "followUp",
+      deliver: async (batch) => {
+        await this.session.sendUserMessage(batch.text, {
+          deliverAs: batch.disposition === "steer" ? "steer" : "followUp",
         });
       },
     });
@@ -787,49 +791,25 @@ function isExactBatchMessage(message: unknown, expectedBatch: string): boolean {
   );
 }
 
-type SerializedBatch = Readonly<{
-  batchId?: string;
-  playerInputs?: readonly Readonly<{ eventId?: string; inputId?: string; locale?: string }>[];
-  worldFacts?: readonly Readonly<{
-    kind?: string;
-    sourceEventId?: string;
-    eventId?: string;
-    correlationId?: string;
-    revision?: number;
-    occurredAtMs?: number;
-    payload?: Readonly<{ state?: unknown }>;
-  }>[];
-  events?: readonly Readonly<{
-    kind?: string;
-    eventId?: string;
-    occurredAtMs?: number;
-    revision?: number;
-    input?: Readonly<{ eventId?: string; inputId?: string }>;
-    sourceEventId?: string;
-    semanticKind?: string;
-    payload?: Readonly<{ state?: unknown }>;
-  }>[];
-}>;
-
 /**
  * The language this turn is conducted in, from the last player input the batch
  * carried. A world-triggered turn has no player input and therefore no locale,
  * which the reaction mechanism reads as "say nothing" rather than guessing.
  */
-function canonicalTurnLocale(batch: SerializedBatch): string | undefined {
-  const locales = (batch.playerInputs ?? [])
+function canonicalTurnLocale(batch: PendingBatch): string | undefined {
+  const locales = batch.inputs
     .map((input) => input.locale)
     .filter((locale): locale is string => typeof locale === "string" && locale.length > 0);
   return locales.at(-1);
 }
 
 /**
- * Selects the canonical cause only from a real serialized Pi batch. Events are
+ * Selects the canonical cause only from a real Pi-consumed batch. Events are
  * already deterministically sorted by CompanionEventPump; held snapshot and
  * progress facts never grant presentation authority.
  */
-function canonicalPresentationSource(batch: SerializedBatch): string | undefined {
-  const events = batch.events ?? [];
+function canonicalPresentationSource(batch: PendingBatch): string | undefined {
+  const events = batch.events;
   const playerSources = events
     .filter((event) => event.kind === "player_input")
     // `inputId` is correlation/dedupe only. A presentation cause must have
