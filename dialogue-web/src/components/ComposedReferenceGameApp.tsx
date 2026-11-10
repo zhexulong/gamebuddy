@@ -32,8 +32,10 @@ import {
   ReferencePipelineSessionError,
 } from "../reference-pipeline-session";
 import { type WorldInfoBindingSource, worldInfoBindingSource } from "../world-info-binding-source";
+import { createSerialDrain, type SerialDrain } from "../serial-drain";
 import { AppBar, type AppBarProps } from "./AppBar";
 import { CharactersSurface } from "./CharactersSurface";
+import { type ChatArmedAction, deriveChatUIState, isTurnInFlight } from "./chat-ui-state";
 import { ChatSurface } from "./ChatSurface";
 import { ChatsSurface } from "./ChatsSurface";
 import { ContextDrawer } from "./ContextDrawer";
@@ -115,18 +117,14 @@ export function ComposedReferenceGameApp() {
     kind: ChatMutationKind;
     handle: string;
   }> | null>(null);
-  // The rewind arm: the message the player asked to cut back to, and the order they were shown it
-  // at. A rewind destroys everything after that point, so the arm only names the target and the
-  // confirmation below the bubble is what sends it.
-  const [rewindArm, setRewindArm] = useState<Readonly<{ handle: string; expectedOrder: number }> | null>(null);
-  // The delete arm: the one message the player asked to remove, and the order they were shown it at.
-  // A delete is destructive and has no undo, so the arm names the target and the confirmation below
-  // the bubble is what sends it - the same shape the rewind arm and a Chats row's trash use.
-  const [deleteArm, setDeleteArm] = useState<Readonly<{ handle: string; expectedOrder: number }> | null>(null);
-  // The variant-discard arm: the reply the player asked to strip one variant from, and the variant index
-  // they were looking at. A discard destroys a generation they spent tokens on, so the arm names it and
-  // the confirmation is what sends it - the same shape the rewind and delete arms use.
-  const [swipeRemoveArm, setSwipeRemoveArm] = useState<Readonly<{ handle: string; targetIndex: number }> | null>(null);
+  // The one destructive arm: the act the player asked to confirm, the message it names, and the order (or
+  // variant index) they were shown it at. A rewind destroys everything after its point, a delete has no
+  // undo, and a variant discard destroys a generation they spent tokens on, so each arm only names the
+  // target and the confirmation below the bubble is what sends it. It is one value, not one per verb:
+  // two confirmations open at once would leave the player unable to tell what the next press removes, and
+  // arming a second act replaces the first by construction rather than by three handlers each remembering
+  // to clear the other two.
+  const [arm, setArm] = useState<ChatArmedAction | null>(null);
   const chatMutationRef = useRef(false);
   // The durable draft's authoring state is the composer's own field (see the
   // seeding effect below); what stays here is the closed outcome line its
@@ -292,7 +290,11 @@ export function ComposedReferenceGameApp() {
     if (view.kind !== "ready" || view.session.snapshot.eventStream === null) return;
     let disposed = false;
     let recovering = false;
-    let work = Promise.resolve();
+    // The frame queue (`../serial-drain`): one slot, in order, and a link that rejects does not stop the
+    // drain. A bare `work = work.then(...)` chain stops at its first rejection while the socket stays open
+    // and `streamLiveRef` stays true - a stream that looks live and delivers nothing, with the fallback
+    // poll suspended because the stream looks live.
+    let drain: SerialDrain | null = null;
     let cursor = view.session.snapshot.eventStream.cursor;
     let pendingResetCursor = false;
     // The recovery read's own retry: one timer and the attempt count that shapes its delay.
@@ -452,7 +454,7 @@ export function ComposedReferenceGameApp() {
       }
     };
     const handleEvent = (event: BrowserEventV1, lastEventId: string): void => {
-      work = work.then(async () => {
+      drain?.push(async () => {
         if (disposed || recovering) return;
         try {
           const current = viewRef.current;
@@ -509,6 +511,9 @@ export function ComposedReferenceGameApp() {
         }
       }
     }
+    // A frame the queue could not process is the same fact a bad frame is: the stream owes an authoritative
+    // read, so the recovery pass is what a rejected link runs.
+    drain = createSerialDrain(() => void recover(true));
     connect();
     return () => {
       disposed = true;
@@ -940,33 +945,29 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
-   * The rewind arm and its confirmation. The arm names the message AND the order the page rendered
-   * it at, and it is dropped the moment that pairing stops holding, so a stale arm can never fire a
-   * destructive command on a message the player is no longer looking at. The Host re-checks the
-   * same pairing anyway: this only keeps the surface honest.
+   * The arm and its confirmation. It names the message AND the order the page rendered it at (or, for a
+   * variant discard, just the reply), and it is dropped the moment that pairing stops holding, so a stale
+   * arm can never fire a destructive command on a message the player is no longer looking at. The Host
+   * re-checks the same pairing anyway: this only keeps the surface honest.
    */
   const mountedTranscript = view.kind === "ready" ? (view.session.snapshot.chat?.transcript ?? null) : null;
   useEffect(() => {
-    if (rewindArm === null) return;
-    if (
-      mountedTranscript?.some(
-        (message) => message.handle === rewindArm.handle && message.order === rewindArm.expectedOrder,
-      ) === true
-    )
-      return;
-    setRewindArm(null);
-  }, [rewindArm, mountedTranscript]);
+    if (arm === null) return;
+    const held = mountedTranscript?.some((message) =>
+      arm.action === "swipe_remove"
+        ? message.handle === arm.targetId
+        : message.handle === arm.targetId && message.order === arm.expectedOrder,
+    );
+    if (held === true) return;
+    setArm(null);
+  }, [arm, mountedTranscript]);
 
   const handleRewindArm = (messageHandle: string, expectedOrder: number): void => {
-    // Only one destructive arm can be open at a time, so arming one drops the other: a row showing
-    // two confirmations at once would leave the player unable to tell what the next press removes.
-    setDeleteArm(null);
-    setSwipeRemoveArm(null);
-    setRewindArm(Object.freeze({ handle: messageHandle, expectedOrder }));
+    setArm(Object.freeze({ action: "rewind", targetId: messageHandle, expectedOrder }));
   };
 
   const handleRewindCancel = (): void => {
-    setRewindArm(null);
+    setArm(null);
   };
 
   const handleRewindConfirm = async (messageHandle: string, expectedOrder: number): Promise<void> => {
@@ -975,7 +976,7 @@ export function ComposedReferenceGameApp() {
     if (chatMutationRef.current) return;
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
-    setRewindArm(null);
+    setArm(null);
     beginMessageMutation("rewind", messageHandle);
     try {
       await tavernApiRef.current.rewind(
@@ -994,31 +995,12 @@ export function ComposedReferenceGameApp() {
     }
   };
 
-  /**
-   * The delete arm and its confirmation, the rewind arm's own shape one row over: the arm names the
-   * message AND the order the page rendered it at, and it is dropped the moment that pairing stops
-   * holding, so a stale arm can never delete a message the player is no longer looking at. The Host
-   * re-checks the same pairing anyway: this only keeps the surface honest.
-   */
-  useEffect(() => {
-    if (deleteArm === null) return;
-    if (
-      mountedTranscript?.some(
-        (message) => message.handle === deleteArm.handle && message.order === deleteArm.expectedOrder,
-      ) === true
-    )
-      return;
-    setDeleteArm(null);
-  }, [deleteArm, mountedTranscript]);
-
   const handleDeleteArm = (messageHandle: string, expectedOrder: number): void => {
-    setRewindArm(null);
-    setSwipeRemoveArm(null);
-    setDeleteArm(Object.freeze({ handle: messageHandle, expectedOrder }));
+    setArm(Object.freeze({ action: "delete", targetId: messageHandle, expectedOrder }));
   };
 
   const handleDeleteCancel = (): void => {
-    setDeleteArm(null);
+    setArm(null);
   };
 
   const handleDeleteConfirm = async (messageHandle: string, expectedOrder: number): Promise<void> => {
@@ -1027,7 +1009,7 @@ export function ComposedReferenceGameApp() {
     if (chatMutationRef.current) return;
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
-    setDeleteArm(null);
+    setArm(null);
     beginMessageMutation("delete", messageHandle);
     try {
       await tavernApiRef.current.delete(
@@ -1047,28 +1029,20 @@ export function ComposedReferenceGameApp() {
   };
 
   /**
-   * The variant discard's arm and its confirmation, the delete arm's own shape one row over. The arm
-   * names the reply and the variant index the page rendered, and it is dropped the moment the reply stops
-   * being one of the transcript's rows - a stale arm must never discard a variant of a reply the player
-   * is no longer looking at. The index itself is re-checked by the Host, which refuses a position that is
-   * not there rather than guessing.
+   * The variant discard's arm and its confirmation, the delete arm's own shape one row over: the arm names
+   * the reply and is dropped the moment the reply stops being one of the transcript's rows, so a stale arm
+   * must never discard a variant of a reply the player is no longer looking at. The index travels with the
+   * confirmation from the row itself, and the Host re-checks it, refusing a position that is not there
+   * rather than guessing.
    */
-  useEffect(() => {
-    if (swipeRemoveArm === null) return;
-    if (mountedTranscript?.some((message) => message.handle === swipeRemoveArm.handle) === true) return;
-    setSwipeRemoveArm(null);
-  }, [swipeRemoveArm, mountedTranscript]);
-
-  const handleSwipeRemoveArm = (messageHandle: string, targetIndex: number): void => {
+  const handleSwipeRemoveArm = (messageHandle: string): void => {
     // Arming is a new intent, so the last refusal's sentence - about a different press - goes with it.
     setMessageMutationNotice(null);
-    setRewindArm(null);
-    setDeleteArm(null);
-    setSwipeRemoveArm(Object.freeze({ handle: messageHandle, targetIndex }));
+    setArm(Object.freeze({ action: "swipe_remove", targetId: messageHandle }));
   };
 
   const handleSwipeRemoveCancel = (): void => {
-    setSwipeRemoveArm(null);
+    setArm(null);
   };
 
   /**
@@ -1084,7 +1058,7 @@ export function ComposedReferenceGameApp() {
     if (chatMutationRef.current) return;
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
-    setSwipeRemoveArm(null);
+    setArm(null);
     beginMessageMutation("swipeRemove", messageHandle);
     try {
       await tavernApiRef.current.removeSwipeVariant(
@@ -1404,15 +1378,6 @@ export function ComposedReferenceGameApp() {
             view.session.snapshot.chat.turn.providerFailure,
           )
         : null;
-  // Whether a turn is in flight: from the moment a submission is admitted until the authoritative
-  // turn reaches a terminal state. It is the bar's first word (`statusLabel` below) and the composer's
-  // busy state. The Game connection has its own drawer (design/26 §4.1, design/104 §2); it is not
-  // announced from here.
-  const turnInFlight =
-    view.kind === "ready" &&
-    (view.session.pending !== null ||
-      (view.session.snapshot.chat?.turn != null && !TERMINAL_TURN_STATES.has(view.session.snapshot.chat.turn.state)));
-
   const managementPanelsAvailable = view.kind === "ready" && view.session.snapshot.chat !== null;
 
   /**
@@ -1427,6 +1392,34 @@ export function ComposedReferenceGameApp() {
   const mountedTurn = view.kind === "ready" ? (view.session.snapshot.chat?.turn ?? null) : null;
 
   const arrivalReads = useArrivalReread(shownSurface, bootstrap, localeRef, rereadChat, managementPipelineApiRef);
+
+  /**
+   * The Chat surface's one state, derived from the facts above (`chat-ui-state`).
+   *
+   * `turn` is the mounted turn only while it has not reached a terminal state: a settled turn is not
+   * something the player can stop, and `chat.submit` is projected available again the moment the
+   * ledger is terminal, so the phase and the gate move together.
+   */
+  const chatUIState = deriveChatUIState({
+    submissionInFlight: view.kind === "ready" && view.session.pending !== null,
+    turn:
+      view.kind === "ready" &&
+      view.session.snapshot.chat?.turn != null &&
+      !TERMINAL_TURN_STATES.has(view.session.snapshot.chat.turn.state)
+        ? view.session.snapshot.chat.turn
+        : null,
+    pendingLine: pendingOptimisticMessage,
+    stopAvailable,
+    submitAvailable,
+    modelRoute: arrivalReads.chatModelRoute,
+    armed: arm,
+  });
+
+  // Whether a turn is in flight: from the moment a submission is admitted until the authoritative
+  // turn reaches a terminal state. It is the bar's first word (`statusLabel` below) and the
+  // conversation's own reading of whether the last line may still be answered. The Game connection
+  // has its own drawer (design/26 §4.1, design/104 §2); it is not announced from here.
+  const turnInFlight = isTurnInFlight(chatUIState);
 
   /**
    * The app bar's status: one derivation, read twice - the word the badge carries and the tone
@@ -1580,7 +1573,7 @@ export function ComposedReferenceGameApp() {
                   chatTitle={view.session.snapshot.chat.title}
                   labels={labels()}
                   pending={chatMutation}
-                  pendingPlayerMessage={pendingOptimisticMessage}
+                  uiState={chatUIState}
                   notice={
                     pollFailure
                       ? labels().chatFailed
@@ -1594,7 +1587,6 @@ export function ComposedReferenceGameApp() {
                     void handleSwipeRemoveConfirm(messageHandle, targetIndex)
                   }
                   onSwipeRemoveCancel={handleSwipeRemoveCancel}
-                  swipeRemoveArmedHandle={swipeRemoveArm === null ? null : swipeRemoveArm.handle}
                   onRegenerate={(messageHandle) => void handleRegenerate(messageHandle)}
                   onOpeningVariant={(messageHandle, direction) => void handleOpeningVariant(messageHandle, direction)}
                   onRewind={handleRewindArm}
@@ -1602,22 +1594,16 @@ export function ComposedReferenceGameApp() {
                     void handleRewindConfirm(messageHandle, expectedOrder)
                   }
                   onRewindCancel={handleRewindCancel}
-                  rewindArmedHandle={rewindArm === null ? null : rewindArm.handle}
                   onEdit={(messageHandle, expectedOrder, text) => void handleEdit(messageHandle, expectedOrder, text)}
                   onDelete={handleDeleteArm}
                   onDeleteConfirm={(messageHandle, expectedOrder) =>
                     void handleDeleteConfirm(messageHandle, expectedOrder)
                   }
                   onDeleteCancel={handleDeleteCancel}
-                  deleteArmedHandle={deleteArm === null ? null : deleteArm.handle}
                   value={inputText}
                   onChange={writeInput}
                   onSend={() => void handleSend()}
                   onStop={() => void handleStop()}
-                  isGenerating={turnInFlight}
-                  canStop={stopAvailable}
-                  disabled={!submitAvailable}
-                  modelRoute={arrivalReads.chatModelRoute}
                   onOpenSettings={openSettings}
                   voice={view.session.snapshot.voice}
                   settingsAction={{

@@ -20,6 +20,7 @@ import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { BrowserMessageV1 } from "../src/reference-pipeline-api";
 import { Composer, type VoiceSurfaceStateV1 } from "../src/components/Composer";
+import type { ChatUIState } from "../src/components/chat-ui-state";
 import { Timeline } from "../src/components/Timeline";
 import { SurfaceDrafts } from "../src/components/surface-drafts";
 import { messages } from "../src/i18n";
@@ -81,6 +82,11 @@ type Model = Readonly<{
    * flight in the ordinary case - a journey that wants the settled failure says so.
    */
   turnInFlight: boolean;
+  /**
+   * The composer band's own state, exactly as the shell derives it: the probe never decides a phase
+   * from the flags above, a journey hands it one value (`setChatUIState`).
+   */
+  composerState: ChatUIState;
 }>;
 
 let model: Model = {
@@ -93,6 +99,7 @@ let model: Model = {
   swipeRemoveArmed: null,
   replyTruncated: false,
   turnInFlight: true,
+  composerState: { phase: "idle", send: { gate: "open" }, armed: null, pendingLine: null },
 };
 let rerender: (() => void) | null = null;
 
@@ -212,8 +219,7 @@ function Probe() {
           setDrafted("");
         }}
         onStop={() => undefined}
-        isGenerating={false}
-        canStop={false}
+        uiState={model.composerState}
         labels={LABELS}
         voice={model.voice}
       />
@@ -258,6 +264,15 @@ const chatProbe = {
    */
   setTurnInFlight(value: boolean): void {
     model = { ...model, turnInFlight: value };
+    rerender?.();
+  },
+  /**
+   * The composer band's one state, exactly as the shell derives it (`deriveChatUIState`). A journey
+   * passes the value the shell would pass, so the controls are read from the same authority the
+   * product uses instead of from a flag the test invented.
+   */
+  setChatUIState(state: ChatUIState): void {
+    model = { ...model, composerState: state };
     rerender?.();
   },
   /** Every regeneration this probe asked the shell for, in order. */

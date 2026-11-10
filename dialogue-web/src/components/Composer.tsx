@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import type { Messages } from "../i18n";
+import { assertKnownPhase, fieldLocked, sendRefused, type ChatUIState } from "./chat-ui-state";
 
 /** Voice surface narrow state from the additive optional snapshot field. */
 export type VoiceSurfaceStateV1 = Readonly<{ state: "unavailable" | "ready" | "speaking" }>;
@@ -75,15 +76,26 @@ function useCompactComposer(): boolean {
   return compact;
 }
 
+function busySlot(labels: Messages) {
+  return (
+    <span
+      className="composer-button composer-busy"
+      role="status"
+      aria-label={labels.generating}
+      title={labels.generating}
+      data-composer-busy
+    >
+      <LoaderCircle className="message-spinner" size={18} aria-hidden="true" />
+    </span>
+  );
+}
+
 export function Composer({
   value,
   onChange,
   onSend,
   onStop,
-  isGenerating,
-  canStop,
-  disabled,
-  sendUnavailable = false,
+  uiState,
   labels,
   voice,
   draftActions,
@@ -95,28 +107,11 @@ export function Composer({
   onSend: () => void;
   onStop: () => void;
   /**
-   * True while a turn is in flight for this conversation - from the submission
-   * being admitted until the authoritative turn reaches a terminal state. It is
-   * that fact itself, and not "the Host lets me cancel it": the two differ for the
-   * whole queued window, and reading the second as the first is what made a queued
-   * turn render a disabled send button with no spinner and no stop.
+   * What this conversation is doing, and the two facts the field answers to - whether the Host would
+   * take a submission now, and whether a reply has a model to reach. Every control in the band reads
+   * its enablement, its disabled state and its label from this one value (see `chat-ui-state`).
    */
-  isGenerating: boolean;
-  /**
-   * True only while the Host says this exact turn can be cancelled. It decides
-   * whether the busy slot offers Stop; a turn in flight without it still says so.
-   */
-  canStop: boolean;
-  disabled?: boolean;
-  /**
-   * True when a send would have no model to reach - the surface's `ChatModelRoute` says `none`.
-   *
-   * It locks the send button and leaves the field writable: the player can compose and keep a draft
-   * while they go and bring a connection, and the surface's own standing sentence says so above this
-   * row. Locking the field instead would take away the one thing that still works, and letting the
-   * send through is what left a no-model turn in the transcript as a dead exchange.
-   */
-  sendUnavailable?: boolean;
+  uiState: ChatUIState;
   labels: Messages;
   /** Additive optional voice surface; absent null renders no mic icon. */
   voice?: VoiceSurfaceStateV1 | null;
@@ -173,11 +168,62 @@ export function Composer({
     if (e.nativeEvent.isComposing) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (!isGenerating && value.trim() && !disabled && !sendUnavailable) {
+      // Enter sends exactly when the Send control would: nothing in flight and a gate that is open.
+      if (uiState.phase === "idle" && value.trim() && !sendRefused(uiState.send)) {
         onSend();
       }
     }
   };
+
+  /**
+   * The action slot: what this conversation is doing, in the one control that says it.
+   *
+   * A phase the band has no control for is a compile error (`assertKnownPhase`), so a state added
+   * to the union cannot fall through to the send button and read as a frozen surface.
+   */
+  const actionSlot = (() => {
+    switch (uiState.phase) {
+      case "idle":
+        return (
+          <button
+            type="button"
+            className="composer-button send-button"
+            data-testid="composer-send"
+            onClick={onSend}
+            disabled={sendRefused(uiState.send) || !value.trim()}
+            title={labels.send}
+            aria-label={labels.send}
+          >
+            <SendHorizontal size={18} aria-hidden="true" />
+          </button>
+        );
+      case "submitting":
+        // The Host holds the submission but has not mounted a turn for it, so there is nothing to
+        // cancel yet: the slot says the surface is busy rather than offering a Stop the Host would
+        // have no target for.
+        return busySlot(labels);
+      case "streaming":
+        // A turn the Host has admitted but does not allow cancelling (`accepted_queued`,
+        // `attempt_starting`, a claimed cancel, a presented response) is still a turn in flight. The
+        // slot says so rather than falling back to the send icon, which is disabled while a turn is
+        // in flight and read as a frozen UI for that whole window.
+        return uiState.canStop ? (
+          <button
+            type="button"
+            className="composer-button stop-button"
+            onClick={onStop}
+            title={labels.stop}
+            aria-label={labels.stop}
+          >
+            <Square size={18} aria-hidden="true" />
+          </button>
+        ) : (
+          busySlot(labels)
+        );
+      default:
+        return assertKnownPhase(uiState);
+    }
+  })();
 
   return (
     <section className="composer-section" aria-label={labels.typeMessagePlaceholder}>
@@ -226,12 +272,11 @@ export function Composer({
           placeholder={placeholder}
           rows={1}
           // The field's own lock is the Host's answer to "would a submission be
-          // accepted now" (`disabled` = `!submitAvailable`, which is false while a
-          // turn exists because the Host projects `chat.submit` as busy then). A
-          // turn in flight is therefore shown by the action slot below, not by a
-          // second, client-side lock here: the poll's own budget ending must leave
-          // the field usable the moment the Host would take a message again.
-          disabled={disabled}
+          // accepted now". A turn in flight is therefore shown by the action slot
+          // below, not by a second, client-side lock here: the poll's own budget
+          // ending must leave the field usable the moment the Host would take a
+          // message again.
+          disabled={fieldLocked(uiState.send)}
           aria-label={placeholder}
         />
         <div className="composer-actions">
@@ -283,46 +328,7 @@ export function Composer({
               <span className="voice-status-label">{voiceLabel}</span>
             </span>
           )}
-          {isGenerating ? (
-            canStop ? (
-              <button
-                type="button"
-                className="composer-button stop-button"
-                onClick={onStop}
-                title={labels.stop}
-                aria-label={labels.stop}
-              >
-                <Square size={18} aria-hidden="true" />
-              </button>
-            ) : (
-              // A turn the Host has admitted but does not allow cancelling
-              // (`accepted_queued`, `attempt_starting`, a claimed cancel, a
-              // presented response) is still a turn in flight. The slot says so
-              // rather than falling back to the send icon, which is disabled while
-              // a turn is in flight and read as a frozen UI for that whole window.
-              <span
-                className="composer-button composer-busy"
-                role="status"
-                aria-label={labels.generating}
-                title={labels.generating}
-                data-composer-busy
-              >
-                <LoaderCircle className="message-spinner" size={18} aria-hidden="true" />
-              </span>
-            )
-          ) : (
-            <button
-              type="button"
-              className="composer-button send-button"
-              data-testid="composer-send"
-              onClick={onSend}
-              disabled={disabled || sendUnavailable || !value.trim()}
-              title={labels.send}
-              aria-label={labels.send}
-            >
-              <SendHorizontal size={18} aria-hidden="true" />
-            </button>
-          )}
+          {actionSlot}
         </div>
       </div>
     </section>

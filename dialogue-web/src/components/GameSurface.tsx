@@ -13,6 +13,14 @@ import {
 } from "../composed-reference-game-browser-api";
 import { deriveGameLifecycleControlAvailability, deriveGameSessionControls } from "../game-lifecycle-controls";
 import { gameOperationFailure, type GameOperationFailure } from "../composed-problem-view";
+import {
+  type GameAttachmentEvent,
+  type GameAttachmentOperation,
+  type GameAttachmentState,
+  GAME_ATTACHMENT_ATTACHED,
+  gameAttachmentRows,
+  reduceGameAttachment,
+} from "./game-app-state";
 import { GameDiagnosticsDisclosure } from "./GameDiagnosticsDisclosure";
 import { GamePlayerSettings } from "./GamePlayerSettings";
 import { GameStatePanel, type CabinViewState } from "./GameStatePanel";
@@ -109,19 +117,36 @@ export function GameSurface({
   const [gameSetupActive, setGameSetupActive] = useState(false);
   const [gameSetupFailure, setGameSetupFailure] = useState<GameOperationFailure | null>(null);
   const [gameSetupNotStaged, setGameSetupNotStaged] = useState(false);
-  const gameStopActiveRef = useRef(false);
   const gameStopKeysRef = useRef(new Map<number, string>());
-  const [gameStopActive, setGameStopActive] = useState(false);
-  const [gameStopFailure, setGameStopFailure] = useState<GameOperationFailure | null>(null);
-  const gameLaunchActiveRef = useRef(false);
   const gameLaunchKeysRef = useRef(new Map<number, string>());
-  const [gameLaunchActive, setGameLaunchActive] = useState(false);
-  const [gameLaunchFailure, setGameLaunchFailure] = useState<GameOperationFailure | null>(null);
-  const [gameLaunchNotStaged, setGameLaunchNotStaged] = useState(false);
-  const disconnectActiveRef = useRef(false);
   const disconnectKeysRef = useRef(new Map<number, string>());
-  const [disconnectActive, setDisconnectActive] = useState(false);
-  const [disconnectFailure, setDisconnectFailure] = useState<GameOperationFailure | null>(null);
+  /**
+   * The attachment's own state - launch, stop and disconnect - in one value (`./game-app-state`).
+   *
+   * These three operations used to be three cells each, so Stop and Disconnect (both offered on an
+   * attached, connected-idle session, each disabled only by its own flag) could be admitted together
+   * against one attachment generation, and a refusal stayed on screen after the next attempt had
+   * superseded the session it described. One value makes a second admission impossible rather than
+   * merely unlikely.
+   *
+   * The ref holds the same value for the one question a render cannot answer: whether THIS press is
+   * admitted, read synchronously before the command is issued.
+   */
+  const [attachment, setAttachmentState] = useState<GameAttachmentState>(GAME_ATTACHMENT_ATTACHED);
+  const attachmentRef = useRef<GameAttachmentState>(GAME_ATTACHMENT_ATTACHED);
+  /** True when this operation was admitted, false while another attachment operation is in flight. */
+  const admitAttachment = (operation: GameAttachmentOperation): boolean => {
+    const next = reduceGameAttachment(attachmentRef.current, { type: "started", operation });
+    if (next === attachmentRef.current) return false;
+    attachmentRef.current = next;
+    setAttachmentState(next);
+    return true;
+  };
+  const setAttachment = (event: GameAttachmentEvent): void => {
+    const next = reduceGameAttachment(attachmentRef.current, event);
+    attachmentRef.current = next;
+    setAttachmentState(next);
+  };
   const gameResumeActiveRef = useRef(false);
   const gameResumeKeysRef = useRef(new Map<number, string>());
   const [gameResumeActive, setGameResumeActive] = useState(false);
@@ -398,21 +423,18 @@ export function GameSurface({
     const current = readView();
     const gameProjection = current.kind === "ready" ? current.root.game : null;
     if (
-      gameStopActiveRef.current ||
       current.kind !== "ready" ||
       gameProjection === null ||
       gameProjection.game.attachment.status !== "attached" ||
       gameProjection.game.attachment.generation < 1 ||
-      gameProjection.game.connectionStatus !== "connected_idle"
+      gameProjection.game.connectionStatus !== "connected_idle" ||
+      !admitAttachment("stop")
     )
       return;
     const generation = gameProjection.game.attachment.generation;
     const existingKey = gameStopKeysRef.current.get(generation);
     const idempotencyKey = existingKey ?? newIdempotencyKey();
     gameStopKeysRef.current.set(generation, idempotencyKey);
-    gameStopActiveRef.current = true;
-    setGameStopActive(true);
-    setGameStopFailure(null);
     try {
       await composedApi.stopGame({
         apiVersion: 1,
@@ -435,26 +457,22 @@ export function GameSurface({
         rereadSucceeded &&
         fresh.kind === "ready" &&
         fresh.root.game?.game.attachment.generation !== generation;
-      setGameStopFailure(staleGenerationReconciled ? null : gameOperationFailure(error, labels));
+      if (!staleGenerationReconciled)
+        setAttachment({ type: "refused", operation: "stop", failure: gameOperationFailure(error, labels) });
     } finally {
-      gameStopActiveRef.current = false;
-      setGameStopActive(false);
+      setAttachment({ type: "finished" });
     }
   };
 
   const handleGameLaunch = async (): Promise<void> => {
     const current = readView();
-    if (gameLaunchActiveRef.current || current.kind !== "ready") return;
+    if (current.kind !== "ready") return;
     const controls = deriveGameLifecycleControlAvailability({ ready: true, game: current.root.game });
-    if (!controls.launchAvailable || controls.launchGeneration === null) return;
+    if (!controls.launchAvailable || controls.launchGeneration === null || !admitAttachment("launch")) return;
     const generation = controls.launchGeneration;
     const existingKey = gameLaunchKeysRef.current.get(generation);
     const idempotencyKey = existingKey ?? newIdempotencyKey();
     gameLaunchKeysRef.current.set(generation, idempotencyKey);
-    gameLaunchActiveRef.current = true;
-    setGameLaunchActive(true);
-    setGameLaunchFailure(null);
-    setGameLaunchNotStaged(false);
     try {
       await composedApi.launchGame({
         apiVersion: 1,
@@ -484,11 +502,10 @@ export function GameSurface({
         gameLaunchKeysRef.current.delete(generation);
         gameSetupKeyRef.current = undefined;
       }
-      setGameLaunchNotStaged(notStaged);
-      setGameLaunchFailure(notStaged ? null : gameOperationFailure(error, labels));
+      if (notStaged) setAttachment({ type: "not_staged" });
+      else setAttachment({ type: "refused", operation: "launch", failure: gameOperationFailure(error, labels) });
     } finally {
-      gameLaunchActiveRef.current = false;
-      setGameLaunchActive(false);
+      setAttachment({ type: "finished" });
     }
   };
 
@@ -496,21 +513,18 @@ export function GameSurface({
     const current = readView();
     const gameProjection = current.kind === "ready" ? current.root.game : null;
     if (
-      disconnectActiveRef.current ||
       current.kind !== "ready" ||
       gameProjection === null ||
       gameProjection.game.attachment.status !== "attached" ||
       !current.root.game?.game ||
-      gameProjection.game.attachment.generation < 1
+      gameProjection.game.attachment.generation < 1 ||
+      !admitAttachment("disconnect")
     )
       return;
     const generation = gameProjection.game.attachment.generation;
     const existingKey = disconnectKeysRef.current.get(generation);
     const idempotencyKey = existingKey ?? newIdempotencyKey();
     disconnectKeysRef.current.set(generation, idempotencyKey);
-    disconnectActiveRef.current = true;
-    setDisconnectActive(true);
-    setDisconnectFailure(null);
     try {
       await composedApi.disconnectGame({
         apiVersion: 1,
@@ -535,10 +549,9 @@ export function GameSurface({
         fresh.root.game.game.connectionStatus === "failed"
       )
         disconnectKeysRef.current.delete(generation);
-      setDisconnectFailure(gameOperationFailure(error, labels));
+      setAttachment({ type: "refused", operation: "disconnect", failure: gameOperationFailure(error, labels) });
     } finally {
-      disconnectActiveRef.current = false;
-      setDisconnectActive(false);
+      setAttachment({ type: "finished" });
     }
   };
 
@@ -1060,6 +1073,8 @@ export function GameSurface({
     setEndgameConfirmArmed(false);
   }, [endgameGeneration, sessionControls.endgameAvailable]);
   const gameSyncing = ready && game !== null && game.game.connectionStatus === "syncing";
+  /** The three attachment rows, all read from the one state (`./game-app-state`). */
+  const attachmentRows = gameAttachmentRows(attachment);
   /**
    * Whether the Host holds a registered Stardew installation for this session.
    *
@@ -1089,17 +1104,12 @@ export function GameSurface({
           failure: gameSetupFailure,
           notStaged: gameSetupNotStaged,
         },
-        launch: {
-          available: gameLaunchAvailable,
-          active: gameLaunchActive,
-          failure: gameLaunchFailure,
-          notStaged: gameLaunchNotStaged,
-        },
+        launch: { available: gameLaunchAvailable, ...attachmentRows.launch },
       }}
       session={{
         controls: sessionControls,
-        stop: { active: gameStopActive, failure: gameStopFailure },
-        disconnect: { active: disconnectActive, failure: disconnectFailure },
+        stop: attachmentRows.stop,
+        disconnect: attachmentRows.disconnect,
         endgame: {
           active: gameEndgameActive,
           failure: gameEndgameFailure,

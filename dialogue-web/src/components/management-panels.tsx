@@ -1,4 +1,5 @@
 import { type ReactElement, useEffect, useState } from "react";
+import { assertNever } from "../assert-never";
 import { type AppearanceChoice, isAppearanceChoice } from "../appearance";
 import { problemTextWithCode } from "../composed-problem-view";
 import { type Locale, messages, recordLabel } from "../i18n";
@@ -89,6 +90,8 @@ function personaLabel(personaId: MimoPersonaId, labels: ReturnType<typeof messag
       return labels.voicePersonaEnergeticYouth;
     case "steady_mature":
       return labels.voicePersonaSteadyMature;
+    default:
+      return assertNever(personaId);
   }
 }
 
@@ -1541,20 +1544,29 @@ export function MemoryPanel({
                             const sent = chapterDraft.value;
                             setChapterSaving(true);
                             void (async () => {
-                              const outcome = await onMutate({
-                                operation: "update_chapter",
-                                handle: chapter.handle,
-                                content: sent,
-                              });
-                              setChapterSaving(false);
-                              if (outcome.kind === "saved") {
-                                setChapterRefusal(null);
-                                // Released only if the field still holds what this save sent: text typed
-                                // during the request is the player's, and the editor keeps it for the
-                                // retry rather than closing over it.
-                                chapterDraft.release(sent);
-                                chapterEditOpen.clear();
-                              } else setChapterRefusal(outcome.text);
+                              try {
+                                const outcome = await onMutate({
+                                  operation: "update_chapter",
+                                  handle: chapter.handle,
+                                  content: sent,
+                                });
+                                if (outcome.kind === "saved") {
+                                  setChapterRefusal(null);
+                                  // Released only if the field still holds what this save sent: text typed
+                                  // during the request is the player's, and the editor keeps it for the
+                                  // retry rather than closing over it.
+                                  chapterDraft.release(sent);
+                                  chapterEditOpen.clear();
+                                } else setChapterRefusal(outcome.text);
+                              } catch {
+                                // A rejection is an answer that never arrived, and the write is not known to
+                                // have landed: the words stay in the field and the line says the attempt failed.
+                                setChapterRefusal(labels.failure);
+                              } finally {
+                                // The one terminal path. It sat after the await, so a rejection left the
+                                // button saying "saving" with no sentence beside it - disabled for good.
+                                setChapterSaving(false);
+                              }
                             })();
                           }}
                         >
@@ -1703,6 +1715,7 @@ export function MemoryPanel({
             <MemoryCreateForm
               label={labels.create}
               contentLabel={labels.memoryContent}
+              failureLabel={labels.failure}
               onCreate={(content) => onMutate({ operation: "create", content })}
             />
           )}
@@ -1725,10 +1738,13 @@ export function MemoryPanel({
 export function MemoryCreateForm({
   label,
   contentLabel,
+  failureLabel,
   onCreate,
 }: Readonly<{
   label: string;
   contentLabel: string;
+  /** What the form says when the write's own answer never arrived (a rejection, not a refusal). */
+  failureLabel: string;
   onCreate: (content: string) => Promise<MemoryMutationOutcome>;
 }>): ReactElement {
   const content = useDraft("memory.new-content", "");
@@ -1756,14 +1772,21 @@ export function MemoryCreateForm({
           const sent = content.value.trim();
           setSaving(true);
           void (async () => {
-            const outcome = await onCreate(sent);
-            setSaving(false);
-            if (outcome.kind === "saved") {
-              setRefusal(null);
-              // Released only if the field still holds what this save sent: text typed during the
-              // request is the player's and stays.
-              content.release(sent);
-            } else setRefusal(outcome.text);
+            try {
+              const outcome = await onCreate(sent);
+              if (outcome.kind === "saved") {
+                setRefusal(null);
+                // Released only if the field still holds what this save sent: text typed during the
+                // request is the player's and stays.
+                content.release(sent);
+              } else setRefusal(outcome.text);
+            } catch {
+              setRefusal(failureLabel);
+            } finally {
+              // The one terminal path: the flag used to be cleared after the await, so a rejection
+              // left the form disabled for good with nothing said.
+              setSaving(false);
+            }
           })();
         }}
       >
@@ -1849,15 +1872,20 @@ export function MemoryRow({
                 const sent = content.value;
                 setSaving(true);
                 void (async () => {
-                  const outcome = await onUpdate(sent.trim());
-                  setSaving(false);
-                  if (outcome.kind === "saved") {
-                    setRefusal(null);
-                    // Back to the projection - unless the player typed while this save was in
-                    // flight, in which case those words are theirs and the editor keeps them.
-                    content.release(sent);
-                    editing.clear();
-                  } else setRefusal(outcome.text);
+                  try {
+                    const outcome = await onUpdate(sent.trim());
+                    if (outcome.kind === "saved") {
+                      setRefusal(null);
+                      // Back to the projection - unless the player typed while this save was in
+                      // flight, in which case those words are theirs and the editor keeps them.
+                      content.release(sent);
+                      editing.clear();
+                    } else setRefusal(outcome.text);
+                  } catch {
+                    setRefusal(labels.failure);
+                  } finally {
+                    setSaving(false);
+                  }
                 })();
               }}
             >

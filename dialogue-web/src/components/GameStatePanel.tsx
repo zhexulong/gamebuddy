@@ -157,7 +157,14 @@ export type GameStatePanelProps = Readonly<{
       unavailable: boolean;
     }>;
     setup: Readonly<{ available: boolean; active: boolean; failure: GameOperationFailure | null; notStaged: boolean }>;
-    launch: Readonly<{ available: boolean; active: boolean; failure: GameOperationFailure | null; notStaged: boolean }>;
+    launch: Readonly<{
+      available: boolean;
+      active: boolean;
+      failure: GameOperationFailure | null;
+      notStaged: boolean;
+      /** Another attachment operation is in flight, so this control must not be offered. */
+      blocked: boolean;
+    }>;
   }>;
   session: Readonly<{
     /**
@@ -167,8 +174,8 @@ export type GameStatePanelProps = Readonly<{
      * cannot disagree.
      */
     controls: GameSessionControls;
-    stop: Readonly<{ active: boolean; failure: GameOperationFailure | null }>;
-    disconnect: Readonly<{ active: boolean; failure: GameOperationFailure | null }>;
+    stop: Readonly<{ active: boolean; failure: GameOperationFailure | null; blocked: boolean }>;
+    disconnect: Readonly<{ active: boolean; failure: GameOperationFailure | null; blocked: boolean }>;
     /**
      * The deliberate terminal operation (`game.endgame`). `confirmArmed` is the
      * UI-level confirm step: the first click arms, only the confirm button sends.
@@ -587,7 +594,7 @@ export function GameStatePanel({
                   type="button"
                   className="game-action"
                   data-testid="game-stop"
-                  disabled={session.stop.active}
+                  disabled={session.stop.active || session.stop.blocked}
                   onClick={handlers.stop}
                 >
                   <Square size={16} aria-hidden="true" />
@@ -599,7 +606,7 @@ export function GameStatePanel({
                   type="button"
                   className="game-action"
                   data-testid="game-disconnect"
-                  disabled={session.disconnect.active}
+                  disabled={session.disconnect.active || session.disconnect.blocked}
                   onClick={handlers.disconnect}
                 >
                   <Unplug size={16} aria-hidden="true" />

@@ -1,3 +1,4 @@
+import { assertNever } from "./assert-never";
 import type { GameBrowserStateV1 } from "./composed-reference-game-browser-api";
 import type { StardewInstallationMutationV1 } from "./composed-reference-game-browser-api";
 import type { Messages } from "./i18n";
@@ -20,10 +21,6 @@ import type { Messages } from "./i18n";
  */
 
 type GameProjection = GameBrowserStateV1["game"];
-
-function exhaustive(value: never): string {
-  return String(value);
-}
 
 export function connectionLabel(labels: Messages, status: GameProjection["connectionStatus"]): string {
   switch (status) {
@@ -58,7 +55,7 @@ export function connectionLabel(labels: Messages, status: GameProjection["connec
     case "disconnected":
       return labels.gameConnectionDisconnected;
     default:
-      return exhaustive(status);
+      return assertNever(status);
   }
 }
 
@@ -84,7 +81,7 @@ export function instanceLabel(labels: Messages, instance: GameProjection["instan
     case "unread":
       return labels.gameInstanceUnread;
     default:
-      return exhaustive(instance.status);
+      return assertNever(instance.status);
   }
 }
 
@@ -101,7 +98,7 @@ export function compatibilityLabel(labels: Messages, compatibility: GameProjecti
     case "warning":
       return labels.gameCompatibilityWarning;
     default:
-      return exhaustive(compatibility.status);
+      return assertNever(compatibility.status);
   }
 }
 
@@ -125,7 +122,7 @@ export function authorityLabel(labels: Messages, authority: GameProjection["acti
     case "paused":
       return labels.gameAuthorityPaused;
     default:
-      return exhaustive(authority);
+      return assertNever(authority);
   }
 }
 
@@ -141,7 +138,7 @@ export function outcomeLabel(labels: Messages, outcome: GameProjection["latestOu
     case "cancelled":
       return labels.gameOutcomeCancelled;
     default:
-      return exhaustive(outcome);
+      return assertNever(outcome);
   }
 }
 
@@ -267,7 +264,7 @@ export function installationStateLabel(labels: Messages, state: InstallationDisc
     case "error":
       return labels.gameInstallationError;
     default:
-      return exhaustive(state);
+      return assertNever(state);
   }
 }
 
@@ -331,8 +328,12 @@ export function installationModLoaderLabel(labels: Messages, modLoader: "present
       return labels.gameInstallationModLoaderPresent;
     case "missing":
       return labels.gameInstallationModLoaderMissing;
-    default:
+    case null:
+      // The Host did not say. It is a member of this union, not a fallback: a fourth state would
+      // otherwise read as "did not say" instead of failing to compile.
       return null;
+    default:
+      return assertNever(modLoader);
   }
 }
 
@@ -415,7 +416,7 @@ function actingDetail(labels: Messages, authority: GameProjection["actionAuthori
     case "unavailable":
       return labels.gameBoardActingUnavailable;
     default:
-      return exhaustive(authority);
+      return assertNever(authority);
   }
 }
 
@@ -508,10 +509,9 @@ export function companionModIsReady(outcome: NonNullable<StardewInstallationMuta
     case "companion-mod-deployment-incomplete":
       return false;
     default:
-      // `exhaustive` is typed to return the message string, so it cannot serve a boolean answer; the
-      // never-argument is what makes a new outcome a compile error either way.
-      exhaustive(outcome);
-      return false;
+      // A new outcome is a compile error here, and no `return false` after it: the guard's own return
+      // type is `never`, the same assertion `companionModLabel` below makes.
+      return assertNever(outcome);
   }
 }
 
@@ -553,6 +553,6 @@ export function companionModLabel(
     case "companion-mod-existing-mod-version-requires-consent":
       return labels.gameCompanionModConsentRequired;
     default:
-      return exhaustive(outcome);
+      return assertNever(outcome);
   }
 }

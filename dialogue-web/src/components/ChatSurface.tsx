@@ -1,8 +1,8 @@
 import { MessagesSquare } from "lucide-react";
 import type { RefObject } from "react";
-import type { ChatModelRoute } from "../chat-model-route";
 import type { Messages } from "../i18n";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
+import { armedRows, replyHasNoModel, isTurnInFlight, type ChatUIState } from "./chat-ui-state";
 import { Composer, type ComposerDraftActions, type ComposerSettingsAction, type VoiceSurfaceStateV1 } from "./Composer";
 import { SurfaceView } from "./SurfaceView";
 import { Timeline } from "./Timeline";
@@ -27,7 +27,7 @@ export function ChatSurface({
   chatTitle,
   labels,
   pending,
-  pendingPlayerMessage,
+  uiState,
   notice,
   arrivalNotice,
   replyTruncated,
@@ -35,26 +35,19 @@ export function ChatSurface({
   onSwipeRemove,
   onSwipeRemoveConfirm,
   onSwipeRemoveCancel,
-  swipeRemoveArmedHandle,
   onRegenerate,
   onOpeningVariant,
   onRewind,
   onRewindConfirm,
   onRewindCancel,
-  rewindArmedHandle,
   onEdit,
   onDelete,
   onDeleteConfirm,
   onDeleteCancel,
-  deleteArmedHandle,
   value,
   onChange,
   onSend,
   onStop,
-  isGenerating,
-  canStop,
-  disabled,
-  modelRoute,
   onOpenSettings,
   voice,
   settingsAction,
@@ -82,12 +75,11 @@ export function ChatSurface({
     handle: string;
   }> | null;
   /**
-   * The optimistic player message: the text just sent, shown until the authoritative one lands.
-   * It is handed to the timeline, which owns the scrolling section - rendering it beside the
-   * timeline would put it outside that section, where a long transcript scrolls past an
-   * optimistic line that never moves with it.
+   * What this conversation is doing, which row each destructive confirmation is open on, and the two
+   * facts the composer answers to. One value, derived by `deriveChatUIState`, so no control on this
+   * surface is rendered from a flag of its own (see `chat-ui-state`).
    */
-  pendingPlayerMessage?: Readonly<{ idempotencyKey: string; text: string }> | null;
+  uiState: ChatUIState;
   /** The one turn-failure line the surface reports, or null for none. */
   notice: string | null;
   /**
@@ -102,46 +94,25 @@ export function ChatSurface({
    */
   replyTruncated: boolean;
   onSwipe: (messageHandle: string, direction: "prev" | "next") => void;
-  /** The variant discard and its confirmation, and the one message whose discard is armed. */
+  /** The variant discard and its confirmation. */
   onSwipeRemove: (messageHandle: string, targetIndex: number) => void;
   onSwipeRemoveConfirm: (messageHandle: string, targetIndex: number) => void;
   onSwipeRemoveCancel: () => void;
-  swipeRemoveArmedHandle: string | null;
   onRegenerate: (messageHandle: string) => void;
   onOpeningVariant: (messageHandle: string, direction: "prev" | "next") => void;
   onRewind: (messageHandle: string, expectedOrder: number) => void;
   onRewindConfirm: (messageHandle: string, expectedOrder: number) => void;
   onRewindCancel: () => void;
-  /** The one message whose rewind is armed, if any. */
-  rewindArmedHandle: string | null;
   /** The player's own row's edit: the new text and the order the page rendered the row at. */
   onEdit: (messageHandle: string, expectedOrder: number, text: string) => void;
-  /** The delete point and its confirmation, and the one message whose delete is armed. */
+  /** The delete point and its confirmation. */
   onDelete: (messageHandle: string, expectedOrder: number) => void;
   onDeleteConfirm: (messageHandle: string, expectedOrder: number) => void;
   onDeleteCancel: () => void;
-  deleteArmedHandle: string | null;
   value: string;
   onChange: (text: string) => void;
   onSend: () => void;
   onStop: () => void;
-  isGenerating: boolean;
-  /**
-   * True only while the Host says the mounted turn can be cancelled. A turn in
-   * flight without it is still busy; it is just not the player's to stop.
-   */
-  canStop: boolean;
-  disabled: boolean;
-  /**
-   * The route a message written here would reach a model through, as `readChatModelRoute`
-   * derives it from the Host's own settings projections.
-   *
-   * The surface owns no rule of its own about this: `connection` means a send works, so the surface
-   * says nothing; `none` is the one state where a reply has no model, and it says so with the way
-   * to Settings while leaving the transcript readable and the composer writable; `unknown` says
-   * nothing, because a read that did not answer is not evidence.
-   */
-  modelRoute: ChatModelRoute;
   /** Opens the Settings surface (the connection section is its first block). */
   onOpenSettings: () => void;
   voice?: VoiceSurfaceStateV1 | null;
@@ -157,6 +128,7 @@ export function ChatSurface({
   /** Where focus returns when this surface is replaced: the AppBar entry that selects it. */
   restoreFocusTo: RefObject<HTMLElement | null>;
 }) {
+  const rows = armedRows(uiState);
   return (
     <SurfaceView
       title={labels.chatPanel}
@@ -178,23 +150,23 @@ export function ChatSurface({
         onSwipeRemove={onSwipeRemove}
         onSwipeRemoveConfirm={onSwipeRemoveConfirm}
         onSwipeRemoveCancel={onSwipeRemoveCancel}
-        swipeRemoveArmedHandle={swipeRemoveArmedHandle}
+        swipeRemoveArmedHandle={rows.swipeRemove}
         onRegenerate={onRegenerate}
         onOpeningVariant={onOpeningVariant}
         onRewind={onRewind}
         onRewindConfirm={onRewindConfirm}
         onRewindCancel={onRewindCancel}
-        rewindArmedHandle={rewindArmedHandle}
+        rewindArmedHandle={rows.rewind}
         onEdit={onEdit}
         onDelete={onDelete}
         onDeleteConfirm={onDeleteConfirm}
         onDeleteCancel={onDeleteCancel}
-        deleteArmedHandle={deleteArmedHandle}
-        pendingPlayerMessage={pendingPlayerMessage}
+        deleteArmedHandle={rows.delete}
+        pendingPlayerMessage={uiState.pendingLine}
         replyTruncated={replyTruncated}
-        turnInFlight={isGenerating}
+        turnInFlight={isTurnInFlight(uiState)}
       />
-      {modelRoute.kind === "none" && (
+      {replyHasNoModel(uiState.send) && (
         // The standing fact, above the one line that reports the last outcome: the Host could not
         // serve the model its own send path resolves, so this reply has nowhere to go. The honest
         // sentence belongs on the surface the player is looking at rather than after a failed send,
@@ -229,10 +201,7 @@ export function ChatSurface({
         onChange={onChange}
         onSend={onSend}
         onStop={onStop}
-        isGenerating={isGenerating}
-        canStop={canStop}
-        disabled={disabled}
-        sendUnavailable={modelRoute.kind === "none"}
+        uiState={uiState}
         labels={labels}
         voice={voice}
         settingsAction={settingsAction}

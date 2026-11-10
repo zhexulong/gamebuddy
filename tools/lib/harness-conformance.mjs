@@ -329,6 +329,14 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // (`frontend_route_population_empty`, exit 1), a Host side with no registration position and one with no source at
   // all (`not_measured`, never passed), and a closed union whose third member has no producer (named on its own).
   "check-frontend-reads-have-producers.mjs",
+  // Prints `examined N (closed unions X, open vocabularies Y, not a union Z)` plus a two-entry `checks[]` verdict, so
+  // its default run is the report this suite reads. Its falsifier is tools/check-switch-exhaustiveness.test.mjs, which
+  // builds a throwaway workspace per case: a union switch missing a member (named, `gamma`), the same switch complete
+  // (passed), a switch covering every member whose `default` answers a value (`switch_default_does_not_assert_never`),
+  // a `default` asserting a different union (not discharged), an open-vocabulary subject with no stated exemption
+  // (`exemption_missing`), one that names nothing (`exemption_expired`), one whose declared count disagrees
+  // (`exemption_count_mismatch`), and an empty population (`blocked`, exit 1).
+  "check-switch-exhaustiveness.mjs",
   "check-contrast-tokens.mjs",
   "check-credential-export-isolation.mjs",
   "check-evidence-bundle.mjs",

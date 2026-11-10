@@ -1,3 +1,4 @@
+import { assertNever } from "../assert-never";
 import type { ProblemStep } from "../composed-problem-view";
 import { PROBLEM_RETRY_READ } from "../composed-problem-view";
 import type { Messages } from "../i18n";
@@ -98,5 +99,7 @@ function stepText(step: ProblemStep, labels: Messages): string | null {
         already_true: labels.problemStepNoStepAlreadyTrue,
         not_this_artifact: labels.problemStepNoStepNotThisArtifact,
       }[step.because];
+    default:
+      return assertNever(step);
   }
 }
