@@ -28,6 +28,7 @@ if (process.argv.includes("--json")) {
         checks: results.map((entry) => ({
           id: entry.id,
           status: entry.findings.length === 0 ? "passed" : "failed",
+          ...(entry.note === undefined ? {} : { note: entry.note }),
           findings: entry.findings,
         })),
       },
@@ -37,6 +38,7 @@ if (process.argv.includes("--json")) {
   );
 } else {
   for (const entry of results) {
+    if (entry.note !== undefined) process.stdout.write(`${entry.id} population: ${entry.note}\n`);
     if (entry.findings.length === 0) {
       process.stdout.write(`${entry.id}: passed\n`);
       continue;

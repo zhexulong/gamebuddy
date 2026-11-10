@@ -9,9 +9,12 @@ import { fileURLToPath } from "node:url";
 import {
   checkExperimentalRunners,
   checkGateFalsifiers,
+  checkGateRegistry,
   checkLiveRunPreflight,
   checkRunnerResolution,
   checkScenarioAcceptance,
+  describeGateFalsifierCensus,
+  gateFalsifierCensus,
   harnessGateNames,
   readModFixtureSources,
 } from "./harness-conformance.mjs";
@@ -168,6 +171,67 @@ test("gate check reports a gate that neither self-reports nor is declared", () =
   );
 
   assert.deepEqual(checkGateFalsifiers({ gateNames: harnessGateNames(toolsDir), toolsDir }), []);
+});
+
+// A check whose population is empty agrees with itself: no gate enumerated must be a finding, not a silent pass.
+test("gate check blocks on an empty population instead of agreeing with itself", () => {
+  const findings = checkGateFalsifiers({ gateNames: [], toolsDir });
+  assert.deepEqual(
+    findings.map((entry) => entry.code),
+    ["gate_population_empty"],
+  );
+  assert.match(findings[0].detail, /no tools\/check-\*\.mjs gate was enumerated/u);
+});
+
+// The census is the number the verdict rests on: a gate whose default run never happens is the state a hand list
+// decides by memory, so the count and the members are printed rather than assumed to be zero.
+test("the census counts each gate in exactly one bucket and names the ones never examined", () => {
+  const census = gateFalsifierCensus({
+    gateNames: ["reported.mjs", "declared.mjs", "nobody.mjs", "nobody-either.mjs"],
+    withFalsifier: ["reported.mjs"],
+    withoutFalsifier: [{ gate: "declared.mjs", reason: "no offline rule set" }],
+  });
+  assert.deepEqual(census, {
+    examined: 4,
+    withReport: 1,
+    without: 1,
+    unexamined: ["nobody.mjs", "nobody-either.mjs"],
+  });
+  assert.equal(
+    describeGateFalsifierCensus(census),
+    "gates examined 4 · declared with a report 1 · declared without 1 · unlisted-and-unexamined 2 " +
+      "(nobody.mjs, nobody-either.mjs)",
+    "an unexamined gate is named, so a red count points at the gate to fix",
+  );
+  assert.equal(
+    describeGateFalsifierCensus(gateFalsifierCensus({ gateNames: harnessGateNames(toolsDir) })).endsWith(
+      "unlisted-and-unexamined 0",
+    ),
+    true,
+    "the real registry classifies every gate in tools/check-*.mjs today",
+  );
+});
+
+// The registry itself drifts: an entry exempting a gate that is not there exempts nothing, and would otherwise keep
+// claiming a reading it no longer makes.
+test("a declaration naming a gate that is not in tools/ is stale", () => {
+  const findings = checkGateRegistry({
+    gateNames: ["reported.mjs"],
+    withFalsifier: ["reported.mjs", "check-deleted.mjs"],
+    withoutFalsifier: [{ gate: "check-moved.mjs", reason: "requires a live-run artifact" }],
+  });
+  assert.deepEqual(
+    findings.map((entry) => entry.detail),
+    [
+      "check-deleted.mjs: declared to print a report, but no such gate is in tools/",
+      "check-moved.mjs: declared without a report, but no such gate is in tools/",
+    ],
+  );
+  assert.deepEqual(
+    checkGateRegistry({ gateNames: harnessGateNames(toolsDir) }),
+    [],
+    "every entry in the real registry names a gate the harness enumerates",
+  );
 });
 
 // The report is what the gate PRINTS, so the falsifier deletes the print while keeping the words the source-text form

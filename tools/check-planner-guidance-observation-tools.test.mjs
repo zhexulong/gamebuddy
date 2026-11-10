@@ -31,6 +31,7 @@ import {
   plannerGuidanceText,
   REASON_CLASSES,
   renderReport,
+  RULES,
 } from "./check-planner-guidance-observation-tools.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -48,6 +49,10 @@ const check = (overrides, reasons) =>
     overrides,
     ...(reasons === undefined ? {} : { reasons }),
   });
+/** The report's JSON line, parsed, so a case reads the verdict the harness reads. */
+const reportOf = (result) => JSON.parse(renderReport(result).lines.at(-1));
+/** The rule ids the report calls out, in report order. */
+const rulesOf = (report, status) => report.checks.filter((entry) => entry.status === status).map((entry) => entry.id);
 
 /** The opening and closing words of the rectangle sentence, so the red proofs read the tree instead of quoting it. */
 const RECTANGLE_LINE_START = "A piece of work with a SHAPE";
@@ -70,7 +75,7 @@ function guidanceBeforeRectangleLine() {
 test("the real tree: every observation tool the Game surface mounts is named in the planner's text or reasoned", () => {
   const result = check({});
   assert.deepEqual(codes(result), [], "the planner's text and the reason table together must account for every tool");
-  assert.equal(result.verdict, "passed");
+  assert.equal(result.status, "passed");
   assert.ok(
     result.examined.observationTools >= 9,
     `only ${result.examined.observationTools} observation tools were derived; a collapse this large means the producer ` +
@@ -84,6 +89,49 @@ test("the real tree: every observation tool the Game surface mounts is named in 
   assert.ok(
     result.named.includes("stardew_inspect_tiles"),
     "the rectangle query is the tool this gate was written for: a task with a shape is a rectangle, not another observe",
+  );
+});
+
+test("the verdict line and the report carry the same status, and every rule is enumerated", () => {
+  const report = reportOf(check({}));
+  assert.equal(report.status, "passed");
+  assert.deepEqual(
+    report.checks.map((entry) => entry.id),
+    RULES.map((rule) => rule.id),
+    "a rule that passed is enumerated beside one that failed; the list is the gate's capability, not its findings",
+  );
+  assert.deepEqual(
+    rulesOf(report, "passed"),
+    report.checks.map((entry) => entry.id),
+  );
+  assert.equal(
+    renderReport(check({})).lines.at(-2),
+    "planner_guidance_observation_tools: passed",
+    "the human line and the JSON status are one spelling of the same verdict",
+  );
+});
+
+test("a failing rule is the one the report names, and the others still report their own outcome", () => {
+  const withoutLookUp = GUIDANCE.replaceAll("stardew_look_up", "the held snapshot");
+  const report = reportOf(check({ [GUIDANCE_PATH]: withoutLookUp }));
+  assert.equal(report.status, "failed");
+  assert.deepEqual(rulesOf(report, "failed"), ["every_observation_tool_named_or_reasoned"]);
+  assert.deepEqual(
+    report.checks.find((entry) => entry.id === "every_observation_tool_named_or_reasoned").findings,
+    ["planner_guidance_omits_tool:stardew_look_up"],
+    "the rule's entry names the tool, so the finding and the report are one reading",
+  );
+  assert.equal(rulesOf(report, "not_measured").length, 0);
+});
+
+test("a prerequisite that cannot be read is not_measured, and the whole gate is blocked", () => {
+  const noTools = PRODUCER.replaceAll("defineTool({", "defineToolLiteral({");
+  const report = reportOf(check({ [PRODUCER_PATH]: noTools }));
+  assert.equal(report.status, "blocked", "an empty population measured nothing, so the gate has not passed");
+  assert.deepEqual(rulesOf(report, "not_measured"), ["observation_population_derived"]);
+  assert.equal(
+    report.checks.find((entry) => entry.id === "observation_population_derived").reason,
+    "the declaration mounts no observation tool, so nothing was measured",
   );
 });
 
@@ -108,7 +156,7 @@ test("the verdict line prints the population, the named count and the reason cou
 
 test("the guidance before the rectangle sentence is red on stardew_inspect_tiles", () => {
   const result = check({ [GUIDANCE_PATH]: guidanceBeforeRectangleLine() });
-  assert.equal(result.verdict, "blocked");
+  assert.equal(result.status, "failed");
   assert.ok(
     codes(result).includes("planner_guidance_omits_tool:stardew_inspect_tiles"),
     `the reading that made this gate necessary must still be red; got ${codes(result).join(", ") || "(nothing)"}`,
@@ -213,7 +261,7 @@ test("a producer with no observation tools is blocked, never a green reading ove
   const noTools = PRODUCER.replaceAll("defineTool({", "defineToolLiteral({");
   const result = check({ [PRODUCER_PATH]: noTools });
   assert.equal(result.examined.observationTools, 0);
-  assert.equal(result.verdict, "blocked");
+  assert.equal(result.status, "blocked");
   assert.ok(
     codes(result).includes("observation_population_empty:createStardewObservationTools"),
     `an empty population must say so; got ${codes(result).join(", ")}`,

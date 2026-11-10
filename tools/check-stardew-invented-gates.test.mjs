@@ -24,10 +24,12 @@ import test from "node:test";
 
 import {
   DECOMPILED_ROOT,
+  RULES,
   STATED_DEBT,
   analyze,
   blockedReason,
   engineReadingAt,
+  ruleChecks,
 } from "./check-stardew-invented-gates.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -253,6 +255,63 @@ test("an empty population blocks instead of passing", () => {
     body: ["        int unaffected = targetX + targetY;"],
   });
   assert.equal(blockedReason(unrelated), "invented_gates_no_population");
+
+  const checks = ruleChecks({ findings: unrelated.findings, blocked: blockedReason(unrelated) });
+  assert.deepEqual(
+    checks.map((check) => check.id),
+    RULES.map((rule) => rule.id),
+    "a blocked run still names every rule, so the report says what was not measured rather than nothing",
+  );
+  assert.deepEqual(
+    checks.filter((check) => check.status === "not_measured").map((check) => check.id),
+    RULES.map((rule) => rule.id),
+    "no rule passed over a population that was never read",
+  );
+  assert.equal(checks[1].reason, "invented_gates_no_population");
+  assert.equal(checks[2].reason, "not reached: invented_gates_no_population");
+});
+
+test("the report names the failing rule, and the rule that passed still enumerates", () => {
+  const report = analyzeFixture({
+    engine: engineFixture(),
+    constants: [
+      "    /// <summary>The native interaction radius for a shop owner (Chebyshev, Utility.cs:20).</summary>",
+      "    private const int ShopOwnerInteractionRadius = 1;",
+      ...NATIVE_CLICK_RADIUS,
+    ],
+    body: [
+      "        bool reach = Utility.tileWithinRadiusOfPlayer(npc.TilePoint.X, npc.TilePoint.Y, ShopOwnerInteractionRadius, player);",
+      "        if (!reach)",
+      '            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "shop_counter_out_of_reach", "x");',
+    ],
+  });
+
+  const checks = ruleChecks({ findings: report.findings });
+  assert.deepEqual(
+    checks.map((check) => check.id),
+    RULES.map((rule) => rule.id),
+    "every rule is enumerated on a red run too - the list is the gate's capability, not its findings",
+  );
+  assert.deepEqual(
+    checks.filter((check) => check.status === "failed").map((check) => check.id),
+    ["every_bound_is_the_engine_number", "one_constant_measures_one_subject"],
+    "the two findings this fixture produces belong to those two rules and to no others",
+  );
+  assert.deepEqual(
+    checks[3].findings,
+    [`invented_gate:${CONTROLLER}:4:ShopOwnerInteractionRadius:ours=1:engine=unstated`],
+    "the rule's entry carries the finding itself, not a second spelling of it",
+  );
+});
+
+test("a debt entry that expired is the one rule that goes red for it", () => {
+  const report = analyze({ sources: [controller({ constants: [], body: [] })], engine: new Map(), debt: STATED_DEBT });
+  const checks = ruleChecks({ findings: report.findings });
+  assert.deepEqual(
+    checks.filter((check) => check.status === "failed").map((check) => check.id),
+    ["stated_debt_expires"],
+    "the ended entry is a debt finding, not an invented bound",
+  );
 });
 
 test("a citation of a member the decompiled tree has not got states no number", () => {
@@ -275,6 +334,16 @@ test("the real tree: the reach authority is engine-cited and no debt entry has e
   );
   assert.match(stdout, /NativeInteractionRadius ours=1 engine=1 status=engine-cited/u);
   assert.doesNotMatch(stdout, /debt_expired:/u, "every debt entry names a constant the tree still declares");
+
+  // The report the harness reads: the last JSON line of the default run, carrying one entry per rule.
+  const report = JSON.parse(stdout.trim().split("\n").at(-1));
+  assert.equal(report.gate, "stardew-invented-gates");
+  assert.deepEqual(
+    report.checks.map((check) => check.id),
+    RULES.map((rule) => rule.id),
+    "the default run's report enumerates every rule this gate is able to report red",
+  );
+  assert.equal(report.status, status === 0 ? "passed" : "failed", "the exit code and the report are one verdict");
 });
 
 function runGate() {

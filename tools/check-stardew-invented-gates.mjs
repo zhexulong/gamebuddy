@@ -64,6 +64,12 @@
  * `invented_gates_no_population`. Both print and exit 2, because a gate that passes on an empty
  * reading is indistinguishable from one that found nothing.
  *
+ * THE REPORT. Every run ends with one JSON line carrying `checks`: one entry per rule in `RULES` below, each with its own
+ * outcome, so the run says which rules this gate is able to report red and what each one found - a rule that passed is
+ * enumerated beside the one that failed. `status` is `passed` only when every rule passed over a non-empty population,
+ * `blocked` when the decompiled tree or the population could not be read, `failed` when a rule has a finding.
+ * `tools/lib/harness-conformance.mjs` reads that line; `--json` prints it alone.
+ *
  * Usage: node tools/check-stardew-invented-gates.mjs [--json]
  *
  * red-proof: inject  `ShopOwnerInteractionRadius` citing the predicate (`Utility.cs:4100`) ->
@@ -71,6 +77,10 @@
  *   measuring `npc.TilePoint` at one site and `x` at another -> `invented_gate_subject`
  * red-proof: inject  deleting a constant `STATED_DEBT` names -> `debt_expired` naming the entry
  * red-proof: inject  a source set with no request path -> `invented_gates_no_population` (exit 2)
+ * red-proof: self-check  the report's `checks` list names one rule per finding the gate can emit, and a finding lands on
+ *   the rule that owns it -> asserted in tools/check-stardew-invented-gates.test.mjs by "the report names the failing
+ *   rule, and the rule that passed still enumerates", "a debt entry that expired is the one rule that goes red for it",
+ *   and the blocked case's `not_measured` census in "an empty population blocks instead of passing"
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -596,6 +606,66 @@ export function blockedReason(report) {
   return report.examined === 0 ? "invented_gates_no_population" : null;
 }
 
+/**
+ * The rules this gate asserts, one entry per finding it can report red with - the list the default run's report
+ * enumerates. Built from this table rather than from the findings, so a rule that passed today is named beside the one
+ * that failed; a report that lists only what went wrong cannot say what the gate looked at.
+ */
+export const RULES = Object.freeze([
+  { id: "engine_citations_readable", codes: ["stardew_decompile_root_missing"] },
+  { id: "population_derived_from_request_paths", codes: ["invented_gates_no_population"] },
+  { id: "every_reach_bound_resolves", codes: ["unresolved_bound:"] },
+  { id: "every_bound_is_the_engine_number", codes: ["invented_gate:"] },
+  { id: "one_constant_measures_one_subject", codes: ["invented_gate_subject:"] },
+  { id: "stated_debt_expires", codes: ["debt_expired:"] },
+]);
+
+/** A finding line starts in column 0; an indented one is the detail of the finding above it, not a finding. */
+const FINDING_LINE = /^[^ ]/u;
+
+/** The per-rule outcomes, each rule's findings named, in `RULES` order. */
+export function ruleChecks({ findings = [], blocked = null } = {}) {
+  const reported = findings.filter((finding) => FINDING_LINE.test(finding));
+  const checks = RULES.map((rule) => {
+    if (blocked !== null) {
+      // A blocked run measured nothing, so nothing below it passed: the rule that names the block says so, the rest say
+      // they were not reached.
+      return {
+        id: rule.id,
+        status: "not_measured",
+        reason: rule.codes.includes(blocked) ? blocked : `not reached: ${blocked}`,
+      };
+    }
+    const hits = reported.filter((finding) => rule.codes.some((code) => finding.startsWith(code)));
+    return hits.length === 0 ? { id: rule.id, status: "passed" } : { id: rule.id, status: "failed", findings: hits };
+  });
+  // A finding this table does not name is a rule reported red and absent from the report, so it is enumerated rather
+  // than dropped: the report's population stays the gate's own capability.
+  const covered = RULES.flatMap((rule) => rule.codes);
+  for (const finding of reported) {
+    if (covered.some((code) => finding.startsWith(code))) continue;
+    checks.push({ id: `unclassified:${finding.split(":")[0]}`, status: "failed", findings: [finding] });
+  }
+  return checks;
+}
+
+/** The one JSON report the default run ends with — the line `tools/lib/harness-conformance.mjs` reads. */
+function reportLine({ report = null, blocked = null } = {}) {
+  const checks = ruleChecks({ findings: report?.findings ?? [], blocked });
+  const status = blocked !== null ? "blocked" : checks.some((check) => check.status === "failed") ? "failed" : "passed";
+  return JSON.stringify({
+    gate: "stardew-invented-gates",
+    examined: report?.examined ?? 0,
+    engineCited: report?.engineCited ?? 0,
+    debt: report?.debt ?? 0,
+    invented: report?.invented ?? 0,
+    authority: report?.authority?.symbol ?? null,
+    findings: report?.findings ?? [],
+    checks,
+    status,
+  });
+}
+
 function main() {
   const asJson = process.argv.includes("--json");
   const modIndex = process.argv.indexOf("--mod");
@@ -606,6 +676,7 @@ function main() {
     console.log(
       "invented-gates: not measured - no cited member can be read, so no constant can be called engine-cited",
     );
+    console.log(reportLine({ blocked: "stardew_decompile_root_missing" }));
     process.exitCode = 2;
     return;
   }
@@ -613,25 +684,13 @@ function main() {
   const blocked = blockedReason(report);
   if (blocked !== null) {
     console.log(`${blocked}: no reach bound in a request path was found under the controller partials`);
+    console.log(reportLine({ report, blocked }));
     process.exitCode = 2;
     return;
   }
+  const line = reportLine({ report });
   if (asJson) {
-    console.log(
-      JSON.stringify(
-        {
-          gate: "stardew-invented-gates",
-          examined: report.examined,
-          engineCited: report.engineCited,
-          debt: report.debt,
-          invented: report.invented,
-          authority: report.authority?.symbol ?? null,
-          findings: report.findings,
-        },
-        null,
-        2,
-      ),
-    );
+    console.log(line);
     process.exitCode = report.findings.length === 0 ? 0 : 1;
     return;
   }
@@ -647,11 +706,12 @@ function main() {
     `invented-gates: constants examined ${report.examined} · engine-cited ${report.engineCited} · ` +
       `debt ${report.debt} · invented ${report.invented}`,
   );
-  for (const line of report.named) console.log(`invented-gates: ${line}`);
+  for (const name of report.named) console.log(`invented-gates: ${name}`);
   if (report.notExamined.length > 0) {
     console.log(`invented-gates: not examined (not a reach): ${report.notExamined.join(", ")}`);
   }
   for (const finding of report.findings) console.log(finding);
+  console.log(line);
   process.exitCode = report.findings.length === 0 ? 0 : 1;
 }
 

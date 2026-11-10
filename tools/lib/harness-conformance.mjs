@@ -339,6 +339,15 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // answer that dropped a step is a dead end, a plan-level refusal with a workable remedy is repaired, a refusal naming
   // no remedy is a dead end even when one exists by hand, and an empty or unpublished population is `blocked`.
   "check-plan-legal-fixpoint.mjs",
+  // Prints `observation tools examined N · named M · with a reason K`, one line per tool, and a `checks[]` verdict
+  // enumerating its seven rules (the surface still mounts the class it reads, the population is non-empty, the guidance
+  // was found, every tool is named or reasoned, the reason table is not stale, its classes are closed, it reads the
+  // declaration). Its falsifier is tools/check-planner-guidance-observation-tools.test.mjs: the guidance as it read
+  // before the rectangle sentence is red on `stardew_inspect_tiles` beside `stardew_look_up` and `stardew_observe`, one
+  // tool's name removed is red on that tool alone, a tenth `defineTool` arrives red by being added, a mention living only
+  // in a comment is not a mention, a reason the text has overtaken and a reason for a tool the producer no longer mounts
+  // are red, an empty producer is blocked, and an unwired adapter is `observation_chain_unanchored`.
+  "check-planner-guidance-observation-tools.mjs",
   // Prints `preset_macros examined N macros violations M status ...` on every run, which is the report the conformance
   // suite reads; its falsifier is tools/check-preset-macros.test.mjs, which injects a module-level variable table (the
   // two-calls-share-state violation) and a preset carrying an unimplemented macro.
@@ -347,6 +356,14 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // it examined, so its default run is the report the conformance suite reads.
   "check-preset-round-trip.mjs",
   "check-stardew-fixture-action-coverage.mjs",
+  // Prints `invented-gates: constants examined N · engine-cited M · debt K · invented D` plus a `checks[]` verdict
+  // enumerating its six rules (the decompiled tree is readable, the population comes from the request paths, every bound
+  // resolves, every bound is the engine's number, one constant measures one subject, every debt entry expires). Its
+  // falsifier is tools/check-stardew-invented-gates.test.mjs: a constant citing `Utility.cs:20` - the predicate, whose
+  // radius is a parameter - is `engine=unstated` beside the subject it names, one constant measured against two tiles
+  // names both, an inline literal that disagrees with the cited authority is invented, a re-valued debt entry expires,
+  // and a source set with no request path blocks rather than passes.
+  "check-stardew-invented-gates.mjs",
   "check-stardew-native-notice-coverage.mjs",
   "check-stardew-postcondition-delta.mjs",
   // Prints a per-reading verdict, each naming the state it read - `applies-to-working-tree` (state=worktree),
@@ -734,10 +751,6 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       " named with its disposition instead of being silent, a filed state that now has a token is red, a stale entry is" +
       " red, and zero population is exit 2",
   },
-  {
-    gate: "check-post-history-instructions-live.mjs",
-    reason: "requires a live-run artifact and a mounted card; no offline rule set",
-  },
 ]);
 
 /** Every gate file the suite recognises: `tools/check-*.mjs`, minus tests and mutation scripts. */
@@ -762,6 +775,8 @@ export function checkGateFalsifiers({
   const declared = new Set(withoutFalsifier.map((entry) => entry.gate));
   const withSet = new Set(withFalsifier);
   const findings = [];
+  if (gateNames.length === 0)
+    findings.push(finding("gate_population_empty", "no tools/check-*.mjs gate was enumerated, so no report was read"));
   for (const name of gateNames) {
     const selfReports = withSet.has(name);
     const declaredExcept = declared.has(name);
@@ -786,6 +801,68 @@ export function checkGateFalsifiers({
   return findings;
 }
 
+/**
+ * Which of the three places each enumerated gate stands in: run for its report, declared without one, or neither.
+ *
+ * The third bucket is the debt this count exists for. A gate in it has never had its default run executed here, so
+ * nothing in this suite can say what it would print - the state is decided by a hand list, and the number is printed
+ * beside the verdict instead of being rounded away. A non-zero count is already red (`gate_without_falsifier`); this is
+ * what a reader needs in order to see WHICH gate is not being checked.
+ */
+export function gateFalsifierCensus({
+  gateNames,
+  withFalsifier = GATES_WITH_FALSIFIER,
+  withoutFalsifier = GATES_WITHOUT_FALSIFIER,
+} = {}) {
+  const withSet = new Set(withFalsifier);
+  const declared = new Set(withoutFalsifier.map((entry) => entry.gate));
+  return {
+    examined: gateNames.length,
+    withReport: gateNames.filter((name) => withSet.has(name)).length,
+    without: gateNames.filter((name) => !withSet.has(name) && declared.has(name)).length,
+    unexamined: gateNames.filter((name) => !withSet.has(name) && !declared.has(name)),
+  };
+}
+
+/** The census as the one line the CLI prints beside the verdict. */
+export function describeGateFalsifierCensus(census) {
+  return (
+    `gates examined ${census.examined} · declared with a report ${census.withReport} · ` +
+    `declared without ${census.without} · unlisted-and-unexamined ${census.unexamined.length}` +
+    (census.unexamined.length === 0 ? "" : ` (${census.unexamined.join(", ")})`)
+  );
+}
+
+/**
+ * The declarations themselves, checked against the tree: an entry naming a gate that is not there exempts nothing.
+ *
+ * `gains a report` is the half this cannot measure - an unlisted gate's default run never happens, so a report it would
+ * print is unknowable here; that is why the census above prints the count rather than a promise. `loses a report` is
+ * measurable and is what this checks: an exempted gate deleted from `tools/` leaves its reason behind and would
+ * otherwise keep excusing a gate that no longer exists.
+ */
+export function checkGateRegistry({
+  gateNames,
+  withFalsifier = GATES_WITH_FALSIFIER,
+  withoutFalsifier = GATES_WITHOUT_FALSIFIER,
+} = {}) {
+  const present = new Set(gateNames);
+  const findings = [];
+  for (const name of withFalsifier) {
+    if (!present.has(name))
+      findings.push(
+        finding("falsifier_entry_stale", `${name}: declared to print a report, but no such gate is in tools/`),
+      );
+  }
+  for (const entry of withoutFalsifier) {
+    if (!present.has(entry.gate))
+      findings.push(
+        finding("falsifier_entry_stale", `${entry.gate}: declared without a report, but no such gate is in tools/`),
+      );
+  }
+  return findings;
+}
+
 // ---------------------------------------------------------------------------------------------------
 // The suite: run all five checks, in order.
 // ---------------------------------------------------------------------------------------------------
@@ -799,8 +876,9 @@ export function readModFixtureSources(repoRoot) {
     .map((name) => ({ file: `integrations/stardew/${name}`, source: readFileSync(join(modDir, name), "utf8") }));
 }
 
-/** Run the five checks against a real checkout and return `{ id, findings }` for each. */
+/** Run the five checks against a real checkout and return `{ id, findings }` for each, plus any count a check prints. */
 export function runHarnessConformance({ toolsDir, repoRoot }) {
+  const gateNames = harnessGateNames(toolsDir);
   return [
     { id: "preflight_synthetic_trees", findings: checkLiveRunPreflight({}) },
     {
@@ -809,6 +887,12 @@ export function runHarnessConformance({ toolsDir, repoRoot }) {
     },
     { id: "runner_resolution", findings: checkRunnerResolution({ toolsDir }) },
     { id: "experimental_runner_inventory", findings: checkExperimentalRunners({ toolsDir }) },
-    { id: "gate_falsifiers", findings: checkGateFalsifiers({ gateNames: harnessGateNames(toolsDir), toolsDir }) },
+    {
+      id: "gate_falsifiers",
+      // The population the verdict rests on, printed beside it: `0 findings` means nothing without `examined N`, and
+      // the third bucket is the set whose default run never happens.
+      note: describeGateFalsifierCensus(gateFalsifierCensus({ gateNames })),
+      findings: [...checkGateFalsifiers({ gateNames, toolsDir }), ...checkGateRegistry({ gateNames })],
+    },
   ];
 }

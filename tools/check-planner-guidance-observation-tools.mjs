@@ -39,9 +39,15 @@
  * itself. `examined N · named M · with a reason K` is the verdict line, and `node
  * tools/check-planner-guidance-observation-tools.mjs` exits 1 on any finding.
  *
+ * THE REPORT. The default run ends with one JSON line carrying `checks`: one entry per rule in `RULES` below, each with
+ * its own outcome, so the run says which rules it is able to report red and what each one found - a rule that passed is
+ * enumerated beside the one that failed. `status` is `passed` only when every rule passed over a non-empty population,
+ * `blocked` when a prerequisite or the population could not be read, `failed` when a rule has a finding; the verdict
+ * line above the report carries the same word. `tools/lib/harness-conformance.mjs` reads that line.
+ *
  * red-proof: inject  the guidance as it read before the rectangle sentence (the name deleted from the text) -> `examined 9
  *   named 0 reason 6`, `planner_guidance_omits_tool:stardew_inspect_tiles`, `...:stardew_look_up`, `...:stardew_observe`,
- *   blocked, exit 1 - measured on the text as it read before the sentence was added, and reproduced by
+ *   failed, exit 1 - measured on the text as it read before the sentence was added, and reproduced by
  *   tools/check-planner-guidance-observation-tools.test.mjs deleting it
  * red-proof: inject  only `stardew_look_up`'s name removed -> that tool alone is named, so the finding points at the tool
  *   that went missing and not at the sentence it was in
@@ -51,6 +57,11 @@
  *   counting as a mention, and a `name:` key inside a producer comment becoming a tool
  * red-proof: inject  `observationToolNames` returning before it walks the producer -> 10 of 13 cases fail, so the derived
  *   population is load-bearing rather than decorative
+ * red-proof: self-check  the report's `checks` list names one rule per finding code the gate can emit, and the rule a
+ *   finding belongs to is the one whose entry carries it -> asserted by three cases in
+ *   tools/check-planner-guidance-observation-tools.test.mjs: "the verdict line and the report carry the same status, and
+ *   every rule is enumerated", "a failing rule is the one the report names, and the others still report their own
+ *   outcome", "a prerequisite that cannot be read is not_measured, and the whole gate is blocked"
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -189,6 +200,60 @@ function defaultRead(root, relativePath) {
 }
 
 /**
+ * The rules this gate asserts, one entry per finding code it can report red with.
+ *
+ * The report is built from this table, not from the findings: a rule that passed today is still enumerated, because a
+ * gate that prints only what it found cannot be told apart from one that never looked. `prerequisite` marks the readings
+ * that make the population trustworthy - when one of them fails nothing below it was measured, which is `not_measured`
+ * rather than a pass.
+ */
+export const RULES = Object.freeze([
+  {
+    id: "observation_chain_anchored",
+    codes: ["observation_chain_unanchored"],
+    prerequisite: "the class being read is not the one the Game surface mounts",
+  },
+  {
+    id: "observation_population_derived",
+    codes: ["observation_population_empty"],
+    prerequisite: "the declaration mounts no observation tool, so nothing was measured",
+  },
+  {
+    id: "guidance_read_from_source",
+    codes: ["guidance_unanchored"],
+    prerequisite: "the planner's guidance was not found, so no name could be missing from it",
+  },
+  { id: "every_observation_tool_named_or_reasoned", codes: ["planner_guidance_omits_tool"] },
+  { id: "reason_table_not_stale", codes: ["planner_guidance_reason_stale"] },
+  { id: "reason_class_declared_and_stated", codes: ["planner_guidance_reason_unreasoned"] },
+  { id: "reason_table_reads_the_declaration", codes: ["planner_guidance_reason_unknown_tool"] },
+]);
+
+/** The per-rule outcomes, each rule's findings named, in `RULES` order. */
+export function ruleChecks(findings) {
+  const checks = RULES.map((rule) => {
+    const hits = findings.filter((finding) => rule.codes.includes(finding.code));
+    if (hits.length === 0) return { id: rule.id, status: "passed" };
+    const named = hits.map((finding) => `${finding.code}:${finding.member}`);
+    return rule.prerequisite === undefined
+      ? { id: rule.id, status: "failed", findings: named }
+      : { id: rule.id, status: "not_measured", findings: named, reason: rule.prerequisite };
+  });
+  // A finding code this table does not name is a rule reported red and absent from the report, so it is enumerated
+  // rather than dropped: the report's population stays the gate's own capability.
+  const covered = RULES.flatMap((rule) => rule.codes);
+  for (const finding of findings) {
+    if (covered.includes(finding.code)) continue;
+    checks.push({
+      id: `unclassified:${finding.code}`,
+      status: "failed",
+      findings: [`${finding.code}:${finding.member}`],
+    });
+  }
+  return checks;
+}
+
+/**
  * @param {{ root?: string, overrides?: Record<string, string>, reasons?: object }} options
  */
 export function checkPlannerGuidanceObservationTools({
@@ -263,9 +328,14 @@ export function checkPlannerGuidanceObservationTools({
   }
 
   findings.sort((left, right) => `${left.code}:${left.member}`.localeCompare(`${right.code}:${right.member}`));
+  const checks = ruleChecks(findings);
   return Object.freeze({
     gate,
-    verdict: findings.length === 0 ? "passed" : "blocked",
+    status: checks.some((check) => check.status === "not_measured")
+      ? "blocked"
+      : checks.some((check) => check.status === "failed")
+        ? "failed"
+        : "passed",
     examined: Object.freeze({
       observationTools: (tools ?? []).length,
       named: named.length,
@@ -275,6 +345,7 @@ export function checkPlannerGuidanceObservationTools({
     named: Object.freeze(named),
     reasoned: Object.freeze(reasoned),
     findings: Object.freeze(findings),
+    checks: Object.freeze(checks),
   });
 }
 
@@ -293,8 +364,11 @@ export function renderReport(result) {
   for (const finding of result.findings)
     lines.push(`planner_guidance_${finding.code}: ${finding.member} - ${finding.detail}`);
   lines.push(
-    `planner_guidance_observation_tools: ${result.verdict}` +
+    `planner_guidance_observation_tools: ${result.status}` +
       `${result.findings.length === 0 ? "" : ` (${result.findings.length} finding(s))`}`,
+  );
+  lines.push(
+    JSON.stringify({ gate: result.gate, examined: result.examined, checks: result.checks, status: result.status }),
   );
   return { lines, exitCode: result.findings.length === 0 ? 0 : 1 };
 }
