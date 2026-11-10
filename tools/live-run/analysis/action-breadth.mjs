@@ -15,7 +15,7 @@
  * denominator is now the run's own published `snapshotCensus`, joined to actions through the discovery audit's
  * `TARGET_FIELD` map, plus the actions that name no snapshot family at all.
  *
- *   node tools/audit-action-breadth.mjs --result <bundle>/result.json [--baseline <path>]
+ *   node tools/live-run/analysis/action-breadth.mjs --result <bundle>/result.json [--baseline <path>]
  *
  * POPULATION (derived, printed, never hand-listed): the published execution actions of the Mod's registration table,
  * read through `tools/lib/stardew-published-action-registry.mjs`, minus the actions this fixture declares it cannot
@@ -45,10 +45,10 @@ import {
   measureActionBreadth,
   readActionBreadthBaseline,
   readActionBreadthSurface,
-} from "./lib/action-breadth.mjs";
+} from "../../lib/action-breadth.mjs";
 // The one definition of what a program execution IS, so this reading cannot count a redelivered journal event twice
 // while the run's own manifest counted it once.
-import { programExecutionRows } from "./live-run/game/execution-trace.mjs";
+import { programExecutionRows } from "../game/execution-trace.mjs";
 
 function out(line) {
   process.stdout.write(`${line}\n`);
@@ -144,7 +144,9 @@ function reportFindings(breadth, flatDispatchCount, rowsRead) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.result === null) {
-    out("action_breadth_usage: node tools/audit-action-breadth.mjs --result <result.json> [--baseline <path>]");
+    out(
+      "action_breadth_usage: node tools/live-run/analysis/action-breadth.mjs --result <result.json> [--baseline <path>]",
+    );
     process.exitCode = 2;
     return;
   }

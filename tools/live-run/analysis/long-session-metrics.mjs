@@ -16,7 +16,9 @@ const option = (name) => {
 const resultPath = option("--result");
 const sessionPath = option("--session");
 if (resultPath === undefined) {
-  console.error("usage: node tools/audit-long-session-metrics.mjs --result <result.json> [--session <session.jsonl>]");
+  console.error(
+    "usage: node tools/live-run/analysis/long-session-metrics.mjs --result <result.json> [--session <session.jsonl>]",
+  );
   process.exit(2);
 }
 

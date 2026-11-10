@@ -11,7 +11,7 @@
 // deciding on her own is in character. What is measured is whether her initiative was LEGIBLE (she said what she was
 // doing and why) and whether she was REDIRECTABLE (pushback changed the next plan).
 //
-// Usage: node tools/audit-airp-scorecard.mjs [runDir]
+// Usage: node tools/live-run/analysis/airp-scorecard.mjs [runDir]
 
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";

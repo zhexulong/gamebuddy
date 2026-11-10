@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "what": "The best action coverage each live scenario has shown over the surface it could address, and the published actions a farm fixture cannot reach.",
-  "howRead": "tools/audit-action-breadth.mjs --result <bundle>; attempted actions against the run's own published `snapshotCensus` (the families its snapshots carried a row for), joined to actions through tools/lib/stardew-published-action-registry.mjs and TARGET_FIELD",
+  "howRead": "tools/live-run/analysis/action-breadth.mjs --result <bundle>; attempted actions against the run's own published `snapshotCensus` (the families its snapshots carried a row for), joined to actions through tools/lib/stardew-published-action-registry.mjs and TARGET_FIELD",
   "why": [
     "A count of executions cannot tell a varied day from 124 repetitions of three safe actions. `round39` reported",
     "`executionTrace: { ok: true, rows: 124 }` and completed, having addressed a small part of the world it was",
