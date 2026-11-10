@@ -88,6 +88,7 @@ import {
 } from "./stardew-execution-recovery-supervisor.js";
 import type { TavernAuthoredContextCatalog } from "./tavern/catalog-service.js";
 import { mergeModelProviderEntry, modelProviderEntry } from "./tavern/pi-provider-store.js";
+import { createPresetBindingStore } from "./tavern/preset-binding.js";
 import {
   formatPresetOverlap,
   type GameSessionPreset,
@@ -96,7 +97,14 @@ import {
   renderPresetMainSegment,
 } from "./tavern/preset-game-session.js";
 import { type PresetSamplingValues, withPresetSampling } from "./tavern/preset-sampling.js";
+import {
+  boundPresetSampling,
+  presetRequestMacros,
+  publishPresetRequestSegments,
+} from "./tavern/preset-request-segments.js";
+import { createPresetStore } from "./tavern/preset-store.js";
 import { TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
+import { resolveTavernPaths } from "./tavern/tavern-paths.js";
 import {
   applyToolDescriptionOverrides,
   assertToolSurface,
@@ -548,6 +556,16 @@ export type RuntimeSession = Readonly<{
    * `before_provider_headers`, so the value travels with the session that sends the request.
    */
   providerTurnHeader: ProviderTurnHeaderScope;
+  /**
+   * Republish the preset segments the NEXT provider request assembles from, for the Chat surface.
+   *
+   * Absent on every other surface: the Game surface applies its mounted preset file at construction. The Chat runtime
+   * reads its durable binding here rather than once at mount because binding a preset must reach the very next turn -
+   * a mount-time read would make the panel's binding row a fact about the next restart. It publishes (or withdraws)
+   * the rendered buckets and the placement function through the vendored seam's Host registry
+   * (`preset-request-segments.ts`), so nothing is cached in this session and the vendor holds no copy to go stale.
+   */
+  refreshPresetRequestSegments?: () => Promise<void>;
   /** Host-owned surface port; Pi never receives this authority directly. */
   presentation?: PresentationRuntime;
   gameplaySubagent?: GameplayTaskSubagent;
@@ -1329,6 +1347,42 @@ export async function createRuntimeWithFixedToolsCore(
           ...(presentation?.profile.locale === undefined ? {} : { locale: presentation.profile.locale }),
         })
       : null;
+  // The preset in force on the CHAT surface: the durable player-scoped binding (`tavern/preset-binding.ts`) over the
+  // imported store, which is the same pair the panel's readout reads. The Game surface has its own mounted preset
+  // above and deliberately reads none of this: one surface, one answer to "which preset", and the Game one is a file
+  // provisioning put in its runtime cwd.
+  //
+  // Two consumers, one composition: the sampler half is spliced into `models.json` at mount (it decides the model Pi
+  // describes, so it cannot change per turn), and the segment half is republished before every prompt
+  // (`refreshPresetRequestSegments`), because binding a preset while a Chat is open must reach the very next request.
+  const chatPreset =
+    runtimeSurface !== "chat"
+      ? null
+      : (() => {
+          const tavernPaths = resolveTavernPaths(paths, identity);
+          const presets = createPresetStore({ runtimeRoot: paths.root, playerRoot: tavernPaths.playerRoot });
+          const binding = createPresetBindingStore(
+            { runtimeRoot: paths.root, playerRoot: tavernPaths.playerRoot },
+            presets,
+          );
+          return Object.freeze({ presets, binding, projectDir: paths.runtimeCwd });
+        })();
+  const chatPresetSampling = chatPreset === null ? null : await boundPresetSampling(chatPreset);
+  const refreshPresetRequestSegments =
+    chatPreset === null
+      ? undefined
+      : async (): Promise<void> => {
+          await publishPresetRequestSegments({
+            projectDir: chatPreset.projectDir,
+            presets: chatPreset.presets,
+            binding: chatPreset.binding,
+            macros: presetRequestMacros(profile.identity.name),
+            // No marker content is supplied yet: the companion card's fields and the bound world book are the Chat
+            // pipeline's to hand over, and until they are, `unfilled` names every slot that stayed empty
+            // (`preset-request-segments.ts` prints them) instead of the request carrying a blank region.
+            markers: Object.freeze({}),
+          });
+        };
   // One string, built here rather than inline below, because it is also what the two guards read: the shared
   // Magic Context config skips its guidance block by a SUBSTRING of the Chat prompt, so the substring has to be
   // shown to cross no surface boundary in either direction. See `assertMagicContextSurfaceSignature`.
@@ -1396,7 +1450,11 @@ export async function createRuntimeWithFixedToolsCore(
   }
 
   const sessionManager = SessionManager.continueRecent(paths.runtimeCwd, paths.sessionDir);
-  const modelRuntime = await createCompanionModelRuntime(paths.agentDir, modelConfig, gameSessionPreset?.sampling);
+  const modelRuntime = await createCompanionModelRuntime(
+    paths.agentDir,
+    modelConfig,
+    runtimeSurface === "chat" ? (chatPresetSampling ?? undefined) : gameSessionPreset?.sampling,
+  );
   const model =
     modelConfig === undefined ? undefined : modelRuntime.getModel(modelConfig.provider, modelConfig.modelId);
   if (modelConfig !== undefined && model === undefined) throw new Error("companion_model_not_available");
@@ -1724,6 +1782,7 @@ export async function createRuntimeWithFixedToolsCore(
       extensions: loader.getExtensions().extensions.map((extension) => extension.path),
       toolSurface,
       providerTurnHeader,
+      ...(refreshPresetRequestSegments === undefined ? {} : { refreshPresetRequestSegments }),
       ...(boundPresentation === undefined ? {} : { presentation: boundPresentation }),
       ...(gameplaySubagent === undefined ? {} : { gameplaySubagent }),
       ...(dispatchController === undefined

@@ -651,8 +651,18 @@ export async function runMountedProviderStart(
       turnId: scope.facts.turnId,
       idempotencyKey: scope.facts.idempotencyKey,
     });
-    // The preset in force is assembled from the catalogue read path; the vendored request-segment seam was reverted
-    // (1103fbc8), so this turn has nothing to refresh here.
+    // The preset in force, rendered and published for THIS request: binding a preset while the Chat is open has to
+    // reach the very next turn, so the read is here rather than at mount. A preset the store refuses (deleted, or a
+    // binding file that no longer parses) fails the turn instead of assembling from a template the player believed
+    // was in use - the design's own rule (§2.4) - and the refusal is named on stderr because the durable outcome
+    // vocabulary has no code of its own for it yet.
+    try {
+      await scope.runtimeSession.refreshPresetRequestSegments?.();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[provider-start] preset refused: ${message.slice(0, 512)}\n`);
+      return await failRuntimeUnavailable(scope);
+    }
     const promptSettled = settlePrompt();
     promptPromise = promptSettled.then(() => undefined);
     const first = await Promise.race([

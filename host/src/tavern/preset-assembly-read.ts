@@ -37,9 +37,16 @@ export type PresetAssemblyRead = Readonly<{ read(): Promise<PresetAssemblyReadV1
 /**
  * The read over one store.
  *
- * `macros`, `markers` and `sampling` are the caller's exactly as `presetAssemblySurface` takes them: the same three
- * values are applied to every stored preset, because a preset that is not in force has no per-preset runtime facts -
- * that resolution belongs to the binding, not here.
+ * `macros` and `markers` are the caller's exactly as `presetAssemblySurface` takes them: the same two values are
+ * applied to every stored preset, because a preset that is not in force has no per-preset runtime facts.
+ *
+ * `sampling` is the runtime's own composed model, asked for at READ time (`null` = this mount holds no Chat session,
+ * so no composed model exists to describe). It is applied to the BOUND row only, and that is the whole point: the
+ * runtime composes `models.json` from the preset in force, so a stored preset that is not bound has no composed model
+ * of its own - `presetAssemblySurface` would fail closed with `preset_sampling_not_applied` for every key it declares,
+ * which is the check that proves the splice took. Handing one model to every row would therefore turn that check into
+ * a thrown read for every preset the player has ever imported, and weakening it to make rows render would delete the
+ * one signal this lane exists to produce.
  */
 export function createPresetAssemblyRead(
   input: Readonly<{
@@ -47,12 +54,17 @@ export function createPresetAssemblyRead(
     binding: PresetBindingStore;
     macros: MacroContext;
     markers: Readonly<Record<string, string>>;
-    sampling: Readonly<{ model: SamplingRuntimeModel; thinkingLevel: string }> | null;
+    sampling: (() => Promise<Readonly<{ model: SamplingRuntimeModel; thinkingLevel: string }> | null>) | null;
   }>,
 ): PresetAssemblyRead {
   return Object.freeze({
     async read(): Promise<PresetAssemblyReadV1> {
       const stored = await input.store.list();
+      // Classified against the SAME listing the rows come from: "bound" cannot name a preset the body does not show,
+      // and "missing" cannot be reported for an id the store still holds. Read before the rows because it also decides
+      // which row may carry a sampling reading.
+      const bound = await input.binding.read();
+      const sampling = bound === null || input.sampling === null ? null : await input.sampling();
       const presets: PresetAssemblySurfaceV1[] = [];
       for (const summary of stored) {
         // The store's own read is the document's authority, and it re-checks the stored summary against the document
@@ -66,13 +78,10 @@ export function createPresetAssemblyRead(
             document: record.document,
             macros: input.macros,
             markers: input.markers,
-            sampling: input.sampling,
+            sampling: record.presetId === bound?.presetId ? sampling : null,
           }),
         );
       }
-      // Classified against the SAME listing the rows come from: "bound" cannot name a preset the body does not show,
-      // and "missing" cannot be reported for an id the store still holds.
-      const bound = await input.binding.read();
       const activePreset: PresetActiveBindingV1 =
         bound === null
           ? Object.freeze({ state: "none" as const })

@@ -158,6 +158,25 @@ export const MERGED_SEAMS = Object.freeze([
     file: "packages/pi-plugin/src/context-handler.ts",
     points: Object.freeze(["PiPresetSegments", "presetSegments", "assemblePresetSegments"]),
   }),
+  // The seam's Host half: the publication slot the embedding Host writes, the subpath that publishes it, and the
+  // per-pass read that spreads it into the options the handler resolves for that pass. Declared as its own members
+  // because losing any one of them leaves the seam present and unreachable - which is the state this lane found.
+  Object.freeze({
+    file: "packages/pi-plugin/src/gamebuddy-preset-segments-source.ts",
+    points: Object.freeze([
+      "PRESET_SEGMENTS_REGISTRY_SLOT",
+      "publishGameBuddyPresetSegments",
+      "clearGameBuddyPresetSegments",
+    ]),
+  }),
+  Object.freeze({
+    file: "packages/pi-plugin/src/tavern/index.ts",
+    points: Object.freeze(["publishGameBuddyPresetSegments"]),
+  }),
+  Object.freeze({
+    file: "packages/pi-plugin/src/index.ts",
+    points: Object.freeze(["__gamebuddyReadPresetSegments"]),
+  }),
 ]);
 
 /** Why an empty patch directory is a measured fact here. Printed on every sealed run, beside the pin it verified. */
