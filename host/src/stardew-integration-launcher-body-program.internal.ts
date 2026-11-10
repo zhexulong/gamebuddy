@@ -39,6 +39,7 @@ import type {
   DataQueryRequest,
   NavigationReadRequest,
   ObserveSceneRequest,
+  TileAreaRequest,
 } from "./protocol.js";
 
 /** Liveness check carried by one exact authenticated connection association. */
@@ -317,6 +318,7 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
       navigationRead: (request: NavigationReadRequest) => bridge.navigationRead(request),
       observeScene: (request: ObserveSceneRequest) => bridge.observeScene(request),
       dataQuery: (request: DataQueryRequest) => bridge.dataQuery(request),
+      tileArea: (request: TileAreaRequest) => bridge.tileArea(request),
     });
     // Mint exactly one authenticated association for the exact frozen wrapper
     // returned by this launch handle. The adapter refuses any structural copy,

@@ -4682,6 +4682,44 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal static string DescribeSoilRefusalCode(string refusal) => $"soil_not_diggable:{refusal}";
 
     /// <summary>
+    /// The engine's own name for whatever stands on this tile, or <c>none</c> when nothing does.
+    ///
+    /// <para>
+    /// The containers are walked in the order a tile's contents live in (<c>resourceClumps</c>, <c>objects</c>,
+    /// <c>terrainFeatures</c>, <c>largeTerrainFeatures</c>), then characters last: a tile holds at most one of the four,
+    /// so the first answer is the answering one. This is the FACT a planner reads ("what is here");
+    /// <see cref="DescribeSoilRefusal"/> is a different question with a narrower answer ("what stops the hoe", which
+    /// also includes ground that is water or carries no `Diggable` property), and it keeps its own walk and its own
+    /// words for that reason.
+    /// </para>
+    /// <para>
+    /// A <c>HoeDirt</c> is deliberately not an occupant: it is the tile's SOIL, and the rectangle query publishes it as
+    /// `hoed`/`watered`/`crop` beside this field. Naming it here would make "this is farmed ground" read as "something
+    /// is in the way".
+    /// </para>
+    /// </summary>
+    internal static string DescribeTileOccupant(StardewValley.GameLocation location, int x, int y)
+    {
+        foreach (StardewValley.TerrainFeatures.ResourceClump clump in location.resourceClumps)
+            if (clump.occupiesTile(x, y))
+                return DescribeOccupantKind(clump);
+        Vector2 tile = new(x, y);
+        if (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is not null)
+            return DescribeOccupantKind(placed);
+        if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
+            && feature is not null
+            && feature is not StardewValley.TerrainFeatures.HoeDirt)
+            return DescribeOccupantKind(feature);
+        foreach (StardewValley.TerrainFeatures.LargeTerrainFeature large in location.largeTerrainFeatures)
+            if (large.Tile == tile)
+                return DescribeOccupantKind(large);
+        foreach (StardewValley.NPC character in location.characters)
+            if (character.TilePoint.X == x && character.TilePoint.Y == y)
+                return DescribeOccupantKind(character);
+        return "none";
+    }
+
+    /// <summary>
     /// The engine's own name for whatever occupies a tile, kept inside the reasonCode alphabet
     /// (`^[a-z0-9_:-]{1,128}$`, `FarmhandExecutionJournal.IsValidReasonCode`).
     ///
@@ -4692,7 +4730,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// fix the wrong thing.
     /// </para>
     /// </summary>
-    private static string DescribeOccupantKind(object occupant)
+    internal static string DescribeOccupantKind(object occupant)
     {
         var bounded = new System.Text.StringBuilder(24);
         foreach (char character in occupant.GetType().Name)
@@ -5349,6 +5387,34 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     internal const int MaximumDiscoveredSoilTiles = 64;
 
+    /// <summary>
+    /// Whether the Hoe admits this tile, as the ONE predicate both the soil discovery and the rectangle query use.
+    ///
+    /// <para>
+    /// The clauses are the ones <c>DiscoverSoilTiles</c> always carried - the map's own `Diggable` property, no water,
+    /// nothing placed in `objects`, the engine's own `isTileLocationOpen` - plus the tile's own `HoeDirt`, which is the
+    /// state `till_soil` refuses with `soil_already_tilled`. They are a function rather than five lines inside the scan
+    /// because a second copy is how "tillable here" and "a soil row there" become two different answers about the same
+    /// tile - and the rectangle query (`TileAreaQuery`) publishes this fact for every tile it is asked about, whether or
+    /// not the tile is inside the actor's discovery window.
+    /// </para>
+    /// <para>
+    /// A tile that already carries a <c>HoeDirt</c> therefore answers FALSE here, and the soil discovery still publishes
+    /// its row: a hoed tile is the target of `plant_seed`, `fertilize_tile` and `water_crop` and the record of work
+    /// already done, so it travels as its own state rather than as "not farmable". The two answers are not in conflict -
+    /// they answer different questions, and the caller reads `hoed` for the second one.
+    /// </para>
+    /// </summary>
+    internal static bool IsTillableTile(StardewValley.GameLocation location, int x, int y)
+    {
+        Vector2 tile = new(x, y);
+        return location.GetHoeDirtAtTile(tile) is null
+            && location.doesTileHaveProperty(x, y, "Diggable", "Back") is not null
+            && !location.isWaterTile(x, y)
+            && !location.objects.ContainsKey(tile)
+            && location.isTileLocationOpen(tile);
+    }
+
     internal static IReadOnlyList<BridgeSoilTile> DiscoverSoilTiles(Farmer player, out int omitted)
     {
         omitted = 0;
@@ -5370,11 +5436,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 bool hoeDirt = location.GetHoeDirtAtTile(tile) is not null;
                 // A hoed tile is published whatever else occupies it. A TILLABLE one must also be free and
                 // reachable, which is the set `till_soil` admits once the actor walks up to it.
-                if (!hoeDirt
-                    && (location.doesTileHaveProperty(x, y, "Diggable", "Back") is null
-                        || location.isWaterTile(x, y)
-                        || location.objects.ContainsKey(tile)
-                        || !location.isTileLocationOpen(tile)))
+                if (!hoeDirt && !IsTillableTile(location, x, y))
                     continue;
                 candidates.Add((Math.Max(Math.Abs(x - originX), Math.Abs(y - originY)), new BridgeSoilTile(x, y, hoeDirt)));
             }

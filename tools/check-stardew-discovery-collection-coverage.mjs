@@ -204,7 +204,7 @@ export const DISCOVERY_COLLECTIONS = Object.freeze({
   DiscoverPedestalTargets: { mustRead: ["objects"] },
   DiscoverFenceGateTargets: { mustRead: ["objects"] },
   DiscoverFeedTroughTargets: { mustRead: ["objects"] },
-  DiscoverSoilTiles: { mustRead: ["objects"] },
+  DiscoverSoilTiles: { mustRead: ["objects"], via: ["IsTillableTile"] },
   DiscoverRockSourceTargets: { mustRead: ["objects"] },
   DiscoverWoodFenceResultTargets: { mustRead: ["objects"] },
   DiscoverCrabPotResultTargets: { mustRead: ["objects"] },

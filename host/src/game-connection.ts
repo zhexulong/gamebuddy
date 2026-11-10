@@ -12,6 +12,8 @@ import type {
   ObserveSceneResult,
   Scope as StardewScope,
   Snapshot,
+  TileAreaRequest,
+  TileAreaResult,
 } from "./protocol.js";
 
 /**
@@ -92,6 +94,8 @@ export interface StardewBridgeConnection extends GameConnection {
   readonly navigationRead?: (request: NavigationReadRequest) => Promise<NavigationReadResult>;
   /** Mod-owned read-only content-table query; static game data, never a game action. */
   readonly dataQuery?: (request: DataQueryRequest) => Promise<DataQueryResult>;
+  /** Mod-owned read-only rectangle query over the live world; a reading, never a game action. */
+  readonly tileArea?: (request: TileAreaRequest) => Promise<TileAreaResult>;
   /** Mod-owned read-only live scene observation; scene refs never authorize mutation. */
   readonly observeScene?: (request: ObserveSceneRequest) => Promise<ObserveSceneResult>;
 }

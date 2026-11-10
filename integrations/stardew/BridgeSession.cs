@@ -510,6 +510,31 @@ string? bodyProgramUnavailableReason = null,
         return true;
     }
 
+    /// <summary>
+    /// One rectangle of the actor's location, answered from the live world on the game thread.
+    ///
+    /// <para>
+    /// Read-only and receipt-free for the same reason the content-table query is: it mutates nothing, creates no
+    /// execution, and "what is on these sixty tiles" is a question a plan has to be able to ask before it commits to a
+    /// single till. It is deliberately not gated on a published capability - the facts are the world the actor already
+    /// stands in, and a companion asked to till a strip needs the strip whether or not `till_soil` was advertised.
+    /// </para>
+    /// </summary>
+    internal bool TryTileAreaQuery(long generation, BridgeEnvelope<BridgeTileAreaQueryRequest>? envelope, out BridgeEnvelope<BridgeTileAreaQueryResult>? response, out string reasonCode)
+    {
+        response = null;
+        if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "tile_area_request", out reasonCode)) return false;
+        if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
+
+        BridgeTileAreaQueryRequest request = envelope!.Payload;
+        response = Reply(
+            "tile_area_result",
+            envelope.CorrelationId,
+            TileAreaQuery.Answer(Game1.player, request.X, request.Y, request.W, request.H, this.CurrentRevision));
+        reasonCode = "accepted";
+        return true;
+    }
+
     internal bool TryExecute(long generation, BridgeEnvelope<BridgeExecutionRequest>? envelope, out BridgeEnvelope<BridgeReceipt>? response, out string reasonCode)
     {
         response = null;

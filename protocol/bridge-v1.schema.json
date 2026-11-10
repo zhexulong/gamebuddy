@@ -40,6 +40,8 @@
         "navigation_read_result",
         "data_query_request",
         "data_query_result",
+        "tile_area_request",
+        "tile_area_result",
         "snapshot",
         "catalog_update",
         "execution_request",
@@ -253,6 +255,38 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/dataQueryResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "tile_area_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/tileAreaRequest"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "tile_area_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/tileAreaResult"
           }
         }
       }
@@ -5826,6 +5860,160 @@
           }
         }
       ]
+    },
+    "tileAreaRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h"
+      ],
+      "properties": {
+        "x": {
+          "type": "integer",
+          "minimum": -1000,
+          "maximum": 1000
+        },
+        "y": {
+          "type": "integer",
+          "minimum": -1000,
+          "maximum": 1000
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      }
+    },
+    "tileAreaRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "tillable",
+        "occupant",
+        "hoed",
+        "watered",
+        "crop",
+        "passable"
+      ],
+      "properties": {
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "tillable": {
+          "description": "Whether the Hoe admits this tile - `ExecutionManager.IsTillableTile`, the same predicate the soil discovery calls. A tile that already carries HoeDirt is false here and true in `hoed`.",
+          "type": "boolean"
+        },
+        "occupant": {
+          "description": "The engine's stored thing on this tile, named by its own runtime type: `none` when the tile is free, `unspecified` when the type name does not survive the trip. HoeDirt is not an occupant - it is the tile's soil and travels as `hoed`/`watered`/`crop`.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "hoed": {
+          "type": "boolean"
+        },
+        "watered": {
+          "type": "boolean"
+        },
+        "crop": {
+          "type": "boolean"
+        },
+        "passable": {
+          "description": "Whether the native planner would step onto this tile now - `StardewBodyController.IsWalkableTile`, the wrapper over the admission test `PathFindController.cs:222` makes. A reading of one instant.",
+          "type": "boolean"
+        }
+      }
+    },
+    "tileAreaResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "detail",
+        "x",
+        "y",
+        "w",
+        "h",
+        "location",
+        "revision",
+        "areaLimit",
+        "rows",
+        "omitted"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "answered",
+            "area_too_large",
+            "invalid_rectangle",
+            "off_map",
+            "world_unavailable"
+          ]
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 512
+        },
+        "x": {
+          "type": "integer"
+        },
+        "y": {
+          "type": "integer"
+        },
+        "w": {
+          "type": "integer"
+        },
+        "h": {
+          "type": "integer"
+        },
+        "location": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "areaLimit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "rows": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/tileAreaRow"
+          }
+        },
+        "omitted": {
+          "description": "Requested tiles the answer does not carry for any reason other than the area bound. An answered rectangle satisfies rows.length + omitted == w * h.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
     },
     "navigationReadRequest": {
       "oneOf": [

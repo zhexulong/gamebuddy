@@ -249,6 +249,66 @@ public sealed record BridgeDoor(
 public sealed record BridgeSoilTile(int X, int Y, bool HoeDirt);
 
 /// <summary>
+/// Inbound rectangle question: every tile of <c>x..x+w-1</c> by <c>y..y+h-1</c> in the actor's current location.
+///
+/// <para>
+/// It exists because the published family for soil is a SQUARE window around the actor with a cap
+/// (<see cref="ExecutionManager.DiscoverSoilTiles"/>), and a task shapes the ground it wants: measured round42, the
+/// companion asked to till 3x20 received a 7x8 blob at 55% density, because nothing in her hands could answer "what is
+/// at (44..46, 12..31)". The request is a rectangle, so the answer is the rectangle.
+/// </para>
+/// </summary>
+public sealed record BridgeTileAreaQueryRequest(int X, int Y, int W, int H);
+
+/// <summary>
+/// One tile of a rectangle, with the facts a planner decides from and nothing else.
+///
+/// <para>
+/// <see cref="Tillable"/> is the Hoe's own admission (<c>ExecutionManager.IsTillableTile</c>, the predicate the soil
+/// discovery calls); <see cref="Occupant"/> is the engine's stored thing for the tile, named by its own type
+/// (<c>none</c> when the tile is free, <c>unspecified</c> when the name does not survive); <see cref="Passable"/> is the
+/// pathfinder's own answer (<c>StardewBodyController.IsWalkableTile</c>, the wrapper over
+/// <c>PathFindController.cs:222</c>). There is no <c>fixture</c> field: a fixture plants real engine entities, so the
+/// occupant and soil facts already carry it and a flag beside them would be a second spelling of one fact.
+/// </para>
+/// </summary>
+public sealed record BridgeTileAreaRow(
+    int X,
+    int Y,
+    bool Tillable,
+    string Occupant,
+    bool Hoed,
+    bool Watered,
+    bool Crop,
+    bool Passable
+);
+
+/// <summary>
+/// The answer to one rectangle question: the rectangle, the location and revision it describes, and one row per tile.
+///
+/// <para>
+/// <see cref="Status"/> is the Mod's own closed vocabulary. <see cref="Detail"/> names the refusal in full
+/// (<c>inspect_tiles_area_too_large:100:11x10</c>), because a bound that refuses without stating the limit and the
+/// requested size is a bound the caller can only discover by bisecting. <see cref="Omitted"/> is the number of requested
+/// tiles the answer does not carry for any reason OTHER than the area bound - a second bound added here must state what
+/// it dropped, and an answered rectangle satisfies <c>rows.Count + omitted == w * h</c>.
+/// </para>
+/// </summary>
+public sealed record BridgeTileAreaQueryResult(
+    string Status,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Detail,
+    int X,
+    int Y,
+    int W,
+    int H,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Location,
+    int Revision,
+    int AreaLimit,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] IReadOnlyList<BridgeTileAreaRow>? Rows,
+    int Omitted
+);
+
+/// <summary>
 /// One inventory slot that holds a tool: a slot a tool action may name, the tool's own item identity, and its upgrade
 /// level. The level is a fact, not advice: which owned tool satisfies an action's `tool:&lt;category&gt;` claim is decided
 /// by the claim's own upgrade requirement, so an identity alone would leave the level unreadable beside it.

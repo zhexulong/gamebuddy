@@ -1416,6 +1416,54 @@ export type DataQueryResult =
       detail: string;
     }>;
 
+/**
+ * One rectangle question: the tiles `x..x+w-1` by `y..y+h-1` of the actor's current location.
+ *
+ * The four numbers are bounded by the wire's own corruption bound on both sides; the AREA bound belongs to the Mod's
+ * answer (`area_too_large`), not to this frame, because a caller that asks for 11x10 must be told the limit rather than
+ * have its request rejected with no statement of it.
+ */
+export type TileAreaRequest = Readonly<{ x: number; y: number; w: number; h: number }>;
+
+/**
+ * One tile of a rectangle: the facts a planner decides from, each owned by one function on the Mod.
+ *
+ * `tillable` is the Hoe's own admission predicate, `passable` the planner's own step test, and `occupant` the engine's
+ * stored thing on the tile (`none` when free). There is no `fixture` field: a fixture plants real engine entities, so
+ * the occupant and soil facts already carry it.
+ */
+export type TileAreaRow = Readonly<{
+  x: number;
+  y: number;
+  tillable: boolean;
+  occupant: string;
+  hoed: boolean;
+  watered: boolean;
+  crop: boolean;
+  passable: boolean;
+}>;
+
+/**
+ * The answer to one rectangle question.
+ *
+ * `status` is the Mod's own closed vocabulary and `detail` names the refusal in full
+ * (`inspect_tiles_area_too_large:100:11x10`). `omitted` is what the answer dropped for any reason OTHER than the area
+ * bound, so an answered rectangle satisfies `rows.length + omitted === w * h` - a bound can never truncate in silence.
+ */
+export type TileAreaResult = Readonly<{
+  status: "answered" | "area_too_large" | "invalid_rectangle" | "off_map" | "world_unavailable";
+  detail: string | null;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  location: string | null;
+  revision: number;
+  areaLimit: number;
+  rows: readonly TileAreaRow[] | null;
+  omitted: number;
+}>;
+
 export type NavigationReadRequest =
   | Readonly<{ operation: "inspect_world_map"; args: Readonly<Record<string, never>> }>
   | Readonly<{ operation: "inspect_world_map"; args: Readonly<{ nodeRef: string }> }>
@@ -2068,6 +2116,8 @@ export type BridgeMessage =
   | Envelope<"navigation_read_result", NavigationReadResult>
   | Envelope<"data_query_request", DataQueryRequest>
   | Envelope<"data_query_result", DataQueryResult>
+  | Envelope<"tile_area_request", TileAreaRequest>
+  | Envelope<"tile_area_result", TileAreaResult>
   | Envelope<"observe_scene_request", ObserveSceneRequest>
   | Envelope<"observe_scene_result", ObserveSceneResult>
   | Envelope<"snapshot", Snapshot>
@@ -2108,6 +2158,8 @@ const BRIDGE_MESSAGE_TYPES = [
   "navigation_read_result",
   "data_query_request",
   "data_query_result",
+  "tile_area_request",
+  "tile_area_result",
   "observe_scene_request",
   "observe_scene_result",
   "snapshot",
@@ -2410,6 +2462,10 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
       return validateDataQueryRequest(payload);
     case "data_query_result":
       return validateDataQueryResult(payload);
+    case "tile_area_request":
+      return validateTileAreaRequest(payload);
+    case "tile_area_result":
+      return validateTileAreaResult(payload);
     case "observe_scene_request":
       return validateObserveSceneRequest(payload);
     case "observe_scene_result":
@@ -2974,6 +3030,94 @@ function validateDataQueryResult(value: Record<string, unknown>): string | null 
       ? null
       : "invalid_data_query_result";
   return "invalid_data_query_result";
+}
+
+/** The wire's own bound on one rectangle coordinate and one side, mirrored by the Mod's request parser. */
+const TILE_AREA_COORDINATE_LIMIT = 1000;
+const TILE_AREA_SIDE_LIMIT = 1000;
+/** The Mod's own area bound (`TileAreaQuery.AreaLimit`), which is also the widest row list one answer can carry. */
+const TILE_AREA_ROW_LIMIT = 100;
+
+/**
+ * One rectangle question.
+ *
+ * The AREA bound is deliberately absent here: a request for 11x10 must reach the Mod, whose answer names the limit and
+ * the requested size. Refusing it at this layer would turn a stated bound into a schema error that states nothing.
+ */
+function validateTileAreaRequest(value: Record<string, unknown>): string | null {
+  if (!hasExactKeys(value, ["x", "y", "w", "h"])) return "invalid_tile_area_request";
+  const coordinate = (entry: unknown): boolean =>
+    Number.isSafeInteger(entry) && Math.abs(entry as number) <= TILE_AREA_COORDINATE_LIMIT;
+  const side = (entry: unknown): boolean =>
+    Number.isSafeInteger(entry) && (entry as number) >= 1 && (entry as number) <= TILE_AREA_SIDE_LIMIT;
+  return coordinate(value.x) && coordinate(value.y) && side(value.w) && side(value.h)
+    ? null
+    : "invalid_tile_area_request";
+}
+
+/**
+ * One rectangle answer, in the Mod's own closed vocabulary.
+ *
+ * The rectangle is echoed on every status so a refusal names the question it refused, and the answered arm carries the
+ * population invariant that makes a silent truncation impossible: `rows.length + omitted === w * h`.
+ */
+function validateTileAreaResult(value: Record<string, unknown>): string | null {
+  if (
+    !hasExactKeys(value, [
+      "status",
+      "detail",
+      "x",
+      "y",
+      "w",
+      "h",
+      "location",
+      "revision",
+      "areaLimit",
+      "rows",
+      "omitted",
+    ])
+  )
+    return "invalid_tile_area_result";
+  if (!["x", "y", "w", "h"].every((key) => Number.isSafeInteger(value[key]))) return "invalid_tile_area_result";
+  if (!isNonNegativeSafeInteger(value.revision) || !isPositiveSafeInteger(value.areaLimit))
+    return "invalid_tile_area_result";
+  if (!isNonNegativeSafeInteger(value.omitted)) return "invalid_tile_area_result";
+  if (value.status === "answered") {
+    if (!boundedSceneText(value.location, 128) || value.detail !== null) return "invalid_tile_area_result";
+    const rows = value.rows;
+    if (
+      !Array.isArray(rows) ||
+      rows.length > TILE_AREA_ROW_LIMIT ||
+      (value.w as number) * (value.h as number) !== rows.length + (value.omitted as number)
+    )
+      return "invalid_tile_area_result";
+    return rows.every((row) => isTileAreaRow(row)) ? null : "invalid_tile_area_result";
+  }
+  if (
+    value.status === "area_too_large" ||
+    value.status === "invalid_rectangle" ||
+    value.status === "off_map" ||
+    value.status === "world_unavailable"
+  )
+    return value.rows === null && value.location === null && isBoundedNonEmptyString(value.detail, 512)
+      ? null
+      : "invalid_tile_area_result";
+  return "invalid_tile_area_result";
+}
+
+function isTileAreaRow(value: unknown): value is TileAreaRow {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["x", "y", "tillable", "occupant", "hoed", "watered", "crop", "passable"]) &&
+    Number.isSafeInteger(value.x) &&
+    Number.isSafeInteger(value.y) &&
+    typeof value.tillable === "boolean" &&
+    isBoundedNonEmptyString(value.occupant, 64) &&
+    typeof value.hoed === "boolean" &&
+    typeof value.watered === "boolean" &&
+    typeof value.crop === "boolean" &&
+    typeof value.passable === "boolean"
+  );
 }
 
 function isDataQueryIds(value: unknown): value is readonly string[] {

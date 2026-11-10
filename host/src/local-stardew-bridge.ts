@@ -34,6 +34,8 @@ import {
   type Scope,
   type Snapshot,
   type SystemNoticeRequest,
+  type TileAreaRequest,
+  type TileAreaResult,
   validateBridgeMessage,
 } from "./protocol.js";
 import { parseStrictBridgeJson } from "./strict-bridge-json.js";
@@ -130,6 +132,7 @@ type OutboundRequestType =
   | "observe_request"
   | "navigation_read_request"
   | "data_query_request"
+  | "tile_area_request"
   | "observe_scene_request"
   | "execution_request"
   | "execution_receipt_query"
@@ -422,6 +425,22 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     const response = await this.request("data_query_request", request);
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
     if (response.type !== "data_query_result") throw new Error("unexpected_data_query_response");
+    return response.payload;
+  }
+
+  /**
+   * Ask one rectangle of the actor's location.
+   *
+   * Read-only and receipt-free like `dataQuery`: it mutates nothing and creates no execution, so it is not gated on a
+   * published capability - a companion asked to till a 3x20 strip needs the strip whether or not `till_soil` was
+   * advertised. The Mod's own answer states its bound (`area_too_large`), which is why the request carries no area
+   * check here.
+   */
+  public async tileArea(request: TileAreaRequest): Promise<TileAreaResult> {
+    this.requireAuthenticated();
+    const response = await this.request("tile_area_request", request);
+    if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
+    if (response.type !== "tile_area_result") throw new Error("unexpected_tile_area_response");
     return response.payload;
   }
 
@@ -1145,6 +1164,8 @@ function isExpectedResponse(requestType: OutboundRequestType, responseType: Brid
       return responseType === "navigation_read_result";
     case "data_query_request":
       return responseType === "data_query_result";
+    case "tile_area_request":
+      return responseType === "tile_area_result";
     case "observe_scene_request":
       return responseType === "observe_scene_result";
     case "execution_request":

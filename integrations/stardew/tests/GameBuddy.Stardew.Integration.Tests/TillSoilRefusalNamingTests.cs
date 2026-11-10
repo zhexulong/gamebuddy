@@ -312,7 +312,16 @@ public sealed class TillSoilRefusalNamingTests
     /// property - so every answer the handler gives is read from the same places a live farm is.
     /// </para>
     /// </summary>
-    private sealed class TillSoilHarness : IDisposable
+    /// <summary>
+    /// A real <see cref="GameLocation"/> with the Back layer the engine's tile reads need, a real <see cref="Farmer"/>
+    /// standing at a known tile, real HoeDirt terrain features and real placed objects.
+    ///
+    /// <para>
+    /// Internal rather than private because the rectangle query's cases drive the SAME world: two harnesses that build
+    /// "a diggable farm tile" two ways is how the tillable predicate and the tile that answers it drift apart.
+    /// </para>
+    /// </summary>
+    internal sealed class TillSoilHarness : IDisposable
     {
         private const int Width = 20;
         private const int Height = 20;
@@ -353,6 +362,12 @@ public sealed class TillSoilRefusalNamingTests
             var root = (NetRoot<NetWorldState>)FormatterServices.GetUninitializedObject(typeof(NetRoot<NetWorldState>));
             root.Value = new NetWorldState();
             typeof(Game1).GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!.SetValue(null, root);
+            // `Object.isPassable` asks `IsFloorPathItem` (Object.cs:6075/:6082), which builds its lookup from
+            // `Game1.floorPathData` (Flooring.cs:130) - a cache `Game1` fills at startup from `Data/FloorsAndPaths`. An
+            // uninitialized `Game1` leaves it null, so ONE placed object made every collision read throw, and the
+            // rectangle query reads collision on every tile it answers. Empty is the honest value: this world declares
+            // no flooring, so no object is a floor path.
+            Game1.floorPathData ??= new Dictionary<string, StardewValley.GameData.FloorsAndPaths.FloorPathData>(System.StringComparer.Ordinal);
 
             var map = new xTile.Map();
             var size = new xTile.Dimensions.Size(Width, Height);

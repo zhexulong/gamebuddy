@@ -224,3 +224,119 @@ test("the audit reports one hole per broken layer rather than passing silently",
   });
   assert.equal(wired.ok, true, JSON.stringify(wired.gaps));
 });
+
+/**
+ * HOP 7: the facts one tile-area row publishes.
+ *
+ * <p>
+ * The rectangle query answers a fact per tile - is it tillable, what is stored on it, is it hoed, would the planner step
+ * onto it - and each of those is a question the game already answers somewhere. The population is the WIRE's own row
+ * definition, so a field added there without an owner stops the audit; the owner check reads the Mod's sources, so a
+ * renamed owner, a duplicated declaration and a "shared" fact that stopped being shared are all findings rather than
+ * prose nobody re-read.
+ * </p>
+ */
+test("the committed tree gives every tile-area fact one owner, and the shared one is really shared", () => {
+  const report = auditDiscoveryChannels({ modSources: loadModSources() });
+  const tileArea = report.tileArea;
+  assert.equal(tileArea.measured, true);
+  assert.ok(tileArea.examined > 0, "a population of zero would agree with itself");
+  assert.equal(tileArea.owned, tileArea.examined, JSON.stringify(tileArea.rows));
+  assert.equal(
+    tileArea.shared,
+    1,
+    "`tillable` is the one fact a second publication also answers, so it is the one that must be a single function",
+  );
+  assert.deepEqual(
+    report.gaps.filter((gap) => gap.gap.startsWith("tile_area")),
+    [],
+  );
+});
+
+test("a tile-area fact with no declared owner is named", () => {
+  const broken = loadModSources().map((entry) =>
+    entry.path.endsWith("TileAreaQuery.cs")
+      ? {
+          ...entry,
+          source: entry.source.replace(
+            '        ("tillable", "ExecutionManager.IsTillableTile", "ExecutionManager.DiscoverSoilTiles"),\n',
+            "",
+          ),
+        }
+      : entry,
+  );
+  const report = auditDiscoveryChannels({ modSources: broken });
+  assert.ok(
+    report.gaps.some((gap) => gap.gap === "tile_area_fact_unowned:tillable"),
+    `a field on the wire with nobody owning it must be named: ${JSON.stringify(report.gaps.map((gap) => gap.gap))}`,
+  );
+  assert.equal(report.ok, false);
+});
+
+test("a declared fact the wire does not carry is named, so the table cannot grow a fiction", () => {
+  const broken = loadModSources().map((entry) =>
+    entry.path.endsWith("TileAreaQuery.cs")
+      ? {
+          ...entry,
+          source: entry.source.replace(
+            '        ("passable",',
+            '        ("fixture", "TileAreaQuery.DescribeTile", null),\n        ("passable",',
+          ),
+        }
+      : entry,
+  );
+  const report = auditDiscoveryChannels({ modSources: broken });
+  assert.ok(
+    report.gaps.some((gap) => gap.gap === "tile_area_fact_unpublished:fixture"),
+    `an owner for a fact nothing publishes is a claim without a subject: ${JSON.stringify(report.gaps.map((gap) => gap.gap))}`,
+  );
+});
+
+test("an owner that names no function in the Mod is named", () => {
+  const broken = loadModSources().map((entry) =>
+    entry.path.endsWith("TileAreaQuery.cs")
+      ? {
+          ...entry,
+          source: entry.source.replace(
+            '("tillable", "ExecutionManager.IsTillableTile",',
+            '("tillable", "ExecutionManager.IsDiggableSoilTile",',
+          ),
+        }
+      : entry,
+  );
+  const report = auditDiscoveryChannels({ modSources: broken });
+  assert.ok(
+    report.gaps.some((gap) => gap.gap === "tile_area_fact_owner_missing:tillable:ExecutionManager.IsDiggableSoilTile"),
+    `an owner that does not exist is a rename nobody followed: ${JSON.stringify(report.gaps.map((gap) => gap.gap))}`,
+  );
+});
+
+test("the soil discovery answering with its own predicate turns the shared fact red", () => {
+  // The drift this hop exists for: `tillable` in the rectangle and the soil rows in the observation are the same fact,
+  // so the day the discovery hand-rolls the check instead of calling the one function, the two channels start
+  // disagreeing about which ground the hoe admits.
+  const broken = loadModSources().map((entry) =>
+    entry.path.endsWith("farmhandexecutioncontroller.cs")
+      ? {
+          ...entry,
+          source: entry.source.replace(
+            "if (!hoeDirt && !IsTillableTile(location, x, y))",
+            'if (!hoeDirt && location.doesTileHaveProperty(x, y, "Diggable", "Back") is null)',
+          ),
+        }
+      : entry,
+  );
+  const report = auditDiscoveryChannels({ modSources: broken });
+  assert.ok(
+    report.gaps.some((gap) => gap.gap === "tile_area_fact_two_spellings:tillable:ExecutionManager.DiscoverSoilTiles"),
+    `a second spelling of the tillable predicate must be named: ${JSON.stringify(report.gaps.map((gap) => gap.gap))}`,
+  );
+});
+
+test("a row definition nobody can read is blocked, never green", () => {
+  const report = auditDiscoveryChannels({ modSources: loadModSources(), schema: {} });
+  assert.ok(
+    report.gaps.some((gap) => gap.gap === "tile_area_rows_unread"),
+    "zero population is blocked with its reason: an empty set agrees with itself",
+  );
+});

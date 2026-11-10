@@ -1406,6 +1406,7 @@ test("runtime mounts only the explicitly verified Stardew product tools", async 
           "stardew_harvest_bush",
           "stardew_harvest_crop",
           "stardew_harvest_fruit_tree",
+          "stardew_inspect_tiles",
           "stardew_inspect_world_map",
           "stardew_interaction_catalog",
           "stardew_look_up",

@@ -42,6 +42,7 @@ const SCHEMA = "protocol/bridge-v1.schema.json";
 const TOOLS = "host/src/game-tools.ts";
 const MOD_SOURCE_ROOT = "integrations/stardew";
 const CONTENT_QUERY_FILE = "ContentDataQuery.cs";
+const TILE_AREA_QUERY_FILE = "TileAreaQuery.cs";
 
 /**
  * The snapshot field each action's opaque target is published under.
@@ -362,10 +363,95 @@ export function contentTableRegistry(query) {
   return tables;
 }
 
+/**
+ * The facts a tile-area row publishes, and the Mod function that owns each one.
+ *
+ * <p>
+ * The declaration lives where the projection lives (`TileAreaQuery.PublishedFacts`), because that is the code that
+ * computes them; this hop only asks whether it still answers for the wire. The population is the schema's own
+ * `tileAreaRow` properties, so a field added to the wire and not to the table is a finding, and a table entry the wire no
+ * longer carries is a finding too - which is what keeps this from being a hand-maintained list that can only drift.
+ * </p>
+ * <p>
+ * The `SharedWith` column is the part with teeth: a fact whose owner is shared with ANOTHER publication must be
+ * computed by that publication's own body. `tillable` names `DiscoverSoilTiles` because the companion plans from BOTH
+ * lists, and two spellings of "this tile can be hoed" is how the answer in one channel and the answer in the other
+ * become two different answers about the same tile.
+ * </p>
+ */
+export function tileAreaFactOwners(query) {
+  const block = query.match(/PublishedFacts\s*=\s*\[?\s*\{([\s\S]*?)\n\s*\};/u)?.[1];
+  if (typeof block !== "string") return [];
+  return [...block.matchAll(/\(\s*"([a-z_]+)"\s*,\s*"([A-Za-z.]+)"\s*,\s*(?:null|"([A-Za-z.]+)")\s*\)/gu)].map(
+    (match) => ({ fact: match[1], owner: match[2], sharedWith: match[3] ?? null }),
+  );
+}
+
+/**
+ * The frozen tool-area facts, checked against the wire and against the functions they name.
+ *
+ * <p>
+ * A declaration entry is only a claim; the two things that make it a measurement are that the owner symbol EXISTS in
+ * the Mod's own sources, and that a shared owner is what the other publication actually calls. Both are read off source
+ * text, so a rename that leaves the prose behind is caught here and not by the next live run.
+ * </p>
+ */
+export function tileAreaFacts(query, schema, modSources) {
+  const declared = tileAreaFactOwners(query);
+  const properties = Object.keys(schema.$defs?.tileAreaRow?.properties ?? {});
+  const rows = properties.map((fact) => {
+    const entries = declared.filter((entry) => entry.fact === fact);
+    const entry = entries[0];
+    const memberOf = (symbol) => (symbol === null || symbol === undefined ? null : symbol.split(".").pop());
+    // The DECLARATION, not the first call site: `DiscoverSoilTiles` is called from `CreateBridgeSnapshot` before its own
+    // body appears, and slicing from a call site reads the calling method's body instead of the owner's. A declared
+    // member is preceded by its return type, which is what distinguishes the two.
+    const bodyOf = (symbol) => {
+      const member = memberOf(symbol);
+      if (member === null) return null;
+      const declaration = new RegExp(`(?:[A-Za-z_][\\w<>.,?\\[\\]]*\\s+)${member}\\s*\\(`, "u");
+      for (const source of modSources ?? []) {
+        const match = declaration.exec(source.source);
+        if (match === null) continue;
+        const open = source.source.indexOf("{", match.index + match[0].length);
+        return open < 0 ? null : source.source.slice(open, balancedEnd(source.source, open, "{", "}") + 1);
+      }
+      return null;
+    };
+    const ownerBody = entry === undefined ? null : bodyOf(entry.owner);
+    const sharedBody = entry === undefined ? null : bodyOf(entry.sharedWith);
+    return {
+      fact,
+      declared: entries.length === 1,
+      owner: entry?.owner ?? null,
+      duplicated: entries.length > 1,
+      ownerDefined: ownerBody !== null,
+      sharedWith: entry?.sharedWith ?? null,
+      sharedCallsOwner:
+        entry?.sharedWith === null || entry?.sharedWith === undefined
+          ? null
+          : sharedBody !== null && sharedBody.includes(`${memberOf(entry.owner)}(`),
+    };
+  });
+  const orphans = declared.filter((entry) => !properties.includes(entry.fact)).map((entry) => entry.fact);
+  return { measured: modSources !== null, population: properties, declared, rows, orphans };
+}
+
+function balancedEnd(source, start, open, close) {
+  let depth = 0;
+  for (let index = start; index < source.length; index += 1) {
+    if (source[index] === open) depth += 1;
+    else if (source[index] === close) {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return source.length - 1;
+}
+
 function lower(name) {
   return name[0].toLowerCase() + name.slice(1);
 }
-
 export function auditDiscoveryChannels({
   surface = JSON.parse(read(SURFACE)),
   models = read(MODELS),
@@ -577,6 +663,34 @@ export function auditDiscoveryChannels({
       gap: "building_construction_cap_can_drop_the_building:daysOfConstructionLeft",
     });
 
+  // ---- hop 7: the facts one tile-area row publishes ---------------------------
+  //
+  // The rectangle query answers a fact per tile, and every one of them has to name the function that computes it. The
+  // population is the wire's own row definition, so a field the Mod starts publishing without an owner stops the audit;
+  // the checks read the Mod's sources, so an owner that was renamed or a shared fact that stopped being shared is a
+  // finding rather than a comment nobody re-read.
+  const tileAreaSource = (modSources ?? []).find((entry) => entry.path.endsWith(TILE_AREA_QUERY_FILE));
+  const tileArea =
+    modSources === null
+      ? { measured: false, population: [], declared: [], rows: [], orphans: [] }
+      : tileAreaFacts(tileAreaSource?.source ?? "", schema, modSources);
+  if (modSources !== null) {
+    if (tileArea.population.length === 0) gaps.push({ subject: "tileAreaRow", gap: "tile_area_rows_unread" });
+    if (tileAreaSource === undefined) gaps.push({ subject: TILE_AREA_QUERY_FILE, gap: "tile_area_query_missing" });
+    for (const row of tileArea.rows) {
+      if (row.duplicated) gaps.push({ subject: row.fact, gap: `tile_area_fact_duplicated:${row.fact}` });
+      else if (!row.declared) gaps.push({ subject: row.fact, gap: `tile_area_fact_unowned:${row.fact}` });
+      if (row.declared && !row.ownerDefined)
+        gaps.push({ subject: row.fact, gap: `tile_area_fact_owner_missing:${row.fact}:${row.owner}` });
+      if (row.sharedCallsOwner === false)
+        gaps.push({
+          subject: row.fact,
+          gap: `tile_area_fact_two_spellings:${row.fact}:${row.sharedWith ?? "none"}`,
+        });
+    }
+    for (const fact of tileArea.orphans) gaps.push({ subject: fact, gap: `tile_area_fact_unpublished:${fact}` });
+  }
+
   return Object.freeze({
     schema: "gamebuddy-stardew-discovery-channel-audit/v1",
     actionCount: rows.length,
@@ -597,6 +711,13 @@ export function auditDiscoveryChannels({
       carried: buildingRows.filter((row) => row.inMod && row.reader).length,
       constructionFirst,
       rows: buildingRows,
+    }),
+    tileArea: Object.freeze({
+      measured: tileArea.measured,
+      examined: tileArea.rows.length,
+      owned: tileArea.rows.filter((row) => row.declared && row.ownerDefined).length,
+      shared: tileArea.rows.filter((row) => row.sharedCallsOwner === true).length,
+      rows: tileArea.rows,
     }),
     gaps,
     ok: gaps.length === 0,
@@ -652,6 +773,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   );
   for (const [gap, actions] of [...byGap].sort())
     process.stdout.write(`  [${gap}] ${actions.length}: ${actions.join(", ")}\n`);
+  const tileArea = report.tileArea;
+  if (tileArea.measured)
+    process.stdout.write(
+      `  tile-area facts     examined ${tileArea.examined}, owned ${tileArea.owned}, shared ${tileArea.shared}: ${tileArea.rows
+        .map((row) => `${row.fact}->${row.owner ?? "none"}`)
+        .join(", ")}\n`,
+    );
   process.stdout.write(
     report.ok ? "  all target-bearing actions have a complete discovery chain\n" : `  ${report.gaps.length} gap(s)\n`,
   );

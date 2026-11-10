@@ -1930,10 +1930,83 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         }
     }
 
+    /// <summary>
+    /// One rectangle question: `{ x, y, w, h }`, the tiles `x..x+w-1` by `y..y+h-1`.
+    ///
+    /// <para>
+    /// The four numbers are bounded here and nowhere narrower: the AREA bound (100 tiles) belongs to the answer, not to
+    /// the frame, because a caller that asks for 11x10 must be told `inspect_tiles_area_too_large:100:11x10` rather than
+    /// have the whole frame rejected by the transport with no statement of the limit.
+    /// </para>
+    /// </summary>
+    public static bool TryDeserializeTileAreaRequest(
+        string json,
+        out BridgeEnvelope<BridgeTileAreaQueryRequest>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        if (!TryReadInboundPayload(json, "tile_area_request", out JsonDocument? document, out JsonElement payload, out reasonCode))
+            return false;
+
+        JsonDocument parsedDocument = document ?? throw new InvalidOperationException("Inbound tile-area parser returned no document.");
+        using (parsedDocument)
+        {
+            if (!HasExactProperties(payload, "x", "y", "w", "h")
+                || !TryReadRectangleCoordinate(payload, "x", out _)
+                || !TryReadRectangleCoordinate(payload, "y", out _)
+                || !TryReadRectangleSide(payload, "w", out _)
+                || !TryReadRectangleSide(payload, "h", out _))
+            {
+                reasonCode = "invalid_tile_area_request";
+                return false;
+            }
+            try
+            {
+                envelope = JsonSerializer.Deserialize<BridgeEnvelope<BridgeTileAreaQueryRequest>>(parsedDocument.RootElement.GetRawText(), JsonOptions);
+                if (envelope is null)
+                {
+                    reasonCode = "invalid_tile_area_request";
+                    return false;
+                }
+                reasonCode = "accepted";
+                return true;
+            }
+            catch (JsonException)
+            {
+                reasonCode = "invalid_json";
+                return false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// One rectangle coordinate, bounded to the same range the Host validator admits.
+    ///
+    /// Negative coordinates are legitimate - a map can declare an edge exit at `x = -1` - so the bound is symmetric and
+    /// the map's own edges, not this, decide whether a rectangle exists.
+    /// </summary>
+    private static bool TryReadRectangleCoordinate(JsonElement payload, string name, out int value)
+    {
+        value = 0;
+        return payload.TryGetProperty(name, out JsonElement element)
+            && element.ValueKind == JsonValueKind.Number
+            && element.TryGetInt32(out value)
+            && value is >= -1000 and <= 1000;
+    }
+
+    /// <summary>One side of the rectangle: at least one tile, and never so many that the product cannot be read.</summary>
+    private static bool TryReadRectangleSide(JsonElement payload, string name, out int value)
+    {
+        value = 0;
+        return payload.TryGetProperty(name, out JsonElement element)
+            && element.ValueKind == JsonValueKind.Number
+            && element.TryGetInt32(out value)
+            && value is >= 1 and <= 1000;
+    }
+
     /// <summary>An engine table name: a plain identifier, bounded so no caller can name a path.</summary>
     private static bool IsTableName(string? value) => value is { Length: > 0 and <= 64 }
         && value.All(static character => char.IsLetterOrDigit(character) || character is '_' or '/' or ' ');
-
     /// <summary>One row id: bounded and printable, because table ids are the game's own keys.</summary>
     private static bool IsTableRowKey(string? value) => value is { Length: > 0 and <= 128 }
         && value.All(static character => !char.IsControl(character));

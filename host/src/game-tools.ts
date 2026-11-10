@@ -35,6 +35,8 @@ import {
   type ExecutionReceipt,
   type ExecutionRequest,
   TOOL_SELECTOR_VALUES,
+  type TileAreaRequest,
+  type TileAreaResult,
   isValidObserveSceneResult,
   validateExecutionRequest,
 } from "./protocol.js";
@@ -150,6 +152,16 @@ type NavigationReadIntegration = StardewBridgeConnection & {
  */
 type DataQueryReadIntegration = {
   dataQuery(request: DataQueryRequest): Promise<DataQueryResult>;
+};
+
+/**
+ * One rectangle of the live world, read through the bridge.
+ *
+ * Duck-typed for the same reason the content-table reader is: a rectangle question is read-only and needs exactly one
+ * method, so a session that cannot answer it says so by not having one.
+ */
+type TileAreaReadIntegration = {
+  tileArea(request: TileAreaRequest): Promise<TileAreaResult>;
 };
 
 /** Read-only tools always expose facts exactly as supplied by the Mod. */
@@ -371,6 +383,69 @@ export function createStardewObservationTools(
       return lookupResult(answer, snapshot !== null);
     },
   });
+  /**
+   * One rectangle of the live world, in one round trip.
+   *
+   * The published soil family is a square window around the actor with a cap, so a task with a SHAPE - a 3x20 strip, a
+   * row along a fence - could only be planned from what happened to be in view: measured round42, a 3x20 request
+   * produced a 7x8 blob at 55% density while the companion re-observed every three or four tiles and inferred her own
+   * work from the list's silence. This is a question, not an action: no receipt, no postcondition and no program node,
+   * so a plan may ask it inside a planning turn, and it is mounted in the OBSERVATION class beside `stardew_look_up`
+   * for the same reason that one is - the answer is a reading of the world, never a way to change it.
+   */
+  const inspectTiles = defineTool({
+    name: "stardew_inspect_tiles",
+    label: "Inspect Stardew Tiles",
+    description:
+      "Read any RECTANGLE of the current location in one call, and ask this whenever the task has a shape - 'a 3-wide, " +
+      "20-long strip', 'the row along the fence', 'the 5x5 around the shed' - instead of observing again and guessing the " +
+      "tiles in between: the observation's soil family is only a square window around you, so a long strip is not in it. " +
+      "x,y is the rectangle's north-west tile and w,h its width and height in tiles; w*h is at most 100, and a bigger " +
+      "rectangle is REFUSED by name with the limit and the size you asked for. Every row carries tillable (would the Hoe " +
+      "admit this tile), occupant (the engine's own name for what is stored on it, 'none' when it is free), hoed / " +
+      "watered / crop (the soil's state), and passable (would the pathfinder step onto it now). The header names the " +
+      "location and the snapshot revision the answer describes. It changes nothing.",
+    parameters: Type.Object(
+      {
+        x: Type.Integer({ minimum: -1000, maximum: 1000 }),
+        y: Type.Integer({ minimum: -1000, maximum: 1000 }),
+        w: Type.Integer({ minimum: 1, maximum: 1000 }),
+        h: Type.Integer({ minimum: 1, maximum: 1000 }),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (_toolCallId, params) => {
+      const args = requireStrictObject(params);
+      const keys = Object.keys(args);
+      if (
+        keys.length !== 4 ||
+        !["x", "y", "w", "h"].every((key) => keys.includes(key)) ||
+        !Number.isSafeInteger(args.x) ||
+        (args.x as number) < -1000 ||
+        (args.x as number) > 1000 ||
+        !Number.isSafeInteger(args.y) ||
+        (args.y as number) < -1000 ||
+        (args.y as number) > 1000 ||
+        !Number.isSafeInteger(args.w) ||
+        (args.w as number) < 1 ||
+        (args.w as number) > 1000 ||
+        !Number.isSafeInteger(args.h) ||
+        (args.h as number) < 1 ||
+        (args.h as number) > 1000
+      )
+        throw new Error("invalid_tool_parameters");
+      const reader = (integration as Partial<TileAreaReadIntegration>).tileArea;
+      if (typeof reader !== "function") throw new Error("tile_area_query_unavailable");
+      return navigationResult(
+        await (integration as TileAreaReadIntegration).tileArea({
+          x: args.x as number,
+          y: args.y as number,
+          w: args.w as number,
+          h: args.h as number,
+        }),
+      );
+    },
+  });
   const execution = defineTool({
     name: "stardew_execution_status",
     label: "Stardew Execution Status",
@@ -527,7 +602,7 @@ export function createStardewObservationTools(
     );
   };
 
-  const tools: Array<ReturnType<typeof defineTool>> = [observe, lookup, execution, catalog, search];
+  const tools: Array<ReturnType<typeof defineTool>> = [observe, lookup, execution, catalog, search, inspectTiles];
   {
     // constant mount; readiness re-checked at execution
     tools.push(
