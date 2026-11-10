@@ -175,3 +175,4 @@ SoilTilePublicationTests.cs	game	StardewValley, Game1, GameLocation, Farmer, Net
 WateringWhereaboutsFreshnessTests.cs	game	WhereaboutsWorld (StardewValley, GameLocation, Farmer, Netcode, Microsoft.Xna)
 WhereaboutsWorld.cs	game	StardewValley, Game1, GameLocation, Farmer, Netcode, Microsoft.Xna
 CharacterBlockedWalkTests.cs	mod-assembly	FarmhandExecutionJournal, RefusalLayerKind, RefusalLayerToken, StardewBodyController
+BuildFarmBuildingAccountTests.cs	mod-assembly	ExecutionManager

@@ -65,9 +65,12 @@ public sealed class BuildFarmBuildingPreconditionOrderTests
     }
 
     /// <summary>
-    /// A refusal reports the account it left alone: the same money before and after, a zero delta, and
+    /// A refusal reports the account it left alone: the same money before and after, zero deltas, and
     /// the same for the materials the commission would have consumed. One helper, called by both
-    /// refusals, so the two cannot report the same fact two ways.
+    /// refusals, so the two cannot report the same fact two ways - and that helper DERIVES the deltas
+    /// from its own two readings, because `money_delta=0` written as text is the defect
+    /// `stardew_receipt_transition_field_provenance/v1` exists for: it says "nothing was spent" on every
+    /// path, including one that just spent.
     /// </summary>
     [Fact]
     public void ARefusedBuildReportsAZeroDeltaOnMoneyAndMaterials()
@@ -80,10 +83,11 @@ public sealed class BuildFarmBuildingPreconditionOrderTests
         body.Should().Contain("DescribeBuildFarmBuildingUnspent(",
             "the daylight refusal reports the account it did not touch");
         resolve.Should().Contain("DescribeBuildFarmBuildingUnspent(", "and so does the blocked-site refusal");
-        unspent.Should().Contain("money_before=", "the refusal reports the wallet it found");
-        unspent.Should().Contain("money_after=");
-        unspent.Should().Contain("money_delta=0", "and that it did not change it");
-        unspent.Should().Contain("materials_delta=0", "the materials the commission needs are untouched by a refusal");
+        unspent.Should().Contain("DescribeBuildFarmBuildingAccount(",
+            "the one renderer of the account, so a refusal and a build cannot spell the same fact twice");
+        unspent.Should().NotContain("money_delta=0",
+            "the refusal's zero is the difference of its own two readings, not a literal that would be zero on a build too");
+        unspent.Should().NotContain("materials_delta=0", "and the materials are read the same way");
     }
 
     /// <summary>

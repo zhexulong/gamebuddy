@@ -78,10 +78,11 @@ namespace GameBuddy.Stardew;
 //     `IsValidReasonCode`), so the tile is spelled the way `RefusalLayer.FormatPoint` spells it and the
 //     code stays `build_farm_building_site_blocked`, which the native-local gate already matches on.
 //
-// BOTH REFUSE BEFORE ANYTHING IS SPENT, and both receipts carry the account they did not touch
-// (`money_before`/`money_after`/`money_delta=0`, `materials_before`/`materials_after`/
-// `materials_delta=0`). The spend is this handler's own, so a `rejected` receipt that did not show the
-// delta would be indistinguishable from a purchase that went wrong.
+// BOTH REFUSE BEFORE ANYTHING IS SPENT, and both receipts carry the account they did not touch: the
+// money and the materials read once before the refusal and once after it, with `money_delta` and
+// `materials_delta` as the difference of that pair (zero here, and derived rather than written). The
+// spend is this handler's own, so a `rejected` receipt that did not show the delta would be
+// indistinguishable from a purchase that went wrong.
 //
 // ARGUMENTS are exactly `{ buildingType, x, y, expectedTargetId }`, all required (the wire
 // has no optional arguments). `buildingType` is the `Data/Buildings` id the commission is
@@ -222,10 +223,13 @@ internal sealed partial class ExecutionManager
         foreach ((string qualifiedItemId, int amount) in materials)
             Game1.player.Items.ReduceId(qualifiedItemId, amount);
 
-        // The postcondition is the WORLD after the call.
+        // The postcondition is the WORLD after the call. Both accounts are read ONCE more here, after both
+        // native statements, and the deltas the receipt publishes are the difference of that pair - never a
+        // literal, which could not tell a paid build from a refused one.
         Building? placed = location.getBuildingAt(new Vector2(x, y));
+        int moneyAfter = Game1.player.Money;
         int materialsAfter = CountBuildFarmBuildingMaterials(materials);
-        bool moneyCharged = Game1.player.Money == moneyBefore - data.BuildCost;
+        bool moneyCharged = moneyAfter == moneyBefore - data.BuildCost;
         bool materialsConsumed = materialsAfter == materialsBefore - materials.Sum(material => material.Amount);
         bool buildingPlaced = placed is not null
             && string.Equals(placed.buildingType.Value, constructed.buildingType.Value, StringComparison.Ordinal)
@@ -234,8 +238,8 @@ internal sealed partial class ExecutionManager
         string evidence =
             BuildFarmBuildingIdentity(targetId, location, x, y, buildingType)
             + $";building_id={constructed.id.Value:D}"
-            + $";money_before={moneyBefore};money_after={Game1.player.Money};build_cost={data.BuildCost}"
-            + $";materials_before={materialsBefore};materials_after={materialsAfter};materials_required={materials.Sum(material => material.Amount)}"
+            + $";{DescribeBuildFarmBuildingAccount(moneyBefore, moneyAfter, materialsBefore, materialsAfter)}"
+            + $";build_cost={data.BuildCost};materials_required={materials.Sum(material => material.Amount)}"
             + $";build_days={data.BuildDays};days_of_construction_left={constructed.daysOfConstructionLeft.Value}"
             + $";magical={data.MagicalConstruction.ToString().ToLowerInvariant()}"
             + $";tile_building_after={(placed?.buildingType.Value ?? "none")}"
@@ -411,9 +415,26 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// The account a refusal leaves untouched, in the receipt's own field names: the money the wallet
-    /// holds and the materials this commission would have consumed, each read once and reported as
-    /// unchanged, with the delta that claims it.
+    /// The wallet and the materials, in the receipt's own field names, with each delta the difference of the
+    /// pair beside it. The ONE renderer of this account: a build's evidence and a refusal's evidence come
+    /// through here, so `money_delta`/`materials_delta` cannot mean two things on the two paths.
+    ///
+    /// <para>
+    /// A delta is a difference, never a literal. `money_delta=0` written as text would say "nothing was
+    /// spent" on a path that had just spent, and the reader has no way to tell which of the two it is
+    /// looking at (`tools/audit-stardew-receipt-transition-fields.mjs` is that rule). The sign is the
+    /// arithmetic one: a paid build is negative on both accounts.
+    /// </para>
+    /// </summary>
+    internal static string DescribeBuildFarmBuildingAccount(int moneyBefore, int moneyAfter, int materialsBefore, int materialsAfter)
+    {
+        return $"money_before={moneyBefore};money_after={moneyAfter};money_delta={moneyAfter - moneyBefore}"
+            + $";materials_before={materialsBefore};materials_after={materialsAfter};materials_delta={materialsAfter - materialsBefore}";
+    }
+
+    /// <summary>
+    /// The account a refusal leaves untouched, read the same way the build reads it: once before the refusal
+    /// and once after it, so the zero delta is the difference of two real readings rather than a literal.
     ///
     /// <para>
     /// It exists because the spend is the action's OWN (the engine's seam charges nothing, so the handler
@@ -425,10 +446,14 @@ internal sealed partial class ExecutionManager
     private static string DescribeBuildFarmBuildingUnspent(BuildingData data)
     {
         IReadOnlyList<(string QualifiedItemId, int Amount)> materials = BuildFarmBuildingMaterials(data);
-        int money = Game1.player.Money;
-        int held = CountBuildFarmBuildingMaterials(materials);
-        return $"money_before={money};money_after={money};money_delta=0"
-            + $";materials_before={held};materials_after={held};materials_delta=0";
+        int moneyBefore = Game1.player.Money;
+        int materialsBefore = CountBuildFarmBuildingMaterials(materials);
+        // No statement of this action's can spend between these two readings - every refusal that reaches
+        // this helper is decided before `buildStructure` and before the debit - so the pairs are equal and
+        // the deltas they produce are zero. The refusal is the only thing that happened in between.
+        int moneyAfter = Game1.player.Money;
+        int materialsAfter = CountBuildFarmBuildingMaterials(materials);
+        return DescribeBuildFarmBuildingAccount(moneyBefore, moneyAfter, materialsBefore, materialsAfter);
     }
 
     /// <summary>

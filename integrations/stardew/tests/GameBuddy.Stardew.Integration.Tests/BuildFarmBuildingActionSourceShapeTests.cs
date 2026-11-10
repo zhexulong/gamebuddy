@@ -111,11 +111,21 @@ public sealed class BuildFarmBuildingActionSourceShapeTests
         string executed = MethodBody(source, "private LocalExecutionReceipt ExecuteBuildFarmBuilding(");
 
         // The decision is the WORLD after the call, never "we called the function": the building
-        // resolved at the tile, the money, the materials and the construction days.
+        // resolved at the tile, the money, the materials and the construction days. The account is
+        // rendered by the ONE helper from this body's OWN before/after readings - the body reads the
+        // wallet again after the debit and hands both numbers over rather than restating either.
         executed.Should().Contain("location.getBuildingAt(new Vector2(x, y))");
         executed.Should().Contain("placed.tileX.Value == x");
-        executed.Should().Contain("money_before=");
-        executed.Should().Contain("money_after=");
+        executed.Should().Contain(
+            "DescribeBuildFarmBuildingAccount(moneyBefore, moneyAfter, materialsBefore, materialsAfter)",
+            "the account is published from the pair the body read, not from a literal beside it");
+        string account = MethodBody(source, "internal static string DescribeBuildFarmBuildingAccount(");
+        account.Should().Contain("money_before=");
+        account.Should().Contain("money_after=");
+        account.Should().Contain("money_delta=");
+        account.Should().Contain("materials_before=");
+        account.Should().Contain("materials_after=");
+        account.Should().Contain("materials_delta=");
         executed.Should().Contain("materials_required=");
         executed.Should().Contain("days_of_construction_left=");
 
