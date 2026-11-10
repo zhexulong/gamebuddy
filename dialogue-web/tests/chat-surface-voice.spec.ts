@@ -54,6 +54,38 @@ test("every voice state the Host publishes reaches the player as a readable labe
 });
 
 /**
+ * The ready state's words may describe the voice lane; they may not ask the
+ * player for an interaction this surface does not implement.
+ *
+ * Production reaches `ready` from the Host's one voice-surface producer
+ * (`createVoiceSurfaceReader`): the gateway is authenticated, its provider is
+ * ready, and no job is in flight - a reading about the companion's voice being
+ * playable, not about a microphone. Nor is there anything here to press: the
+ * voice element is a `<span role="status">`, `dialogue-web/src` contains no
+ * `getUserMedia`, `MediaRecorder`, `AudioContext` or `AudioWorklet`, the browser
+ * contract has no capture operation, and no product surface sends the gateway's
+ * `ptt_start` (only `tools/run-windows-sensevoice-final-transcript-gate.mjs`
+ * does). A label reading "press to talk" therefore pointed at a control that
+ * does not exist - the failure this asserts against.
+ */
+test("the ready state never instructs an interaction this surface does not implement", async ({ page }) => {
+  await openProbe(page);
+  await page.evaluate(() => window.chatProbe.setVoice({ state: "ready" }));
+  await expect(page.locator("[data-voice-state]")).toHaveAttribute("data-voice-state", "ready");
+  const label = (await page.evaluate(() => window.chatProbe.voiceLabel())) ?? "";
+
+  for (const instruction of ["press", "talk", "speak", "按", "说话"]) {
+    expect(label.toLowerCase(), `the ready label instructs "${instruction}"`).not.toContain(instruction);
+  }
+  // The voice element is a state reading with nothing to press: not a button, and
+  // not inside one. A control that looked pressable would be the same lie.
+  const pressable = await page
+    .locator("[data-voice-state]")
+    .evaluate((node) => node.closest("button, [role=button]") !== null);
+  expect(pressable, "the voice element is a status reading, not a control").toBe(false);
+});
+
+/**
  * The mic's recording-state question, answered honestly.
  *
  * The brief asked for a "recording in progress" pulse. This wire has no

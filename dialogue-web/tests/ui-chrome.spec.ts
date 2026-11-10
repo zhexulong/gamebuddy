@@ -11,6 +11,7 @@
  * written.
  */
 import { expect, test, type Page } from "./frontend-coverage";
+import { messages } from "../src/i18n";
 
 const token = "A".repeat(43);
 const handle = "B".repeat(42) + "A";
@@ -476,7 +477,7 @@ test("the voice status yields without bursting the composer rail", async ({ page
   expect(measured?.dotHeight).toBe(22);
   // And the fact itself is intact, for the live region and for anyone reading
   // the surface without the stylesheet.
-  expect(measured?.labelText).toContain("Voice ready");
+  expect(measured?.labelText).toBe(messages("en").voiceReady);
   expect(measured?.statusText).toContain(measured?.labelText ?? "");
 });
 

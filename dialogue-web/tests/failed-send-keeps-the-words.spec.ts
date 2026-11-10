@@ -12,6 +12,12 @@ import { expect, test } from "./frontend-coverage";
  * replaced the whole shell with its problem page - so a refused send unmounted the composer
  * with the words inside it. `1b468db2` gave the text back on a retryable failure; the
  * non-retryable branch beside it still dropped it, and everything the shell drew went with it.
+ *
+ * The third case is the one that is not a refusal at all: a send whose ANSWER never came. The
+ * words still have to survive, and they still are the player's - but the composer is not handed
+ * back, because "no answer" does not mean "nothing ran". The record that keeps the fallback poll
+ * alive stays, so the Host's own receipt is what settles the attempt
+ * (`tests/unknown-send-is-not-a-refusal.spec.ts` is that fact on its own).
  */
 
 const token = "A".repeat(43);
@@ -81,6 +87,13 @@ test.describe("a send the Host does not accept", () => {
     test(`${outcome.name} keeps the words in the field beside the sentence`, async ({ page }) => {
       let sends = 0;
       await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
+      // The reads an unresolved submission is settled by (the fallback poll's own). An answered
+      // refusal spends the record before any of them is asked for; the unanswered case below is the
+      // one that needs them.
+      await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
+      await page.route("**/api/tavern/v1/message-submission-status", (route) =>
+        route.fulfill(jsonOk({ apiVersion: 1, disposition: "pending" })),
+      );
       await page.route("**/api/tavern/v1/draft", (route) =>
         route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
       );
@@ -123,13 +136,24 @@ test.describe("a send the Host does not accept", () => {
       await expect(notice).toBeVisible();
       console.log(`MEASURE ${outcome.name}: notice=${JSON.stringify(await notice.innerText())}`);
       if (outcome.sentence !== null) await expect(notice).toContainText(outcome.sentence);
-      await expect(composer).toBeEnabled();
 
-      // The refusal did not become the page: the conversation stays readable, and nothing was
-      // written into it as if the send had been accepted.
+      if (outcome.reply.kind === "offline") {
+        // There is no answer, so whether anything ran is unknown. The submission may be the turn the
+        // Host is running, so the attempt is kept open - field locked, its own pending line still
+        // shown - until the Host's receipt says what happened. Handing the field back here is what
+        // invited the resend that duplicated a provider turn.
+        await expect(composer).toBeDisabled();
+        await expect(surface.getByTestId("optimistic-player-message")).toHaveCount(1);
+      } else {
+        // An answered refusal stated that nothing ran, so the composer comes back with the words.
+        await expect(composer).toBeEnabled();
+        await expect(surface.getByTestId("optimistic-player-message")).toHaveCount(0);
+      }
+
+      // Neither failure became the page: the conversation stays readable, and nothing was written
+      // into the authoritative list as if the send had been accepted.
       await expect(page.locator(".problem-view")).toHaveCount(0);
       await expect(surface.locator(".message-list > li")).toHaveCount(1);
-      await expect(surface.getByTestId("optimistic-player-message")).toHaveCount(0);
     });
   }
 });

@@ -48,6 +48,7 @@ const INPUTS: ChatUIStateInputs = {
   pendingLine: null,
   stopAvailable: false,
   submitAvailable: true,
+  messageMutationInFlight: false,
   modelRoute: { kind: "connection" },
   armed: null,
 };
@@ -100,18 +101,22 @@ test("one armed act names exactly one row", () => {
   });
 });
 
-test("the send gate answers both questions at once", () => {
+test("the send gate answers all three questions at once", () => {
   const routes: readonly ChatModelRoute[] = [{ kind: "connection" }, { kind: "none" }, { kind: "unknown" }];
   for (const submitAvailable of [true, false]) {
-    for (const modelRoute of routes) {
-      const { send } = deriveChatUIState(inputs({ submitAvailable, modelRoute }));
-      const where = `submitAvailable=${submitAvailable} route=${modelRoute.kind}`;
-      // The field follows the Host's own "would a submission be accepted now", and nothing else.
-      expect(fieldLocked(send), `field lock at ${where}`).toBe(!submitAvailable);
-      // The standing sentence follows the model route, and nothing else.
-      expect(replyHasNoModel(send), `no-model banner at ${where}`).toBe(modelRoute.kind === "none");
-      // Send is refused for either reason - which is why the two facts had to become one answer.
-      expect(sendRefused(send), `send refusal at ${where}`).toBe(!submitAvailable || modelRoute.kind === "none");
+    for (const messageMutationInFlight of [true, false]) {
+      for (const modelRoute of routes) {
+        const { send } = deriveChatUIState(inputs({ submitAvailable, messageMutationInFlight, modelRoute }));
+        const where = `submitAvailable=${submitAvailable} mutation=${messageMutationInFlight} route=${modelRoute.kind}`;
+        // The field follows "would a submission be admitted now": the Host's own answer, and the fact
+        // that this surface is not mid-rewrite of the transcript it would be written into.
+        const admitted = submitAvailable && !messageMutationInFlight;
+        expect(fieldLocked(send), `field lock at ${where}`).toBe(!admitted);
+        // The standing sentence follows the model route, and nothing else.
+        expect(replyHasNoModel(send), `no-model banner at ${where}`).toBe(modelRoute.kind === "none");
+        // Send is refused for any of the reasons - which is why the facts had to become one answer.
+        expect(sendRefused(send), `send refusal at ${where}`).toBe(!admitted || modelRoute.kind === "none");
+      }
     }
   }
 });

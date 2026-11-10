@@ -131,13 +131,13 @@ export function ComposedReferenceGameApp() {
   // Save/Discard report through.
   const [draftNotice, setDraftNotice] = useState<Readonly<{ kind: "success" | "failure"; text: string }> | null>(null);
   /**
-   * The last send this surface refused, in the refusal's own sentence.
+   * The last send this surface could not complete, in the failure's own sentence.
    *
-   * The words go back into the field, and this is what stands beside them: a refusal is a fact
-   * about one attempt, so it is reported where the player can act on it and never replaces the
-   * conversation the attempt was written into. It is spent by the next turn-starting mutation
-   * (`beginTurnMutation`, shared by send and regenerate) and by adopting another Chat, because
-   * past either point it describes an attempt that no longer stands.
+   * The words go back into the field, and this is what stands beside them: a failure is a fact about
+   * one attempt, so it is reported where the player can act on it and never replaces the conversation
+   * the attempt was written into. It is spent by the next turn-starting mutation (`beginTurnMutation`,
+   * shared by send and regenerate) and by adopting another Chat, because past either point it
+   * describes an attempt that no longer stands.
    */
   const [sendFailure, setSendFailure] = useState<string | null>(null);
   /**
@@ -557,9 +557,56 @@ export function ComposedReferenceGameApp() {
     }
   };
 
+  /**
+   * Whether the Host itself answered a failed turn-starting mutation.
+   *
+   * `TavernProblemError` is the Host's own validated problem document: it answered, and the answer
+   * is that the command was not carried out. Everything else is the absence of an answer - a dropped
+   * connection, a timeout, a body this client could not read - and the absence of an answer is not a
+   * refusal: it says nothing about whether the Host admitted the submission.
+   */
+  const hostAnswered = (error: unknown): boolean => error instanceof TavernProblemError;
+
+  /**
+   * What a failed turn-starting mutation does with the record it published.
+   *
+   * Two facts, not one, and the difference decides whether the player may send again:
+   *
+   *   - **refused** - the Host answered. Nothing ran, so the record is spent and the composer is
+   *     handed back. `rereadChat`'s settle rule cannot do this: it spends a record for a *terminal
+   *     turn*, and a refusal leaves no turn at all, so the spinner of a submission no turn backs
+   *     would outlive the refusal until the player switched chats or reloaded.
+   *   - **unanswered** - no answer arrived. The record survives, because it is exactly the fact that
+   *     a submission may be held: it keeps the fallback poll live and keeps the send gate closed.
+   *     Handing it back invites a resend of a message the Host may already be answering, which is a
+   *     second player row and a second provider turn for one press. The poll is the one authority
+   *     that can say what happened, and it spends the record when the turn settles.
+   *
+   * Send and regenerate publish the same record through the same seam (`beginTurnMutation`), so they
+   * resolve it through the same one.
+   *
+   * Read from `viewRef` rather than from the caller's own view: this runs after the mutation's await
+   * (and, for regenerate, after its reread), so the view the caller captured is no longer the view
+   * the record lives in.
+   */
+  const settleFailedTurnMutation = (error: unknown): void => {
+    if (!hostAnswered(error)) {
+      startPolling();
+      return;
+    }
+    const latest = viewRef.current;
+    if (latest.kind === "ready" && latest.session.pending !== null)
+      commit({ ...latest, session: latest.session.withPending(null) });
+  };
+
   const handleSend = async (): Promise<void> => {
     const current = viewRef.current;
     if (current.kind !== "ready" || current.session.pending !== null) return;
+    // The latch every message mutation takes (`beginMessageMutation`): a rewind, an edit, a delete or a
+    // regenerate is rewriting the transcript, and the reread that follows it is the only thing that
+    // says what the conversation then is. The gate the press came through reads the same fact
+    // (`chat-ui-state`), and this covers the press that lands in the same tick as a mutation's start.
+    if (chatMutationRef.current) return;
     const text = inputTextRef.current.trim();
     if (text.length === 0) return;
     const idempotencyKey = newIdempotencyKey();
@@ -616,15 +663,17 @@ export function ComposedReferenceGameApp() {
         setInputText(text);
         inputTextRef.current = text;
       }
-      // The sentence stands beside the words rather than in place of them. A refused send says nothing about the
+      // The sentence stands beside the words rather than in place of them. A failed send says nothing about the
       // conversation behind it - the transcript and this shell's snapshot are still what they were, and the
-      // pending record is spent - so replacing the whole surface with a problem page would take away the field
+      // pending record is spent if the Host answered at all (`settleFailedTurnMutation` decides that, and only
+      // that) - so replacing the whole surface with a problem page would take away the field
       // the words were just put back into, and report a state fault that did not happen. The one line is the same
       // sentence that page drew, from the same place: `composedProblemView` is the owner of which words a failure
       // earns, and its `detail` is what a one-line notice has room for. The read that leaves the chat unreadable
       // is a different failure, and that path still commits the problem view.
       setSendFailure(problemView(error, messages(current.locale)).detail);
-      commit({ ...current, session: current.session.withPending(null) });
+      // An answered refusal costs the record this send published; an unanswered attempt keeps it.
+      settleFailedTurnMutation(error);
       return;
     }
     startPolling();
@@ -658,10 +707,20 @@ export function ComposedReferenceGameApp() {
    * Nothing is carried over because there is nothing to carry: the player's place
    * on a problem screen is the problem screen, and a read that lands replaces it
    * wholesale.
+   *
+   * The view this read is applied to is the one that is current when the read
+   * LANDS, never the one it saw when it started. A read is a round trip, and a
+   * commit that lands inside it - a send's own pending record, a refusal's settle,
+   * a problem view - is newer than the photograph the read took before leaving.
+   * Committing that photograph erases them; the erased pending record is the one
+   * that keeps the fallback poll alive (`beginTurnMutation`) and the send gate shut,
+   * so the player's just-sent line leaves the screen and the composer unlocks
+   * mid-turn. `recover` and `reconcile` below already read after their awaits for
+   * the same reason - this is the read path that did not.
    */
   const rereadChat = async (): Promise<void> => {
-    const current = viewRef.current;
     const { root, draft } = await readChatSnapshotPair(composedApiRef.current);
+    const current = viewRef.current;
     if (current.kind !== "ready") {
       setPreview(null);
       commit({
@@ -682,6 +741,9 @@ export function ComposedReferenceGameApp() {
     commit({
       ...current,
       root,
+      // A record this surface published while the read was in flight is the surface's own fact, and
+      // the reading cannot have seen the submission it names: `applySnapshot` carries it over, and
+      // the read only spends it for the one state that settles it - a terminal turn.
       session: terminalTurn(root.chat.chat.turn) ? session.withPending(null) : session,
       draft,
     });
@@ -938,6 +1000,10 @@ export function ComposedReferenceGameApp() {
       await rereadChat().catch(() => {
         commit(problemView(error, messages(current.locale)));
       });
+      // Last, so the record's fate is decided against the view the reread left behind: a refusal
+      // spends the record this regenerate published, and an unanswered attempt keeps it and hands
+      // it to the poll.
+      settleFailedTurnMutation(error);
     } finally {
       chatMutationRef.current = false;
       setChatMutation(null);
@@ -1411,6 +1477,7 @@ export function ComposedReferenceGameApp() {
     pendingLine: pendingOptimisticMessage,
     stopAvailable,
     submitAvailable,
+    messageMutationInFlight: chatMutation !== null,
     modelRoute: arrivalReads.chatModelRoute,
     armed: arm,
   });

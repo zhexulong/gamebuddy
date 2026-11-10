@@ -18,6 +18,7 @@
  *    provider keeps "bring your own key".
  */
 import { type Page, expect, test } from "./frontend-coverage";
+import { messages } from "../src/i18n";
 
 const token = "A".repeat(43);
 const csrfToken = `${"C".repeat(42)}A`;
@@ -523,7 +524,7 @@ test.describe("C: the voice consent leaves the first settings screen", () => {
     // once that record says `ready`.
     const chat = page.getByTestId("chat-surface");
     await expect(chat.locator("[data-voice-state='ready']")).toBeAttached();
-    await expect(chat).toContainText("Voice ready — press to talk");
+    await expect(chat).toContainText(messages("en").voiceReady);
   });
 });
 

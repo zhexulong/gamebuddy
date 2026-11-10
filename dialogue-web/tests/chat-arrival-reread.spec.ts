@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./frontend-coverage";
+import { messages } from "../src/i18n";
 
 /**
  * Arriving at the conversation shows the Host's state as it is *now*, not as it was when the
@@ -224,7 +225,7 @@ test("granting voice consent in Settings reaches the conversation's mic on the w
   await page.getByRole("button", { name: "Chat", exact: true }).click();
   await expect(chat).toBeVisible();
   await expect(chat.locator("[data-voice-state]")).toHaveAttribute("data-voice-state", "ready");
-  await expect(chat).toContainText("Voice ready — press to talk");
+  await expect(chat).toContainText(messages("en").voiceReady);
   await expect(chat).not.toContainText("Voice unavailable");
 
   // No reload happened: the one-shot boot token is spent for good, and a reload would need it.

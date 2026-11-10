@@ -41,7 +41,7 @@ export type ChatArmedAction =
 export type ChatSendGate =
   /** A send would be accepted and would reach a model. */
   | Readonly<{ gate: "open" }>
-  /** The Host would not take a submission now. The field is locked too. */
+  /** The Host would not take a submission now, or this surface is rewriting the transcript. The field is locked too. */
   | Readonly<{ gate: "locked" }>
   /** The Host would take it, but nothing would answer it. The field stays writable. */
   | Readonly<{ gate: "no_model" }>
@@ -91,6 +91,17 @@ export type ChatUIStateInputs = Readonly<{
   stopAvailable: boolean;
   /** True while the Host would accept a submission now (`chat.submit` availability). */
   submitAvailable: boolean;
+  /**
+   * True while this surface is rewriting the mounted conversation (a rewind truncating it, an edit,
+   * a delete, a variant discard, a regeneration).
+   *
+   * It is not a second "busy": it is the reason a submission cannot be admitted right now, and the
+   * reason is not in the snapshot - the store is idle until the command lands, so `chat.submit` still
+   * reads available. Every message mutation takes the same single-flight latch, so reading it here
+   * makes the gate and the mutations answer the one question with the one fact: a surface that is
+   * changing the transcript has no room for a message written into it.
+   */
+  messageMutationInFlight: boolean;
   /** The route a message written here would reach a model through. */
   modelRoute: ChatModelRoute;
   /** The one destructive act being confirmed, if any. */
@@ -105,7 +116,7 @@ export type ChatUIStateInputs = Readonly<{
  * it - a reload, or a conversation read back mid-turn - is the same phase for the same reason.
  */
 export function deriveChatUIState(inputs: ChatUIStateInputs): ChatUIState {
-  const send = sendGate(inputs.submitAvailable, inputs.modelRoute);
+  const send = sendGate(inputs.submitAvailable, inputs.messageMutationInFlight, inputs.modelRoute);
   const armed = inputs.armed;
   const pendingLine = inputs.pendingLine;
   if (inputs.turn !== null) {
@@ -115,9 +126,13 @@ export function deriveChatUIState(inputs: ChatUIStateInputs): ChatUIState {
   return { phase: "idle", send, armed, pendingLine };
 }
 
-function sendGate(submitAvailable: boolean, modelRoute: ChatModelRoute): ChatSendGate {
+function sendGate(
+  submitAvailable: boolean,
+  messageMutationInFlight: boolean,
+  modelRoute: ChatModelRoute,
+): ChatSendGate {
   const noModel = modelRoute.kind === "none";
-  if (!submitAvailable) return { gate: noModel ? "locked_no_model" : "locked" };
+  if (!submitAvailable || messageMutationInFlight) return { gate: noModel ? "locked_no_model" : "locked" };
   return { gate: noModel ? "no_model" : "open" };
 }
 
