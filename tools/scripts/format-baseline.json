@@ -105,7 +105,6 @@
     "host/src/descriptor-derived-gate.test.ts",
     "host/src/desktop-presentation-handoff.internal.test.ts",
     "host/src/desktop-presentation-handoff.internal.ts",
-    "host/src/dialogue-controller.test.ts",
     "host/src/dialogue-web-entry-absence.test.ts",
     "host/src/event-pump.test.ts",
     "host/src/execution-correlation-ledger.ts",
