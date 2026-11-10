@@ -1831,40 +1831,68 @@ export type BodyProgramStatusRequest = Readonly<{ programId?: string }>;
 export type BodyProgramStopRequest = Readonly<{ programId: string; stopEpoch: number }>;
 
 /**
- * Every node state the Mod's journal settles a node in, in ONE declaration.
+ * Every node state the Mod's journal can settle a node in, in ONE declaration that also says what each one OWES a reader.
  *
  * The population is the Mod's own `BodyProgramNodeState` (eleven durable values, `BodyProgramModels.cs`), and it is
  * declared here as a value rather than as eleven `||` arms for one reason: the state list is what
- * `isBodyProgramNodeState` accepts AND what `planNodeReasonDetail` has to answer for, and a gate that checks "every state
- * owes a reason" cannot derive its population from a boolean function's source.
+ * `isBodyProgramNodeState` accepts AND what every reader of a plan row has to answer for, and a rule that says "only a
+ * node that STOPPED owes a reason" cannot derive its population from a boolean function's source.
  *
  * `skipped_dependency` and `abandoned` are in it because the journal really settles nodes there: 30 skipped and 1
  * abandoned against ZERO `recovery_required` in one measured run, while the wire projection named nine states and folded
  * both into `recovery_required` - a vocabulary collapse that read as a condition.
+ *
+ * THE VERDICT IS PART OF THE STATE, not a second list beside it, because a waiter that decided this for itself would be
+ * a second authority over the same fact:
+ *  - `moving` - not stopped; nothing has ended, so a reader is owed no reason at all.
+ *  - `stopped_succeeded` - stopped, and the receipt proved the effect; the effect IS the answer.
+ *  - `stopped_without_success` - stopped short of the effect; it owes a reason, and a settlement that carried none is a
+ *    defect the reader must be told about (`unknown_reason:<state>`) instead of having quietly passed over.
  */
-export const BODY_PROGRAM_NODE_STATES = Object.freeze([
-  "pending",
-  "awaiting_host_admission",
-  "host_admitted",
-  "running",
-  "succeeded",
-  "failed",
-  "cancelled",
-  "recovery_required",
-  "rejected",
-  "skipped_dependency",
-  "abandoned",
-] as const);
-export type BodyProgramNodeState = (typeof BODY_PROGRAM_NODE_STATES)[number];
+export const BODY_PROGRAM_NODE_STATE_VERDICTS = Object.freeze({
+  pending: "moving",
+  awaiting_host_admission: "moving",
+  host_admitted: "moving",
+  running: "moving",
+  succeeded: "stopped_succeeded",
+  failed: "stopped_without_success",
+  cancelled: "stopped_without_success",
+  recovery_required: "stopped_without_success",
+  rejected: "stopped_without_success",
+  skipped_dependency: "stopped_without_success",
+  abandoned: "stopped_without_success",
+} as const);
+export type BodyProgramNodeState = keyof typeof BODY_PROGRAM_NODE_STATE_VERDICTS;
+/** What one node state owes a reader: nothing while it moves, nothing when it succeeded, a reason when it stopped short. */
+export type BodyProgramNodeStateVerdict = (typeof BODY_PROGRAM_NODE_STATE_VERDICTS)[BodyProgramNodeState];
 
+/**
+ * The same states as an ordered list, DERIVED from the verdicts above so the two cannot disagree about which state a node
+ * can be in. A reader that only needs membership uses this; one that needs the reason rule asks the declaration.
+ */
+export const BODY_PROGRAM_NODE_STATES: readonly BodyProgramNodeState[] = Object.freeze(
+  Object.keys(BODY_PROGRAM_NODE_STATE_VERDICTS) as BodyProgramNodeState[],
+);
+
+/** What the declaration says about one state - `undefined` for a token it does not name (the Host's own `unknown`). */
+export function bodyProgramNodeStateVerdict(state: string): BodyProgramNodeStateVerdict | undefined {
+  return Object.hasOwn(BODY_PROGRAM_NODE_STATE_VERDICTS, state)
+    ? BODY_PROGRAM_NODE_STATE_VERDICTS[state as BodyProgramNodeState]
+    : undefined;
+}
 /**
  * The states a node may carry `refusalDetail` on: the ones where it settled without succeeding.
  *
  * The same three the Mod's journal permits (`BodyProgramValidation.MayCarryRefusalDetail`), stated over the wire
  * token: a `succeeded` node proves an effect, an in-flight one has refused nothing, and `recovery_required` says why in
- * `recoveryDiagnostic` instead.
+ * `recoveryDiagnostic` instead. Exported so a gate can exercise the real-detail arm on exactly the states the wire
+ * permits it, instead of on a second list written in the test.
  */
-const REFUSAL_DETAIL_NODE_STATES: ReadonlySet<BodyProgramNodeState> = new Set(["failed", "cancelled", "rejected"]);
+export const BODY_PROGRAM_REFUSAL_DETAIL_NODE_STATES: ReadonlySet<BodyProgramNodeState> = new Set([
+  "failed",
+  "cancelled",
+  "rejected",
+]);
 
 /** The Mod's own bound on a refusal detail (`BodyProgramValidation.MaximumNodeRefusalDetailLength`). */
 export const MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH = 512;
@@ -5071,7 +5099,7 @@ function isBodyProgramNodeStatus(value: unknown): boolean {
     isOptionalBoundedReason(value.refusalDetail, MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH) &&
     (value.refusalDetail === undefined ||
       value.refusalDetail === null ||
-      REFUSAL_DETAIL_NODE_STATES.has(value.state as BodyProgramNodeState)) &&
+      BODY_PROGRAM_REFUSAL_DETAIL_NODE_STATES.has(value.state as BodyProgramNodeState)) &&
     isOptionalBoundedReason(value.recoveryDiagnostic, MAX_BODY_PROGRAM_RECOVERY_DIAGNOSTIC_LENGTH) &&
     (value.recoveryDiagnostic === undefined ||
       value.recoveryDiagnostic === null ||

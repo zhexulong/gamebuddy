@@ -43,6 +43,8 @@
  * nothing in between.
  */
 
+import { BODY_PROGRAM_NODE_STATE_VERDICTS, BODY_PROGRAM_NODE_STATES, bodyProgramNodeStateVerdict } from "./protocol.js";
+
 /** The only non-terminal program state (`BodyProgramState`, `BodyProgramModels.cs:144`). */
 const ACTIVE_PROGRAM_STATE = "active";
 
@@ -92,23 +94,20 @@ export interface ProgramStatusWaitOutcome<TResult> {
 const NODE_STATES_IN_FLIGHT: ReadonlySet<string> = new Set(["host_admitted", "running"]);
 
 /**
- * The node states with nothing left to run (`BodyProgramNodeState`, `BodyProgramModels.cs:145`).
+ * The node states with nothing left to run, DERIVED from the one declaration (`BODY_PROGRAM_NODE_STATE_VERDICTS`).
  *
  * Everything here has stopped for good, so counting one of them as outstanding work would overstate what waiting can
  * still deliver. `rejected` and `skipped_dependency` are the two a naive reader misses: a plan whose remaining nodes
  * depend on a rejected one is still `active`, and the Mod will never dispatch the node that was refused or the
  * descendants it skipped. `abandoned` is the ADR-006 state for a dispatch whose outcome can never be known - settled
  * ignorance, which the plan itself reports as `failed`.
+ *
+ * The membership is not written here: a state added to the declaration is settled or moving by its own verdict, and
+ * "nothing left to run" and "owes a reason" cannot come apart.
  */
-const NODE_STATES_SETTLED: ReadonlySet<string> = new Set([
-  "succeeded",
-  "failed",
-  "cancelled",
-  "recovery_required",
-  "rejected",
-  "skipped_dependency",
-  "abandoned",
-]);
+const NODE_STATES_SETTLED: ReadonlySet<string> = new Set(
+  BODY_PROGRAM_NODE_STATES.filter((state) => BODY_PROGRAM_NODE_STATE_VERDICTS[state] !== "moving"),
+);
 
 /**
  * Is every action this snapshot shows finished, with nothing dispatched and unsettled?
@@ -276,12 +275,16 @@ interface PlanNodeAnswer {
   /** Where to go instead, when the reason was that the target had no route. */
   readonly hint?: string;
   /**
-   * WHY, in the Mod's own words - the receipt's evidence for a node that settled without succeeding, carried verbatim.
+   * WHY, in the Mod's own words - the receipt's evidence for a node that STOPPED WITHOUT SUCCEEDING, carried verbatim.
    *
-   * Present on every node whose state is not `succeeded`, because a settlement without a reason is the silence this
-   * field exists to end: when the Mod sent none the row says `unknown_reason:<state>` rather than omitting the key, so
-   * "the Mod had nothing more to say" and "the Host forgot to ask" cannot be the same answer. Absent on `succeeded`,
-   * which proves the effect instead.
+   * Present only where a node ended short of its effect, and absent everywhere else, because the two absences mean
+   * different things. A `pending` or `running` node has not ended, so it has nothing to explain and the field is not
+   * there: measured `round42`, 100+ live rows answered `{"state":"pending","reasonDetail":"unknown_reason:pending"}`
+   * against 159 pending, 400 succeeded, 47 failed and 22 rejected, which dressed every queued step as a defect and
+   * buried the 69 rows that were one. A `succeeded` node proves its effect instead.
+   *
+   * Where it IS owed, a settlement that carried no reason answers `unknown_reason:<state>` rather than omitting the key,
+   * so "the Mod had nothing more to say" and "the Host forgot to ask" cannot be the same answer.
    *
    * Never re-rendered and never summarised: `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1` is what the refusing
    * layer wrote, and a Host that reformatted it into prose would be a second author of a fact it did not observe.
@@ -396,20 +399,25 @@ export function planBatchAnswer(
 }
 
 /**
- * WHY a node settled, as the row states it: the Mod's own detail, else the state it stopped in.
+ * WHY a node ended, as the row states it: the Mod's own detail, else the state it stopped in.
  *
  * <para>
- * `null` means exactly one thing - the node `succeeded` - and every other state, including the Host's own `unknown` for a
- * node the journal did not list, answers a string. That is deliberate. `round41` measured the whole defect this closes:
- * `shop_purchase` refused `shop_counter_out_of_reach` six times while the Mod's receipt held
+ * The state's own verdict decides whether a reason is owed at all (`BODY_PROGRAM_NODE_STATE_VERDICTS`), so `null` means
+ * "nothing to explain" in exactly two cases: the node has not stopped (`pending`, `host_admitted`, `running`, and the
+ * Host's own `unknown` for a node the journal does not list - none of them has ended, so none of them has a reason), or
+ * it `succeeded`, where the receipt's effect is the answer. Everything the declaration calls `stopped_without_success`
+ * answers a string. That is deliberate. `round41` measured the whole defect this closes: `shop_purchase` refused
+ * `shop_counter_out_of_reach` six times while the Mod's receipt held
  * `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1`, the model read only the code, and it invented the world fact it
  * needed. Ninety-four `program_status` replies in that round carried no `evidence` and no `detail` at all.
  * </para>
  * <para>
- * `unknown_reason:<state>` is therefore the placeholder for "the reason side of this frame is empty", and it must stay
- * IMPOSSIBLE to omit: a row that simply dropped the key would be indistinguishable from one whose refusal carried no
- * detail, and the difference between "the Mod said nothing" and "there was nothing to say" is the difference between a
- * bug and a success. It never coexists with a real detail, because the two are arms of one `??` chain.
+ * `unknown_reason:<state>` is therefore the placeholder for "this node ENDED and the reason side of its frame is empty",
+ * and where it is owed it must stay IMPOSSIBLE to omit: a row that simply dropped the key would be indistinguishable from
+ * one whose refusal carried no detail, and the difference between "the Mod said nothing" and "there was nothing to say"
+ * is the difference between a bug and a success. It never coexists with a real detail, because the two are arms of one
+ * `??` chain. It is never owed by a node that has not ended: that row would report a settlement defect about a step that
+ * is still queued, and `round42` shows it buries the rows that are real.
  * </para>
  * <para>
  * `recoveryDiagnostic` is consulted for the same reason: the journal's own `execution_uncertain` did not use to reach the
@@ -422,7 +430,7 @@ export function planNodeReasonDetail(
   refusalDetail: string | null,
   recoveryDiagnostic: string | null,
 ): string | null {
-  if (state === "succeeded") return null;
+  if (bodyProgramNodeStateVerdict(state) !== "stopped_without_success") return null;
   return refusalDetail ?? recoveryDiagnostic ?? `unknown_reason:${state}`;
 }
 

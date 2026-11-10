@@ -9,7 +9,11 @@ import {
   planNodeReasonDetail,
   waitForTerminalProgramStatus,
 } from "./program-status-wait.js";
-import { BODY_PROGRAM_NODE_STATES } from "./protocol.js";
+import {
+  BODY_PROGRAM_NODE_STATES,
+  BODY_PROGRAM_NODE_STATE_VERDICTS,
+  BODY_PROGRAM_REFUSAL_DETAIL_NODE_STATES,
+} from "./protocol.js";
 
 /**
  * The predicate that decides whether a wait is over, pinned against every state the Mod can publish
@@ -514,8 +518,10 @@ test("a batch is settled only when every node has stopped, and says how many hav
 });
 
 test("a node the journal does not describe is unknown, and never counts as settled", () => {
-  // A journal that does not list a node has not shown it to be waiting, so `pending` would be the Host inventing
-  // progress; counting it as settled would be worse - it would report a batch finished around work it never read.
+  // A journal that does not list a node has not shown it to be WAITING, so `pending` would be the Host inventing
+  // progress; counting it as settled would be worse - it would report a batch finished around work it never read. What it
+  // also is not is a settlement: nothing ended, so the row carries no `reasonDetail`. `unknown_reason:unknown` used to
+  // stand there, which named a defect about a step the Host had simply not read yet.
   const answer = planBatchAnswer([answerNode("n01"), answerNode("n02")], {
     nodes: [{ nodeId: "n01", state: "succeeded" }],
   });
@@ -523,7 +529,6 @@ test("a node the journal does not describe is unknown, and never counts as settl
     index: 1,
     actionId: "move_to_tile",
     state: "unknown",
-    reasonDetail: "unknown_reason:unknown",
   });
   assert.equal(answer.settled, false);
   assert.equal(answer.remaining, 1);
@@ -667,49 +672,132 @@ test("the Mod's own refusal detail reaches the plan answer byte for byte", () =>
 });
 
 /**
+ * A row for a node that has NOT stopped says nothing about why it stopped, because it has not.
+ *
+ * `round42` measured the cost: over one run, 100+ rows of a live plan answered
+ * `{"state":"pending","reasonDetail":"unknown_reason:pending"}` against a census of 159 pending, 400 succeeded,
+ * 47 failed and 22 rejected. The placeholder exists to name a DEFECT - a node that ended with nobody saying why -
+ * and a row that has not ended wearing the same shape buries the 69 rows that do matter. So the three buckets are
+ * decided by the state's own verdict (`BODY_PROGRAM_NODE_STATES`), and only the last one carries the field at all.
+ */
+test("a live plan's rows carry a reason only where a node actually stopped", () => {
+  const detail = "owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1";
+  const answer = planBatchAnswer(
+    ["n01", "n02", "n03", "n04", "n05"].map((nodeId) => answerNode(nodeId)),
+    {
+      programId: "p1",
+      state: "active",
+      nodes: [
+        { nodeId: "n01", state: "pending" },
+        { nodeId: "n02", state: "pending" },
+        { nodeId: "n03", state: "running" },
+        { nodeId: "n04", state: "failed", failureCode: "no_native_path" },
+        {
+          nodeId: "n05",
+          state: "rejected",
+          rejectionCode: "shop_counter_out_of_reach",
+          refusalDetail: detail,
+        },
+      ],
+    },
+  );
+  assert.deepEqual(
+    answer.nodes.map((node) => node.state),
+    ["pending", "pending", "running", "failed", "rejected"],
+  );
+  assert.equal(answer.settled, false);
+  assert.equal(answer.remaining, 3, "the three rows that have not stopped are the outstanding work");
+  // The whole row, not just the key: a queued node answers with its state and nothing else, because nothing else
+  // has happened to it.
+  assert.deepEqual(answer.nodes[0], { index: 0, actionId: "move_to_tile", state: "pending" });
+  assert.deepEqual(answer.nodes[2], { index: 2, actionId: "move_to_tile", state: "running" });
+  for (const row of answer.nodes.slice(0, 3))
+    assert.equal(
+      Object.hasOwn(row as object, "reasonDetail"),
+      false,
+      `the '${row.state}' node has not ended, so it has no reason to give - not even a placeholder`,
+    );
+  // ...and the rows that DID end keep exactly the answer they had: the Mod's sentence, or the named defect.
+  assert.equal(answer.nodes[3]?.reasonDetail, "unknown_reason:failed");
+  assert.equal(answer.nodes[4]?.reasonDetail, detail);
+  assert.deepEqual(
+    answer.nodes.filter((node) => node.reasonDetail !== undefined).map((node) => node.state),
+    ["failed", "rejected"],
+    "the reason field marks the two rows that stopped without succeeding, and no others",
+  );
+});
+
+/**
  * T3 - THE GATE.
  *
  * Population: `BODY_PROGRAM_NODE_STATES`, the declaration the wire validator itself accepts (`isBodyProgramNodeState`),
- * not a list written here. For every member: a non-succeeded node with no reason answers `unknown_reason:<state>`, a node
- * with a real detail answers that detail, and the two never coexist.
+ * not a list written here - and each state's answer is decided by its OWN verdict in that declaration, not by a table in
+ * this file. There are three of those, and a state in none of them fails here:
+ *  - `moving` (not ended): the row carries NO `reasonDetail` key at all - there is nothing to explain yet;
+ *  - `stopped_succeeded`: the row carries none either, because the receipt's effect is the answer;
+ *  - `stopped_without_success`: the row carries the Mod's detail verbatim, or `unknown_reason:<state>` when it sent none.
  *
- * Why a gate and not a test: the defect is "a settlement reaches the caller with no reason", and its members are states
- * nobody has written yet. A list of the states someone remembered cannot cover the state added next; the enum can. The
- * count is printed and refused at zero, because a gate that examined nothing agrees with itself.
+ * Why a gate and not a test: the defect is a row whose reason is a lie in ONE OF TWO DIRECTIONS - a settlement with no
+ * reason, or a queued step dressed as one - and its members are states nobody has written yet. `round42` measured the
+ * second direction: 100+ `unknown_reason:pending` rows in one run against 47 failed and 22 rejected, so the placeholder
+ * that exists to name a defect buried every row that was one. The count is printed and refused at zero, because a gate
+ * that examined nothing agrees with itself.
  */
-test("every node state the wire names either carries its reason or says it has none", () => {
-  assert.ok(BODY_PROGRAM_NODE_STATES.length >= 11, `examined ${BODY_PROGRAM_NODE_STATES.length} node states`);
+test("every node state the wire names answers what its own verdict says it owes", () => {
+  const states = [...BODY_PROGRAM_NODE_STATES];
+  assert.ok(states.length >= 11, `examined ${states.length} node states`);
+  assert.equal(new Set(states).size, states.length, "the declaration names each state once");
+  assert.deepEqual(
+    [...new Set(states.map((state) => BODY_PROGRAM_NODE_STATE_VERDICTS[state]))].sort(),
+    ["moving", "stopped_succeeded", "stopped_without_success"],
+    "the declaration carries exactly the three verdicts a row knows how to answer",
+  );
+  // THE ANCHOR. The declaration gives the RULE, and a rule that silently reclassified `pending` as stopped would agree
+  // with itself - so the CONTENT of each bucket is pinned here, by hand, once. These four are the states the journal moves
+  // a node through before it settles (`BodyProgramNodeState`), and `round42` is why the list is asserted rather than
+  // trusted: 159 pending nodes answering `unknown_reason:pending` is what a moved bucket looks like from the outside.
+  assert.deepEqual(
+    states.filter((state) => BODY_PROGRAM_NODE_STATE_VERDICTS[state] === "moving"),
+    ["pending", "awaiting_host_admission", "host_admitted", "running"],
+    "the states still in progress are exactly the four a node passes through before it settles",
+  );
+  assert.deepEqual(
+    states.filter((state) => BODY_PROGRAM_NODE_STATE_VERDICTS[state] === "stopped_succeeded"),
+    ["succeeded"],
+    "one state proves its effect, and it is the only one",
+  );
   const examined: string[] = [];
   const rowFor = (state: string, extra: Readonly<Record<string, unknown>> = {}) =>
     planBatchAnswer([{ nodeId: "n01", actionId: "shop_purchase", arguments: {} }], {
       nodes: [{ nodeId: "n01", state, ...extra }],
     }).nodes[0];
-  for (const state of BODY_PROGRAM_NODE_STATES) {
+  for (const state of states) {
+    const verdict = BODY_PROGRAM_NODE_STATE_VERDICTS[state];
     const row = rowFor(state);
     assert.ok(row !== undefined, `the state '${state}' must produce a row`);
     assert.equal(row.state, state, `the state '${state}' must arrive verbatim`);
-    if (state === "succeeded") {
-      assert.equal(
-        Object.hasOwn(row as object, "reasonDetail"),
-        false,
-        "a success proves its effect and owes no reason",
-      );
-    } else {
+    const owesReason = verdict === "stopped_without_success";
+    assert.equal(
+      Object.hasOwn(row as object, "reasonDetail"),
+      owesReason,
+      verdict === "moving"
+        ? `the state '${state}' has not ended, so its row must carry no reason at all - not even a placeholder`
+        : `the state '${state}' is '${verdict}', so it ${owesReason ? "owes a reason" : "proves its effect instead"}`,
+    );
+    if (owesReason)
       assert.equal(
         row.reasonDetail,
         `unknown_reason:${state}`,
-        `the state '${state}' settles without succeeding, so the row must say the reason is missing rather than omit it`,
+        `the state '${state}' stopped short with no reason sent, so the row must say the reason is missing rather than omit it`,
       );
-    }
     // ...and with a real detail the placeholder is gone. One `??` chain, so the two arms cannot coexist.
-    if (state === "failed" || state === "cancelled" || state === "rejected") {
+    if (BODY_PROGRAM_REFUSAL_DETAIL_NODE_STATES.has(state)) {
       const explained = rowFor(state, { refusalDetail: "owner=Pierre;radius=1" });
       assert.equal(
         explained?.reasonDetail,
         "owner=Pierre;radius=1",
         `the state '${state}' must carry the Mod's detail`,
       );
-      assert.notEqual(explained?.reasonDetail, `unknown_reason:${state}`, "real detail and placeholder never coexist");
     }
     // `recovery_required` is the one state whose journal reason is a diagnostic rather than a detail: the Mod writes
     // `execution_uncertain` there, and answering `unknown_reason:recovery_required` would deny something it had said.
@@ -719,18 +807,21 @@ test("every node state the wire names either carries its reason or says it has n
     }
     examined.push(state);
   }
-  assert.deepEqual(examined, [...BODY_PROGRAM_NODE_STATES], `examined ${examined.length} node states`);
+  assert.deepEqual(examined, states, `examined ${examined.length} node states`);
   assert.equal(examined.length, BODY_PROGRAM_NODE_STATES.length);
 });
 
 /**
- * The single decision point, asked directly: `succeeded` is the only state with no reason, and the placeholder can never
- * stand where a real detail exists.
+ * The single decision point, asked directly: a reason is owed by the states that stopped short, and by nothing else.
  */
-test("a reason detail answers for every settled state and is absent only for a success", () => {
+test("a reason detail answers for every state that stopped short, and for no other", () => {
   assert.equal(planNodeReasonDetail("succeeded", null, null), null);
   assert.equal(planNodeReasonDetail("succeeded", "a detail a broken Mod sent", null), null, "a success has no reason");
   assert.equal(planNodeReasonDetail("cancelled", "why", null), "why");
   assert.equal(planNodeReasonDetail("failed", null, null), "unknown_reason:failed");
   assert.equal(planNodeReasonDetail("recovery_required", null, "execution_uncertain"), "execution_uncertain");
+  // A node that has not ended has nothing to report, so it reports nothing - the `round42` shape, at the decision point.
+  assert.equal(planNodeReasonDetail("pending", null, null), null);
+  assert.equal(planNodeReasonDetail("running", "a detail through the wrong door", null), null);
+  assert.equal(planNodeReasonDetail("unknown", null, null), null, "an unread row is not a settlement either");
 });
