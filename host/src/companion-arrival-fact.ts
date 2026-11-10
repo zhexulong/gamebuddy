@@ -50,15 +50,23 @@ export const COMPANION_ARRIVAL_SEMANTIC_KIND = "companion_arrival";
 /** Who synthesised the fact. Deliberately not `stardew_mod`: the Mod never says this. */
 export const COMPANION_ARRIVAL_SOURCE = "host_game_session";
 
-/** The batch marker `companionArrivalAlreadySaid` looks for in the session's own entries. */
-const COMPANION_ARRIVAL_MARKER = `"${COMPANION_ARRIVAL_EVENT_ID}"`;
+/**
+ * The invariant opening of the arrival paragraph, in each language it is written in.
+ *
+ * TWO READERS, ONE DECLARATION: `arrivalText` opens with it, and `companionArrivalAlreadySaid` looks for it in the
+ * session's persisted entries. It used to be the fact's event id inside a JSON envelope - the batch was a stringified
+ * object, so `"companion_arrival"` was the marker - and a prose delivery carries no such token. The opening sentence is
+ * the one thing the delivered text and the detector cannot disagree about, because both are built from these strings.
+ */
+const ARRIVAL_OPENING_ZH = "你刚到这座农场，第一次真的站在这里";
+const ARRIVAL_OPENING_EN = "You have just arrived on this farm and are standing here for the first time";
 
 /**
  * Whether this Game session already carried the arrival fact.
  *
- * The batch that carried it is a `user` message Pi persisted verbatim, so the fact's own event id is
- * the marker, and `chatTranscriptPlayerText` reduces a persisted batch to exactly the text the Host
- * passed. The session's entries are the only authority that cannot drift from the delivery.
+ * The batch that carried it is a `user` message Pi persisted verbatim, so the arrival paragraph's own opening is the
+ * marker, and `chatTranscriptPlayerText` reduces a persisted batch to exactly the text the Host passed. The session's
+ * entries are the only authority that cannot drift from the delivery.
  */
 export type CompanionArrivalHistory = Readonly<{ alreadySaid(): boolean }>;
 
@@ -123,7 +131,7 @@ export function companionArrivalAlreadySaid(session: Pick<SessionManager, "getBr
   for (const entry of session.getBranch()) {
     if (entry.type !== "message") continue;
     const text = chatTranscriptPlayerText(entry.message);
-    if (text !== null && text.includes(COMPANION_ARRIVAL_MARKER)) return true;
+    if (text !== null && (text.includes(ARRIVAL_OPENING_ZH) || text.includes(ARRIVAL_OPENING_EN))) return true;
   }
   return false;
 }
@@ -149,7 +157,7 @@ function arrivalText(
   if (zh) {
     const when = date === "" ? clock : `${date} ${clock}`;
     return [
-      `你刚到这座农场，第一次真的站在这里；世界已经走起来了：现在是${when}，${weatherLabel}${
+      `${ARRIVAL_OPENING_ZH}；世界已经走起来了：现在是${when}，${weatherLabel}${
         location === undefined ? "" : `，此刻在${location}`
       }。`,
       "用你自己一贯开口的语气，说你想说的第一句话：可以是你看到的、你在意的，或者你想去做的。",
@@ -158,7 +166,7 @@ function arrivalText(
   }
   const when = date === "" ? clock : `${date} ${clock}`;
   return [
-    `You have just arrived on this farm and are standing here for the first time; the world has started moving: it is ${when}, ${weatherLabel}${location === undefined ? "" : `, here in ${location}`}.`,
+    `${ARRIVAL_OPENING_EN}; the world has started moving: it is ${when}, ${weatherLabel}${location === undefined ? "" : `, here in ${location}`}.`,
     " Open this morning in the voice you always open with: say the first thing you want to say - something you see, something you care about, something you want to do.",
     ' Do not read the clock or the weather out as a status report, and do not merely announce "I have arrived".',
   ].join("");
