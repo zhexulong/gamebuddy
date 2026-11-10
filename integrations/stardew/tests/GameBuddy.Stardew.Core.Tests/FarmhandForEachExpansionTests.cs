@@ -170,6 +170,14 @@ public sealed class FarmhandForEachExpansionTests
     private static FarmhandForEachSource Rect(int x, int y, int w, int h) =>
         new(FarmhandForEachSource.AreaKind, x, y, w, h);
 
+    /// <summary>One live tile row, with the occupant the farm world publishes for it in the `Clears` vocabulary.</summary>
+    private static FarmhandForEachRow Occupied(int x, int y, int localColumn, string occupant) =>
+        new(x, y, localColumn, 0, new Dictionary<string, FarmhandForEachValue>(StringComparer.Ordinal)
+        {
+            ["kind"] = FarmhandForEachValue.Of(occupant),
+            [FarmhandForEachHealing.OccupantField] = FarmhandForEachValue.Of(occupant),
+        });
+
     /// <summary>The live rows a rectangle source yields, exactly as the Mod reads them off the map.</summary>
     private static IEnumerable<FarmhandForEachRow> AreaRows(FarmhandForEachSource source) =>
         FarmhandForEachRules.AreaRows(source).Select(row => new FarmhandForEachRow(row.X, row.Y, row.LocalColumn, row.LocalRow, Row()));
@@ -255,6 +263,47 @@ public sealed class FarmhandForEachExpansionTests
             .Should().OnlyContain(target => target.ExecutionId != null && target.Tile != null);
         pass.Targets.Select(target => target.ExecutionId).OfType<string>().Should().OnlyHaveUniqueItems(
             "each target keeps its own receipt lineage, or two effects could not be told apart");
+    }
+
+    /// <summary>
+    /// A ROW IS A TILE'S OCCUPANT, NOT ITS KIND: `{ occupant: "weed" }` works the weeds and reports the stones.
+    ///
+    /// <para>
+    /// WHY THE SPELLING EXISTS. `where` could filter by POSITION and by a row's `kind`, and both answer the wrong question
+    /// on a mixed patch: `kind` is what the clearing table resolves to an action, while `occupant` is what is STANDING
+    /// there - so a strip of weeds and stones either sent a scythe at a rock or reported the rocks as worked.
+    /// </para>
+    /// <para>
+    /// THE DOCUMENT IS READ BY THE MOD'S OWN READER and the rows are the fields the farm world publishes, so this is the
+    /// whole lane: spelling, decision, and the count a caller reads back. A stone is `not_matched` - the existing word -
+    /// and it names its own tile, because a row the filter did not claim is reported and never skipped.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AnOccupantPredicateWorksTheWeedsAndReportsTheStonesAsNotMatched()
+    {
+        string document =
+            "{\"source\":{\"area\":{\"x\":60,\"y\":18,\"w\":3,\"h\":1}},"
+            + "\"where\":[{\"occupant\":\"weed\"}],\"do\":{\"action\":\"cut_weeds\"}}";
+        FarmhandForEachArguments.TryParseDocument(document, out FarmhandForEachLoop? loop, out string reasonCode)
+            .Should()
+            .BeTrue(reasonCode);
+
+        var handler = new RecordingHandler();
+        (FarmhandActionRouter router, Ledger ledger) = Table(handler, "cut_weeds");
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(
+            loop!,
+            "pass_occupant",
+            new[] { Occupied(60, 18, 0, "weed"), Occupied(61, 18, 1, "stone"), Occupied(62, 18, 2, FarmhandForEachHealing.NoOccupant) },
+            DispatchTo(router, ledger),
+            () => false,
+            _ => true);
+
+        pass.Succeeded.Should().Be(1, "the one weed is the row the filter claimed");
+        pass.NotMatched.Should().Be(2, "the stone and the empty tile are reported, not skipped - a skipped row reads as a worked one");
+        handler.Requests.Should().ContainSingle("no native effect may reach a tile the filter did not claim");
+        pass.Targets[1].ReasonCode.Should().Be(FarmhandForEachRules.NoRuleMatchedReasonCode("stone", 61, 18));
+        pass.Targets[2].ReasonCode.Should().Be(FarmhandForEachRules.NoRuleMatchedReasonCode(FarmhandForEachHealing.NoOccupant, 62, 18));
     }
 
     /// <summary>

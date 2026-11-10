@@ -30,6 +30,9 @@ public sealed record FarmhandForEachStride(int Every, int Offset)
 
     public const string OffsetOperator = "offset";
 
+    /// <summary>The two keys a stride is written with, in the order a refusal names them.</summary>
+    public static readonly string[] Operators = { EveryOperator, OffsetOperator };
+
     /// <summary>
     /// An offset at or past the stride claims no index at all, and a rule that can never match is indistinguishable from
     /// a tile nobody thought about - so it is refused rather than silently dead.
@@ -51,28 +54,67 @@ public enum FarmhandForEachComparison
 }
 
 /// <summary>
-/// One `where` predicate over a row's field: `{ field: "health", gt: 0 }`, `{ field: "kind", in: ["rock","stump"] }`.
+/// One `where` predicate over a row: `{ field: "health", gt: 0 }`, `{ field: "kind", in: ["rock","stump"] }`,
+/// `{ occupant: "weed" }`, or a position guard `{ col: { every: 3, offset: 1 } }`.
 ///
-/// ONE SPELLING per test. A kind is `field: "kind"` like any other field, and position is `col`/`row` on the loop row
-/// itself; there is no second shorthand for either, because a form with two ways to say "weed" is a form whose two ways
-/// will eventually disagree.
+/// ONE SPELLING PER TEST, declared in <see cref="Selectors"/> and <see cref="Comparisons"/> and nowhere else: the reader
+/// accepts what those declare and its refusal prints them, so "a word this form does not have" is answered with the words
+/// it does have instead of with the caller's own word back.
+///
+/// `occupant` IS NOT A SECOND VOCABULARY. It is the ONE field test on <see cref="FarmhandForEachHealing.OccupantField"/> -
+/// the field the clearing join reads, whose words are the engine's own (`ExecutionManager.DescribeTileOccupant`) and the
+/// same words `FarmhandActionDescriptor.Clears` is declared in - so `{ occupant: "weed" }` and
+/// `{ field: "occupant", eq: "weed" }` are one test with one meaning.
 /// </summary>
 public sealed record FarmhandForEachPredicate(
     string? Field,
     FarmhandForEachComparison Comparison,
     IReadOnlyList<FarmhandForEachValue> Values)
 {
+    public const string FieldOperator = "field";
+
     public const string ColOperator = "col";
 
     public const string RowOperator = "row";
 
-    // The wire words of the three field comparisons this pass accepts. They belong here, beside the type they name, so
-    // the reader that accepts a declaration and the model that decides a row cannot disagree about how one is spelled.
+    /// <summary>The named test of what STANDS on the tile, in the words the clearing join is written in.</summary>
+    public const string OccupantOperator = "occupant";
+
+    // The wire words of the field comparisons this pass accepts. They belong here, beside the type they name, so the
+    // reader that accepts a declaration and the model that decides a row cannot disagree about how one is spelled.
     public const string EqOperator = "eq";
+
+    public const string NeOperator = "ne";
 
     public const string LtOperator = "lt";
 
+    public const string LteOperator = "lte";
+
     public const string GtOperator = "gt";
+
+    public const string GteOperator = "gte";
+
+    /// <summary>The one comparison that takes a LIST of values: `kind in ["rock","stump"]`.</summary>
+    public const string InOperator = "in";
+
+    /// <summary>The keys that say WHAT one predicate tests, in the order a refusal names them.</summary>
+    public static readonly string[] Selectors = { FieldOperator, ColOperator, RowOperator, OccupantOperator };
+
+    /// <summary>
+    /// Every comparison word, with the comparison it spells: the ONE declaration the reader accepts a field test against
+    /// and the one a refusal prints. A word added here is a word the reader must read, and the test beside this file
+    /// asserts that for every member rather than for the three that were written by hand.
+    /// </summary>
+    public static readonly (string Word, FarmhandForEachComparison Kind)[] Comparisons =
+    {
+        (EqOperator, FarmhandForEachComparison.Eq),
+        (NeOperator, FarmhandForEachComparison.Ne),
+        (LtOperator, FarmhandForEachComparison.Lt),
+        (LteOperator, FarmhandForEachComparison.Lte),
+        (GtOperator, FarmhandForEachComparison.Gt),
+        (GteOperator, FarmhandForEachComparison.Gte),
+        (InOperator, FarmhandForEachComparison.In),
+    };
 
     /// <summary>
     /// How many values one `in` list may carry.

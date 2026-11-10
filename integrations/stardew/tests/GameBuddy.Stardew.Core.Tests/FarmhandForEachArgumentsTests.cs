@@ -138,12 +138,87 @@ public sealed class FarmhandForEachArgumentsTests
             "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":{\"action\":\"till_soil\"},\"limit\":4}",
             "for_each_unknown_key:limit");
 
-    /// <summary>The two `where` spellings and no more: a second operator word is the seed of a second semantics.</summary>
+    private static string Document(string predicate) =>
+        "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"where\":[" + predicate + "],\"do\":{\"action\":\"cut_weeds\"}}";
+
+    /// <summary>
+    /// EVERY SPELLING THE MODEL DECLARES IS READ HERE, AND A REFUSAL NAMES THE ONES THAT ARE.
+    ///
+    /// <para>
+    /// THE POPULATION IS THE MODEL'S OWN: <see cref="FarmhandForEachPredicate.Selectors"/> and
+    /// <see cref="FarmhandForEachPredicate.Comparisons"/>. A spelling added to either is red here until this reader reads
+    /// it, in both directions - so the two languages cannot drift into "the compiler and the wire accept a document this
+    /// reader refuses".
+    /// </para>
+    /// <para>
+    /// WHAT IT CLOSES. The Host's compiler and the wire accepted <c>{"field":"kind","in":["weed"]}</c> while this
+    /// reader refused it as <c>for_each_where_unrecognised:in</c> - a word that named nothing the caller could write
+    /// instead, for a document two thirds of the pipeline had already accepted. Measured: that exact failureCode sits in
+    /// <c>tools/body-program-journal/journal.json</c>.
+    /// </para>
+    /// </summary>
     [Fact]
-    public void AnUnrecognisedPredicateOperatorIsRefusedByName() =>
-        Refused(
-            "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":2,\"h\":1}},\"where\":[{\"field\":\"kind\",\"ne\":\"weed\"}],\"do\":{\"action\":\"till_soil\"}}",
-            "for_each_where_unrecognised:ne");
+    public void EveryDeclaredWhereSpellingIsReadAndTheRefusalNamesThem()
+    {
+        foreach (string selector in FarmhandForEachPredicate.Selectors)
+        {
+            string predicate = selector switch
+            {
+                FarmhandForEachPredicate.FieldOperator => "{\"field\":\"kind\",\"eq\":\"weed\"}",
+                FarmhandForEachPredicate.OccupantOperator => "{\"occupant\":\"weed\"}",
+                FarmhandForEachPredicate.ColOperator or FarmhandForEachPredicate.RowOperator =>
+                    "{\"" + selector + "\":{\"every\":2,\"offset\":0}}",
+                _ => throw new InvalidOperationException($"where_spelling_unproven:{selector}"),
+            };
+            FarmhandForEachArguments.TryParseDocument(Document(predicate), out _, out string answered)
+                .Should()
+                .BeTrue($"where_readers_disagree:{selector}:mod answered {answered}");
+        }
+
+        foreach ((string word, FarmhandForEachComparison _) in FarmhandForEachPredicate.Comparisons)
+        {
+            string value = string.Equals(word, FarmhandForEachPredicate.InOperator, StringComparison.Ordinal) ? "[\"weed\"]" : "\"weed\"";
+            FarmhandForEachArguments.TryParseDocument(Document("{\"field\":\"kind\",\"" + word + "\":" + value + "}"), out _, out string answered)
+                .Should()
+                .BeTrue($"where_readers_disagree:{word}:mod answered {answered}");
+        }
+
+        // A WORD THE MODEL DOES NOT HAVE IS ANSWERED WITH THE WORDS IT DOES, derived from the declaration and not restated.
+        FarmhandForEachArguments.TryParseDocument(Document("{\"in\":[\"weed\"]}"), out _, out string reasonCode).Should().BeFalse();
+        reasonCode.Should().StartWith(
+            $"{FarmhandForEachArguments.WhereUnrecognised}:in;allowed={string.Join(",", FarmhandForEachPredicate.Selectors)}",
+            "the refusal names the word that was written AND the spellings that may be written instead");
+
+        FarmhandForEachArguments.TryParseDocument(Document("{\"field\":\"kind\",\"equals\":\"weed\"}"), out _, out reasonCode).Should().BeFalse();
+        reasonCode.Should().StartWith(
+            $"{FarmhandForEachArguments.WhereUnrecognised}:equals;allowed={string.Join(",", FarmhandForEachPredicate.Comparisons.Select(entry => entry.Word))}",
+            "beside `field` the alternatives are the comparison words, and they are printed from the same declaration the reader accepts");
+
+        (FarmhandForEachPredicate.Selectors.Length + FarmhandForEachPredicate.Comparisons.Length).Should()
+            .BeGreaterThan(0, "blocked: the model declares no spelling, so this gate examined nothing");
+    }
+
+    /// <summary>
+    /// `occupant` IS THE TILE FIELD THE CLEARING JOIN READS, not a second vocabulary beside it.
+    ///
+    /// The words are the engine's own (<c>ExecutionManager.DescribeTileOccupant</c>, and the `Clears` declarations that
+    /// name the same words), and the predicate is the ONE field test on
+    /// <see cref="FarmhandForEachHealing.OccupantField"/> - so `occupant: "weed"` and
+    /// `field: "occupant", eq: "weed"` cannot come to mean two things.
+    /// </summary>
+    [Fact]
+    public void TheOccupantSpellingReadsTheFieldTheClearingJoinReads()
+    {
+        FarmhandForEachArguments.TryParseDocument(Document("{\"occupant\":\"weed\"}"), out FarmhandForEachLoop? loop, out string reasonCode)
+            .Should()
+            .BeTrue(reasonCode);
+
+        loop!.Where.Should().ContainSingle();
+        loop.Where![0].Field.Should().Be(FarmhandForEachHealing.OccupantField);
+        loop.Where[0].Comparison.Should().Be(FarmhandForEachComparison.Eq);
+        loop.Where[0].Values[0].Text.Should().Be("weed");
+        loop.Where[0].IsPositionGuard.Should().BeFalse("occupant is a test of what stands there, not of where the row is");
+    }
 
     /// <summary>A stride that claims no index is a rule that can never match, so it is refused rather than run dead.</summary>
     [Fact]

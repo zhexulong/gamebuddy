@@ -63,6 +63,16 @@ public static class FarmhandForEachArguments
     /// </summary>
     public const int MaximumDocumentChars = 512;
 
+    /// <summary>
+    /// The word every "this form has no such spelling" refusal answers with.
+    ///
+    /// ONE WORD ON BOTH SIDES of the boundary: the compiler refuses the same declaration before submission and this reader
+    /// refuses it on the game thread, so a caller is never taught a code and then answered with another. The refusal itself
+    /// is <c>&lt;WhereUnrecognised&gt;:&lt;given&gt;;allowed=&lt;a&gt;,&lt;b&gt;</c>, generated from the model's own
+    /// declarations rather than from a list written in the message.
+    /// </summary>
+    public const string WhereUnrecognised = "for_each_where_unrecognised";
+
     private const string LoopFault = "for_each_invalid:loop";
 
     private const string SourceFault = "for_each_invalid:source";
@@ -299,71 +309,103 @@ public static class FarmhandForEachArguments
     {
         predicate = null;
         reasonCode = WhereFault;
-        if (element.ValueKind != JsonValueKind.Object) return false;
+        if (element.ValueKind != JsonValueKind.Object) return Unrecognised("empty", FarmhandForEachPredicate.Selectors, out reasonCode);
         List<string> names = element.EnumerateObject().Select(property => property.Name).ToList();
-        bool col = names.Contains(FarmhandForEachPredicate.ColOperator, StringComparer.Ordinal);
-        bool row = names.Contains(FarmhandForEachPredicate.RowOperator, StringComparer.Ordinal);
-        if (col || row)
+        // ONE SPELLING PER PREDICATE, read from the model's own list. A name that is not one of them is answered with that
+        // list, so the caller is told what may be written here instead of being handed its own word back.
+        List<string> selectors = names.Where(name => Array.IndexOf(FarmhandForEachPredicate.Selectors, name) >= 0).ToList();
+        if (selectors.Count == 0) return Unrecognised(string.Join(",", names), FarmhandForEachPredicate.Selectors, out reasonCode);
+        if (selectors.Count > 1)
         {
-            // A position guard is ONE axis. Two axes, or an axis beside a field test, is two predicates and the caller
-            // should write two: folding them would hide the second from the refusal that names it.
-            if (col && row || names.Any(name => name is not (FarmhandForEachPredicate.ColOperator or FarmhandForEachPredicate.RowOperator)))
-            {
-                reasonCode = $"for_each_where_unrecognised:{(col && row ? FarmhandForEachPredicate.ColOperator : names.First(name => name is not (FarmhandForEachPredicate.ColOperator or FarmhandForEachPredicate.RowOperator)))}";
-                return false;
-            }
-            string axis = col ? FarmhandForEachPredicate.ColOperator : FarmhandForEachPredicate.RowOperator;
-            if (!TryReadStride(element.GetProperty(axis), axis, out FarmhandForEachStride? stride, out reasonCode)) return false;
+            reasonCode = $"{WhereFault}:one_selector_of:{string.Join(",", FarmhandForEachPredicate.Selectors)}";
+            return false;
+        }
+
+        string selector = selectors[0];
+        string? beside = names.FirstOrDefault(name => !string.Equals(name, selector, StringComparison.Ordinal));
+        if (selector is FarmhandForEachPredicate.ColOperator or FarmhandForEachPredicate.RowOperator)
+        {
+            // A position guard is ONE axis: two axes, or an axis beside anything else, is two predicates and the caller
+            // should write two - folding them would hide the second from the refusal that names it.
+            if (beside is not null) return Unrecognised(beside, FarmhandForEachPredicate.Selectors, out reasonCode);
+            if (!TryReadStride(element.GetProperty(selector), selector, out FarmhandForEachStride? stride, out reasonCode)) return false;
             predicate = new FarmhandForEachPredicate(null, FarmhandForEachComparison.In, Array.Empty<FarmhandForEachValue>())
             {
-                Axis = axis,
+                Axis = selector,
                 Stride = stride,
             };
             reasonCode = "accepted";
             return true;
         }
 
-        // `List<string>.Contains` compares with `EqualityComparer<string>.Default`, which is ordinal for a string.
-        if (!names.Contains("field"))
+        if (string.Equals(selector, FarmhandForEachPredicate.OccupantOperator, StringComparison.Ordinal))
         {
-            reasonCode = $"for_each_where_unrecognised:{(names.Count == 0 ? "empty" : names[0])}";
-            return false;
-        }
-        if (!element.TryGetProperty("field", out JsonElement fieldElement) || fieldElement.ValueKind != JsonValueKind.String)
-        {
-            reasonCode = "for_each_where_unrecognised:field";
-            return false;
-        }
-        string? comparison = null;
-        foreach (string name in names)
-        {
-            if (name == "field") continue;
-            if (name is not (FarmhandForEachPredicate.EqOperator or FarmhandForEachPredicate.LtOperator or FarmhandForEachPredicate.GtOperator))
+            // THE TILE'S OCCUPANT IS THE ROW FIELD THE CLEARING JOIN READS, so this is NOT a second vocabulary: the named key
+            // is that field's `eq` test, and its words are the engine's own (`ExecutionManager.DescribeTileOccupant`) and the
+            // ones `FarmhandActionDescriptor.Clears` is declared in.
+            if (beside is not null) return Unrecognised(beside, FarmhandForEachPredicate.Selectors, out reasonCode);
+            if (!TryReadValue(element.GetProperty(selector), out FarmhandForEachValue? occupant)
+                || element.GetProperty(selector).ValueKind != JsonValueKind.String)
             {
-                reasonCode = $"for_each_where_unrecognised:{name}";
+                // The WHOLE WORD is the value of the one key: too long, or not a word at all, is the shape rather than a
+                // spelling, and it names the key the caller has to fix.
+                reasonCode = $"{WhereFault}:{selector}";
                 return false;
             }
+            predicate = new FarmhandForEachPredicate(FarmhandForEachHealing.OccupantField, FarmhandForEachComparison.Eq, new[] { occupant! });
+            if (!predicate.IsValid)
+            {
+                predicate = null;
+                return false;
+            }
+            reasonCode = "accepted";
+            return true;
+        }
+
+        // A FIELD TEST: the field's name plus exactly one comparison word, both read from the declarations.
+        if (!element.TryGetProperty(FarmhandForEachPredicate.FieldOperator, out JsonElement fieldElement)
+            || fieldElement.ValueKind != JsonValueKind.String)
+            return Unrecognised(FarmhandForEachPredicate.FieldOperator, FarmhandForEachPredicate.Selectors, out reasonCode);
+        FarmhandForEachComparison? comparison = null;
+        foreach (string name in names)
+        {
+            if (string.Equals(name, FarmhandForEachPredicate.FieldOperator, StringComparison.Ordinal)) continue;
+            FarmhandForEachComparison? kind = ComparisonOf(name);
+            // A word beside `field` that is not a comparison: the alternatives are the comparison words, printed from the
+            // declaration the reader accepts them against.
+            if (kind is null) return Unrecognised(name, ComparisonWords(), out reasonCode);
             // Two comparison words on one field is a predicate nobody can read: which one ordered the value?
-            if (comparison is not null) return false;
-            comparison = name;
+            if (comparison is not null)
+            {
+                reasonCode = $"{WhereFault}:one_comparison_of:{string.Join(",", ComparisonWords())}";
+                return false;
+            }
+            comparison = kind;
         }
         if (comparison is null)
         {
-            reasonCode = "for_each_where_unrecognised:field";
+            reasonCode = $"{WhereFault}:one_comparison_of:{string.Join(",", ComparisonWords())}";
             return false;
         }
-        if (!TryReadValue(element.GetProperty(comparison), out FarmhandForEachValue? value))
+        string word = names.First(name => ComparisonOf(name) == comparison);
+        if (comparison == FarmhandForEachComparison.In)
         {
-            reasonCode = WhereFault;
-            return false;
+            if (!TryReadValues(element.GetProperty(word), out IReadOnlyList<FarmhandForEachValue>? values))
+            {
+                reasonCode = $"{WhereFault}:{fieldElement.GetString()}:{word}";
+                return false;
+            }
+            predicate = new FarmhandForEachPredicate(fieldElement.GetString(), comparison.Value, values!);
         }
-        FarmhandForEachComparison kind = comparison switch
+        else
         {
-            FarmhandForEachPredicate.EqOperator => FarmhandForEachComparison.Eq,
-            FarmhandForEachPredicate.LtOperator => FarmhandForEachComparison.Lt,
-            _ => FarmhandForEachComparison.Gt,
-        };
-        predicate = new FarmhandForEachPredicate(fieldElement.GetString(), kind, new[] { value! });
+            if (!TryReadValue(element.GetProperty(word), out FarmhandForEachValue? value))
+            {
+                reasonCode = WhereFault;
+                return false;
+            }
+            predicate = new FarmhandForEachPredicate(fieldElement.GetString(), comparison.Value, new[] { value! });
+        }
         if (!predicate.IsValid)
         {
             predicate = null;
@@ -373,15 +415,35 @@ public static class FarmhandForEachArguments
         return true;
     }
 
+    /// <summary>
+    /// The refusal for a word this form does not have, generated from the declaration that says which words it has.
+    ///
+    /// The word it replaces named nothing a caller could act on: `for_each_where_unrecognised:in` was answered for a
+    /// document the Host's compiler and the wire had already accepted, and it left the caller to guess what `where` does
+    /// accept. Naming the alternatives is the whole difference between a refusal and a shrug.
+    /// </summary>
+    private static bool Unrecognised(string given, IReadOnlyList<string> allowed, out string reasonCode)
+    {
+        reasonCode = string.Create(CultureInfo.InvariantCulture, $"{WhereUnrecognised}:{given};allowed={string.Join(",", allowed)}");
+        return false;
+    }
+
+    /// <summary>The comparison a word spells, or null when the model declares no such word.</summary>
+    private static FarmhandForEachComparison? ComparisonOf(string word)
+    {
+        foreach ((string candidate, FarmhandForEachComparison kind) in FarmhandForEachPredicate.Comparisons)
+            if (string.Equals(candidate, word, StringComparison.Ordinal)) return kind;
+        return null;
+    }
+
+    private static string[] ComparisonWords() =>
+        FarmhandForEachPredicate.Comparisons.Select(entry => entry.Word).ToArray();
+
     private static bool TryReadStride(JsonElement element, string axis, out FarmhandForEachStride? stride, out string reasonCode)
     {
         stride = null;
-        reasonCode = WhereFault;
-        if (element.ValueKind != JsonValueKind.Object)
-        {
-            reasonCode = $"for_each_where_unrecognised:{axis}";
-            return false;
-        }
+        reasonCode = $"{WhereFault}:{axis}:expected:{string.Join(",", FarmhandForEachStride.Operators)}";
+        if (element.ValueKind != JsonValueKind.Object) return false;
         int? every = null;
         int? offset = null;
         foreach (JsonProperty property in element.EnumerateObject())
@@ -391,18 +453,17 @@ public static class FarmhandForEachArguments
             {
                 case FarmhandForEachStride.EveryOperator when every is null && read is not null: every = read; break;
                 case FarmhandForEachStride.OffsetOperator when offset is null && read is not null: offset = read; break;
-                // An undeclared member, a repeated one, or an operand that is not a whole number.
+                // An undeclared member is answered with the stride's own two operators; a repeated one, or an operand that is
+                // not a whole number, is the shape rather than the spelling and keeps the structural fault.
                 default:
-                    reasonCode = property.Name is FarmhandForEachStride.EveryOperator or FarmhandForEachStride.OffsetOperator
-                        ? WhereFault
-                        : $"for_each_where_unrecognised:{property.Name}";
-                    return false;
+                    return property.Name is FarmhandForEachStride.EveryOperator or FarmhandForEachStride.OffsetOperator
+                        ? false
+                        : Unrecognised(property.Name, FarmhandForEachStride.Operators, out reasonCode);
             }
         }
         if (every is null || offset is null)
         {
             // `every: n, offset: k` is one statement; half of it claims nothing.
-            reasonCode = $"for_each_where_unrecognised:{axis}";
             return false;
         }
         var candidate = new FarmhandForEachStride(every.Value, offset.Value);
@@ -557,6 +618,26 @@ public static class FarmhandForEachArguments
     /// <summary>A whole number, the only numeric shape the wire's canonical form has.</summary>
     private static int? TryReadInteger(JsonElement element) =>
         element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out int value) ? value : null;
+
+    /// <summary>
+    /// The values the one list-valued comparison takes, bounded by <see cref="FarmhandForEachPredicate.MaximumValues"/>:
+    /// a fact about the predicate, not about this reader, and an empty list claims nothing.
+    /// </summary>
+    private static bool TryReadValues(JsonElement element, out IReadOnlyList<FarmhandForEachValue>? values)
+    {
+        values = null;
+        if (element.ValueKind != JsonValueKind.Array) return false;
+        int count = element.GetArrayLength();
+        if (count is < 1 or > FarmhandForEachPredicate.MaximumValues) return false;
+        var read = new FarmhandForEachValue[count];
+        for (int index = 0; index < count; index++)
+        {
+            if (!TryReadValue(element[index], out FarmhandForEachValue? value)) return false;
+            read[index] = value!;
+        }
+        values = read;
+        return true;
+    }
 
     private static bool TryReadValue(JsonElement element, out FarmhandForEachValue? value)
     {
