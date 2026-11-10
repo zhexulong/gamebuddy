@@ -562,8 +562,13 @@ internal sealed partial class ExecutionManager
     {
         Vector2 tile = new(targetX, targetY);
         StardewValley.GameLocation location = Game1.player.currentLocation;
-        if (location.GetHoeDirtAtTile(tile) is not null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "soil_already_tilled", $"target={targetX},{targetY}");
+        // The tile's soil feature, READ before the hoe swings. `before` used to be the literal "none", so the receipt
+        // claimed a transition from nothing to `HoeDirt` that no read had ever seen, and a tile that already carried
+        // one was refused without naming what was actually there.
+        StardewValley.TerrainFeatures.HoeDirt? dirtBefore = location.GetHoeDirtAtTile(tile);
+        string before = DescribeSoilFeature(dirtBefore);
+        if (dirtBefore is not null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "soil_already_tilled", $"target={targetX},{targetY};before={before}");
         if (DescribeSoilRefusal(location, targetX, targetY) is { } soilRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, DescribeSoilRefusalCode(soilRefusal), $"target={targetX},{targetY}");
         // Selection facts are deliberately NOT published here: this action takes the hoe its own claim declares and
@@ -579,14 +584,17 @@ internal sealed partial class ExecutionManager
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", null);
 
             LocalSoilTillingSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, this.revision, requestedDeadlineMs);
-            string before = "none";
             float staminaBefore = Game1.player.Stamina;
             UseNativeToolOnTile(hoe, location, targetX, targetY, Game1.player, staminaBefore);
             float staminaAfter = Game1.player.Stamina;
             float staminaDelta = staminaAfter - staminaBefore;
             float expectedStaminaCost = hoe.IsEfficient ? 0f : 2f - (Game1.player.FarmingLevel * 0.1f);
-            bool tilled = location.GetHoeDirtAtTile(tile) is not null;
-            receipt = new(executionId, requestId, tilled ? ExecutionState.Succeeded : ExecutionState.Uncertain, tilled ? "soil_tilled" : "soil_postcondition_unavailable", this.revision, $"location={specification.Location};target={targetX},{targetY};before={before};after={(tilled ? "HoeDirt" : "none")};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}");
+            // The same read again, on the same tile: `after` is what the swing left behind, and the pair is two
+            // measurements of one fact rather than a measurement and a word.
+            StardewValley.TerrainFeatures.HoeDirt? dirtAfter = location.GetHoeDirtAtTile(tile);
+            string after = DescribeSoilFeature(dirtAfter);
+            bool tilled = dirtAfter is not null;
+            receipt = new(executionId, requestId, tilled ? ExecutionState.Succeeded : ExecutionState.Uncertain, tilled ? "soil_tilled" : "soil_postcondition_unavailable", this.revision, $"location={specification.Location};target={targetX},{targetY};before={before};after={after};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}");
         }
         finally
         {
@@ -596,6 +604,17 @@ internal sealed partial class ExecutionManager
         this.AddTrace(receipt);
         return receipt;
     }
+
+    /// <summary>
+    /// One `HoeDirt` read of a tile, named the way a receipt's `before`/`after` fields name it.
+    ///
+    /// <para>
+    /// The read is the engine's own (`GameLocation.GetHoeDirtAtTile`), the one `IsTillableTile` and the
+    /// `soil_already_tilled` gate already ask. It is named here rather than inlined so both ends of the transition are
+    /// spelled by one function instead of by two literals that could drift apart.
+    /// </para>
+    /// </summary>
+    private static string DescribeSoilFeature(StardewValley.TerrainFeatures.HoeDirt? dirt) => dirt is null ? "none" : "HoeDirt";
 
     /// <summary>
     /// equip_tool/v2: resolves one canonical semantic tool category to the

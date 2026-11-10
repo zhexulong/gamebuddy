@@ -155,6 +155,25 @@ public sealed class TillSoilRefusalNamingTests
     }
 
     [Fact]
+    public void AnAlreadyTilledTile_IsRefusedNamingTheStateThatWasActuallyThere()
+    {
+        // `before` used to be the literal "none" written beside the receipt, so a tile that already carried a
+        // `HoeDirt` was refused without saying so - and a swing on it would have published `before=none;after=HoeDirt`,
+        // a delta of zero reported as a transition. The state is now READ off the tile and named.
+        using TillSoilHarness harness = TillSoilHarness.Create();
+        harness.PlaceActorAt(13, 9);
+        harness.SetDiggable(13, 10);
+        harness.PlaceHoeDirt(13, 10);
+
+        LocalExecutionReceipt receipt = harness.RequestTill(13, 10);
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be("soil_already_tilled");
+        receipt.Evidence.Should().Contain("target=13,10");
+        receipt.Evidence.Should().Contain("before=HoeDirt", "the refusal names the state the tile was actually in");
+    }
+
+    [Fact]
     public void EverySoilRefusalSurvivesTheValidatorThatWillJudgeIt()
     {
         // Emitted into a receipt, so each member has to survive the journal's own validator and the wire's alphabet.
