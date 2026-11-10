@@ -39,11 +39,15 @@ namespace GameBuddy.Stardew;
 /// </para>
 ///
 /// <para>
-/// WHAT IS SKIPPED is the bar's per-frame holding, and nothing else. Every number the receipt carries is read from the
-/// engine's own objects: the fish from `location.getFish` inside `DoFunction`'s nibble branch (`:491`), the size, quality
-/// and difficulty from the `BobberBar` the engine constructs for THIS catch (`:891-940`, `BobberBar.cs:181-195`), and the
-/// stamina/bait/tackle deltas from the engine's own mutations. No size formula, no difficulty roll and no fish table lives
-/// in this file.
+/// WHAT IS SKIPPED is the bar's per-frame holding, and nothing else - and the skip is REPORTED rather than papered
+/// over. The minigame reads the player's held buttons (`BobberBar.cs:423`) and cannot be played from here, so the win it
+/// would have produced is unobserved: the receipt says `pull_outcome=not_verified` and names the field it could not
+/// observe (`BobberBar.distanceFromCatching`). What it does NOT do is turn the unplayed bar into a perfect catch. Every
+/// number the receipt carries is read from the engine's own objects: the fish from `location.getFish` inside
+/// `DoFunction`'s nibble branch (`:491`), the size, quality and difficulty from the `BobberBar` the engine constructs for
+/// THIS catch (`:891-940`, `BobberBar.cs:181-195`), the values the engine's own item creation reads back (`:2405`), and
+/// the stamina/bait/tackle deltas from the engine's own mutations. No size formula, no difficulty roll, no quality
+/// upgrade and no fish table lives in this file.
 /// </para>
 /// </summary>
 internal sealed partial class ExecutionManager
@@ -370,21 +374,29 @@ internal sealed partial class ExecutionManager
                 {
                     // The engine built this bar for THIS catch (`FishingRod.startMinigameEndFunction`, `:891-940`), which is
                     // where the size and the quality are decided from `Data/Fish` and its own roll, and where the difficulty
-                    // comes from. Reading them here is what keeps this file free of a second copy of any of those rules.
+                    // comes from. Both are handed on UNMODIFIED: no size formula, no quality upgrade, no experience bonus.
                     string fishQualifiedItemId = ItemRegistry.QualifyItemId(bar.whichFish);
                     // The "before" reading of the engine's own catch record, taken while the win path still has not run.
                     int countBefore = ReadCaughtCount(Game1.player, fishQualifiedItemId);
                     // The bar's own challenge-bait count is part of the same object; `numCaught` is 1 otherwise
                     // (`BobberBar.cs:353-358`).
                     int numCaught = Math.Max(1, bar.challengeBaitFishes);
-                    // The win path's own line (`BobberBar.cs:368`): the minigame is closed by the same call the game closes it
-                    // with, and the bar never runs an update frame - it is cleared in the tick that observed it.
-                    Game1.exitActiveMenu();
-                    // `wasPerfect: true` is a DECLARED PROPERTY OF THIS ACTION, not an observation: the bar starts `perfect`
-                    // true and only the minigame's own bar can clear it (`BobberBar.cs:185`), and this action does not play
-                    // the bar. A catch made here is perfect by construction, and the receipt says so in those words.
+                    // THE ENGINE'S WIN CALL, IN THE ENGINE'S OWN ORDER: `BobberBar.update` pulls the fish first (`:361`) and
+                    // closes the menu only after it (`:368`).
+                    //
+                    // `wasPerfect: false` is the only value this action can honestly pass, and it is what keeps the catch at
+                    // the quality the engine rolled. The bar's `perfect` flag is TRUE from its constructor
+                    // (`BobberBar.cs:185`) and is cleared only when the fish leaves the bar during play (`:542`); this action
+                    // never plays the bar, so that flag is true because nothing happened, not because the fish was held.
+                    // Handing it on upgrades the catch - silver to gold, gold to iridium (`FishingRod.cs:1176-1183`) - and
+                    // pays 40% more experience (`:1195-1198`), which is the iridium fish a companion must not land on
+                    // every cast.
                     rod.pullFishFromWater(fishQualifiedItemId, bar.fishSize, bar.fishQuality, (int)bar.difficulty, bar.treasureCaught,
-                        wasPerfect: true, fromFishPond: bar.fromFishPond, bar.setFlagOnCatch, bar.bossFish, numCaught);
+                        wasPerfect: false, fromFishPond: bar.fromFishPond, bar.setFlagOnCatch, bar.bossFish, numCaught);
+                    // Dismissed because it cannot be played from here: `BobberBar.update` reads the player's held buttons
+                    // (`:423`) and `readyToClose` is false (`:635`), so the menu would block the actor forever. Closing it
+                    // unplayed is exactly why the pull outcome is reported `not_verified`, with the unobserved field named.
+                    Game1.exitActiveMenu();
                     this.activeFishing = spec with
                     {
                         Phase = LocalFishingPhase.AwaitingCredit,
@@ -433,25 +445,30 @@ internal sealed partial class ExecutionManager
                 int baitAfter = rod.GetBait()?.Stack ?? 0;
                 string evidence = string.Format(
                     CultureInfo.InvariantCulture,
-                    "location={0};target={1};tile={2},{3};caught_qualified_item_id={4};display_name={5};fish_size={6};quality={7};was_perfect=true;was_perfect_basis=declared_by_action;rod_durability_left={8};bait_before={9};bait_left={10};stamina_before={11};stamina_after={12};stamina_delta={13};inventory_before={14};inventory_after={15};fish_caught_before={16};fish_caught_after={17};credit=fishCaught:{16}->{17}",
+                    "location={0};target={1};tile={2},{3};caught_qualified_item_id={4};display_name={5};fish_size={6};quality={7};pull_outcome=not_verified;pull_unobserved_field=BobberBar.distanceFromCatching;bite_observed=isNibbling;cast_to_credit_ms={8};rod_durability_left={9};bait_before={10};bait_left={11};bait_consumed={12};stamina_before={13};stamina_after={14};stamina_delta={15};inventory_before={16};inventory_after={17};fish_caught_before={18};fish_caught_after={19};fish_caught_delta={20};credit=fishCaught:{18}->{19}",
                     spec.Location,
                     spec.TargetId,
                     spec.TargetX,
                     spec.TargetY,
                     fishQualifiedItemId,
                     RequireDisplayName(fishQualifiedItemId),
-                    spec.CaughtFishSize,
-                    spec.CaughtFishQuality,
+                    // The engine's own record of the catch, not the snapshot taken before its win path ran: these are the
+                    // two fields `CreateFish()` reads when it builds the item it puts in the pack (`FishingRod.cs:2405`).
+                    rod.fishSize,
+                    rod.fishQuality,
+                    nowMs - spec.StartedAtMs,
                     DescribeTackleUsesLeft(rod),
                     spec.BaitBefore,
                     baitAfter,
+                    spec.BaitBefore - baitAfter,
                     spec.StaminaBefore.ToString("0.####", CultureInfo.InvariantCulture),
                     staminaAfter.ToString("0.####", CultureInfo.InvariantCulture),
                     staminaDelta.ToString("0.####", CultureInfo.InvariantCulture),
                     inventoryBefore,
                     inventoryAfter,
                     spec.CaughtCountBefore,
-                    caughtAfter);
+                    caughtAfter,
+                    caughtAfter - spec.CaughtCountBefore);
                 this.SettleFishingCast(
                     spec,
                     credited ? ExecutionState.Succeeded : ExecutionState.Uncertain,

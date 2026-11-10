@@ -12,6 +12,7 @@ using Netcode;
 using StardewValley;
 using StardewValley.Tools;
 using Xunit;
+using Xunit.Abstractions;
 using static GameBuddy.Stardew.Integration.Tests.TargetFamilyCompletenessTests;
 
 namespace GameBuddy.Stardew.Integration.Tests;
@@ -49,6 +50,13 @@ public sealed class FishingActionTests
 {
     private const string FishingPartial = "integrations/stardew/farmhandexecutioncontroller.fishingactions.cs";
     private const string WaterTargetIdPrefix = "water_";
+
+    /// <summary>The four readings the catch receipt must carry, so the run prints them instead of re-deriving them.</summary>
+    private static readonly string[] CatchReadings = { "quality=", "cast_to_credit_ms=", "bait_consumed=", "stamina_delta=" };
+
+    private readonly ITestOutputHelper output;
+
+    public FishingActionTests(ITestOutputHelper output) => this.output = output;
 
     /// <summary>
     /// The card's failure vocabulary is CLOSED and every member of it is spent BEFORE the cast: no `fish_escaped`,
@@ -235,8 +243,6 @@ public sealed class FishingActionTests
         Require("caughtAfter > spec.CaughtCountBefore", "missing_credit_before_after:fishCaught");
         Require("credited ? ExecutionState.Succeeded : ExecutionState.Uncertain", "success_not_bound_to_engine_credit");
         Require("fish_here_catch_not_credited", "missing_uncredited_code");
-        // `was_perfect` is a DECLARED property of this action, and the receipt has to say so.
-        Require("was_perfect_basis=declared_by_action", "was_perfect_presented_as_observation");
         return violations;
     }
 
@@ -402,6 +408,216 @@ public sealed class FishingActionTests
         if (beforeRead >= 0 && winPath >= 0 && beforeRead > winPath) violations.Add("credit_before_reading_after_the_win_path");
         if (afterRead >= 0 && winPath >= 0 && afterRead < winPath) violations.Add("credit_after_reading_before_the_win_path");
         return violations;
+    }
+
+    /// <summary>
+    /// NO RECEIPT MAY STATE A PERFECTION THE ENGINE DID NOT PRODUCE.
+    ///
+    /// <para>
+    /// The shipped defect was a DECLARED perfect catch: the handler handed `wasPerfect: true` to the engine's win path
+    /// because the bar it never played starts `perfect` true (<c>BobberBar.cs:185</c>, cleared only when the fish leaves
+    /// the bar during play, <c>:542</c>). The engine's own `doPullFishFromWater` turns that flag into a QUALITY UPGRADE -
+    /// silver to gold, gold to iridium (<c>FishingRod.cs:1176-1183</c>) - and 40% more experience (<c>:1195-1198</c>).
+    /// A companion that lands an iridium fish on every cast is a gold-farming bot, not a partner.
+    /// </para>
+    ///
+    /// <para>
+    /// THREE THINGS ARE PINNED, each with its own injected violation: the value handed to the engine, the absence of any
+    /// perfection wording in the receipt, and the honest label the receipt carries instead - the pull outcome is
+    /// `not_verified`, and the field this action could not observe is named beside it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void NoReceiptClaimsAPerfectionTheEngineDidNotProduce()
+    {
+        string source = FishingSource();
+
+        PerfectClaimViolations(source).Should().BeEmpty(
+            "the receipt may state only what the engine produced, and this action never plays the bar that earns a perfect catch");
+
+        // Red proof 1: the shipped defect itself, re-injected into the shipped source.
+        string claimedPerfect = source.Replace("wasPerfect: false", "wasPerfect: true", StringComparison.Ordinal);
+        PerfectClaimViolations(claimedPerfect).Should().Contain("perfect_claim_in_credit_call",
+            "a declared perfect catch is the exact line the card overrules, and it must be reported by name");
+
+        // Red proof 2: the receipt wording, in place of the honest label.
+        string receiptClaim = source.Replace("pull_outcome=not_verified", "was_perfect=true", StringComparison.Ordinal);
+        PerfectClaimViolations(receiptClaim).Should().Contain("perfect_claim_in_receipt",
+            "perfection is a property of a played minigame, so a receipt that states one is stating something it never saw");
+    }
+
+    /// <summary>What a receipt may say about perfection, as a pure predicate so a mutated copy can be judged too.</summary>
+    private static IReadOnlyList<string> PerfectClaimViolations(string source)
+    {
+        var violations = new List<string>();
+        if (!source.Contains("wasPerfect: false", StringComparison.Ordinal)) violations.Add("perfect_claim_in_credit_call");
+        if (source.Contains("was_perfect", StringComparison.Ordinal)) violations.Add("perfect_claim_in_receipt");
+        if (!source.Contains("pull_outcome=not_verified", StringComparison.Ordinal)) violations.Add("pull_outcome_claimed_as_observed");
+        if (!source.Contains("pull_unobserved_field=BobberBar.distanceFromCatching", StringComparison.Ordinal))
+            violations.Add("unobserved_field_not_named");
+        return violations;
+    }
+
+    /// <summary>
+    /// THE FISH, ITS SIZE AND ITS QUALITY ARE THE ENGINE'S, UNMODIFIED.
+    ///
+    /// <para>
+    /// The engine's win path is handed the `BobberBar` it built for THIS catch, and the receipt states the values the
+    /// engine's own item creation reads back - `CreateFish()` stamps `fishQuality` onto the item it adds to the pack
+    /// (<c>FishingRod.cs:2405</c>). Reading them from the rod rather than from a copy taken before the win path is what
+    /// makes "the receipt says what landed" true by construction instead of by agreement.
+    /// </para>
+    ///
+    /// <para>
+    /// The second half is the upgrade path: `wasPerfect: true` would let the engine raise the quality by one tier
+    /// (<c>:1176-1183</c>), so a constant quality and an open upgrade path are the same defect spelled twice.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheReceiptStatesTheEnginesOwnSizeAndQuality()
+    {
+        string source = FishingSource();
+
+        EngineAuthoredCatchViolations(source).Should().BeEmpty(
+            "the size and the quality must be read from the engine's own record of the catch, never from a copy or a constant");
+
+        string constantQuality = source.Replace("rod.fishQuality", "4", StringComparison.Ordinal);
+        EngineAuthoredCatchViolations(constantQuality).Should().Contain("receipt_quality_is_not_the_engines",
+            "a hard-coded iridium quality is the forced iridium the card forbids, and it must be reported by name");
+
+        string constantSize = source.Replace("rod.fishSize", "12", StringComparison.Ordinal);
+        EngineAuthoredCatchViolations(constantSize).Should().Contain("receipt_size_is_not_the_engines",
+            "a hard-coded size is a number the engine did not roll for this fish");
+    }
+
+    /// <summary>What the catch receipt must read, as a pure predicate so a mutated copy can be judged too.</summary>
+    private static IReadOnlyList<string> EngineAuthoredCatchViolations(string source)
+    {
+        var violations = new List<string>();
+        void Require(string text, string violation)
+        {
+            if (!source.Contains(text, StringComparison.Ordinal)) violations.Add(violation);
+        }
+
+        Require("rod.fishSize", "receipt_size_is_not_the_engines");
+        Require("rod.fishQuality", "receipt_quality_is_not_the_engines");
+        Require("wasPerfect: false", "engine_quality_upgrade_path_open");
+        return violations;
+    }
+
+    /// <summary>
+    /// THE CATCH CANNOT BE TAKEN BEFORE THE ENGINE HAS BITTEN.
+    ///
+    /// <para>
+    /// The credit is gated on the rod's own `isNibbling` - the state the engine enters when
+    /// `fishingBiteAccumulator` passes `timeUntilFishingBite` (<c>FishingRod.cs:2125-2129</c>) - so the receipt has to
+    /// name that observation. Without it a reader cannot tell a cast that waited for the world from a cast that was
+    /// credited on the tick it was thrown, and the receipt would be as good as the claim it replaced.
+    /// </para>
+    ///
+    /// <para>
+    /// The latency half is measured from the cast's own start, so the reading is the pull the actor actually waited
+    /// through rather than a duration invented here.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheCreditIsGatedOnTheEnginesOwnBite()
+    {
+        string source = FishingSource();
+
+        CatchIsNotInstantViolations(source).Should().BeEmpty(
+            "the pull may only follow the engine's own hook, and the receipt must name that hook");
+
+        string noHookGate = source.Replace("if (rod.isNibbling && !rod.hit)", "if (true)", StringComparison.Ordinal);
+        CatchIsNotInstantViolations(noHookGate).Should().Contain("credit_not_gated_on_the_engines_bite",
+            "pulling without the engine's nibble is a catch taken from a cast, and it must be reported by name");
+
+        string unnamedHook = source.Replace("bite_observed=isNibbling", string.Empty, StringComparison.Ordinal);
+        CatchIsNotInstantViolations(unnamedHook).Should().Contain("receipt_does_not_name_the_observed_bite",
+            "a receipt that does not name the bite cannot prove the catch was not instant");
+    }
+
+    /// <summary>What "not instant" means for the source, as a pure predicate so a mutated copy can be judged too.</summary>
+    private static IReadOnlyList<string> CatchIsNotInstantViolations(string source)
+    {
+        var violations = new List<string>();
+        void Require(string text, string violation)
+        {
+            if (!source.Contains(text, StringComparison.Ordinal)) violations.Add(violation);
+        }
+
+        Require("rod.isNibbling", "credit_not_gated_on_the_engines_bite");
+        Require("bite_observed=isNibbling", "receipt_does_not_name_the_observed_bite");
+        Require("cast_to_credit_ms=", "receipt_does_not_measure_the_pull_latency");
+
+        int hook = source.IndexOf("rod.isNibbling", StringComparison.Ordinal);
+        int credit = source.IndexOf("rod.pullFishFromWater(", StringComparison.Ordinal);
+        if (hook < 0 || credit < 0 || hook > credit) violations.Add("credit_reachable_without_observing_the_bite");
+        return violations;
+    }
+
+    /// <summary>
+    /// THE BEHAVIOURAL HALF: a cast the engine has not bitten credits nothing and settles nothing. Driven through the
+    /// production tick with the phase the cast starts in, because the alternative - waiting on a wall clock - is the
+    /// invented timer the card forbids.
+    /// </summary>
+    [Fact]
+    public void ACastTheEngineHasNotBittenCreditsNothing()
+    {
+        using TargetFamilyWorld world = TargetFamilyWorld.Create();
+        world.PutToolInPackSlot(0, typeof(FishingRod), "(T)FishingRod", upgradeLevel: 0);
+        world.Actor.CurrentToolIndex = 0;
+        ((FishingRod)world.Actor.Items[0]!).isNibbling = false;
+        ExecutionManager executions = world.NewExecutionManager("fish_here");
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var spec = new LocalFishingCastSpec(
+            "exec_unbitten",
+            "req_unbitten",
+            world.Farm.NameOrUniqueName,
+            2,
+            3,
+            ExecutionManager.BuildWaterTargetId(world.Farm, 2, 3),
+            RodSlot: 0,
+            PreviousSlot: 0,
+            StaminaBefore: world.Actor.Stamina,
+            BaitBefore: 0,
+            StartedAtMs: now,
+            DeadlineMs: now + 30_000,
+            LocalFishingPhase.WaitingForBite);
+        typeof(ExecutionManager)
+            .GetField("activeFishing", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(executions, spec);
+
+        typeof(ExecutionManager)
+            .GetMethod("UpdateFishingCast", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(executions, null);
+
+        executions.TryGetReceipt("req_unbitten", out _).Should().BeFalse(
+            "a cast the world has not bitten is still a cast, not a catch");
+        ((LocalFishingCastSpec)typeof(ExecutionManager)
+                .GetField("activeFishing", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(executions)!).Phase.Should().Be(LocalFishingPhase.WaitingForBite,
+            "the phase advances on the engine's own hook and on nothing else");
+    }
+
+    /// <summary>
+    /// THE FOUR READINGS. The receipt carries them so the run prints what it observed rather than re-deriving it, and
+    /// every reading that needs the engine's own catch is reported `not_verified` with its reason - a zero would read as
+    /// "no quality" and "no latency", which is a different fact from "not measured".
+    /// </summary>
+    [Fact]
+    public void TheCatchReceiptCarriesTheFourReadings()
+    {
+        string source = FishingSource();
+
+        foreach (string reading in CatchReadings)
+            source.Should().Contain(reading, $"the catch receipt must publish the `{reading.TrimEnd('=')}` reading");
+
+        this.output.WriteLine(
+            "fish_caught_quality_distribution=not_verified:engine_catch_requires_DataLoader.Fish(BobberBar.cs:151);"
+            + "fish_here_cast_to_credit_ms=not_verified:no_engine_catch_in_this_process;"
+            + "bait_consumed_per_cast=not_verified:doneFishing(consumeBaitAndTackle:true)_is_the_only_consumer(FishingRod.cs:2333);"
+            + "stamina_delta_per_catch=not_verified:the_engine_spends_it_in_DoFunction(FishingRod.cs:407-410)");
     }
 
     /// <summary>
