@@ -1895,12 +1895,13 @@ test("CompanionLoop prints one delivery account per turn: the parts it had, the 
     textParts: 3,
     presented: 2,
     suppressed: { empty_after_projection: 1 },
-    unaccounted: 0,
     // Three pieces reached the player: this turn's reaction sound, its one working remark (the first paragraph, released
     // mid-message after a real silence), and the paragraph that committed at the end. The beat-only message is the
     // withheld part, so it contributes no piece at all.
     pieces: { text: 1, ahead: 2 },
   });
+  // The three populations add up, so the turn states no mismatch: 2 presented + 1 withheld is 3 produced.
+  assert.doesNotMatch(printed, /delivery_mismatch:/u);
 });
 
 test("a turn with no presentation source accounts for its text instead of leaving it in the remainder", async () => {
@@ -1992,9 +1993,8 @@ test("a turn with no presentation source accounts for its text instead of leavin
   } finally {
     process.stderr.write = stderrWrite;
   }
-  // Nothing could show these words, and the account says so by name rather than leaving them in the
-  // remainder: the sum invariant is `presented + Σsuppressed + unaccounted === textParts`, and the
-  // remainder of a turn that was measured is zero.
+  // Nothing could show these words, and the account says so by name rather than leaving them unstated: two parts
+  // produced, none presented, both withheld by the one reason that explains them.
   assert.deepEqual(presented, []);
   const line = printed.split("\n").find((entry) => entry.startsWith("NATIVE_COMPANION_TURN_DELIVERY "));
   assert.notEqual(line, undefined, `no delivery account was printed; stderr was: ${printed}`);
@@ -2002,9 +2002,94 @@ test("a turn with no presentation source accounts for its text instead of leavin
     textParts: 2,
     presented: 0,
     suppressed: { no_presentation_lease: 2 },
-    unaccounted: 0,
     pieces: { text: 0, ahead: 0 },
   });
+  assert.doesNotMatch(printed, /delivery_mismatch:/u);
+});
+
+test("a part no layer could account for fails the turn's delivery identity, by name", async () => {
+  // The identity is `presented + suppressed === produced`, checked against three independently measured populations
+  // instead of being balanced by a residual. Here the projection never received the second message's
+  // `message_start`, so it had no message to report: two parts were produced, one was presented, none was withheld.
+  // The lost part is named where the account is printed rather than absorbed by a difference nobody reads.
+  const listeners = new Set<(event: unknown) => void>();
+  const emit = (event: unknown) => {
+    for (const listener of [...listeners]) listener(event);
+  };
+  const loop = new CompanionLoop(
+    {
+      async sendUserMessage(batch: string) {
+        emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: batch }] } });
+        for (const [id, text, withStart] of [
+          ["assistant_1", "先出门去农场。", true],
+          ["assistant_2", "花椰菜给她了。", false],
+        ] as const) {
+          const snapshot = { id, role: "assistant", content: [], stopReason: "pending" };
+          if (withStart) {
+            emit({ type: "message_start", message: snapshot });
+            emit({
+              type: "message_update",
+              message: snapshot,
+              assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: snapshot },
+            });
+            emit({
+              type: "message_update",
+              message: snapshot,
+              assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text, partial: snapshot },
+            });
+          }
+          emit({
+            type: "message_end",
+            message: { id, role: "assistant", content: [{ type: "text", text }], stopReason: "stop" },
+          });
+        }
+        emit({ type: "agent_settled" });
+      },
+      async abort() {},
+      clearQueue() {},
+      async waitForIdle() {},
+      subscribe(next: (event: unknown) => void) {
+        listeners.add(next);
+        return () => {
+          listeners.delete(next);
+        };
+      },
+    } as never,
+    {
+      beginPlayerBatch() {},
+      endBatch() {},
+      async presentNativeAssistantContent() {},
+    },
+  );
+  const stderrWrite = process.stderr.write;
+  let printed = "";
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    printed += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    loop.pump.enqueuePlayerInput({
+      source: "player_text",
+      inputId: "input_mismatch",
+      eventId: "player_source_mismatch",
+      text: "去把菜收了",
+      locale: "zh-CN",
+      timestampMs: 1,
+    });
+    assert.equal(await loop.flush(), "completed");
+  } finally {
+    process.stderr.write = stderrWrite;
+  }
+
+  const line = printed.split("\n").find((entry) => entry.startsWith("NATIVE_COMPANION_TURN_DELIVERY "));
+  assert.notEqual(line, undefined, `no delivery account was printed; stderr was: ${printed}`);
+  assert.deepEqual(JSON.parse(line!.slice("NATIVE_COMPANION_TURN_DELIVERY ".length)), {
+    textParts: 2,
+    presented: 1,
+    suppressed: {},
+    pieces: { text: 1, ahead: 1 },
+  });
+  assert.match(printed, /^delivery_mismatch:produced=2;presented=1;suppressed=0;missing=1$/mu);
 });
 
 /** A Pi session that answers whatever batch it is given with one assistant message saying `text`. */
@@ -2127,7 +2212,6 @@ test("a settled program opens a presentation lease, because an outcome nobody wa
     textParts: 1,
     presented: 1,
     suppressed: {},
-    unaccounted: 0,
     // One paragraph and no sound: a settlement batch carries no locale, so the reaction vocabulary has nothing to
     // speak and the surface correctly emits nothing ahead of the words.
     pieces: { text: 1, ahead: 0 },
@@ -2163,7 +2247,6 @@ test("an ordinary execution outcome still opens no lease, so volume cannot creep
     textParts: 1,
     presented: 0,
     suppressed: { no_presentation_lease: 1 },
-    unaccounted: 0,
     pieces: { text: 0, ahead: 0 },
   });
 });
@@ -2239,7 +2322,6 @@ test("a turn that ran with no projection is named, so its text is never an unexp
     textParts: 1,
     presented: 0,
     suppressed: { no_presentation_lease: 1 },
-    unaccounted: 0,
     pieces: { text: 0, ahead: 0 },
   });
 });

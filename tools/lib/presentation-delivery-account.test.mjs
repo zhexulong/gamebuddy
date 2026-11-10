@@ -16,22 +16,28 @@ test("a run's pieces and its account are the same population, and the reaction s
   // The round41 shape, reduced: 46 text parts presented as 46 pieces, plus the one sound each of the thirteen turns
   // opened with. 59 pieces, 59 accounted, nothing unexplained - which is the answer the bundle could not give.
   const records = [
-    { textParts: 4, presented: 4, suppressed: {}, unaccounted: 0, pieces: { text: 4, ahead: 1 } },
-    { textParts: 42, presented: 42, suppressed: {}, unaccounted: 0, pieces: { text: 42, ahead: 12 } },
+    { textParts: 4, presented: 4, suppressed: {}, pieces: { text: 4, ahead: 1 } },
+    { textParts: 42, presented: 42, suppressed: {}, pieces: { text: 42, ahead: 12 } },
   ];
   const account = summarizeDeliveryAccount({ records, piecesProduced: 59 });
   assert.deepEqual(account.pieces, { produced: 59, accounted: 59, unaccounted: 0, text: 46, ahead: 13 });
-  assert.deepEqual(account.parts, { produced: 46, presented: 46, suppressed: {}, unaccounted: 0 });
+  assert.deepEqual(account.parts, {
+    produced: 46,
+    presented: 46,
+    suppressed: {},
+    missing: 0,
+    mismatchedTurns: 0,
+  });
   assert.equal(account.blocked, null);
   assert.match(
     describeDeliveryAccount(account),
-    /^pieces produced 59 · accounted 59 · unaccounted 0 · parts produced 46 · presented 46 · unaccounted 0 · turns 2 · reconciled$/u,
+    /^pieces produced 59 · accounted 59 · unaccounted 0 · parts produced 46 · presented 46 · suppressed 0 · missing 0 · turns 2 · reconciled$/u,
   );
 });
 
 test("a piece the account never named blocks the run and says which two numbers disagree", () => {
   // A turn that presented pieces but printed no record - the exact reading round41 could not rule out.
-  const records = [{ textParts: 2, presented: 2, suppressed: {}, unaccounted: 0, pieces: { text: 2, ahead: 0 } }];
+  const records = [{ textParts: 2, presented: 2, suppressed: {}, pieces: { text: 2, ahead: 0 } }];
   const account = summarizeDeliveryAccount({ records, piecesProduced: 15 });
   assert.equal(account.pieces.unaccounted, 13);
   assert.equal(account.blocked, "delivery_account_unaccounted_pieces");
@@ -49,11 +55,43 @@ test("a piece the account never named blocks the run and says which two numbers 
   });
 });
 
-test("a part no layer named is its own block, in the parts population", () => {
-  const records = [{ textParts: 3, presented: 1, suppressed: {}, unaccounted: 2, pieces: { text: 1, ahead: 0 } }];
+test("parts that do not add up block the run and print the three populations and the leftover", () => {
+  const records = [{ textParts: 3, presented: 1, suppressed: {}, pieces: { text: 1, ahead: 0 } }];
   const account = summarizeDeliveryAccount({ records, piecesProduced: 1 });
-  assert.equal(account.parts.unaccounted, 2, "two parts reached neither the player nor a named suppression");
-  assert.equal(account.blocked, "delivery_account_unaccounted_parts");
+  assert.equal(account.parts.missing, 2, "two parts reached neither the player nor a named suppression");
+  assert.equal(account.blocked, "delivery_account_parts_do_not_add_up");
+  assert.deepEqual(deliveryAccountClause(account), {
+    id: "delivery_account",
+    passed: false,
+    reasonCode: "delivery_account_parts_do_not_add_up",
+  });
+  assert.match(describeDeliveryAccount(account), /delivery_mismatch:produced=3;presented=1;suppressed=0;missing=2$/u);
+});
+
+test("two turns that err in opposite directions do not cancel: the run-level totals can agree while no turn does", () => {
+  // The reading this gate exists for. Each turn's own numbers are a small lie (+2, -2); summed with signs they are zero,
+  // so the old account reported `unaccounted 0` and passed a run in which two turns had lost text. The totals still
+  // agree - 4 produced, 4 presented - which is why the per-turn identity is checked and not only the aggregate.
+  const records = [
+    { textParts: 3, presented: 1, suppressed: {}, pieces: { text: 1, ahead: 0 } },
+    { textParts: 1, presented: 3, suppressed: {}, pieces: { text: 3, ahead: 0 } },
+  ];
+  const account = summarizeDeliveryAccount({ records, piecesProduced: 4 });
+  assert.equal(
+    account.parts.missing,
+    0,
+    "the aggregate identity does hold, which is exactly why it alone is not enough",
+  );
+  assert.equal(account.parts.mismatchedTurns, 2);
+  assert.equal(account.blocked, "delivery_account_parts_do_not_add_up");
+  const described = describeDeliveryAccount(account);
+  assert.match(described, /turns mismatched 2/u);
+  assert.match(described, /delivery_mismatch:produced=4;presented=4;suppressed=0;missing=0$/u);
+  assert.deepEqual(deliveryAccountClause(account), {
+    id: "delivery_account",
+    passed: false,
+    reasonCode: "delivery_account_parts_do_not_add_up",
+  });
 });
 
 test("a run that presented nothing and printed nothing says so instead of agreeing with itself", () => {
@@ -71,7 +109,7 @@ test("pieces with no records at all are an absent account, never a pass", () => 
 
 test("an unreadable record is counted, because an account nobody could read did not agree", () => {
   const text = [
-    line({ textParts: 1, presented: 1, suppressed: {}, unaccounted: 0, pieces: { text: 1, ahead: 0 } }),
+    line({ textParts: 1, presented: 1, suppressed: {}, pieces: { text: 1, ahead: 0 } }),
     `${TURN_DELIVERY_PREFIX}{not json`,
   ].join("\n");
   const read = readTurnDeliveryRecords(text);
@@ -82,7 +120,7 @@ test("an unreadable record is counted, because an account nobody could read did 
 
 test("the written bundle is judged by the same invariant, and an old bundle blocks rather than passing", () => {
   const reconciled = summarizeDeliveryAccount({
-    records: [{ textParts: 1, presented: 1, suppressed: {}, unaccounted: 0, pieces: { text: 1, ahead: 1 } }],
+    records: [{ textParts: 1, presented: 1, suppressed: {}, pieces: { text: 1, ahead: 1 } }],
     piecesProduced: 2,
   });
   assert.deepEqual(assessBundleDeliveryAccount({ presentation: { pieceCount: 2, deliveryAccount: reconciled } }), {
@@ -104,4 +142,15 @@ test("the written bundle is judged by the same invariant, and an old bundle bloc
     assessBundleDeliveryAccount({ presentation: { pieceCount: 2, deliveryAccount: brokenSum } }).code,
     "delivery_account_sum_does_not_hold",
   );
+  // The same hand-written reading in the PARTS population: 1 produced, 1 presented, nothing withheld - yet the account
+  // claims another part was shown. Before this check the comparison subtracted the account's own residual, so it could
+  // not be false and this bundle passed.
+  const brokenParts = {
+    ...reconciled,
+    blocked: null,
+    parts: { ...reconciled.parts, presented: 2, missing: -1 },
+  };
+  const partsVerdict = assessBundleDeliveryAccount({ presentation: { pieceCount: 2, deliveryAccount: brokenParts } });
+  assert.equal(partsVerdict.code, "delivery_account_parts_do_not_add_up");
+  assert.match(partsVerdict.detail, /delivery_mismatch:produced=1;presented=2;suppressed=0;missing=-1$/u);
 });

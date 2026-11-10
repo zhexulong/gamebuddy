@@ -307,11 +307,12 @@ export class CompanionLoop {
      *
      * <p>
      * `assistantTextParts` is Pi's own message stream - the population. `presentedTextParts` and
-     * `suppressedByReason` are the projection's answer for the messages it saw. Whatever is left
-     * over is text that never reached the projection at all, which is a different defect from a
-     * withheld piece and must not read as silence. That is exactly what the 2026-11-09 audit could
-     * not get from any artifact: 47 of a 34-minute run's 60 parts never reached presentation, and
-     * nothing in the bundle said which layer dropped them.
+     * `suppressedByReason` are the projection's own report of what it did with each message: how many parts it
+     * delivered and how many it withheld, by reason. The three are counted independently and the identity between them
+     * is `presented + suppressed === produced`; whatever does not fit it is a lost part, printed as `delivery_mismatch:`
+     * and blocking the run's delivery verdict. That is exactly what the 2026-11-09 audit could not get from any
+     * artifact: 47 of a 34-minute run's 60 parts never reached presentation, and nothing in the bundle said which layer
+     * dropped them.
      * </p>
      */
     let assistantTextParts = 0;
@@ -694,29 +695,34 @@ export class CompanionLoop {
       return turnOutcome ?? "completed";
     } finally {
       this.pump.turnProducedWork = producedWork;
-      // One line per turn that had text to deliver: the population (this turn's own assistant text
-      // parts), how many of them the player was shown, and every part withheld with its reason - the
-      // projection's own reasons and this loop's (`no_presentation_lease`). `unaccounted` is what is
-      // left when BOTH layers have named their parts; a non-zero one is now a claim that some text
-      // reached neither, and that is the number no shipped artifact has ever carried.
+      // One line per turn that had text to deliver: THREE populations, each counted where it was measured - the parts Pi's
+      // stream produced, the parts the projection reported as presented, and the parts it named as withheld with a reason.
+      // The record carries no residual: a stored difference reads like a fourth measurement and, summed across turns with
+      // opposite signs, it cancelled itself to zero (a turn that lost two parts and a turn that counted two twice agreed).
+      // The identity is `presented + suppressed === textParts`; when it does not hold, this turn says so in the same
+      // channel every run reads, and no later reading can make it disappear.
       //
       // `pieces` is the second population, in the unit the run reports: `text` paragraphs the surface committed and
       // the `ahead` pieces a paced surface committed before them. `textParts` and `pieces` are different counts of
       // different things on purpose - a part is a block of model text, a piece is one commit the player saw - and
       // publishing both is what lets a run reconcile its own `presentation.pieceCount` against this account instead
-      // of reading the difference as missing turns (see the measurement above).
+      // of reading the difference as missing turns.
       if (assistantTextParts > 0 || presentedTextPieces > 0 || aheadPieces > 0) {
         const suppressed = Object.fromEntries(suppressedByReason);
-        const named = Object.values(suppressed).reduce((total, count) => total + count, 0);
+        const suppressedParts = Object.values(suppressed).reduce((total, count) => total + count, 0);
         process.stderr.write(
           `NATIVE_COMPANION_TURN_DELIVERY ${JSON.stringify({
             textParts: assistantTextParts,
             presented: presentedTextParts,
             suppressed,
-            unaccounted: assistantTextParts - presentedTextParts - named,
             pieces: { text: presentedTextPieces, ahead: aheadPieces },
           })}\n`,
         );
+        const missingParts = assistantTextParts - presentedTextParts - suppressedParts;
+        if (missingParts !== 0)
+          process.stderr.write(
+            `delivery_mismatch:produced=${String(assistantTextParts)};presented=${String(presentedTextParts)};suppressed=${String(suppressedParts)};missing=${String(missingParts)}\n`,
+          );
       }
       if (batchId !== undefined) {
         try {

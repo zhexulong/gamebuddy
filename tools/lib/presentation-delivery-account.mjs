@@ -22,6 +22,17 @@
 export const TURN_DELIVERY_PREFIX = "NATIVE_COMPANION_TURN_DELIVERY ";
 
 /**
+ * The one line a reader and a log grep can act on when the three measured part populations do not agree.
+ *
+ * It is a fixed shape rather than prose because it is the run's delivery VERDICT: every number names the population it
+ * counted, so the difference cannot be mistaken for a rounding of one of them. `missing` is the residual and is
+ * REPORTED here - it is never what the reconciliation is computed from.
+ */
+export function describeDeliveryMismatch(parts) {
+  return `delivery_mismatch:produced=${String(parts.produced)};presented=${String(parts.presented)};suppressed=${String(sumSuppressed(parts.suppressed))};missing=${String(parts.missing)}`;
+}
+
+/**
  * Every delivery record in a run's own log text.
  *
  * A line that does not parse is COUNTED rather than dropped: an account this module could not read is not an account
@@ -43,20 +54,25 @@ export function readTurnDeliveryRecords(logText) {
   return Object.freeze({ records: Object.freeze(records), unparsable });
 }
 
-/** How many of a turn's parts no layer named - the number the per-turn account claims is zero. */
-function unaccountedParts(record) {
-  const suppressed = record.suppressed ?? {};
-  const named = Object.values(suppressed).reduce((total, count) => total + (Number(count) || 0), 0);
-  return (Number(record.textParts) || 0) - (Number(record.presented) || 0) - named;
-}
-
 /**
  * The run-level account: both populations, each a partition, plus the one numbers the reader compares.
  *
- * `parts` is the assistant text the run produced. `pieces` is what the presentation port committed, which is the
- * population `presentation.pieceCount` counts - one paragraph can be several pieces, and a paced surface emits pieces
- * that are not text at all. `pieces.accounted` is the sum of what the Host named PER TURN, so a turn that never
- * printed its record cannot hide inside the total.
+ * `parts` is the assistant text the run produced, and it is reconciled from THREE populations that are each summed
+ * from where they were measured: `produced` (Pi's own message stream, which `companion-loop.ts` counts),
+ * `presented` (the projection's report of the parts it delivered) and `suppressed` (its report of the parts it
+ * withheld, by reason). `missing` is the residual `produced - presented - suppressed` and it is REPORTED, never used
+ * to balance the books: the identity that has to hold is `presented + suppressed === produced`, and a run whose three
+ * numbers do not satisfy it is BLOCKED with `delivery_mismatch:...`.
+ *
+ * Why this is not pedantry: the previous version summed each turn's residual and kept the total as `unaccounted`, so two
+ * turns that erred in opposite directions cancelled to zero and the account agreed with itself. A residual derived from
+ * a total cannot disagree with that total, and an identity whose last term is computed from the difference is not an
+ * identity. The per-turn check is therefore part of the gate, not a convenience: two totals can agree while every turn
+ * behind them is wrong in a different direction, and `mismatchedTurns` is how many did.
+ *
+ * `pieces` is what the presentation port committed, which is the population `presentation.pieceCount` counts - one
+ * paragraph can be several pieces, and a paced surface emits pieces that are not text at all. `pieces.accounted` is the
+ * sum of what the Host named PER TURN, so a turn that never printed its record cannot hide inside the total.
  */
 export function summarizeDeliveryAccount({ records, piecesProduced, unparsable = 0 }) {
   const suppressed = {};
@@ -64,9 +80,14 @@ export function summarizeDeliveryAccount({ records, piecesProduced, unparsable =
   let presented = 0;
   let textPieces = 0;
   let aheadPieces = 0;
+  let mismatchedTurns = 0;
   for (const record of records ?? []) {
-    textParts += Number(record.textParts) || 0;
-    presented += Number(record.presented) || 0;
+    const turnParts = Number(record.textParts) || 0;
+    const turnPresented = Number(record.presented) || 0;
+    const turnSuppressed = sumSuppressed(record.suppressed);
+    if (turnParts - turnPresented - turnSuppressed !== 0) mismatchedTurns += 1;
+    textParts += turnParts;
+    presented += turnPresented;
     for (const [reason, count] of Object.entries(record.suppressed ?? {}))
       suppressed[reason] = (suppressed[reason] ?? 0) + (Number(count) || 0);
     textPieces += Number(record.pieces?.text) || 0;
@@ -74,7 +95,7 @@ export function summarizeDeliveryAccount({ records, piecesProduced, unparsable =
   }
   const produced = Number(piecesProduced) || 0;
   const accounted = textPieces + aheadPieces;
-  const partsUnaccounted = (records ?? []).reduce((total, record) => total + unaccountedParts(record), 0);
+  const missingParts = textParts - presented - sumSuppressed(suppressed);
   // Three zeroes, told apart. Nothing was presented and no turn had anything to deliver: a real state, named, and not
   // the same answer as an account that failed to add up.
   const nothingPresented = produced === 0 && (records ?? []).length === 0;
@@ -85,8 +106,8 @@ export function summarizeDeliveryAccount({ records, piecesProduced, unparsable =
       ? "delivery_account_unreadable"
       : (records ?? []).length === 0
         ? "delivery_account_absent"
-        : partsUnaccounted !== 0
-          ? "delivery_account_unaccounted_parts"
+        : missingParts !== 0 || mismatchedTurns > 0
+          ? "delivery_account_parts_do_not_add_up"
           : piecesUnaccounted !== 0
             ? "delivery_account_unaccounted_pieces"
             : null;
@@ -98,7 +119,8 @@ export function summarizeDeliveryAccount({ records, piecesProduced, unparsable =
       produced: textParts,
       presented,
       suppressed: Object.freeze(suppressed),
-      unaccounted: partsUnaccounted,
+      missing: missingParts,
+      mismatchedTurns,
     }),
     pieces: Object.freeze({
       produced,
@@ -111,12 +133,20 @@ export function summarizeDeliveryAccount({ records, piecesProduced, unparsable =
   });
 }
 
-/** One line a reader (and every log grep) can act on: the two numbers and what is left over. */
+/** One line a reader (and every log grep) can act on: the two accounts, and the verdict.
+ *
+ * When the parts do not add up the line carries the two facts the reader needs to tell the shapes apart - how many TURNS
+disagreed with their own numbers, and the run's `delivery_mismatch:produced=…;presented=…;suppressed=…;missing=…`. Both
+ * are named where the account is printed, so the failure is in the log beside the account that produced it rather than
+ * only in a verdict field somebody has to open the bundle to read.
+ */
 export function describeDeliveryAccount(account) {
   const { parts, pieces } = account;
   const verdict =
     account.blocked === null ? (account.nothingPresented ? "nothing presented" : "reconciled") : account.blocked;
-  return `pieces produced ${pieces.produced} · accounted ${pieces.accounted} · unaccounted ${pieces.unaccounted} · parts produced ${parts.produced} · presented ${parts.presented} · unaccounted ${parts.unaccounted} · turns ${account.turns} · ${verdict}`;
+  const mismatched = parts.mismatchedTurns > 0 ? ` · turns mismatched ${parts.mismatchedTurns}` : "";
+  const mismatch = parts.missing === 0 && parts.mismatchedTurns === 0 ? "" : ` · ${describeDeliveryMismatch(parts)}`;
+  return `pieces produced ${pieces.produced} · accounted ${pieces.accounted} · unaccounted ${pieces.unaccounted} · parts produced ${parts.produced} · presented ${parts.presented} · suppressed ${sumSuppressed(parts.suppressed)} · missing ${parts.missing}${mismatched} · turns ${account.turns} · ${verdict}${mismatch}`;
 }
 
 /** The rung clause: a run whose own commitment count disagrees with its account is not a passed run. */
@@ -163,11 +193,14 @@ export function assessBundleDeliveryAccount(bundle) {
       detail: `produced ${String(pieces.produced)} · accounted ${String(pieces.accounted)} + unaccounted ${String(pieces.unaccounted)}`,
     });
   const parts = account.parts ?? {};
-  if (Number(parts.presented) + Number(parts.unaccounted) !== Number(parts.produced) - sumSuppressed(parts.suppressed))
+  if (Number(parts.presented) + sumSuppressed(parts.suppressed) !== Number(parts.produced))
     return Object.freeze({
       ok: false,
       code: "delivery_account_parts_do_not_add_up",
-      detail: `parts produced ${String(parts.produced)} · presented ${String(parts.presented)} · suppressed ${String(sumSuppressed(parts.suppressed))} · unaccounted ${String(parts.unaccounted)}`,
+      detail: describeDeliveryMismatch({
+        ...parts,
+        missing: Number(parts.produced) - Number(parts.presented) - sumSuppressed(parts.suppressed),
+      }),
     });
   if (typeof account.blocked === "string" && account.blocked.length > 0)
     return Object.freeze({

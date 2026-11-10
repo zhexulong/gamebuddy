@@ -588,7 +588,10 @@ export function attachNativeCompanionContent(
         }
         const paragraph = present([...messageSentences, messageAccumulator.flush()].join(""));
         if (presentIsEmpty(paragraph)) {
-          if (!messageSpoken) reportMessageText(finalMessage, suppressionReasonFor(finalMessage));
+          // Nothing is left to present, and the message's parts are still accounted for exactly once: either the surface
+          // withheld them (and names why) or they already left as this turn's working remark. Reporting nothing here put
+          // a spoken part in no population at all, which the caller's delivery identity reads as a lost sentence.
+          reportMessageText(finalMessage, messageSpoken ? null : suppressionReasonFor(finalMessage));
           return;
         }
         const pieces = splitForBudget(paragraph);
@@ -624,7 +627,7 @@ export function attachNativeCompanionContent(
         // sentences, which per-unit dehydration would trim off.
         const paragraph = present([...messageSentences, messageAccumulator.flush()].join(""));
         if (presentIsEmpty(paragraph)) {
-          if (!messageSpoken) reportMessageText(finalMessage, suppressionReasonFor(finalMessage));
+          reportMessageText(finalMessage, messageSpoken ? null : suppressionReasonFor(finalMessage));
           return;
         }
         const pieces = splitForBudget(paragraph);

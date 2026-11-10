@@ -43,6 +43,11 @@ function fakeSession() {
 }
 
 const text = (value: string) => Object.freeze({ type: "text" as const, text: value });
+/** Two microtask turns: `dispatch` serializes the sink callbacks on a promise chain. */
+async function flushMicrotasks(): Promise<void> {
+  await new Promise<void>((resolve) => queueMicrotask(resolve));
+  await new Promise<void>((resolve) => queueMicrotask(resolve));
+}
 const toolCall = Object.freeze({ type: "toolCall" as const, id: "tool_01", name: "action", arguments: {} });
 const assistant = (content: readonly unknown[], stopReason: "stop" | "toolUse") =>
   Object.freeze({ role: "assistant" as const, content, stopReason, responseId: "response-1" });
@@ -175,6 +180,35 @@ test("a turn that answers and then speaks again delivers both messages, not only
     { textParts: 1, suppression: null },
     { textParts: 1, suppression: null },
   ]);
+});
+
+test("a message whose only sentence already left as the working remark still reports its part as presented", async (t) => {
+  // The delivery identity is `presented + suppressed === produced`, so a part that reached the player must be counted
+  // as presented even when nothing is left to commit at `message_end`. The remark IS that message's text: reporting
+  // nothing here would file a spoken part under no population and fail the turn for a sentence the player heard.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const fx = fakeSession();
+  const recorded = record({ incremental: true });
+  const observer = attachGame(fx, recorded.sinks);
+  const start = assistant([], "toolUse");
+  fx.emit({ type: "message_start", message: start });
+  fx.emit({
+    type: "message_update",
+    message: start,
+    assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: start },
+  });
+  fx.emit({
+    type: "message_update",
+    message: start,
+    assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "先出门去农场。", partial: start },
+  });
+  t.mock.timers.tick(3_000);
+  await flushMicrotasks();
+  fx.emit({ type: "message_end", message: assistant([text("先出门去农场。"), toolCall], "toolUse") });
+  await observer.close();
+
+  assert.deepEqual(words(recorded.pieces), ["先出门去农场。"]);
+  assert.deepEqual(recorded.messages, [{ textParts: 1, suppression: null }]);
 });
 
 test("a turn that only speaks still delivers its text (the case that works must not regress)", async () => {
