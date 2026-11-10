@@ -12,42 +12,47 @@ using StardewValley.Menus;
 namespace GameBuddy.Stardew;
 
 /// <summary>
-/// shop_purchase: buy from a shop the player is ALREADY standing next to.
+/// shop_purchase: buy from a counter the GAME would open for this actor.
 ///
 /// Scope, deliberately narrow (owner decision): this action does not walk. Walking is
-/// <c>move_to_tile</c>'s job, exactly as it is for every other action. If the owner is
-/// outside the native interaction radius the action refuses with
-/// <c>shop_counter_out_of_reach</c> and the Agent walks and retries. That keeps this
-/// action's receipt about the TRANSACTION, and keeps a walk failure from being reported
-/// as a trade failure.
+/// <c>move_to_tile</c>'s job, exactly as it is for every other action. What this action owes is an
+/// admission decision that is the engine's own, and a receipt about the TRANSACTION - so a walk failure
+/// is never reported as a trade failure.
 ///
-/// Authority: every fact comes from the game.
+/// Authority: every fact comes from the game, INCLUDING the entry it opens through.
 ///
 /// <list type="bullet">
 /// <item>Which shops exist and what they sell: <c>DataLoader.Shops</c> / <c>ShopBuilder.GetShopStock</c>.</item>
-/// <item>Whether an owner entry is currently eligible: <c>ShopBuilder.GetCurrentOwners</c>,
-/// which is where <c>ShopOwnerData.Condition</c> (a game-state query) is evaluated. The Mod
-/// does not model opening hours; it asks the game.</item>
+/// <item>Whether an owner entry is currently eligible: <c>ShopBuilder.GetCurrentOwners</c>, which is where
+/// <c>ShopOwnerData.Condition</c> (a game-state query) is evaluated. The Mod does not model opening hours; it asks
+/// the game.</item>
 /// <item>Why a shop is closed: <c>ShopOwnerData.ClosedMessage</c>, the game's own text.</item>
-/// <item>The interaction radius: <c>Utility.tileWithinRadiusOfPlayer</c> (Chebyshev-1),
-/// the same predicate the native cursor uses.</item>
-/// <item>The transaction: <c>Utility.TryOpenShopMenu</c> opens the game's own
-/// <c>ShopMenu</c>, and the purchase is dispatched through <c>ShopMenu.receiveLeftClick</c>
-/// over the menu's public <c>forSaleButtons</c>. The Mod does not re-implement
-/// <c>tryToPurchaseItem</c> (it is private and its logic is the game's).</item>
+/// <item>How far a counter can be acted on from: <c>Utility.tileWithinRadiusOfPlayer(tile, 1, player)</c>, the gate
+/// <c>Game1</c> applies to the TILE before it calls <c>GameLocation.checkAction</c> (Game1.cs:11509, :11637). That is
+/// a radius around a TILE - never around an NPC: no native shop path measures the distance to the owner, and an
+/// NPC-run counter is resolved by searching the room's whole character list (Utility.cs:4243-4268), not by distance.
+/// Measured round42: this action refused <c>shop_counter_out_of_reach</c> at actor (5,19) against Pierre on (4,17) -
+/// two tiles, one radius, no native gate - and the world would have sold her the seed.</item>
+/// <item>A counter an NPC runs is opened with the engine's own location overload,
+/// <c>Utility.TryOpenShopMenu(shopId, location, ownerArea, maxOwnerY, forceOpen)</c> (Utility.cs:4230-4324): the call
+/// the engine's own counter cases make (FishShop GameLocation.cs:10756, Sandy :10776, Saloon :10836, Desert
+/// Desert.cs:71). It resolves the eligible entries, looks for one of those NPCs among the room's characters
+/// (:4243-4268), draws <c>ClosedMessage</c> and refuses when that entry is shut (:4305-4317), and opens nothing when
+/// no entry can run the counter (:4318-4323). Every part of that decision stays the engine's; the Mod reports its
+/// answer instead of pre-judging it with a distance of its own.</item>
+/// <item>The transaction: <c>Utility.TryOpenShopMenu</c> builds the game's own <c>ShopMenu</c>, and the purchase is
+/// dispatched through <c>ShopMenu.receiveLeftClick</c> over the menu's public <c>forSaleButtons</c>. The Mod does not
+/// re-implement <c>tryToPurchaseItem</c> (it is private and its logic is the game's).</item>
 /// </list>
 ///
-/// Discovery reports targets for the CURRENT location only, because the owner's presence is
-/// what makes a shop usable — so the Agent can tell "this shop is not on the map I am on"
-/// from "this shop is here but closed", which are different problems with different fixes.
-/// A shop whose native counter is a TILE rather than an NPC (the tile-opened stalls) is
-/// discovered from that tile for the same reason: the counter's presence is what makes it
-/// usable, and the tile is where the actor has to stand.
+/// Discovery reports targets for the CURRENT location only, because the counter's presence is what makes a shop
+/// usable - so the Agent can tell "this shop is not on the map I am on" from "this shop is here but closed", which
+/// are different problems with different fixes. A shop whose native counter is a TILE rather than an NPC (the
+/// tile-opened stalls) is discovered from that tile for the same reason: the tile IS the counter, it is where the
+/// actor has to stand, and it is the tile whose action opens the menu.
 /// </summary>
 internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger
 {
-    /// <summary>The native interaction radius for a shop owner (Chebyshev, Utility.cs:4100).</summary>
-    private const int ShopOwnerInteractionRadius = 1;
     /// <summary>The Host's published cap on <c>shopTargets</c> (host/src/protocol.ts), which the
     /// one snapshot contract enforces; exceeding it invalidates the WHOLE snapshot.</summary>
     private const int MaxShopTargets = 32;
@@ -115,40 +120,102 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     internal static bool OpensNow(ShopOwnerData? resolvedOwner) => resolvedOwner is { ClosedMessage: null };
 
     /// <summary>
-    /// Whether the game would OPEN this shop's counter today for <paramref name="ownerName"/>.
+    /// One counter in the actor's current room: the identity discovery mints for it, the tile it is acted on from, and
+    /// the engine's OPEN verdict.
     ///
     /// <para>
-    /// The fact the snapshot needs and did not have. An owner entry being currently ELIGIBLE (its game-state-query
-    /// condition matches) is half the engine's decision; the other half is the entry's own <c>ClosedMessage</c>, which
-    /// the location overload draws instead of opening a menu (<c>Utility.cs:4305-4317</c>). Measured round41: a
-    /// festival day published <c>DesertFestival_Pierre</c> and <c>SeedShop</c> on the SAME tile (4,17) - Pierre's own -
-    /// because both shops' owner entries name him and both conditions matched, while the store behind him was shut. A
-    /// row published for the shut one is a counter the caller can walk to and never buy from.
+    /// Two readers share this ONE enumeration: discovery publishes the open counters (recording
+    /// <c>shop_closed_today</c> for the others), and the purchase path resolves the caller's id against it - so a caller
+    /// holding a stale id is answered with "this counter shuts today" in the game's own words, not with a distance it
+    /// would then try to close.
     /// </para>
     /// <para>
-    /// A tile-opened counter answers TRUE by construction and does not come through here: the two forms this action
-    /// dispatches for those tiles (the fixed selectors' string overload, and <c>OpenShop</c> with <c>forceOpen</c>) both
-    /// open with a <c>ClosedMessage</c> entry - the string overload ignores the field, and <c>forceOpen</c> skips such
-    /// entries (<c>Utility.cs:4247-4250</c>).
+    /// It carries no stock. Resolving the item queries behind a shop's stock is the expensive half (<c>seedSupplyTargets</c>
+    /// caches it per day for exactly that reason), and a withheld counter is never published, so only
+    /// <see cref="PublishShopCounter"/> pays for it.
     /// </para>
     /// </summary>
-    internal static bool IsShopOpenNow(ShopData? shopData, string ownerName) =>
-        OpensNow(ResolveCurrentShopOwner(shopData, ownerName));
+    private readonly record struct DiscoveredShopCounter(
+        string TargetId,
+        string ShopId,
+        ShopData ShopData,
+        string OwnerName,
+        int CounterX,
+        int CounterY,
+        bool OpensNow,
+        string? ClosedMessage);
 
     internal static string ShopTargetId(string shopId, string ownerName) =>
         $"shop_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(shopId + "\u0000" + ownerName))).ToLowerInvariant()[..16]}";
 
-    /// <summary>
-    /// Every shop whose owner is eligible AND physically present in the actor's current
-    /// location. Empty is the honest answer everywhere else.
-    /// </summary>
-    private IReadOnlyList<BridgeShopTarget> DiscoverShopTargets(Farmer player, DiscoveryExclusionRecorder? exclusions)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null)
-            return Array.Empty<BridgeShopTarget>();
+    /// <summary>The owner half of a refusal's evidence: a counter no NPC runs is spelled <c>none</c>, the same way
+    /// every optional value is spelled here, because an empty <c>owner=</c> is a field the Host cannot reparse.</summary>
+    internal static string ShopOwnerToken(string ownerName) => ownerName.Length == 0 ? "none" : ownerName;
 
-        List<BridgeShopTarget> targets = new();
+    /// <summary>
+    /// The one spelling of "which counter, which body, which radius" - the three tokens a caller computes an approach
+    /// from. Two refusals state a counter cannot be reached from here (a TILE outside the engine's radius, and a counter
+    /// no eligible owner can run in this room), and they must not spell that comparison two ways.
+    /// </summary>
+    internal static string ShopCounterReachEvidence(string ownerName, int counterX, int counterY, int actorX, int actorY) =>
+        $"owner={ShopOwnerToken(ownerName)};owner_tile={counterX},{counterY};"
+        + $"actor_tile={actorX},{actorY};radius={NativeInteractionRadius}";
+
+    /// <summary>
+    /// The refusal a counter's REACH produces, or null when the actor may act on it from where it stands.
+    ///
+    /// <para>
+    /// A counter that is a TILE action is reachable at the radius the engine itself applies to that tile before it calls
+    /// <c>GameLocation.checkAction</c> (<c>Game1.cs:11509</c> and <c>:11637</c> both gate on
+    /// <c>Utility.tileWithinRadiusOfPlayer(tile, 1, player)</c>). The number is the engine's and the tile measured is
+    /// the tile a caller would otherwise have to click, which is why this refusal names THAT tile.
+    /// </para>
+    /// <para>
+    /// A counter an NPC runs has no such gate anywhere in the engine: <c>Utility.TryOpenShopMenu(shopId, location, ...)</c>
+    /// resolves the owner entries, searches the room's characters for one of those NPCs and opens the menu
+    /// (<c>Utility.cs:4243-4324</c>). Measured round42: this action refused <c>shop_counter_out_of_reach</c> at actor
+    /// (5,19) against Pierre on (4,17) - a distance no native call takes - while the engine would have opened his counter
+    /// from where she stood. So an NPC counter answers null here, and the engine's own call above is the whole verdict.
+    /// </para>
+    /// </summary>
+    internal static string? ShopCounterReachRefusal(
+        bool counterIsTileAction,
+        string ownerName,
+        int counterX,
+        int counterY,
+        Farmer actor)
+    {
+        if (!counterIsTileAction || actor is null)
+            return null;
+        if (IsWithinRangeOfRequest((counterX, counterY), actor))
+            return null;
+        return ShopCounterReachEvidence(ownerName, counterX, counterY, actor.TilePoint.X, actor.TilePoint.Y);
+    }
+
+    /// <summary>
+    /// The refusal for a counter the game says is shut today, in the SAME words discovery withholds it with
+    /// (<see cref="DiscoveryExclusionReasons.ShopClosedToday"/>), with the game's own closed text beside it.
+    /// </summary>
+    internal static string ShopClosedNowRefusal(string shopId, string ownerName, int counterX, int counterY, int actorX, int actorY, string? closedMessage) =>
+        $"shop={shopId};owner={ShopOwnerToken(ownerName)};owner_tile={counterX},{counterY};actor_tile={actorX},{actorY}"
+        + (string.IsNullOrEmpty(closedMessage) ? string.Empty : $";closed_message={closedMessage}");
+
+    /// <summary>
+    /// Every shop counter in the actor's current location, WITH the engine's open verdict, so that publishing and
+    /// refusing read one enumeration instead of two scans that could disagree.
+    ///
+    /// <para>
+    /// A named-owner counter is here when that NPC is in the room's character list - the same list
+    /// <c>Utility.TryOpenShopMenu</c> searches (<c>Utility.cs:4236-4240</c>) - and it opens when the entry that would run
+    /// it carries no <c>ClosedMessage</c> (<c>Utility.cs:4305-4317</c>). A tile counter is here when its Action tile opens
+    /// that shop, and it answers OPEN by construction: the two forms this action dispatches for those tiles (the fixed
+    /// selectors' string overload, and <c>OpenShop</c> with <c>forceOpen</c>) both open with a <c>ClosedMessage</c> entry -
+    /// the string overload ignores the field, and <c>forceOpen</c> skips such entries (<c>Utility.cs:4247-4250</c>).
+    /// </para>
+    /// </summary>
+    private static List<DiscoveredShopCounter> EnumerateShopCounters(GameLocation location)
+    {
+        List<DiscoveredShopCounter> counters = new();
         foreach ((string shopId, ShopData shopData) in DataLoader.Shops(Game1.content))
         {
             ShopOwnerData[] owners;
@@ -165,7 +232,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
             foreach (ShopOwnerData owner in owners)
             {
-                // Only a named NPC is a physical owner we can stand next to.
+                // Only a named NPC is a physical owner standing in the room.
                 if (owner.Type != ShopOwnerType.NamedNpc || string.IsNullOrWhiteSpace(owner.Name))
                     continue;
 
@@ -174,31 +241,18 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 if (npc is null)
                     continue;
 
-                // The counter is here, but the game will not open it today (the resolved owner entry carries
-                // `ClosedMessage`, Utility.cs:4305-4317). Omit the row - a caller that walked to it could never buy -
-                // and SAY it was withheld, so an empty family never reads as "no shop in this room".
-                if (!IsShopOpenNow(shopData, owner.Name))
-                {
-                    if (exclusions is not null)
-                        exclusions.Record("shopTargets", DiscoveryExclusionReasons.ShopClosedToday);
-                    continue;
-                }
-
-                bool inReach = Utility.tileWithinRadiusOfPlayer(
-                    npc.TilePoint.X, npc.TilePoint.Y, ShopOwnerInteractionRadius, player);
-
-                ReadShopStock(shopId, shopData, out int stockCount, out List<string> stockItemIds, out _);
-
-                targets.Add(new BridgeShopTarget(
+                // ONE resolution per counter: the verdict and the game's own closed text are both projected from the
+                // entry that would RUN this counter, so "open now" and "why not" cannot be two readings.
+                ShopOwnerData? resolvedOwner = ResolveCurrentShopOwner(shopData, owner.Name);
+                counters.Add(new DiscoveredShopCounter(
                     ShopTargetId(shopId, owner.Name),
                     shopId,
+                    shopData,
                     owner.Name,
-                    location.NameOrUniqueName,
                     npc.TilePoint.X,
                     npc.TilePoint.Y,
-                    inReach,
-                    stockCount,
-                    stockItemIds));
+                    OpensNow(resolvedOwner),
+                    resolvedOwner?.ClosedMessage));
             }
         }
 
@@ -207,7 +261,61 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         // tile that opens it, so that is where it is discovered. The reachable set is the
         // tile set, not every non-NamedNpc owner entry: an owner entry nothing in the
         // world opens has no counter to walk up to and must not be advertised.
-        targets.AddRange(DiscoverTileShopTargets(location, player));
+        counters.AddRange(DiscoverTileShopTargets(location));
+        return counters;
+    }
+
+    /// <summary>
+    /// The row <c>shopTargets</c> publishes for one counter, with what the game would sell right now.
+    ///
+    /// <para>
+    /// <c>OwnerInReach</c> is the engine's radius fact about this row's TILE (<c>Game1.cs:11509</c>), published so a
+    /// caller can see how far it has to walk. It is an admission gate for a TILE counter and nothing else: an NPC-run
+    /// counter is opened by the engine from anywhere in the room (see <see cref="ShopCounterReachRefusal"/>), so no
+    /// refusal may be derived from it there.
+    /// </para>
+    /// </summary>
+    private static BridgeShopTarget PublishShopCounter(DiscoveredShopCounter counter, GameLocation location, Farmer player)
+    {
+        ReadShopStock(counter.ShopId, counter.ShopData, out int stockCount, out List<string> stockItemIds, out _);
+        return new BridgeShopTarget(
+            counter.TargetId,
+            counter.ShopId,
+            counter.OwnerName,
+            location.NameOrUniqueName,
+            counter.CounterX,
+            counter.CounterY,
+            Utility.tileWithinRadiusOfPlayer(counter.CounterX, counter.CounterY, NativeInteractionRadius, player),
+            stockCount,
+            stockItemIds);
+    }
+
+    /// <summary>
+    /// The counters this location has that the game would OPEN right now. Empty is the honest answer everywhere else.
+    ///
+    /// <para>
+    /// The withheld ones are named in the family's exclusions rather than dropped, so an empty <c>shopTargets</c> never
+    /// reads as "no shop in this room" when the truth is "the counter is here and shut".
+    /// </para>
+    /// </summary>
+    private IReadOnlyList<BridgeShopTarget> DiscoverShopTargets(Farmer player, DiscoveryExclusionRecorder? exclusions)
+    {
+        GameLocation? location = player.currentLocation;
+        if (location is null)
+            return Array.Empty<BridgeShopTarget>();
+
+        List<BridgeShopTarget> targets = new();
+        foreach (DiscoveredShopCounter counter in EnumerateShopCounters(location))
+        {
+            if (!counter.OpensNow)
+            {
+                if (exclusions is not null)
+                    exclusions.Record("shopTargets", DiscoveryExclusionReasons.ShopClosedToday);
+                continue;
+            }
+            targets.Add(PublishShopCounter(counter, location, player));
+        }
+
         return targets.Take(MaxShopTargets).ToArray();
     }
 
@@ -261,18 +369,16 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     }
 
     /// <summary>
-    /// Shops opened by a Buildings-layer Action tile instead of by an NPC the actor stands
-    /// next to. Their execution seam is exactly the one this action already dispatches
-    /// (<c>Utility.TryOpenShopMenu</c>), but their owner entry is not a named NPC in the
-    /// room, so the owner scan above can never see them.
+    /// Shops opened by a Buildings-layer Action tile instead of by an NPC in the room. Their execution seam is exactly
+    /// the one this action already dispatches (<c>Utility.TryOpenShopMenu</c>), but their owner entry is not a named NPC
+    /// in the room, so the owner scan above can never see them.
     ///
-    /// The tile IS the counter: <c>ownerTileX/Y</c> is the tile the actor has to stand
-    /// within the native click radius of, and <c>ownerName</c> is empty because no NPC owns
-    /// the stall. That empty name is not a missing fact -- every one of these native cases
-    /// opens the shop with a null owner, which the game documents as "no NPC
+    /// The tile IS the counter: <c>ownerTileX/Y</c> is the tile the actor has to stand within the native click radius of
+    /// (Game1.cs:11509), and <c>ownerName</c> is empty because no NPC owns the stall. That empty name is not a missing
+    /// fact -- every one of these native cases opens the shop with a null owner, which the game documents as "no NPC
     /// portrait/dialogue" (Utility.cs:4174).
     /// </summary>
-    private static IEnumerable<BridgeShopTarget> DiscoverTileShopTargets(GameLocation location, Farmer player)
+    private static IEnumerable<DiscoveredShopCounter> DiscoverTileShopTargets(GameLocation location)
     {
         xTile.Layers.Layer? buildings = location.map?.GetLayer("Buildings");
         if (buildings is null)
@@ -305,18 +411,16 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     || !seen.Add(shopId))
                     continue;
 
-                ReadShopStock(shopId, shopData, out int stockCount, out List<string> stockItemIds, out _);
                 found++;
-                yield return new BridgeShopTarget(
+                yield return new DiscoveredShopCounter(
                     ShopTargetId(shopId, string.Empty),
                     shopId,
+                    shopData,
                     string.Empty,
-                    location.NameOrUniqueName,
                     x,
                     y,
-                    Utility.tileWithinRadiusOfPlayer(x, y, ShopOwnerInteractionRadius, player),
-                    stockCount,
-                    stockItemIds);
+                    OpensNow: true,
+                    ClosedMessage: null);
             }
         }
     }
@@ -525,20 +629,60 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "invalid_quantity", $"quantity={quantity}");
 
         // Re-resolve the target from live state: the client's opaque id is only matched against a set derived here,
-        // never parsed. It is the SAME enumeration `shopTargets` publishes from (`exclusions: null` - a purchase
-        // publishes no discovery rows), so a counter this action cannot open today is absent from both by construction
-        // instead of by two checks that happen to agree.
+        // never parsed. It is the SAME enumeration `shopTargets` publishes from, so a counter this action cannot open
+        // today cannot be published by one check and refused by another.
         GameLocation? location = actor.currentLocation;
         if (location is null)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
 
-        IReadOnlyList<BridgeShopTarget> targets = this.DiscoverShopTargets(actor, exclusions: null);
-        BridgeShopTarget? target = targets.FirstOrDefault(t => string.Equals(t.TargetId, targetId, StringComparison.Ordinal));
-        if (target is null)
+        List<DiscoveredShopCounter> counters = EnumerateShopCounters(location);
+
+        // ONE producer per refusal this action mints about a counter, so each reason has exactly one spelling and the
+        // sites below cannot drift apart: a counter the actor cannot act on from where it stands, and a counter the game
+        // says is shut today (in discovery's own token, with the game's own closed text).
+        LocalExecutionReceipt RefuseUnreachableCounter(string evidence) =>
+            this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "shop_counter_out_of_reach", evidence);
+
+        LocalExecutionReceipt RefuseClosedCounter(DiscoveredShopCounter counter, string? closedMessage) =>
+            this.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Rejected,
+                DiscoveryExclusionReasons.ShopClosedToday,
+                ShopClosedNowRefusal(
+                    counter.ShopId,
+                    counter.OwnerName,
+                    counter.CounterX,
+                    counter.CounterY,
+                    actor.TilePoint.X,
+                    actor.TilePoint.Y,
+                    closedMessage));
+
+        DiscoveredShopCounter? chosen = null;
+        foreach (DiscoveredShopCounter candidate in counters)
         {
+            if (candidate.OpensNow && string.Equals(candidate.TargetId, targetId, StringComparison.Ordinal))
+            {
+                chosen = candidate;
+                break;
+            }
+        }
+
+        if (chosen is not DiscoveredShopCounter target)
+        {
+            // A counter that is here but SHUT answers with the reason discovery withheld it (`shop_closed_today`, the
+            // same token the family's exclusions use) and the game's own closed text. It used to answer
+            // `shop_counter_out_of_reach` with a `closed_message=` appended - a distance for a shop that was not open.
+            foreach (DiscoveredShopCounter candidate in counters)
+            {
+                if (candidate.OpensNow || !string.Equals(candidate.TargetId, targetId, StringComparison.Ordinal))
+                    continue;
+                return RefuseClosedCounter(candidate, candidate.ClosedMessage);
+            }
+
             // Distinguish "the shop exists but its owner is not here / not eligible" from
             // "this is not a shop at all", because they need different Agent responses.
-            string knownHere = string.Join(",", targets.Select(t => t.ShopId).Distinct().Take(8));
+            string knownHere = string.Join(",", counters.Where(c => c.OpensNow).Select(c => c.ShopId).Distinct().Take(8));
             return this.RememberTerminal(
                 request.RequestId,
                 executionId,
@@ -547,18 +691,13 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 $"target={targetId};location={location.NameOrUniqueName};available_here={knownHere}");
         }
 
-        if (!target.OwnerInReach)
-        {
-            // The deliberate scope boundary: walking is move_to_tile's job.
-            return this.RememberTerminal(
-                request.RequestId,
-                executionId,
-                ExecutionState.Rejected,
-                "shop_counter_out_of_reach",
-                $"owner={target.OwnerName};owner_tile={target.OwnerTileX},{target.OwnerTileY};"
-                    + $"actor_tile={actor.TilePoint.X},{actor.TilePoint.Y};radius={ShopOwnerInteractionRadius}"
-                    + (string.IsNullOrWhiteSpace(GameStateQueryClosedMessageFor(target.ShopId, target.OwnerName)) ? string.Empty : $";closed_message={GameStateQueryClosedMessageFor(target.ShopId, target.OwnerName)}"));
-        }
+        // The deliberate scope boundary: walking is move_to_tile's job. What is measured here is the counter the engine
+        // itself gates - a TILE - never the distance to the NPC running it (see `ShopCounterReachRefusal`).
+        bool tileOpened = target.OwnerName.Length == 0;
+        string? reachRefusal = ShopCounterReachRefusal(
+            tileOpened, target.OwnerName, target.CounterX, target.CounterY, actor);
+        if (reachRefusal is not null)
+            return RefuseUnreachableCounter(reachRefusal);
 
         // A tile-opened shop's counter is the tile. The counter's own Action, re-read on the
         // game thread, decides which native call this target's case makes: the fixed
@@ -567,9 +706,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         // overload with no owner area and forceOpen -- and only that form reproduces the
         // case's own closed-message refusal (Utility.cs:4305-4317). Opening a gated stall
         // anyway would be a gate bypass.
-        bool tileOpened = target.OwnerName.Length == 0;
         string? counterAction = tileOpened
-            ? ReadBuildingsLayerAction(location, new Microsoft.Xna.Framework.Point(target.OwnerTileX, target.OwnerTileY))
+            ? ReadBuildingsLayerAction(location, new Microsoft.Xna.Framework.Point(target.CounterX, target.CounterY))
             : null;
         bool counterIsOpenShop = counterAction is not null
             && string.Equals(
@@ -590,14 +728,14 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     executionId,
                     ExecutionState.Rejected,
                     "shop_tile_gate_refused",
-                    $"shop={target.ShopId};counter={target.OwnerTileX},{target.OwnerTileY};day={Game1.dayOfMonth};gate=bookseller_day");
+                    $"shop={target.ShopId};counter={target.CounterX},{target.CounterY};day={Game1.dayOfMonth};gate=bookseller_day");
             if (Game1.player.mailReceived.Contains("read_a_book"))
                 return this.RememberTerminal(
                     request.RequestId,
                     executionId,
                     ExecutionState.Rejected,
                     "shop_tile_requires_dialogue",
-                    $"shop={target.ShopId};counter={target.OwnerTileX},{target.OwnerTileY};gate=bookseller_choice");
+                    $"shop={target.ShopId};counter={target.CounterX},{target.CounterY};gate=bookseller_choice");
         }
 
         // The stock the game would actually offer right now.
@@ -676,34 +814,48 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         ShopMenu? menu = null;
         try
         {
-            // A tile-opened shop needs no owner name: the game documents a null owner as
-            // "open the shop with no NPC portrait/dialogue" (Utility.cs:4174) and each fixed
-            // selector's native case calls it that way. The suppression states the game's
-            // own contract, and naming the argument also selects the string overload.
-            bool shopOpened = !tileOpened
-                ? Utility.TryOpenShopMenu(target.ShopId, target.OwnerName)
-                : counterIsOpenShop
+            // The engine's own entry, per counter form:
+            //
+            //   * an NPC-run counter goes through the FREE-ROAMING location overload - the call the engine's own
+            //     counter cases make (SandyHouse GameLocation.cs:10776, Saloon :10836, Desert Desert.cs:71). It resolves
+            //     the eligible owner entries, searches the room's characters for one of those NPCs (Utility.cs:4243-4268),
+            //     draws `ClosedMessage` and refuses instead of opening when that entry is shut (:4305-4317), and opens
+            //     nothing when no entry can run the counter (:4318-4323). Measured round42: opening with the STRING
+            //     overload would have bypassed every one of those checks - that overload's own documentation says it opens
+            //     "regardless of whether they're present" (Utility.cs:4172).
+            //   * a tile-opened shop needs no owner name: the game documents a null owner as "open the shop with no NPC
+            //     portrait/dialogue" (Utility.cs:4174) and each fixed selector's native case calls it that way. The
+            //     suppression states the game's own contract, and naming the argument also selects the string overload.
+            bool shopOpened = tileOpened
+                ? counterIsOpenShop
                     ? Utility.TryOpenShopMenu(target.ShopId, location, ownerArea: null, maxOwnerY: null, forceOpen: true)
-                    : Utility.TryOpenShopMenu(shopId: target.ShopId, ownerName: null!);
+                    : Utility.TryOpenShopMenu(shopId: target.ShopId, ownerName: null!)
+                : Utility.TryOpenShopMenu(target.ShopId, location, ownerArea: null, maxOwnerY: null, forceOpen: false);
             if (!shopOpened)
             {
                 // The location overload's closed-message path mounts the game's own
                 // DialogueBox before returning false. Leaving it mounted would make every
                 // later action reject as modal_open, so it is closed with the public step
                 // the native input paths use and its text goes into the refusal instead.
-                string tileClosedMessage = Game1.activeClickableMenu is DialogueBox closedBox
+                string nativeClosedMessage = Game1.activeClickableMenu is DialogueBox closedBox
                     ? string.Join(" | ", closedBox.dialogues)
                     : string.Empty;
                 if (Game1.activeClickableMenu is DialogueBox)
                     ((DialogueBox)Game1.activeClickableMenu).closeDialogue();
-                return this.RememberTerminal(
-                    request.RequestId,
-                    executionId,
-                    ExecutionState.Rejected,
-                    "shop_open_refused",
-                    $"shop={target.ShopId};owner={target.OwnerName};counter={target.OwnerTileX},{target.OwnerTileY}"
-                        + (string.IsNullOrEmpty(tileClosedMessage) ? string.Empty : $";closed_message={tileClosedMessage}")
-                        + (string.IsNullOrWhiteSpace(GameStateQueryClosedMessageFor(target.ShopId, target.OwnerName)) ? string.Empty : $";closed_message={GameStateQueryClosedMessageFor(target.ShopId, target.OwnerName)}"));
+
+                // TWO answers, and the engine's own call is what separates them: a counter that is shut today names
+                // its closed text and is refused with the reason discovery withheld it; a counter whose owner entry
+                // could not be resolved from this room is the reach refusal, because standing elsewhere is the fix.
+                string? closedMessage = string.IsNullOrEmpty(nativeClosedMessage)
+                    ? GameStateQueryClosedMessageFor(target.ShopId, target.OwnerName)
+                    : nativeClosedMessage;
+                if (!string.IsNullOrEmpty(closedMessage))
+                    return RefuseClosedCounter(target, closedMessage);
+
+                return RefuseUnreachableCounter(
+                    ShopCounterReachEvidence(
+                            target.OwnerName, target.CounterX, target.CounterY, actor.TilePoint.X, actor.TilePoint.Y)
+                        + ";native=no_current_owner");
             }
 
             if (Game1.activeClickableMenu is not ShopMenu opened)
@@ -890,14 +1042,14 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         //   * the two diagnostics below are lists, and their entries used to embed `;`, which split each entry into
         //     fields the Host cannot read (`drop0:empty_slot=0` is not a key). They now separate parts with `|` and
         //     entries with `||`, so the whole diagnostic stays ONE field.
-        string ownerName = target.OwnerName.Length == 0 ? "none" : target.OwnerName;
+        string ownerName = ShopOwnerToken(target.OwnerName);
         string evidence =
             $"shop={target.ShopId};owner={ownerName};entry={entryKind};item={expectedItemId};"
             + $"requested={quantity};purchased={purchasable};unit_price={unitPrice};"
             + $"money_before={currencyBefore};money_after={currencyAfter};"
             + $"owned_before={ownedBefore};owned_after={ownedAfter};gained={gained};"
             + $"stock_before={stockBefore};stock_after={(menu is not null && stock.TryGetValue(offer, out ItemStockInformation? after) && after is not null ? after.Stock : -1)};"
-            + $"owner_tile={target.OwnerTileX},{target.OwnerTileY};menu_closed={menuClosed.ToString().ToLowerInvariant()};"
+            + $"owner_tile={target.CounterX},{target.CounterY};menu_closed={menuClosed.ToString().ToLowerInvariant()};"
             + $"clicks={clickDiagnostics.Count}[{string.Join("||", clickDiagnostics)}];"
             + $"drops={dropDiagnostics.Count}[{string.Join("||", dropDiagnostics)}]";
 

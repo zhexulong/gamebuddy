@@ -79,12 +79,12 @@ public sealed class ShopPurchasabilityTests
         string source = File.ReadAllText(RepositorySourcePath(
             Path.Combine("integrations", "stardew", "farmhandexecutioncontroller.shopactions.cs")));
 
-        source.Should().Contain("IsShopOpenNow(shopData, owner.Name)", "discovery asks the engine's own verdict");
+        source.Should().Contain("OpensNow(resolvedOwner)", "discovery asks the engine's own verdict on the entry that runs the counter");
         source.Should().Contain(
             "exclusions.Record(\"shopTargets\", DiscoveryExclusionReasons.ShopClosedToday)",
             "the withheld counter is named in the family's exclusions, not silently dropped");
         source.Should().Contain(
-            "this.DiscoverShopTargets(actor, exclusions: null)",
+            "List<DiscoveredShopCounter> counters = EnumerateShopCounters(location)",
             "the purchase re-reads the SAME enumeration the snapshot published, so agreement is construction, not luck");
         source.Should().Contain(
             "openNow = OpensNow(SelectCurrentShopOwner(eligibleOwners, ownerName))",

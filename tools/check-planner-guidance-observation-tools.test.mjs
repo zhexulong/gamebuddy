@@ -27,8 +27,8 @@ import { fileURLToPath } from "node:url";
 import {
   checkPlannerGuidanceObservationTools,
   observationToolNames,
-  plannerGuidanceText,
   PLANNER_NEED_NOT_MENTION,
+  plannerGuidanceText,
   REASON_CLASSES,
   renderReport,
 } from "./check-planner-guidance-observation-tools.mjs";
