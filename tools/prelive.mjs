@@ -141,6 +141,15 @@ export const L0_GATES = Object.freeze([
   // `assets/tavern/presets/PERSONA-REVISION.md` in the same commit. 2.0 s here (three git spawns, batched), and it
   // names the drifting field rather than a file.
   "tools/check-persona-prose.mjs",
+  // The FULL totality audit, because the place that could fail on its findings never did: CI runs it on every push with
+  // `continue-on-error: true`, only so `--verbose` can be uploaded as an artifact, so a blocking finding reached nobody
+  // - and this rung ran `audit-totality-head.mjs` above instead, whose entry guard is missing, so it exits 0 having
+  // walked nothing. Measured 30.3 s inside the rung (92.4 s on a cold first run: the four classes it delegates spawn
+  // `tsx` suites from `dialogue-web`), which is the most expensive member of this rung and the reason the number is
+  // written here rather than left as a surprise: the run that put it in the ladder found four blocking findings - one
+  // bounds pair and three ceilings a player could meet as a generic failure - and no other gate in any rung reports
+  // that class.
+  "tools/audit-totality.mjs",
   "tools/check-prelive-gate-registry.mjs",
 ]);
 

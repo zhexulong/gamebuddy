@@ -285,11 +285,6 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm audit:stardew-test-shape",
   },
   {
-    path: "tools/audit-totality.mjs",
-    reason: "elsewhere: loads the built Host modules to walk every declaration class, runs on every push",
-    runsIn: "pnpm audit:totality",
-  },
-  {
     path: "tools/check-action-coverage.mjs",
     reason:
       "report: counts dispatches out of `.live-runs/game-ladder` artifacts and exits 0 by design until someone puts a " +
