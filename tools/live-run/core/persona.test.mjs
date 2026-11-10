@@ -59,28 +59,45 @@ test("the canonical live-run card is present and identified", async () => {
   assert.ok(LIVE_RUN_PERSONA_DIR.endsWith(path.join("assets", "tavern", "presets", "default-companion")));
 });
 
-test("provisioning copies both files byte for byte, with no preprocessing", { skip: REQUIRES_HOST_BUILD }, async () => {
-  const { root, identity, runtimeCwd } = await runtimeRoot();
-  try {
-    const provisioned = await provisionLiveRunPersona(runtimeCwd, { identity, root });
-    const [{ cardPath, worldbookPath }] = [{ ...provisioned }];
-    assert.deepEqual(
-      await readFile(cardPath, "utf8"),
-      await readFile(path.join(runtimeCwd, "card.json"), "utf8"),
-      "card.json must be identical after provisioning",
-    );
-    assert.deepEqual(
-      await readFile(worldbookPath, "utf8"),
-      await readFile(path.join(runtimeCwd, "worldbook.json"), "utf8"),
-      "worldbook.json must be identical after provisioning",
-    );
-    const mounted = await assertLiveRunPersonaMounted(runtimeCwd, { identity, root });
-    assert.equal(mounted.ok, true, JSON.stringify(mounted.problems));
-    assert.equal(mounted.worldBookEntries, provisioned.identity.worldBookEntries);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+test(
+  "provisioning copies the card, its book AND the generation preset byte for byte, with no preprocessing",
+  {
+    skip: REQUIRES_HOST_BUILD,
+  },
+  async () => {
+    const { root, identity, runtimeCwd } = await runtimeRoot();
+    try {
+      const provisioned = await provisionLiveRunPersona(runtimeCwd, { identity, root });
+      const [{ cardPath, worldbookPath, presetPath }] = [{ ...provisioned }];
+      assert.deepEqual(
+        await readFile(cardPath, "utf8"),
+        await readFile(path.join(runtimeCwd, "card.json"), "utf8"),
+        "card.json must be identical after provisioning",
+      );
+      assert.deepEqual(
+        await readFile(worldbookPath, "utf8"),
+        await readFile(path.join(runtimeCwd, "worldbook.json"), "utf8"),
+        "worldbook.json must be identical after provisioning",
+      );
+      // The generation preset is the same kind of input: the reviewed file, byte for byte, mounted under the name the
+      // Host reads it by (`host/src/tavern/preset-game-session.ts`). A run whose review asks whether the preset shaped
+      // the session needs the file to be the authored one, not a copy that was normalised on the way in.
+      assert.deepEqual(
+        await readFile(presetPath, "utf8"),
+        await readFile(path.join(runtimeCwd, "preset.json"), "utf8"),
+        "preset.json must be identical after provisioning",
+      );
+      const mounted = await assertLiveRunPersonaMounted(runtimeCwd, { identity, root });
+      assert.equal(mounted.ok, true, JSON.stringify(mounted.problems));
+      assert.equal(mounted.worldBookEntries, provisioned.identity.worldBookEntries);
+      assert.equal(mounted.generationPreset, path.join(runtimeCwd, "preset.json"));
+      assert.ok(mounted.generationPrompts > 0, "the mounted preset must declare its prompt entries");
+      assert.ok(mounted.generationEnabled > 0, "and at least one of them must be switched on");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test(
   "provisioning COMPILES the card into the identity profile the Host reads, not just the card file",

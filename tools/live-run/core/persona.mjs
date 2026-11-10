@@ -59,11 +59,29 @@ export const LIVE_RUN_PERSONA_DIR = path.resolve(
 /** The card and its world book travel together; naming them here keeps every loop identical. */
 export const LIVE_RUN_PERSONA_FILES = Object.freeze(["card.json", "worldbook.json"]);
 
+/**
+ * The companion's GENERATION preset, and the name it is mounted under.
+ *
+ * It travels with the persona because it is the same reviewed bundle (`assets/tavern/presets/`) and it is what the
+ * Game surface assembles a request from: its sampler values, its `main` system entry and its post-history entry. It is
+ * mounted as `preset.json` in the runtime cwd - the same file convention as `card.json` and `worldbook.json`, read
+ * back by `host/src/tavern/preset-game-session.ts` - rather than passed as a parameter, so a run and a player's root
+ * read the same file the same way.
+ *
+ * A run whose review asks "did the preset shape this session?" needs the file to be THERE: absence is reported as
+ * `generation: null` in the run's bundle, and this harness refuses to start without it.
+ */
+export const LIVE_RUN_GENERATION_PRESET = Object.freeze({
+  file: "amber-deepseek-v4.1.json",
+  target: "preset.json",
+});
+
 export function liveRunPersonaPaths({ dir = LIVE_RUN_PERSONA_DIR } = {}) {
   return Object.freeze({
     dir,
     cardPath: path.join(dir, "card.json"),
     worldbookPath: path.join(dir, "worldbook.json"),
+    presetPath: path.resolve(dir, "..", LIVE_RUN_GENERATION_PRESET.file),
   });
 }
 
@@ -334,11 +352,12 @@ export async function provisionLiveRunPersona(
   { dir = LIVE_RUN_PERSONA_DIR, hostBuildRoot, identity, root, wireSentinels } = {},
 ) {
   if (typeof runtimeCwd !== "string" || runtimeCwd.length === 0) throw new Error("live_run_persona_cwd_invalid");
-  const { cardPath, worldbookPath } = liveRunPersonaPaths({ dir });
+  const { cardPath, worldbookPath, presetPath } = liveRunPersonaPaths({ dir });
   const identityFacts = await readLiveRunPersonaIdentity({ dir });
   for (const [source, name] of [
     [cardPath, "card.json"],
     [worldbookPath, "worldbook.json"],
+    [presetPath, LIVE_RUN_GENERATION_PRESET.target],
   ]) {
     await copyFile(source, path.join(runtimeCwd, name));
   }
@@ -363,6 +382,7 @@ export async function provisionLiveRunPersona(
     identity: identityFacts,
     cardPath,
     worldbookPath,
+    presetPath,
     profile,
     greeting,
     scenario,
@@ -454,6 +474,24 @@ export async function assertLiveRunPersonaMounted(runtimeCwd, { identity, root, 
       problems.push("worldbook_json_unparseable");
     }
   }
+  // The generation preset the Game surface assembles from, REPORTED here and never required: a runtime cwd with none is
+  // an ordinary state (the Host assembles the floor alone and publishes `generation: null`), so its absence is not a
+  // broken PERSONA. What a run must not do is leave the question unanswerable, which is why the facts go back to the
+  // caller instead of being dropped.
+  const presetPath = path.join(runtimeCwd, LIVE_RUN_GENERATION_PRESET.target);
+  let presetPrompts = 0;
+  let presetEnabled = 0;
+  if (existsSync(presetPath)) {
+    try {
+      const preset = JSON.parse(await readFile(presetPath, "utf8"));
+      const prompts = Array.isArray(preset?.prompts) ? preset.prompts : [];
+      presetPrompts = prompts.length;
+      presetEnabled = prompts.filter((entry) => entry?.enabled === true).length;
+    } catch {
+      presetPrompts = 0;
+      presetEnabled = 0;
+    }
+  }
   const profilePath = path.join(runtimeCwd, "identity-profile.json");
   let profileName = null;
   if (!existsSync(profilePath)) problems.push("identity_profile_absent");
@@ -525,6 +563,9 @@ export async function assertLiveRunPersonaMounted(runtimeCwd, { identity, root, 
     profileName,
     worldBookEntries: entries,
     macroTokens,
+    generationPreset: existsSync(presetPath) ? presetPath : null,
+    generationPrompts: presetPrompts,
+    generationEnabled: presetEnabled,
     greeting,
     scenario,
   });

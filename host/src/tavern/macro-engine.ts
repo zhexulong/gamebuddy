@@ -121,8 +121,7 @@ export function unrenderedMacros(text: string): readonly string[] {
 }
 
 /** How many macros one report line names. A field may carry more; the line stays bounded and says how many it did not. */
-const MAX_NAMED_MACROS = 8;
-/**
+const MAX_NAMED_MACROS = 8; /**
  * The most characters of one macro token a report line carries.
  *
  * `unrenderedMacros` returns whatever the text wrote between its braces, so a card can author a token far longer than any
@@ -142,6 +141,25 @@ export function namedMacros(tokens: readonly string[]): string {
     .map((token) => (token.length <= MAX_NAMED_MACRO_CHARS ? token : `${token.slice(0, MAX_NAMED_MACRO_CHARS)}…`));
   const rest = tokens.length - named.length;
   return rest > 0 ? `${named.join(", ")} (+${rest} more)` : named.join(", ");
+}
+
+/**
+ * The unrendered macros in `text`, split by whether SillyTavern itself defines them, or `undefined` when none survived.
+ *
+ * The split is the whole policy of every caller that consumes it, and it is the same policy in each: a token SillyTavern
+ * defines but this engine deliberately leaves literal (`{{time}}`) means the field is dropped and NAMED, while a token
+ * neither table knows is a defect the caller refuses on. Two callers - a reviewed card's field and a third-party
+ * preset's - differ in what they DO about it, never in how they read it, so the reading lives here once.
+ */
+export function survivingMacros(
+  rendered: string,
+): Readonly<{ standard: readonly string[]; unrecognised: readonly string[] }> | undefined {
+  const tokens = unrenderedMacros(rendered);
+  if (tokens.length === 0) return undefined;
+  return Object.freeze({
+    standard: Object.freeze(tokens.filter((token) => isStandardSillyTavernMacro(token))),
+    unrecognised: Object.freeze(tokens.filter((token) => !isStandardSillyTavernMacro(token))),
+  });
 }
 
 /**

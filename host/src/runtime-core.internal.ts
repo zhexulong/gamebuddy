@@ -89,15 +89,13 @@ import {
 import type { TavernAuthoredContextCatalog } from "./tavern/catalog-service.js";
 import { mergeModelProviderEntry, modelProviderEntry } from "./tavern/pi-provider-store.js";
 import {
-  companionPresetPublication,
-  formatCompanionPresetLine,
   formatPresetOverlap,
   type GameSessionPreset,
   presetOverlaps,
   readGameSessionPreset,
   renderPresetMainSegment,
 } from "./tavern/preset-game-session.js";
-import { effectivePresetSampling, type PresetSamplingValues, withPresetSampling } from "./tavern/preset-sampling.js";
+import { type PresetSamplingValues, withPresetSampling } from "./tavern/preset-sampling.js";
 import { TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
 import {
   applyToolDescriptionOverrides,
@@ -950,30 +948,6 @@ function withPresetMain(floor: string, preset: GameSessionPreset | null): string
 }
 
 /**
- * The sampler values this runtime will really send, or `null` when there is no composed model to read them from.
- *
- * `effectivePresetSampling` is the ONE reading of the adapter's precedence and it fails closed when a value this
- * module wrote is not what the composed model carries, so `null` here can only mean "no composed model" - never "some
- * keys were quietly dropped".
- */
-function effectivePresetSamplingValues(
-  preset: GameSessionPreset | null,
-  model: ReturnType<ModelRuntime["getModel"]> | undefined,
-  session: RuntimeSessionResource,
-): Readonly<Record<string, number>> | null {
-  if (preset === null || model === undefined) return null;
-  const level = session.agent.state.thinkingLevel;
-  const readings = effectivePresetSampling({
-    model,
-    thinkingLevel: typeof level === "string" ? level : "off",
-    preset: preset.sampling,
-  });
-  const values: Record<string, number> = {};
-  for (const reading of readings) if (typeof reading.value === "number") values[reading.key] = reading.value;
-  return Object.freeze(values);
-}
-
-/**
  * Create a Pi SDK session without coding-agent discovery. Only the installed,
  * pinned Magic Context extension can load; built-ins, project/user extensions,
  * skills, templates, context files, and coding prompts are excluded.
@@ -1582,22 +1556,6 @@ export async function createRuntimeWithFixedToolsCore(
   // After session construction, and only for a runtime that mounted Magic Context: the embedded
   // historian spawns per trigger with this registry, and without it every attempt fails closed.
   if (loadMagicContextExtension) await bindEmbeddedHistorianModelRegistry(modelRuntime);
-
-  // The preset facts ONE bounded line per Game runtime, printed here because they cannot be stated earlier: the
-  // thinking level is Pi's clamped answer (not the level the player typed) and the composed model is what the adapter
-  // will actually send. The live-run bundle publishes this line rather than re-deriving the same facts from a second
-  // copy of the preset, so "did the run load the preset?" is answerable from the run's own record.
-  if (runtimeSurface === "game")
-    process.stderr.write(
-      `${formatCompanionPresetLine(
-        companionPresetPublication({
-          preset: gameSessionPreset,
-          runtimeCwd: paths.runtimeCwd,
-          sampling: effectivePresetSamplingValues(gameSessionPreset, model, session),
-          contextWindow: model?.contextWindow,
-        }),
-      )}\n`,
-    );
 
   // Once Pi has returned a session, every subsequent initialization step owns
   // one deterministic reverse path. In particular, publication is cleared

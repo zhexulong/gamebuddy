@@ -4,13 +4,15 @@ import { canonicalJson, type TavernArtifactStore } from "./artifact-store.js";
 import { ST_CARD_DECODER_LIMITS_V1 } from "./compatibility-manifest.v1.js";
 import {
   hasUnrenderedMacro,
-  isStandardSillyTavernMacro,
+  namedMacros,
   renderMacros,
   renderWorldBookText,
-  unrenderedMacros,
+  survivingMacros,
   type MacroTable,
 } from "./macro-engine.js";
 import { readCompanionPostHistoryInstructions } from "./post-history-instructions.js";
+import type { GameSessionPresetPrompt } from "./preset-game-session.js";
+import { decidePresetTailBlock } from "./preset-tail-block.js";
 import type {
   ChatThread,
   TavernStableManagedWorldInfoBinding,
@@ -202,10 +204,10 @@ export async function materializeTavernAuthoredContextCatalog(
     if (surviving !== undefined) {
       if (surviving.unrecognised.length > 0)
         throw new Error(
-          `tavern_stable_context_unrecognised_${selected.kind}_macro: ${selected.kind} ${selected.sourceId} carries ${nameMacros(surviving.unrecognised)}, which is not a macro this product recognises`,
+          `tavern_stable_context_unrecognised_${selected.kind}_macro: ${selected.kind} ${selected.sourceId} carries ${namedMacros(surviving.unrecognised)}, which is not a macro this product recognises`,
         );
       process.stderr.write(
-        `[authored-context] omitting ${selected.kind} ${selected.sourceId}: it carries ${nameMacros(surviving.standard)}, a standard SillyTavern macro this engine cannot fill\n`,
+        `[authored-context] omitting ${selected.kind} ${selected.sourceId}: it carries ${namedMacros(surviving.standard)}, a standard SillyTavern macro this engine cannot fill\n`,
       );
       continue;
     }
@@ -260,48 +262,6 @@ export async function materializeTavernAuthoredContextCatalog(
     volatileSources: Object.freeze(volatileSources),
   });
 }
-/** How many macros one drop names. A field may carry more; the line stays bounded and says how many it did not name. */
-const MAX_NAMED_MACROS = 8;
-/**
- * The most characters of one macro token a message carries.
- *
- * `unrenderedMacros` returns whatever the text wrote between its braces, so a card can author a token far longer than any
- * real macro. One pathological field must not turn a log line or a refusal into a page.
- */
-const MAX_NAMED_MACRO_CHARS = 64;
-/**
- * The macros a rendered authored text still carries, told apart by what this product knows about them.
- *
- * `undefined` is the ordinary answer: nothing survived the render, so the text publishes as it stands. When something did,
- * the two groups are different facts and both callers decide between them the same way:
- *
- *  - `standard` are the SillyTavern macros this engine deliberately leaves literal - `{{time}}`, `{{date}}`, `{{random}}`,
- *    `{{lastmessage}}`, `{{idle_duration}}`, `{{original}}`, `{{model}}`; `LEFT_LITERAL_STANDARD_MACROS` holds the reason
- *    for each. A card that wrote one is doing the normal thing at a seam that has no clock, no dice and no conversation
- *    yet, so the field that carries it is DROPPED and named. Refusing the whole assembly over it made one optional field
- *    able to take the companion's entire context down, while the same macro in a world-book entry only cost that entry.
- *  - `unrecognised` are tokens in neither table, so they are a typo or an extension this product cannot render. Dropping
- *    on a guess would hide which token it was and publishing it would put a literal `{{...}}` in the companion's context,
- *    so that case still fails closed and names the token.
- */
-function survivingMacros(
-  rendered: string,
-): Readonly<{ standard: readonly string[]; unrecognised: readonly string[] }> | undefined {
-  const tokens = unrenderedMacros(rendered);
-  if (tokens.length === 0) return undefined;
-  return Object.freeze({
-    standard: Object.freeze(tokens.filter((token) => isStandardSillyTavernMacro(token))),
-    unrecognised: Object.freeze(tokens.filter((token) => !isStandardSillyTavernMacro(token))),
-  });
-}
-/** The macros one message names, bounded in count and in token length so it stays one readable line. */
-function nameMacros(tokens: readonly string[]): string {
-  const named = tokens
-    .slice(0, MAX_NAMED_MACROS)
-    .map((token) => (token.length <= MAX_NAMED_MACRO_CHARS ? token : `${token.slice(0, MAX_NAMED_MACRO_CHARS)}…`));
-  const rest = tokens.length - named.length;
-  return rest > 0 ? `${named.join(", ")} (+${rest} more)` : named.join(", ");
-}
 /**
  * Her card's closing direction, or `undefined` when the card declared none.
  *
@@ -331,7 +291,7 @@ async function authoredPostHistoryInstructions(
   const surviving = survivingMacros(rendered);
   if (surviving !== undefined && surviving.unrecognised.length > 0)
     throw new Error(
-      `tavern_stable_context_unrecognised_post_history_macro: post_history_instructions carries ${nameMacros(surviving.unrecognised)}, which is not a macro this product recognises`,
+      `tavern_stable_context_unrecognised_post_history_macro: post_history_instructions carries ${namedMacros(surviving.unrecognised)}, which is not a macro this product recognises`,
     );
   if (surviving !== undefined) {
     // A standard macro this engine deliberately leaves literal (`{{time}}` - see
@@ -340,7 +300,7 @@ async function authoredPostHistoryInstructions(
     // loss is named instead of the whole catalogue becoming unbuildable over it. The rule the
     // refusal protected still holds - no literal `{{...}}` is published as her own words.
     process.stderr.write(
-      `[authored-context] omitting post_history_instructions: it carries ${nameMacros(surviving.standard)}, a standard SillyTavern macro this engine cannot fill\n`,
+      `[authored-context] omitting post_history_instructions: it carries ${namedMacros(surviving.standard)}, a standard SillyTavern macro this engine cannot fill\n`,
     );
     return undefined;
   }
@@ -680,6 +640,14 @@ function hash(value: string): string {
  * Chat surface uses: the Game scope invents no second selection rule. The
  * volatile total order keys continue AFTER the stable source so the catalog
  * keeps one strictly increasing sequence.
+ *
+ * `presetPostHistory` is the one fact that does NOT come from the card: the
+ * generation preset's own post-history entry, when the runtime was provisioned
+ * with one and it sits at the tail. It is the second branch of R-2 - render a
+ * low-priority tail block - taken on material this product can trace to a file
+ * it ships, while the card's own `post_history_instructions` stays unpublished
+ * on this surface. See `presetTailBlock` for the publication rules and
+ * `prompt-field-delivery.test.ts` for the two assertions that hold them.
  */
 /** The companion's own scenario as the Game catalog consumes it. */
 export type GameSurfaceScenarioSource = Readonly<{
@@ -697,6 +665,7 @@ export function buildGameSurfaceAuthoredCatalog(
   macros: Readonly<{ char: string | null }> = { char: null },
   scenario?: GameSurfaceScenarioSource,
   activatedWorldInfo?: TavernManagedWorldInfoSource,
+  presetPostHistory?: GameSessionPresetPrompt,
 ): TavernAuthoredContextCatalog {
   if (binding.surface !== "game") throw new Error("game_authored_context_surface_mismatch");
   const sources: Array<TavernAuthoredContextCatalog["stableSources"][number]> = [];
@@ -804,14 +773,14 @@ export function buildGameSurfaceAuthoredCatalog(
     }
     if (surviving.unrecognised.length > 0)
       throw new Error(
-        `game_authored_context_unrecognised_macro: source ${item.sourceId} (${item.kind}) carries ${nameMacros(surviving.unrecognised)}, which is not a macro this product recognises`,
+        `game_authored_context_unrecognised_macro: source ${item.sourceId} (${item.kind}) carries ${namedMacros(surviving.unrecognised)}, which is not a macro this product recognises`,
       );
     // A standard macro this engine deliberately leaves literal (`{{date}}`) is the card doing
     // the normal thing at a seam with no clock, so this source is omitted and NAMED rather
     // than taking the whole Game catalogue down with it. The invariant the refusal protected
     // still holds: nothing carrying a literal `{{...}}` is published as her authored context.
     process.stderr.write(
-      `[authored-context] omitting authored context source ${item.sourceId} (${item.kind}): it carries ${nameMacros(surviving.standard)}, a standard SillyTavern macro this engine cannot fill\n`,
+      `[authored-context] omitting authored context source ${item.sourceId} (${item.kind}): it carries ${namedMacros(surviving.standard)}, a standard SillyTavern macro this engine cannot fill\n`,
     );
   }
   const body = {
@@ -820,10 +789,39 @@ export function buildGameSurfaceAuthoredCatalog(
     stableSources: publishable,
     volatileSources,
   };
+  // The TAIL BLOCK, and which tail block is the decision (`design/research/game-airp-review-2026-10-21.md` R-2).
+  //
+  // R-2 asked whether the Game surface should keep its closing-direction channel opaque or render a low-priority
+  // tail block. It is rendered here, and the material it renders is the PRESET's - the enabled `jailbreak` entry of
+  // the generation preset this runtime was provisioned with - because that is the half whose provenance this product
+  // controls: the text came from a file under `assets/tavern/presets/**`, it is framing for how she talks, and it is
+  // not a field of a card whose author this product never reviewed. The card's own `post_history_instructions`
+  // stays unpublished on this surface, and `prompt-field-delivery.test.ts` holds both halves at once - the pair is
+  // the decision, not a coincidence.
+  const tailBlock = presetTailBlock(presetPostHistory);
   return Object.freeze({
     ...body,
     canonicalHash: hash(canonicalJson(body)),
+    ...(tailBlock === undefined ? {} : { postHistoryInstructions: tailBlock }),
     stableSources: Object.freeze(publishable),
     volatileSources: Object.freeze(volatileSources),
   });
+}
+
+/**
+ * The preset's post-history entry as the catalog publishes it, or `undefined` when it must not be published.
+ *
+ * The decision is `decidePresetTailBlock`, which the run's own publication line reads too - so "published" and
+ * "refused, because ..." cannot be two opinions about one entry. A refusal is NAMED here and the session keeps
+ * running: unlike the card's own closing direction, which this product reviews and therefore refuses hard, a preset is
+ * third-party input and the player's world must not fail to load because one of its tokens is unfamiliar.
+ */
+function presetTailBlock(prompt: GameSessionPresetPrompt | undefined): string | undefined {
+  const decision = decidePresetTailBlock(prompt);
+  if (decision.kind === "published") return decision.text;
+  if (decision.kind === "refused")
+    process.stderr.write(
+      `[authored-context] omitting the preset's post-history tail: ${decision.reason} (${decision.detail})\n`,
+    );
+  return undefined;
 }

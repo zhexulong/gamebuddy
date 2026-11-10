@@ -6,6 +6,7 @@ import { TavernArtifactStore } from "../tavern/artifact-store.js";
 import type { GameSurfaceScenarioSource, TavernManagedWorldInfoSource } from "../tavern/catalog-service.js";
 import { resolveCompanionOwnScenario } from "../tavern/library-service.js";
 import { resolveTavernPaths } from "../tavern/tavern-paths.js";
+import { type GameSessionPreset, readGameSessionPreset } from "../tavern/preset-game-session.js";
 import { createManagedWorldInfoBindingResolver } from "../tavern/world-info-binding/managed-world-info-binding.js";
 import { createWorldInfoManagementRepository } from "../tavern/world-info-management/world-info-management.js";
 import { readWorldBook, worldBookMetadata, type WorldBookBinding } from "../worldbook.js";
@@ -42,6 +43,14 @@ export type GameRuntimeContextSource = Readonly<{
   worldBook?: WorldBookBinding;
   scenario?: GameSurfaceScenarioSource;
   worldInfo?: TavernManagedWorldInfoSource;
+  /**
+   * The generation preset this runtime cwd was provisioned with, or absent when it has none.
+   *
+   * It is READ here and CONSUMED twice: this materializer publishes the preset's post-history entry as the Game
+   * catalog's tail block, and `runtime-core.internal.ts` reads the same file for the system segment and the sampler.
+   * One file, read by the two constructors that need it, exactly as `worldbook.json` already is.
+   */
+  preset?: GameSessionPreset;
 }>;
 
 export async function assembleGameRuntimeContext(
@@ -52,6 +61,8 @@ export async function assembleGameRuntimeContext(
     identityProfile?: IdentityProfile;
     /** Explicitly resolved world book supplied by the composition, if any. */
     worldBook?: WorldBookBinding;
+    /** The locale the session presents, which is what the preset's `{{user}}` fallback is chosen against. */
+    locale?: string;
   }>,
 ): Promise<GameRuntimeContextSource> {
   const runtimePaths = resolveRuntimePaths(input.identity, input.runtimeRoot);
@@ -59,11 +70,19 @@ export async function assembleGameRuntimeContext(
   const worldBook = input.worldBook ?? (await readCanonicalWorldBook(runtimePaths.runtimeCwd));
   const scenario = await readCompanionOwnScenario(runtimePaths, input.identity, input.runtimeRoot);
   const worldInfo = await readActivatedWorldInfo(input.runtimeRoot, input.identity);
+  const preset =
+    profile === undefined
+      ? null
+      : await readGameSessionPreset(runtimePaths.runtimeCwd, {
+          profile,
+          ...(input.locale === undefined ? {} : { locale: input.locale }),
+        });
   return Object.freeze({
     ...(profile === undefined ? {} : { profile }),
     ...(worldBook === undefined ? {} : { worldBook }),
     ...(scenario === undefined ? {} : { scenario }),
     ...(worldInfo === undefined ? {} : { worldInfo }),
+    ...(preset === null ? {} : { preset }),
   });
 }
 
