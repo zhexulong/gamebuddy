@@ -7,9 +7,9 @@
  *
  * The facts a wait needs are already published, so this module adds no authority: it reads the same
  * `program_status` payload the tool already reads, and it never invents a finished state. On expiry the caller gets
- * the last real snapshot plus `reachedTerminal: false`. The one thing it now remembers is when it first saw each node
- * in its state (`createProgramProgressObserver`), because the wire carries no timestamp and a caller choosing its next
- * wait needs to know how long the node in front of it has been there.
+ * the last real snapshot plus what THAT read said about the plan (`waited.terminality`). The one thing it now
+ * remembers is when it first saw each node in its state (`createProgramProgressObserver`), because the wire carries no
+ * timestamp and a caller choosing its next wait needs to know how long the node in front of it has been there.
  *
  * "It did not finish" alone is not an answer a caller can act on. The wait re-reads the live journal every interval
  * (`PROGRAM_STATUS_POLL_INTERVAL_MS`), so it already knows whether the journal published anything at all while it
@@ -64,15 +64,44 @@ const PROGRAM_STATUS_POLL_INTERVAL_MS = 250;
 export const MAX_PROGRAM_STATUS_WAIT_MS = 30_000;
 
 /**
+ * What the last read of a wait PROVED about the plan: `terminal` and `active` are the two answers a payload can give,
+ * and `unknown` is the one it can refuse to give.
+ *
+ * The third state exists because the alternative was a claim nobody made. `invalid_input` (a request the Mod could not
+ * answer) and a `found` frame whose state is unreadable are answers that do not say whether the plan finished, and
+ * folding them into "it did not finish" is how a caller that re-dispatches on that word runs work that already ran.
+ */
+export type ProgramStatusWaitTerminality = "terminal" | "active" | "unknown";
+
+/** What one `program_status` payload says about whether the plan has stopped, and what could not be read when it says nothing. */
+export interface ProgramStatusReadTerminality {
+  readonly terminality: ProgramStatusWaitTerminality;
+  /**
+   * WHY the read could not be classified, named with the payload's own word (`invalid_input`, `found_without_state`).
+   *
+   * `null` whenever `terminality` is `terminal` or `active`: then the payload gave an answer, and there is nothing it
+   * failed to say. Always present otherwise, so "the plan is still running" and "I could not read your plan" cannot
+   * arrive in the same shape.
+   */
+  readonly unreadable: string | null;
+}
+
+/**
  * What the wait itself saw, BESIDE the payload it returned last.
  *
- * `reachedTerminal` is the one the wait was built for. `snapshotChanged` is what makes an expired wait actionable: a
- * caller told only "still running" cannot tell a long node from a plan that published nothing for thirty seconds, and
- * the measured answer to that is to ask again and pay the same bound once more.
+ * `terminality` is what that last read proved, and it is derived from that read on EVERY return arm rather than stated
+ * by the arm that returned - an arm that decides on the caller's behalf is how a plan that finished inside the last
+ * poll came back as "not terminal". `snapshotChanged` is what makes an expired wait actionable: a caller told only
+ * "still running" cannot tell a long node from a plan that published nothing for thirty seconds, and the measured
+ * answer to that is to ask again and pay the same bound once more.
  */
+export interface ProgramStatusWaitFacts extends ProgramStatusReadTerminality {
+  readonly snapshotChanged: boolean;
+}
+
 export interface ProgramStatusWaitOutcome<TResult> {
   readonly result: TResult;
-  readonly waited: Readonly<{ reachedTerminal: boolean; snapshotChanged: boolean }>;
+  readonly waited: ProgramStatusWaitFacts;
 }
 
 /**
@@ -546,15 +575,41 @@ const UNCHANGED_POLLS_BEFORE_EARLY_RETURN = 8;
  * `not_found` counts as finished for the same reason: there is no longer anything to wait for, and the answer does
  * not change by asking again. `invalid_input` does not - that is a caller error, not a plan state, and the read that
  * produced it will keep producing it, so the loop must not spin on it.
+ *
+ * The boolean is a projection of `programStatusTerminality`, not a second reading of the same payload: a caller that
+ * needs the third state asks the classifier, and the two can never disagree about one frame.
  */
 export function isTerminalProgramStatus(payload: unknown): boolean {
-  if (typeof payload !== "object" || payload === null) return false;
+  return programStatusTerminality(payload).terminality === "terminal";
+}
+
+/**
+ * What one `program_status` payload PROVES about the plan, and - when it proves nothing - which answer was unreadable.
+ *
+ * The two answers a payload can give are `terminal` (`not_found`, or a `found` plan in any state but `active`) and
+ * `active`. Everything else is a payload this Host cannot classify: a frame that is not an object, a code the Host
+ * does not know (`invalid_input` included), a `found` claim with no snapshot, or one with no state on it. Those are
+ * named rather than guessed, because the guess that used to be made here - "not terminal" - is a statement about the
+ * plan that the read never established.
+ */
+export function programStatusTerminality(payload: unknown): ProgramStatusReadTerminality {
+  if (typeof payload !== "object" || payload === null) return unreadableAnswer("unreadable_payload");
   const record = payload as Record<string, unknown>;
-  if (record.code === "not_found") return true;
-  if (record.code !== "found") return false;
+  if (record.code === "not_found") return Object.freeze({ terminality: "terminal", unreadable: null });
+  if (record.code !== "found")
+    return unreadableAnswer(typeof record.code === "string" ? record.code : "unreadable_code");
   const snapshot = record.snapshot;
-  if (typeof snapshot !== "object" || snapshot === null) return false;
-  return (snapshot as Record<string, unknown>).state !== ACTIVE_PROGRAM_STATE;
+  if (typeof snapshot !== "object" || snapshot === null) return unreadableAnswer("found_without_snapshot");
+  const state = (snapshot as Record<string, unknown>).state;
+  if (typeof state !== "string") return unreadableAnswer("found_without_state");
+  return Object.freeze({
+    terminality: state === ACTIVE_PROGRAM_STATE ? "active" : "terminal",
+    unreadable: null,
+  });
+}
+
+function unreadableAnswer(unreadable: string): ProgramStatusReadTerminality {
+  return Object.freeze({ terminality: "unknown", unreadable });
 }
 
 /**
@@ -563,6 +618,11 @@ export function isTerminalProgramStatus(payload: unknown): boolean {
  * `first` is the caller's own read, which it already made; the wait starts from it rather than repeating it, so a plan
  * that finished before the wait began costs nothing extra and every later comparison is against what the caller was
  * actually told.
+ *
+ * EVERY return arm goes through `settle`, and `settle` asks the payload it is about to hand back. That is the whole
+ * structure of the fix: an arm that says `false` by itself is a claim about a plan that read said had finished, and
+ * two of these arms did exactly that - one on expiry, one on the unchanged-poll return - so a plan that rolled over
+ * on the last poll came back as "did not reach terminal" and a caller re-dispatched work that had already run.
  */
 export async function waitForTerminalProgramStatus<TResult>(
   read: () => Promise<TResult>,
@@ -576,8 +636,18 @@ export async function waitForTerminalProgramStatus<TResult>(
   let previous = first;
   let snapshotChanged = false;
   let unchangedPolls = 0;
-  const settle = (result: TResult, reachedTerminal: boolean) =>
-    Object.freeze({ result, waited: Object.freeze({ reachedTerminal, snapshotChanged }) });
+  // The flag comes from the read, not from the path. `settle` takes no terminality argument, so no arm can state one.
+  const settle = (result: TResult): ProgramStatusWaitOutcome<TResult> => {
+    const readTerminality = programStatusTerminality(result);
+    return Object.freeze({
+      result,
+      waited: Object.freeze({
+        terminality: readTerminality.terminality,
+        unreadable: readTerminality.unreadable,
+        snapshotChanged,
+      }),
+    });
+  };
   // Every read passes through here, so the expiry read counts the same as any other: a plan that moved on the last
   // poll before the deadline is a plan that moved, and saying otherwise is the blindness this reports on.
   const readOnce = async (): Promise<TResult> => {
@@ -596,15 +666,16 @@ export async function waitForTerminalProgramStatus<TResult>(
   };
   for (;;) {
     const remaining = deadline - now();
-    if (remaining <= 0) return settle(await readOnce(), false);
+    if (remaining <= 0) return settle(await readOnce());
     // Nothing has moved for a while: hand back what is known NOW rather than what will still be known at the deadline.
     // `snapshotChanged` tells the caller the same thing it would have told it thirty seconds later, and the run keeps
     // its turn. The read is fresh, so the caller never receives a stale payload for this decision.
-    if (unchangedPolls >= UNCHANGED_POLLS_BEFORE_EARLY_RETURN) return settle(await readOnce(), false);
+    if (unchangedPolls >= UNCHANGED_POLLS_BEFORE_EARLY_RETURN) return settle(await readOnce());
     await sleep(Math.min(remaining, PROGRAM_STATUS_POLL_INTERVAL_MS));
     const result = await readOnce();
-    if (isTerminalProgramStatus(result)) return settle(result, true);
-    if (now() >= deadline) return settle(result, false);
+    const answer = settle(result);
+    if (answer.waited.terminality === "terminal") return answer;
+    if (now() >= deadline) return answer;
   }
 }
 

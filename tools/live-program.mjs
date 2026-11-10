@@ -729,7 +729,7 @@ export async function awaitProgramSettlement({
     windows += 1;
     const waited = await waitForTerminal(readStatus, latest, Math.min(windowMs, remaining));
     latest = waited.result;
-    reachedTerminal = waited.waited.reachedTerminal === true || isTerminal(latest) === true;
+    reachedTerminal = waited.waited.terminality === "terminal" || isTerminal(latest) === true;
     unchanged = waited.waited.snapshotChanged !== true;
     if (!reachedTerminal && unchanged) break;
   }

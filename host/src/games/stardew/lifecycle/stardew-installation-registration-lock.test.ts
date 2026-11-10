@@ -32,8 +32,8 @@ import { createHarness } from "./stardew-private-bootstrap-composer.test-fixture
  *  2. every lock-taking registration operation stays blocked for as long as the
  *     foreign owner holds it, and leaves the record untouched;
  *  3. once the exact owner releases, the same operations succeed;
- *  4. a holder that dies without releasing leaves a barrier that only ages into
- *     reclaimability, and only then does a successor proceed.
+ *  4. a holder that dies without releasing leaves a lock the next process reclaims at once, because death is the
+ *     evidence and it needs no age.
  */
 
 const moduleDirectory = dirname(fileURLToPath(import.meta.url));
@@ -348,38 +348,23 @@ test("the registration lock is released once the attempt is bound, so the refusa
   );
 });
 
-test("a holder that died without releasing still blocks a successor while its lock is fresh", async () => {
+test("a holder that died without releasing is reclaimed at once, so a restart proceeds", async () => {
   const root = await createRoot();
   await publishStardewInstallationRegistration(root, null, readyRecord());
   const lockPath = join(root, `${REGISTRATION_RELATIVE}.lock`);
 
   const holder = await spawnLockHolder(root);
-  // Kill the owner without a clean release while the lock is still fresh. A
-  // fresh lock whose owner died is deliberately still a barrier: recovery must
-  // not infer a dead owner from an unaged record, or a slow-but-alive process
-  // could lose its installation to a successor.
+  // Kill the owner without a clean release while the lock is still fresh. The record NAMES that pid and the machine
+  // proves it is gone, so the death is the evidence: no age is required, and requiring one kept a provably dead lock
+  // for five minutes, which is exactly what a crash cost the next process.
   process.kill(holder.pid, "SIGKILL");
   await holder.exited.catch(() => undefined);
 
-  const freshRecovery = await reclaimStaleLock(lockPath);
-  assert.equal(freshRecovery.outcome, "kept", "a fresh owner-died lock is not yet reclaimable");
-  assert.equal(freshRecovery.reason, "valid_owner_fresh");
+  const recovery = await reclaimStaleLock(lockPath);
+  assert.equal(recovery.outcome, "reclaimed", "a dead owner's lock is reclaimable the moment its death is proven");
+  assert.equal(recovery.reason, "valid_owner_dead");
 
-  // The successor stays unavailable for as long as the residue is fresh, so a
-  // crash alone cannot let a second launch take the installation.
-  const pending = publishStardewInstallationRegistration(root, 1, readyRecord(2));
-  await assertStillBlocked(pending);
-  assert.equal(JSON.parse(await readFile(join(root, REGISTRATION_RELATIVE), "utf8")).revision, 1);
-
-  // Aging the residue into staleness is the only thing that frees it: the real
-  // dead child pid is still in the record, so once the bytes are old both the
-  // age rule and the liveness rule agree, and only then does a successor run.
-  await pending.catch(() => undefined);
-  await ageLockPastStaleWindow(lockPath, holder.pid);
-  const staleRecovery = await reclaimStaleLock(lockPath);
-  assert.equal(staleRecovery.outcome, "reclaimed");
-  assert.equal(staleRecovery.reason, "valid_owner_stale_and_dead");
-
+  // A successor therefore proceeds immediately, instead of spending the stale window failing to acquire the lock.
   await publishStardewInstallationRegistration(root, 1, readyRecord(2));
   assert.equal((await readStardewInstallationRegistration(root))?.revision, 2);
 });

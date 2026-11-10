@@ -94,8 +94,10 @@ test("Windows stale-lock reclaimer executes the strict root/segments protocol wi
     await assertResult(reclaimRequest(staleValidDead, "stale_valid_dead"), "reclaimed");
     await assertResult(reclaimRequest(freshMalformed, "stale_malformed"), "kept_malformed_fresh");
     assert.equal(await readFile(freshMalformed, "utf8"), "partial write");
-    await assertResult(reclaimRequest(freshValid, "stale_valid_dead"), "kept_valid_fresh");
-    assert.equal(await readFile(freshValid, "utf8"), freshValidOwner);
+    // A record that names a dead owner is dead residue NOW: age is evidence for an owner nobody can identify, not for
+    // one the machine has already proven gone.
+    await assertResult(reclaimRequest(freshValid, "stale_valid_dead"), "reclaimed");
+    await assert.rejects(lstat(freshValid), { code: "ENOENT" });
     await assertResult(releaseRequest(releasePath, token), "released");
     await assert.rejects(lstat(releasePath), { code: "ENOENT" });
     await assertResult(releaseRequest(wrongTokenPath, otherToken), "kept_token_mismatch");

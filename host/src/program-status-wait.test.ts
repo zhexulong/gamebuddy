@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   MAX_PROGRAM_STATUS_WAIT_MS,
@@ -7,6 +10,7 @@ import {
   isTerminalProgramStatus,
   planBatchAnswer,
   planNodeReasonDetail,
+  programStatusTerminality,
   waitForTerminalProgramStatus,
 } from "./program-status-wait.js";
 import {
@@ -84,7 +88,7 @@ test("a plan that publishes nothing ends the wait early instead of spending the 
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
   );
-  assert.equal(outcome.waited.reachedTerminal, false);
+  assert.equal(outcome.waited.terminality, "active");
   assert.equal(outcome.waited.snapshotChanged, false, "nothing moved, and that is what it reports");
   // Eight unchanged polls at the 250 ms interval, not the thirty seconds that were asked for.
   assert.ok(clock.now() < 5_000, `returned after ${clock.now()} ms of a 30,000 ms bound`);
@@ -117,7 +121,7 @@ test("an action still running in the game is not a plan with nothing to report",
     async (milliseconds) => clock.advance(milliseconds),
   );
   // The whole point: it waited for the action and reported what the action became.
-  assert.equal(outcome.waited.reachedTerminal, true, `returned after ${clock.now()} ms without reaching the settle`);
+  assert.equal(outcome.waited.terminality, "terminal", `returned after ${clock.now()} ms without reaching the settle`);
   assert.ok(
     clock.now() >= settlesAtMs,
     `returned at ${clock.now()} ms, before the action settled at ${settlesAtMs} ms`,
@@ -135,7 +139,7 @@ test("a running action that never settles spends the caller's bound instead of c
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
   );
-  assert.equal(outcome.waited.reachedTerminal, false);
+  assert.equal(outcome.waited.terminality, "active");
   assert.equal(outcome.waited.snapshotChanged, false);
   assert.ok(clock.now() >= 30_000, `returned after ${clock.now()} ms of a 30,000 ms bound, with an action in flight`);
 });
@@ -152,7 +156,7 @@ test("the early return still fires once the last action settles and nothing is i
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
   );
-  assert.equal(outcome.waited.reachedTerminal, false);
+  assert.equal(outcome.waited.terminality, "active");
   assert.equal(outcome.waited.snapshotChanged, true, "the settle was reported as movement");
   assert.ok(clock.now() < 30_000, `returned after ${clock.now()} ms`);
 });
@@ -172,7 +176,7 @@ test("a plan that IS moving is still waited for to the deadline", async () => {
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
   );
-  assert.equal(outcome.waited.reachedTerminal, false);
+  assert.equal(outcome.waited.terminality, "active");
   assert.equal(outcome.waited.snapshotChanged, true);
   assert.ok(clock.now() >= 1_000, `spent the whole bound: ${clock.now()} ms`);
 });
@@ -189,7 +193,7 @@ test("a plan that settles while waiting returns the settled read and says it wai
     async (milliseconds) => clock.advance(milliseconds),
   );
   assert.deepEqual(outcome.result, { code: "found", snapshot: { state: "succeeded" } });
-  assert.equal(outcome.waited.reachedTerminal, true);
+  assert.equal(outcome.waited.terminality, "terminal");
   // The second read had moved a node, so the plan changed even before it settled.
   assert.equal(outcome.waited.snapshotChanged, true);
   assert.equal(index, 3);
@@ -209,7 +213,7 @@ test("expiry returns the honest still-running read, never a finished one", async
     async (milliseconds) => clock.advance(milliseconds),
   );
   assert.deepEqual(outcome.result, active(["running"]));
-  assert.equal(outcome.waited.reachedTerminal, false);
+  assert.equal(outcome.waited.terminality, "active");
   // It polled more than once but did not spin: ~4 intervals inside a 1s budget.
   assert.ok(reads >= 2 && reads <= 6, `unexpected read count ${String(reads)}`);
 });
@@ -227,7 +231,7 @@ test("an expired wait whose plan never moved says so, instead of the bare still-
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
   );
-  assert.equal(outcome.waited.reachedTerminal, false);
+  assert.equal(outcome.waited.terminality, "active");
   assert.equal(outcome.waited.snapshotChanged, false);
 });
 
@@ -242,7 +246,7 @@ test("a plan that advanced a node during an expired wait is reported as having a
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
   );
-  assert.equal(outcome.waited.reachedTerminal, false);
+  assert.equal(outcome.waited.terminality, "active");
   assert.equal(outcome.waited.snapshotChanged, true);
 });
 
@@ -265,7 +269,7 @@ test("another program's journal entry does not count as this plan changing", asy
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
   );
-  assert.equal(outcome.waited.reachedTerminal, false);
+  assert.equal(outcome.waited.terminality, "active");
   assert.equal(outcome.waited.snapshotChanged, false);
 });
 
@@ -299,8 +303,250 @@ test("an already-finished plan costs exactly one read", async () => {
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
   );
-  assert.equal(outcome.waited.reachedTerminal, true);
+  assert.equal(outcome.waited.terminality, "terminal");
   assert.equal(reads, 1);
+});
+
+/**
+ * What one `program_status` payload PROVES, asked of the classifier directly: the two answers a read can give, and the
+ * third it can refuse to give, named.
+ *
+ * The third state is why a boolean is gone: `invalid_input` is the Mod answering a question it could not read, and a
+ * boolean cannot hold "the plan did not finish" apart from "this payload said nothing about the plan" - which is the
+ * difference between waiting again and re-running work that already ran.
+ */
+test("a read that cannot say whether the plan finished is unknown, and names what it could not read", () => {
+  const cases: readonly (readonly [unknown, string, string | null])[] = [
+    [{ code: "found", snapshot: { state: "succeeded" } }, "terminal", null],
+    [{ code: "found", snapshot: { state: "active" } }, "active", null],
+    [{ code: "not_found", snapshot: null }, "terminal", null],
+    [{ code: "invalid_input", snapshot: null }, "unknown", "invalid_input"],
+    [{ code: "found", snapshot: null }, "unknown", "found_without_snapshot"],
+    [{ code: "found" }, "unknown", "found_without_snapshot"],
+    [{ code: "found", snapshot: {} }, "unknown", "found_without_state"],
+    [undefined, "unknown", "unreadable_payload"],
+    ["found", "unknown", "unreadable_payload"],
+  ];
+  const examined: string[] = [];
+  for (const [payload, terminality, unreadable] of cases) {
+    assert.deepEqual(programStatusTerminality(payload), { terminality, unreadable }, JSON.stringify(payload));
+    // The boolean is that same reading, so a caller of either can never get two answers about one frame.
+    assert.equal(isTerminalProgramStatus(payload), terminality === "terminal", JSON.stringify(payload));
+    examined.push(terminality);
+  }
+  assert.deepEqual(
+    [...new Set(examined)].sort(),
+    ["active", "terminal", "unknown"],
+    `examined ${examined.length} payloads`,
+  );
+});
+
+const waitSourcePath = resolve(dirname(fileURLToPath(import.meta.url)), "../src", "program-status-wait.ts");
+
+/**
+ * Every `return` the wait's poll loop makes, with the line it is on, read out of the function itself.
+ *
+ * The population is the SOURCE, not a list written here: an arm added tomorrow is in it the moment it exists, and the
+ * count assertion at the end of the gate refuses to pass until that arm has been driven.
+ */
+function waitReturnArms(source: string): readonly Readonly<{ line: number; text: string }>[] {
+  const functionStart = source.indexOf("export async function waitForTerminalProgramStatus");
+  assert.ok(functionStart >= 0, "the wait must still be in the source");
+  const loopStart = source.indexOf("for (;;) {", functionStart);
+  assert.ok(loopStart > functionStart, "the wait must still be a poll loop");
+  let depth = 0;
+  let loopEnd = -1;
+  for (let index = loopStart; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    else if (source[index] === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        loopEnd = index;
+        break;
+      }
+    }
+  }
+  assert.ok(loopEnd > loopStart, "the poll loop must have a body");
+  const loop = source.slice(loopStart, loopEnd + 1);
+  const arms: { line: number; text: string }[] = [];
+  for (const match of loop.matchAll(/return\s+[^;]+;/gu)) {
+    const offset = loopStart + (match.index ?? 0);
+    arms.push({ line: source.slice(0, offset).split("\n").length, text: match[0].replace(/\s+/gu, " ").trim() });
+  }
+  return arms;
+}
+
+/**
+ * THE GATE.
+ *
+ * Population: every `return` arm of the wait's poll loop, enumerated from the source and printed. Property: the
+ * outcome's `terminality` and `unreadable` are what THAT arm's own read said - an arm may hand back a payload, it may
+ * never state what the payload proves.
+ *
+ * The defect this closes hid in exactly two arms: the expiry read and the unchanged-poll read both returned the status
+ * they had just read and simultaneously said it was not terminal. A plan that finished on that last poll was then
+ * reported as unfinished, and the caller - whose whole rule is "not terminal, so run it again" - re-dispatched work
+ * that had already run. No arm may do that again, including arms nobody has written yet: the arms are read from the
+ * source, and the count assertion fails until each one is driven here.
+ */
+test("every return arm of the wait reports what its own read said", async () => {
+  const arms = waitReturnArms(await readFile(waitSourcePath, "utf8"));
+  const printed = arms.map((arm) => `line ${arm.line}: ${arm.text}`).join("; ");
+  assert.ok(arms.length > 0, "the wait has no return arm to examine");
+  for (const arm of arms)
+    assert.doesNotMatch(
+      arm.text,
+      /\b(?:true|false)\b/u,
+      `line ${arm.line} states the outcome itself instead of reading it: ${arm.text}`,
+    );
+
+  const settledPlan = () => ({
+    code: "found",
+    snapshot: { programId: "p1", state: "succeeded", nodes: [{ nodeId: "n1", state: "succeeded" }] },
+  });
+  // The Mod's own answer to a request it could not read: a plan state in no sense at all.
+  const unreadablePlan = () => ({ code: "invalid_input", snapshot: null });
+
+  const cases: readonly Readonly<{
+    arm: number;
+    label: string;
+    waitMs: number;
+    first: unknown;
+    answer: (read: number) => unknown;
+    reads: number;
+    sleeps: number;
+  }>[] = [
+    {
+      arm: 1,
+      label: "the bound was already spent and that last read finished the plan",
+      waitMs: 0,
+      first: active(["running"]),
+      answer: () => settledPlan(),
+      reads: 1,
+      sleeps: 0,
+    },
+    {
+      arm: 1,
+      label: "the bound was already spent and the plan is still running",
+      waitMs: 0,
+      first: active(["running"]),
+      answer: () => active(["running"]),
+      reads: 1,
+      sleeps: 0,
+    },
+    {
+      arm: 2,
+      label: "eight quiet polls, and the ninth read finished the plan",
+      waitMs: 30_000,
+      first: active(["awaiting_host_admission"]),
+      answer: (read) => (read < 9 ? active(["awaiting_host_admission"]) : settledPlan()),
+      reads: 9,
+      sleeps: 8,
+    },
+    {
+      arm: 2,
+      label: "eight quiet polls, and the ninth read is an answer nobody can classify",
+      waitMs: 30_000,
+      first: active(["awaiting_host_admission"]),
+      answer: (read) => (read < 9 ? active(["awaiting_host_admission"]) : unreadablePlan()),
+      reads: 9,
+      sleeps: 8,
+    },
+    {
+      arm: 3,
+      label: "the plan settled inside the window",
+      waitMs: 5_000,
+      first: active(["running"]),
+      answer: (read) => (read < 3 ? active(["running"]) : settledPlan()),
+      reads: 3,
+      sleeps: 3,
+    },
+    {
+      arm: 4,
+      label: "the bound ran out with the plan still running",
+      waitMs: 1_000,
+      first: active(["running"]),
+      answer: () => active(["running"]),
+      reads: 4,
+      sleeps: 4,
+    },
+    {
+      arm: 4,
+      label: "the bound ran out on an answer that says nothing about the plan",
+      waitMs: 1_000,
+      first: unreadablePlan(),
+      answer: () => unreadablePlan(),
+      reads: 4,
+      sleeps: 4,
+    },
+  ];
+
+  const covered = new Set<number>();
+  for (const entry of cases) {
+    const clock = fakeTime();
+    let reads = 0;
+    let sleeps = 0;
+    const outcome = await waitForTerminalProgramStatus(
+      async () => entry.answer((reads += 1)),
+      entry.first,
+      entry.waitMs,
+      clock.now,
+      async (milliseconds) => {
+        sleeps += 1;
+        clock.advance(milliseconds);
+      },
+    );
+    // Which arm fired is observable from what the call did, not from what it says about itself.
+    assert.equal(reads, entry.reads, `${entry.label}: read ${String(reads)} times`);
+    assert.equal(sleeps, entry.sleeps, `${entry.label}: slept ${String(sleeps)} times`);
+    const ownRead = programStatusTerminality(outcome.result);
+    assert.equal(
+      outcome.waited.terminality,
+      ownRead.terminality,
+      `${entry.label}: the flag must be what the last read said`,
+    );
+    assert.equal(
+      outcome.waited.unreadable,
+      ownRead.unreadable,
+      `${entry.label}: and it must name what it could not read`,
+    );
+    covered.add(entry.arm);
+  }
+  assert.deepEqual(
+    [...covered].sort((left, right) => left - right),
+    arms.map((_, index) => index + 1),
+    `the wait has ${String(arms.length)} return arms (${printed}) and this gate drove ${String(covered.size)}`,
+  );
+});
+
+/**
+ * THE CALLER, in its own words: re-dispatch whenever the wait did not prove settlement.
+ *
+ * This is the decision the outcome exists for, and it is why "I could not tell" could not keep wearing `false`: a plan
+ * that finished on the last poll of a spent bound came back as "not terminal", and a farm action that had already run
+ * was run a second time.
+ */
+test("a plan that finished on the last poll is not dispatched a second time", async () => {
+  const clock = fakeTime();
+  let dispatches = 0;
+  const dispatch = () => {
+    dispatches += 1;
+    return active(["running"]);
+  };
+  const first = dispatch();
+  const outcome = await waitForTerminalProgramStatus(
+    async () => ({
+      code: "found",
+      snapshot: { programId: "p1", state: "succeeded", nodes: [{ nodeId: "n1", state: "succeeded" }] },
+    }),
+    first,
+    0,
+    clock.now,
+    async (milliseconds) => clock.advance(milliseconds),
+  );
+  if (outcome.waited.terminality !== "terminal") dispatch();
+  assert.equal(outcome.waited.terminality, "terminal", "the read it returned had already finished the plan");
+  assert.equal(dispatches, 1, "the plan ran once, so the caller had nothing to re-dispatch");
 });
 
 /**

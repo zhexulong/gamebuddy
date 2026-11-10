@@ -1763,7 +1763,10 @@ test("attested submit timeout emits exactly one program frame and is not retried
  */
 test("an expired wait reports whether the plan moved, through the real status tool", { timeout: 15_000 }, async () => {
   const requests: BridgeMessage[] = [];
-  // The Mod's answer moves once, on the SECOND status read: a plan that advanced a node during the wait.
+  // The Mod's answer moves once, AFTER the two reads the tool makes before it starts waiting: the caller's own read and
+  // the staleness re-read (`program-event-delivery.ts`). Landing the movement on the first of those put it behind the
+  // wait's starting point, so the wait saw a frozen plan and `snapshotChanged` was false - the movement has to land on
+  // a read the WAIT makes for the wait to be able to report it.
   let statusReads = 0;
   await withHelloAck(
     "farmhand_client",
@@ -1807,7 +1810,14 @@ test("an expired wait reports whether the plan moved, through the real status to
             await tools()
               .find((tool) => tool.name === name)!
               .execute("wait_outcome", params, new AbortController().signal, () => undefined)
-          ).details as { code?: string; waited?: { reachedTerminal: boolean; snapshotChanged: boolean } };
+          ).details as {
+            code?: string;
+            waited?: {
+              terminality: "terminal" | "active" | "unknown";
+              unreadable: string | null;
+              snapshotChanged: boolean;
+            };
+          };
         // The readers mount on a recorded submission, so one accepted program comes first.
         await execute("stardew_submit_action_program", {
           programId: "program_06",
@@ -1816,7 +1826,11 @@ test("an expired wait reports whether the plan moved, through the real status to
         // A short wait, not 30 s: the fact under test is WHICH answer comes back, and the deadline is the unit test's.
         const advanced = await execute("stardew_action_program_status", { programId: "program_06", waitMs: 400 });
         assert.equal(advanced.code, "found");
-        assert.equal(advanced.waited?.reachedTerminal, false, "the fixture never settles, so the wait expired");
+        assert.equal(
+          advanced.waited?.terminality,
+          "active",
+          "the fixture never settles, so the wait expired on a plan still running",
+        );
         assert.equal(advanced.waited?.snapshotChanged, true, "a node moved while the call waited");
       } finally {
         await materialized?.close();
@@ -1842,7 +1856,15 @@ test("an expired wait reports whether the plan moved, through the real status to
                 catalogRevision: 1,
                 stopEpoch: 0,
                 eventHighWater: 0,
-                nodes: [{ nodeId: "node_06", state: "running", nodeAttempt: 1, admissionAttempt: 1 }],
+                nodes: [
+                  {
+                    nodeId: "node_06",
+                    actionId: "move_to_tile",
+                    state: "running",
+                    nodeAttempt: 1,
+                    admissionAttempt: 1,
+                  },
+                ],
               },
             },
           }),
@@ -1866,7 +1888,7 @@ test("an expired wait reports whether the plan moved, through the real status to
                   {
                     nodeId: "node_06",
                     actionId: "move_to_tile",
-                    state: statusReads === 1 ? "running" : "succeeded",
+                    state: statusReads <= 2 ? "running" : "succeeded",
                     nodeAttempt: 1,
                     admissionAttempt: 1,
                   },

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   type AtomicWriteFileDependencies,
   bindWindowsStaleLockReclaimer,
@@ -21,6 +22,7 @@ import {
   withPathLock,
 } from "./path-lock.js";
 import { createTestWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.test-support.js";
+import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
 import type { WindowsStaleLockReclaimerCapability } from "./windows-stale-lock-reclaimer/internal.js";
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -110,9 +112,11 @@ async function simulateNativeReclaimer(request: SimulatedReclaimerRequest): Prom
     if (classified.kind !== "malformed" && classified.kind !== "zero") return "kept_policy_mismatch";
     if (Date.now() - Number(opened.mtimeNs / 1_000_000n) < STALE_LOCK_MS) return "kept_malformed_fresh";
   } else {
+    // A valid record names its owner, so the policy was selected by that owner's liveness and what is left to prove is
+    // the object's own stability below - never the clock. Mirroring the exe exactly is the point: a fake that still
+    // required age would hide a restart that spends five minutes failing, and one that was looser than the binary would
+    // hide a refusal the real helper makes.
     if (classified.kind !== "valid") return "kept_policy_mismatch";
-    if (Date.now() - classified.owner!.createdAtMs < STALE_LOCK_MS) return "kept_valid_fresh";
-    if (Date.now() - Number(opened.mtimeNs / 1_000_000n) < STALE_LOCK_MS) return "kept_valid_fresh";
   }
   await delay(SIMULATED_OBSERVATION_MS);
   await simulatedBeforeRecheck?.(request);
@@ -615,36 +619,104 @@ test("path lock reclaims stale malformed crash residue but never a fresh one", a
   }
 });
 
-test("path lock reclaims only a stale locally-dead valid owner and keeps live or fresh ones", async () => {
+test("path lock reclaims a dead owner's lock without an age gate, and keeps a live or a malformed one", async () => {
   bindSimulated();
   const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-owner-rule-"));
   try {
+    // THE DEFECT: the rule required OLD **and** locally dead, so a Host that crashed thirty seconds ago left a lock
+    // that was provably dead and could not be taken for another four and a half minutes - every restart in that window
+    // waited out the 10 s acquisition and threw `durable_path_lock_timeout`.
+    const young = join(directory, "young.json");
+    const youngOwner = staleOwner(999_999_999, Date.now() - 5_000);
+    await writeFile(pathLockPath(young), youngOwner, "utf8");
+    // Its mtime is NOW as well: neither age number agrees the residue is old, and neither has to.
+    assert.deepEqual(await reclaimStaleLock(pathLockPath(young)), { outcome: "reclaimed", reason: "valid_owner_dead" });
+    await assert.rejects(lstat(pathLockPath(young)), { code: "ENOENT" });
+
+    // ...and the same lock through the caller's own path: the work runs instead of the acquisition timing out.
+    const acquired = join(directory, "acquired.json");
+    await writeFile(pathLockPath(acquired), staleOwner(999_999_999, Date.now() - 5_000), "utf8");
+    let ran = false;
+    await withPathLock(
+      acquired,
+      async () => {
+        ran = true;
+      },
+      { timeoutMs: 2_000 },
+    );
+    assert.equal(ran, true, "a five-second-old lock from a dead owner no longer costs the caller its timeout");
+
+    // An aged dead owner is still reclaimed; the age gate was not the thing that made it safe.
     const dead = join(directory, "dead.json");
-    const live = join(directory, "live.json");
-    const fresh = join(directory, "fresh.json");
     await writeFile(pathLockPath(dead), staleOwner(999_999_999), "utf8");
     await makeStale(pathLockPath(dead));
-    assert.deepEqual(await reclaimStaleLock(pathLockPath(dead)), {
-      outcome: "reclaimed",
-      reason: "valid_owner_stale_and_dead",
-    });
+    assert.deepEqual(await reclaimStaleLock(pathLockPath(dead)), { outcome: "reclaimed", reason: "valid_owner_dead" });
     await assert.rejects(lstat(pathLockPath(dead)), { code: "ENOENT" });
 
-    // A stale owner whose PID is locally alive stays a barrier and never even
-    // reaches the capability: the Host dead-proof gates the selector.
-    const liveOwner = staleOwner(process.pid);
+    // A live owner stays a barrier whatever the record's age: the liveness proof is what protects it, and the dead-proof
+    // never even reaches the capability.
+    const live = join(directory, "live.json");
+    const liveOwner = staleOwner(process.pid, Date.now() - 5_000);
     await writeFile(pathLockPath(live), liveOwner, "utf8");
-    await makeStale(pathLockPath(live));
     assert.deepEqual(await reclaimStaleLock(pathLockPath(live)), { outcome: "kept", reason: "valid_owner_live" });
     assert.equal(await readFile(pathLockPath(live), "utf8"), liveOwner);
 
-    // A fresh owner stays a barrier regardless of the pid it names.
-    await writeFile(pathLockPath(fresh), staleOwner(999_999_999, Date.now()), "utf8");
-    assert.deepEqual(await reclaimStaleLock(pathLockPath(fresh)), { outcome: "kept", reason: "valid_owner_fresh" });
+    // A MALFORMED record names nobody, so age is the only evidence it can offer and a five-second-old one is still a
+    // barrier. The age gate did not disappear; it moved to the record that has nothing better to offer.
+    const malformed = join(directory, "malformed.json");
+    await writeFile(pathLockPath(malformed), "partial write", "utf8");
+    assert.deepEqual(await reclaimStaleLock(pathLockPath(malformed)), { outcome: "kept", reason: "malformed_fresh" });
+    assert.equal(await readFile(pathLockPath(malformed), "utf8"), "partial write");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+/**
+ * THE SAME RULE, THROUGH THE REAL BINARY.
+ *
+ * The simulated reclaimer above mirrors the helper, and a mirror can drift: a fake more permissive than the published
+ * exe is exactly how a green suite hides a restart that still waits five minutes. So this drives the emitted pair
+ * itself, with the same five-second-old dead owner, through the same fixed Host entry point and the same identity
+ * checks.
+ */
+test(
+  "the real helper reclaims a five-second-old dead owner's lock",
+  { skip: process.platform !== "win32" },
+  async (t) => {
+    const helperPath = fileURLToPath(
+      new URL(
+        "../native/windows-stale-lock-reclaimer/.dist/win-x64/GameBuddy.WindowsStaleLockReclaimer.exe",
+        import.meta.url,
+      ),
+    );
+    const published = await lstat(helperPath).catch(() => undefined);
+    if (published === undefined || !published.isFile() || published.isSymbolicLink()) {
+      t.skip("BLOCKED: the emitted helper pair is unavailable; the real binary's rule cannot be claimed");
+      return;
+    }
+    bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+    const directory = await mkdtemp(join(await canonicalTemporaryRoot(), "gamebuddy-path-lock-real-helper-"));
+    const lockPath = pathLockPath(join(directory, "artifact.json"));
+    const owner = (pid: number) =>
+      JSON.stringify({ token: "00000000-0000-4000-8000-000000000000", pid, createdAtMs: Date.now() - 5_000 });
+    try {
+      const deadOwner = owner(999_999_999);
+      await writeFile(lockPath, deadOwner, "utf8");
+      // Both age numbers say this residue is young; the record's named owner is what settles it, and the helper's own
+      // native liveness check must agree with the Host's before it deletes anything.
+      assert.ok(
+        Date.now() - JSON.parse(deadOwner).createdAtMs < STALE_LOCK_MS,
+        "the fixture is younger than the age bound",
+      );
+      assert.deepEqual(await reclaimStaleLock(lockPath), { outcome: "reclaimed", reason: "valid_owner_dead" });
+      await assert.rejects(lstat(lockPath), { code: "ENOENT" });
+    } finally {
+      bindSimulated();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("path lock refuses to reclaim an active writer and never deletes a reparse lock entry", async (t) => {
   bindSimulated();
@@ -783,7 +855,7 @@ test("path lock maps every native reclaim category to the typed recovery result"
         category: "reclaimed",
         policy: "stale_valid_dead",
         path: validPath,
-        expected: { outcome: "reclaimed", reason: "valid_owner_stale_and_dead" },
+        expected: { outcome: "reclaimed", reason: "valid_owner_dead" },
       },
       {
         category: "missing",

@@ -152,8 +152,8 @@ test("a read returns the record while another owner holds the lock, and still re
   try {
     const ready = record();
     await publishStardewInstallationRegistration(subject.root, null, ready);
-    // A fresh, well-formed owner that is not this process: reclaim answers `valid_owner_fresh`
-    // and the lock stays a barrier for every writer for the whole five-minute window.
+    // A well-formed owner record whose pid is not this process. A read never consults the lock, so this record is only
+    // the ambient state a real concurrent writer would leave behind; the marker and byte rules below are the subject.
     await writeForeignHeldLock(pathLockPath(subject.path));
     assert.deepEqual(await readStardewInstallationRegistration(subject.root), ready);
 

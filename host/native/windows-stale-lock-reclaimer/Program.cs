@@ -30,14 +30,18 @@ namespace GameBuddy.WindowsStaleLockReclaimer;
 /// would rebind any retained namespace component; only the current leaf name
 /// can receive a disposition through its retained HANDLE.
 ///
-/// For <c>stale_valid_dead</c> the helper itself revalidates through its
-/// retained leaf HANDLE that the owner PID is not live: strict valid owner
-/// grammar, stale <c>createdAtMs</c> and stale <c>LastWriteTime</c>, a first
-/// native liveness check, then after the bounded observation interval the same
-/// file facts and same owner bytes, and a second native liveness check for the
-/// reread owner PID immediately before disposition. Any live PID, PID check
-/// error, owner mutation or ambiguity returns a conservative kept category;
-/// PID reuse may conservatively keep a stale lock, never justify deletion.
+/// The two selectors weigh different evidence, because the two kinds of record hold different facts.
+///
+/// For <c>stale_malformed</c> nothing identifies an owner, so age is the only evidence there is: a fresh residue is
+/// kept, and only a <c>LastWriteTime</c> past the frozen stale interval, a first observation, a bounded observation
+/// window on the retained HANDLE, and a re-read that matches file ID, size, mtime, ctime and owner bytes may be
+/// deleted.
+///
+/// For <c>stale_valid_dead</c> the record NAMES its owner, so that owner's death is the evidence and no age is
+/// required: strict valid owner grammar, a first native liveness check, then after the bounded observation interval
+/// the same file facts and same owner bytes, and a second native liveness check for the reread owner PID immediately
+/// before disposition. Any live PID, PID check error, owner mutation or ambiguity returns a conservative kept
+/// category; PID reuse may conservatively keep a lock, never justify deletion.
 ///
 /// All failure modes (unavailable API, unsupported filesystem, access/share
 /// failure, malformed request, timeout, missing file, reparse point,
@@ -241,8 +245,11 @@ internal static class Program
             else
             {
                 if (owner.Kind != OwnerKind.Valid) return "kept_policy_mismatch";
-                if (!IsOldEnough(owner.CreatedAtMs!.Value)) return "kept_valid_fresh";
-                if (!IsStale(before.LastWriteTimeUtc, now)) return "kept_valid_fresh";
+                // A valid record names its owner, so the fact that decides this lock is whether that PID is still live -
+                // and death needs no age. Age is evidence for a record whose owner cannot be identified (the malformed
+                // policy above); a PID the machine has already proven gone is the evidence itself. Requiring both kept a
+                // provably dead owner's lock for the whole stale interval, which is what made a Host that crashed thirty
+                // seconds ago fail every acquisition for another four and a half minutes.
                 // First native liveness revalidation: the Host's dead-proof only
                 // selects the selector; the helper must itself prove the owner
                 // PID read through its retained HANDLE is not live.
@@ -563,19 +570,6 @@ internal static class Program
     private static bool IsStale(DateTime lastWriteUtc, DateTime nowUtc)
     {
         return nowUtc - lastWriteUtc >= TimeSpan.FromMilliseconds(StaleIntervalMs);
-    }
-
-    private static bool IsOldEnough(long createdAtMs)
-    {
-        try
-        {
-            var createdUtc = DateTimeOffset.FromUnixTimeMilliseconds(createdAtMs).UtcDateTime;
-            return DateTime.UtcNow - createdUtc >= TimeSpan.FromMilliseconds(StaleIntervalMs);
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            return false;
-        }
     }
 
     private static void WriteResponse(string result)

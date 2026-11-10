@@ -34,6 +34,13 @@ import {
 const tails = new Map<string, Promise<void>>();
 const LOCK_TIMEOUT_MS = 10_000;
 const LOCK_POLL_MS = 20;
+/**
+ * How old a record that identifies NOBODY must be before it is admitted to be residue.
+ *
+ * This is age as EVIDENCE, and it is only evidence for a malformed/zero-byte record: nobody can be asked whether they
+ * still own it, so surviving this long unchanged is the only thing left to weigh. A valid record names a pid, and that
+ * pid's death is a stronger answer than the clock - see `reclaimStaleLock`.
+ */
 const STALE_LOCK_MS = 5 * 60_000;
 
 type LockOwner = Readonly<{ token: string; pid: number; createdAtMs: number }>;
@@ -76,7 +83,7 @@ async function requestWindowsReclaimer(): Promise<WindowsStaleLockReclaimerCapab
 export type PathLockRecoveryResult = Readonly<{
   outcome: "reclaimed" | "kept" | "unsafe";
   reason:
-    | "valid_owner_stale_and_dead"
+    | "valid_owner_dead"
     | "malformed_stale_identity_stable"
     | "valid_owner_fresh"
     | "valid_owner_live"
@@ -346,9 +353,10 @@ async function acquireFileLock(
     } catch (error) {
       if (!isNodeError(error) || error.code !== "EEXIST") throw error;
       // Never parse or reclaim a lock through a link/reparse point. A
-      // malformed regular owner remains a barrier while fresh; only a stale,
-      // identity-stable regular file or an old locally-dead valid owner can be
-      // reclaimed, and only by reclaimStaleLock's evidence-based decision.
+      // malformed regular owner remains a barrier while fresh; a malformed
+      // residue is presented to the helper only after the frozen age interval,
+      // and a valid owner only after this process proved its pid is not alive.
+      // Both are then decided by reclaimStaleLock's evidence-based rule.
       await verifyLeaf(lockPath);
       const recovery = await reclaimStaleLock(lockPath);
       if (recovery.outcome === "unsafe") throw new Error("unsafe_path_boundary");
@@ -481,17 +489,39 @@ function assertContained(path: string, root: string | undefined): void {
  * is a deep-module behavior, not a per-store cleanup: no durable Chat mutation
  * may rm a lock path itself.
  *
+ * The rule is one question per kind of record, and the two kinds are not
+ * interchangeable:
+ *
+ * - A VALID owner record names its owner, so the machine can check the fact
+ *   that decides the lock: is that pid alive? A pid that is provably not alive
+ *   means the owner died without releasing, and that death is the evidence -
+ *   no age is required and none is available. Age used to be required here as
+ *   well, which meant a Host that crashed thirty seconds ago left a lock that
+ *   was provably dead and could not be reclaimed for another four and a half
+ *   minutes: every restart in that window waited out `LOCK_TIMEOUT_MS` and
+ *   threw `durable_path_lock_timeout`. A slow-but-alive owner is protected by
+ *   the liveness answer, not by the clock, and a reused pid also reads as
+ *   alive, so the only effect the age gate ever had was to keep dead locks.
+ * - A MALFORMED/zero-byte record identifies nobody, so age is the ONLY evidence
+ *   available and the frozen stale interval is what makes it admit it is
+ *   residue; a fresh malformed lock stays a barrier. It is then the helper that
+ *   must further prove identity stability across its own observation window.
+ *
+ * The helper independently re-reads both kinds through its retained HANDLE, so
+ * nothing here is a statement the helper takes on trust:
+ *
  * - A malformed/zero-byte owner record is a barrier while the file is fresh.
- * - After the frozen stale interval, the helper receives only the frozen
+ *   After the frozen stale interval, the helper receives only the frozen
  *   `stale_malformed` selector; it independently opens the leaf no-follow,
  *   classifies the owner bytes through its retained HANDLE, waits the bounded
  *   frozen observation interval on that same HANDLE, re-queries file ID, size,
  *   mtime and ctime, re-reads the owner bytes, re-checks that the path still
  *   names the opened object, and only then applies a handle-bound disposition.
- * - A valid owner record keeps the existing rule: only old plus locally dead
- *   owners are candidates, selected as `stale_valid_dead`. The local dead-proof
- *   is only a policy predicate for choosing that selector, never identity
- *   evidence; the helper's opened-handle facts must agree with the selector.
+ * - A valid owner record is selected as `stale_valid_dead` on the local
+ *   dead-proof alone. That proof is only a policy predicate for choosing the
+ *   selector, never identity evidence; the helper's opened-handle facts must
+ *   agree with the selector, and the helper runs its own native liveness check
+ *   before and after its observation window.
  * - On non-Windows, when no capability is bound, or on any unavailable,
  *   unsupported or ambiguous helper outcome, the lock is kept and the caller
  *   fails closed. There is no POSIX stale reclaim.
@@ -504,14 +534,12 @@ export async function reclaimStaleLock(lockPath: string): Promise<PathLockRecove
   if (owner === "disappeared") return recoveryResult("kept", "lock_disappeared");
   let policy: WindowsStaleLockReclaimPolicy;
   if (owner !== null) {
-    if (Date.now() - owner.createdAtMs < STALE_LOCK_MS) return recoveryResult("kept", "valid_owner_fresh");
     if (processAlive(owner.pid)) return recoveryResult("kept", "valid_owner_live");
-    if (!staleByMtime(first)) return recoveryResult("kept", "valid_owner_fresh");
     policy = "stale_valid_dead";
   } else {
     // Malformed or zero-byte ownership: never infer an owner PID from the
-    // bytes. Only a stale, unchanged regular file may even be presented to the
-    // helper; a fresh residue stays a barrier.
+    // bytes, so age is the only evidence this record can offer. A fresh residue
+    // stays a barrier.
     if (!staleByMtime(first)) return recoveryResult("kept", "malformed_fresh");
     policy = "stale_malformed";
   }
@@ -563,13 +591,16 @@ function mapReclaimCategory(
     case "reclaimed":
       return recoveryResult(
         "reclaimed",
-        policy === "stale_valid_dead" ? "valid_owner_stale_and_dead" : "malformed_stale_identity_stable",
+        policy === "stale_valid_dead" ? "valid_owner_dead" : "malformed_stale_identity_stable",
       );
     case "missing":
       return recoveryResult("kept", "lock_disappeared");
     case "kept_malformed_fresh":
       return recoveryResult("kept", "malformed_fresh");
     case "kept_valid_fresh":
+      // Still part of the frozen wire vocabulary, so it is still mapped: a
+      // helper that applied an age gate of its own would answer this, and an
+      // unmapped category would become an untyped `undefined` outcome.
       return recoveryResult("kept", "valid_owner_fresh");
     case "kept_policy_mismatch":
       return recoveryResult("kept", "identity_changed_during_observation");
