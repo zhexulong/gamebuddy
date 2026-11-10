@@ -93,7 +93,7 @@ public sealed class ChopTreeSwingOutcomeSourceShapeTests
         // own still-standing answer (Tree.cs:587), read here as its negation.
         Match exclusion = Regex.Match(
             controller,
-            @"private static string\? TreeChopSourceExclusion\([^)]*\)[\s\S]*?\n    \}",
+            @"(?:private|internal) static string\? TreeChopSourceExclusion\([^)]*\)[\s\S]*?\n    \}",
             RegexOptions.None,
             TimeSpan.FromSeconds(2));
         exclusion.Success.Should().BeTrue("the chop-source predicate and its reason must be one decision");

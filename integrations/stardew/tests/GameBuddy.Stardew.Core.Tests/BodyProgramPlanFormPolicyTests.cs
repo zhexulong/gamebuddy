@@ -166,6 +166,10 @@ public sealed class BodyProgramPlanFormPolicyTests
         // whether the family is derivable or not, and no test in this file depends on which.
         public bool CanNameFamily(string family) => false;
 
+        // ...and no reason either: an unexamined family is the gap the Mod's own drift gate fails on, and this stub is not
+        // a table of facts about families.
+        public string? RowIdentityRefusalFor(string family) => null;
+
         public bool IsActionEnabled(string actionId) => string.Equals(actionId, this.enabled, StringComparison.Ordinal);
 
         public bool StopRequested => false;

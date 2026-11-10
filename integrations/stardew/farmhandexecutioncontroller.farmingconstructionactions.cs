@@ -1536,6 +1536,24 @@ internal sealed partial class ExecutionManager
         return null;
     }
 
+    /// <summary>
+    /// The identity `debrisTargets` publishes for the resource clump ANCHORED on one tile, or null when no clump starts
+    /// there.
+    ///
+    /// The family's row is per clump, and a clump is named by its position in `location.resourceClumps` and its anchor
+    /// tile (`<see cref="FindDebrisTarget"/>` resolves a request the same way), so a tile inside a footprint but not on its
+    /// anchor has no row of this family - which is a different fact from a tile nothing stands on.
+    /// </summary>
+    internal static string? DebrisTargetIdAt(StardewValley.GameLocation location, int x, int y)
+    {
+        for (int index = 0; index < location.resourceClumps.Count; index++)
+        {
+            StardewValley.TerrainFeatures.ResourceClump clump = location.resourceClumps[index];
+            if ((int)clump.Tile.X == x && (int)clump.Tile.Y == y) return BuildDebrisTargetId(location, index, clump);
+        }
+        return null;
+    }
+
     private static string BuildDebrisTargetId(StardewValley.GameLocation location, int index, StardewValley.TerrainFeatures.ResourceClump clump)
     {
         string raw = $"{location.NameOrUniqueName}:{index}:{(int)clump.Tile.X},{(int)clump.Tile.Y}:{clump.parentSheetIndex.Value}:{clump.width.Value}x{clump.height.Value}";

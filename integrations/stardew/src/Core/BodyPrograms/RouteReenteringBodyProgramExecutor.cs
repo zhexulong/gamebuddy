@@ -636,12 +636,16 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 : world.TargetIdFor(family, rowX, rowY, target.Arguments);
             if (targetId is not { Length: > 0 })
             {
-                // TWO FACTS, TWO WORDS. The family the descriptor names is the one the snapshot publishes, verbatim
+                // THREE FACTS, THREE WORDS. The family the descriptor names is the one the snapshot publishes, verbatim
                 // (`FarmhandForEachFamilyDriftTests` is the gate on that spelling), so this refusal cannot be read as a
-                // case mismatch - and a row over a tile that carries nothing says so instead of blaming the family.
+                // case mismatch - and a row over a tile that carries nothing says so instead of blaming the family. A
+                // family the pass cannot address at all carries ITS OWN stated reason ("not a tile", "no reader for that
+                // tile"); only a family nothing has examined falls through to the generic word, which the drift gate turns
+                // red rather than the row.
+                string? refusal = family is null ? null : world.RowIdentityRefusalFor(family);
                 reasonCode = family is not null && world.CanNameFamily(family)
                     ? $"row_target_absent:{actionId}:{family}"
-                    : $"row_target_identity_unavailable:{actionId}:{family ?? NoTargetFamily}";
+                    : $"{refusal ?? IdentityUnavailableRefusal}:{actionId}:{family ?? NoTargetFamily}";
                 return false;
             }
             values[ExpectedTargetIdArgument] = new BodyProgramCanonicalValue(BodyProgramArgumentKind.String, targetId);
@@ -834,6 +838,13 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
 
     /// <summary>What the identity refusal names when the action declares no target family at all.</summary>
     private const string NoTargetFamily = "none";
+
+    /// <summary>
+    /// The refusal a family the pass has never examined answers - the unexamined gap, never a verdict about the family.
+    /// `FarmhandForEachFamilyDriftTests` fails on that family by name, so the gap is closed where the population is derived
+    /// rather than per refused row.
+    /// </summary>
+    private const string IdentityUnavailableRefusal = "row_target_identity_unavailable";
 
     private const string PassIncompleteReason = "for_each_pass_incomplete";
 

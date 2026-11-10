@@ -73,6 +73,25 @@ public interface IFarmhandForEachWorld
     /// </summary>
     bool CanNameFamily(string family);
 
+    /// <summary>
+    /// Why this pass cannot name a tile under <paramref name="family"/>, as the reason-code stem a row reports - or null
+    /// when the pass mints that family, and null for a family no table in it has ever examined.
+    ///
+    /// <para>
+    /// A FAMILY THIS PASS CANNOT NAME IS NOT ONE FACT. A family whose rows are not map tiles at all (a station, a shop, a
+    /// recipe, a person) and a family whose rows ARE tiles this pass has no reader for are both unanswerable - and a reader
+    /// deciding whether to write the loop again needs to know which one it hit, without either of them reading as "this
+    /// tile carries nothing" (<c>row_target_absent</c>).
+    /// </para>
+    /// <para>
+    /// NULL IS THE UNEXAMINED GAP, never a verdict: a family in no table of the implementation answers the generic
+    /// `row_target_identity_unavailable`, and `FarmhandForEachFamilyDriftTests` fails on that family by name so the gap is
+    /// closed where the population is derived rather than per refused row.
+    /// </para>
+    /// </summary>
+    /// <param name="family">The `targetFamily` the action's own descriptor declares.</param>
+    string? RowIdentityRefusalFor(string family);
+
     /// <summary>Whether the live action policy enables this action right now.</summary>
     bool IsActionEnabled(string actionId);
 

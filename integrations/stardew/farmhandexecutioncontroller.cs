@@ -3575,7 +3575,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// branch is the engine's own refusal, cited on its token in <see cref="DiscoveryExclusionReasons"/>.
     /// </para>
     /// </summary>
-    private static string? TreeChopSourceExclusion(StardewValley.TerrainFeatures.Tree tree)
+    internal static string? TreeChopSourceExclusion(StardewValley.TerrainFeatures.Tree tree)
     {
         if (tree.stump.Value) return DiscoveryExclusionReasons.Stump;
         if (tree.growthStage.Value < StardewValley.TerrainFeatures.Tree.treeStage) return DiscoveryExclusionReasons.NotGrown;
@@ -3874,7 +3874,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return result;
     }
 
-    private static string BuildGrassTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Grass grass)
+    internal static string BuildGrassTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Grass grass)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:grass:{grass.grassType.Value}:{grass.numberOfWeeds.Value}";
         return $"grass_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -3932,7 +3932,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private static bool IsScytheTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, 1);
 
-    private static string BuildWeedTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.Object weed)
+    internal static string BuildWeedTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.Object weed)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:weed:{weed.QualifiedItemId}:{weed.MinutesUntilReady}";
         return $"weed_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -3946,7 +3946,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     internal const string DeadCropHarvestItemId = "none";
 
-    private static string BuildScytheCropTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.Crop crop)
+    internal static string BuildScytheCropTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.Crop crop)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:scythe-crop:{crop.netSeedIndex.Value ?? crop.indexOfHarvest.Value}";
         return $"scythe_crop_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -3958,7 +3958,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"tree_sapling_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static string BuildTreeStumpTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
+    internal static string BuildTreeStumpTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:tree-stump:{tree.treeType.Value}";
         return $"tree_stump_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -4189,7 +4189,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// mutates `minutesUntilReady` in place (`Pickaxe.cs:140`), never the object's identity - so the identity must not
     /// move when the health does. The published `health` field carries the durability for the Agent to read.
     /// </remarks>
-    private static string BuildRockSourceTargetId(GameLocation location, int x, int y, StardewValley.Object rock)
+    internal static string BuildRockSourceTargetId(GameLocation location, int x, int y, StardewValley.Object rock)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:{rock.QualifiedItemId}";
         return $"rock_source_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -4976,6 +4976,38 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     : string.Equals(targetId, expectedTargetId, StringComparison.Ordinal);
                 if (matched)
                     return (debris, debrisIndex, chunkIndex, chunk, targetId, qualifiedItemId, Math.Max(1, debris.item?.Stack ?? 1));
+                chunkIndex++;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The identity `itemTargets` publishes for the ground chunk lying on ONE tile, or null when no chunk of a pickable
+    /// kind is there.
+    ///
+    /// <para>
+    /// THE SAME THREE FACTS THE PUBLISHER READS, and the same builder: `DiscoverItemTargets` walks `location.debris`, skips
+    /// the debris that carries no item, and names each chunk by `debrisIndex`/`chunkIndex`/item through
+    /// <see cref="BuildItemTargetId"/>. The radius and the row cap are PUBLICATION limits - how many rows one observation
+    /// may carry - not part of what the chunk is called, so they are deliberately absent here: a loop over an area asks
+    /// about a tile it has already decided to work, and an id withheld by a radius would make `pickup_item` report
+    /// `item_target_changed` on a chunk it published perfectly well from closer up.
+    /// </para>
+    /// </summary>
+    internal static string? GroundItemTargetIdAt(StardewValley.GameLocation location, int x, int y)
+    {
+        for (int debrisIndex = 0; debrisIndex < location.debris.Count; debrisIndex++)
+        {
+            Debris debris = location.debris[debrisIndex];
+            string? qualifiedItemId = debris.item?.QualifiedItemId ?? debris.itemId.Value;
+            if (string.IsNullOrWhiteSpace(qualifiedItemId) || debris.Chunks.Count == 0 || debris.debrisType.Value is not (Debris.DebrisType.OBJECT or Debris.DebrisType.RESOURCE))
+                continue;
+            int chunkIndex = 0;
+            foreach (Chunk chunk in debris.Chunks)
+            {
+                Point tile = GetChunkTile(chunk);
+                if (tile.X == x && tile.Y == y) return BuildItemTargetId(location, debrisIndex, chunkIndex, debris, qualifiedItemId);
                 chunkIndex++;
             }
         }

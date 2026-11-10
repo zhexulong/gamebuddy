@@ -1311,6 +1311,17 @@ public sealed class TargetFamilyCompletenessTests
                     this.PlaceWaterableCrop(x: 2, y: 3);
                     this.StandAt(2, 2);
                     break;
+                case "harvestTargets":
+                    this.PlaceHarvestableCrop(x: 2, y: 3);
+                    this.StandAt(2, 2);
+                    break;
+                case "seedTargets":
+                    // A seed row is one per (held stack, tile): the stack supplies the item, the slot names it, and the
+                    // empty hoedirt is the tile the family offers for it.
+                    this.PutInPackSlot(0, "(O)472", 1, category: -74);
+                    this.PlaceEmptyHoeDirt(x: 3, y: 2);
+                    this.StandAt(2, 2);
+                    break;
                 case "itemTargets":
                     this.PlaceGroundDrop(x: 2, y: 3, qualifiedItemId: "(O)24");
                     this.StandAt(2, 2);
@@ -1399,6 +1410,7 @@ public sealed class TargetFamilyCompletenessTests
             "harvestTargets" => "DiscoverHarvestTargets",
             "itemTargets" => "DiscoverItemTargets",
             "forageTargets" => "DiscoverForageTargets",
+            "seedTargets" => "DiscoverSeedTargets",
             "clearHoeDirtTargets" => "DiscoverClearHoeDirtTargets",
             "scytheCropTargets" => "DiscoverScytheCropTargets",
             "shakeTreeTargets" => "DiscoverShakeTreeTargets",
@@ -1486,7 +1498,7 @@ public sealed class TargetFamilyCompletenessTests
         /// `ItemId` clears the qualified cache, so the qualified value is written AFTER it; a process without a content
         /// manager has no `Data/Objects` row to resolve one from, and the projections compare the qualified id.
         /// </summary>
-        private static StardewValley.Object PlacedObject(string qualifiedItemId, string? name, int category)
+        internal static StardewValley.Object PlacedObject(string qualifiedItemId, string? name, int category)
         {
             var item = new StardewValley.Object();
             if (name is not null) item.Name = name;
