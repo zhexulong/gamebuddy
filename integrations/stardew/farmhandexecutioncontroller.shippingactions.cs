@@ -61,7 +61,8 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
 
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is not (Farm or StardewValley.Locations.IslandWest))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required", null);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required",
+                $"location={(Game1.player?.currentLocation?.NameOrUniqueName ?? "none")}");
         // Shared mechanical admission (identity → actionability → deadline →
         // body exclusivity), behavior-equivalent to the inline sequence it
         // replaced: identical reasonCodes, identical order. Geometry, target
@@ -123,7 +124,8 @@ internal sealed partial class ExecutionManager
     private LocalExecutionReceipt ExecuteShipItem(string executionId, string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
         if (Game1.player.currentLocation is not (Farm or StardewValley.Locations.IslandWest))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required", null);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required",
+                $"location={Game1.player.currentLocation.NameOrUniqueName}");
         if (ResolveShippingBin(Game1.player) is not ResolvedShippingBin bin)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "shipping_bin_unavailable", $"location={Game1.player.currentLocation.NameOrUniqueName}");
         if (!string.Equals(bin.TargetId, expectedTargetId, StringComparison.Ordinal))

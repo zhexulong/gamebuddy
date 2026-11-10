@@ -46,7 +46,8 @@ internal sealed partial class ExecutionManager
         this.revision++;
 
         if (request.Args.Emote is null || !EmoteMap.TryGetValue(request.Args.Emote, out int emoteIndex))
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "invalid_emote", null);
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "invalid_emote",
+                $"emote={request.Args.Emote ?? "none"}");
 
         if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason, null);

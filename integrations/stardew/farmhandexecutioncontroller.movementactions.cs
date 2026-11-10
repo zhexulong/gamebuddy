@@ -81,14 +81,17 @@ internal sealed partial class ExecutionManager
 
         if (!IsFiniteTile(targetTile) || targetTile.X != MathF.Floor(targetTile.X) || targetTile.Y != MathF.Floor(targetTile.Y)
             || targetTile.X < 0 || targetTile.Y < 0 || targetTile.X > 1000 || targetTile.Y > 1000)
-            return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "invalid_target_tile", null);
+            return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "invalid_target_tile",
+                $"tile={targetTile.X.ToString(CultureInfo.InvariantCulture)},{targetTile.Y.ToString(CultureInfo.InvariantCulture)}");
 
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         long deadlineMs = requestedDeadlineMs ?? nowMs + DefaultDeadlineTicks * 1000L / 60L;
         if (deadlineMs <= nowMs)
-            return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "deadline_expired", null);
+            return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "deadline_expired",
+                $"deadline={deadlineMs};now={nowMs}");
         if (deadlineMs > nowMs + TimeSpan.FromMinutes(1).TotalMilliseconds)
-            return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "invalid_deadline", null);
+            return this.RememberTerminal(requestId, Guid.NewGuid().ToString("N"), ExecutionState.Rejected, "invalid_deadline",
+                $"deadline={deadlineMs};now={nowMs};ceiling={nowMs + (long)TimeSpan.FromMinutes(1).TotalMilliseconds}");
 
         // A newer accepted directive supersedes the earlier local directive.
         // The controller is still the sole body owner: it first records a
@@ -1449,7 +1452,8 @@ internal sealed partial class ExecutionManager
         this.navigationExecutionIds.Add(executionId);
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (deadlineMs <= nowMs || deadlineMs > nowMs + TimeSpan.FromMinutes(10).TotalMilliseconds)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline",
+                $"deadline={deadlineMs};now={nowMs};ceiling={nowMs + (long)TimeSpan.FromMinutes(10).TotalMilliseconds}");
 
         if (this.activeNavigate is not null
             || this.active is not null
@@ -1581,7 +1585,8 @@ internal sealed partial class ExecutionManager
         this.revision++;
 
         if (request.Args.Direction is null || !DirectionMap.TryGetValue(request.Args.Direction, out int directionInt))
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "invalid_direction", null);
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "invalid_direction",
+                $"direction={request.Args.Direction ?? "none"}");
 
         if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason, null);

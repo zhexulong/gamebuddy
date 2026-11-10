@@ -1559,6 +1559,10 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
             "inventory_slots_after",
             "inventory_units_before",
             "inventory_units_after",
+            "tool_selected",
+            "tool_before",
+            "slot_before",
+            "tool_restored",
           ],
           (e) => {
             const before = integerEvidenceValue(e.times_panned_before);
@@ -1566,6 +1570,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
             return (
               validSlot(e.slot) &&
               hasOpaqueEvidenceValue(e.tool) &&
+              hasToolSelectionEvidence(e, "pan") &&
               hasTileEvidenceValue(e.tile) &&
               hasBoundedNonemptyEvidenceValue(e.location) &&
               // The panning site is a live, non-zero tile before the pan (the admission refuses
@@ -1839,12 +1844,18 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
             "stamina_after",
             "stamina_delta",
             "expected_stamina_cost",
+            "tool_selected",
+            "slot",
+            "tool_before",
+            "slot_before",
+            "tool_restored",
           ],
           (e) =>
             hasOpaqueIdEvidenceValue(e.target) &&
             e.type === "tree_stump" &&
             hasOpaqueEvidenceValue(e.tree) &&
             e.tool === "axe" &&
+            hasToolSelectionEvidence(e, "axe") &&
             integerEvidenceValue(e.tool_level) !== null &&
             finiteEvidenceValue(e.health_before) !== null &&
             hasBoundedNonemptyEvidenceValue(e.health_after) &&
@@ -2172,6 +2183,11 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
             "stamina_delta",
             "expected_stamina_cost",
             "native_scythe",
+            "tool_selected",
+            "slot",
+            "tool_before",
+            "slot_before",
+            "tool_restored",
           ],
           (e) => {
             const before = integerEvidenceValue(e.debris_before);
@@ -2180,6 +2196,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
             return (
               hasOpaqueIdEvidenceValue(e.target) &&
               hasBoundedNonemptyEvidenceValue(e.crop) &&
+              hasToolSelectionEvidence(e, "scythe") &&
               // A harvest must name the produce it dropped; a clear must name that there is none, because a dead
               // crop yields nothing and "none" is the receipt's own word for that absence.
               (cleared ? e.harvested_item === "none" : hasOpaqueEvidenceValue(e.harvested_item)) &&
@@ -2733,6 +2750,11 @@ function hasWateringToolCompletionEvidence(detail: string): boolean {
     "stamina_delta",
     "expected_stamina_cost",
     "native_menu_opened",
+    "tool_selected",
+    "slot",
+    "tool_before",
+    "slot_before",
+    "tool_restored",
   ];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
@@ -2742,6 +2764,7 @@ function hasWateringToolCompletionEvidence(detail: string): boolean {
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
     hasOpaqueIdEvidenceValue(evidence.target) &&
     hasTileEvidenceValue(evidence.tile) &&
+    hasToolSelectionEvidence(evidence, "watering_can") &&
     evidence.before_watered === "false" &&
     evidence.after_watered === "true" &&
     before !== null &&
@@ -2926,12 +2949,17 @@ function hasTillSoilCompletionEvidence(detail: string): boolean {
   const expectedKeys = [
     "location",
     "target",
+    "tool_selected",
+    "slot",
+    "tool_before",
+    "slot_before",
     "before",
     "after",
     "stamina_before",
     "stamina_after",
     "stamina_delta",
     "expected_stamina_cost",
+    "tool_restored",
   ];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
@@ -2939,6 +2967,7 @@ function hasTillSoilCompletionEvidence(detail: string): boolean {
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
     evidence.location !== "none" &&
     hasTileEvidenceValue(evidence.target) &&
+    hasToolSelectionEvidence(evidence, "hoe") &&
     evidence.before === "none" &&
     evidence.after === "HoeDirt" &&
     hasStaminaConservationEvidence(evidence)
@@ -3065,6 +3094,10 @@ function hasDigArtifactSpotCompletionEvidence(detail: string): boolean {
     "hoedirt_present_before",
     "hoedirt_present_after",
     "source_removed",
+    "tool_selected",
+    "tool_before",
+    "slot_before",
+    "tool_restored",
   ];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
@@ -3075,6 +3108,7 @@ function hasDigArtifactSpotCompletionEvidence(detail: string): boolean {
     hasOpaqueIdEvidenceValue(evidence.result_target) &&
     hasTileEvidenceValue(evidence.tile) &&
     evidence.tool === "hoe" &&
+    hasToolSelectionEvidence(evidence, "hoe") &&
     slot !== null &&
     slot >= 0 &&
     slot <= 36 &&
@@ -3106,6 +3140,10 @@ function hasRefillWateringCanCompletionEvidence(detail: string): boolean {
     "stamina_after",
     "stamina_delta",
     "expected_stamina_cost",
+    "tool_selected",
+    "tool_before",
+    "slot_before",
+    "tool_restored",
   ];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
@@ -3116,6 +3154,7 @@ function hasRefillWateringCanCompletionEvidence(detail: string): boolean {
     hasOpaqueIdEvidenceValue(evidence.target) &&
     hasOpaqueEvidenceValue(evidence.can) &&
     validSlot(evidence.slot) &&
+    hasToolSelectionEvidence(evidence, "watering_can") &&
     before !== null &&
     after !== null &&
     max !== null &&
@@ -3235,6 +3274,10 @@ function hasClearHoeDirtCompletionEvidence(detail: string): boolean {
     "stamina_after",
     "stamina_delta",
     "expected_stamina_cost",
+    "tool_selected",
+    "tool_before",
+    "slot_before",
+    "tool_restored",
   ];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
@@ -3244,6 +3287,7 @@ function hasClearHoeDirtCompletionEvidence(detail: string): boolean {
     hasOpaqueIdEvidenceValue(evidence.target) &&
     hasTileEvidenceValue(evidence.tile) &&
     evidence.tool === "pickaxe" &&
+    hasToolSelectionEvidence(evidence, "pickaxe") &&
     slot !== null &&
     slot >= 0 &&
     slot <= 36 &&
@@ -3372,6 +3416,10 @@ function hasChopTreeSourceCompletionEvidence(detail: string): boolean {
     "stamina_after",
     "stamina_delta",
     "expected_stamina_cost",
+    "tool_selected",
+    "tool_before",
+    "slot_before",
+    "tool_restored",
   ];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
     return false;
@@ -3385,6 +3433,7 @@ function hasChopTreeSourceCompletionEvidence(detail: string): boolean {
     hasOpaqueIdEvidenceValue(evidence.target) &&
     evidence.tool === "axe" &&
     validSlot(evidence.slot) &&
+    hasToolSelectionEvidence(evidence, "axe") &&
     hasBoundedNonemptyEvidenceValue(evidence.tree) &&
     healthBefore !== null &&
     healthBefore > 0 &&

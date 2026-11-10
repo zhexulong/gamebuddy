@@ -417,7 +417,7 @@ test("Stardew refill completion evidence requires exact, internally consistent s
     reasonCode: "watering_can_refilled",
     evidence: {
       detail:
-        "target=watering_can_refill_1234;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40;stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0",
+        "target=watering_can_refill_1234;can=(T)WateringCan;water_before=39;water_after=40;water_max=40;stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0;tool_selected=watering_can;slot=4;tool_before=none;slot_before=0;tool_restored=none",
     },
   } as const;
   assert.equal(
@@ -516,7 +516,7 @@ test("Stardew clear-hoedirt completion evidence requires exact removal fields", 
     reasonCode: "hoedirt_cleared",
     evidence: {
       detail:
-        "location=Farm;target=hoedirt_1234;tile=10,12;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+        "location=Farm;target=hoedirt_1234;tile=10,12;tool=pickaxe;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_selected=pickaxe;slot=4;tool_before=none;slot_before=0;tool_restored=none",
     },
   } as const;
   assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("clear_hoedirt", valid), true);
@@ -562,7 +562,7 @@ test("Stardew chop-tree-source completion evidence requires the felled tree plus
     reasonCode: "tree_source_chopped",
     evidence: {
       detail:
-        "target=tree_chop_1234;tool=axe;slot=4;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=100;stamina_after=80;stamina_delta=-20;expected_stamina_cost=20",
+        "target=tree_chop_1234;tool=axe;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=100;stamina_after=80;stamina_delta=-20;expected_stamina_cost=20;tool_selected=axe;slot=4;tool_before=none;slot_before=0;tool_restored=none",
     },
   } as const;
   assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("chop_tree", valid), true);

@@ -107,7 +107,8 @@ internal sealed partial class ExecutionManager
         };
         SleepAndAdvanceDayLifecycle? lifecycle = SleepAndAdvanceDayLifecycle.TryStart(this.monitor, config);
         if (lifecycle is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "lifecycle_configuration_invalid", null);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "lifecycle_configuration_invalid",
+                $"enable={config.Enable};timeout_seconds={config.TimeoutSeconds};settle_frames={config.SettleFrameBudget};minimum_online_farmers={config.MinimumOnlineFarmers}");
 
         this.activeDayAdvance = new ActiveDayAdvance(executionId, requestId, lifecycle);
         LocalExecutionReceipt accepted = new(

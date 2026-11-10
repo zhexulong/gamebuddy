@@ -195,7 +195,8 @@ internal sealed partial class ExecutionManager
         Horse? horse = ResolveHorseTarget(location, expectedTargetId);
         if (horse is null) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "horse_target_unavailable", $"target={expectedTargetId}");
         if (Game1.player.CurrentItem is StardewValley.Objects.Hat || Game1.player.CurrentItem?.QualifiedItemId == "(O)Carrot")
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "horse_interaction_item_interference", null);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "horse_interaction_item_interference",
+                $"held={(Game1.player.CurrentItem?.QualifiedItemId ?? "none")}");
         // 5.2: out of the native Chebyshev-1 radius, walk in rather than refuse. The horse stands on the map the actor
         // is already on; identity, reach and hands are re-read on arrival because the walk takes ticks and the horse
         // keeps walking.
@@ -219,7 +220,8 @@ internal sealed partial class ExecutionManager
         Horse? horse = ResolveHorseTarget(location, expectedTargetId);
         if (horse is null) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "horse_target_unavailable", $"target={expectedTargetId}");
         if (Game1.player.CurrentItem is StardewValley.Objects.Hat || Game1.player.CurrentItem?.QualifiedItemId == "(O)Carrot")
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "horse_interaction_item_interference", null);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "horse_interaction_item_interference",
+                $"held={(Game1.player.CurrentItem?.QualifiedItemId ?? "none")}");
         // Reach is measured against the horse's LIVE tile. The walk was aimed at the tile it occupied when the
         // approach began, and it may have moved since; the shared arrival leg sees only that fixed tile, so this is
         // the check that separates "arrived and it moved" from "never got close enough".

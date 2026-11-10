@@ -78,10 +78,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 $"expected={BusStopLocationName};actual={location?.NameOrUniqueName ?? "none"}");
 
         if (activeBusRide is not null)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "bus_ride_already_in_progress", null);
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "bus_ride_already_in_progress",
+                $"origin={activeBusRide.OriginLocation};ride={activeBusRide.ExecutionId}");
 
         if (!TryFindTicketMachine(location, out int ticketX, out int ticketY))
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "bus_ticket_machine_unavailable", null);
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "bus_ticket_machine_unavailable",
+                $"location={location.NameOrUniqueName}");
 
         if (!IsAdjacentToActor(actor, ticketX, ticketY))
             return this.RememberTerminal(

@@ -327,6 +327,10 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["inventory_slots_after", "2"],
       ["inventory_units_before", "1"],
       ["inventory_units_after", "3"],
+      ["tool_selected", "pan"],
+      ["tool_before", "axe"],
+      ["slot_before", "0"],
+      ["tool_restored", "axe"],
     ],
   },
   claim_mail_attachment: {
@@ -373,6 +377,11 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["stamina_delta", "-2"],
       ["expected_stamina_cost", "2"],
       ["native_menu_opened", "false"],
+      ["tool_selected", "watering_can"],
+      ["slot", "3"],
+      ["tool_before", "none"],
+      ["slot_before", "0"],
+      ["tool_restored", "none"],
     ],
   },
   water_slime_hutch_trough: {
@@ -391,6 +400,11 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["stamina_delta", "-2"],
       ["expected_stamina_cost", "2"],
       ["native_menu_opened", "false"],
+      ["tool_selected", "watering_can"],
+      ["slot", "3"],
+      ["tool_before", "none"],
+      ["slot_before", "0"],
+      ["tool_restored", "none"],
     ],
   },
   dismiss_modal: {
@@ -477,6 +491,11 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["stamina_after", "90"],
       ["stamina_delta", "-10"],
       ["expected_stamina_cost", "10"],
+      ["tool_selected", "axe"],
+      ["slot", "3"],
+      ["tool_before", "axe"],
+      ["slot_before", "0"],
+      ["tool_restored", "axe"],
     ],
   },
   plant_sapling: {
@@ -653,6 +672,11 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["stamina_delta", "0"],
       ["expected_stamina_cost", "0"],
       ["native_scythe", "true"],
+      ["tool_selected", "scythe"],
+      ["slot", "3"],
+      ["tool_before", "none"],
+      ["slot_before", "0"],
+      ["tool_restored", "none"],
     ],
   },
   craft_item: {
@@ -923,6 +947,46 @@ for (const [actionId, fixture] of Object.entries(completionFixtures)) {
   });
 }
 
+test("till_soil: the selection half is published, and the extended key list is what admits it", () => {
+  // The Mod's own shape, key for key. `tool_selected`/`slot`/`tool_before`/`slot_before` are the four facts
+  // `ToolActionEvidence.SelectionFacts` states and `tool_restored` is written after the handler put the actor's own
+  // selection back; before this pair moved, the handler published NONE of them because this rule pinned the exact key
+  // set. Both directions are checked here: without the publication the rule refuses, and with a key the producer does
+  // not write the rule refuses too, which is what makes the widened list - not a permissive rule - the thing that
+  // admits the selection half.
+  const shape: readonly (readonly [string, string])[] = [
+    ["location", "Farm"],
+    ["target", "37,18"],
+    ["tool_selected", "hoe"],
+    ["slot", "3"],
+    ["tool_before", "none"],
+    ["slot_before", "0"],
+    ["before", "none"],
+    ["after", "HoeDirt"],
+    ["stamina_before", "100"],
+    ["stamina_after", "98"],
+    ["stamina_delta", "-2"],
+    ["expected_stamina_cost", "2"],
+    ["tool_restored", "none"],
+  ];
+  assert.equal(completionEvidence("till_soil", "soil_tilled", detail(shape)), true);
+  assert.equal(
+    completionEvidence("till_soil", "soil_tilled", detail(shape.filter(([key]) => key !== "tool_selected"))),
+    false,
+    "a run that never published its own selection did not prove it drove the hoe the claim declares",
+  );
+  assert.equal(
+    completionEvidence("till_soil", "soil_tilled", detail(shape.filter(([key]) => key !== "tool_restored"))),
+    false,
+    "the restore is the half a run that died mid-action cannot report",
+  );
+  assert.equal(
+    completionEvidence("till_soil", "soil_tilled", detail([...shape, ["unknown", "value"]])),
+    false,
+    "the key set stays exact, so the widened list is what admits the selection half",
+  );
+});
+
 test("shop_purchase: the shapes that made it unreadable are REFUSED, and the readable one is accepted", () => {
   // The A/B that proves the producer fix was necessary and sufficient. Both refusals were real defects: with the
   // old diagnostics (`key=value;key=value` per entry) or an empty `owner=` for a tile-opened shop, the Host cannot
@@ -1068,6 +1132,11 @@ test("scythe_crop: the dead-crop clear branch completes, and a harvest shape cla
     ["stamina_delta", "0"],
     ["expected_stamina_cost", "0"],
     ["native_scythe", "false"],
+    ["tool_selected", "scythe"],
+    ["slot", "3"],
+    ["tool_before", "none"],
+    ["slot_before", "0"],
+    ["tool_restored", "none"],
   ];
   const withField = (key: string, value: string): readonly (readonly [string, string])[] =>
     cleared.map(([fieldKey, fieldValue]) => [fieldKey, fieldKey === key ? value : fieldValue] as const);

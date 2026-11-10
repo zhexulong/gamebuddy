@@ -66,10 +66,8 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteRefillWateringCan(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        // Selection facts are deliberately NOT published here: this action takes the can its own claim declares and
-        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it
-        // (`hasRefillWateringCanCompletionEvidence`) compares an EXACT evidence-key set. Whoever adds those keys must
-        // extend that validator in the same commit.
+        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
+        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(Game1.player, "refill_watering_can", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "refill_watering_can", toolRefusalCode, slot));
         ExecutionState state;
@@ -93,7 +91,7 @@ internal sealed partial class ExecutionManager
             float expectedStaminaCost = 0f; // refill branch never deducts stamina (WateringCan.DoFunction refill path)
             int after = wateringCan.WaterLeft;
             bool succeeded = ReferenceEquals(Game1.player.Items[selection.Slot], wateringCan) && before < max && after == max;
-            evidence = $"target={expectedTargetId};slot={selection.Slot};can={wateringCan.QualifiedItemId};water_before={before};water_after={after};water_max={max};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
+            evidence = $"target={expectedTargetId};can={wateringCan.QualifiedItemId};water_before={before};water_after={after};water_max={max};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
             state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
             reasonCode = succeeded ? "watering_can_refilled" : "watering_can_refill_postcondition_unavailable";
         }
@@ -101,6 +99,7 @@ internal sealed partial class ExecutionManager
         {
             RestoreToolSelection(Game1.player, selection);
         }
+        evidence += $";{SelectionSuffix(selection)}";
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
@@ -169,7 +168,8 @@ internal sealed partial class ExecutionManager
             if (selection.Tool is not WateringCan wateringCan)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
             if (wateringCan.WaterLeft <= 0 && !Game1.player.hasWateringCanEnchantment)
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_empty", null);
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_empty",
+                    $"water_left={wateringCan.WaterLeft};slot={selection.Slot}");
 
             LocalCropWateringSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId, dirt.crop.netSeedIndex.Value ?? dirt.crop.indexOfHarvest.Value ?? "unknown", this.revision, requestedDeadlineMs);
             bool beforeWatered = dirt.isWatered();
@@ -281,7 +281,8 @@ internal sealed partial class ExecutionManager
     if (Game1.player.CurrentTool is StardewValley.Tool selectedTool
         && selectedTool.isScythe()
         && string.Equals(selectedTool.ItemId, "66", StringComparison.Ordinal))
-        return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "golden_scythe_grab_override", null);
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "golden_scythe_grab_override",
+            $"tool={selectedTool.QualifiedItemId};slot={Game1.player.CurrentToolIndex}");
 
     StardewValley.Item harvestItem;
     try
@@ -608,7 +609,8 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
 
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is not Farm farm)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required", null);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required",
+                $"location={(Game1.player?.currentLocation?.NameOrUniqueName ?? "none")}");
         // Shared mechanical admission (identity → actionability → deadline →
         // body exclusivity), behavior-equivalent to the inline sequence it
         // replaced: identical reasonCodes, identical order. Geometry, target
@@ -656,7 +658,8 @@ internal sealed partial class ExecutionManager
         StardewValley.Object source = executeSource;
         GameLocation fenceLocation = Game1.player.currentLocation;
         if (fenceLocation is not Farm farm)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required", null);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required",
+                $"location={fenceLocation.NameOrUniqueName}");
         Vector2 tile = new(targetX, targetY);
         if (!string.Equals(BuildWoodFenceTargetId(farm, slot, targetX, targetY), expectedTargetId, StringComparison.Ordinal)
             || farm.objects.ContainsKey(tile)
@@ -724,7 +727,8 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
 
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is not Farm farm)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required", null);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required",
+                $"location={(Game1.player?.currentLocation?.NameOrUniqueName ?? "none")}");
         // Shared mechanical admission (identity → actionability → deadline →
         // body exclusivity), behavior-equivalent to the inline sequence it
         // replaced: identical reasonCodes, identical order. Geometry, target
@@ -771,7 +775,8 @@ internal sealed partial class ExecutionManager
         StardewValley.Object source = executeSource;
         GameLocation crabPotLocation = Game1.player.currentLocation;
         if (crabPotLocation is not Farm farm)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required", null);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "farm_required",
+                $"location={crabPotLocation.NameOrUniqueName}");
         Vector2 tile = new(targetX, targetY);
         if (!string.Equals(BuildCrabPotTargetId(farm, slot, targetX, targetY), expectedTargetId, StringComparison.Ordinal)
             || !StardewValley.Objects.CrabPot.IsValidCrabPotLocationTile(farm, targetX, targetY)
@@ -1691,10 +1696,8 @@ internal sealed partial class ExecutionManager
 
     private LocalExecutionReceipt ExecuteScytheCrop(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        // Selection facts are deliberately NOT published here: this action takes the scythe its own claim declares and
-        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it (the
-        // `scythe_crop` `exactEvidence` block in stardew-game-integration-adapter.ts) compares an EXACT evidence-key set.
-        // Whoever adds those keys must extend that validator in the same commit.
+        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
+        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(Game1.player, "scythe_crop", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "scythe_crop", toolRefusalCode, slot));
         ExecutionState state;
@@ -1762,6 +1765,7 @@ internal sealed partial class ExecutionManager
         {
             RestoreToolSelection(Game1.player, selection);
         }
+        evidence += $";{SelectionSuffix(selection)}";
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 

@@ -77,7 +77,17 @@ public sealed class RefusalLayerNamingTests
     /// "your deadline has already passed", and inventing one would put a token on the wire that names no countermeasure.
     /// </para>
     /// </summary>
-    private const int RecordedBare = 549;
+    /// <para>
+    /// RAISED FROM 549 TO 551 by the refusal-evidence pass, and the two sites are named rather than absorbed: the
+    /// `watering_can_empty` guards in `water_pet_bowl` and `water_slime_hutch_trough` (`petbowlactions.cs`, `
+    /// slimehutchtroughactions.cs`) each split into two refusals, because the two branches know DIFFERENT facts - a slot
+    /// that holds no can at all, and a can whose water is spent - and one shared `null` could not say which. Both stay
+    /// bare HERE because neither names a world layer: the fact is the can's water, and the closed vocabulary has no
+    /// `water` layer (inventing one would put a token on the wire that names no countermeasure). The evidence each one
+    /// publishes is judged by `refusal_informativeness/v1`, which is where a dropped fact is a failure.
+    /// </para>
+    /// </summary>
+    private const int RecordedBare = 551;
     [Fact]
     public void TheLayerVocabularyIsClosedAndWireShaped()
     {

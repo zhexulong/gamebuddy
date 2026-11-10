@@ -81,10 +81,8 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteChopTreeSource(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        // Selection facts are deliberately NOT published here: this action takes the axe its own claim declares and
-        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it
-        // (`hasChopTreeSourceCompletionEvidence`) compares an EXACT evidence-key set. Whoever adds those keys must extend
-        // that validator in the same commit.
+        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
+        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(Game1.player, "chop_tree", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_tree", toolRefusalCode, slot));
         ExecutionState state;
@@ -187,7 +185,7 @@ internal sealed partial class ExecutionManager
             // The receipt keeps ONE identity (`tree_source_chopped`) and adds the three facts the model would otherwise
             // have to observe again: the health pair the swings moved between and how many swings it took. The Host
             // pins this exact key set, so the stop facts below are appended on the failure path only.
-            evidence = $"target={expectedTargetId};tool=axe;slot={selection.Slot};tree={treeType};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={healthAfterText};stump_before={stumpBefore.ToString().ToLowerInvariant()};stump_after={stumpAfter.ToString().ToLowerInvariant()};source_transformed={felled.ToString().ToLowerInvariant()};swings={swingCount.ToString(CultureInfo.InvariantCulture)};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={(perSwingStaminaCost * swingCount).ToString("0.####", CultureInfo.InvariantCulture)}";
+            evidence = $"target={expectedTargetId};tool=axe;tree={treeType};health_before={before.ToString("0.##", CultureInfo.InvariantCulture)};health_after={healthAfterText};stump_before={stumpBefore.ToString().ToLowerInvariant()};stump_after={stumpAfter.ToString().ToLowerInvariant()};source_transformed={felled.ToString().ToLowerInvariant()};swings={swingCount.ToString(CultureInfo.InvariantCulture)};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={(perSwingStaminaCost * swingCount).ToString("0.####", CultureInfo.InvariantCulture)}";
             if (stoppedBy is not null)
                 evidence += $";stopped_by={stoppedBy};{stopEvidence}";
             state = felled ? ExecutionState.Succeeded : ExecutionState.Uncertain;
@@ -197,6 +195,7 @@ internal sealed partial class ExecutionManager
         {
             RestoreToolSelection(Game1.player, selection);
         }
+        evidence += $";{SelectionSuffix(selection)}";
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
@@ -352,10 +351,8 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteDigArtifactSpot(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        // Selection facts are deliberately NOT published here: this action takes the hoe its own claim declares and
-        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it
-        // (`hasDigArtifactSpotCompletionEvidence`) compares an EXACT evidence-key set. Whoever adds those keys must extend
-        // that validator in the same commit.
+        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
+        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(Game1.player, "dig_artifact_spot", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "dig_artifact_spot", toolRefusalCode, slot));
         ExecutionState state;
@@ -396,7 +393,7 @@ internal sealed partial class ExecutionManager
                 this.artifactSpotResultRevision = this.revision;
                 this.artifactSpotResultDay = Game1.Date.TotalDays;
             }
-            evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};result_target={resultTargetId ?? "none"};tile={targetX},{targetY};tool=hoe;slot={selection.Slot};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};qualified_item_id={artifactSpot.QualifiedItemId};source_present_before={sourcePresentBefore.ToString().ToLowerInvariant()};source_present_after={sourcePresentAfter.ToString().ToLowerInvariant()};hoedirt_present_before={hoeDirtPresentBefore.ToString().ToLowerInvariant()};hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};source_removed={(!sourcePresentAfter).ToString().ToLowerInvariant()}";
+            evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};result_target={resultTargetId ?? "none"};tile={targetX},{targetY};tool=hoe;stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};qualified_item_id={artifactSpot.QualifiedItemId};source_present_before={sourcePresentBefore.ToString().ToLowerInvariant()};source_present_after={sourcePresentAfter.ToString().ToLowerInvariant()};hoedirt_present_before={hoeDirtPresentBefore.ToString().ToLowerInvariant()};hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};source_removed={(!sourcePresentAfter).ToString().ToLowerInvariant()}";
             state = succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain;
             reasonCode = succeeded ? "artifact_spot_dug" : "artifact_spot_postcondition_unavailable";
         }
@@ -404,6 +401,7 @@ internal sealed partial class ExecutionManager
         {
             RestoreToolSelection(Game1.player, selection);
         }
+        evidence += $";{SelectionSuffix(selection)}";
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
@@ -450,10 +448,8 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteClearHoeDirt(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        // Selection facts are deliberately NOT published here: this action takes the pickaxe its own claim declares and
-        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it
-        // (`hasClearHoeDirtCompletionEvidence`) compares an EXACT evidence-key set. Whoever adds those keys must extend
-        // that validator in the same commit.
+        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
+        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(Game1.player, "clear_hoedirt", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "clear_hoedirt", toolRefusalCode, slot));
         ExecutionState state;
@@ -475,7 +471,7 @@ internal sealed partial class ExecutionManager
             float expectedStaminaCost = pickaxe.IsEfficient ? 0f : 2f - (Game1.player.MiningLevel * 0.1f);
             bool hoeDirtPresentAfter = location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? afterFeature) && afterFeature is StardewValley.TerrainFeatures.HoeDirt;
             bool removed = !hoeDirtPresentAfter;
-            evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};tool=pickaxe;slot={selection.Slot};crop_before=false;hoedirt_present_before=true;hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};removed={removed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
+            evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};tool=pickaxe;crop_before=false;hoedirt_present_before=true;hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};removed={removed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
             state = removed ? ExecutionState.Succeeded : ExecutionState.Uncertain;
             reasonCode = removed ? "hoedirt_cleared" : "clear_hoedirt_postcondition_unavailable";
         }
@@ -483,6 +479,7 @@ internal sealed partial class ExecutionManager
         {
             RestoreToolSelection(Game1.player, selection);
         }
+        evidence += $";{SelectionSuffix(selection)}";
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
@@ -571,17 +568,17 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "soil_already_tilled", $"target={targetX},{targetY};before={before}");
         if (DescribeSoilRefusal(location, targetX, targetY) is { } soilRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, DescribeSoilRefusalCode(soilRefusal), $"target={targetX},{targetY}");
-        // Selection facts are deliberately NOT published here: this action takes the hoe its own claim declares and
-        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it
-        // (`hasTillSoilCompletionEvidence`) compares an EXACT evidence-key set. Whoever adds those keys must extend that
-        // validator in the same commit.
+        // The selection half is written into the detail from the same four facts the other tool family states, and
+        // `tool_restored` is added after `RestoreToolSelection` has run.
         if (!TrySelectDeclaredTool(Game1.player, "till_soil", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "till_soil", toolRefusalCode));
-        LocalExecutionReceipt receipt;
+        ExecutionState state;
+        string reasonCode;
+        Dictionary<string, string> evidence = ToolActionEvidence.SelectionFacts(selection);
         try
         {
             if (selection.Tool is not Hoe hoe)
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", null);
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
 
             LocalSoilTillingSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, this.revision, requestedDeadlineMs);
             float staminaBefore = Game1.player.Stamina;
@@ -594,12 +591,24 @@ internal sealed partial class ExecutionManager
             StardewValley.TerrainFeatures.HoeDirt? dirtAfter = location.GetHoeDirtAtTile(tile);
             string after = DescribeSoilFeature(dirtAfter);
             bool tilled = dirtAfter is not null;
-            receipt = new(executionId, requestId, tilled ? ExecutionState.Succeeded : ExecutionState.Uncertain, tilled ? "soil_tilled" : "soil_postcondition_unavailable", this.revision, $"location={specification.Location};target={targetX},{targetY};before={before};after={after};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}");
+            evidence["location"] = specification.Location;
+            evidence["target"] = $"{targetX},{targetY}";
+            evidence["before"] = before;
+            evidence["after"] = after;
+            evidence["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture);
+            state = tilled ? ExecutionState.Succeeded : ExecutionState.Uncertain;
+            reasonCode = tilled ? "soil_tilled" : "soil_postcondition_unavailable";
         }
         finally
         {
             RestoreToolSelection(Game1.player, selection);
+            evidence["tool_restored"] = DescribeToolCategory(Game1.player.CurrentTool);
         }
+        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
+            ToolActionEvidence.Compose(ToolActionEvidence.TillSoil, evidence));
         this.Remember(receipt);
         this.AddTrace(receipt);
         return receipt;
@@ -976,6 +985,14 @@ internal sealed partial class ExecutionManager
         farmer.CurrentToolIndex = selection.PreviousSlot;
 
     /// <summary>
+    /// The selection half of a receipt detail, read AFTER <see cref="RestoreToolSelection"/> has run: the four facts
+    /// <see cref="ToolActionEvidence.SelectionFacts"/> states plus the tool the actor holds again. The handlers whose
+    /// evidence is one composed string append this rather than restating the keys, so the vocabulary has one spelling.
+    /// </summary>
+    private static string SelectionSuffix(DeclaredToolSelection selection) =>
+        ToolActionEvidence.SelectionSuffix(selection, DescribeToolCategory(Game1.player.CurrentTool));
+
+    /// <summary>
     /// The category of whatever the actor is holding, in the vocabulary a `tool:&lt;category&gt;` claim speaks, or
     /// `none` when nothing is held or the held thing is not a tool this Mod can name - the one literal the Host
     /// accepts for the absent equipped tool.
@@ -1061,10 +1078,8 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private LocalExecutionReceipt ExecuteChopStump(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
-        // Selection facts are deliberately NOT published here: this action takes the axe its own claim declares and
-        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it (the
-        // `chop_stump` `exactEvidence` block in stardew-game-integration-adapter.ts) compares an EXACT evidence-key set.
-        // Whoever adds those keys must extend that validator in the same commit.
+        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
+        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(Game1.player, "chop_stump", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_stump", toolRefusalCode, slot));
         ExecutionState state;
@@ -1140,6 +1155,7 @@ internal sealed partial class ExecutionManager
         {
             RestoreToolSelection(Game1.player, selection);
         }
+        evidence += $";{SelectionSuffix(selection)}";
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
@@ -1873,6 +1889,12 @@ internal static class ToolActionEvidence
         "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost", "tool_restored",
     });
 
+    internal static readonly IReadOnlyList<string> TillSoil = Array.AsReadOnly(new[]
+    {
+        "location", "target", "tool_selected", "slot", "tool_before", "slot_before", "before", "after",
+        "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost", "tool_restored",
+    });
+
     /// <summary>
     /// The selection half of one action's detail: the tool the handler took, the slot it came from, and the tool and
     /// slot it displaced. `slot` is the one the SELECTION put in hand, never the number a request carried.
@@ -1884,6 +1906,15 @@ internal static class ToolActionEvidence
         ["tool_before"] = ExecutionManager.DescribeToolCategory(selection.PreviousTool),
         ["slot_before"] = selection.PreviousSlot.ToString(CultureInfo.InvariantCulture),
     };
+
+    /// <summary>
+    /// The same four facts as one fragment, plus the tool the actor holds again, for the handlers whose evidence is a
+    /// composed string. <paramref name="restoredCategory"/> is read after the restore has run, so the fragment reports
+    /// the actor's own selection rather than a claim that the restore happened.
+    /// </summary>
+    internal static string SelectionSuffix(DeclaredToolSelection selection, string restoredCategory) =>
+        string.Join(";", SelectionFacts(selection).Select(fact => $"{fact.Key}={fact.Value}"))
+        + $";tool_restored={restoredCategory}";
 
     /// <summary>
     /// One receipt detail from a key list and its values, in the LIST's order: the list is the contract, so a key that

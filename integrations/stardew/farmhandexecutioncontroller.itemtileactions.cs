@@ -483,10 +483,8 @@ internal sealed partial class ExecutionManager
         // never obeyed.
         if (ResolveDeclaredTool(player.Items, "pan_ore").RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(player.Items, "pan_ore", toolRefusal, slot));
-        // Selection facts are deliberately NOT published here: this action takes the pan its own claim declares and
-        // reports no tool_selected/slot_before/tool_before/tool_restored, because the Host validator for it (the
-        // `pan_ore` `exactEvidence` block in stardew-game-integration-adapter.ts) compares an EXACT evidence-key set.
-        // Whoever adds those keys must extend that validator in the same commit.
+        // The selection half is appended after `RestoreToolSelection` has run, so `tool_restored` reports what the actor
+        // holds again rather than what this body assumed (`ToolActionEvidence.SelectionSuffix`).
         if (!TrySelectDeclaredTool(player, "pan_ore", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(player.Items, "pan_ore", toolRefusalCode, slot));
         ExecutionState state;
@@ -562,7 +560,7 @@ internal sealed partial class ExecutionManager
             bool overflowPending = Game1.activeClickableMenu is StardewValley.Menus.ItemGrabMenu;
             bool panned = siteMoved && statAdvanced;
             evidence =
-                $"slot={selection.Slot};tool={DescribeTool(pan) ?? "pan"};tile={targetX},{targetY};location={location.NameOrUniqueName};"
+                $"tool={DescribeTool(pan) ?? "pan"};tile={targetX},{targetY};location={location.NameOrUniqueName};"
                 + $"site_before={siteBefore.X},{siteBefore.Y};site_after={siteAfter.X},{siteAfter.Y};site_moved={siteMoved.ToString().ToLowerInvariant()};"
                 + $"times_panned_before={timesPannedBefore.ToString(CultureInfo.InvariantCulture)};times_panned_after={timesPannedAfter.ToString(CultureInfo.InvariantCulture)};"
                 + $"pan_output_overflow={overflowPending.ToString().ToLowerInvariant()};"
@@ -575,6 +573,7 @@ internal sealed partial class ExecutionManager
         {
             RestoreToolSelection(player, selection);
         }
+        evidence += $";{SelectionSuffix(selection)}";
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 

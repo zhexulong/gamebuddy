@@ -262,7 +262,8 @@ internal sealed partial class ExecutionManager
 
             long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             if (requestedDeadlineMs <= nowMs)
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline",
+                    $"deadline={requestedDeadlineMs};now={nowMs}");
 
             float staminaBefore = Game1.player.Stamina;
             int baitBefore = rod.GetBait()?.Stack ?? 0;

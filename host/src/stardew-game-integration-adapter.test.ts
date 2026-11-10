@@ -87,7 +87,7 @@ test("plant, refill, break, and chop completion evidence reject opaque sentinels
     [
       "refill_watering_can",
       "watering_can_refilled",
-      "target=water_01;slot=3;can=WateringCan;water_before=0;water_after=40;water_max=40;stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0",
+      "target=water_01;can=WateringCan;water_before=0;water_after=40;water_max=40;stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0;tool_selected=watering_can;slot=3;tool_before=none;slot_before=0;tool_restored=none",
       "slot=3",
       "slot=999",
     ],
@@ -101,7 +101,7 @@ test("plant, refill, break, and chop completion evidence reject opaque sentinels
     [
       "chop_tree",
       "tree_source_chopped",
-      "target=tree_01;tool=axe;slot=3;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=100;stamina_after=80;stamina_delta=-20;expected_stamina_cost=20",
+      "target=tree_01;tool=axe;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=100;stamina_after=80;stamina_delta=-20;expected_stamina_cost=20;tool_selected=axe;slot=3;tool_before=none;slot_before=0;tool_restored=none",
       "slot=3",
       "slot=999",
     ],
@@ -134,7 +134,7 @@ test("every accepted semantic evidence field rejects protocol scalar sentinels",
     [
       "till_soil",
       "soil_tilled",
-      "location=Farm;target=37,18;before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+      "location=Farm;target=37,18;before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_selected=hoe;slot=3;tool_before=none;slot_before=0;tool_restored=none",
       ["location", "target"],
     ],
     ["move_to_tile", "target_reached", "tile=37,18;target=37,18;arrival=exact;path=stardew_native", ["tile", "target"]],
@@ -147,13 +147,13 @@ test("every accepted semantic evidence field rejects protocol scalar sentinels",
     [
       "refill_watering_can",
       "watering_can_refilled",
-      "target=water_01;slot=3;can=WateringCan;water_before=0;water_after=40;water_max=40;stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0",
+      "target=water_01;can=WateringCan;water_before=0;water_after=40;water_max=40;stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0;tool_selected=watering_can;slot=3;tool_before=none;slot_before=0;tool_restored=none",
       ["target", "can"],
     ],
     [
       "dig_artifact_spot",
       "artifact_spot_dug",
-      "location=Farm;target=artifact_01;result_target=result_01;tile=10,12;tool=hoe;slot=4;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;qualified_item_id=(O)590;source_present_before=true;source_present_after=false;hoedirt_present_before=false;hoedirt_present_after=true;source_removed=true",
+      "location=Farm;target=artifact_01;result_target=result_01;tile=10,12;tool=hoe;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;qualified_item_id=(O)590;source_present_before=true;source_present_after=false;hoedirt_present_before=false;hoedirt_present_after=true;source_removed=true;tool_selected=hoe;slot=4;tool_before=none;slot_before=0;tool_restored=none",
       ["location", "target", "result_target", "tile"],
     ],
     [
@@ -165,13 +165,13 @@ test("every accepted semantic evidence field rejects protocol scalar sentinels",
     [
       "clear_hoedirt",
       "hoedirt_cleared",
-      "location=Farm;target=soil_01;tile=10,12;tool=pickaxe;slot=3;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+      "location=Farm;target=soil_01;tile=10,12;tool=pickaxe;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_selected=pickaxe;slot=3;tool_before=none;slot_before=0;tool_restored=none",
       ["location", "target", "tile"],
     ],
     [
       "chop_tree",
       "tree_source_chopped",
-      "target=tree_01;tool=axe;slot=3;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=100;stamina_after=80;stamina_delta=-20;expected_stamina_cost=20",
+      "target=tree_01;tool=axe;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=100;stamina_after=80;stamina_delta=-20;expected_stamina_cost=20;tool_selected=axe;slot=3;tool_before=none;slot_before=0;tool_restored=none",
       ["target", "tree"],
     ],
     [
@@ -274,7 +274,7 @@ test("move_to_tile completion evidence accepts exact native arrival after :0.## 
 
 test("till_soil completion evidence requires exact location, coordinates, and soil transition", () => {
   const valid =
-    "location=Farm;target=37,18;before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2";
+    "location=Farm;target=37,18;before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_selected=hoe;slot=3;tool_before=none;slot_before=0;tool_restored=none";
   const receipt = {
     state: "succeeded",
     reasonCode: "soil_tilled",
@@ -1185,7 +1185,7 @@ test("completion parsers never accept another action's succeeded evidence", () =
 
 test("dig_artifact_spot completion evidence is strict and source-only", () => {
   const valid =
-    "location=Farm;target=artifact_spot_deadbeef;result_target=artifact_result_deadbeef;tile=10,12;tool=hoe;slot=4;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;qualified_item_id=(O)590;source_present_before=true;source_present_after=false;hoedirt_present_before=false;hoedirt_present_after=true;source_removed=true";
+    "location=Farm;target=artifact_spot_deadbeef;result_target=artifact_result_deadbeef;tile=10,12;tool=hoe;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;qualified_item_id=(O)590;source_present_before=true;source_present_after=false;hoedirt_present_before=false;hoedirt_present_after=true;source_removed=true;tool_selected=hoe;slot=4;tool_before=none;slot_before=0;tool_restored=none";
   const receipt = {
     state: "succeeded",
     reasonCode: "artifact_spot_dug",

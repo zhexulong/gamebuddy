@@ -398,7 +398,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             return admissionRejection;
 
         if (Game1.activeClickableMenu is not DialogueBox dialogue)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "no_modal_present", null);
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "no_modal_present",
+                $"menu={(Game1.activeClickableMenu?.GetType().Name ?? "none")}");
 
         if (!dialogue.isQuestion)
             return this.RememberTerminal(
@@ -410,7 +411,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         string? requestedKey = request.Args.ResponseKey;
         if (string.IsNullOrWhiteSpace(requestedKey) || requestedKey.Length > 128)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "invalid_response_key", null);
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "invalid_response_key",
+                $"key_length={requestedKey?.Length ?? 0};blank={(string.IsNullOrWhiteSpace(requestedKey) ? "true" : "false")};max_length=128");
 
         Response[] offeredResponses = OfferedResponses(dialogue);
         // THE ENGINE'S OWN SPELLING WINS. A caller that sends `yes` answers the box that offers `Yes`, because the key
@@ -467,8 +469,9 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         Response answer = offeredResponses[offeredIndex];
         string responseKey = answer.responseKey;
 
-        if (!this.TryGetBoundActor(out Farmer? actor, out _) || actor is null || Game1.currentLocation is null)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "player_not_actionable", null);
+        if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null || Game1.currentLocation is null)
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "player_not_actionable",
+                $"actor={(actor is null ? (guardReason ?? "none") : "bound")};location={(Game1.currentLocation?.NameOrUniqueName ?? "none")}");
 
         bool answered = false;
         try

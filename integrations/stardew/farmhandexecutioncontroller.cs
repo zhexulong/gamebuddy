@@ -1119,7 +1119,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 WorldModel.DescribeBodyHold(admissionDisposition, admissionFacts, boundActor.CanMove));
 
         if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + maxDurationMs)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline", null);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline",
+                $"deadline={requestedDeadlineMs};now={nowMs};ceiling={nowMs + maxDurationMs}");
 
         if (profile is not AdmissionActionabilityProfile.Modal
             && (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.activePedestalTaking is not null || this.activeToolApproach is not null

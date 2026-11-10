@@ -103,7 +103,7 @@ test("completed worker report requires a succeeded evidenced receipt owned by th
     revision: 1,
     evidence: {
       detail:
-        "location=Farm;target=3,4;before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+        "location=Farm;target=3,4;before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_selected=hoe;slot=3;tool_before=none;slot_before=0;tool_restored=none",
     },
   };
   const report = {

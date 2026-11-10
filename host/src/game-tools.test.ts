@@ -643,7 +643,7 @@ test("published refill_watering_can mounts only from a live capability and forwa
         revision: 4,
         evidence: {
           detail:
-            "target=watering_can_refill_01;slot=4;can=(T)WateringCan;water_before=39;water_after=40;water_max=40;stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0",
+            "target=watering_can_refill_01;can=(T)WateringCan;water_before=39;water_after=40;water_max=40;stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0;tool_selected=watering_can;slot=4;tool_before=none;slot_before=0;tool_restored=none",
         },
       };
     },
@@ -922,7 +922,7 @@ test("published clear_hoedirt mounts only from a live capability and forwards ex
         revision: 4,
         evidence: {
           detail:
-            "location=Farm;target=hoedirt_01;tile=2,3;tool=pickaxe;slot=4;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2",
+            "location=Farm;target=hoedirt_01;tile=2,3;tool=pickaxe;crop_before=false;hoedirt_present_before=true;hoedirt_present_after=false;removed=true;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_selected=pickaxe;slot=4;tool_before=none;slot_before=0;tool_restored=none",
         },
       };
     },
@@ -1155,7 +1155,7 @@ test("published chop_tree mounts only from a live Mod capability and forwards th
         revision: 4,
         evidence: {
           detail:
-            "target=tree_chop_01;tool=axe;slot=4;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=100;stamina_after=80;stamina_delta=-20;expected_stamina_cost=20",
+            "target=tree_chop_01;tool=axe;tree=Oak;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=100;stamina_after=80;stamina_delta=-20;expected_stamina_cost=20;tool_selected=axe;slot=4;tool_before=none;slot_before=0;tool_restored=none",
         },
       };
     },

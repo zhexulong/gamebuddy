@@ -494,7 +494,8 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
 
         if (!Context.IsWorldReady || Game1.player?.currentLocation is not AnimalHouse location)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_house_not_available", null);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_house_not_available",
+                $"location={Game1.player?.currentLocation?.NameOrUniqueName ?? "none"}");
         // Shared mechanical admission (identity → actionability → deadline →
         // body exclusivity). The single authority names the hold it refuses on;
         // geometry, trough identity and the postcondition stay action-specific.
@@ -600,7 +601,8 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_product_target_changed", $"target={expectedTargetId}");
         StardewValley.Object produce = ItemRegistry.Create<StardewValley.Object>("(O)" + animal.currentProduce.Value);
         if (!Game1.player.couldInventoryAcceptThisItem(produce.QualifiedItemId, animal.hasEatenAnimalCracker.Value ? 2 : 1))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", null);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full",
+                $"item={produce.QualifiedItemId};stack={(animal.hasEatenAnimalCracker.Value ? 2 : 1)};space=none");
 
         // Out of the native Chebyshev-1 radius, walk in rather than refuse -- the
         // same 5.2 ruling the tool family follows. This used to be a bare distance
@@ -648,7 +650,8 @@ internal sealed partial class ExecutionManager
         int produceStack = animal.hasEatenAnimalCracker.Value ? 2 : 1;
         StardewValley.Object produce = ItemRegistry.Create<StardewValley.Object>("(O)" + animal.currentProduce.Value);
         if (!Game1.player.couldInventoryAcceptThisItem(produce.QualifiedItemId, produceStack))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", null);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full",
+                $"item={produce.QualifiedItemId};stack={produceStack};space=none");
 
         int inventoryBefore = CountQualifiedItem(Game1.player, produce.QualifiedItemId);
         int previousSlot = Game1.player.CurrentToolIndex;
