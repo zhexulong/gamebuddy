@@ -3,7 +3,13 @@ import test from "node:test";
 
 import { CompanionEventPump, type WorldFact } from "./event-pump.js";
 import { createStardewObservationTools } from "./game-tools.js";
-import { FACT_BRIEF_BLOCKS, composeFactBrief, composeWorldState, unchangedWorldAnswer } from "./fact-brief.js";
+import {
+  FACT_BRIEF_BLOCKS,
+  composeFactBrief,
+  composeWorldState,
+  MAX_EVIDENCE_DETAIL_CHARS,
+  unchangedWorldAnswer,
+} from "./fact-brief.js";
 import { NON_ROW_FAMILIES, TARGET_FAMILY_LABELS, nearbyTargetFamilies } from "./game-world-vocabulary.js";
 import { SNAPSHOT_KEYS, type Snapshot } from "./protocol.js";
 
@@ -386,4 +392,96 @@ test("observe_result_chars: the observation answer is the state block, and an un
     `the observation answer is ${String(median)} chars at the median, against round44's 20,980-char dump`,
   );
   assert.ok(answers.every((answer) => answer.startsWith("<world-state>") || answer.startsWith("自 revision ")));
+});
+
+/**
+ * A FAILURE LINE CARRIES BOTH HALVES OF A REFUSAL: the Mod's sentence AND its evidence.
+ *
+ * Measured at `516e2559`: `failureWords` printed `hint ?? detail`, so a node carrying both reached her with the short
+ * sentence alone - and the numbers that make a refusal actionable (`owner=Pierre;owner_tile=4,17;actor_tile=5,19;
+ * radius=1`) are exactly what the detail holds and the hint never repeats. A refusal she cannot decode is a refusal she
+ * answers by guessing, and that guess is where an invented world fact comes from.
+ *
+ * The population is the fixture's own nodes: every one carrying a non-empty `reasonDetail` must reach
+ * `<execution-result>`, whatever else it carries, and the count is asserted so a fixture that stopped carrying details
+ * fails here instead of passing with nothing to examine.
+ */
+test("execution_result_evidence: every settled node's refusal detail reaches the model beside its hint", () => {
+  const detail = "owner=Pierre;owner_tile=4,17;actor_tile=5,19;radius=1";
+  const longDetail = `${"far=".repeat(60)}end`;
+  const nodes = [
+    {
+      nodeId: "n01",
+      actionId: "water_crop",
+      state: "failed",
+      reasonCode: "npc_in_the_way",
+      hint: "请 Pierre 让开",
+      reasonDetail: detail,
+    },
+    // A detail with NO hint: the evidence is all this node has to say for itself.
+    {
+      nodeId: "n02",
+      actionId: "shop_purchase",
+      state: "failed",
+      reasonCode: "out_of_stock",
+      reasonDetail: "item=(O)388;stock=0",
+    },
+    // A hint with NO detail: the fallback must not be lost by the change that keeps both.
+    { nodeId: "n03", actionId: "till_soil", state: "cancelled", reasonCode: "stopped", hint: "被打断了" },
+    // Neither: the reason code alone is the whole account the Mod gave.
+    { nodeId: "n04", actionId: "harvest_crop", state: "rejected", reasonCode: "not_ready" },
+    // Past the bound: printed up to it, with the cut named rather than silent.
+    { nodeId: "n05", actionId: "plant_seed", state: "failed", reasonCode: "blocked", reasonDetail: longDetail },
+  ];
+  const text = composeFactBrief({
+    inputs: [],
+    snapshot: undefined,
+    events: [
+      fact({
+        kind: "world_fact",
+        eventId: "program_settled_evidence",
+        semanticKind: "program_settled",
+        payload: { total: nodes.length, counts: { succeeded: 0 }, nodes },
+      }),
+    ],
+    locale: "zh-CN",
+  });
+  const opened = text.indexOf("<execution-result>");
+  const block = opened === -1 ? "" : text.slice(opened, text.indexOf("</execution-result>"));
+  assert.notEqual(opened, -1, "the fixture's programme must render one <execution-result> block");
+
+  const withDetail: readonly Readonly<{ nodeId: string; reasonDetail: string }>[] = nodes.flatMap((node) =>
+    typeof node.reasonDetail === "string" && node.reasonDetail.trim() !== ""
+      ? [{ nodeId: node.nodeId, reasonDetail: node.reasonDetail }]
+      : [],
+  );
+  assert.equal(
+    withDetail.length,
+    3,
+    "the fixture must carry nodes with a refusal detail, or this gate examines nothing (blocked, not green)",
+  );
+  for (const node of withDetail) {
+    const expected = node.reasonDetail.trim();
+    const shown = expected.slice(0, MAX_EVIDENCE_DETAIL_CHARS);
+    assert.ok(
+      block.includes(shown),
+      `${node.nodeId}: its refusal detail ${JSON.stringify(expected)} never reaches the model; the line it should be ` +
+        `in says ${JSON.stringify(block)}`,
+    );
+  }
+
+  // BOTH, NOT ONE INSTEAD OF THE OTHER: the node that carries a sentence and its evidence prints the two of them.
+  assert.ok(block.includes("请 Pierre 让开"), "n01's hint is the sentence");
+  assert.ok(block.includes(detail), "and n01's detail is its evidence, not a casualty of the sentence");
+  // The cut is NAMED. A silent truncation would be the same defect one layer down: she would read a partial coordinate
+  // list as the whole one.
+  assert.ok(!block.includes(longDetail), "n05's detail is bounded, not printed whole");
+  assert.ok(
+    block.includes(`${longDetail.slice(0, MAX_EVIDENCE_DETAIL_CHARS)}…`),
+    "n05's detail is printed up to the bound, and marked",
+  );
+  // AND THE HALVES THAT ARE ALONE STAY: a detail without a hint, a hint without a detail, and a node with neither.
+  assert.ok(block.includes("item=(O)388;stock=0"), "n02's detail is its whole account");
+  assert.ok(block.includes("被打断了"), "n03's hint survives, and no detail was invented for it");
+  assert.ok(block.includes("not_ready"), "n04 is explained by the Mod's own code");
 });

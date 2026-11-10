@@ -436,7 +436,8 @@ function composeExecutionResult(settlements: readonly WorldFact[]): string {
  *
  * The counts and the rows come from `program-settlement-digest.ts`'s own payload (`total`, `counts`, `nodes`), so this
  * sentence and a `stardew_action_program_status` answer cannot disagree. A failure is said in WORDS: the node's own
- * `hint` when the Mod published one, else its `reasonCode` - never a Host paraphrase, and never a bare count.
+ * `hint` and its own `reasonDetail`, each bounded, with its `reasonCode` beside them - never a Host paraphrase, and never
+ * a bare count.
  */
 function settlementLine(fact: WorldFact): string {
   const total = Number(fact.payload.total);
@@ -455,22 +456,48 @@ function settlementLine(fact: WorldFact): string {
 }
 
 /**
- * One failed node in words: the Mod's own hint first, because that is the sentence that says what would fix it.
+ * One failed node in words: the Mod's own hint AND its own detail, each bounded, never one instead of the other.
  *
- * The node's `reasonCode` is printed BESIDE the sentence when it has one, never replaced by it - a run audit greps for
+ * <p>
+ * The hint is the SENTENCE that says what would fix it; `reasonDetail` is the EVIDENCE that makes the sentence
+ * actionable (`owner=Pierre;owner_tile=4,17;actor_tile=5,19;radius=1`). Measured at `516e2559`, this function printed
+ * `hint ?? detail`, so a node carrying both reached her with the sentence alone and the coordinates - the one part of the
+ * refusal a guess cannot reconstruct - were dropped. A refusal she cannot decode is a refusal she answers by inventing a
+ * world fact.
+ * </p>
+ *
+ * <p>
+ * The node's `reasonCode` is printed BESIDE both, never replaced by either - a run audit greps for
  * `shop_counter_out_of_reach`, and a sentence that only said the counter was out of reach would be a second vocabulary
  * for the same refusal (`round41`: six of those refusals reached the model as a bare code, which is why the sentence
  * exists; neither half may cost the other).
+ * </p>
  */
 function failureWords(node: SettledNode): string {
   const action = typeof node.actionId === "string" ? node.actionId : "一步";
-  const hint = typeof node.hint === "string" && node.hint.trim() !== "" ? node.hint.trim() : undefined;
-  const detail =
-    typeof node.reasonDetail === "string" && node.reasonDetail.trim() !== "" ? node.reasonDetail.trim() : undefined;
   const code = typeof node.reasonCode === "string" && node.reasonCode !== "" ? node.reasonCode : undefined;
-  const words = hint ?? detail;
-  const reason = words === undefined ? code : code === undefined ? words : `${code}：${words}`;
+  // Sentence first, its evidence second: the order a reader needs them in. The separator is not `：`, which already
+  // introduces the code, so the two halves stay distinguishable in the line.
+  const words = [boundedFailureField(node.hint), boundedFailureField(node.reasonDetail)]
+    .filter((part): part is string => part !== undefined)
+    .join("｜");
+  const reason = words === "" ? code : code === undefined ? words : `${code}：${words}`;
   return reason === undefined ? `${action} 没做成` : `${action} 没做成（${reason}）`;
+}
+
+/**
+ * One failure field's share of a line: `evidenceDetail`'s own bound, with the cut NAMED.
+ *
+ * A bare ellipsis would leave her reading a partial coordinate list as the whole one; the count says how much of the
+ * Mod's text the line is not showing. Absent or blank is `undefined`, so the caller joins only the halves that exist.
+ */
+function boundedFailureField(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  if (text === "") return undefined;
+  if (text.length <= MAX_EVIDENCE_DETAIL_CHARS) return text;
+  const rest = text.length - MAX_EVIDENCE_DETAIL_CHARS;
+  return `${text.slice(0, MAX_EVIDENCE_DETAIL_CHARS)}…（另有 ${String(rest)} 字）`;
 }
 
 /**
