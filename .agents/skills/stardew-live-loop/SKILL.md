@@ -97,6 +97,10 @@ Freeze the criteria **before** the run, write what each number must be, and list
 pass afterwards (second-launch willingness, human blind rating, a second session ≥24 h apart).
 
 ## 7. Never
+- Never print a number without its population, its source, its method and its window. `26 of 26 toolCall parts (session.jsonl, structured parse, 09:01–09:21)` is a reading; `26 calls` is a rumour. The constructor is `tools/lib/reading.mjs` and the gate is `tools/audit-run-reading-shape.mjs`.
+- Never resolve two disagreeing methods by preference: a `disagree` reading blocks the verdict.
+- Never explain behaviour before proving the mechanism was available — count the refusals beside the calls (AGENTS.md, attribution discipline).
+- Never report a point-in-time reading as a whole-run verdict, and never a parallel-run test count as the suite's state: say which mode produced it.
 
 - Never kill a run you did not start by exact PID; never `killall`/`Get-Process -Name node`.
 - Never rebuild or redeploy into the game's Mod folder during a run.
