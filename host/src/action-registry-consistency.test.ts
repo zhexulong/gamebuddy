@@ -11,7 +11,10 @@ import {
   isDescriptorDerivedActionId,
   isModDescriptorComplete,
 } from "./action-registry.js";
-import type { ActionRegistrationDescriptor } from "./protocol.js";
+import { createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
+import { buildGameCompanionSystemPrompt, DEFAULT_IDENTITY_PROFILE } from "./identity-profile.js";
+import type { ActionRegistration, ActionRegistrationDescriptor, Scope } from "./protocol.js";
+import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
 /**
  * The generated Mod action-surface artifact (stardew-action-development) is
@@ -38,6 +41,13 @@ type SurfaceAction = Readonly<{
   resourceTemplate?: Readonly<{ claims?: readonly SurfaceActionClaim[] }>;
   effect?: "read" | "write";
   postcondition?: Readonly<{ name?: string }>;
+  /**
+   * The engine member this action drives, on the actions that declare one. Published for the mount arms, which
+   * require it: measured 2026-11-11, the artifact carried no such field while `express_emote` and
+   * `face_direction` - the two actions the Game prompt names for body language - were refused by their own arms
+   * on the only descriptor a consumer without a running game can read.
+   */
+  nativeBinding?: string;
 }>;
 
 function loadActionSurface(): readonly SurfaceAction[] {
@@ -151,72 +161,270 @@ function publishedDescriptor(action: SurfaceAction): ActionRegistrationDescripto
     })),
     ...(action.effect === undefined ? {} : { effect: action.effect }),
     ...(action.postcondition?.name === undefined ? {} : { postcondition: { name: action.postcondition.name } }),
+    ...(action.nativeBinding === undefined ? {} : { nativeBinding: action.nativeBinding }),
   };
 }
 
-/**
- * Mounts this gate cannot judge from the artifact, each with the reason. A reservation is a claim about the
- * ARTIFACT, never about the rule: the id still has to be complete on the descriptor hello_ack publishes, and a
- * reservation that is no longer needed fails the third test below rather than sitting here.
- */
-const UNJUDGEABLE_FROM_THE_ARTIFACT: Readonly<Record<string, string>> = Object.freeze({
-  express_emote:
-    "its arm requires the emote argument's enum AND a nativeBinding; the artifact publishes the vocabulary (FarmhandActionArgumentSchema.Enum), but the projection record carries no native binding field at all (farmhandactionsurfacepublication.cs:14-25).",
-  face_direction:
-    "same gap as express_emote: the artifact publishes the direction vocabulary, but the descriptor's nativeBinding is still not projected into it.",
-});
+/** The fields every action of the artifact carries; anything else is a field the Mod may omit. */
+const PUBLISHED_ACTION_REQUIRED_KEYS: readonly string[] = [
+  "actionId",
+  "identityVersion",
+  "lifecycle",
+  "kind",
+  "argumentSchema",
+  "outputFacts",
+  "resourceTemplate",
+  "effect",
+  "postcondition",
+];
 
-test("every mounted descriptor-derived action opens the gate on the Mod's own published descriptor", () => {
-  const mounted = mountedActionIds();
-  assert.ok(mounted.length >= 70, `expected the mount blocks to be found, got ${mounted.length}`);
-  const published = new Map(loadActionSurface().map((action) => [action.actionId, action]));
+/**
+ * The optional descriptor fields the Mod publishes, each with a value it publishes somewhere, read off the
+ * artifact instead of a list here: a field the Mod stops publishing disappears from this population, and a
+ * field it starts publishing joins it with no edit.
+ */
+function publishedOptionalFacts(actions: readonly SurfaceAction[]): ReadonlyMap<string, unknown> {
+  const facts = new Map<string, unknown>();
+  for (const action of actions) {
+    for (const [key, value] of Object.entries(action)) {
+      if (!PUBLISHED_ACTION_REQUIRED_KEYS.includes(key) && !facts.has(key)) facts.set(key, value);
+    }
+  }
+  return facts;
+}
+
+/**
+ * The optional members the Mod's projection RECORD declares, each with a probe value its declared type allows.
+ *
+ * Read from the record and not from the artifact, because the artifact is the suspect: a member the projection drops
+ * is absent from every action at once, so an artifact-derived population would lose exactly the member the reader
+ * needs named - the gate would keep passing on a vocabulary that had quietly shrunk. The probe value is a placeholder
+ * of the member's own type, used only to ask an already-shut arm whether that member is what it waits for; it never
+ * reaches a request.
+ */
+const MOD_PROJECTION_SOURCE = readFileSync(
+  resolve(hostRoot, "../integrations/stardew/src/Core/Policy/farmhandactionsurfacepublication.cs"),
+  "utf8",
+);
+
+function declaredOptionalMemberProbes(): ReadonlyMap<string, unknown> {
+  const probes = new Map<string, unknown>();
+  const at = MOD_PROJECTION_SOURCE.indexOf("record FarmhandActionDescriptorProjection(");
+  if (at < 0) throw new Error("stardew_action_descriptor_projection_record_not_found");
+  const declaration = MOD_PROJECTION_SOURCE.slice(at, MOD_PROJECTION_SOURCE.indexOf(");", at));
+  for (const match of declaration.matchAll(
+    /\[property: JsonIgnore\(Condition = JsonIgnoreCondition\.WhenWritingNull\)\]\s*([A-Za-z_][\w.<>]*\??)\s+([A-Z][A-Za-z0-9_]*)\s*=/gu,
+  )) {
+    const [, type, name] = match;
+    if (type === undefined || name === undefined) continue;
+    probes.set(name[0]!.toLowerCase() + name.slice(1), type.startsWith("string") ? "probe.member" : undefined);
+  }
+  if (probes.size === 0) throw new Error("stardew_action_descriptor_projection_record_declares_no_optional_member");
+  return probes;
+}
+
+/**
+ * The string-valued members the HOST's own descriptor type admits, read from `protocol.ts`.
+ *
+ * The probe population has to survive the projection being reverted, so it also comes from the CONSUMER's contract and
+ * not only from the Mod record under test: with `nativeBinding` removed from the Mod's record and from its artifact
+ * at once, the member is still one the Host judges and still what its two arms wait for - which is the fact the reader
+ * needs, and the one a probe built only from the Mod side cannot see.
+ */
+const HOST_PROTOCOL_SOURCE = readFileSync(resolve(hostRoot, "src", "protocol.ts"), "utf8");
+
+function hostDescriptorStringMembers(): readonly string[] {
+  const at = HOST_PROTOCOL_SOURCE.indexOf("export type ActionRegistrationDescriptor = Readonly<{");
+  if (at < 0) throw new Error("stardew_host_action_descriptor_type_not_found");
+  const block = HOST_PROTOCOL_SOURCE.slice(at, HOST_PROTOCOL_SOURCE.indexOf("}>;", at));
+  return [...block.matchAll(/^\s+([a-zA-Z][A-Za-z0-9]*)\?: string;$/gmu)].map((match) => match[1]!);
+}
+
+/** Every field worth probing, with a REAL published value taking precedence over a placeholder. */
+function descriptorProbes(published: readonly SurfaceAction[]): ReadonlyMap<string, unknown> {
+  const probes = new Map<string, unknown>(declaredOptionalMemberProbes());
+  for (const member of hostDescriptorStringMembers()) {
+    if (!probes.has(member)) probes.set(member, "probe.member");
+  }
+  for (const [member, value] of publishedOptionalFacts(published)) probes.set(member, value);
+  return probes;
+}
+
+/**
+ * Why the arm is shut, in a form the reader can act on.
+ *
+ * The arm is ASKED, never re-implemented: forty-odd per-action rules copied into a test would disagree with the
+ * ones that matter the first time either changed. Each optional field the artifact publishes is added back on
+ * its own, with a value the artifact itself publishes for that field, and the field whose ABSENCE alone keeps
+ * the arm shut is what the reader needs to know.
+ */
+function whyTheArmClosed(
+  actionId: string,
+  descriptor: ActionRegistrationDescriptor,
+  probes: ReadonlyMap<string, unknown>,
+): string {
+  const repairs: string[] = [];
+  for (const [field, value] of probes) {
+    if (value === undefined || field in descriptor) continue;
+    if (isModDescriptorComplete(actionId, { ...descriptor, [field]: value } as ActionRegistrationDescriptor))
+      repairs.push(field);
+  }
+  if (repairs.length > 0) return `the published descriptor carries no ${repairs.join("+")}, which its arm requires`;
+  return "the arm is shut on a fact neither this artifact nor the Mod's projection record names";
+}
+
+/**
+ * The tool list a Game session is handed, built by the function a session calls with the catalog hello_ack
+ * publishes. `familyId` is the one registration field the artifact does not publish, and mounting reads only the
+ * id and the descriptor.
+ */
+function mountedToolNames(published: readonly SurfaceAction[]): readonly string[] {
+  const registrations: readonly ActionRegistration[] = published.map((action) => ({
+    actionId: action.actionId,
+    familyId: action.actionId,
+    identityVersion: action.identityVersion,
+    lifecycle: action.lifecycle as ActionRegistration["lifecycle"],
+    kind: action.kind as ActionRegistration["kind"],
+    descriptor: publishedDescriptor(action),
+  }));
+  const capabilities = registrations.filter((registration) => registration.kind === "execution").map((r) => r.actionId);
+  const scope: Scope = {
+    integrationId: "stardew",
+    saveId: "save_mount_gate",
+    worldId: "world_mount_gate",
+    playerId: "player_mount_gate",
+    companionId: "companion_mount_gate",
+  };
+  const integration: MoveCapableIntegration = {
+    scope,
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
+    state: {
+      connected: true,
+      sessionId: "session_mount_gate",
+      capabilities,
+      catalogRevision: 1,
+      enabledActionIds: capabilities,
+      snapshot: {
+        revision: 1,
+        location: "Farm",
+        tile: { x: 10, y: 15 },
+        stamina: 100,
+        exhausted: false,
+        health: 100,
+        actionable: true,
+        capabilities,
+        catalogRevision: 1,
+        enabledActionIds: capabilities,
+        presentationLocale: "en-US",
+        timeOfDay: 600,
+        dayOfMonth: 1,
+        seasonIndex: 0,
+        year: 1,
+        weather: "sunny",
+        activeExecution: null,
+      },
+      latestReceipt: null,
+      latestReasonCode: null,
+      catalogRegistrations: registrations,
+    },
+    async execute() {
+      throw new Error("mount_gate_never_executes");
+    },
+    async cancel() {
+      throw new Error("mount_gate_never_cancels");
+    },
+  };
+  return createStardewActionTools(integration, undefined, () => {
+    throw new Error("mount_gate_never_dispatches");
+  }).map((tool) => tool.name);
+}
+
+function toolNameFor(actionId: string): string | undefined {
+  return (STARDEW_ACTION_TOOL_NAMES as Readonly<Record<string, string>>)[actionId];
+}
+
+test("the mounted descriptor-derived set is exactly the published set whose arm opens", () => {
+  const published = loadActionSurface();
+  const publishedById = new Map(published.map((action) => [action.actionId, action]));
+  const publishedDescriptorDerived = published.filter((action) => isDescriptorDerivedActionId(action.actionId));
+  // Zero population is BLOCKED, never green: an artifact with no descriptor-derived action would make both
+  // sides of the equality agree on nothing at all.
+  assert.ok(
+    publishedDescriptorDerived.length > 0,
+    "blocked: the artifact publishes no descriptor-derived action, so this gate examines nothing",
+  );
+
+  const probes = descriptorProbes(published);
+  const mountBlocks = new Set(mountedActionIds());
   const failures: string[] = [];
-  for (const actionId of mounted) {
-    if (!isDescriptorDerivedActionId(actionId)) continue;
-    if (actionId in UNJUDGEABLE_FROM_THE_ARTIFACT) continue;
-    const action = published.get(actionId);
-    if (action === undefined) {
-      failures.push(`${actionId}: no published descriptor in the Mod artifact`);
+  const armOpen = new Set<string>();
+  for (const action of publishedDescriptorDerived) {
+    const descriptor = publishedDescriptor(action);
+    if (!isModDescriptorComplete(action.actionId, descriptor)) {
+      failures.push(
+        `action_published_but_not_mounted:${action.actionId}:${whyTheArmClosed(action.actionId, descriptor, probes)}`,
+      );
       continue;
     }
-    if (!isModDescriptorComplete(actionId, publishedDescriptor(action)))
+    armOpen.add(action.actionId);
+    if (!mountBlocks.has(action.actionId)) {
       failures.push(
-        `${actionId}: the gate stays shut on the descriptor the Mod publishes, so the Agent can never call it`,
+        `action_published_and_open_but_not_mounted:${action.actionId}:no mount block in game-tools.ts, so nothing hands it to the Agent`,
       );
+    }
   }
-  assert.deepEqual(failures, [], `these mounted actions are unreachable: ${failures.join(" | ")}`);
+  for (const actionId of mountBlocks) {
+    if (!isDescriptorDerivedActionId(actionId)) continue;
+    if (!publishedById.has(actionId)) {
+      failures.push(
+        `action_mounted_but_not_published:${actionId}:game-tools.ts mounts it and the artifact publishes no descriptor for it`,
+      );
+    }
+  }
+
+  // What the session is actually handed, not a second reading of the same gate.
+  const mounted = new Set(mountedToolNames(published));
+  const mountedDescriptorDerived = publishedDescriptorDerived
+    .filter((action) => {
+      const toolName = toolNameFor(action.actionId);
+      if (toolName === undefined) {
+        failures.push(
+          `action_published_but_not_mounted:${action.actionId}:STARDEW_ACTION_TOOL_NAMES carries no name for it, so no session can be handed the tool`,
+        );
+        return false;
+      }
+      return mounted.has(toolName);
+    })
+    .map((action) => action.actionId)
+    .sort();
+
+  assert.deepEqual(
+    mountedDescriptorDerived,
+    [...armOpen].sort(),
+    `mounted tools differ from the actions whose arm opens: ${failures.join(" | ")}`,
+  );
+  assert.deepEqual(failures, [], `the mount ledger is inconsistent: ${failures.join(" | ")}`);
 });
 
-test("every descriptor-derived id is both mounted and published, so no arm is dead code", () => {
-  const mounted = new Set(mountedActionIds());
-  const published = new Set(loadActionSurface().map((action) => action.actionId));
-  assert.deepEqual(
-    STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS.filter((actionId) => !mounted.has(actionId)),
-    [],
-    "a descriptor-derived id with no mount block is an arm nothing can reach",
-  );
-  assert.deepEqual(
-    STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS.filter((actionId) => !published.has(actionId)),
-    [],
-    "a descriptor-derived id the Mod does not publish can never be complete",
-  );
-});
+/**
+ * The prompt floor's own tool names.
+ *
+ * The Game conduct told the companion "Body language goes through the native actions stardew_express_emote and
+ * stardew_face_direction" while neither tool was in the mounted list: measured round44, `stardew_express_emote`
+ * appeared zero times as a mounted tool definition and only in that sentence. Nothing compared the two - the
+ * floor is prose, the mount ledger is code, and each was checked on its own. This gate reads the rendered floor
+ * the model receives and holds every tool name in it against the list a Game session actually mounts.
+ */
+const FLOOR_TOOL_NAME = /\bstardew_[a-z0-9_]+/gu;
 
-test("each reservation names a reason and is still required", () => {
-  const published = new Map(loadActionSurface().map((action) => [action.actionId, action]));
-  for (const [actionId, reason] of Object.entries(UNJUDGEABLE_FROM_THE_ARTIFACT)) {
-    assert.equal(
-      isDescriptorDerivedActionId(actionId),
-      true,
-      `${actionId} is reserved but is not gated by isModDescriptorComplete at all`,
-    );
-    assert.ok(reason.length > 80, `${actionId} needs a reason that names what is missing`);
-    const action = published.get(actionId);
-    assert.notEqual(action, undefined, `${actionId} is reserved but the Mod publishes no descriptor`);
-    assert.equal(
-      isModDescriptorComplete(actionId, publishedDescriptor(action!)),
-      false,
-      `${actionId} is now judgeable from the artifact: drop the reservation instead of weakening the gate`,
-    );
-  }
+test("every tool the Game prompt floor names is a tool a Game session mounts", () => {
+  const floor = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  const named = [...new Set([...floor.matchAll(FLOOR_TOOL_NAME)].map((match) => match[0]))].sort();
+  assert.ok(named.length > 0, "blocked: the rendered Game prompt names no tool at all, so this gate examines nothing");
+  const mounted = new Set(mountedToolNames(loadActionSurface()));
+  assert.deepEqual(
+    named.filter((name) => !mounted.has(name)).map((name) => `floor_names_unmounted_tool:${name}`),
+    [],
+    `the prompt tells the companion to use a tool no Game session mounts: ${named.join(", ")}`,
+  );
 });

@@ -142,7 +142,8 @@
           "postcondition": {
             "name": "native_action_postcondition"
           },
-          "targetFamily": "toolSlots"
+          "targetFamily": "toolSlots",
+          "nativeBinding": "Game1.player.CurrentToolIndex"
         },
         "handlerGroup": null
       },
@@ -243,7 +244,8 @@
           "effect": "write",
           "postcondition": {
             "name": "bus_arrived"
-          }
+          },
+          "nativeBinding": "BusStop.checkAction+answerDialogue"
         },
         "handlerGroup": null
       },
@@ -1250,7 +1252,8 @@
           "approach": {
             "relation": "self_walked"
           },
-          "targetFamily": "worldObjectTargets"
+          "targetFamily": "worldObjectTargets",
+          "nativeBinding": "Object.placementAction"
         },
         "handlerGroup": null
       },
@@ -1299,7 +1302,8 @@
           "approach": {
             "relation": "self_walked"
           },
-          "targetFamily": "worldObjectTargets"
+          "targetFamily": "worldObjectTargets",
+          "nativeBinding": "Object.performRemoveAction"
         },
         "handlerGroup": null
       },
@@ -1338,7 +1342,8 @@
           "postcondition": {
             "name": "placed_furniture_picked_up"
           },
-          "targetFamily": "worldObjectTargets"
+          "targetFamily": "worldObjectTargets",
+          "nativeBinding": "GameLocation.removeQueuedFurniture"
         },
         "handlerGroup": null
       },
@@ -1387,7 +1392,8 @@
           "approach": {
             "relation": "self_walked"
           },
-          "targetFamily": "worldObjectTargets"
+          "targetFamily": "worldObjectTargets",
+          "nativeBinding": "BreakableContainer.performToolAction"
         },
         "handlerGroup": null
       },
@@ -1426,7 +1432,8 @@
           "postcondition": {
             "name": "furniture_rotated"
           },
-          "targetFamily": "worldObjectTargets"
+          "targetFamily": "worldObjectTargets",
+          "nativeBinding": "Furniture.rotate"
         },
         "handlerGroup": null
       },
@@ -1469,7 +1476,8 @@
           "postcondition": {
             "name": "fence_removed"
           },
-          "targetFamily": "worldObjectTargets"
+          "targetFamily": "worldObjectTargets",
+          "nativeBinding": "Fence.performToolAction"
         },
         "handlerGroup": null
       },
@@ -1515,7 +1523,8 @@
           "postcondition": {
             "name": "fish_tank_item_deposited"
           },
-          "targetFamily": "worldObjectTargets"
+          "targetFamily": "worldObjectTargets",
+          "nativeBinding": "FishTankFurniture.checkForAction"
         },
         "handlerGroup": null
       },
@@ -1561,7 +1570,8 @@
           "postcondition": {
             "name": "pedestal_item_placed"
           },
-          "targetFamily": "worldObjectTargets"
+          "targetFamily": "worldObjectTargets",
+          "nativeBinding": "ItemPedestal.performObjectDropInAction"
         },
         "handlerGroup": null
       },
@@ -2389,7 +2399,8 @@
           "effect": "write",
           "postcondition": {
             "name": "emote_started"
-          }
+          },
+          "nativeBinding": "Farmer.doEmote"
         },
         "handlerGroup": null
       },
@@ -2426,7 +2437,8 @@
           "effect": "write",
           "postcondition": {
             "name": "actor_facing_matches"
-          }
+          },
+          "nativeBinding": "Farmer.faceDirection"
         },
         "handlerGroup": null
       },
@@ -2750,7 +2762,8 @@
           "approach": {
             "relation": "self_walked"
           },
-          "targetFamily": "caskTargets"
+          "targetFamily": "caskTargets",
+          "nativeBinding": "Cask.performToolAction"
         },
         "handlerGroup": null
       },
@@ -2795,7 +2808,8 @@
           "approach": {
             "relation": "self_walked"
           },
-          "targetFamily": "mannequinTargets"
+          "targetFamily": "mannequinTargets",
+          "nativeBinding": "Mannequin.performObjectDropInAction"
         },
         "handlerGroup": null
       },
@@ -2840,7 +2854,8 @@
           "approach": {
             "relation": "self_walked"
           },
-          "targetFamily": "signTargets"
+          "targetFamily": "signTargets",
+          "nativeBinding": "Sign.checkForAction"
         },
         "handlerGroup": null
       },
@@ -2885,7 +2900,8 @@
           "approach": {
             "relation": "self_walked"
           },
-          "targetFamily": "siloTargets"
+          "targetFamily": "siloTargets",
+          "nativeBinding": "GameLocation.tryToAddHay"
         },
         "handlerGroup": null
       },
@@ -2928,7 +2944,8 @@
           "postcondition": {
             "name": "tool_light_toggled"
           },
-          "targetFamily": "lanternSlots"
+          "targetFamily": "lanternSlots",
+          "nativeBinding": "Lantern.DoFunction"
         },
         "handlerGroup": null
       },
@@ -2969,7 +2986,8 @@
           "approach": {
             "relation": "self_walked"
           },
-          "targetFamily": "siloTargets"
+          "targetFamily": "siloTargets",
+          "nativeBinding": "GameLocation.GetHayFromAnySilo"
         },
         "handlerGroup": null
       },
@@ -3052,7 +3070,8 @@
           "approach": {
             "relation": "self_walked"
           },
-          "targetFamily": "animalDoorTargets"
+          "targetFamily": "animalDoorTargets",
+          "nativeBinding": "Building.ToggleAnimalDoor"
         },
         "handlerGroup": null
       },
@@ -3088,7 +3107,8 @@
           "postcondition": {
             "name": "warp_item_arrived"
           },
-          "targetFamily": "warpItemTargets"
+          "targetFamily": "warpItemTargets",
+          "nativeBinding": "Object.performUseAction"
         },
         "handlerGroup": null
       },
@@ -3131,7 +3151,8 @@
           "postcondition": {
             "name": "ore_panned"
           },
-          "targetFamily": "panSites"
+          "targetFamily": "panSites",
+          "nativeBinding": "Pan.DoFunction"
         },
         "handlerGroup": null
       },
@@ -3172,7 +3193,8 @@
           "approach": {
             "relation": "self_walked"
           },
-          "targetFamily": "mailboxTargets"
+          "targetFamily": "mailboxTargets",
+          "nativeBinding": "GameLocation.mailbox"
         },
         "handlerGroup": null
       },
@@ -3217,7 +3239,8 @@
           "approach": {
             "relation": "self_walked"
           },
-          "targetFamily": "buildingChestTargets"
+          "targetFamily": "buildingChestTargets",
+          "nativeBinding": "Building.PerformBuildingChestAction"
         },
         "handlerGroup": null
       },
@@ -3258,7 +3281,8 @@
           "approach": {
             "relation": "self_walked"
           },
-          "targetFamily": "buildingChestTargets"
+          "targetFamily": "buildingChestTargets",
+          "nativeBinding": "Building.PerformBuildingChestAction"
         },
         "handlerGroup": null
       },
@@ -3740,7 +3764,8 @@
           "postcondition": {
             "name": "wearable_equipped"
           },
-          "targetFamily": "wearableTargets"
+          "targetFamily": "wearableTargets",
+          "nativeBinding": "Farmer.Equip"
         },
         "handlerGroup": null
       },
@@ -3776,7 +3801,8 @@
           "postcondition": {
             "name": "wearable_unequipped"
           },
-          "targetFamily": "wearableTargets"
+          "targetFamily": "wearableTargets",
+          "nativeBinding": "Farmer.Equip"
         },
         "handlerGroup": null
       },
@@ -3803,7 +3829,8 @@
           "effect": "write",
           "postcondition": {
             "name": "transport_dismounted"
-          }
+          },
+          "nativeBinding": "Horse.dismount"
         },
         "handlerGroup": null
       },
@@ -3830,7 +3857,8 @@
           "effect": "write",
           "postcondition": {
             "name": "modal_dismissed"
-          }
+          },
+          "nativeBinding": "DialogueBox.closeDialogue"
         },
         "handlerGroup": null
       },
@@ -3861,7 +3889,8 @@
           "effect": "write",
           "postcondition": {
             "name": "answer_dialogue_answered"
-          }
+          },
+          "nativeBinding": "GameLocation.answerDialogue"
         },
         "handlerGroup": null
       },
@@ -3904,7 +3933,8 @@
           "postcondition": {
             "name": "level_up_resolved"
           },
-          "targetFamily": "pendingLevelUpChoices"
+          "targetFamily": "pendingLevelUpChoices",
+          "nativeBinding": "LevelUpMenu.okButtonClicked"
         },
         "handlerGroup": null
       },
@@ -4006,7 +4036,8 @@
           "approach": {
             "relation": "self_walked"
           },
-          "targetFamily": "colorTargets"
+          "targetFamily": "colorTargets",
+          "nativeBinding": "DiscreteColorPicker.getColorFromSelection"
         },
         "handlerGroup": null
       },
@@ -4047,7 +4078,8 @@
           "approach": {
             "relation": "self_walked"
           },
-          "targetFamily": "fishPondTargets"
+          "targetFamily": "fishPondTargets",
+          "nativeBinding": "FishPond.ClearPond"
         },
         "handlerGroup": null
       },
@@ -4091,7 +4123,8 @@
           "approach": {
             "relation": "self_walked"
           },
-          "targetFamily": "farmBuildingTargets"
+          "targetFamily": "farmBuildingTargets",
+          "nativeBinding": "GameLocation.buildStructure"
         },
         "handlerGroup": null
       },
@@ -4123,7 +4156,8 @@
           "postcondition": {
             "name": "daily_quest_accepted"
           },
-          "targetFamily": "dailyQuestTargets"
+          "targetFamily": "dailyQuestTargets",
+          "nativeBinding": "Quest.accept"
         },
         "handlerGroup": null
       },
@@ -4155,7 +4189,8 @@
           "postcondition": {
             "name": "special_order_accepted"
           },
-          "targetFamily": "specialOrderTargets"
+          "targetFamily": "specialOrderTargets",
+          "nativeBinding": "FarmerTeam.AddSpecialOrder"
         },
         "handlerGroup": null
       },
@@ -4187,7 +4222,8 @@
           "postcondition": {
             "name": "museum_rewards_collected"
           },
-          "targetFamily": "museumRewardTargets"
+          "targetFamily": "museumRewardTargets",
+          "nativeBinding": "LibraryMuseum.getRewardsForPlayer"
         },
         "handlerGroup": null
       },
@@ -4245,7 +4281,8 @@
           "effect": "write",
           "postcondition": {
             "name": "prize_ticket_redeemed"
-          }
+          },
+          "nativeBinding": "PrizeTicketMenu.getPrizeItem"
         },
         "handlerGroup": null
       },
@@ -4283,7 +4320,8 @@
           "postcondition": {
             "name": "clothing_tailored"
           },
-          "targetFamily": "tailoringTargets"
+          "targetFamily": "tailoringTargets",
+          "nativeBinding": "TailoringMenu.CraftItem"
         },
         "handlerGroup": null
       },
@@ -4321,7 +4359,8 @@
           "postcondition": {
             "name": "clothing_dyed"
           },
-          "targetFamily": "tailoringTargets"
+          "targetFamily": "tailoringTargets",
+          "nativeBinding": "TailoringMenu.DyeItems"
         },
         "handlerGroup": null
       },
@@ -4356,7 +4395,8 @@
           "effect": "write",
           "postcondition": {
             "name": "native_action_postcondition"
-          }
+          },
+          "nativeBinding": "GeodeMenu.receiveLeftClick"
         },
         "handlerGroup": null
       }

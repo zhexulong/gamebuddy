@@ -26,7 +26,7 @@ export const ACTION_SURFACE_ACTION_KEYS = Object.freeze([
  * a fixed set. Measured 2026-10-29: `HEAD` fails `stardew_action_surface_invalid_action_shape` before any change of
  * this session.
  */
-export const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily"]);
+export const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily", "nativeBinding"]);
 export const ACTION_SURFACE_MAX_JSON_BYTES = 64 * 1024;
 const ACTION_SURFACE_MAX_REGISTRATIONS = 128;
 export const ACTION_SURFACE_MAX_IDENTIFIER_LENGTH = 128;
@@ -474,7 +474,17 @@ function validateAction(value, seenActionIds) {
     if (typeof value.targetFamily !== "string" || !TARGET_FAMILY.test(value.targetFamily)) fail("invalid_target_family");
   }
 
-  return Object.freeze({ actionId, identityVersion, lifecycle, kind, argumentSchema, outputFacts, resourceTemplate, effect, postcondition, ...(value.sceneTarget === undefined ? {} : { sceneTarget: value.sceneTarget }), ...(value.targetFamily === undefined ? {} : { targetFamily: value.targetFamily }) });
+  if (value.nativeBinding !== undefined) {
+    // The engine member this action drives, in the Mod's own spelling (`Farmer.doEmote`). Measured 2026-11-11: this
+    // field never reached the artifact, so the Host's mount arms - which require it - closed on the only descriptor a
+    // consumer outside a running game can read, and the two actions the Game prompt tells the companion to use for body
+    // language could not be mounted at all. Bounded exactly as the Host's own wire validator bounds it (a non-empty
+    // string of at most 128 characters), so a value that passes here cannot be refused on the other side.
+    if (typeof value.nativeBinding !== "string" || value.nativeBinding.length === 0 || value.nativeBinding.length > 128)
+      fail("invalid_native_binding");
+  }
+
+  return Object.freeze({ actionId, identityVersion, lifecycle, kind, argumentSchema, outputFacts, resourceTemplate, effect, postcondition, ...(value.sceneTarget === undefined ? {} : { sceneTarget: value.sceneTarget }), ...(value.targetFamily === undefined ? {} : { targetFamily: value.targetFamily }), ...(value.nativeBinding === undefined ? {} : { nativeBinding: value.nativeBinding }) });
 }
 
 /**

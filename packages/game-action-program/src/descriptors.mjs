@@ -15,9 +15,9 @@ const DESCRIPTOR_REQUIRED_KEYS = Object.freeze([
   "effect",
   "postcondition",
 ]);
-// The members a producer may ADD to the required set. Both are optional because the Mod's serializer omits them when an
-// action declares neither (`JsonIgnoreCondition.WhenWritingNull`), and both are members the Host's own registration
-// descriptor already accepts. Refusing either here only makes the published surface unreadable to the one consumer of
+// The members a producer may ADD to the required set. Each is optional because the Mod's serializer omits it when an
+// action declares none (`JsonIgnoreCondition.WhenWritingNull`), and each is a member the Host's own registration
+// descriptor already accepts. Refusing one here only makes the published surface unreadable to the one consumer of
 // this module, which then reports it as "not parseable by the Host descriptor whitelist" while the Host parses it
 // happily - the drift `eff7646f` fixed for `approach` and `450c8f90` re-opened for `sceneTarget`.
 //
@@ -26,7 +26,7 @@ const DESCRIPTOR_REQUIRED_KEYS = Object.freeze([
 // derivation lives one layer up, in `tools/audit-stardew-decision-closure.test.mjs`, where both directions are asserted
 // against the published surface and `protocol.ts`'s `KNOWN_ACTION_DESCRIPTOR_KEYS` - so a member added to either side is
 // judged and named instead of silently missed.
-const DESCRIPTOR_OPTIONAL_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily"]);
+const DESCRIPTOR_OPTIONAL_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily", "nativeBinding"]);
 // `description` is the Mod's own words for what an argument MEANS, published per argument so the companion is not told
 // a Host-side sentence about a shared argument name that is false for the action it is calling. The Host's registration
 // descriptor has carried it since `693c19a8`; this entry whitelist still refused it.
@@ -187,6 +187,11 @@ function isValidDescriptor(descriptor) {
   // Host-side catalog is built from, so a value it admits and the Host refuses is a descriptor that parses here and dies
   // at registration. The value rule is `TARGET_FAMILY_NAME`, the Host's own.
   const targetFamily = ownValue(descriptor, "targetFamily");
+  // The engine member this action drives (`Farmer.doEmote`), bounded exactly as the Host bounds it. It reached the
+  // artifact when the Host's mount arms needed the field they require: the two actions the Game prompt names for body
+  // language were published, planned for, and unmountable from the only descriptor a consumer without a running game
+  // can read.
+  const nativeBinding = ownValue(descriptor, "nativeBinding");
   return typeof actionId === "string" && IDENTIFIER.test(actionId)
     && Number.isSafeInteger(identityVersion) && identityVersion >= 1
     && identityVersion <= MAX_IDENTITY_VERSION
@@ -199,7 +204,9 @@ function isValidDescriptor(descriptor) {
     && validPostcondition(postcondition)
     && (approach === INVALID || validApproach(approach))
     && (sceneTarget === INVALID || validSceneTarget(sceneTarget))
-    && (targetFamily === INVALID || (typeof targetFamily === "string" && TARGET_FAMILY_NAME.test(targetFamily)));
+    && (targetFamily === INVALID || (typeof targetFamily === "string" && TARGET_FAMILY_NAME.test(targetFamily)))
+    && (nativeBinding === INVALID
+      || (typeof nativeBinding === "string" && nativeBinding.length > 0 && nativeBinding.length <= MAX_STRING_LENGTH));
 }
 
 /**

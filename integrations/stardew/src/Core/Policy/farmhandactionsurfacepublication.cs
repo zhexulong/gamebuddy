@@ -39,7 +39,20 @@ public sealed record FarmhandActionDescriptorProjection(
     /// connected by nothing at all in this assembly.
     /// </para>
     /// </summary>
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TargetFamily = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TargetFamily = null,
+    /// <summary>
+    /// The engine member this action drives (`Farmer.doEmote`), or null for an action that declares none.
+    ///
+    /// <para>
+    /// Published because the Host's mount arms require it and the artifact is the only descriptor a consumer outside a
+    /// running game can read: measured 2026-11-11, `express_emote` and `face_direction` were the two actions the Game
+    /// prompt tells the companion to use for body language, and neither could be mounted from this artifact - the two
+    /// arms require `nativeBinding`, the artifact never carried it, while the hello_ack wire (which does carry it) is
+    /// only available with a live Mod. Omitted when null, like `Approach` and `TargetFamily`, so an action that declares
+    /// no binding keeps the exact wire shape it had before.
+    /// </para>
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? NativeBinding = null
 );
 
 /// <summary>
@@ -149,7 +162,8 @@ public static class FarmhandActionSurfacePublication
             Approach: descriptor.Approach is { } approach
                 ? new FarmhandActionApproachRequirementProjection(approach.Relation, approach.WithinTiles)
                 : null,
-            TargetFamily: descriptor.TargetFamily);
+            TargetFamily: descriptor.TargetFamily,
+            NativeBinding: descriptor.NativeBinding);
     }
 
     private static void ValidateIdentity(string value, string name)

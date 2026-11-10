@@ -345,8 +345,8 @@ test("the projection admits no descriptor member the Host's registration whiteli
   // The other direction, and the one whose absence let the gap open: a member this gateway admits but the Host refuses
   // is a descriptor that parses here and is rejected at registration. Every admitted member must be one the Host
   // judges - either on the registration envelope or inside the descriptor. The projection stays a SUBSET: the Host's
-  // descriptor whitelist also carries fields the static surface artifact never publishes (`nativeBinding`,
-  // `watchdogMs`, `evidenceSchema`, `canonicalCodec`), so equality would be the wrong assertion.
+  // descriptor whitelist also carries fields the static surface artifact never publishes (`watchdogMs`,
+  // `evidenceSchema`, `canonicalCodec`), so equality would be the wrong assertion.
   const judgedByTheHost = new Set([...hostEnvelopeKeys(), ...hostDescriptorKeys()]);
   const projection = [
     ...DESCRIPTOR_PROJECTION_VOCABULARY.descriptor.required,
@@ -586,6 +586,7 @@ test("the Mod's descriptor record parses to exactly the member vocabulary it dec
     { name: "approach", bucket: "optional" },
     { name: "sceneTarget", bucket: "optional" },
     { name: "targetFamily", bucket: "optional" },
+    { name: "nativeBinding", bucket: "optional" },
   ]);
   // The other record is parsed by the same reader and must not bleed into this one: `Enum` and `Description` also carry
   // `WhenWritingNull` and belong to FarmhandActionArgumentSchema.
@@ -759,19 +760,15 @@ test("the Mod's argument record and the projection spell one argument vocabulary
  *                    published; the Host reads both (`action-registry.ts:813`).
  *  - `watchdogMs`    the Mod's own execution budget. `JsonIgnoreCondition.Always` on the record, because it sizes a
  *                    dispatch deadline rather than describing anything the agent decides with.
- *  - `nativeBinding` the native method an emote/dispatch arm calls. Sent on the registration wire and required by
- *                    `action-registry.ts:904` for those arms; never a member of the projection record at all.
  *  - `evidenceSchema` Host-tolerated only: no C# source emits it (measured: zero occurrences under
  *                    `integrations/stardew`), so it is a whitelist entry with no producer.
  *  - `canonicalCodec` the same, for the codec name.
+ *
+ * `nativeBinding` left this list when it became a member of the projection record: the Host's mount arms require it, and
+ * a member required only on the wire is one the artifact's consumers cannot read, which is how the two body-language
+ * actions the Game prompt names were unmountable without a running game.
  */
-const RUNTIME_ONLY_KEYS = Object.freeze([
-  "arguments",
-  "canonicalCodec",
-  "evidenceSchema",
-  "nativeBinding",
-  "watchdogMs",
-]);
+const RUNTIME_ONLY_KEYS = Object.freeze(["arguments", "canonicalCodec", "evidenceSchema", "watchdogMs"]);
 
 /**
  * The drift between the projection and the Host's registration whitelist, once the runtime-only members are separated.

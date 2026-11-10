@@ -124,6 +124,10 @@ public sealed class FarmhandActionSurfaceExportTests
             if (action.TryGetProperty("approach", out _)) declared.Add("approach");
             if (action.TryGetProperty("sceneTarget", out _)) declared.Add("sceneTarget");
             if (action.TryGetProperty("targetFamily", out _)) declared.Add("targetFamily");
+            // `nativeBinding` is present only on the actions that declare one (`express_emote`, `face_direction`), and it
+            // is what the Host's mount arms require: an artifact that omits it withdraws the action from the Agent with
+            // no error raised.
+            if (action.TryGetProperty("nativeBinding", out _)) declared.Add("nativeBinding");
             action.EnumerateObject().Select(property => property.Name).Should().Equal(declared);
             action.GetProperty("resourceTemplate").EnumerateObject().Select(property => property.Name)
                 .Should().Equal("claims");
