@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { StardewBridgeConnection } from "./game-connection.js";
+import { bindProgramDirectiveLedger } from "./game-directive.js";
 import { LOOKUP_SUBJECTS, MAX_MY_WORK_PROGRAMS, type MyWorkJournal, myWork } from "./game-lookup.js";
 import { createStardewObservationTools } from "./game-tools.js";
 import type { BodyProgramStatusResult, BodyProgramStatusSnapshot, Snapshot } from "./protocol.js";
@@ -204,9 +205,11 @@ test("my_work answers the totals, the byAction order and the tiles of one journa
   assert.equal(answer.byAction.omitted, 0);
   assert.equal(answer.tiles.omitted, 0);
   assert.deepEqual(answer.programs.rows, [
-    { programId: "program_seeded", state: "succeeded" },
-    { programId: "program_running", state: "active" },
-    { programId: "program_abandoned", state: "failed" },
+    // No ledger reader is wired into this session, so no row may claim a standing: `not_measured` is the honest answer and
+    // is what stops an empty reading from being quoted as "nothing was authorized".
+    { programId: "program_seeded", state: "succeeded", directiveId: null, directiveStanding: "not_measured" },
+    { programId: "program_running", state: "active", directiveId: null, directiveStanding: "not_measured" },
+    { programId: "program_abandoned", state: "failed", directiveId: null, directiveStanding: "not_measured" },
   ]);
   assert.equal(answer.programs.omitted, 0, "the transport page holds three programs");
   assert.equal(answer.population, "programs read 3 of 3");
@@ -304,4 +307,109 @@ test("an addressed journal answer is not treated as the recent-program page", as
   const { body } = await ask("my_work", {}, addressed);
   assert.equal(body.missingField, "BodyProgramJournal.programs");
   assert.match(body.unknown, /no recent-program page:found/u);
+});
+
+/**
+ * THE DIRECTIVE READING, through the same tool the model calls.
+ *
+ * `round44` could not tell a plan authorized by today's note from one authorized by yesterday's, because no field said
+ * so. These assertions are that field: the row carries the id it was admitted under, the totals partition every plan,
+ * and both numbers print with their denominator. `not_measured` is the third answer and is not the same word as
+ * `none` - a session with no reader knows nothing, a session with no directive knows the plan was her own.
+ */
+test("my_work says which directive authorized each plan, and partitions current from retired", async () => {
+  const bound = connection(JOURNAL, snapshot);
+  bindProgramDirectiveLedger(bound, () =>
+    Object.freeze({
+      currentDirectiveId: "d_6_bbbb",
+      stamps: new Map([
+        ["program_seeded", "d_6_aaaa"],
+        ["program_running", "d_6_bbbb"],
+      ]),
+    }),
+  );
+  const tool = createStardewObservationTools(bound).find((candidate) => candidate.name === "stardew_look_up");
+  const result = await tool?.execute(
+    "lookup_01",
+    { subject: "my_work" },
+    new AbortController().signal,
+    () => {},
+    {} as never,
+  );
+  const body = JSON.parse(String((result?.content[0] as { text?: string }).text)) as Record<string, any>;
+
+  assert.deepEqual(
+    body.answer.programs.rows.map((row: Record<string, unknown>) => [
+      row.programId,
+      row.directiveId,
+      row.directiveStanding,
+    ]),
+    [
+      // Admitted under A, while B is current: retired, and its id proves it without any instruction to prefer B.
+      ["program_seeded", "d_6_aaaa", "retired"],
+      ["program_running", "d_6_bbbb", "current"],
+      // The journal knows this program and the ledger does not - a previous session. Not the same word as "none".
+      ["program_abandoned", null, "unrecorded"],
+    ],
+  );
+  assert.deepEqual(body.answer.totals.directive, {
+    state: "measured",
+    current: "d_6_bbbb",
+    plans: { read: 3, current: 1, retired: 1, none: 0, unrecorded: 1 },
+    summary: "plans 2 of 3 (current 1 · retired 1)",
+  });
+});
+
+test("my_work with no directive says none, and never reports a row as authorized", async () => {
+  const bound = connection(JOURNAL, snapshot);
+  bindProgramDirectiveLedger(bound, () => Object.freeze({ currentDirectiveId: null, stamps: new Map() }));
+  const tool = createStardewObservationTools(bound).find((candidate) => candidate.name === "stardew_look_up");
+  const result = await tool?.execute(
+    "lookup_01",
+    { subject: "my_work" },
+    new AbortController().signal,
+    () => {},
+    {} as never,
+  );
+  const body = JSON.parse(String((result?.content[0] as { text?: string }).text)) as Record<string, any>;
+  assert.equal(body.answer.totals.directive.state, "measured");
+  assert.equal(body.answer.totals.directive.current, null);
+  assert.equal(body.answer.totals.directive.summary, "directive: none");
+  // A plan admitted with no directive is `none` once the ledger has it, and nothing claims an authorization.
+  const none = myWork(
+    JOURNAL_FOR_UNIT,
+    {},
+    Object.freeze({
+      currentDirectiveId: null,
+      stamps: new Map(JOURNAL_FOR_UNIT.programs.map((entry) => [entry.programId, null])),
+    }),
+  );
+  assert.ok("answer" in none);
+  const rows = (none.answer as Record<string, any>).programs.rows;
+  assert.equal(
+    rows.every((row: { directiveId: string | null; directiveStanding: string }) => row.directiveId === null),
+    true,
+  );
+  assert.equal(
+    rows.every((row: { directiveStanding: string }) => row.directiveStanding === "none"),
+    true,
+    "no directive existed, so no plan was authorized and none is called retired",
+  );
+  assert.equal((none.answer as Record<string, any>).totals.directive.summary, "directive: none");
+});
+
+test("with no ledger reader wired, my_work says not_measured and no row claims a directive", async () => {
+  // The seam the materializer binds. Without it this session cannot answer the question at all, and the answer must say
+  // so rather than printing an empty partition that reads as "nothing was authorized today".
+  const { body } = await ask("my_work");
+  assert.equal(body.answer.totals.directive.state, "not_measured");
+  assert.equal(body.answer.totals.directive.missingField, "integration.programDirectiveLedger");
+  assert.equal(
+    body.answer.programs.rows.some(
+      (row: { directiveId: string | null; directiveStanding: string }) =>
+        row.directiveId !== null || row.directiveStanding !== "not_measured",
+    ),
+    false,
+    "rows claimed a directive with no reader wired",
+  );
 });

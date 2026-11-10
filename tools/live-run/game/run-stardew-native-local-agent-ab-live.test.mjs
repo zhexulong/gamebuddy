@@ -1265,7 +1265,12 @@ test("the player prompt waits for a real admission, and the run reports startup 
   // chose to do nothing" (1s turn, revision 0, no receipt): the failure is now a
   // refused admission the harness WAITS out, not a silent no-op.
   assert.match(RUNNER_SOURCE, /import \{ submitPlayerPrompt \} from "\.\.\/core\/player-input-admission\.mjs";/);
-  assert.match(RUNNER_SOURCE, /accept: \(promptText, locale\) => tools\.acceptPlayerText\(promptText, locale\)/);
+  // TWO CHANNELS, BY KIND, and the ternary is asserted whole so neither branch can be lost: a day's note is the day's
+  // directive (`acceptDirective`, restated into every later batch), and everything a player types stays player input.
+  assert.match(
+    RUNNER_SOURCE,
+    /options\.asDirective === true\n\s+\? \(promptText, locale\) => tools\.acceptDirectiveText\(promptText, locale\)\n\s+: \(promptText, locale\) => tools\.acceptPlayerText\(promptText, locale\),/u,
+  );
   assert.match(RUNNER_SOURCE, /error: `player_input_refused:/);
   assert.match(RUNNER_SOURCE, /if \(admission\.accepted !== true\)/);
   // Startup phase timings answer "the live run is slow to start" with numbers.
@@ -1688,6 +1693,7 @@ test("the assembly logs a tool-timing disagreement by name", async () => {
       executionTraceInvariant,
       TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
       multidayOutcome: null,
+      directiveAlignment: null,
       SCENARIO: "morning_routine",
       LEGACY_LADDER: null,
       historianRubricOutcome: null,
@@ -3074,6 +3080,7 @@ test("a run whose work all went through programs publishes a non-empty attempted
       executionTraceInvariant,
       TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
       multidayOutcome: null,
+      directiveAlignment: null,
       SCENARIO: "morning_routine",
       LEGACY_LADDER: null,
       historianRubricOutcome: null,
@@ -3833,6 +3840,9 @@ const instrumentGlobals = Object.freeze({
   }),
   summarizeHostMemory,
   RESULT_FILE: "/tmp/gb-runner-result.json",
+  // The directive authority's reading, published by the run that measured it: a builder test that has no Host supplies
+  // `null` rather than a fabricated ratio, which is the same shape a crashed assembly publishes.
+  directiveAlignment: null,
 });
 
 /** The globals `buildRunResult` reads besides the ones a test supplies, kept in one place for the reason tests below. */

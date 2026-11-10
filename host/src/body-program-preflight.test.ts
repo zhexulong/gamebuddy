@@ -313,7 +313,10 @@ test("the submission path asks this decision instead of testing a node against t
   assert.ok(preflight > 0, "the preflight must refuse on that answer");
   const submit = source.slice(source.indexOf("const submitProgram = async"));
   const askedBeforeSending = submit.indexOf("assertFreshBodyProgramPreflight(");
-  const sent = submit.indexOf("port.submit(request)");
+  // The frame the preflight was asked about is the one that is sent: `submitProgram` projects the candidate to the wire
+  // subset once (`bodyProgramCandidateWire`) and asks about THAT, so a stamp the Host holds cannot be preflighted as if
+  // the Mod had a field for it.
+  const sent = submit.indexOf("port.submit(wire)");
   assert.ok(askedBeforeSending > 0 && sent > 0, "the one submission path must run the preflight before it sends");
   assert.ok(askedBeforeSending < sent, "the answer must come BEFORE anything is sent to the Mod");
   assert.equal(

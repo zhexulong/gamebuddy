@@ -98,6 +98,14 @@ export interface SettledProgramAnswer {
   readonly nodes: readonly SettledDigestNode[];
   /** How many rows did not fit. `0` for a plan inside the bound, and the counts above still cover them. */
   readonly omitted: number;
+  /**
+   * The directive this plan was admitted under, or `null` when none was current that day.
+   *
+   * ON THE ANSWER, not only on the fact, so the poll and the pushed digest cannot report a plan's authorization two ways.
+   * A reader compares it with the `directive` block in the batch it is reading: unequal means the work was authorized by
+   * a directive that no longer stands, which is visible without any instruction to obey the newer one.
+   */
+  readonly directiveId: string | null;
 }
 
 /**
@@ -106,7 +114,10 @@ export interface SettledProgramAnswer {
  * Not a second projection: the rows are the batch answer's rows, unchanged, so `reasonCode`, `hint`, `tile`,
  * `reasonDetail` and `skippedBecause` arrive here exactly as `stardew_action_program_status` reports them.
  */
-export function settledProgramAnswer(answer: ReturnType<typeof planBatchAnswer>): SettledProgramAnswer {
+export function settledProgramAnswer(
+  answer: ReturnType<typeof planBatchAnswer>,
+  directiveId: string | null,
+): SettledProgramAnswer {
   const counts: Record<string, number> = {};
   for (const node of answer.nodes) counts[node.state] = (counts[node.state] ?? 0) + 1;
   const nodes = answer.nodes.slice(0, MAX_SETTLED_DIGEST_NODES);
@@ -116,6 +127,7 @@ export function settledProgramAnswer(answer: ReturnType<typeof planBatchAnswer>)
     summary: settledSummary(counts, answer.nodes.length),
     nodes: Object.freeze(nodes),
     omitted: answer.nodes.length - nodes.length,
+    directiveId,
   });
 }
 
@@ -129,6 +141,8 @@ export interface SettledDigestInput {
   readonly status: unknown;
   /** When the Host composed the fact. Carried on the envelope only; the settlement time is the Mod's. */
   readonly nowMs?: number;
+  /** The directive this plan was admitted under, from the Host's ledger (see `SettledProgramAnswer.directiveId`). */
+  readonly directiveId: string | null;
 }
 
 /**
@@ -157,7 +171,7 @@ export function settledProgramFact(
   if (!isTerminalProgramStatus(input.status)) return undefined;
   const snapshot = foundSnapshot(input.status);
   if (snapshot === null) return undefined;
-  const answer = settledProgramAnswer(planBatchAnswer(input.compiled, snapshot));
+  const answer = settledProgramAnswer(planBatchAnswer(input.compiled, snapshot), input.directiveId);
   const fact = Object.freeze({
     source: PROGRAM_SETTLED_DIGEST_SOURCE,
     kind: "world_fact" as const,

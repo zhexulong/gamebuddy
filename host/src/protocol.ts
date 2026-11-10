@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { isForEachLoopDocument, type PlanForEachLoop } from "./body-program-for-each.js";
+import type { WorldDay } from "./game-directive.js";
 import {
   hasExactKeys,
   hasExactKeysOrOptional,
@@ -1865,7 +1866,35 @@ const MAX_NATIVE_NOTICES = 8;
 const MAX_NATIVE_NOTICE_CHARS = 512;
 /** Frozen per-node binding-map bound, aligned with the existing C# Core verifier bound of 4. */
 export const MAX_BODY_PROGRAM_BINDINGS_PER_NODE = 4;
-export type BodyProgramCandidateRequest = Readonly<{ programId: string; nodes: readonly BodyProgramNode[] }>;
+export type BodyProgramCandidateRequest = Readonly<{
+  programId: string;
+  nodes: readonly BodyProgramNode[];
+  /**
+   * The directive that authorized this plan, stamped by the HOST at admission - never by the model
+   * (`hostOwnedStampField` refuses a candidate that carries one) and never on the wire in this unit: the attached Mod
+   * has no field for it, so sending one would describe storage that does not exist. `null` means no directive was
+   * current, which is a legitimate day's work rather than an absence of authority: nothing was claimed, so nothing can
+   * be revoked (`host/src/game-directive.ts`).
+   */
+  directiveId?: string | null;
+  /** The world day `directiveId` was current on, so a stamp can be read as "yesterday's" without a second clock. */
+  directiveWorldDay?: WorldDay | null;
+}>;
+
+/**
+ * What actually crosses the bridge: the unchanged `program_submit` payload.
+ *
+ * ONE SPELLING OF THE WIRE SHAPE. The stamp is Host-owned state (`CompanionHostService.#programDirectives`) and the
+ * Mod unit that stores it has not landed, so `submitProgram` projects this subset instead of sending a field whose
+ * reader does not exist yet. The projection is the single place that decides it - `validateBodyProgramCandidateRequest`
+ * stays `hasExactKeys(["programId","nodes"])`, so a stamp that leaked onto the wire is refused here rather than
+ * accepted by a peer that would ignore it.
+ */
+export function bodyProgramCandidateWire(
+  request: BodyProgramCandidateRequest,
+): Readonly<{ programId: string; nodes: readonly BodyProgramNode[] }> {
+  return Object.freeze({ programId: request.programId, nodes: request.nodes });
+}
 export type BodyProgramStatusRequest = Readonly<{ programId?: string }>;
 
 /**

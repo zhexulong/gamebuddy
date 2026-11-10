@@ -10,6 +10,17 @@ import {
   PROVIDER_EMPTY_COMPLETION,
 } from "./companion-loop.js";
 import type { CompanionTurnOutcome, WorldFact } from "./event-pump.js";
+import {
+  currentDirectiveIdOf,
+  type DirectiveAlignment,
+  type GameDirective,
+  issueDirective,
+  measureDirectiveAlignment,
+  type ProgramDirectiveLedger,
+  type ProgramDirectiveStamp,
+  supersedeDirective,
+  type WorldDay,
+} from "./game-directive.js";
 import type { IntegrationEventSource, IntegrationLifecycleEvent } from "./integration-launcher.js";
 import { NativeNoticeLedger } from "./native-notice-fact.js";
 import type {
@@ -40,6 +51,11 @@ const REFUSED_PLAYER_INPUT = Object.freeze({
   integration_unavailable: Object.freeze({ accepted: false, reasonCode: "player_input_integration_unavailable" }),
   run_terminated: Object.freeze({ accepted: false, reasonCode: "player_input_run_terminated" }),
   empty: Object.freeze({ accepted: false, reasonCode: "player_input_empty" }),
+  /**
+   * A directive without a day to be current ON cannot be compared with the world later, and a directive that cannot
+   * expire is a standing order nobody asked for. Refused by name rather than issued undated.
+   */
+  world_day_unavailable: Object.freeze({ accepted: false, reasonCode: "directive_world_day_unavailable" }),
 } as const);
 
 /**
@@ -76,7 +92,8 @@ export type PlayerInputRefusalCode =
   | "player_input_session_closed"
   | "player_input_integration_unavailable"
   | "player_input_run_terminated"
-  | "player_input_empty";
+  | "player_input_empty"
+  | "directive_world_day_unavailable";
 
 /**
  * Admission outcome of one player message. `accepted` means ENQUEUED for
@@ -441,6 +458,19 @@ export class CompanionHostService {
   /** The notice identities this session has already delivered (see `native-notice-fact.ts`). */
   readonly #nativeNotices = new NativeNoticeLedger();
   /**
+   * `programId -> the directive that authorized it`, for this Game session only.
+   *
+   * The one place the authorization bond exists. It is what `my_work`, the settled digest and the run's
+   * `directiveAlignment` reading all read, so a plan's stamp cannot be reported two ways; it is released with the session
+   * (never persisted) because a reconnect restores no AI authority and therefore must restore no authorization
+   * (product rule #3023). A measured run submitted 26 programs in 24 minutes, so the population is the session's own
+   * action count, not an unbounded append: the whole map goes when the service does.
+   */
+  readonly #programDirectives = new Map<
+    string,
+    { directiveId: string | null; directiveWorldDay: WorldDay | null; settled: boolean }
+  >();
+  /**
    * The session's latest world snapshot fact, re-stated into every turn (see `#restateWorldSnapshot`).
    *
    * The pump holds a snapshot as latest state and hands it out with the batch that follows its arrival, so a
@@ -644,6 +674,106 @@ export class CompanionHostService {
     timestampMs = Date.now(),
   ): Promise<PlayerInputDisposition> {
     return await this.acceptPlayerInput({ sourceEventId: randomUUID(), text, locale, timestampMs });
+  }
+
+  /**
+   * The player's directive for today: the one ingress that says what this day is FOR.
+   *
+   * A separate ingress from `acceptPlayerInput` because the two are different kinds of utterance. A player message is a
+   * turn - it is answered, then it is history. A directive is an authorization: it is held, it is restated into every
+   * later batch (`CompanionEventPump.#directive`), it expires with the world day, and every plan submitted while it is
+   * current is stamped with it. `round44` treated the day's note as the first kind, so its words had 0 carriers in the
+   * emitted context 25 minutes later while 31 described the work it had superseded.
+   *
+   * The refusal order is `acceptPlayerInput`'s, because the same four conditions make delivery dishonest; the fifth is
+   * this kind's own: an undated directive cannot expire, and a directive that cannot expire is not a directive.
+   */
+  public async acceptDirective(input: Readonly<{ text: string; locale?: string }>): Promise<PlayerInputDisposition> {
+    if (this.#closed) return REFUSED_PLAYER_INPUT.session_closed;
+    if (this.#runTermination !== undefined) return REFUSED_PLAYER_INPUT.run_terminated;
+    if (!this.#integrationAdmissionOpen) return REFUSED_PLAYER_INPUT.integration_unavailable;
+    if (input.text.trim().length === 0) return REFUSED_PLAYER_INPUT.empty;
+    // The world day is the snapshot's own calendar triple - the same three integers the model reads every turn - so
+    // there is one spelling of "which day" and this record cannot disagree with the snapshot it is checked against.
+    const worldDay = this.loop.pump.worldDay;
+    if (worldDay === null) return REFUSED_PLAYER_INPUT.world_day_unavailable;
+    const previous = this.loop.pump.directive;
+    // The replaced record is retired HERE and then dropped: the Host keeps ONE copy of the player's words (§6.2), and a
+    // retired record left in the slot is a second directive a later batch could restate as standing. What survives is the
+    // id it was superseded by, and the plan stamps that name it.
+    const retired = previous === null ? null : supersedeDirective(previous);
+    const directive = issueDirective({
+      directiveId: `d_${String(worldDay.dayOfMonth)}_${randomUUID().replaceAll("-", "").slice(0, 8)}`,
+      text: input.text,
+      worldDay,
+      supersedes: retired,
+    });
+    this.loop.pump.setDirective(directive);
+    await this.flushSoon();
+    return Object.freeze({ accepted: true, turnOutcome: this.#lastTurnOutcome });
+  }
+
+  /** Internal callers without authenticated ingress receive a fresh Host event id. */
+  public async acceptDirectiveText(text: string, locale = "zh-CN"): Promise<PlayerInputDisposition> {
+    return await this.acceptDirective({ text, locale });
+  }
+
+  /** The directive in force right now, or `null`. Its `state` says whether it authorizes anything today. */
+  public get directive(): GameDirective | null {
+    return this.loop.pump.directive;
+  }
+
+  /**
+   * Stamp one admitted plan with the directive that authorized it, and answer what was stamped.
+   *
+   * Called at the SINGLE submission path in the materializer, never from a tool handler: a stamp added at a call site is
+   * a stamp a second call site can forget, and then a plan's authority is whatever its path happened to do.
+   */
+  public stampProgramDirective(programId: string): ProgramDirectiveStamp {
+    const directiveId = currentDirectiveIdOf(this.loop.pump.directive);
+    const worldDay: WorldDay | null = directiveId === null ? null : (this.loop.pump.directive?.worldDay ?? null);
+    this.#programDirectives.set(programId, { directiveId, directiveWorldDay: worldDay, settled: false });
+    return Object.freeze({ directiveId, directiveWorldDay: worldDay });
+  }
+
+  /** What a plan was admitted under. `null` only for a program this session never stamped. */
+  public programDirectiveStamp(programId: string): ProgramDirectiveStamp {
+    const held = this.#programDirectives.get(programId);
+    if (held === undefined) return Object.freeze({ directiveId: null, directiveWorldDay: null });
+    return Object.freeze({ directiveId: held.directiveId, directiveWorldDay: held.directiveWorldDay });
+  }
+
+  /** The plan's ledger has been announced; from here it is history rather than stale work. */
+  public settleProgramDirective(programId: string): void {
+    const held = this.#programDirectives.get(programId);
+    if (held !== undefined) held.settled = true;
+  }
+
+  /** The ledger `my_work` reads, or `null` when this session never stamped anything. */
+  public programDirectiveLedger(): ProgramDirectiveLedger | null {
+    const currentDirectiveId = currentDirectiveIdOf(this.loop.pump.directive);
+    const stamps = new Map<string, string | null>();
+    for (const [programId, held] of this.#programDirectives) stamps.set(programId, held.directiveId);
+    return Object.freeze({ currentDirectiveId, stamps });
+  }
+
+  /**
+   * What the directive authority is worth on this session's own evidence (§6.7).
+   *
+   * Both populations are read from their one owner - the pump for delivered turns, this service for plan stamps - and the
+   * ratio is computed once, in `measureDirectiveAlignment`, so a run's bundle and a test answer the same object.
+   */
+  public directiveAlignment(): DirectiveAlignment {
+    const delivery = this.loop.pump.directiveDelivery;
+    const stamps = [...this.#programDirectives.values()].map((held) =>
+      Object.freeze({ directiveId: held.directiveId, settled: held.settled }),
+    );
+    return measureDirectiveAlignment({
+      deliveredTurns: delivery.turns,
+      turnsWithDirective: delivery.withDirective,
+      currentDirectiveId: currentDirectiveIdOf(this.loop.pump.directive),
+      stamps,
+    });
   }
 
   /** Explicit STOP remains sealed after its old epoch has settled. */
