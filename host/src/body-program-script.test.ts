@@ -893,6 +893,49 @@ test("every body-yielding pair either compiles or names a remedy that fixes it",
   assert.ok(pairs.length - notMeasured.length > 0, `no pair was measured: ${population}`);
   assert.deepEqual(deadEnds, [], `${deadEnds.length} dead ends of ${population}:\n${deadEnds.join("\n")}`);
 });
+
+/**
+ * THE HOST'S MODAL SET IS A PROJECTION OF A MOD DECLARATION THAT IS NOT ON THE WIRE, so the two are compared here.
+ *
+ * A projection narrower than its authority is a plan that needs the missing member and is refused with no legal remedy; a
+ * projection wider is a plan that skips a dismissal the body needed. Neither is visible from inside the Host, and the wire
+ * carries no handler group (`ActionRegistrationDescriptor`), so the Mod's side is read from its own source:
+ * `FarmhandActionCatalog.ModalResolvingActionIds` is `Registrations.Where(r => r.HandlerGroup ==
+ * FarmhandActionHandlerGroup.Modal)` (`FarmhandActionDefinitions.cs:746-762`), and a member is one `E(<id>, <family>,
+ * FarmhandActionHandlerGroup.Modal, ...)` registration. A member present on one side only is drift, named with the side it
+ * is on. The regex spells its quotation marks as `\x22` so this block needs no escaping of its own.
+ *
+ * Both populations are asserted non-empty BEFORE the comparison: two empty sets agree with themselves. The first member is
+ * also asserted to declare no argument, because that member is the one the compiler WRITES on the author's behalf.
+ */
+test(`the host's modal-clearing projection does not drift from the Mod's declaration`, () => {
+  const modMembers = [
+    ...MOD_LIFECYCLE_WIRE.matchAll(
+      /\bE\(\s*\x22([a-z][a-z0-9_]+)\x22\s*,\s*\x22[a-z][a-z0-9_]+\x22\s*,\s*FarmhandActionHandlerGroup\.Modal\s*,/gu,
+    ),
+  ].map((match) => match[1]!);
+  assert.ok(modMembers.length > 0, `the Mod's Modal handler group names at least one registration`);
+  const hostMembers = [...MODAL_CLEARING_PLAN_ACTION_IDS];
+  assert.ok(hostMembers.length > 0, `the Host projection names at least one action`);
+  const drift: string[] = [];
+  for (const actionId of modMembers)
+    if (!hostMembers.includes(actionId)) drift.push(`modal_clearing_set_drift:${actionId}:mod`);
+  for (const actionId of hostMembers)
+    if (!modMembers.includes(actionId)) drift.push(`modal_clearing_set_drift:${actionId}:host`);
+  assert.deepEqual(
+    drift,
+    [],
+    `${drift.length} drifting member(s) between the Mod's declaration (${modMembers.join(`,`)}) and the Host projection ` +
+      `(${hostMembers.join(`, `)}):\n${drift.join(`\n`)}`,
+  );
+  // The member the compiler writes is the FIRST one, so its declaration must be one the compiler can write: no argument.
+  assert.deepEqual(
+    surfaceArguments(MODAL_CLEARING_PLAN_ACTION_IDS[0]!),
+    [],
+    `${MODAL_CLEARING_PLAN_ACTION_IDS[0]} is the member the compiler writes, so it must declare no argument`,
+  );
+});
+
 test("a modal-clearing step is what makes a continuation legal after talk_to_npc", () => {
   // The primitive was never missing: `dismiss_modal` closes an informational DialogueBox
   // (`farmhandexecutioncontroller.modalactions.cs:129-131`). So "talk, then carry on" has a correct shape, and the plan rule

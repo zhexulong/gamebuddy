@@ -382,18 +382,34 @@ const WORLD_RESETTING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["sleep
 export const BODY_YIELDING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["talk_to_npc"]);
 
 /**
- * The actions that RESTORE actionability after a body-yielding one, so a plan can carry on instead of stopping.
+ * The actions that RESTORE actionability after a body-yielding one: the Host's PROJECTION of the Mod's own declaration.
  *
- * `dismiss_modal` already closes an informational dialogue - `farmhandexecutioncontroller.modalactions.cs:129-131` takes the
- * `DialogueBox` branch and runs `closeDialogue` (`exitActiveMenu` + `dialogueUp = false`) - and `answer_dialogue` is the
- * seam for the question branch that `dismiss_modal` refuses on purpose. Nothing needed inventing; the plan simply had to
- * be allowed to say it.
+ * The Mod declares the fact once, as a handler group - `FarmhandActionHandlerGroup.Modal` is "the actions whose working
+ * precondition is an open modal", and `FarmhandActionCatalog.ModalResolvingActionIds` is exactly the registrations in it
+ * (`integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs:746-762`). THAT DECLARATION IS NOT ON THE WIRE:
+ * `ActionRegistrationDescriptor` publishes arguments, output facts, resource claims, approach and target family
+ * (`host/src/protocol.ts`), so this compiler cannot derive the set and has to restate it.
  *
- * `dismiss_modal` is FIRST because it is the one of the two the compiler can write itself: it declares no argument, while
- * `answer_dialogue` demands a `responseKey` only the author can choose. That is why the inserted step, and the refusal
- * that answers when an insertion is impossible, both name `MODAL_CLEARING_PLAN_ACTION_IDS[0]`.
+ * Restating it is a drift risk, and the risk has two shapes: narrower than the Mod means a plan that needs the missing
+ * member is refused with no legal remedy, and wider means a plan skips a dismissal the body needed. The gate in
+ * `body-program-script.test.ts` compares this list against the C# declaration and fails by name
+ * (`modal_clearing_set_drift:<actionId>:<side>`) when the two disagree. Publishing the group on the wire is the real fix
+ * and is separate work; until then the gate is what keeps the copy honest.
+ *
+ * `dismiss_modal` is FIRST because it is the one member the compiler can WRITE itself - it declares no argument, while
+ * `answer_dialogue` demands the `responseKey` only the author can choose and `respond_level_up` the choice, skill and
+ * level it is settling. The inserted step, and the refusal that answers when an insertion is impossible, both name
+ * `MODAL_CLEARING_PLAN_ACTION_IDS[0]` for that reason, and the gate asserts that first member declares no argument.
+ *
+ * `respond_level_up` is a member even though it can never succeed as the node after a `talk_to_npc`: a dismissal inserted
+ * before it would close the dialogue the player is reading and leave the level-up prompt - the modal it actually acts on -
+ * untouched. A step whose own precondition is the modal must not be preceded by a step that closes one.
  */
-export const MODAL_CLEARING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["dismiss_modal", "answer_dialogue"]);
+export const MODAL_CLEARING_PLAN_ACTION_IDS: readonly string[] = Object.freeze([
+  "dismiss_modal",
+  "answer_dialogue",
+  "respond_level_up",
+]);
 
 const MAX_PLAN_SCRIPT_CHARS = 8192;
 /** The engine's message is the caller's to fix; it is bounded because it reaches a model's context. */
@@ -768,7 +784,7 @@ export function planShape(actions: readonly PublishedPlanAction[], request: Plan
  */
 export function planWorkDescription(actions: readonly PublishedPlanAction[]): string {
   return (
-    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message, so end your turn and speak to the player. Every answer carries `nodes`: one row per node you wrote, at its own `index`, with the Mod's `state` (`succeeded` when the step did the thing and its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` when it has not stopped yet), a `reasonCode` when it did not succeed, and the `tile` it named - plus `settled`, true only when every node has stopped, and `remaining`, how many have not. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared, with no per-action tool beside them; ask stardew_plan_shape ONCE for every action the script will call - it takes a list - and every argument it lists is required. One call the compiler refuses does not void the batch: the nodes around it compile and the answer names the refused call by position, so write the whole piece of work and read back which steps were dropped. Stop when builder.isFull() is true and plan the rest in the next call, in this shape:\n" +
+    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message, so end your turn and speak to the player. Every answer carries `nodes`: one row per node you wrote, at its own `index`, with the Mod's `state` (`succeeded` when the step did the thing and its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` when it has not stopped yet), a `reasonCode` when it did not succeed, and the `tile` it named - plus `settled`, true only when every node has stopped, and `remaining`, how many have not. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared, with no per-action tool beside them; ask stardew_plan_shape ONCE for every action the script will call - it takes a list - and every argument it lists is required. A piece of work with a SHAPE - a 3-wide 20-long strip, the row along a fence, the 5x5 around the shed - is one RECTANGLE to query, not a reason to observe again: stardew_observe shows only a square window around you, stardew_inspect_tiles answers exactly the rectangle you name, and stardew_look_up answers what this session already holds with no round trip; all three are reads, so asking costs the plan no node, and each one's own description says what it takes. One call the compiler refuses does not void the batch: the nodes around it compile and the answer names the refused call by position, so write the whole piece of work and read back which steps were dropped. Stop when builder.isFull() is true and plan the rest in the next call, in this shape:\n" +
     `${planActionVocabularyText(actions)}\n` +
     "// Sequential steps - one call per step, in order:\n" +
     "builder.move_to_tile({ x: 10, y: 20 });\n" +
