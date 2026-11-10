@@ -1475,7 +1475,7 @@ export function createStardewActionTools(
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedQualifiedItemId: Type.String({
-            pattern: "^\\([A-Z]+\\)\\d+$",
+            pattern: "^\\([^()\\s]+\\)[^()\\s]+$",
             minLength: 1,
             maxLength: 128,
             description:

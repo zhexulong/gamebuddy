@@ -1528,6 +1528,7 @@
             "fishPondTargets",
             "obeliskTargets",
             "shopTargets",
+            "debrisTargets",
             "harvestWhereabouts",
             "wateringWhereabouts"
           ],
@@ -1544,7 +1545,8 @@
             "not_ready",
             "wrong_harvest_method",
             "already_baited",
-            "shop_closed_today"
+            "shop_closed_today",
+            "tool_insufficient"
           ],
           "description": "One of the closed vocabulary of reasons a family withheld subjects it could see. A reason is admitted only when the engine itself refuses the same action on the same subject today; a filter the engine does not share is a defect in discovery, not a reason."
         },
@@ -2070,7 +2072,7 @@
             "null"
           ],
           "maxLength": 128,
-          "pattern": "^\\([A-Z]+\\)[0-9]+$"
+          "pattern": "^\\([^()\\s]+\\)[^()\\s]+$"
         },
         "loadInputStack": {
           "type": [
@@ -5481,7 +5483,7 @@
         "expectedQualifiedItemId": {
           "type": "string",
           "maxLength": 128,
-          "pattern": "^\\([A-Z]+\\)[0-9]+$"
+          "pattern": "^\\([^()\\s]+\\)[^()\\s]+$"
         },
         "expectedTargetId": {
           "$ref": "#/$defs/opaqueId"
@@ -8763,7 +8765,7 @@
           "properties": {
             "qualifiedItemId": {
               "type": "string",
-              "pattern": "^\\([A-Z]+\\)[0-9]+$"
+              "pattern": "^\\([^()\\s]+\\)[^()\\s]+$"
             },
             "displayName": {
               "type": "string",

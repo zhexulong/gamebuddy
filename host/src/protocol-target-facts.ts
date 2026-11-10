@@ -2080,12 +2080,22 @@ export function isOpaqueId(value: unknown): value is string {
 }
 
 /**
- * A qualified item id: an uppercase item-type prefix and a numeric id (`(O)433`, `(BC)12`). It is the ONE spelling the
- * game accepts, and the Mod compares a request's id against the qualified id of a LIVE carried stack - so a free-form
- * string here could only ever compare false, and the caller would learn it from a refusal instead of from the value.
+ * A qualified item id: the engine's bracketed type prefix, then the item's own id - `(O)433`, `(O)Carrot`,
+ * `(BC)Dehydrator`, `(T)WateringCan`, `(TR)FrogEgg`.
+ *
+ * The engine concatenates exactly those two parts (`QualifiedItemId => TypeDefinitionId + ItemId`, Item.cs:187-197).
+ * The prefix is whatever `IItemDataDefinition.Identifier` a type registers (ItemRegistry.cs:22-58 publishes `(O)`,
+ * `(BC)`, `(B)`, `(F)`, `(FL)`, `(H)`, `(M)`, `(P)`, `(S)`, `(T)`, `(TR)`, `(W)`, `(WP)`; mods register their own),
+ * so it is named here by its SHAPE and not by a copy of that list. The body is the item's `ItemId`, documented as
+ * "alphanumeric, underscore, and dot characters" (Item.cs:161-166) and NOT restricted to digits: 1.6 ships letter
+ * ids such as `(O)SeedSpot`, `(O)CarrotSeeds` and `(T)WateringCan`. A digits-only body refused those rows as
+ * `invalid_snapshot`, and the bridge CLOSES on that verdict (local-stardew-bridge.ts:853), so the digits were the
+ * one spelling the engine never promised. What this admits that names no item compares false against the LIVE
+ * qualified id the Mod resolves and comes back as a refusal - the failure this pattern can afford; the one it
+ * cannot afford is refusing a row the engine really published.
  */
 export function isQualifiedItemId(value: unknown): value is string {
-  return typeof value === "string" && /^\([A-Z]+\)[0-9]+$/.test(value);
+  return typeof value === "string" && /^\([^()\s]+\)[^()\s]+$/.test(value);
 }
 
 /**

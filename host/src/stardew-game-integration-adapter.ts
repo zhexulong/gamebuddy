@@ -2,11 +2,10 @@ import {
   type ActionPolicy,
   DEFAULT_ACTION_POLICY,
   parseActionPolicy,
-  searchActionsFromModCatalog,
   STARDEW_ACTION_ADAPTERS,
+  searchActionsFromModCatalog,
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
-import { createStardewActionTools, createStardewObservationTools } from "./game-tools.js";
 import {
   createIntegrationActionCatalog,
   DEFAULT_INTEGRATION_ACTION_POLICY,
@@ -21,9 +20,11 @@ import {
   type IntegrationStatusDetails,
   type IntegrationToolContext,
 } from "./game-integration-adapter.js";
-import { assertAuthenticatedStardewConnection } from "./stardew-integration-launcher-body-program.internal.js";
+import { createStardewActionTools, createStardewObservationTools } from "./game-tools.js";
 import { createStardewKnowledgeTools, type KnowledgeBundle } from "./knowledge.js";
 import type { ActionRegistration, ExecutionReceipt } from "./protocol.js";
+import { isQualifiedItemId } from "./protocol-target-facts.js";
+import { assertAuthenticatedStardewConnection } from "./stardew-integration-launcher-body-program.internal.js";
 
 const STARDew_ACTION_ENTRIES = STARDEW_ACTION_ADAPTERS.map(({ actionId }) => ({
   actionId,
@@ -3759,17 +3760,17 @@ function hasMachineLoadCompletionEvidence(detail: string): boolean {
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
     hasOpaqueIdEvidenceValue(evidence.target) &&
     hasTileEvidenceValue(evidence.tile) &&
-    isQualifiedItemIdEvidenceValue(evidence.machine) &&
+    isQualifiedItemId(evidence.machine) &&
     slot !== null &&
     slot <= 36 &&
-    isQualifiedItemIdEvidenceValue(evidence.input) &&
+    isQualifiedItemId(evidence.input) &&
     stackBefore !== null &&
     stackBefore >= 1 &&
     consumed !== null &&
     stackAfter !== null &&
     stackBefore - stackAfter === consumed &&
     evidence.last_input === evidence.input &&
-    isQualifiedItemIdEvidenceValue(evidence.held) &&
+    isQualifiedItemId(evidence.held) &&
     observedMinutes !== null &&
     evidence.ready_for_harvest === (observedMinutes === 0 ? "true" : "false") &&
     (!windowDerived || (expectedMinutes !== null && expectedMinutes === observedMinutes)) &&
@@ -3805,9 +3806,9 @@ function hasMachineCollectOutputCompletionEvidence(detail: string): boolean {
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
     hasOpaqueIdEvidenceValue(evidence.target) &&
     hasTileEvidenceValue(evidence.tile) &&
-    isQualifiedItemIdEvidenceValue(evidence.machine) &&
-    isQualifiedItemIdEvidenceValue(evidence.output) &&
-    (evidence.input === "none" || isQualifiedItemIdEvidenceValue(evidence.input)) &&
+    isQualifiedItemId(evidence.machine) &&
+    isQualifiedItemId(evidence.output) &&
+    (evidence.input === "none" || isQualifiedItemId(evidence.input)) &&
     outputStack !== null &&
     evidence.ready_before === "true" &&
     evidence.minutes_until_ready_before === "0" &&
@@ -4034,11 +4035,6 @@ function hasOpaqueIdEvidenceValue(value: string | undefined): value is string {
  * output method owns it. Nothing is compared in that case; the observed window must still be real.
  */
 const MACHINE_WINDOW_UNAVAILABLE = "unavailable_in_machine_data";
-
-/** A qualified item id as the Mod reports it: `(BC)12`, `(O)395`. */
-function isQualifiedItemIdEvidenceValue(value: string | undefined): value is string {
-  return typeof value === "string" && /^\([A-Z]+\)[0-9]+$/.test(value);
-}
 
 /** Stardew multiplayer IDs can exceed JavaScript's safe integer range. */
 function hasDecimalOwnerIdEvidenceValue(value: string | undefined): value is string {
