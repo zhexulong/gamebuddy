@@ -20,3 +20,4 @@ One line per deliberate change:
 | date | commit | field | why | who asked |
 | --- | --- | --- | --- | --- |
 | 2026-11-11 | pending | presets, card.json, worldbook.json | split game and chat specialized presets and worldbooks | user |
+| 2026-11-11 | pending | card.json, worldbook.json, presets | purge preachy elderly moralizing ('比工位上的报表实在'), enforce 24yo peer trauma resonance and banter | user |
