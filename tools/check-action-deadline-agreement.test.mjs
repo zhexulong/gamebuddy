@@ -1,3 +1,11 @@
+/**
+ * The action-deadline gate's falsifier: `tools/check-action-deadline-agreement.mjs`, driven over a surface and a
+ * producer export this file controls, plus the shipped tree's own agreement.
+ *
+ * red-proof: inject  a runner writing a 120 s window against the surface's own 60 s -> `disagree 1`, the line naming both
+ *                    numbers (the measured 2026-11-10 refusal); an export naming no action -> blocked; an empty
+ *                    population -> blocked; a runner file that cannot be read -> blocked and named.
+ */
 import assert from "node:assert/strict";
 import test from "node:test";
 

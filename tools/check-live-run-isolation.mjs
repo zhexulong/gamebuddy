@@ -525,6 +525,8 @@ process.stdout.write(
     mode: live ? "live" : "offline",
     status,
     ...(live && liveVerdict !== null ? { verdict: liveVerdict } : {}),
+    // The cases this run drove: the fixture and cleanup checks offline, the lane checks live.
+    cases: checks.length,
     checks,
   })}\n`,
 );

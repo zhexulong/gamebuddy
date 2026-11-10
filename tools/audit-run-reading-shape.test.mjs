@@ -17,6 +17,10 @@
  *   - the real tree is scanned, and this suite asserts `bare prints 0` with a non-zero `scripts examined` and a
  *     non-zero `readings routed`: a gate that matched no scripts, or whose conversions were removed, fails here;
  *   - an empty scan is asserted BLOCKED, so `examined 0` can never read as a clean tree.
+ *
+ * red-proof: inject  the round43 expression verbatim (`text.split("plan_work").length - 1`) -> `bare_reading` names the
+ *                    file, the line and the expression; a rewritten exemption -> `stale_reading_exemption`; a scan that
+ *                    matches nothing -> `reading-shape_blocked` with `examined 0`.
  */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";

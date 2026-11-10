@@ -10,6 +10,10 @@
  *
  * A bundle that predates `presentation.deliveryAccount` is BLOCKED, not passed: the question cannot be answered from
  * it, and a check whose population is empty must not agree with itself.
+ *
+ * red-proof: history  round41's own bundle carried `pieceCount: 59` against thirteen named pieces -> this entry point
+ *                    exits 1 on it, and the reconciling cases beside it (a piece no record names, parts that do not add
+ *                    up, an absent account) live in tools/lib/presentation-delivery-account.test.mjs
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";

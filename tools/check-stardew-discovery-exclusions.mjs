@@ -53,8 +53,8 @@
  *   `filter_without_a_reason: DiscoverWeedTargets ... health.Value` and exits 1.
  * red-proof: delete the `exclusions.Record("debrisTargets", ...)` call from `DiscoverDebrisTargets`; the gate prints
  *   `silent_discovery_drop: DiscoverDebrisTargets:<line>:debrisTargets` and exits 1.
- * red-proof: add `tool_insufficient` to `DiscoveryExclusionReasons.All` and leave the other four `token pending` entries
- *   filed; each names `capability_token_available` instead of accepting the stale disposition.
+ * red-proof: inject  adding `tool_insufficient` to `DiscoveryExclusionReasons.All` while the other four
+ *   `token pending` entries stay filed; each names `capability_token_available` instead of accepting the stale disposition.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

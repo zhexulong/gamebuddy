@@ -18,9 +18,9 @@
  *    loop whose rows were refused BEFORE dispatch reports zero of them - the difference between "two rows ran" and "two
  *    rows were named as absent" that `3d249ff1` had to teach the Mod.
  *
- * red-proof: the bound gate holds `settle.budgetMs` at 400 ms against a reader that never settles; raising the loop's
- * budget to `Number.MAX_SAFE_INTEGER` makes it hang instead of answering `reachedTerminal: false`, which is the defect
- * (a slice waiting out the game's day instead of its own bound). The subject gate fails the moment `--action` is accepted.
+ * red-proof: inject  raising the bound gate's loop budget to `Number.MAX_SAFE_INTEGER` makes a reader that never settles
+ * halt instead of answering `reachedTerminal: false`, which is the defect (a slice waiting out the game's day instead of its
+ * own bound); the subject gate fails the moment `--action` is accepted.
  */
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

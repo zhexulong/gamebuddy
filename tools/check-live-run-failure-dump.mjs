@@ -331,7 +331,13 @@ async function main() {
 
   const failed = checks.filter((entry) => entry.status !== "passed");
   process.stdout.write(
-    `${JSON.stringify({ gate: "live_run_failure_dump/v1", status: failed.length === 0 ? "passed" : "failed", checks })}\n`,
+    `${JSON.stringify({
+      gate: "live_run_failure_dump/v1",
+      status: failed.length === 0 ? "passed" : "failed",
+      // The cases this gate drove: one fixture-shaped defect per check. Zero of them is a run that measured nothing.
+      cases: checks.length,
+      checks,
+    })}\n`,
   );
   if (failed.length > 0) process.exitCode = 1;
 }

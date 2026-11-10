@@ -188,6 +188,8 @@ export function checkStardewNativePathfinderSource({ roots = DEFAULT_ROOTS, sour
   }
   return Object.freeze({
     gate: "stardew-native-pathfinder-source/v1",
+    // The objects this gate examined: the Mod source files under its roots. Zero of them means the roots moved.
+    examined: paths.size,
     findings: Object.freeze(findings),
     ok: findings.length === 0,
   });

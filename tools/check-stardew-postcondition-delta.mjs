@@ -771,7 +771,7 @@ function report(result, checks) {
   const status =
     result.findings.length === 0 && checks.every((entry) => entry.status === "passed") ? "passed" : "failed";
   process.stdout.write(
-    `${JSON.stringify({ gate: SELF_VERIFICATION_SCHEMA, mode: "self_verification", status, checks })}\n`,
+    `${JSON.stringify({ gate: SELF_VERIFICATION_SCHEMA, mode: "self_verification", status, examined: result.checked, checks })}\n`,
   );
   if (status === "passed") return 0;
   return result.totalWrite === 0 ? 2 : 1;

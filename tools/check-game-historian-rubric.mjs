@@ -93,6 +93,8 @@ function fixtureChecks() {
       nothingToJudge.passed === false,
     `passed=${String(nothingToJudge.passed)} compartmentsChecked=${String(nothingToJudge.compartmentsChecked)}`,
   );
+  // The objects the offline run examined: the obligations this rubric enforces, each driven on its own broken sample.
+  return healthy.checkedObligations.length;
 }
 
 /** Every run directory under `root` that carries a captured runtime root. */
@@ -144,9 +146,10 @@ function parseOption(name) {
 
 const runDir = parseOption("--run-dir");
 const all = process.argv.includes("--all");
-let judged = 0;
+/** What this run examined: the rubric obligations exercised offline, or the runs judged under `--run-dir`. */
+let examined = 0;
 if (runDir === null) {
-  fixtureChecks();
+  examined = fixtureChecks();
 } else if (!existsSync(runDir) || !statSync(runDir).isDirectory()) {
   check("run_dir_exists", false, runDir);
 } else if (all) {
@@ -154,14 +157,14 @@ if (runDir === null) {
   check("runs_found", roots.length > 0, `${String(roots.length)} runtime roots under ${runDir}`);
   for (const root of roots) {
     judgeRuntimeRoot(root, root.slice(runDir.length + 1).replace(/[\\/]/gu, "-") || "run");
-    judged += 1;
+    examined += 1;
   }
 } else {
   const direct = join(runDir, "runtime-root");
   const root = existsSync(direct) ? direct : runDir;
   check("run_has_a_captured_runtime_root", existsSync(root), root);
   judgeRuntimeRoot(root, "run");
-  judged = 1;
+  examined = 1;
 }
 
 const failed = checks.filter((entry) => entry.status === "failed");
@@ -172,7 +175,7 @@ process.stdout.write(
     mode: runDir === null ? "obligations" : "run-dir",
     runDir,
     judgeVerb: all ? "all" : "one",
-    runsJudged: judged,
+    examined,
     // A pass means the narrative obligations held; `unmeasured` names anything the gate could not decide, so it
     // never reads as a silent success.
     status: failed.length === 0 ? "passed" : "failed",

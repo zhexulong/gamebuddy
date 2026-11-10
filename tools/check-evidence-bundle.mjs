@@ -3,10 +3,11 @@
 // Two modes, one validator. With `--run-dir` it validates one run's bundle against what is on disk
 // (the mode the lanes use). Without it, it validates the documented bundle shape, so a contract
 // change that stops accepting the very shape the plan specifies fails in CI rather than in a run.
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { readEvidenceBundle, validateEvidenceBundle } from "./lib/evidence-bundle.mjs";
+import { EVIDENCE_BUNDLE_FILES, readEvidenceBundle, validateEvidenceBundle } from "./lib/evidence-bundle.mjs";
 
 const CANONICAL_DIR = "fixtures/stardew/evidence-bundle";
 
@@ -47,14 +48,23 @@ async function contractCheck() {
   return {
     status: result.ok ? "passed" : "failed",
     violations: result.violations,
-    obligationsChecked: result.checkedObligations.length,
+    // The objects this gate examined: the obligations the documented shape is checked against. Zero of them means the
+    // obligation list itself stopped being read.
+    examined: result.checkedObligations.length,
     traceEntries: trace === null ? null : trace.length,
   };
 }
 
 async function runDirCheck(runDir) {
   const result = await readEvidenceBundle(runDir);
-  return { status: result.violations.length === 0 ? "passed" : "failed", violations: result.violations };
+  // What was examined here: the bundle's own files that are on disk. A run directory holding none of them is named by
+  // the violations, and `examined: 0` says the gate read nothing rather than that the bundle is clean.
+  const filesExamined = Object.values(EVIDENCE_BUNDLE_FILES).filter((name) => existsSync(join(runDir, name))).length;
+  return {
+    status: result.violations.length === 0 ? "passed" : "failed",
+    violations: result.violations,
+    examined: filesExamined,
+  };
 }
 
 async function main(argv) {

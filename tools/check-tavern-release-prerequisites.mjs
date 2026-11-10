@@ -254,11 +254,13 @@ export async function checkTavernReleasePrerequisites({
 } = {}) {
   const releaseProfile = resolveTavernReleaseProfile(profile);
   if (releaseProfile === undefined) {
+    const checks = [result("release_profile", "blocked", "release_profile_unknown")];
     return {
       gate: "tavern_release_prerequisites/v1",
       profile,
       verdict: "blocked",
-      checks: [result("release_profile", "blocked", "release_profile_unknown")],
+      examined: checks.length,
+      checks,
     };
   }
 
@@ -409,6 +411,8 @@ export async function checkTavernReleasePrerequisites({
     gate: "tavern_release_prerequisites/v1",
     profile: releaseProfile.id,
     verdict: blocked.length === 0 ? "passed" : "blocked",
+    // The population the shared judge reads: one prerequisite per check, so a profile that checked nothing is visible.
+    examined: checks.length,
     checks,
   };
 }
@@ -438,6 +442,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         {
           gate: "tavern_release_prerequisites/v1",
           verdict: "blocked",
+          examined: 0,
           checks: [result("checker_execution", "blocked", error instanceof Error ? error.message : String(error))],
         },
         null,

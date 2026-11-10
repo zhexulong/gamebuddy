@@ -151,6 +151,9 @@ process.stdout.write(
   `${JSON.stringify({
     gate: "stardew_native_notice_coverage/v1",
     status: failed.length === 0 && violations.length === 0 ? "passed" : "failed",
+    // The objects this gate examined: the native notice call sites it found across the families. Zero means the scan
+    // stopped seeing the Mod's calls, not that nothing is routed.
+    examined: families.reduce((total, family) => total + family.callSites, 0),
     families,
     checks,
     violations,

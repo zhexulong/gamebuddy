@@ -243,7 +243,9 @@ function main() {
     `${JSON.stringify({
       gate: "game_context_pressure/v1",
       mode: runDirIndex >= 0 ? "run_dir" : "fixtures",
-      ...(runDirIndex >= 0 ? { runDir: args[runDirIndex + 1], judgedSessions: judged.length } : {}),
+      ...(runDirIndex >= 0 ? { runDir: args[runDirIndex + 1] } : {}),
+      // The objects this gate examined: the sessions it judged under --run-dir, the fixture cases it drove offline.
+      examined: runDirIndex >= 0 ? judged.length : offline.length,
       status: failed.length > 0 ? "failed" : "passed",
       ...(unmeasured ? { unmeasured: "no session carried a token reading - this is not a pass" } : {}),
       checks: entries,

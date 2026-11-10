@@ -505,6 +505,8 @@ process.stdout.write(
     status: failed.length === 0 ? "passed" : "failed",
     // WHAT THIS VERDICT COVERS, next to the verdict itself: a pass must not read as wider than the corpus.
     scope: BASELINE_SCOPE_NOTES,
+    // The cases this run drove: one rule or one day-crossing reading per check.
+    cases: checks.length,
     checks,
     // Read-only echo of the raw record for a real run, so a reader sees the crossings rather than only the verdict.
     ...(runDir !== null && existsSync(join(runDir, "manifest.json"))

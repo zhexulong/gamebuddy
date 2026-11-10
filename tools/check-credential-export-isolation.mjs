@@ -783,10 +783,14 @@ function main(argv) {
   const root = rootAt < 0 ? REPOSITORY_ROOT : resolve(argv[rootAt + 1]);
   const checks = selfCheck();
   const failed = checks.filter((entry) => entry.status !== "passed");
+  const result = evaluate({ root });
   process.stdout.write(
     `${JSON.stringify({
       gate: "credential_export_isolation/v1",
-      status: failed.length === 0 ? "passed" : "failed",
+      status: failed.length === 0 && result.violations.length === 0 ? "passed" : "failed",
+      // The objects the rule is about: the credentials an export may not carry. With none of them the rule proves
+      // nothing about a player's keys, whatever the tree looks like.
+      examined: result.checked.credentials,
       checks,
     })}\n`,
   );
@@ -796,7 +800,6 @@ function main(argv) {
     );
     return 1;
   }
-  const result = evaluate({ root });
   if (result.violations.length === 0) {
     process.stdout.write(
       `credential_export_isolation_ok credentials=${result.checked.credentials} ` +

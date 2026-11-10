@@ -1738,11 +1738,14 @@ export function checkHostProductionImportBoundary({
       `${right.importer}:${right.line}:${right.kind}:${right.specifier}`,
     ),
   );
+  const inspectedFiles = [...visited].map((path) => display(root, path)).sort();
   return {
     gate: "host_production_import_boundary/v1",
     verdict: violations.length === 0 ? "passed" : "blocked",
     roots: absoluteRoots.map((path) => display(root, path)),
-    inspectedFiles: [...visited].map((path) => display(root, path)).sort(),
+    inspectedFiles,
+    // The objects this gate examined: the specifiers it followed into a file. Zero of them is a broken walk, not a clean tree.
+    examined: inspectedFiles.length,
     declaredGlobalStrips: permittedGlobalStrips.sort((left, right) =>
       `${left.importer}:${left.line}`.localeCompare(`${right.importer}:${right.line}`),
     ),

@@ -36,8 +36,9 @@
  *
  * Usage: node tools/audit-run-reading-shape.mjs
  *
- * red-proof: `tools/audit-run-reading-shape.test.mjs` drives the rule red on the round43 expression itself
- * (`text.split("plan_work").length - 1`), on a stale exemption, and on an empty population.
+ * red-proof: inject  the round43 expression verbatim (`text.split("plan_work").length - 1`) in a scanned script ->
+ *                    `bare_reading` names that file, line and expression; a rewritten exemption ->
+ *                    `stale_reading_exemption`; an empty scan -> `reading-shape_blocked` (tools/audit-run-reading-shape.test.mjs)
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";

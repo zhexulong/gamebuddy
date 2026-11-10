@@ -100,26 +100,6 @@ function main(
   } = {},
 ) {
   const listing = argv.includes("--list");
-  // The falsifier runs on every verdict, not once in a test file: a rule that has stopped being able to red this
-  // gate must say so on the run that would otherwise print a clean count. `--list` is a listing, not a verdict, and
-  // `verifyRules: false` is how the falsifier reaches the verdict path without re-entering itself.
-  if (verifyRules && !listing) {
-    const checks = selfCheck();
-    const failed = checks.filter((entry) => entry.status !== "passed");
-    write(
-      `${JSON.stringify({
-        gate: "build_artifact_producers/v1",
-        status: failed.length === 0 ? "passed" : "failed",
-        checks,
-      })}\n`,
-    );
-    if (failed.length > 0) {
-      writeError(
-        `build_artifact_producers_self_check_failed: ${failed.map((entry) => `${entry.id}: ${entry.detail}`).join("; ")}\n`,
-      );
-      return 1;
-    }
-  }
 
   const trackedFiles = execFileSync("git", ["ls-files", "-z"], {
     cwd: root,
@@ -143,6 +123,28 @@ function main(
   }
 
   const unproduced = unique.filter((entry) => producedBy(entry.path, outputs).length === 0);
+  // The falsifier runs on every verdict, not once in a test file: a rule that has stopped being able to red this
+  // gate must say so on the run that would otherwise print a clean count. `--list` is a listing, not a verdict, and
+  // `verifyRules: false` is how the falsifier reaches the verdict path without re-entering itself.
+  const checks = verifyRules ? selfCheck() : [];
+  const failed = checks.filter((entry) => entry.status !== "passed");
+  write(
+    `${JSON.stringify({
+      gate: "build_artifact_producers/v1",
+      status: failed.length === 0 && unproduced.length === 0 ? "passed" : "failed",
+      // The objects this gate examined: the setup paths tracked documents hand a maintainer. Zero of them means the
+      // scan stopped reading the documents, not that every documented artifact is produced.
+      examined: unique.length,
+      ...(checks.length === 0 ? {} : { checks }),
+    })}\n`,
+  );
+  if (failed.length > 0) {
+    writeError(
+      `build_artifact_producers_self_check_failed: ${failed.map((entry) => `${entry.id}: ${entry.detail}`).join("; ")}\n`,
+    );
+    return 1;
+  }
+
   write(
     `build_artifact_producers setup_paths=${unique.length} outputs=${outputs.length} unproduced=${unproduced.length}\n`,
   );

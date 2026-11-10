@@ -99,7 +99,7 @@
  *   node tools/check-vendor-patches-apply.mjs                    # this repository
  *   node tools/check-vendor-patches-apply.mjs --root <dir>       # a fixture tree
  *
- * red-proof: PATCH MODE  inject  edit one context line of the WORKING-TREE copy of the file a patch anchors on
+ * red-proof: inject  in PATCH MODE, edit one context line of the WORKING-TREE copy of the file a patch anchors on
  *            while the pinned commit still holds it, using the test's `seamPatch()` - a patch built from the real
  *            seam file, anchored on `cacheTtlConfig`, so the injection is one real line:
  *

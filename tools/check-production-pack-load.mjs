@@ -208,6 +208,7 @@ function verifyVoicePackLoad(report, generationRoot, runtimePath) {
 
 if (process.argv[1] && resolve(process.argv[1]) === scriptPath) {
   const report = checkProductionPackLoad();
-  console.log(JSON.stringify(report, null, 2));
+  // `examined` is the population the shared judge reads: the module entries this generation's pack was walked for.
+  console.log(JSON.stringify({ ...report, examined: report.entries.length }, null, 2));
   process.exitCode = report.verdict === "passed" ? 0 : 2;
 }

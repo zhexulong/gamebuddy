@@ -316,6 +316,8 @@ process.stdout.write(
     mode: runDir === null ? "rules" : "run-dir",
     runDir,
     status,
+    // The cases this run examined: one synthetic timeline per rule in rules mode, one check per reading of a real run.
+    cases: checks.length,
     thresholds: {
       observableEventIntervalMs: OBSERVABLE_EVENT_INTERVAL_MS,
       maxSilentStretchMs: MAX_SILENT_STRETCH_MS,
