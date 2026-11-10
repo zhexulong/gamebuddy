@@ -797,6 +797,10 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // changes and are deferred. The cost the seam does NOT charge (the Data/Buildings BuildCost
         // and BuildMaterials) is debited by the handler itself, because the only native debit lives
         // on the menu (CarpenterMenu.ConsumeResources) and driving the menu is forbidden.
+        //
+        // `Synthetic: true` is the honest half of that: the companion spends the gold and the wood and
+        // places the structure without Robin's counter, her hours or her build queue, so a reader of the
+        // artifact can tell this apart from a commission the player would have made there.
         E("build_farm_building", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("buildingType", "string"), new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "farm_building_built", "GameLocation.buildStructure", Synthetic: true)), FarmhandActionLifecycle.LiveVerified, "farmBuildingTargets"),
         // Accepting the day's help-wanted quest. The handler carries ONLY the write half of
         // Billboard.receiveLeftClick's acceptQuestButton branch (Menus/Billboard.cs:363-374): the
