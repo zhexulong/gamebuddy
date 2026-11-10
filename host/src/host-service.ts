@@ -409,6 +409,23 @@ export class CompanionHostService {
    */
   #runTermination: HostRunTermination | undefined;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * The single timer that notices an execution has stopped making progress.
+   *
+   * <p>
+   * MEASURED 2026-11-08 (`round43`): the Mod owned an execution and then published nothing for more than 180 s while the
+   * receipt the Host still held said `running`, the companion's session record aged past three minutes, and no turn was
+   * created - a frozen-looking game and a silent companion for the rest of the run. Every other turn start in this file
+   * needs a fact to ARRIVE, and the whole shape of a stall is that none does.
+   * </p>
+   * <p>
+   * ONE timer, not one per execution, armed only while the pump is timing something: `#armStallWatch` clears it when the
+   * last in-flight execution settles (`stallWatch.nextStallInMs` becomes `undefined`), when admission seals, and on
+   * close. THE SPLIT: the pump measures and speaks, and this file owns liveness - so the fact still starts its turn
+   * through the one path every other turn start uses. See `#publishStallFact`.
+   * </p>
+   */
+  #stallTimer: ReturnType<typeof setTimeout> | undefined;
   /** The retry ladder's first step, and the sentinel that says "the last attempt succeeded". */
   readonly #baseRetryDelayMs = 50;
   #retryDelayMs = this.#baseRetryDelayMs;
@@ -521,6 +538,7 @@ export class CompanionHostService {
     if (detachVoice !== undefined) void detachVoice();
     if (detachPlayback !== undefined) void detachPlayback();
     if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
+    this.#disarmStallWatch();
     this.#stopSettledListeners.clear();
   }
 
@@ -657,6 +675,7 @@ export class CompanionHostService {
           : "no_active_turn";
     if (!admission.accepted) return Object.freeze({ admission, outcome, settled: Promise.resolve() });
     this.#integrationAdmissionOpen = false;
+    this.#disarmStallWatch();
     this.turnTracker.revoke();
     // Evidence is observational only: a congested/closed append or parent IPC
     // must make this run unverifiable, never prevent the already accepted STOP
@@ -909,6 +928,7 @@ export class CompanionHostService {
   public acceptHostMintedFact(fact: WorldFact): void {
     if (this.#closed) return;
     this.loop.pump.enqueueFact(fact);
+    this.#armStallWatch();
     // A held fact (`isSettledPlanDigest`) does not set `hasPendingDelivery` on its own, so this flush delivers it with
     // whatever else is queued and starts no turn of its own.
     void this.flushSoon().catch(() => undefined);
@@ -1001,6 +1021,9 @@ export class CompanionHostService {
       // companion waiting between plans has nothing outstanding, which is exactly when the clock matters.
       if (fact.kind === "execution_receipt") this.#admitNativeNotices(fact);
       this.loop.pump.enqueueFact(fact);
+      // The one call that re-arms (or clears) the stall watch: this fact is the freshest thing the pump has been told
+      // about its execution, so it is also what moves that execution's next stall threshold.
+      this.#armStallWatch();
     } catch (error) {
       if (!isEventPumpOverflow(error)) throw error;
       this.#containIntegrationOverflow();
@@ -1142,6 +1165,7 @@ export class CompanionHostService {
     if (!this.#integrationAdmissionOpen) return;
     this.#integrationAdmissionOpen = false;
     this.turnTracker.revoke();
+    this.#disarmStallWatch();
     if (this.#retryTimer !== undefined) {
       clearTimeout(this.#retryTimer);
       this.#retryTimer = undefined;
@@ -1417,6 +1441,53 @@ export class CompanionHostService {
     // The second reason, and the defect: the last turn settled without producing work, so the world is exactly where it
     // was and nothing will move it. Bounded, so a model that answers with dialogue forever costs two turns, not the run.
     return this.#idleTurnsWithoutWork > 0 && this.#idleTurnsWithoutWork < 2 && this.#lastTurnOutcome === "completed";
+  }
+
+  /**
+   * Arm, re-arm or clear the stall watch from the pump's own next-due reading.
+   *
+   * <p>
+   * Called after every fact the Host admits, because a fact is the only thing that changes the answer: a new fact for an
+   * execution pushes its threshold out, and its terminal receipt removes it from the watch entirely - which is what
+   * clears this timer when the last execution settles. No execution in flight means no timer.
+   * </p>
+   */
+  #armStallWatch(): void {
+    this.#disarmStallWatch();
+    if (this.#closed || !this.#integrationAdmissionOpen || this.#runTermination !== undefined) return;
+    // `?.` and not `stallWatch.`: the Host's own test doubles provide a partial pump, while the TYPE still requires the
+    // getter - so a real pump that loses it fails the build instead of quietly disarming the watch.
+    const dueInMs = this.loop.pump.stallWatch?.nextStallInMs;
+    if (dueInMs === undefined) return;
+    this.#stallTimer = setTimeout(() => {
+      this.#stallTimer = undefined;
+      this.#publishStallFact();
+    }, dueInMs);
+  }
+
+  #disarmStallWatch(): void {
+    if (this.#stallTimer === undefined) return;
+    clearTimeout(this.#stallTimer);
+    this.#stallTimer = undefined;
+  }
+
+  /**
+   * Say that an execution has stopped making progress, and let the fact start a turn.
+   *
+   * <p>
+   * The fact is MINTED by the pump (`takeStallFact`) and travels the one path every other Host-minted fact uses, so a
+   * stall cannot become a second way to start a turn. The threshold is re-armed BEFORE the turn is requested: a flush
+   * may spend minutes at the provider, and the next bound belongs to the silence, not to the turn.
+   * </p>
+   */
+  #publishStallFact(): void {
+    const fact = this.loop.pump.takeStallFact();
+    this.#armStallWatch();
+    if (fact === undefined) return;
+    // Named where an operator and a bundle reader can both date it: what was watched, what the bound evicted, and what
+    // is stuck - including the ownership that would release it, when the Mod said.
+    process.stderr.write(`EXECUTION_STALL ${JSON.stringify({ atMs: Date.now(), ...fact.payload })}\n`);
+    this.acceptHostMintedFact(fact);
   }
 
   private scheduleRetry(): void {
