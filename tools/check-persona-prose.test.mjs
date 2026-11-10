@@ -22,8 +22,10 @@ import { fileURLToPath } from "node:url";
 
 import {
   VIOLATION,
+  batchContents,
   changedProse,
   documentLeaves,
+  historyOf,
   judge,
   presetPromptLeaves,
   runCheck,
@@ -277,6 +279,23 @@ test("a range with no commits is blocked rather than a pass over nothing", (cont
   const { status, stdout } = run(root, ["--range", "HEAD..HEAD"]);
   assert.equal(status, 2);
   assert.match(stdout, /persona_prose_range_empty:HEAD\.\.HEAD/mu);
+});
+
+test("the two parsers that read git's own output hold on the real shipped document and real history", () => {
+  const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  // Sliced by the byte length in `cat-file`'s header, not by characters: this document is 3459 characters and 5343
+  // bytes, and a character slice would cut its Chinese dialogue and stop it being JSON.
+  const spec = `HEAD:${CARD.replace("card.json", "worldbook.json")}`;
+  const text = batchContents(repositoryRoot, [spec]).get(spec);
+  assert.equal(JSON.parse(text).entries.length, 8);
+  assert.notEqual(Buffer.byteLength(text), text.length);
+
+  // `%x01`-separated `git log` records, one per commit, in order, with the message that decides the marker.
+  const commits = historyOf(repositoryRoot, "796f701a^..796f701a");
+  assert.equal(commits.length, 1);
+  assert.match(commits[0].sha, /^796f701a[0-9a-f]*$/u);
+  assert.equal(commits[0].parent.startsWith("52c8173d"), true);
+  assert.match(commits[0].message, /^fix\(tavern\): she can cook over a campfire/mu);
 });
 
 test("the default run of this repository reads the shipped preset, and finds it unchanged", () => {

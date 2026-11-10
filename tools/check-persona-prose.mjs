@@ -75,9 +75,9 @@ import { fileURLToPath } from "node:url";
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** The shipped persona prose, and the file a deliberate change records itself in. */
-export const PRESETS_DIRECTORY = "assets/tavern/presets";
-export const PERSONA_REVISION_FILE = "assets/tavern/presets/PERSONA-REVISION.md";
-export const DELIBERATE_CHANGE_MARKER = "[persona]";
+const PRESETS_DIRECTORY = "assets/tavern/presets";
+const PERSONA_REVISION_FILE = "assets/tavern/presets/PERSONA-REVISION.md";
+const DELIBERATE_CHANGE_MARKER = "[persona]";
 
 /** The finding every red prints, in the format this gate is read by. */
 export const VIOLATION = "persona_prose_changed_without_decision";
@@ -134,14 +134,14 @@ export function presetPromptLeaves(document, leaves = new Map()) {
 }
 
 /** The persona prose one file carries, as `field -> text`. Throws on a document that is not JSON. */
-export function proseFieldsOfPath(path, text) {
+function proseFieldsOfPath(path, text) {
   const name = path.slice(path.lastIndexOf("/") + 1);
   const document = JSON.parse(text);
   return DOCUMENT_PRESETS.has(name) ? documentLeaves(document) : presetPromptLeaves(document);
 }
 
 /** One side of a comparison: `Map<file\0field, { path, field, text }>`, plus the files that could not be read. */
-export function readSide(files) {
+function readSide(files) {
   const prose = new Map();
   const unreadable = [];
   let examined = 0;
