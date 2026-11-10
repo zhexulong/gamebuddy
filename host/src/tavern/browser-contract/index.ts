@@ -1898,9 +1898,21 @@ export const PresetAssemblyDepthBlockV1Schema = strictObject({
  * things about one fact, and a body carrying neither leaves the player unable to tell "nothing is
  * sent" from "nobody looked".
  */
+/**
+ * The longest preset name this wire publishes, and the ceiling the preset document's validator refuses a longer one at.
+ *
+ * A preset's name is SillyTavern's own top-level `name` - a label the panel shows beside the preset, not authored text -
+ * and it carries the ceiling every other name on this wire carries. It is declared here, where it is published, and
+ * imported by the WRITER so the document a store accepts and the body a panel draws cannot disagree about it. The
+ * version of this fact that used to exist was `maxLength: 256` here and nothing at the writer: a preset whose name was
+ * longer imported cleanly, and the read's own schema check then answered the whole listing with
+ * `preset_assembly_read_unavailable`.
+ */
+export const PRESET_NAME_CHARS = 128;
+
 export const PresetAssemblySurfaceV1Schema = strictObject({
   presetId: Type.String({ minLength: 1, maxLength: 128 }),
-  name: Type.Union([Type.String({ minLength: 1, maxLength: 256 }), Type.Null()]),
+  name: Type.Union([Type.String({ minLength: 1, maxLength: PRESET_NAME_CHARS }), Type.Null()]),
   revision: Revision,
   entries: strictObject({ total: Revision, enabled: Revision, disabled: Revision }),
   disabledEntries: Type.Array(Type.String({ minLength: 1, maxLength: 128 })),

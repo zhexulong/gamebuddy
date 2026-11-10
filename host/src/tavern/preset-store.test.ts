@@ -7,6 +7,7 @@ import { canonicalHash } from "./artifact-store.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { type PresetDocument, validatePresetDocument, withPromptEnabled } from "./preset-document.js";
+import { PRESET_NAME_CHARS } from "./browser-contract/index.js";
 import { createPresetStore, type PresetStore } from "./preset-store.js";
 
 // The store writes and deletes through the Host's path lock, whose release needs the reclaimer the runtime binds.
@@ -154,6 +155,38 @@ test("falsy field values are preserved rather than treated as absent", async () 
     const [entry] = exported.prompts as readonly Record<string, unknown>[];
     assert.equal(Object.hasOwn(entry as object, "injection_depth"), true);
     assert.equal(entry?.injection_depth, 0);
+  });
+});
+
+/**
+ * The published bound IS the writer's bound: a name the wire would refuse never reaches the store.
+ *
+ * Measured before this: the contract published `maxLength: 256` for the surface's `name` and nothing enforced it, so a
+ * document with a 200-character name imported cleanly, listed cleanly, and the read's own schema check then answered
+ * `preset_assembly_read_unavailable` for the WHOLE listing - one label blanking every preset the player had. Both
+ * halves are asserted: a name AT the bound is stored, and one character past it is refused with its length and the
+ * ceiling, before anything is written.
+ */
+test("a document name is stored up to the wire's own bound and refused past it by name", async () => {
+  await withStore(async (store) => {
+    const atBound = { ...structuredClone(PRESET), name: "N".repeat(PRESET_NAME_CHARS) };
+    assert.equal(
+      (await store.import({ presetId: "at-bound", document: atBound })).summary.name?.length,
+      PRESET_NAME_CHARS,
+      "a name the wire publishes is a name the store accepts",
+    );
+    await assert.rejects(
+      store.import({
+        presetId: "over",
+        document: { ...structuredClone(PRESET), name: "N".repeat(PRESET_NAME_CHARS + 1) },
+      }),
+      { message: `preset_name_over_ceiling:${String(PRESET_NAME_CHARS + 1)}:${String(PRESET_NAME_CHARS)}` },
+    );
+    assert.deepEqual(
+      (await store.list()).map((summary) => summary.presetId),
+      ["at-bound"],
+      "the refused document left nothing behind",
+    );
   });
 });
 

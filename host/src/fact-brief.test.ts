@@ -480,6 +480,13 @@ test("execution_result_evidence: every settled node's refusal detail reaches the
     block.includes(`${longDetail.slice(0, MAX_EVIDENCE_DETAIL_CHARS)}…`),
     "n05's detail is printed up to the bound, and marked",
   );
+  // AND THE MARK IS THE CEILING'S OWN NAME, in the bounded-token shape a `reasonCode` has: the length the Mod wrote and
+  // the ceiling it met. The count used to be Chinese prose beside the ellipsis, which named the cut but not the ceiling -
+  // nothing reading this line could tell which limit had been met, or grep for it.
+  assert.ok(
+    block.includes(`evidence_detail_over_ceiling:${String(longDetail.length)}:${String(MAX_EVIDENCE_DETAIL_CHARS)}`),
+    "the cut names the ceiling and the measured length, not only that something was cut",
+  );
   // AND THE HALVES THAT ARE ALONE STAY: a detail without a hint, a hint without a detail, and a node with neither.
   assert.ok(block.includes("item=(O)388;stock=0"), "n02's detail is its whole account");
   assert.ok(block.includes("被打断了"), "n03's hint survives, and no detail was invented for it");

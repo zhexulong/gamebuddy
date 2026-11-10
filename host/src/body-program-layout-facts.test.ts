@@ -138,4 +138,17 @@ test("the warning list is bounded while its count is not", () => {
     8,
     "the list is bounded; the count is the population",
   );
+  // AND THE WINDOW SAYS HOW IT WAS CUT: the last row is the ceiling and the population it truncated, so the list is
+  // never read as a whole answer that happens to be short. Measured before this row existed: eight rows and no way to
+  // tell 8 of 8 from 8 of 24 without comparing `layoutFactsAbsentCount` beside them by hand.
+  assert.equal(
+    compiled.ok ? compiled.layoutFactsAbsent.at(-1) : "",
+    "layout_facts_absent_over_ceiling:24:8",
+    "a truncated list ends in the code that names its ceiling and the population it cut",
+  );
+  assert.equal(
+    compiled.ok ? compiled.layoutFactsAbsent.filter((row) => row.startsWith("layout_facts_absent:")).length : -1,
+    7,
+    "the ceiling row takes one slot of the eight, so the window is 7 facts and one code - the list stays eight long",
+  );
 });

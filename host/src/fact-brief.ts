@@ -486,18 +486,19 @@ function failureWords(node: SettledNode): string {
 }
 
 /**
- * One failure field's share of a line: `evidenceDetail`'s own bound, with the cut NAMED.
+ * One failure field's share of a line: `evidenceDetail`'s own bound, and the cut NAMED by the code that measures it.
  *
- * A bare ellipsis would leave her reading a partial coordinate list as the whole one; the count says how much of the
- * Mod's text the line is not showing. Absent or blank is `undefined`, so the caller joins only the halves that exist.
+ * A bare ellipsis would leave her reading a partial coordinate list as the whole one; the code says how much of the Mod's
+ * text the line is not showing (`evidence_detail_over_ceiling:<length>:<ceiling>`, the same bounded-token shape a node's
+ * own `reasonCode` has, so a run audit can grep it). Absent or blank is `undefined`, so the caller joins only the halves
+ * that exist.
  */
 function boundedFailureField(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const text = value.trim();
   if (text === "") return undefined;
   if (text.length <= MAX_EVIDENCE_DETAIL_CHARS) return text;
-  const rest = text.length - MAX_EVIDENCE_DETAIL_CHARS;
-  return `${text.slice(0, MAX_EVIDENCE_DETAIL_CHARS)}…（另有 ${String(rest)} 字）`;
+  return `${text.slice(0, MAX_EVIDENCE_DETAIL_CHARS)}…[evidence_detail_over_ceiling:${String(text.length)}:${String(MAX_EVIDENCE_DETAIL_CHARS)}]`;
 }
 
 /**

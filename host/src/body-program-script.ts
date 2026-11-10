@@ -266,7 +266,9 @@ export type CompiledPlan =
         insertedNodeIds: readonly string[];
         /**
          * Layout facts this plan's own nodes depend on that the snapshot it was compiled against does not carry, one per
-         * `layout_facts_absent:call <n>:<fact>`. Bounded; `layoutFactsAbsentCount` is the population.
+         * `layout_facts_absent:call <n>:<fact>`. Bounded; `layoutFactsAbsentCount` is the population, and a list that had
+         * to be cut ends in one `layout_facts_absent_over_ceiling:<count>:<ceiling>` row naming the ceiling and the
+         * population it truncated.
          */
         layoutFactsAbsent: readonly string[];
         layoutFactsAbsentCount: number;
@@ -999,6 +1001,14 @@ function nodeTile(node: PlanNode): Readonly<{ x: number; y: number }> | undefine
  * refusal list uses, so the companion reads back WHICH of its calls is blind. Nothing here refuses: the answer carries
  * the plan and the warning together, because the receipt is where she learns, not the harness.
  * </p>
+ *
+ * <p>
+ * THE WINDOW SAYS HOW IT WAS CUT. More absent facts than the answer can afford are answered by the first
+ * `MAX_REPORTED_LAYOUT_FACTS_ABSENT - 1` of them and one last row spelling
+ * `layout_facts_absent_over_ceiling:<count>:<ceiling>` - the ceiling she met and the population it truncated - the same
+ * shape `<world-facts>` states its own remainder in (`fact-brief.ts`). A row that names both is the difference between
+ * a window and a silent prefix, and it is why the list and `layoutFactsAbsentCount` can never be read as disagreeing.
+ * </p>
  */
 export function layoutFactsAbsent(
   nodes: readonly PlanNode[],
@@ -1023,11 +1033,20 @@ export function layoutFactsAbsent(
     for (const fact of facts) {
       if (row !== undefined && row[fact] !== undefined) continue;
       count += 1;
-      if (absent.length < MAX_REPORTED_LAYOUT_FACTS_ABSENT)
-        absent.push(`layout_facts_absent:call ${index + 1}:${fact}`);
+      absent.push(`layout_facts_absent:call ${index + 1}:${fact}`);
     }
   });
-  return Object.freeze({ absent: Object.freeze(absent), count });
+  return Object.freeze({
+    absent: Object.freeze(
+      absent.length > MAX_REPORTED_LAYOUT_FACTS_ABSENT
+        ? [
+            ...absent.slice(0, MAX_REPORTED_LAYOUT_FACTS_ABSENT - 1),
+            `layout_facts_absent_over_ceiling:${String(count)}:${String(MAX_REPORTED_LAYOUT_FACTS_ABSENT)}`,
+          ]
+        : absent,
+    ),
+    count,
+  });
 }
 
 /**
@@ -2232,7 +2251,9 @@ function emitForEachNode(value: unknown, actions: readonly PublishedPlanAction[]
  * SO A MERGE IS ALLOWED ONLY WHEN EVERY RULE SURVIVES IT. `MAX_FOR_EACH_RULES` is the pass's own representable size and
  * the Mod's reader enforces it, so a union past it has rules with nowhere to go; trimming would hand the Mod a pass the
  * caller did not write. The refusal's counts are the INCOMING loop's: `<kept>:<dropped>` of the rules it wrote, so the
- * caller reads which of its rules the pass has no room for rather than a document length.
+ * caller reads which of its rules the pass has no room for rather than a document length. The union is compared to the
+ * ceiling itself - `refuseForEachMergeOverflow` is where the code is spelled - so the measurement and the refusal that
+ * names it are the same statement.
  * </p>
  */
 function mergeForEachRules(
@@ -2242,13 +2263,8 @@ function mergeForEachRules(
 ): PlanForEachLoop {
   const previousRules = forEachRules(previous);
   const incomingRules = forEachRules(incoming);
-  const refuse = (kept: number): never =>
-    rejectPlanCall(
-      `plan_script_for_each_merge_would_drop_rules:${String(kept)}:${String(incomingRules.length - kept)}`,
-      state,
-    );
-  const room = Math.max(MAX_FOR_EACH_RULES - previousRules.length, 0);
-  if (incomingRules.length > room) refuse(room);
+  if (previousRules.length + incomingRules.length > MAX_FOR_EACH_RULES)
+    refuseForEachMergeOverflow(Math.max(MAX_FOR_EACH_RULES - previousRules.length, 0), incomingRules.length, state);
   const merged = incomingRules.reduce(withForEachRule, previous);
   // AND THE RESULT IS CHECKED AGAINST THE UNION rather than trusted to the fold: the rules the pass reports ARE the union,
   // in the order the caller wrote them, or this refuses instead of shipping a pass that disagrees with her script.
@@ -2256,8 +2272,17 @@ function mergeForEachRules(
   const kept = incomingRules.filter(
     (rule, index) => JSON.stringify(carried[previousRules.length + index]) === JSON.stringify(rule),
   ).length;
-  if (kept !== incomingRules.length || carried.length !== previousRules.length + incomingRules.length) refuse(kept);
+  if (kept !== incomingRules.length || carried.length !== previousRules.length + incomingRules.length)
+    refuseForEachMergeOverflow(kept, incomingRules.length, state);
   return merged;
+}
+
+/**
+ * Refuses a merge the pass has no room for, naming how many of THIS loop's rules survive it and how many have nowhere to
+ * go - `plan_script_for_each_merge_would_drop_rules:<kept>:<dropped>`, the one spelling of that refusal.
+ */
+function refuseForEachMergeOverflow(kept: number, incoming: number, state: PlanScriptState): never {
+  rejectPlanCall(`plan_script_for_each_merge_would_drop_rules:${String(kept)}:${String(incoming - kept)}`, state);
 }
 
 /**

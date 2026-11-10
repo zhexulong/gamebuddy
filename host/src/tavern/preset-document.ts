@@ -12,6 +12,7 @@
  * field authority; the reference implementation read beside this module is SillyTavern's own
  * `default/content/presets/openai/Default.json`.
  */
+import { PRESET_NAME_CHARS } from "./browser-contract/index.js";
 
 /**
  * The prompt-entry fields A4 §2.2 documents. This is a reading aid for callers that must name or recognise one
@@ -68,6 +69,12 @@ export type PresetSummary = Readonly<{
 export function validatePresetDocument(value: unknown): PresetDocument {
   if (!isRecord(value)) throw new Error("preset_document_not_an_object:preset");
   if (!Array.isArray(value.prompts)) throw new Error("preset_prompts_not_an_array:prompts");
+  // The ONE ceiling this validator adds to the format, and it is the WIRE's own rather than a stricter reading of
+  // SillyTavern's: the surface publishes `name`, so a document whose name is past `PRESET_NAME_CHARS` is a preset no
+  // panel can draw, and the read would answer the whole listing with `preset_assembly_read_unavailable` instead of
+  // naming the field at fault. Refused here, by name, before anything is stored.
+  if (typeof value.name === "string" && value.name.length > PRESET_NAME_CHARS)
+    throw new Error(`preset_name_over_ceiling:${String(value.name.length)}:${String(PRESET_NAME_CHARS)}`);
   value.prompts.forEach((entry, index) => {
     const path = `prompts[${index}]`;
     if (!isRecord(entry)) throw new Error(`preset_prompt_entry_not_an_object:${path}`);
