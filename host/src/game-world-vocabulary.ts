@@ -193,12 +193,16 @@ function chineseTimeOfDayBand(rawHour: number): string {
 }
 
 export function formatGameDate(day: number, seasonIndex: number, year: number, zh: boolean): string {
+  // An absent reading is DROPPED, never rendered as `undefined年第undefined天` - the same rule every sibling fact here
+  // follows. The wire requires all three, so this only fires for a payload that is not a full snapshot.
+  if (!Number.isSafeInteger(day) || !Number.isSafeInteger(seasonIndex) || !Number.isSafeInteger(year)) return "";
   const season = (zh ? SEASON_NAMES_ZH[seasonIndex] : SEASON_NAMES_EN[seasonIndex]) ?? seasonIndex;
   if (zh) return `${year}年第${day}天 ${season}`;
   return `Year ${year}, Day ${day} of ${season}`;
 }
 
 export function formatGameWeather(token: string, zh: boolean): string {
+  if (typeof token !== "string" || token.length === 0) return "";
   const map = zh ? WEATHER_NAMES_ZH : WEATHER_NAMES_EN;
   const name = map[token] ?? token;
   return zh ? `天气：${name}` : `weather: ${name}`;
@@ -284,9 +288,9 @@ function boundedName(value: string): string {
 }
 
 /** The tile under her feet, in the map's own coordinates. */
-function formatGameTile(tile: { readonly x: number; readonly y: number }, zh: boolean): string {
-  if (!(Number.isFinite(tile.x) && Number.isFinite(tile.y))) return "";
-  return `${zh ? "脚下" : "tile"}: (${tile.x}, ${tile.y})`;
+function formatGameTile(tile: { readonly x: number; readonly y: number } | undefined, zh: boolean): string {
+  if (!Number.isFinite(tile?.x) || !Number.isFinite(tile?.y)) return "";
+  return `${zh ? "脚下" : "tile"}: (${String(tile?.x)}, ${String(tile?.y)})`;
 }
 
 /**
@@ -336,7 +340,7 @@ function formatHeldTool(source: GameEnvironmentFactsSource, zh: boolean): string
  */
 function formatNearbyVillagers(source: GameEnvironmentFactsSource, zh: boolean): string {
   const tile = source.tile;
-  if (!(Number.isFinite(tile.x) && Number.isFinite(tile.y))) return "";
+  if (tile === undefined || !Number.isFinite(tile.x) || !Number.isFinite(tile.y)) return "";
   const here = (source.villagerWhereabouts ?? []).filter((villager) => villager.inCurrentLocation === true);
   if (here.length === 0) return "";
   const distance = (villager: { readonly x: number; readonly y: number }): number =>
