@@ -136,8 +136,13 @@ async function observe(candidate: Snapshot): Promise<Observation> {
   const budget = (result.details as { observationBudget?: unknown }).observationBudget;
   if (budget === undefined || typeof budget !== "object" || budget === null)
     throw new Error("observation_budget_missing_from_details");
+  // What the model READ is `<world-state>` prose now, so the bounded snapshot itself is taken from the details the
+  // tool publishes for exactly this kind of operator reading - the same object the text was composed from.
+  const publishedJson = (result.details as { snapshotJson?: unknown }).snapshotJson;
+  if (typeof publishedJson !== "string") throw new Error("observation_snapshot_missing_from_details");
+  assert.match(text, /^<world-state>$/mu, "the answer is the state block, and the bound's own object rides in details");
   return {
-    published: JSON.parse(text) as Readonly<Record<string, unknown>>,
+    published: JSON.parse(publishedJson) as Readonly<Record<string, unknown>>,
     budget: budget as Observation["budget"],
   };
 }

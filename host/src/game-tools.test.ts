@@ -184,7 +184,9 @@ test("Stardew Host tools expose only factual observation and receipt surfaces", 
   client.hello("a".repeat(16), now);
   client.observe(now);
   const observed = await observe.execute("test", {}, new AbortController().signal, () => {}, {} as never);
-  assert.match(observed.content[0]?.type === "text" ? observed.content[0].text : "", /"location":"Farm"/);
+  // The answer is the state block, and the map is named in it in WORDS (the vocabulary module's spelling) rather than
+  // as the engine's own asset id - the same rule the per-turn block follows.
+  assert.match(observed.content[0]?.type === "text" ? observed.content[0].text : "", /位置: 农场/u);
   const noReceipt = await execution.execute("test", {}, new AbortController().signal, () => {}, {} as never);
   assert.match(noReceipt.content[0]?.type === "text" ? noReceipt.content[0].text : "", /No authoritative/);
   client.dispose();

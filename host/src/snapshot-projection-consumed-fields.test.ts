@@ -210,12 +210,11 @@ test("the carrying list is bounded, and what the bound left out is counted rathe
   );
 });
 
-test("time and pet target fields reach the Agent only as an unfiltered observation dump", async () => {
-  // This is the whole of the current Host-side consumption: `stardew_observe`
-  // serializes the admitted snapshot verbatim. Nothing derives a decision,
-  // count, ranking, or availability from these fields. If a decision
-  // consumer is added, it must be asserted here rather than inferred from
-  // this pass-through.
+test("time and pet target fields reach the Agent through the world block, and nothing derives a decision from them", async () => {
+  // This is the whole of the Host-side consumption: `stardew_observe` states the world as the same `<world-state>`
+  // block the turn carries, and the clock and the target families reach the model inside it. Nothing here derives a
+  // decision, count, ranking, or availability - if a decision consumer is added, it must be asserted here rather
+  // than inferred from this pass-through.
   const snapshot: Snapshot = {
     ...baseSnapshot,
     timeOfDay: 2350,
@@ -266,15 +265,9 @@ test("time and pet target fields reach the Agent only as an unfiltered observati
   if (observe === undefined) throw new Error("stardew_observe_tool_missing");
   const result = await observe.execute("test", {}, new AbortController().signal, () => {}, {} as never);
   const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-  const delivered = JSON.parse(text) as Readonly<{
-    timeOfDay: number;
-    seasonIndex: number;
-    petTargets: readonly Readonly<{ stationary: boolean }>[];
-  }>;
-  assert.equal(delivered.timeOfDay, 2350);
-  assert.equal(delivered.seasonIndex, 3);
-  assert.deepEqual(
-    delivered.petTargets.map((target) => target.stationary),
-    [true],
-  );
+  assert.match(text, /^<world-state>$/mu, "the answer is the state block, not a dump");
+  assert.match(text, /23:50/u, "the clock the Mod published is stated");
+  assert.match(text, /冬季/u, "and so is the season");
+  assert.match(text, /宠物 \(10,12\)/u, "and the pet target, with its tile");
+  assert.equal(text.includes('{"'), false, "and a JSON envelope is not what reaches the model");
 });

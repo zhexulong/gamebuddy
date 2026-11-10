@@ -13,6 +13,7 @@ import {
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
 import type { IntegrationDispatchAdmission } from "./game-integration-adapter.js";
+import { composeWorldState, unchangedWorldAnswer } from "./fact-brief.js";
 import {
   LOOKUP_SUBJECTS,
   type AffordanceAction,
@@ -34,6 +35,7 @@ import {
   type DataQueryResult,
   type ExecutionReceipt,
   type ExecutionRequest,
+  type Snapshot,
   TOOL_SELECTOR_VALUES,
   type TileAreaRequest,
   type TileAreaResult,
@@ -172,6 +174,9 @@ export function createStardewObservationTools(
   // Which catalog revision this model has already been shown. Held in the closure because the connection
   // state belongs to the bridge, and "what this model has been told" is a property of the model's view.
   let surfaceRevisionShown: number | undefined;
+  // The snapshot revision this tool last ANSWERED with. An observation that finds the revision it already
+  // stated is one line, because the caller already has the world.
+  let observedRevisionShown: number | undefined;
   const observe = defineTool({
     name: "stardew_observe",
     label: "Observe Stardew",
@@ -223,12 +228,31 @@ export function createStardewObservationTools(
       // stale coordinates and amplified the cascade, with the failure visible only in `details.refreshError`. The
       // content now names it, and the reasonCode does too.
       const staleAfterFailedRefresh = available && refresh === "cached" && refreshError !== null;
-      const staleText = `STALE SNAPSHOT: the fresh observation FAILED (${refreshError}) while the connection is still attached, so the world may have stopped advancing. Do not treat these coordinates as current - re-observe or report the state to the player instead of acting on them. Last known snapshot: ${JSON.stringify(snapshot)}`;
+      const revision = observed === null ? undefined : observed.revision;
+      // The answer is the SAME block the per-turn delivery composes (`fact-brief.ts`), from the snapshot the Mod just
+      // published - not a second rendering of the world with its own wording. Measured `round44`: the JSON dump this
+      // replaces was a median 20,980 characters per call, 648,059 over 31 calls, 81.1% of every tool-result byte.
+      const unchanged = bounded !== null && revision !== undefined && revision === observedRevisionShown;
+      const fresh = bounded !== null && revision !== undefined && !unchanged;
+      const worldText =
+        bounded === null || revision === undefined
+          ? ""
+          : unchanged
+            ? unchangedWorldAnswer(revision)
+            : composeWorldState({
+                snapshot: bounded.snapshot as unknown as Snapshot,
+                revision,
+                ageTurns: 0,
+              });
+      if (fresh) observedRevisionShown = revision;
+      // A refresh the Mod refused still has a world to state - the last one it published - and the failure is said
+      // FIRST, because a block that reads as current after a failed refresh is the deadlock this sentence exists for.
+      const staleText = `STALE SNAPSHOT: the fresh observation FAILED (${refreshError}) while the connection is still attached, so the world may have stopped advancing. Do not treat these coordinates as current - re-observe or report the state to the player instead of acting on them.\n${worldText}`;
       return {
         content: [
           {
             type: "text" as const,
-            text: available ? (staleAfterFailedRefresh ? staleText : JSON.stringify(snapshot)) : unavailableText,
+            text: available ? (staleAfterFailedRefresh ? staleText : worldText) : unavailableText,
           },
         ],
         details: {
