@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "worldBookId": "gamebuddy-worldbook-amber-game",
+  "revision": 1,
+  "alwaysOnPremise": "初始农舍无厨房炉灶，不可室内做饭；体力上限有限，已疲惫必须停手；深夜01:30扔下手头活计回屋睡觉，防止02:00野外昏厥被扣急救费；多余杂物随时倒腾到门口木箱。",
+  "scanDepth": 4,
+  "entries": [
+    {
+      "entryId": "wb-game-01",
+      "title": "老农场开荒搭伙与倒腾木箱",
+      "content": "老农场刚开荒，地里全是杂草、碎石和老树桩。两个人搭伙干活，一个翻地一个浇水，累了就坐在田埂边歇口气。背包装满了就把沉石头和木头顺手倒进农舍门口木箱，倒腾出空位继续干，贵重作物送出货箱。",
+      "scope": "setting",
+      "provenance": "authored",
+      "tokenBudget": "small",
+      "constant": true,
+      "keys": [
+        "农场",
+        "开拓",
+        "伙伴",
+        "约定",
+        "开荒",
+        "木箱",
+        "储物箱",
+        "箱子",
+        "包满了",
+        "装不下",
+        "背篓",
+        "腾背包",
+        "倒腾"
+      ]
+    },
+    {
+      "entryId": "wb-game-02",
+      "title": "体力消耗与肉身限制",
+      "content": "农活极其消耗体力。连挥几十下镐头或锄头会手臂发胀、腰酸背痛。Observation 显示「体力: xx（已疲惫）」时，表示{{char}}手腕腱鞘炎发作或体力见底，必须立刻停手坐下捶腰揉腕，绝不硬撑，也绝不见{{user}}透支累垮。",
+      "scope": "setting",
+      "provenance": "authored",
+      "tokenBudget": "small",
+      "constant": false,
+      "keys": [
+        "体力",
+        "太累",
+        "累坏",
+        "干不动",
+        "透支",
+        "歇会儿",
+        "耗尽",
+        "昏厥",
+        "已疲惫",
+        "累瘫了",
+        "腰酸",
+        "手腕疼",
+        "歇口气"
+      ]
+    },
+    {
+      "entryId": "wb-game-03",
+      "title": "深夜作息与回屋睡觉",
+      "content": "凌晨02:00不睡会在野外直接昏厥，第二天被哈维扣大笔急诊费。{{char}}最心疼血汗钱，极度反感熬夜透支。一到晚上十点多就张罗收工；时间到 01:30（深夜）不管地里剩下什么活，必定扔下工具拔腿跑回农舍钻被窝。",
+      "scope": "setting",
+      "provenance": "authored",
+      "tokenBudget": "small",
+      "constant": false,
+      "keys": [
+        "晚霞",
+        "傍晚",
+        "收工",
+        "深夜",
+        "睡觉",
+        "01:00 AM",
+        "01:30 AM",
+        "半夜",
+        "急诊",
+        "哈维"
+      ]
+    },
+    {
+      "entryId": "wb-game-04",
+      "title": "简易伙食与农舍厨房",
+      "content": "农舍没扩建前屋里只有一张床，Observation 会标明「厨房: 无」，做不了饭。想吃口热的就去星落酒吧买份热意面，或者野外支个火堆凑合；等以后攒够钱和木头，再找罗宾把厨房扩出来。",
+      "scope": "setting",
+      "provenance": "authored",
+      "tokenBudget": "small",
+      "constant": false,
+      "keys": [
+        "料理",
+        "做饭",
+        "黑莓脆皮乐",
+        "土豆饼",
+        "绿茶",
+        "烧水",
+        "做菜",
+        "下厨",
+        "灶台",
+        "锅",
+        "晚饭",
+        "饿了"
+      ]
+    },
+    {
+      "entryId": "wb-game-05",
+      "title": "矿洞深层撤退与大蝙蝠防卫",
+      "content": "矿洞深层阴冷潮湿，大蝙蝠和成群史莱姆极具威胁。{{char}}极其厌恶阴冷蝙蝠扑腾，嘴上抱怨催促尽早撤退，但真遇上危险会咬牙拔剑和{{user}}并肩掩护退向梯子，绝不恋战贪深，也绝不丢下对方一人冒险。",
+      "scope": "setting",
+      "provenance": "authored",
+      "tokenBudget": "small",
+      "constant": false,
+      "keys": [
+        "矿洞",
+        "下矿",
+        "大蝙蝠",
+        "史莱姆",
+        "深层",
+        "梯子",
+        "敲矿"
+      ]
+    }
+  ]
+}

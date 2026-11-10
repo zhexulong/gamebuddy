@@ -36,7 +36,7 @@ import { join } from "node:path";
 const { injectionFacts, readCapturedRequests } = observation;
 
 /** The three claims, in the order a run reads them: what she remembers, what she was told, how she speaks. */
-export const INJECTION_CLAIMS = Object.freeze(["memory", "worldBook", "sampling"]);
+export const INJECTION_CLAIMS = Object.freeze(["memory", "worldBook", "preset"]);
 
 /** A claim's verdict vocabulary. `proven` is the only member that says the context reached the provider. */
 export const CLAIM_VERDICTS = Object.freeze([
@@ -115,7 +115,7 @@ function sectionText(text, name) {
  * stopped at the first block with bytes would report `<project-memory>` as "a section without the fact" on
  * exactly the turns where it carried the fact.
  */
-function memoryReading(turn, text, sections, fact) {
+function memoryReading(turn, text, messages, sections, fact) {
   const blocks = [];
   for (const name of sections) {
     const bytes = sectionBytes(turn, name);
@@ -132,38 +132,212 @@ function memoryReading(turn, text, sections, fact) {
      * "the fact arrived" would hide. */
     factInSection: factSection !== null,
     factSection: factSection === null ? null : factSection.name,
+    leaks: messageLeaks({
+      evidence: [["memory.fact", fact]],
+      texts: messages.map((message) => wireMessageText(message)),
+      roles: messages.map((message) => (typeof message?.role === "string" ? message.role : "")),
+      isCarrier: (_label, _at, one) => sections.some((name) => sectionText(one, name).includes(fact)),
+    }),
   };
 }
 
 /**
  * The world-book claim's readings.
  *
- * The block's size is reported beside the content because the block is the m[1] carrier: an entry whose
- * text is in the request but outside that block is a quote somewhere else (a tool result, the exported
- * catalogue), not the entry being injected.
+ * The block's size is reported beside the content because the block is the carrier: an entry whose text is
+ * in the request but outside that block is a quote somewhere else (a tool result, the exported catalogue),
+ * not the entry being injected.
+ *
+ * THE FIXTURE'S ENTRIES ARE THE BOOK'S ALWAYS-ON ONES (`constant: true`), so they ride the stable authored
+ * block (`<gamebuddy-authored-context>`, the m[0] prefix) and the block this claim names is that one. A
+ * KEYWORD-GATED fixture was the earlier shape, and it forced the probe to type its trigger words into the
+ * player's own turn - a turn the probe authored, which is the one thing a reader of injection must not count
+ * as the product's assembly. `enabled` is still the only variable between the two directions.
  */
-function worldBookReading(turn, text, declared, entry) {
+function worldBookReading(turn, text, declared, entry, messages, roles) {
   return {
-    sectionBytes: sectionBytes(turn, declared.volatileKind),
+    sectionBytes: sectionBytes(turn, declared.authoredTag),
     inBody: text.includes(entry.text),
-    inWorldBookBlock: sectionText(text, declared.volatileTag).includes(entry.text),
+    inAuthoredBlock: sectionText(text, declared.authoredTag).includes(entry.text),
+    leaks: messageLeaks({
+      evidence: [["worldBook.text", entry.text]],
+      texts: messages.map((message) => wireMessageText(message)),
+      roles,
+      isCarrier: (_label, _at, one) => sectionText(one, declared.authoredTag).includes(entry.text),
+    }),
   };
 }
 
 /**
- * The sampling claim's readings.
+ * Evidence a probe wrote into the conversation is evidence of the probe, not of injection.
  *
- * A preset's sampling values reach the wire as top-level request fields (`tavern/preset-sampling.ts`
- * merges them into the provider entry's `modelOverrides`, and the adapter writes that bag into the HTTP
- * body last), so this reads the body rather than the messages. A key that is present with another
- * layer's value is reported as not carried: the claim is that the PRESET's value is what the model is
- * called with, and a preset saying 0.9 while the wire says 0.7 is the false green the preset surface
- * exists to delete.
+ * A provider body is assembled by the product out of what the player stored; the ONE message a probe
+ * authors is its own player turn. So an evidence string that turns up where its own placement rule does not
+ * name it - and above all in an `assistant` message, which is model output no probe wrote - is a body
+ * carrying bytes that did not arrive by injection. This is the reading a body-wide `includes` hides: the
+ * 2026-11-12 run submitted `gbw3enabledkey and gbw3disabledkey are both in this line` as the player's turn,
+ * and the trigger words it then "found" had been planted by the probe.
+ *
+ * `evidence` is `[label, marker]` pairs; `isCarrier(label, index, text)` says whether this message is one
+ * the label's own placement rule names. Every finding carries the two facts a failure must state: the marker
+ * and the role it was found in.
  */
-function samplingReading(body, entry) {
-  const carried = body !== null && typeof body === "object" && Object.hasOwn(body, entry.key);
-  const value = carried ? body[entry.key] : null;
-  return { key: entry.key, carried, value, matches: carried && value === entry.value };
+function messageLeaks({ evidence, texts, roles, isCarrier }) {
+  const leaks = [];
+  for (const [label, marker] of evidence) {
+    if (typeof marker !== "string" || marker.length === 0) continue;
+    for (let at = 0; at < texts.length; at += 1) {
+      if (!texts[at].includes(marker)) continue;
+      const role = roles[at] === "" ? "unlabelled" : roles[at];
+      if (role === "assistant") {
+        leaks.push({ label, marker, role, at, reason: "in_an_assistant_message" });
+        continue;
+      }
+      if (!isCarrier(label, at, texts[at])) {
+        leaks.push({ label, marker, role, at, reason: "outside_the_block_its_placement_names" });
+      }
+    }
+  }
+  return leaks;
+}
+
+/**
+ * The preset claim's readings, in the TWO halves a preset actually has.
+ *
+ * A preset is `prompt_order` plus sampler values (design `tavern-preset-compatibility` §2.4/§5), and the two
+ * halves reach the wire by DIFFERENT paths, so one reading for both would hide which one arrived:
+ *
+ *   prompts   rendered entries, placed by `preset-request-segments.ts::placeSegments`. `before` joins the
+ *             LEADING SYSTEM message's text (not a system message of its own - `pi-ai`'s
+ *             `collapseSystemMessages` drops every system message after the first), and `after`/`depth`
+ *             become `user` messages after the transcript. So "the string is in the body" is not the claim:
+ *             the claim is that it is in the block its own placement rule names. A marker quoted inside the
+ *             player's line, a tool result or the world-book block is a body that carries the bytes and not
+ *             the injection.
+ *   sampling  merged into `models.json` (`withPresetSampling`) and written into the HTTP body as a TOP-LEVEL
+ *             field by the adapter, which is why this reads the body rather than the messages. A key present
+ *             with another layer's value is reported as not carried: the false green this feature exists to
+ *             delete is a panel printing 0.13 while the wire sends 0.7.
+ *
+ * THE TWO HALVES AND THE ONE MOUNT BOUNDARY. The segments are republished before every prompt
+ * (`p4-provider-start-execution.ts:660`), so clearing the binding stops them on the very next request. The
+ * sampler is not: it is re-derived from the binding when a Chat runtime is CONSTRUCTED
+ * (`runtime-core.internal.ts:1456` reads `boundPresetSampling` for that mount) and written into `models.json`
+ * for that runtime to send from then on. So a turn taken in a Chat mounted while the preset is bound carries
+ * the sampler, and a turn taken in a Chat mounted after the unbind does not - which is the pair this claim
+ * reads, and which the 2026-11-11 run of driver V measured in both directions: three markers in their own
+ * placements plus `temperature: 0.13` while bound; no marker and no sampler in the Chat mounted after the
+ * unbind. `models.json`'s own last write is 3 ms after that mount's surface session was created, so the
+ * write is the mount's construction, not a later rewrite.
+ *
+ * WHAT THAT LEAVES FRAGILE, named because the reading depends on it: the sampler follows the binding only as
+ * of the LAST Chat mount. Clearing the binding while a Chat is already mounted leaves that Chat's request
+ * carrying the sampler until another Chat mounts (`applyCompanionModelSelection` rewrites the entry without
+ * it too, `runtime-core.internal.ts:2025`). A run that took its absent turn in the already-mounted Chat would
+ * therefore read `absent_direction_failed` with `markers=0/3` and the sampler still matching - a shape this
+ * reader names rather than rounds.
+ */
+function presetReading(text, body, entry) {
+  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  const texts = messages.map((message) => wireMessageText(message));
+  const roles = messages.map((message) => (typeof message?.role === "string" ? message.role : ""));
+  // Where the player's own line sits, so "after the transcript" is an index comparison rather than a guess.
+  const playerLine = typeof entry.playerLine === "string" ? entry.playerLine : "";
+  const playerAt = playerLine.length === 0 ? -1 : texts.findIndex((one) => one.includes(playerLine));
+  const markerOf = (marker, block) => {
+    const at = typeof marker === "string" && marker.length > 0 ? texts.findIndex((one) => one.includes(marker)) : -1;
+    const inBody = at >= 0;
+    /*
+     * `before` must be the FIRST message's text: that is exactly the placement `placeSegments` produces (it
+     * joins the leading message, or unshifts one), and it is the placement that survives
+     * `collapseSystemMessages`. The role is REPORTED rather than asserted - a transport may call the leading
+     * message `system` or `developer`, and pinning the word while position is the real invariant would fail
+     * the claim on a transport difference that changes nothing about where the preset went.
+     *
+     * `after`/`depth` must sit after the player's own line. With no anchor on the wire there is nothing to
+     * compare against, so presence is all that can be read and the detail says so.
+     */
+    const inItsBlock = inBody && (block === "before" ? at === 0 : playerAt >= 0 ? at > playerAt : true);
+    return {
+      block,
+      marker: typeof marker === "string" ? marker : null,
+      inBody,
+      inItsBlock,
+      role: inBody ? roles[at] : null,
+      index: inBody ? at : null,
+      indexFromEnd: inBody ? texts.length - 1 - at : null,
+    };
+  };
+  const placements = [
+    markerOf(entry.markers?.before, "before"),
+    markerOf(entry.markers?.after, "after"),
+    markerOf(entry.markers?.depth, "depth"),
+  ];
+  // Only the markers the probe actually planted are scored: an omitted one is not a placement that failed.
+  const usable = placements.filter(
+    (one) => typeof entry.markers?.[one.block] === "string" && entry.markers[one.block].length > 0,
+  );
+  const key = typeof entry.sampling?.key === "string" ? entry.sampling.key : null;
+  const carried = key !== null && body !== null && typeof body === "object" && Object.hasOwn(body, key);
+  const value = carried ? body[key] : null;
+  return {
+    bodyMessages: texts.length,
+    playerAnchored: playerAt >= 0,
+    markers: usable,
+    markersExpected: usable.length,
+    markersInBody: usable.filter((one) => one.inBody).length,
+    markersInPlace: usable.filter((one) => one.inItsBlock).length,
+    sampler: {
+      key,
+      carried,
+      value,
+      /* "carried" and "carried but blank" are different readings of the same key: a body that sends
+       * `temperature: null` is a layer that wrote the field and left it empty, not one that sent nothing. */
+      empty: carried && (value === null || value === "" || value === undefined),
+      matches: carried && value === entry.sampling?.value,
+    },
+    leaks: messageLeaks({
+      evidence: [
+        ["preset.before", entry.markers?.before],
+        ["preset.after", entry.markers?.after],
+        ["preset.depth", entry.markers?.depth],
+      ],
+      texts,
+      roles,
+      isCarrier: (label, at) => {
+        const block = label.slice("preset.".length);
+        return block === "before" ? at === 0 : playerAt >= 0 ? at > playerAt : true;
+      },
+    }),
+    textLength: text.length,
+  };
+}
+
+/**
+ * The preset claim's outcome, as `carried`, `absent`, or the named disagreement between its two halves.
+ *
+ * `markers_absent` / `markers_out_of_place` / `sampling_not_carried` are the three shapes that make "it
+ * arrived" useless: the preset never reached the request, it reached it in the wrong block, or only its
+ * sampler did. On the absent side ANY surviving half is `present`, because the claim is that the preset
+ * stops reaching the model when it stops being bound.
+ */
+function presetOutcome(detail, wanted) {
+  const promptsCarried = detail.markersExpected > 0 && detail.markersInPlace === detail.markersExpected;
+  const samplerCarried = detail.sampler.matches === true;
+  if (wanted === "absent") return detail.markersInBody > 0 || samplerCarried ? "present" : "absent";
+  if (promptsCarried && samplerCarried) return "carried";
+  if (detail.markersInBody === 0) return "markers_absent";
+  if (!promptsCarried) return "markers_out_of_place";
+  return "sampling_not_carried";
+}
+
+/** A preset probe that planted nothing is a missing measurement, not a preset that arrived nowhere. */
+function presetProbeIsEmpty(entry) {
+  const markers = entry?.markers ?? {};
+  const planted = [markers.before, markers.after, markers.depth].filter(
+    (marker) => typeof marker === "string" && marker.length > 0,
+  );
+  return planted.length === 0 && (typeof entry?.sampling?.key !== "string" || entry.sampling.key.length === 0);
 }
 
 /**
@@ -183,7 +357,7 @@ function memoryOutcome(detail, wanted) {
 
 /** A world-book reading's outcome: the entry is carried only inside the block that carries entries. */
 function worldBookOutcome(detail, wanted) {
-  const carried = detail.inBody && detail.inWorldBookBlock;
+  const carried = detail.inBody && detail.inAuthoredBlock;
   if (wanted === "absent") return carried ? "present" : "absent";
   if (carried) return "carried";
   if (detail.inBody) return "fact_outside_the_section";
@@ -216,11 +390,70 @@ function declarationSections() {
   if (declaration.ok !== true) throw new Error(declaration.reason);
   return {
     memoryBlocks: declaration.memoryBlocks,
-    /* The census names the world-book section by its KIND (lorebook_entry); the tag that carries it
-     * is the wrapper element, and content is read out of the wrapper, not out of the kind. */
-    volatileKind: declaration.volatile.kind,
-    volatileTag: declaration.volatile.tag,
+    /* The block the book's always-on entries ride, by its own declared tag - the same name the census
+     * reports (`gamebuddy-authored-context`), so the claim is asserted against a section name rather than
+     * against "somewhere in the body". */
+    authoredTag: declaration.authored.tag,
   };
+}
+
+/** Every string a claim searches for as its own evidence, labelled, in the order the claims are read. */
+function claimEvidence(name, entry) {
+  if (name === "memory") return [["memory.fact", entry?.fact]];
+  if (name === "worldBook") return [["worldBook.text", entry?.text]];
+  return [
+    ["preset.before", entry?.markers?.before],
+    ["preset.after", entry?.markers?.after],
+    ["preset.depth", entry?.markers?.depth],
+  ];
+}
+
+/**
+ * The two things the probe itself must never do, read over every body the capture holds.
+ *
+ *   1. submit one of its own markers as the turn it types - `text.includes(entry.text)` would then credit the
+ *      probe's own sentence as the injection;
+ *   2. submit (or print) the diagnostic sentence it used to submit, which is the shape this lane was opened
+ *      for: `gbw3enabledkey and gbw3disabledkey are both in this line`.
+ *
+ * Both findings carry the marker and the role, because "a marker was found" without either is a message the
+ * next reader cannot act on. A finding is not a claim failure - the claims can still read `proven` - and that
+ * is exactly why it has to be printed: a capture whose instrument wrote its own evidence has measured the
+ * probe, not the product.
+ */
+function instrumentFindings({ captured, probe }) {
+  const requests = Array.isArray(captured?.requests) ? captured.requests : [];
+  const evidence = INJECTION_CLAIMS.flatMap((name) => claimEvidence(name, probe?.[name]));
+  const said = typeof probe?.said === "string" && probe.said.length > 0 ? probe.said : null;
+  const diagnostic =
+    typeof probe?.diagnosticSentence === "string" && probe.diagnosticSentence.length > 0
+      ? probe.diagnosticSentence
+      : null;
+  const findings = [];
+  for (const request of requests) {
+    const messages = Array.isArray(request?.body?.messages) ? request.body.messages : [];
+    for (let at = 0; at < messages.length; at += 1) {
+      const text = wireMessageText(messages[at]);
+      const role = typeof messages[at]?.role === "string" ? messages[at].role : "unlabelled";
+      const turn = typeof request?.idempotencyKey === "string" ? request.idempotencyKey : null;
+      if (diagnostic !== null && text.includes(diagnostic)) {
+        findings.push({
+          label: "probe.diagnosticSentence",
+          marker: diagnostic,
+          role,
+          at,
+          turn,
+          reason: "the_probes_own_diagnostic_sentence",
+        });
+      }
+      if (said === null || !text.includes(said)) continue;
+      for (const [label, marker] of evidence) {
+        if (typeof marker === "string" && marker.length > 0 && text.includes(marker))
+          findings.push({ label, marker, role, at, turn, reason: "the_probe_turn_carries_its_own_evidence" });
+      }
+    }
+  }
+  return findings;
 }
 
 /**
@@ -231,6 +464,8 @@ function declarationSections() {
  *   memory     { fact, sections?, turns: { carried, absent } }
  *   worldBook  { text, turns: { carried, absent } }
  *   sampling   { key, value, turns: { carried, absent } }
+ *   said       the exact turn text the probe typed, checked for every claim's evidence (see `instrumentFindings`)
+ *   diagnosticSentence  the sentence the probe used to submit, asserted absent from every body
  *
  * A claim omitted from `probe` is `unobserved` with the reason `probe_names_no_turn_pair`. A side whose key is
  * absent (`null`, or a turn the driver never sent) is `no_turn_key_for:<side>` - a turn that was never sent and
@@ -275,25 +510,39 @@ export async function readInjectionClaims({ captured, probe }) {
         const body = bodies.get(key);
         if (body === undefined) return unobserved(censusReason === null ? `no_capture_for_turn:${key}` : censusReason);
         const text = requestTextOf(body);
+        const messages = Array.isArray(body?.messages) ? body.messages : [];
+        const roles = messages.map((message) => (typeof message?.role === "string" ? message.role : ""));
         const turn = censusByTurn.get(key) ?? null;
+        /*
+         * A leak overrides the claim's own outcome, and only where that outcome would otherwise be a pass.
+         * On the carried side a marker that arrived outside its block is not the injection; on the absent side
+         * a marker still in the body is the preset/book still reaching the model - which is why the override is
+         * `present` and not the `absent` a body-wide scan reports. A direction already failing by name keeps
+         * that name: the leak line beside it says the marker and the role.
+         */
+        const state = (detail, outcome) => {
+          const leaks = Array.isArray(detail.leaks) ? detail.leaks : [];
+          if (leaks.length === 0) return outcome;
+          if (wanted === "absent") return outcome === "absent" ? "present" : outcome;
+          return outcome === "carried" ? "evidence_leaked" : outcome;
+        };
         if (name === "memory") {
-          const detail = memoryReading(turn, text, memorySections, entry.fact);
+          const detail = memoryReading(turn, text, messages, memorySections, entry.fact);
           return {
-            state: memoryOutcome(detail, wanted),
+            state: state(detail, memoryOutcome(detail, wanted)),
             detail: { turn: key, factLength: entry.fact.length, ...detail },
           };
         }
         if (name === "worldBook") {
-          const detail = worldBookReading(turn, text, declared, entry);
+          const detail = worldBookReading(turn, text, declared, entry, messages, roles);
           return {
-            state: worldBookOutcome(detail, wanted),
+            state: state(detail, worldBookOutcome(detail, wanted)),
             detail: { turn: key, textLength: entry.text.length, ...detail },
           };
         }
-        const detail = samplingReading(body, entry);
-        const state =
-          wanted === "carried" ? (detail.matches ? "carried" : "absent") : detail.matches ? "present" : "absent";
-        return { state, detail: { turn: key, ...detail } };
+        if (presetProbeIsEmpty(entry)) return unobserved("probe_names_no_preset_marker_or_sampler");
+        const detail = presetReading(text, body, entry);
+        return { state: state(detail, presetOutcome(detail, wanted)), detail: { turn: key, ...detail } };
       }),
     );
   }
@@ -302,25 +551,33 @@ export async function readInjectionClaims({ captured, probe }) {
     ok: true,
     source: captured.source,
     claims,
-    sections: { memory: memorySections, worldBook: declared.volatileKind },
+    sections: { memory: memorySections, worldBook: declared.authoredTag },
+    /* The instrument's own reading, beside the claims: an instrument that manufactured its evidence makes
+     * every claim above it a reading of the probe. */
+    instrument: instrumentFindings({ captured, probe, memorySections }),
     /* The census's own refusal, when it had one: the section halves of these readings are then blind and
      * the claim verdicts below are stated against the request text alone. */
     census: censusReason === null ? { ok: true } : { ok: false, reason: censusReason },
   };
 }
 
-/** The Host seam that carries a preset's sampler values into the request body. */
-const SEAM_NAME = "applyPresetSamplingToProviderEntry";
+/** The Host seam that carries a preset's sampler values into the provider entry the adapter writes the body from. */
+const SEAM_NAME = "withPresetSampling";
 
 /**
  * The callers of the Host's preset-sampling seam, in its production sources.
  *
- * The sampling claim has no carried direction in this product: `applyPresetSamplingToProviderEntry`
- * (`host/src/tavern/preset-sampling.ts`) merges a preset's sampler values into the provider entry that
- * the adapter writes into the HTTP body, but nothing binds a preset to a chat's runtime, so no turn
- * carries one. That is a fact about the product rather than about a run, and a reader may only report a
- * named absence while it holds - so the fact is MEASURED here instead of asserted. The day a caller
- * appears this returns it by name and the sampling claim stops being allowed to say `unobserved`.
+ * This is the seam's own caller census, and it exists so the preset claim's carried direction is not the
+ * only thing that says the sampler path is wired: `withPresetSampling` (`host/src/tavern/preset-sampling.ts`)
+ * folds a preset's sampler values into the provider entry, and `models.json` is the one layer the `openai-*`
+ * adapters merge into the request body last. Whoever calls it is the code that decides what the model is
+ * called with, so a run can name it instead of asserting it.
+ *
+ * IT WAS WRITTEN AS AN EXPIRING EXEMPTION AND IT EXPIRED, which is why it is kept. Until the bound-preset
+ * commit there was no caller, and the claim was allowed to report `unobserved:no_preset_bound_to_runtime`
+ * ONLY while this returned an empty list. `runtime-core.internal.ts` is that caller now; the unit test
+ * beside this module asserts the list is non-empty, so a product that lost the splice again would fail a
+ * test rather than quietly keep reading a value nothing sends.
  *
  * A root that cannot be read is `ok: false`, not zero callers: "not measured" and "nothing calls it" are
  * the two readings this repository keeps telling apart.
@@ -393,8 +650,18 @@ export function describeClaims(label, reading) {
       const detail = claim.readings[side].detail;
       if (detail === null) continue;
       lines.push(`INJECTION ${label} claim=${claim.name} reading=${side}: ${describeDetail(claim.name, detail)}`);
+      /* The leak line names the marker literal and the role: the markers are this lane's own opaque bytes,
+       * so quoting one is reproducing the instrument, not printing anything a player wrote. */
+      for (const leak of detail.leaks ?? [])
+        lines.push(
+          `INJECTION ${label} claim=${claim.name} reading=${side} leak: marker=${leak.marker} label=${leak.label} role=${leak.role} at=${leak.at} why=${leak.reason}`,
+        );
     }
   }
+  for (const finding of reading.instrument ?? [])
+    lines.push(
+      `INJECTION ${label} instrument: probe_wrote_its_own_evidence marker=${finding.marker} label=${finding.label} role=${finding.role} turn=${finding.turn ?? "unkeyed"} why=${finding.reason}`,
+    );
   if (reading.census.ok !== true) lines.push(`INJECTION ${label} claims: census_unobserved:${reading.census.reason}`);
   return lines;
 }
@@ -405,7 +672,19 @@ function describeReading(reading) {
   if (detail.factInBody !== undefined)
     return `${reading.state} section=${detail.section ?? "none"} bytes=${detail.sectionBytes}`;
   if (detail.inBody !== undefined) return `${reading.state} bytes=${detail.sectionBytes ?? "none"}`;
-  return `${reading.state} ${detail.key}=${detail.carried ? JSON.stringify(detail.value) : "not-carried"}`;
+  return `${reading.state} markers=${detail.markersInBody}/${detail.markersExpected} in-place=${detail.markersInPlace}/${detail.markersExpected} ${samplerText(detail.sampler)}`;
+}
+
+/**
+ * The sampler as the reading prints it: the key it read, and what the body held under it.
+ *
+ * "not-carried" and "carried but blank" are different facts about the same key - a layer that wrote
+ * `temperature: null` did not send nothing - so the value is printed rather than collapsed into a boolean.
+ */
+function samplerText(sampler) {
+  if (sampler === null || sampler === undefined) return "sampler=none";
+  const value = sampler.carried ? (sampler.empty ? "present-empty" : JSON.stringify(sampler.value)) : "not-carried";
+  return `sampler.key=${sampler.key ?? "none"} sampler.value=${value}`;
 }
 
 function describeDetail(claim, detail) {
@@ -413,6 +692,14 @@ function describeDetail(claim, detail) {
   if (claim === "memory")
     return `${turn} section=${detail.section ?? "none"} bytes=${detail.sectionBytes} blocks=${detail.blocks === "" ? "none" : detail.blocks} factInBody=${detail.factInBody} factInSection=${detail.factInSection} factSection=${detail.factSection ?? "none"} factBytes=${detail.factLength}`;
   if (claim === "worldBook")
-    return `${turn} bytes=${detail.sectionBytes ?? "none"} inBody=${detail.inBody} inWorldBookBlock=${detail.inWorldBookBlock} probeBytes=${detail.textLength}`;
-  return `${turn} ${detail.key}=${detail.carried ? JSON.stringify(detail.value) : "not-carried"} matches=${detail.matches}`;
+    return `${turn} bytes=${detail.sectionBytes ?? "none"} inBody=${detail.inBody} inAuthoredBlock=${detail.inAuthoredBlock} probeBytes=${detail.textLength}`;
+  /* The preset reading names each block's own placement, because "3 markers in the body" and "3 markers in
+   * the blocks their placement rule names" are different facts about the same three strings. */
+  const blocks = detail.markers
+    .map(
+      (one) =>
+        `${one.block}:${one.inBody ? (one.inItsBlock ? "in-place" : "out-of-place") : "absent"}@${one.index ?? "-"}/fromEnd=${one.indexFromEnd ?? "-"}/role=${one.role ?? "-"}`,
+    )
+    .join(",");
+  return `${turn} markersInBody=${detail.markersInBody}/${detail.markersExpected} markersInPlace=${detail.markersInPlace}/${detail.markersExpected} blocks=${blocks === "" ? "none" : blocks} playerAnchored=${detail.playerAnchored} messages=${detail.bodyMessages} ${samplerText(detail.sampler)} matches=${detail.sampler.matches}`;
 }

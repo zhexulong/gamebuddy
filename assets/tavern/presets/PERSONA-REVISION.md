@@ -19,3 +19,4 @@ One line per deliberate change:
 
 | date | commit | field | why | who asked |
 | --- | --- | --- | --- | --- |
+| 2026-11-11 | pending | presets, card.json, worldbook.json | split game and chat specialized presets and worldbooks | user |

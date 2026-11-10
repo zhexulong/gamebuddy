@@ -74,13 +74,21 @@ function sentences(text: string): readonly string[] {
 }
 
 /**
+ * Dialogue example lines (under `[Dialogue Examples]`) are scene demonstrations rather than
+ * surface-channel protocol rules.
+ */
+function isDialogueExample(sentence: string): boolean {
+  return /^[^\s:]+:\s*\*/u.test(sentence) || sentence.startsWith("<START>");
+}
+
+/**
  * The compiled Game prompt's channel-protocol sentences: the ones naming a mounted Game tool, and
  * the ones speaking about the stage-direction mark.
  */
 const GAME_CHANNEL_SENTENCES: readonly string[] = Object.freeze(
-  sentences(GAME_PROMPT).filter(
-    (sentence) => toolNamesIn(sentence).length > 0 || sentence.includes(STAGE_DIRECTION_MARK),
-  ),
+  sentences(GAME_PROMPT)
+    .filter((sentence) => !isDialogueExample(sentence))
+    .filter((sentence) => toolNamesIn(sentence).length > 0 || sentence.includes(STAGE_DIRECTION_MARK)),
 );
 
 test("the Game prompt states its channel protocol, so there is a rule to isolate", () => {

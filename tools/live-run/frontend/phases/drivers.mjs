@@ -51,9 +51,11 @@ export const DRIVERS = Object.freeze([
   // The three authored-context claims, read in both directions from this run's own wire: her memory (one
   // durable row, created and archived through the management route - INJECTION PATH, NOT FOLD - and read
   // in the `<project-memory>` block of a Chat mounted after the write), her world book (one fixture book,
-  // one `enabled` flag flipped), and the preset's sampling values (which this product does not bind to a
-  // runtime - see the driver's header). Both measured claims take their directions across mounts, so this
-  // driver leaves four Chats behind; it runs last because it edits and then restores durable state, and a
-  // driver that ran after it would read the book it temporarily changed.
+  // one `enabled` flag flipped), and the preset in force (marker strings in the blocks their placement rule
+  // names, plus the sampler value spliced into `models.json` at mount - seeded by the launch phase because
+  // the product has no import or bind route, see lib/preset-seed.mjs). The two measured claims take their
+  // directions across mounts and the preset's across an unbind, so this driver leaves five Chats behind; it
+  // runs last because it edits and then restores durable state, and a driver that ran after it would read the
+  // book it temporarily changed.
   { key: "v-injection-claims", file: "v-injection-claims.cjs", out: "v-injection-claims.txt" },
 ]);

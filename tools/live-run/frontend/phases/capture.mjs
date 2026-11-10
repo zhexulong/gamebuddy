@@ -66,6 +66,10 @@ async function main() {
 
   let failed = 0;
   let skippedByMarker = 0;
+  /* The failed drivers by NAME. A count beside a mostly-green reconciliation is the shape the operator could
+   * not act on: `failed=2 of 22` names nothing, and a reader has to go hunting through the log for which two.
+   * The roster keys are printed in the DONE line so the failure and its owner are read together. */
+  const failedKeys = [];
   const executed = [];
   const doneDir = join(paths.stateDir, "capture-done");
   await mkdir(doneDir, { recursive: true });
@@ -84,6 +88,7 @@ async function main() {
     log(`  exit=${code} elapsed=${elapsed}s`);
     if (code !== 0) {
       failed += 1;
+      failedKeys.push(driver.key);
       log(`  DRIVER ${driver.key} FAILED (exit ${code})`);
     }
     await writeFile(doneMarker, JSON.stringify({ exit: code, elapsed }, null, 1), "utf8");
@@ -94,7 +99,9 @@ async function main() {
   // `failed=0 of 20 (skipped=0)` and exited 0 above eight-day-old screenshots. A run that executed nothing
   // verified nothing, so it is a failure with its own exit code rather than a pass.
   log(
-    `DONE-CAPTURE failed=${failed} of ${selected.length} ran=${executed.length} skipped=${skippedByMarker} not-selected=${DRIVERS.length - selected.length}`,
+    `DONE-CAPTURE failed=${failed} of ${selected.length} ran=${executed.length} skipped=${skippedByMarker} not-selected=${DRIVERS.length - selected.length}${
+      failedKeys.length === 0 ? "" : ` failed-drivers=[${failedKeys.join(",")}]`
+    }`,
   );
   if (selected.length === 0) {
     log(`capture_selected_nothing: --driver= matched none of ${DRIVERS.length} drivers, so this run verified nothing`);
@@ -122,6 +129,7 @@ function runDriver(driver, { port, cdpPort, run, paths, log }) {
         GB_SHOTS_CDP_PORT: String(cdpPort),
         GB_SHOTS_CREDENTIAL_PRESENT: run.credentialPresent === true ? "1" : "0",
         GB_SHOTS_WIRE_REQUESTS: paths.wireRequestsFile,
+        GB_SHOTS_LAUNCH_STATE: paths.launchStateFile,
         GB_SHOTS_TAG: run.tag,
       },
     });

@@ -19,6 +19,7 @@ import { pathToFileURL } from "node:url";
 import { runPaths, loadRunConfig } from "../lib/config.mjs";
 import { acquireCdpPortLock, cdpPortLockDir } from "../lib/cdp-port-lock.mjs";
 import { seedRunConnection } from "../lib/seed-connection.mjs";
+import { seedRunPreset } from "../lib/preset-seed.mjs";
 import { startWireCapture } from "../lib/wire-capture.mjs";
 
 const run = loadRunConfig({ runConfigFile: process.argv[2] });
@@ -310,6 +311,27 @@ async function main() {
       : `connection NOT seeded (${connection.reason}) — turn-dependent drivers will take their named skip`,
   );
 
+  // The preset in force, imported and bound into the same root before the Host reads it. The product has no
+  // route for either write (see lib/preset-seed.mjs), so the harness calls the store's own `import` and the
+  // binding's own `bind` from the generation this launch installs. It has to happen BEFORE the child starts:
+  // the sampler half is spliced into `models.json` when the Chat runtime is constructed, so a preset bound
+  // after boot would reach the prompts (`refreshPresetRequestSegments` runs per turn) and never the sampler.
+  let preset;
+  try {
+    preset = await seedRunPreset({
+      artifactRoot: paths.artifact,
+      runtimeRoot: declaredDataRoot,
+      principal,
+    });
+  } catch (error) {
+    preset = { kind: "skipped", reason: `seed_failed:${String(error).slice(0, 200)}` };
+  }
+  say(
+    preset.kind === "seeded"
+      ? `preset bound: ${preset.presetId} revision=${preset.revision} at ${preset.playerRoot} (markers ${JSON.stringify(preset.markers)}, ${preset.sampling.key}=${preset.sampling.value})`
+      : `preset NOT bound (${preset.reason}) — the INJECTION preset claim reports unobserved:no_preset_imported`,
+  );
+
   const measureNow = async () =>
     launcher.measureDesktopCompositionRunRoots({
       root: paths.runRoot,
@@ -531,6 +553,8 @@ async function main() {
         stderrBytes: Buffer.byteLength(stderr, "utf8"),
         mounted: Boolean(mounted),
         connection,
+        preset,
+        principal,
         wireCapture: wireCaptureFact,
         title,
         launchUrlRedacted: launchUrl.replace(/boot=[^&]*/u, "boot=<redacted>"),

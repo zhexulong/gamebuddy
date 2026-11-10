@@ -32,11 +32,20 @@
 //              (whose baseline has no memory block at all). The row is the variable and the mount is the
 //              condition - the same shape as the world book's pair one claim over.
 //   worldBook  one fixture book, ONE field flipped. Two entries are added to her own world book through
-//              the product's own route: a control entry that is enabled, and a probe entry that is
-//              `enabled: false`. A turn carrying both trigger words must bring the control's text and
-//              must NOT bring the probe's. Then the probe's `enabled` is flipped to true in the SAME
-//              book (a real fixture toggle through the product, not a second fixture) and a second turn
-//              must bring it. The flip is the falsifier, so the flag - not the fixture - is the variable.
+//              the product's own route: a control entry that is `enabled: true`, and a probe entry that is
+//              `enabled: false`. Both are the book's ALWAYS-ON kind (`constant: true`), so they ride the
+//              stable authored block on every turn and a turn must bring the control's text and must NOT
+//              bring the probe's. Then the probe's `enabled` is flipped to true in the SAME book (a real
+//              fixture toggle through the product, not a second fixture) and a second turn must bring it.
+//              The flip is the falsifier, so the flag - not the fixture - is the variable.
+//
+//              WHY ALWAYS-ON AND NOT KEYWORD-GATED. A keyword-gated entry only reaches a turn that carries
+//              its trigger word, so the probe would have to TYPE that trigger into the player's own turn to
+//              falsify it - and the player's turn is the one message this driver authors. The 2026-11-12 run
+//              did exactly that with probe-identifying strings (`gbw3enabledkey and gbw3disabledkey are both
+//              in this line`) and read its own sentence back as the product's injection. `enabled` is the
+//              variable in both designs, so the cheaper fixture that needs no probe-authored trigger is the
+//              honest one.
 //
 //              EACH DIRECTION IS MEASURED IN A CHAT CREATED AFTER ITS BOOK WAS WRITTEN, and that is not
 //              a convenience. The Chat publishes her authored catalogue ONCE, when it mounts
@@ -50,10 +59,34 @@
 //              section as 313 bytes in both - correctly, because that mount never saw the fixture at all.
 //              A fixture that the measured turn cannot observe is not a falsifier, so each reading now
 //              comes from a mount that has the book it is asserting about.
-//   sampling   the preset's `samplingParams`. See WHAT THIS RUN CANNOT SAY: no preset is bound to a
-//              chat's runtime in this tree, so the claim cannot be made true by any turn. The reading is
-//              `unobserved`, and the wire's own sampler values are printed beside it so a reader can see
-//              what IS sent instead of reading the absence as "the preset sent nothing".
+//   preset     the preset bound to this run's Chat runtime, in its TWO halves, because they reach the wire by
+//              different paths and only one of them can be un-bound while the Host runs:
+//
+//                prompts   the entries the bound document renders, placed by `preset-request-segments.ts`:
+//                          `before` joins the LEADING SYSTEM MESSAGE, `after`/`depth` become `user` messages
+//                          after the transcript. Three marker strings that exist nowhere else in the product,
+//                          so one `indexOf` decides presence, and the block each one lands in is checked
+//                          against its own placement rule rather than against "somewhere in the body".
+//                sampling  `temperature` from the fixture's `samplingParams`, spliced into `models.json`
+//                          (`withPresetSampling`) and written into the HTTP body as a top-level field.
+//
+//              WHERE THE PRESET COMES FROM, stated because the product has no route for it: the browser
+//              contract declares ONE preset route (`presets.read`, a readout) and `preset-binding.ts`'s
+//              `bind`/`clear` are called from nothing in `host/src`, so nothing a player can click imports a
+//              preset or binds one. The harness does both BEFORE the Host boots, through the product's own
+//              store and binding APIs loaded from the generation this launch installs (`lib/preset-seed.mjs`,
+//              `lib/preset-fixture.mjs`) - a real Host on a real root, never a hand-written JSON file. If
+//              that seed skips, this driver says `unobserved:no_preset_imported:<reason>` and the claim
+//              reports no turn pair rather than a preset that arrived nowhere.
+//
+//              THE PAIR IS TAKEN ACROSS AN UNBIND, in a Chat mounted after each state - the same discipline the
+//              other two claims use, and the reason it matters here: the sampler is re-derived from the binding
+//              when a Chat runtime is CONSTRUCTED (`runtime-core.internal.ts:1456`), so the bound turn's Chat
+//              carries it and the Chat mounted after the unbind does not. `models.json`'s last write is 3 ms
+//              after that mount's surface session appeared, so the write is the mount, not a later rewrite.
+//              A run that took its absent turn in the ALREADY-mounted Chat would read
+//              `absent_direction_failed` instead (markers gone, sampler still matching) - the shape this
+//              reader names.
 //
 // WHAT THIS RUN CANNOT SAY, named rather than counted as zero:
 //
@@ -66,21 +99,38 @@
 //                                   claim's pair is the baseline block because that is the block it names,
 //                                   so a run with no mid-chat write has no delta reading to take - and this
 //                                   driver takes none: it is named here instead of being counted as absent.
-//   preset sampling                 nothing binds a preset to a chat's runtime: `applyPresetSamplingTo
-//                                   ProviderEntry` (`host/src/tavern/preset-sampling.ts`) is exported,
-//                                   tested in isolation, and called by nothing. So the claim's carried
-//                                   direction has no state to produce in this product, and the run says
-//                                   so by name.
+//   a sampler that outlives its unbind  this run did not produce it: its absent turn was taken in a Chat
+//                                   mounted after the unbind, whose construction saw no binding. A turn in the
+//                                   already-mounted Chat would read `absent_direction_failed` with
+//                                   `markersInBody=0` and the sampler still matching, and the reader names
+//                                   that shape rather than rounding it.
 //
-// WHAT IT WRITES, AND THAT IT PUTS IT BACK: two entries added to her world book, four Chats created to
+// WHAT IT WRITES, AND THAT IT PUTS IT BACK: two entries added to her world book, six Chats created to
 // mount them, and one Memory row (created, then archived). The book is restored to the entries it had (by
 // the same route, CASing on the revision it reads at the end) and the Memory row is archived, so the
 // conversation the player was reading is untouched. The created Chats stay: they are the mounts, they hold
 // nothing but the synthetic lines, and deleting them would be a second write this driver has no reading
 // for. Every restore is reported with its outcome; a failed restore is printed, never swallowed.
 //
+// The preset is the one durable fact this driver does NOT put back, because it is the run's own fixture: it
+// is unbound on purpose (that is the absent direction) and the run root it lives in is kept for the report.
+// It is not the player's preset - a fresh root has none, and the harness imports this one under an id this
+// driver names.
+//
 // NO CONTENT IS PRINTED. The fact strings, the entry texts and the player's line stay in this process:
-// what travels is a reading, a section name, a byte count and whether the probe string was found.
+// what travels is a reading, a section name, a byte count and whether the probe string was found. The ONE
+// exception is the preset fixture's three marker strings and its sampler value, which are this lane's own
+// opaque bytes rather than anything a player wrote - they are printed so the wire grep in a run's report can
+// be reproduced by hand. A LEAK reading prints the marker it found for the same reason: the marker is this
+// lane's own opaque bytes, and a leak that did not name it would cost the next reader the afternoon it cost
+// this one.
+//
+// WHAT MAKES THIS PROBE'S OWN EVIDENCE UNCOUNTABLE, asserted rather than promised. Every claim's marker is
+// checked against EVERY message of the request it was read from: the marker must sit inside the block its own
+// placement rule names, it must never sit inside an `assistant` message (model output no probe wrote), and the
+// sentence this driver used to submit must not appear anywhere at all. A finding names the marker and the role
+// and makes the driver exit non-zero, because a capture whose instrument wrote its own evidence has measured
+// the probe and nothing else (`injection-claims.mjs::messageLeaks` / `instrumentFindings`).
 const { readFileSync, readdirSync } = require("node:fs");
 const { join } = require("node:path");const {
 	connect,
@@ -96,9 +146,25 @@ const { join } = require("node:path");const {
 /** Opaque, unique and NFC-safe: one `indexOf` decides presence, and none of it is player prose. */
 const TOKEN_ENABLED = "gbw3-enabled-entry-token";
 const TOKEN_DISABLED = "gbw3-disabled-entry-token";
-const KEY_ENABLED = "gbw3enabledkey";
-const KEY_DISABLED = "gbw3disabledkey";
 const MEMORY_FACT = "gbw3 memory fact: the spare key hangs inside the third pot";
+/**
+ * The one line every turn of this driver sends, and it is INNOCUOUS PLAYER PROSE.
+ *
+ * That is a measurement requirement, not a courtesy. This driver is the only author of this line, so every
+ * byte in it is the probe's own writing - and the 2026-11-12 run submitted a diagnostic sentence built out
+ * of the probe's own strings (`gbw3enabledkey and gbw3disabledkey are both in this line`), which turned the
+ * player's turn into a place the probe could then "find" its own markers. A turn that carries a marker, a
+ * trigger word or the claim's wording measures the instrument. The world-book entries this driver flips are
+ * the book's ALWAYS-ON ones (`constant: true`), so no turn needs to carry a trigger word for them either.
+ */
+const SAID = "今早我在北边地里忙了一上午，回头跟你细说都干了些什么。";
+/**
+ * The sentence this driver used to submit as the player's turn, kept ONLY as a negative constant.
+ *
+ * The reader asserts it never reaches a request body again; without it there is no way to check the one thing
+ * the fix promised.
+ */
+const PROBE_DIAGNOSTIC_SENTENCE = "gbw3enabledkey and gbw3disabledkey are both in this line";
 
 const API = 1;
 
@@ -224,7 +290,48 @@ const API = 1;
 	const writeBook = (handle, revision, entries) =>
 		put(`/api/tavern/v1/companions/${handle}/worldbook`, { apiVersion: API, expectedRevision: revision, entries });
 
-	const claims = { memory: null, worldBook: null };
+	/**
+	 * The companion and her book, resolved FRESH from the mount that is up now.
+	 *
+	 * The companion handle is a per-mount HMAC (`desktop-presentation-admission-owner.ts:342-343`,
+	 * `lease.browserProjection.projectCompanionHandle`), so the handle a World Book write must carry is the one
+	 * the CURRENT lease minted. The 2026-11-12 run read the handle once and wrote the `enabled` flip after
+	 * creating a Chat: the handle belonged to the mount before, the route answered 404 `companion_not_found`,
+	 * the restore never ran, and the player's book was left carrying two probe entries. That is the probe
+	 * switching its own subject mid-measurement, and resolving the handle per write is what removes it.
+	 *
+	 * The SUBJECT does not change: the mounted companion is the manifest's in-play one for the whole Host run
+	 * (`currentCompanionId = manifest.principal.companionId`, same file), so a fresh handle reaches the same
+	 * book. The caller checks that rather than assuming it - see `withoutFixture`.
+	 */
+	const currentBook = async () => {
+		const companion = await companionHandle();
+		if (companion.handle === null)
+			return { handle: null, status: 0, revision: null, entries: [], companions: companion.count };
+		const read = await readBook(companion.handle);
+		return { handle: companion.handle, status: read.status, revision: read.revision, entries: read.entries };
+	};
+
+	/** The book's own fields, as an edit sends them back: the projection's shape, nothing else. */
+	const asEntry = (entry) => ({
+		title: entry.title,
+		keys: Array.isArray(entry.keys) ? entry.keys : [],
+		constant: entry.constant === true,
+		enabled: entry.enabled !== false,
+		content: entry.content ?? "",
+	});
+
+	/**
+	 * The player's own entries, as one comparable string.
+	 *
+	 * This is the assertion the operator asked for: a mount that changes the LEASE is allowed (the flip has to
+	 * be read from a mount that has the book it asserts about), but the rest of the context must be the same
+	 * one - so the two reads are compared and a difference is named instead of read as the toggle's effect.
+	 */
+	const withoutFixture = (entries, titles) =>
+		JSON.stringify(entries.filter((entry) => !titles.includes(entry.title)).map(asEntry));
+
+	const claims = { memory: null, worldBook: null, preset: null };
 	const steps = [];
 
 	/**
@@ -256,44 +363,46 @@ const API = 1;
 	};
 
 	const worldBookHalf = async () => {
-		const companion = await companionHandle();
-		if (companion.handle === null) {
-			say(`worldBook: unobserved:no_current_companion:companions=${companion.count}`);
+		const before = await currentBook();
+		if (before.handle === null) {
+			say(`worldBook: unobserved:no_current_companion:companions=${before.companions}`);
 			steps.push({ half: "worldBook", reason: "no_current_companion" });
 			return;
 		}
-		const before = await readBook(companion.handle);
 		if (before.revision === null) {
-			say(`worldBook: unobserved:no_durable_book:status=${before.status}:companions=${companion.count}`);
+			say(`worldBook: unobserved:no_durable_book:status=${before.status}:companions=${before.companions}`);
 			steps.push({ half: "worldBook", reason: "no_durable_book" });
 			return;
 		}
 		say(`worldBook: durable book revision=${before.revision} entries=${before.entries.length}`);
-		const original = before.entries.map((entry) => ({
-			title: entry.title,
-			keys: Array.isArray(entry.keys) ? entry.keys : [],
-			constant: entry.constant === true,
-			enabled: entry.enabled !== false,
-			content: entry.content ?? "",
-		}));
+		const fixtureTitles = ["w3 control entry", "w3 probe entry"];
+		const original = before.entries.map(asEntry);
+		/* The book this claim measures, as the two reads after each mount are compared against. */
+		const subject = withoutFixture(before.entries, fixtureTitles);
+		/*
+		 * BOTH entries are the book's ALWAYS-ON kind (`constant: true`), which is why they carry no trigger
+		 * words: a keyword-gated fixture would make the probe type the trigger into the player's own turn, and
+		 * `enabled` is the only variable this claim needs. A switched-off entry is background the reader leaves
+		 * out of both the always-on source and the per-turn volatile list (`worldbook.ts:222-234`).
+		 */
 		const control = {
 			title: "w3 control entry",
-			keys: [KEY_ENABLED],
-			constant: false,
+			keys: [],
+			constant: true,
 			enabled: true,
 			content: `${TOKEN_ENABLED} this entry is switched on.`,
 		};
-		const probe = {
+		const probeEntry = {
 			title: "w3 probe entry",
-			keys: [KEY_DISABLED],
-			constant: false,
+			keys: [],
+			constant: true,
 			enabled: false,
 			content: `${TOKEN_DISABLED} this entry is switched off.`,
 		};
 
-		const first = await writeBook(companion.handle, before.revision, [...original, control, probe]);
+		const first = await writeBook(before.handle, before.revision, [...original, control, probeEntry]);
 		say(
-			`worldBook: fixture added status=${first.status} revision=${first.body?.revision ?? "none"} code=${first.body?.code ?? "none"} entries=${first.body?.entries?.length ?? "none"} (control enabled, probe enabled:false)`,
+			`worldBook: fixture added status=${first.status} revision=${first.body?.revision ?? "none"} code=${first.body?.code ?? "none"} entries=${first.body?.entries?.length ?? "none"} (both entries always-on; control enabled, probe enabled:false)`,
 		);
 		if (first.status !== 200) {
 			steps.push({ half: "worldBook", reason: `book_write_refused:${first.status}:${first.body?.code ?? "none"}` });
@@ -302,13 +411,23 @@ const API = 1;
 
 		const offTurn =
 			(await mountFor("worldBook", "off")) === true
-				? await sendTurn("worldbook-off", `${KEY_ENABLED} and ${KEY_DISABLED} are both in this line`)
+				? await sendTurn("worldbook-off", SAID)
 				: null;
-		const second = await writeBook(companion.handle, first.body.revision, [
-			...original,
-			control,
-			{ ...probe, enabled: true },
-		]);
+		/*
+		 * The flip is written against the book the OFF mount is showing, resolved from that same lease. A mount
+		 * is allowed - the pair has to read from mounts that carry the book each direction asserts about - but the
+		 * subject must not have moved, so the player's own entries are compared before the flip is sent.
+		 */
+		const offBook = await currentBook();
+		say(
+			`worldBook: the off mount's own book revision=${offBook.revision ?? "none"} entries=${offBook.entries.length} same-subject=${withoutFixture(offBook.entries, fixtureTitles) === subject}`,
+		);
+		if (offBook.revision !== null && withoutFixture(offBook.entries, fixtureTitles) !== subject)
+			steps.push({ half: "worldBook", reason: "the_mount_changed_the_book_being_measured" });
+		const second =
+			offBook.revision === null
+				? { status: 0, body: { code: "no_book_to_flip" } }
+				: await writeBook(offBook.handle, offBook.revision, [...original, control, { ...probeEntry, enabled: true }]);
 		say(
 			`worldBook: the probe's own enabled flipped false->true status=${second.status} revision=${second.body?.revision ?? "none"} code=${second.body?.code ?? "none"}`,
 		);
@@ -317,18 +436,30 @@ const API = 1;
 		}
 		const onTurn =
 			second.status === 200 && (await mountFor("worldBook", "on")) === true
-				? await sendTurn("worldbook-on", `${KEY_ENABLED} and ${KEY_DISABLED} are both in this line`)
+				? await sendTurn("worldbook-on", SAID)
 				: null;
+		const onBook = await currentBook();
+		say(
+			`worldBook: the on mount's own book revision=${onBook.revision ?? "none"} entries=${onBook.entries.length} same-subject=${withoutFixture(onBook.entries, fixtureTitles) === subject}`,
+		);
+		if (onBook.revision !== null && withoutFixture(onBook.entries, fixtureTitles) !== subject)
+			steps.push({ half: "worldBook", reason: "the_mount_changed_the_book_being_measured" });
 
 		// Put the player's book back exactly as it was found, and say what happened.
-		const restoreRead = await readBook(companion.handle);
+		const restoreRead = await currentBook();
 		const restored =
-			restoreRead.revision === null ? null : await writeBook(companion.handle, restoreRead.revision, original);
+			restoreRead.revision === null
+				? null
+				: await writeBook(restoreRead.handle, restoreRead.revision, original);
 		say(
 			`worldBook: restored status=${restored === null ? "unobserved:no_book_to_restore_into" : restored.status} entries=${original.length}`,
 		);
 
-		claims.worldBook = { text: TOKEN_DISABLED, control: TOKEN_ENABLED, turns: { carried: onTurn?.turnKey ?? null, absent: offTurn?.turnKey ?? null } };
+		claims.worldBook = {
+			text: TOKEN_DISABLED,
+			control: TOKEN_ENABLED,
+			turns: { carried: onTurn?.turnKey ?? null, absent: offTurn?.turnKey ?? null },
+		};
 		if (offTurn !== null && onTurn !== null && (onTurn.turnKey === null || offTurn.turnKey === null))
 			steps.push({ half: "worldBook", reason: "a_turn_marked_no_submission_key" });
 	};
@@ -396,7 +527,7 @@ const API = 1;
 		// reads the row, which is the only moment `<project-memory>` is written from durable rows.
 		const bound =
 			(await mountFor("memory", "bound")) === true
-				? await sendTurn("memory-bound", `${KEY_ENABLED} and ${KEY_DISABLED} are both in this line`)
+				? await sendTurn("memory-bound", SAID)
 				: null;
 
 		/*
@@ -434,7 +565,7 @@ const API = 1;
 		// Direction 2: a Chat mounted after the archive, whose baseline has no memory block at all.
 		const unbound =
 			(await mountFor("memory", "absent")) === true
-				? await sendTurn("memory-unbound", `${KEY_ENABLED} and ${KEY_DISABLED} are both in this line`)
+				? await sendTurn("memory-unbound", SAID)
 				: null;
 		/*
 		 * `sections` is the claim's own block list, not the declaration's whole memory population: this pair is
@@ -452,6 +583,82 @@ const API = 1;
 			steps.push({ half: "memory", reason: "a_turn_marked_no_submission_key" });
 	};
 
+	/**
+	 * The preset fact the launch phase wrote, or a named reason it is absent.
+	 *
+	 * A launch state that names no preset and a seed that skipped are different silences, so they get different
+	 * reasons: the first is a harness too old to have planted one, the second is this run failing to import a
+	 * preset the product has no route for.
+	 */
+	const presetFact = () => {
+		let state = null;
+		try {
+			state = JSON.parse(readFileSync(process.env.GB_SHOTS_LAUNCH_STATE ?? "", "utf8"));
+		} catch {
+			state = null;
+		}
+		if (state === null) return { ok: false, reason: "launch_state_unreadable" };
+		if (state.preset === null || state.preset === undefined) return { ok: false, reason: "launch_state_names_no_preset" };
+		if (state.preset.kind !== "seeded") return { ok: false, reason: String(state.preset.reason ?? "unknown") };
+		if (
+			typeof state.artifactRoot !== "string" ||
+			typeof state.declaredDataRoot !== "string" ||
+			state.principal === null ||
+			state.principal === undefined
+		)
+			return { ok: false, reason: "launch_state_lacks_the_paths_an_unbind_needs" };
+		return {
+			ok: true,
+			preset: state.preset,
+			artifactRoot: state.artifactRoot,
+			runtimeRoot: state.declaredDataRoot,
+			principal: state.principal,
+		};
+	};
+
+	/** The carried direction: a turn taken while the harness's preset is in force. */
+	const presetBoundTurn = async () => {
+		const fact = presetFact();
+		if (fact.ok !== true) {
+			say(`preset: unobserved:no_preset_imported:${fact.reason}`);
+			steps.push({ half: "preset", reason: `no_preset_imported:${fact.reason}` });
+			return null;
+		}
+		say(
+			`preset: bound before this Host mounted id=${fact.preset.presetId} revision=${fact.preset.revision} markers=${JSON.stringify(fact.preset.markers)} sampling=${fact.preset.sampling.key}=${fact.preset.sampling.value}`,
+		);
+		const turn = (await mountFor("preset", "bound")) === true ? await sendTurn("preset-bound", SAID) : null;
+		return { fact, turn };
+	};
+
+	/**
+	 * The absent direction: unbind through the same store the Host read the binding from, then take a turn.
+	 *
+	 * The unbind is a real product write (the binding file is the authority the Host re-reads before every
+	 * prompt), performed with `createPresetBindingStore().clear()` loaded from the generation this run
+	 * installs - there is no route a player could use, so the harness names what it did instead.
+	 */
+	const presetUnboundTurn = async (bound) => {
+		if (bound === null) return null;
+		const { clearRunPreset } = await import("../lib/preset-seed.mjs");
+		const cleared = await clearRunPreset({
+			artifactRoot: bound.fact.artifactRoot,
+			runtimeRoot: bound.fact.runtimeRoot,
+			principal: bound.fact.principal,
+		});
+		say(
+			`preset: unbind ${cleared.kind}${cleared.kind === "cleared" ? ` named=${cleared.presetId ?? "none"}` : ` reason=${cleared.reason}`}`,
+		);
+		if (cleared.kind !== "cleared" || cleared.presetId === null) {
+			steps.push({ half: "preset", reason: `unbind_${cleared.kind}` });
+			return null;
+		}
+		return (await mountFor("preset", "unbound")) === true ? await sendTurn("preset-unbound", SAID) : null;
+	};
+
+	say(`=== ITEM: the preset in force, taken before the world book ===`);
+	const presetBound = await presetBoundTurn();
+
 	say(`=== ITEM: the world book, one flag flipped in the same fixture ===`);
 	if (csrfToken === null) {
 		/*
@@ -468,34 +675,100 @@ const API = 1;
 		await memoryHalf();
 	}
 
+	say(`=== ITEM: the same preset, unbound, in a Chat mounted after the unbind ===`);
+	const presetUnbound = await presetUnboundTurn(presetBound);
+	if (presetBound !== null) {
+		claims.preset = {
+			/* The anchor for "after the transcript": the driver's own line, which it may look for and never print. */
+			playerLine: SAID,
+			markers: presetBound.fact.preset.markers,
+			sampling: presetBound.fact.preset.sampling,
+			turns: { carried: presetBound.turn?.turnKey ?? null, absent: presetUnbound?.turnKey ?? null },
+		};
+		if (presetBound.turn === null || presetBound.turn?.turnKey === null)
+			steps.push({ half: "preset", reason: "the_bound_turn_marked_no_submission_key" });
+		if (presetUnbound !== null && presetUnbound.turnKey === null)
+			steps.push({ half: "preset", reason: "the_unbound_turn_marked_no_submission_key" });
+	}
+
 	say(`=== ITEM: the three claims, read from this run's own capture ===`);
 	const { readClaimsFromCaptureFile, describeClaims, presetSamplingCallers } = await import("./injection-claims.mjs");
 	const captureFile = process.env.GB_SHOTS_WIRE_REQUESTS;
-	const probe = { memory: claims.memory, worldBook: claims.worldBook };
+	const probe = {
+		memory: claims.memory,
+		worldBook: claims.worldBook,
+		preset: claims.preset,
+		/*
+		 * The turn this driver itself typed, and the sentence it used to type. Those are the only bytes in a
+		 * request body the probe authored, so they are the two things the reader's instrument assertions check:
+		 * a marker inside the turn, or the old diagnostic sentence anywhere, is the probe certifying itself.
+		 */
+		said: SAID,
+		diagnosticSentence: PROBE_DIAGNOSTIC_SENTENCE,
+	};
 	const reading = await readClaimsFromCaptureFile({ captureFile, probe });
 	for (const line of describeClaims("v", reading)) say(line);
 	/*
 	 * The world-book control is the half a single pair cannot state: the control entry is enabled in BOTH
 	 * turns, so its presence in both is what says the flip changed one variable and not the block itself.
 	 */
+	let controlInstrument = [];
 	if (reading.ok === true && claims.worldBook !== null) {
 		const control = await readClaimsFromCaptureFile({
 			captureFile,
-			probe: { worldBook: { text: claims.worldBook?.control ?? "", turns: claims.worldBook?.turns ?? {} } },
+			probe: {
+				worldBook: { text: claims.worldBook?.control ?? "", turns: claims.worldBook?.turns ?? {} },
+				said: SAID,
+				diagnosticSentence: PROBE_DIAGNOSTIC_SENTENCE,
+			},
 		});
-		for (const line of describeClaims("v-control", control)) say(line);
+		/*
+		 * A CONTROL IS NOT A CLAIM. The control entry is enabled in BOTH directions, so its presence in the
+		 * absent turn is exactly what it is for - and reading it through the claim vocabulary labelled it
+		 * `absent_direction_failed` on a body that carried the control exactly as intended. A control that reads
+		 * like a failure is the mirror of a claim that passes by asserting less, so it prints its own line and
+		 * the claim vocabulary is left to the claims.
+		 */
+		const controlClaim =
+			control.ok === true ? ((control.claims ?? []).find((one) => one.name === "worldBook") ?? null) : null;
+		const carriedIn = (side) => controlClaim?.readings?.[side]?.detail?.inBody === true;
+		const inBoth = carriedIn("carried") && carriedIn("absent");
+		say(
+			`INJECTION v-control claim=worldBook control=${inBoth ? "carried-in-both-turns" : "the_control_entry_did_not_ride_both_turns"} carried=${carriedIn("carried")} absent=${carriedIn("absent")}`,
+		);
+		for (const side of ["carried", "absent"]) {
+			const detail = controlClaim?.readings?.[side]?.detail ?? null;
+			if (detail === null) continue;
+			say(
+				`INJECTION v-control claim=worldBook reading=${side}: turn=${detail.turn} bytes=${detail.sectionBytes ?? "none"} inBody=${detail.inBody} inAuthoredBlock=${detail.inAuthoredBlock}`,
+			);
+			for (const leak of detail.leaks ?? [])
+				say(
+					`INJECTION v-control claim=worldBook reading=${side} leak: marker=${leak.marker} label=${leak.label} role=${leak.role} at=${leak.at} why=${leak.reason}`,
+				);
+		}
+		controlInstrument = control.ok === true ? (control.instrument ?? []) : [];
 	}
+	/*
+	 * An instrument that wrote its own evidence makes every claim above it a reading of the PROBE, so the run
+	 * is red rather than green and the count is visible with names (`phases/capture.mjs` prints the failed
+	 * driver keys). A capture whose instrument is dirty has measured nothing about the product.
+	 */
+	const instrument = [...(reading.ok === true ? (reading.instrument ?? []) : []), ...controlInstrument];
+	say(`INJECTION v instrument readings=${instrument.length}`);
+	if (instrument.length > 0) process.exitCode = 1;
 
 	/*
-	 * Sampling: the claim has no state to produce in this product, so it is named as unobserved - with the
-	 * seam's own caller census beside it, so the reason is checkable rather than asserted, and with the
-	 * wire's actual sampler values, so "the preset sent nothing" is not read into a body that does carry a
-	 * temperature from another layer.
+	 * The seam's own caller census, beside the reading rather than instead of it: it names the production file
+	 * that folds the bound preset's values into the provider entry, so a reader can see the path the sampler
+	 * took. It used to stand in for a carried reading that did not exist; it is now the receipt for one.
 	 */
 	const seam = presetSamplingCallers(join(REPO_ROOT, "host", "src"));
 	say(
-		`INJECTION v claim=sampling: unobserved:no_preset_bound_to_runtime:a_preset_is_exported_and_called_by_nothing:seam=${seam.ok === true ? "measured" : seam.reason} callers=${seam.ok === true ? seam.callers.length : "unobserved"} files=${seam.files}`,
+		`INJECTION v claim=preset seam=${seam.ok === true ? "measured" : `unobserved:${seam.reason}`} callers=${seam.ok === true ? seam.callers.join(",") || "none" : "unobserved"} files=${seam.files}`,
 	);
+	/* The wire's own sampler values, key by key: the preset claim reads ONE key, and this says what else the
+	 * same bodies carried (a model's own default, another layer's value) so nothing is read into a silence. */
 	const capturedForSampling = reading.ok === true ? readFileSync(captureFile, "utf8") : "";
 	const samplerKeys = ["temperature", "top_p", "top_k", "min_p", "repetition_penalty", "presence_penalty", "frequency_penalty"];
 	const samplerSeen = new Map();
