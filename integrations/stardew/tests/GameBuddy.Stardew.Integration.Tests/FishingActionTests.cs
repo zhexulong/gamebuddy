@@ -159,12 +159,9 @@ public sealed class FishingActionTests
         }
 
         FishingRod? rod = world.Actor.Items[0] as FishingRod;
-        // `Farmer.fishCaught` is a readonly field INITIALIZER (`Farmer.cs:758`) that an uninitialized farmer never ran, so
-        // the record is seeded here: the catch count is one of the four things a refusal must leave alone, and asserting
-        // against a null record would make that assertion vacuous.
-        typeof(Farmer)
-            .GetField("fishCaught", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
-            .SetValue(world.Actor, new NetStringIntArrayDictionary());
+        // The engine's catch record is one of the four things a refusal must leave alone, so it is present here: a null
+        // record would make that assertion vacuous.
+        SeedCatchRecord(world.Actor);
         float staminaBefore = world.Actor.Stamina;
         string? baitBefore = rod?.GetBait()?.QualifiedItemId;
         int tackleBefore = rod?.GetTackleQualifiedItemIDs().Count ?? 0;
@@ -259,6 +256,9 @@ public sealed class FishingActionTests
         using TargetFamilyWorld world = TargetFamilyWorld.Create();
         world.PutToolInPackSlot(0, typeof(FishingRod), "(T)FishingRod", upgradeLevel: 0);
         world.Actor.CurrentToolIndex = 0;
+        // The record this fish WOULD have been written to: held at zero, so the failure under test is "the engine booked
+        // nothing", not "the record was absent and therefore unreadable".
+        SeedCatchRecord(world.Actor, ("(O)128", 0, 0));
         ExecutionManager executions = world.NewExecutionManager("fish_here");
 
         long past = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 1_000;
@@ -292,9 +292,130 @@ public sealed class FishingActionTests
         receipt!.State.Should().Be(ExecutionState.Uncertain,
             "a catch the engine never booked is uncertain, never a success");
         receipt.ReasonCode.Should().Be("fish_here_catch_not_credited");
+        // Same code, same record, named with both of its readings: the negative answer is an observation too.
+        receipt.Evidence.Should().Contain("credit=fishCaught:0->0",
+            "the credit record is named with the reading before and after, so `not credited` can be told from `not read`");
         typeof(ExecutionManager)
             .GetField("activeFishing", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(executions).Should().BeNull("the cast's slot is released on every exit");
+    }
+
+    /// <summary>
+    /// THE CREDIT IS READ FROM THE RECORD THE ENGINE KEEPS, UNDER THE KEY THE ENGINE WRITES.
+    ///
+    /// <para>
+    /// `Farmer.caughtFish` stores the count under `metadata.QualifiedItemId` (`Farmer.cs:2995-2996`), while the bar this
+    /// action reads is built with the fish's RAW id (`FishingRod.cs:939` -> `BobberBar.cs:150`). Measured live 2026-11-10:
+    /// `fish_here` landed a sunfish, spent the bait (20 -> 19) and the stamina, collected it through the engine's own
+    /// `doneHoldingFish` - and answered `fish_here_catch_not_credited` with `caught_qualified_item_id=145`, because both
+    /// readings of the record were taken under a key the engine never wrote (`0 -> 0`). The verdict was right to refuse an
+    /// unproven catch; the READ is what was wrong.
+    /// </para>
+    ///
+    /// <para>
+    /// THREE THINGS ARE PINNED, each with its own injected violation: the record (the farmer's, not the rod's transient
+    /// flag), the key (the engine's qualified id), and the ORDER (a reading before the win path, the same reading after
+    /// it). The order is the whole defect - a "before" taken after the engine has written has nothing to compare with.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheCreditIsReadFromTheEnginesOwnRecordUnderTheEnginesOwnKey()
+    {
+        string source = FishingSource();
+
+        CreditReadViolations(source).Should().BeEmpty(
+            "the catch must be credited by the engine's own saved record, before and after its own win path");
+
+        string rawKey = source.Replace("ItemRegistry.QualifyItemId(bar.whichFish)", "bar.whichFish", StringComparison.Ordinal);
+        CreditReadViolations(rawKey).Should().Contain("credit_key_not_the_engines_qualified_id",
+            "reading the record with the bar's raw id is the shipped defect, and it must be reported by name");
+
+        const string beforeRead = "int countBefore = ReadCaughtCount(Game1.player, fishQualifiedItemId);";
+        string lateBefore = source
+            .Replace(beforeRead, string.Empty, StringComparison.Ordinal)
+            .Replace("CaughtCountBefore = countBefore,", beforeRead + "\n                        CaughtCountBefore = countBefore,", StringComparison.Ordinal);
+        CreditReadViolations(lateBefore).Should().Contain("credit_before_reading_after_the_win_path",
+            "a before-reading taken once the engine has already written leaves nothing for the after-reading to be compared against");
+
+        string withoutAfter = source.Replace("int caughtAfter = ReadCaughtCount(Game1.player, fishQualifiedItemId);", string.Empty, StringComparison.Ordinal);
+        CreditReadViolations(withoutAfter).Should().Contain("missing_credit_after_reading",
+            "the credit is a delta, so a missing second reading is a missing credit");
+
+        string rodFlag = source.Replace(
+            "player.fishCaught.TryGetValue(qualifiedItemId, out int[]? entry) ? entry[0] : 0",
+            "rod?.fishCaught == true ? 1 : 0",
+            StringComparison.Ordinal);
+        CreditReadViolations(rodFlag).Should().Contain("credit_record_is_not_the_farmers_catch_record",
+            "the rod's own flag is cleared by the settle (`FishingRod.cs:2352`) and can never answer what the engine booked");
+
+        string flatIsCredited = source.Replace("caughtAfter > spec.CaughtCountBefore", "caughtAfter >= spec.CaughtCountBefore", StringComparison.Ordinal);
+        CreditReadViolations(flatIsCredited).Should().Contain("credit_decision_is_not_the_record_delta",
+            "a flat record credited as a catch is the default-success shape the card forbids");
+
+        string unnamedRecord = source.Replace("credit=fishCaught:", "credit=", StringComparison.Ordinal);
+        CreditReadViolations(unnamedRecord).Should().Contain("credit_receipt_does_not_name_the_record",
+            "the receipt has to name the record that proved the catch, not just that something proved it");
+    }
+
+    /// <summary>
+    /// THE KEY ITSELF, driven against the production read. `Farmer.caughtFish` normalises the id it is handed
+    /// (`Farmer.cs:2995-2996`) and keys the count by the QUALIFIED one, so the raw id the catch window publishes reads a
+    /// row the engine never writes - and returns the same zero before and after a real catch.
+    /// </summary>
+    [Fact]
+    public void TheCatchRecordIsKeyedByTheEnginesQualifiedItemId()
+    {
+        using TargetFamilyWorld world = TargetFamilyWorld.Create();
+        SeedCatchRecord(world.Actor, ("(O)145", 3, 9));
+        ExecutionManager.ReadCaughtCount(world.Actor, "(O)145").Should().Be(3,
+            "the count is read under the qualified id, which is the key `Farmer.caughtFish` writes");
+        ExecutionManager.ReadCaughtCount(world.Actor, "145").Should().Be(0,
+            "the raw id the catch window carries is not a key the engine ever writes, so a raw-key read is a silent zero - which is how a recorded catch was reported as `fish_here_catch_not_credited`");
+        ExecutionManager.ReadCaughtCount(world.Actor, "(O)128").Should().Be(0,
+            "a fish the record does not hold yet reads as zero rather than throwing");
+    }
+
+    /// <summary>
+    /// What the credit read must BE, as a pure predicate so a mutated copy can be judged too: the engine's own saved
+    /// record, under the engine's own key, read on both sides of the engine's own win path, and named in the receipt.
+    /// </summary>
+    private static IReadOnlyList<string> CreditReadViolations(string source)
+    {
+        var violations = new List<string>();
+        void Require(string text, string violation)
+        {
+            if (!source.Contains(text, StringComparison.Ordinal)) violations.Add(violation);
+        }
+
+        Require("player.fishCaught.TryGetValue(qualifiedItemId", "credit_record_is_not_the_farmers_catch_record");
+        Require("ItemRegistry.QualifyItemId(bar.whichFish)", "credit_key_not_the_engines_qualified_id");
+        Require("caughtAfter > spec.CaughtCountBefore", "credit_decision_is_not_the_record_delta");
+        Require("credit=fishCaught:", "credit_receipt_does_not_name_the_record");
+
+        int beforeRead = source.IndexOf("int countBefore = ReadCaughtCount(Game1.player, fishQualifiedItemId);", StringComparison.Ordinal);
+        int winPath = source.IndexOf("rod.pullFishFromWater(", StringComparison.Ordinal);
+        int afterRead = source.IndexOf("int caughtAfter = ReadCaughtCount(Game1.player, fishQualifiedItemId);", StringComparison.Ordinal);
+        if (beforeRead < 0) violations.Add("missing_credit_before_reading");
+        if (afterRead < 0) violations.Add("missing_credit_after_reading");
+        if (winPath < 0) violations.Add("missing_credit_call:pullFishFromWater");
+        if (beforeRead >= 0 && winPath >= 0 && beforeRead > winPath) violations.Add("credit_before_reading_after_the_win_path");
+        if (afterRead >= 0 && winPath >= 0 && afterRead < winPath) violations.Add("credit_after_reading_before_the_win_path");
+        return violations;
+    }
+
+    /// <summary>
+    /// The engine's catch record on an uninitialized farmer: `Farmer.fishCaught` is a readonly FIELD INITIALIZER
+    /// (`Farmer.cs:758`) that a headless instance never ran, and `NetStringIntArrayDictionary`'s constructor is not public,
+    /// so `TargetFamilyWorld` cannot supply it the way it supplies the other NetFields. One spelling for both tests that
+    /// need the record, so the COUNT they agree on cannot drift from the KEY they agree on.
+    /// </summary>
+    private static void SeedCatchRecord(Farmer actor, params (string QualifiedItemId, int Count, int Size)[] entries)
+    {
+        var record = new NetStringIntArrayDictionary();
+        foreach (var entry in entries) record[entry.QualifiedItemId] = new[] { entry.Count, entry.Size };
+        typeof(Farmer)
+            .GetField("fishCaught", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
+            .SetValue(actor, record);
     }
 
     /// <summary>One cast dispatched through the production handler, against the real probe world.</summary>

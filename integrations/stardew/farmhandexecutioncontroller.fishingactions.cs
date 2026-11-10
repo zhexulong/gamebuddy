@@ -20,6 +20,25 @@ namespace GameBuddy.Stardew;
 /// </para>
 ///
 /// <para>
+/// WHICH OF THOSE SURVIVES THE SETTLE, and why the credit is read from `Farmer.fishCaught` rather than the rod. The rod
+/// carries two flags and neither is a record: `fishCaught` is set by the win path (`:1092`) and cleared by the very next
+/// settle - `doDoneFishing` (`:1789`) or `doneHoldingFish` (`:2352`) - and `whichFish` is the pull's own scratch
+/// metadata. `Farmer.fishCaught` is the game's saved record of the catch: `caughtFish` writes it inside the win path
+/// (`:1104` -> `Farmer.cs:2993-3017`) and it outlives the rod, the cast and the save. The inventory insertion is durable
+/// too, but `doneHoldingFish` performs it AFTER it releases the rod (`:2333` release, `:2341` add).
+/// </para>
+///
+/// <para>
+/// THE KEY IS THE ENGINE'S, NOT THE BAR'S. `BobberBar` is built with the fish's RAW item id (`FishingRod.cs:939` passes
+/// `fish.ItemId`), and it is that raw id `whichFish` holds and the engine's own win call re-passes (`BobberBar.cs:361`).
+/// Everything downstream re-qualifies it - `doPullFishFromWater` resolves it through `ItemRegistry.GetMetadata` (`:1170`)
+/// and `Farmer.caughtFish` keys the record by `metadata.QualifiedItemId` (`Farmer.cs:2995-2996`). Reading that record with
+/// the bar's raw id therefore reads a key the engine never writes, and a real catch counts as zero on both sides of the
+/// comparison. The identity is resolved once, here, and one spelling is used for the credit call, both readings of the
+/// record and the receipt.
+/// </para>
+///
+/// <para>
 /// WHAT IS SKIPPED is the bar's per-frame holding, and nothing else. Every number the receipt carries is read from the
 /// engine's own objects: the fish from `location.getFish` inside `DoFunction`'s nibble branch (`:491`), the size, quality
 /// and difficulty from the `BobberBar` the engine constructs for THIS catch (`:891-940`, `BobberBar.cs:181-195`), and the
@@ -352,8 +371,9 @@ internal sealed partial class ExecutionManager
                     // The engine built this bar for THIS catch (`FishingRod.startMinigameEndFunction`, `:891-940`), which is
                     // where the size and the quality are decided from `Data/Fish` and its own roll, and where the difficulty
                     // comes from. Reading them here is what keeps this file free of a second copy of any of those rules.
-                    string fishId = bar.whichFish;
-                    int countBefore = Game1.player.fishCaught.TryGetValue(fishId, out int[]? caughtBefore) ? caughtBefore[0] : 0;
+                    string fishQualifiedItemId = ItemRegistry.QualifyItemId(bar.whichFish);
+                    // The "before" reading of the engine's own catch record, taken while the win path still has not run.
+                    int countBefore = ReadCaughtCount(Game1.player, fishQualifiedItemId);
                     // The bar's own challenge-bait count is part of the same object; `numCaught` is 1 otherwise
                     // (`BobberBar.cs:353-358`).
                     int numCaught = Math.Max(1, bar.challengeBaitFishes);
@@ -363,12 +383,12 @@ internal sealed partial class ExecutionManager
                     // `wasPerfect: true` is a DECLARED PROPERTY OF THIS ACTION, not an observation: the bar starts `perfect`
                     // true and only the minigame's own bar can clear it (`BobberBar.cs:185`), and this action does not play
                     // the bar. A catch made here is perfect by construction, and the receipt says so in those words.
-                    rod.pullFishFromWater(fishId, bar.fishSize, bar.fishQuality, (int)bar.difficulty, bar.treasureCaught,
+                    rod.pullFishFromWater(fishQualifiedItemId, bar.fishSize, bar.fishQuality, (int)bar.difficulty, bar.treasureCaught,
                         wasPerfect: true, fromFishPond: bar.fromFishPond, bar.setFlagOnCatch, bar.bossFish, numCaught);
                     this.activeFishing = spec with
                     {
                         Phase = LocalFishingPhase.AwaitingCredit,
-                        CaughtQualifiedItemId = fishId,
+                        CaughtQualifiedItemId = fishQualifiedItemId,
                         CaughtFishSize = bar.fishSize,
                         CaughtFishQuality = bar.fishQuality,
                         CaughtCountBefore = countBefore,
@@ -383,30 +403,37 @@ internal sealed partial class ExecutionManager
 
             case LocalFishingPhase.AwaitingCredit:
             {
-                // `fishCaught` is the rod's own "the fish is in hand" flag and nothing but `playerCaughtFishEndFunction`
-                // sets it (`FishingRod.cs:1092`), i.e. it is true exactly when the engine has booked the catch.
+                string fishQualifiedItemId = spec.CaughtQualifiedItemId ?? string.Empty;
+                // `rod.fishCaught` is the rod's own "the fish is in hand" flag, and it is the moment `doneHoldingFish` is
+                // allowed to run: `playerCaughtFishEndFunction` sets it (`FishingRod.cs:1092`) in the same call that writes
+                // the record (`:1104`), so the record has already moved when the gate opens - no tick has to be waited out.
+                // It is NOT the credit: the settle clears it (`:2352`), so it cannot answer what happened.
                 if (!rod.fishCaught)
                 {
                     if (nowMs > spec.DeadlineMs)
                         this.SettleFishingCast(spec, ExecutionState.Uncertain, "fish_here_catch_not_credited",
-                            $"location={spec.Location};target={spec.TargetId};fish={spec.CaughtQualifiedItemId ?? "none"};phase=awaiting_credit;fish_in_hand=false");
+                            string.Format(CultureInfo.InvariantCulture,
+                                "location={0};target={1};tile={2},{3};fish={4};phase=awaiting_credit;fish_in_hand=false;credit=fishCaught:{5}->{6}",
+                                spec.Location, spec.TargetId, spec.TargetX, spec.TargetY, fishQualifiedItemId,
+                                spec.CaughtCountBefore, ReadCaughtCount(Game1.player, fishQualifiedItemId)));
                     return;
                 }
-                string fishQualifiedItemId = spec.CaughtQualifiedItemId ?? rod.whichFish?.QualifiedItemId ?? string.Empty;
                 int inventoryBefore = CountQualifiedItem(Game1.player, fishQualifiedItemId);
                 // The engine's own win settle (`FishingRod.cs:2304-2350`): it adds the fish to the pack and calls
                 // `doneFishing(who, consumeBaitAndTackle: true)` - the bait and tackle consumption the card asks for, from
                 // the one place the game performs it. A player reaches it by clicking the held fish (`:2273-2275`).
                 rod.doneHoldingFish(Game1.player);
                 int inventoryAfter = CountQualifiedItem(Game1.player, fishQualifiedItemId);
-                int caughtAfter = Game1.player.fishCaught.TryGetValue(fishQualifiedItemId, out int[]? caughtAfterEntry) ? caughtAfterEntry[0] : 0;
+                // THE CREDIT, from the one record the engine keeps and never clears: the same key, read again, against
+                // the reading taken before the win path ran.
+                int caughtAfter = ReadCaughtCount(Game1.player, fishQualifiedItemId);
                 bool credited = caughtAfter > spec.CaughtCountBefore;
                 float staminaAfter = Game1.player.Stamina;
                 float staminaDelta = staminaAfter - spec.StaminaBefore;
                 int baitAfter = rod.GetBait()?.Stack ?? 0;
                 string evidence = string.Format(
                     CultureInfo.InvariantCulture,
-                    "location={0};target={1};tile={2},{3};caught_qualified_item_id={4};display_name={5};fish_size={6};quality={7};was_perfect=true;was_perfect_basis=declared_by_action;rod_durability_left={8};bait_before={9};bait_left={10};stamina_before={11};stamina_after={12};stamina_delta={13};inventory_before={14};inventory_after={15};fish_caught_before={16};fish_caught_after={17}",
+                    "location={0};target={1};tile={2},{3};caught_qualified_item_id={4};display_name={5};fish_size={6};quality={7};was_perfect=true;was_perfect_basis=declared_by_action;rod_durability_left={8};bait_before={9};bait_left={10};stamina_before={11};stamina_after={12};stamina_delta={13};inventory_before={14};inventory_after={15};fish_caught_before={16};fish_caught_after={17};credit=fishCaught:{16}->{17}",
                     spec.Location,
                     spec.TargetId,
                     spec.TargetX,
@@ -434,6 +461,21 @@ internal sealed partial class ExecutionManager
             }
         }
     }
+
+    /// <summary>
+    /// The engine's own record of how many of one fish this farmer has caught: `Farmer.fishCaught`, read under the
+    /// QUALIFIED item id and answered as zero for a fish the record does not hold yet.
+    ///
+    /// <para>
+    /// The key is the whole of it. `Farmer.caughtFish` normalises the id it is handed and stores the count under
+    /// `metadata.QualifiedItemId` (`Farmer.cs:2995-2996`), while the bar this action reads carries the RAW id
+    /// (`FishingRod.cs:939`). A raw-key read finds nothing on either side of the comparison, so a real catch reads as no
+    /// catch - and the record is the only fact that can answer it, because the rod's own `fishCaught` flag is cleared by
+    /// the settle that follows (`FishingRod.cs:2352`).
+    /// </para>
+    /// </summary>
+    internal static int ReadCaughtCount(Farmer player, string qualifiedItemId) =>
+        player.fishCaught.TryGetValue(qualifiedItemId, out int[]? entry) ? entry[0] : 0;
 
     /// <summary>
     /// The rod's remaining durability, which IS its tackle's remaining uses: `FishingRod.doDoneFishing` increments
