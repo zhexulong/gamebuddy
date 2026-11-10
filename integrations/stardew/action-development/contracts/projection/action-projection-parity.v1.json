@@ -3187,7 +3187,8 @@
           "name": "farm_building_built"
         },
         "targetFamily": "farmBuildingTargets",
-        "nativeBinding": "GameLocation.buildStructure"
+        "nativeBinding": "GameLocation.buildStructure",
+        "synthetic": true
       },
       {
         "actionId": "accept_daily_quest",

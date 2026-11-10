@@ -46,7 +46,7 @@ const PROJECTION_PARITY_ACTION_REQUIRED_KEYS = Object.freeze([
  * at the original nine while 80 of 95 published actions grew `targetFamily`. The drift is now watched by
  * `action-projection-parity-drift.test.mjs`, which CAN import both and asserts the two lists are equal.
  */
-const PROJECTION_PARITY_ACTION_OPTIONAL_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily", "nativeBinding"]);
+const PROJECTION_PARITY_ACTION_OPTIONAL_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily", "nativeBinding", "synthetic"]);
 const PROJECTION_PARITY_LIFECYCLE_KEYS = Object.freeze([
   "admittedLifecycles",
   "executableActionIds",

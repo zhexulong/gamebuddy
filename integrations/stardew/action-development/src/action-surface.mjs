@@ -25,8 +25,13 @@ export const ACTION_SURFACE_ACTION_KEYS = Object.freeze([
  * the four actions that declare it - and passing on the ninety-one that do not, because `exactKeys` compares against
  * a fixed set. Measured 2026-10-29: `HEAD` fails `stardew_action_surface_invalid_action_shape` before any change of
  * this session.
+ *
+ * `synthetic` reached it in `f1474cff`, which regenerated the artifact and left this list behind - so the member was
+ * published before its readers learned it, and the parity producer could not run at all (measured 2026-11-11:
+ * `stardew_action_surface_invalid_action_shape` out of `parseActionSurface`). Same ordering as `approach` above, and
+ * the same fix: the reader learns the member it was already being handed.
  */
-export const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily", "nativeBinding"]);
+export const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily", "nativeBinding", "synthetic"]);
 export const ACTION_SURFACE_MAX_JSON_BYTES = 64 * 1024;
 const ACTION_SURFACE_MAX_REGISTRATIONS = 128;
 export const ACTION_SURFACE_MAX_IDENTIFIER_LENGTH = 128;
@@ -484,7 +489,14 @@ function validateAction(value, seenActionIds) {
       fail("invalid_native_binding");
   }
 
-  return Object.freeze({ actionId, identityVersion, lifecycle, kind, argumentSchema, outputFacts, resourceTemplate, effect, postcondition, ...(value.sceneTarget === undefined ? {} : { sceneTarget: value.sceneTarget }), ...(value.targetFamily === undefined ? {} : { targetFamily: value.targetFamily }), ...(value.nativeBinding === undefined ? {} : { nativeBinding: value.nativeBinding }) });
+  // `synthetic` is admitted by the key set AND forwarded below, because admitting a member and dropping it are the same
+  // defect wearing two faces: the artifact would pass the reader and then vanish from every consumer view of it. The
+  // Mod publishes the member only on the action that bypasses the NPC counter owning it (`build_farm_building` places a
+  // structure through `GameLocation.buildStructure` instead of opening Robin's menu), so an absent member means "no
+  // claim" and a published `false` would be a second spelling of absent - refused rather than forwarded.
+  if (value.synthetic !== undefined && value.synthetic !== true) fail("invalid_synthetic");
+
+  return Object.freeze({ actionId, identityVersion, lifecycle, kind, argumentSchema, outputFacts, resourceTemplate, effect, postcondition, ...(value.sceneTarget === undefined ? {} : { sceneTarget: value.sceneTarget }), ...(value.targetFamily === undefined ? {} : { targetFamily: value.targetFamily }), ...(value.nativeBinding === undefined ? {} : { nativeBinding: value.nativeBinding }), ...(value.synthetic === undefined ? {} : { synthetic: value.synthetic }) });
 }
 
 /**
