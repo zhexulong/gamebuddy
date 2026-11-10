@@ -53,7 +53,7 @@ public sealed class FarmhandForEachRulesTests
     public void TheSameRuleSetHasTheSameMeaningOverAOneByOneAreaAndOverAFamily()
     {
         var predicate = Field("kind", FarmhandForEachComparison.In, "weed");
-        var effect = new FarmhandForEachEffect("cut_weeds");
+        var effect = new FarmhandForEachEffect(new FarmhandForEachStep("cut_weeds"));
         var overArea = new FarmhandForEachLoop(Rect(60, 18, 1, 1), new[] { predicate }, effect);
         var overFamily = new FarmhandForEachLoop(
             new FarmhandForEachSource(FarmhandForEachSource.FamilyKind, Family: "weedTargets"),
@@ -68,7 +68,7 @@ public sealed class FarmhandForEachRulesTests
 
         fromArea.Outcome.Should().Be(FarmhandForEachRowOutcome.Dispatched);
         fromFamily.Outcome.Should().Be(fromArea.Outcome);
-        fromFamily.Effect!.Action.Should().Be(fromArea.Effect!.Action, "the source chooses the rows, never the dispatch");
+        fromFamily.Effect!.Steps[0].Action.Should().Be(fromArea.Effect!.Steps[0].Action, "the source chooses the rows, never the dispatch");
         fromArea.X.Should().Be(60);
         fromFamily.X.Should().Be(60);
     }
@@ -82,7 +82,7 @@ public sealed class FarmhandForEachRulesTests
         var loop = new FarmhandForEachLoop(
             new FarmhandForEachSource(FarmhandForEachSource.FamilyKind, Family: "cropTargets"),
             new[] { Field("readyForHarvest", FarmhandForEachComparison.Eq, "true") },
-            new FarmhandForEachEffect("harvest_crop"));
+            new FarmhandForEachEffect(new FarmhandForEachStep("harvest_crop")));
         loop.IsValid.Should().BeTrue();
 
         var ready = new Dictionary<string, FarmhandForEachValue>(StringComparer.Ordinal)
@@ -106,8 +106,8 @@ public sealed class FarmhandForEachRulesTests
     [Fact]
     public void AnInterleavedTwoSeedPatternDecidesPerTileAndAPathIsCountedAsLeftAlone()
     {
-        var hops = new FarmhandForEachLoop(Rect(60, 18, 20, 3), new[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 0) }, new FarmhandForEachEffect("plant_seed", Arguments: new Dictionary<string, string> { ["seed"] = "hops" }));
-        var coffee = new FarmhandForEachLoop(Rect(60, 18, 20, 3), new[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 1) }, new FarmhandForEachEffect("plant_seed", Arguments: new Dictionary<string, string> { ["seed"] = "coffee" }));
+        var hops = new FarmhandForEachLoop(Rect(60, 18, 20, 3), new[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 0) }, new FarmhandForEachEffect(new FarmhandForEachStep("plant_seed", new Dictionary<string, string> { ["seed"] = "hops" })));
+        var coffee = new FarmhandForEachLoop(Rect(60, 18, 20, 3), new[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 1) }, new FarmhandForEachEffect(new FarmhandForEachStep("plant_seed", new Dictionary<string, string> { ["seed"] = "coffee" })));
         var path = new FarmhandForEachLoop(Rect(60, 18, 20, 3), new[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 2) }, null);
 
         var rows = FarmhandForEachRules.AreaRows(hops.Source).ToArray();
@@ -122,7 +122,7 @@ public sealed class FarmhandForEachRulesTests
                 foreach (FarmhandForEachLoop loop in new[] { hops, coffee, path })
                 {
                     FarmhandForEachRowDecision decision = FarmhandForEachRules.Decide(loop, row.X, row.Y, row.LocalColumn, row.LocalRow, Row("empty_tillable"));
-                    if (decision.Outcome == FarmhandForEachRowOutcome.Dispatched) return decision.Effect!.Arguments!["seed"];
+                    if (decision.Outcome == FarmhandForEachRowOutcome.Dispatched) return decision.Effect!.Steps[0].Arguments!["seed"];
                     if (decision.Outcome == FarmhandForEachRowOutcome.LeftAlone) return "path";
                 }
                 return "unmatched";
@@ -185,7 +185,7 @@ public sealed class FarmhandForEachRulesTests
         var loop = new FarmhandForEachLoop(
             new FarmhandForEachSource(FarmhandForEachSource.FamilyKind, Family: "treeChopSourceTargets"),
             new[] { Number("health", FarmhandForEachComparison.Gt, 0) },
-            new FarmhandForEachEffect("chop_tree"));
+            new FarmhandForEachEffect(new FarmhandForEachStep("chop_tree")));
 
         var fields = new Dictionary<string, FarmhandForEachValue>(StringComparer.Ordinal)
         {
@@ -200,8 +200,28 @@ public sealed class FarmhandForEachRulesTests
     [Fact]
     public void ByKindIsATokenRatherThanAMappingTheCallerSupplies()
     {
-        FarmhandForEachEffect.ByKindAction.Should().Be("by_kind");
-        new FarmhandForEachEffect(FarmhandForEachEffect.ByKindAction).IsValid.Should().BeTrue();
-        new FarmhandForEachEffect(string.Empty).IsValid.Should().BeFalse();
+        FarmhandForEachStep.ByKindAction.Should().Be("by_kind");
+        new FarmhandForEachStep(FarmhandForEachStep.ByKindAction).IsValid.Should().BeTrue();
+        new FarmhandForEachStep(string.Empty).IsValid.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// A CHAIN IS BOUNDED, AND BOTH ENDS OF THE BOUND ARE SAID OUT LOUD. `do` of no steps claims nothing (that is
+    /// `do: null`), and a chain past the bound is refused rather than truncated - a row that silently lost its fourth step
+    /// would report the tile as worked.
+    /// </summary>
+    [Fact]
+    public void AChainOfStepsIsBoundedAtBothEnds()
+    {
+        FarmhandForEachStep till = new("till_soil");
+        FarmhandForEachStep water = new("water_crop");
+        FarmhandForEachStep harvest = new("harvest_crop");
+        FarmhandForEachStep sow = new("plant_seed");
+        FarmhandForEachStep mulch = new("place_mulch");
+
+        new FarmhandForEachEffect(till).IsValid.Should().BeTrue("the single form is the chain of length one");
+        new FarmhandForEachEffect(till, harvest, water, sow).IsValid.Should().BeTrue("the clear-till-water-sow chain fits the bound");
+        new FarmhandForEachEffect().IsValid.Should().BeFalse("an empty chain claims nothing; `do: null` is the spelling for that");
+        new FarmhandForEachEffect(till, harvest, water, sow, mulch).IsValid.Should().BeFalse("a chain past the bound is refused, not truncated");
     }
 }

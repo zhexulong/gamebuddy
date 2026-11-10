@@ -451,7 +451,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
 
         var table = new List<(int LocalRow, int LocalColumn, string Json)>(outsideFarm);
         foreach (FarmhandForEachTargetResult result in pass.Targets)
-            table.Add((result.LocalRow, result.LocalColumn, RowJson(result.X, result.Y, result.Target?.ActionId, StateOf(result.Outcome), result.ReasonCode, result.Healed)));
+            table.Add((result.LocalRow, result.LocalColumn, RowJson(result.X, result.Y, result.Target?.ActionId, StateOf(result.Outcome), result.ReasonCode, result.Healed, result.Steps, result.StoppedAt)));
 
         // A PASS THAT HAS NOT FINISHED IS NOT AN ANSWER. The native body still owns the embodied actor, so the node stays
         // bound-Running and a later tick re-enters this same pass: the row identities are deterministic, so the router
@@ -553,7 +553,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         receipt = default!;
         reasonCode = "for_each_row_unavailable";
         string actionId = target.ActionId;
-        if (string.Equals(actionId, FarmhandForEachEffect.ByKindAction, StringComparison.Ordinal))
+        if (string.Equals(actionId, FarmhandForEachStep.ByKindAction, StringComparison.Ordinal))
         {
             string kind = target.Kind ?? "unknown";
             if (world.ActionForKind(kind) is not { Length: > 0 } resolved)
@@ -744,9 +744,48 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         _ => "not_matched",
     };
 
-    private static string RowJson(int? x, int? y, string? action, string state, string? reasonCode, string? healed) =>
+    /// <summary>
+    /// One row of the pass's table, in the words the aggregate carries it in.
+    ///
+    /// INTERNAL SO A TEST CAN ASK THE RECEIPT ITSELF what a chained row and a one-action row look like: the two new words
+    /// (`steps`, `stopped_at`) are additive only if the rows that never asked for a chain stay byte-identical, and that is a
+    /// property of this formatting rather than of the pass. Same seam as <see cref="VerdictFor"/>, one level down.
+    /// </summary>
+    internal static string RowJson(
+        int? x,
+        int? y,
+        string? action,
+        string state,
+        string? reasonCode,
+        string? healed,
+        IReadOnlyList<FarmhandForEachStepResult>? steps = null,
+        string? stoppedAt = null) =>
         string.Create(CultureInfo.InvariantCulture,
-            $"{{\"x\":{x?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"y\":{y?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"action\":{JsonText(action)},\"state\":\"{state}\",\"reasonCode\":{JsonText(reasonCode)},\"healed\":{JsonText(healed)}}}");
+            $"{{\"x\":{x?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"y\":{y?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"action\":{JsonText(action)},\"state\":\"{state}\",\"reasonCode\":{JsonText(reasonCode)},\"healed\":{JsonText(healed)}{StepsJson(steps, stoppedAt)}{StoppedAtJson(stoppedAt)}}}");
+
+    /// <summary>
+    /// The steps a row took, when it took more than one - or when it is a chain that stopped on its first step.
+    ///
+    /// A one-action row already says `action`/`state`/`reasonCode`, and repeating them as a list of one would grow every
+    /// row of every pass that never asked for a chain to say what it already said.
+    /// </summary>
+    private static string StepsJson(IReadOnlyList<FarmhandForEachStepResult>? steps, string? stoppedAt)
+    {
+        // A ONE-STEP ROW REPEATS WHAT `action`/`state`/`reasonCode` ALREADY SAY - except when it is a CHAIN that stopped on
+        // its first step, where the chain's own length is what makes `stopped_at=0:...` readable.
+        if (steps is null || (steps.Count < 2 && stoppedAt is null)) return string.Empty;
+        var body = new StringBuilder();
+        foreach (FarmhandForEachStepResult step in steps)
+        {
+            if (body.Length > 0) body.Append(',');
+            body.Append(CultureInfo.InvariantCulture,
+                $"{{\"step\":{step.Step},\"action\":{JsonText(step.ActionId)},\"state\":\"{StateOf(step.Outcome)}\",\"reasonCode\":{JsonText(step.ReasonCode)}}}");
+        }
+        return string.Create(CultureInfo.InvariantCulture, $",\"steps\":[{body}]");
+    }
+
+    /// <summary>Where a row's chain stopped, on the row it happened to: `&lt;step&gt;:&lt;reasonCode&gt;`.</summary>
+    private static string StoppedAtJson(string? stoppedAt) => stoppedAt is null ? string.Empty : $",\"stopped_at\":{JsonText(stoppedAt)}";
 
     private static string JsonText(string? value) => value is null ? "null" : JsonSerializer.Serialize(value);
 
@@ -758,8 +797,11 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// </summary>
     private static string Aggregate(FarmhandForEachPassResult pass, IReadOnlyList<(int LocalRow, int LocalColumn, string Json)> table, string state, ref int rowsOmitted)
     {
+        // The step count is part of the aggregate only when a chain ran: a pass of single actions already answers `steps ==
+        // decided` by construction, and every row of every existing pass would otherwise grow to say it.
+        string steps = pass.Steps > pass.Decided ? string.Create(CultureInfo.InvariantCulture, $",\"steps\":{pass.Steps}") : string.Empty;
         string header = string.Create(CultureInfo.InvariantCulture,
-            $"{{\"state\":\"{state}\",\"succeeded\":{pass.Succeeded},\"failed\":{pass.Failed},\"refused\":{pass.Refused},\"left_alone\":{pass.LeftAlone},\"not_matched\":{pass.NotMatched},\"deferred\":{pass.Deferred},\"omitted\":{pass.Omitted}");
+            $"{{\"state\":\"{state}\",\"succeeded\":{pass.Succeeded},\"failed\":{pass.Failed},\"refused\":{pass.Refused},\"left_alone\":{pass.LeftAlone},\"not_matched\":{pass.NotMatched},\"deferred\":{pass.Deferred},\"omitted\":{pass.Omitted}{steps}");
         var body = new StringBuilder();
         foreach ((int _, int _, string json) in table.OrderBy(row => row.LocalRow).ThenBy(row => row.LocalColumn))
         {
@@ -846,6 +888,8 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         var counts = new StringBuilder(128);
         counts.Append(CultureInfo.InvariantCulture,
             $"decided={pass.Decided};succeeded={pass.Succeeded};failed={pass.Failed};refused={pass.Refused};not_matched={pass.NotMatched};left_alone={pass.LeftAlone};deferred={pass.Deferred};stopped={pass.StopObserved};omitted={pass.Omitted}");
+        // A pass of chains says how many native effects it made, so a reader can see that one pass did the work four used to.
+        if (pass.Steps > pass.Decided) counts.Append(CultureInfo.InvariantCulture, $";steps={pass.Steps}");
         foreach ((string code, int count) in ReasonsByCount(pass))
         {
             string entry = string.Create(CultureInfo.InvariantCulture, $";{code}={count}");

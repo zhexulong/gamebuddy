@@ -57,7 +57,7 @@ public sealed class FarmhandForEachWireTests
             .Should()
             .BeTrue(reasonCode);
         loop!.Source.AreaRowCount.Should().Be(60);
-        loop.Do!.Action.Should().Be("till_soil");
+        loop!.Do!.Steps[0].Action.Should().Be("till_soil");
     }
 
     /// <summary>

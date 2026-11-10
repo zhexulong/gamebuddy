@@ -19,10 +19,11 @@ namespace GameBuddy.Stardew.Core.Tests;
 /// </para>
 /// <para>
 /// EVERY BOUND AND EVERY SPELLING COMES FROM THE MODEL, never from this file: `FarmhandForEachSource.AreaKind`,
-/// `FarmhandForEachStride.EveryOperator`, `FarmhandForEachEffect.ByKindAction`, `FarmhandForEachLoop.MaximumRules`,
-/// `FarmhandForEachRule.MaximumPredicates`, `FarmhandForEachPredicate.MaximumValues` and
-/// `FarmhandForEachEffect.MaximumArguments`. The bare numbers in this file's documents are the CALLER's values (a 3x20
-/// patch, every-3 columns); the limits are read from those constants so a bound that changes cannot leave a test behind.
+/// `FarmhandForEachStride.EveryOperator`, `FarmhandForEachStep.ByKindAction`, `FarmhandForEachLoop.MaximumRules`,
+/// `FarmhandForEachRule.MaximumPredicates`, `FarmhandForEachPredicate.MaximumValues`,
+/// `FarmhandForEachStep.MaximumArguments` and `FarmhandForEachEffect.MaximumSteps`. The bare numbers in this file's
+/// documents are the CALLER's values (a 3x20 patch, every-3 columns); the limits are read from those constants so a bound
+/// that changes cannot leave a test behind.
 /// </para>
 /// </summary>
 public sealed class FarmhandForEachArgumentsTests
@@ -64,8 +65,9 @@ public sealed class FarmhandForEachArgumentsTests
         loop.Source.Height.Should().Be(3);
         loop.Source.AreaRowCount.Should().Be(60, "three rows by twenty columns is one intent, not sixty");
         loop.Where.Should().BeNull("an absent predicate list means every row of the source");
-        loop.Do!.Action.Should().Be("till_soil");
-        loop.Do.Arguments.Should().BeNull("the caller declared no argument, and absence is not an empty string");
+        loop.Do!.Steps.Should().ContainSingle("the single object is the chain of length one, the one shape downstream reads");
+        loop.Do.Steps[0].Action.Should().Be("till_soil");
+        loop.Do.Steps[0].Arguments.Should().BeNull("the caller declared no argument, and absence is not an empty string");
         loop.IsValid.Should().BeTrue("the parse answers only loops the model itself accepts");
     }
 
@@ -93,8 +95,8 @@ public sealed class FarmhandForEachArgumentsTests
         loop.Rules[0].Where![0].Stride!.Every.Should().Be(3);
         loop.Rules[0].Where![0].Stride!.Offset.Should().Be(0);
         // A declared argument rides through as the caller's own scalar, spelled the way a wire scalar is spelled.
-        loop.Rules[0].Do!.Arguments!["slot"].Should().Be("0");
-        loop.Rules[0].Do!.Arguments!["expectedQualifiedItemId"].Should().Be("(O)472");
+        loop.Rules[0].Do!.Steps[0].Arguments!["slot"].Should().Be("0");
+        loop.Rules[0].Do!.Steps[0].Arguments!["expectedQualifiedItemId"].Should().Be("(O)472");
         loop.Rules[2].Do.Should().BeNull("`do: null` is a STATEMENT - this column is a path - and not a forgotten row");
     }
 
@@ -173,9 +175,13 @@ public sealed class FarmhandForEachArgumentsTests
     public void AnExtentOfZeroRowsIsRefusedAsASourceFault() =>
         Refused("{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":0,\"h\":3}},\"do\":{\"action\":\"till_soil\"}}", "for_each_invalid:source");
 
+    /// <summary>
+    /// A `do` whose step names no action is refused BY THE STEP, not as a bare `invalid`: the caller has to know which step of
+    /// its chain it wrote wrongly, and `for_each_invalid:do` named nothing anyone could act on.
+    /// </summary>
     [Fact]
-    public void AnEffectWithoutAnActionIsRefusedAsAnEffectFault() =>
-        Refused("{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":{\"slot\":0}}", "for_each_invalid:do");
+    public void AnEffectWithoutAnActionNamesTheStepThatIsNotAStep() =>
+        Refused("{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":{\"slot\":0}}", "for_each_do_step_unrecognised:0");
 
     [Fact]
     public void ANodeWithoutTheLoopArgumentIsRefusedAsALoopFault()
@@ -235,6 +241,69 @@ public sealed class FarmhandForEachArgumentsTests
             .Should()
             .BeTrue(reasonCode);
 
-        loop!.Do!.Action.Should().Be(FarmhandForEachEffect.ByKindAction);
+        loop!.Do!.Steps[0].Action.Should().Be(FarmhandForEachStep.ByKindAction);
     }
+
+    /// <summary>
+    /// ONE TILE, THREE STEPS, ONE PASS. The measured reason the chain exists: clearing a tile, tilling it and sowing it are
+    /// one tile's work, and a form that could name one action per row spent three passes - with three rounds of waking,
+    /// ordering and receipts - to do it. The steps arrive in the order the caller wrote them, with their own arguments.
+    /// </summary>
+    [Fact]
+    public void ADoneArrayIsOneChainOfStepsInTheOrderTheCallerWroteThem()
+    {
+        string document =
+            "{\"source\":{\"area\":{\"x\":60,\"y\":18,\"w\":6,\"h\":1}},"
+            + "\"do\":[{\"action\":\"till_soil\"},{\"action\":\"water_crop\"},{\"action\":\"plant_seed\",\"seed\":\"hops\"}]}";
+
+        FarmhandForEachArguments.TryParse(Arguments(document), out FarmhandForEachLoop? loop, out string reasonCode)
+            .Should()
+            .BeTrue(reasonCode);
+
+        loop!.Do!.Steps.Should().HaveCount(3);
+        loop.Do.Steps.Select(step => step.Action).Should().Equal("till_soil", "water_crop", "plant_seed");
+        loop.Do.Steps[2].Arguments!["seed"].Should().Be("hops", "each step carries its OWN arguments, not the chain's");
+        loop.IsValid.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// THE CHAIN IS BOUNDED AT BOTH ENDS, and each end says which it is. An empty array is not "leave this row alone" - that
+    /// is `do: null` - and a chain past the bound is refused with its own count so the caller can see how far over it is.
+    /// </summary>
+    [Fact]
+    public void AChainPastItsBoundIsRefusedWithItsOwnCount()
+    {
+        string overlong =
+            "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":["
+            + string.Join(",", Enumerable.Repeat("{\"action\":\"till_soil\"}", FarmhandForEachEffect.MaximumSteps + 1))
+            + "]}";
+
+        Refused(overlong, $"for_each_too_many_steps:{FarmhandForEachEffect.MaximumSteps + 1}:{FarmhandForEachEffect.MaximumSteps}");
+        Refused("{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":[]}", "for_each_do_empty");
+    }
+
+    /// <summary>
+    /// A STEP THAT IS NOT A STEP IS NAMED BY ITS POSITION. In a chain the caller has to know WHICH step to fix, and the
+    /// refusal that used to answer a missing action said nothing a caller could act on.
+    /// </summary>
+    [Theory]
+    [InlineData(
+        "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":[{\"action\":\"till_soil\"},\"water_crop\"]}",
+        "for_each_do_step_unrecognised:1")]
+    [InlineData(
+        "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":[{\"action\":\"till_soil\"},{\"seed\":\"hops\"}]}",
+        "for_each_do_step_unrecognised:1")]
+    [InlineData(
+        "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":[{\"action\":\"till_soil\"},{\"action\":\"plant_seed\",\"seed\":[\"hops\"]}]}",
+        "for_each_do_step_unrecognised:1:seed")]
+    public void AStepThatIsNotAStepIsRefusedByItsPosition(string document, string expectedReasonCode) =>
+        Refused(document, expectedReasonCode);
+
+    /// <summary>A row identity is the Mod's in EVERY step of a chain, not only in the first one.</summary>
+    [Fact]
+    public void ARowIdentityInsideALaterStepIsRefusedByName() =>
+        Refused(
+            "{\"source\":{\"area\":{\"x\":0,\"y\":0,\"w\":1,\"h\":1}},\"do\":[{\"action\":\"till_soil\"},"
+            + "{\"action\":\"water_crop\",\"expectedTargetId\":\"crop_0123456789abcdef\"}]}",
+            FarmhandForEachArguments.RowIdentityIsNotTheCallers);
 }

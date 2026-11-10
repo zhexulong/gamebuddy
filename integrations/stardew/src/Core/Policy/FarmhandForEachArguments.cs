@@ -25,8 +25,8 @@ namespace GameBuddy.Stardew.Core.Policy;
 /// </para>
 /// <para>
 /// ONE SPELLING PER CONCEPT, taken from the model: the source kinds are <see cref="FarmhandForEachSource"/>'s, the axes
-/// and the comparison words are <see cref="FarmhandForEachPredicate"/>'s, the effect's action count is
-/// <see cref="FarmhandForEachEffect.MaximumArguments"/>, and every bound this file checks is a constant on the record it
+/// and the comparison words are <see cref="FarmhandForEachPredicate"/>'s, the step's argument count is
+/// <see cref="FarmhandForEachStep.MaximumArguments"/>, and every bound this file checks is a constant on the record it
 /// belongs to. A number repeated here would be a second authority for the same bound.
 /// </para>
 /// </summary>
@@ -70,6 +70,9 @@ public static class FarmhandForEachArguments
     private const string WhereFault = "for_each_invalid:where";
 
     private const string EffectFault = "for_each_invalid:do";
+
+    /// <summary>Why a `do` chain with no steps in it is refused: `do: null` is the spelling for a deliberate path.</summary>
+    private const string EmptyChain = "for_each_do_empty";
 
     private const string RulesFault = "for_each_invalid:then";
 
@@ -424,6 +427,59 @@ public static class FarmhandForEachArguments
             reasonCode = "accepted";
             return true;
         }
+        // ONE SHAPE INTERNALLY: a single object is the chain of length one, so the step reader has one caller shape and a
+        // chain of four is the same grammar written four times rather than a second form beside it.
+        if (element.ValueKind == JsonValueKind.Array) return TryReadSteps(element, out effect, out reasonCode);
+        if (!TryReadStep(element, 0, out FarmhandForEachStep? only, out reasonCode)) return false;
+        effect = new FarmhandForEachEffect(only!);
+        reasonCode = "accepted";
+        return true;
+    }
+
+    /// <summary>
+    /// A chain, read in the order the caller wrote it, bounded by the model's own step count.
+    ///
+    /// AN EMPTY CHAIN AND AN OVERLONG ONE ARE TWO FACTS. `do: []` claims nothing about a row it matched - `do: null` is the
+    /// spelling for "leave this row alone" - and a chain past <see cref="FarmhandForEachEffect.MaximumSteps"/> is refused
+    /// with its own length, because a bound nobody can see is a bound the caller cannot stay under.
+    /// </summary>
+    private static bool TryReadSteps(JsonElement element, out FarmhandForEachEffect? effect, out string reasonCode)
+    {
+        effect = null;
+        int count = element.GetArrayLength();
+        if (count == 0)
+        {
+            reasonCode = EmptyChain;
+            return false;
+        }
+        if (count > FarmhandForEachEffect.MaximumSteps)
+        {
+            reasonCode = $"for_each_too_many_steps:{count}:{FarmhandForEachEffect.MaximumSteps}";
+            return false;
+        }
+        var steps = new FarmhandForEachStep[count];
+        for (int index = 0; index < count; index++)
+        {
+            if (!TryReadStep(element[index], index, out FarmhandForEachStep? step, out reasonCode)) return false;
+            steps[index] = step!;
+        }
+        effect = new FarmhandForEachEffect(steps);
+        reasonCode = "accepted";
+        return true;
+    }
+
+    /// <summary>
+    /// One step: `{ action, &lt;argument&gt;: &lt;scalar&gt; }`, the same object a lone `do` has always been.
+    ///
+    /// EVERY REFUSAL NAMES THE STEP IT IS ABOUT. A chain is read by position, so "a step is wrong" is not actionable:
+    /// `for_each_do_step_unrecognised:&lt;step&gt;` says which one is not a step, and the same code with the argument's name
+    /// says which part of it. A step that is not an object at all used to answer a code that named nothing a caller could
+    /// fix, which is the defect class this reader keeps closing.
+    /// </summary>
+    private static bool TryReadStep(JsonElement element, int index, out FarmhandForEachStep? step, out string reasonCode)
+    {
+        step = null;
+        reasonCode = $"for_each_do_step_unrecognised:{index}";
         if (element.ValueKind != JsonValueKind.Object) return false;
         if (!element.TryGetProperty("action", out JsonElement actionElement)
             || actionElement.ValueKind != JsonValueKind.String
@@ -442,14 +498,21 @@ public static class FarmhandForEachArguments
                 reasonCode = RowIdentityIsNotTheCallers;
                 return false;
             }
-            if (!BodyProgramValidation.IsIdentifier(property.Name)) return false;
-            if (!TryReadScalarText(property.Value, out string? text)) return false;
+            if (!BodyProgramValidation.IsIdentifier(property.Name) || !TryReadScalarText(property.Value, out string? text))
+            {
+                reasonCode = $"for_each_do_step_unrecognised:{index}:{property.Name}";
+                return false;
+            }
             arguments ??= new Dictionary<string, string>(StringComparer.Ordinal);
-            if (arguments.Count >= FarmhandForEachEffect.MaximumArguments || !arguments.TryAdd(property.Name, text!)) return false;
+            if (arguments.Count >= FarmhandForEachStep.MaximumArguments || !arguments.TryAdd(property.Name, text!))
+            {
+                reasonCode = $"for_each_too_many_arguments:{index}:{FarmhandForEachStep.MaximumArguments}";
+                return false;
+            }
         }
-        var candidate = new FarmhandForEachEffect(action, arguments is null ? null : new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(arguments));
+        var candidate = new FarmhandForEachStep(action, arguments is null ? null : new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(arguments));
         if (!candidate.IsValid) return false;
-        effect = candidate;
+        step = candidate;
         reasonCode = "accepted";
         return true;
     }

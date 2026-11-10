@@ -4,7 +4,7 @@ namespace GameBuddy.Stardew.Core.Policy;
 /// What the Mod's own classifier says an area row IS, and which published action clears it.
 ///
 /// <para>
-/// `for_each` accepts `do: { action: "by_kind" }`, and <see cref="FarmhandForEachEffect.ByKindAction"/> is explicit about
+/// `for_each` accepts `do: { action: "by_kind" }`, and <see cref="FarmhandForEachStep.ByKindAction"/> is explicit about
 /// what that means: a REFERENCE the Mod resolves, never a mapping the caller supplies. This is that resolution, and it
 /// lives here - beside <see cref="ClearableKind"/>, the one mapping from the engine's containers onto the kind words -
 /// because a caller that could restate it would be writing a second classifier.

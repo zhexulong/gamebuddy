@@ -142,19 +142,20 @@ public sealed record FarmhandForEachSource(
     };
 }
 
-/// <summary>What a matching row gets: a published action with its arguments, or null for "leave this row alone".</summary>
-public sealed record FarmhandForEachEffect(string Action, IReadOnlyDictionary<string, string>? Arguments = null)
+/// <summary>One step of a row's chain: a published action with its own arguments.</summary>
+public sealed record FarmhandForEachStep(string Action, IReadOnlyDictionary<string, string>? Arguments = null)
 {
     /// <summary>How long an action id may be, which is the longest published action id by a wide margin.</summary>
     public const int MaximumActionLength = 128;
 
     /// <summary>
-    /// How many arguments one `do` may name.
+    /// How many arguments one step may name.
     ///
-    /// A fact about the EFFECT, not about the reader: it is the same bound the compiler writes it against
-    /// (`MAX_FOR_EACH_EFFECT_ARGUMENTS`, `host/src/body-program-for-each.ts:147`).
+    /// A fact about the STEP, not about the reader: it is the same bound the compiler writes it against
+    /// (`MAX_FOR_EACH_EFFECT_ARGUMENTS`, `host/src/body-program-for-each.ts:166`).
     /// </summary>
     public const int MaximumArguments = 16;
+
     /// <summary>
     /// The token that means "whatever action the Mod's own classifier names for this row's kind".
     ///
@@ -165,6 +166,32 @@ public sealed record FarmhandForEachEffect(string Action, IReadOnlyDictionary<st
 
     public bool IsValid => this.Action.Length is >= 1 and <= MaximumActionLength
         && (this.Arguments is null || this.Arguments.Count <= MaximumArguments);
+}
+
+/// <summary>
+/// What a matching row gets: an ORDERED CHAIN of steps worked on one tile in one pass, or null for "leave this row alone".
+///
+/// <para>
+/// WHY A CHAIN. Farm work is a chain per tile - clear, till, water, sow - and a form that could name only ONE action per
+/// row needed one pass per action: four passes of waking, ordering and receipts over the same sixty tiles, each pass
+/// reporting the tiles the previous one had just prepared by the action the next one wanted. One row is one tile's work,
+/// in the order the caller wrote it, and at most <see cref="MaximumSteps"/> steps of it.
+/// </para>
+/// <para>
+/// THE SINGLE FORM IS THE CHAIN OF LENGTH ONE. `do: { action, ... }` and `do: [{ action, ... }]` are the same value here,
+/// so the decision has one shape to answer and a row's receipt has one shape to report.
+/// </para>
+/// </summary>
+public sealed record FarmhandForEachEffect(params FarmhandForEachStep[] Steps)
+{
+    /// <summary>
+    /// How many steps one row may chain: long enough to be the clear-till-water-sow chain a farm tile really needs, short
+    /// enough that a row is still one tile's work and not a plan.
+    /// </summary>
+    public const int MaximumSteps = 4;
+
+    public bool IsValid => this.Steps is { Length: >= 1 and <= MaximumSteps }
+        && this.Steps.All(step => step is not null && step.IsValid);
 }
 
 /// <summary>

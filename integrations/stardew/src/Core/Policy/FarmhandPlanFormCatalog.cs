@@ -60,7 +60,7 @@ public static class FarmhandPlanFormCatalog
                         FarmhandForEachArguments.LoopArgument,
                         "string",
                         null,
-                        "The loop document: { source: { area: { x, y, w, h } }, where: [...], do: { action, ... } | null, then: [...] }. Written by builder.for_each; read by the Mod's own FarmhandForEachArguments."),
+                        "The loop document: { source: { area: { x, y, w, h } }, where: [...], do: { action, ... } | [{ action, ... }, ...] | null, then: [...] }. A `do` array is one tile's ordered chain of at most 4 steps; the single object is the chain of length 1. Written by builder.for_each; read by the Mod's own FarmhandForEachArguments."),
                 },
                 new Dictionary<string, string>(StringComparer.Ordinal),
                 new[] { new FarmhandActionResourceTemplateClaim("embodied_actor", FarmhandResourceTemplateValue.ScopePlayer) },

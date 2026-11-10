@@ -202,7 +202,7 @@ public sealed class FarmhandForEachExpansionTests
                 out reasonCode);
 
     private static FarmhandForEachEffect Plant(string seed) =>
-        new("plant_seed", new Dictionary<string, string>(StringComparer.Ordinal) { ["seed"] = seed });
+        new(new FarmhandForEachStep("plant_seed", new Dictionary<string, string>(StringComparer.Ordinal) { ["seed"] = seed }));
 
     /// <summary>
     /// THE INTERCROPPED PATCH, per tile, nothing coalesced: hops on columns 0, 3, 6..., coffee on 1, 4, 7..., path on
@@ -265,7 +265,7 @@ public sealed class FarmhandForEachExpansionTests
     public void StopIsCheckedBetweenTwoNativeEffectsAndTheEffectInFlightFinishes()
     {
         FarmhandForEachSource patch = Rect(60, 18, 20, 3);
-        var loop = new FarmhandForEachLoop(patch, null, new FarmhandForEachEffect("till_soil"));
+        var loop = new FarmhandForEachLoop(patch, null, new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
 
         var handler = new RecordingHandler();
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "till_soil");
@@ -296,7 +296,7 @@ public sealed class FarmhandForEachExpansionTests
     public void AReceiptThatHasNotSettledEndsThePassInsteadOfContendingForTheActor()
     {
         FarmhandForEachSource patch = Rect(60, 18, 20, 3);
-        var loop = new FarmhandForEachLoop(patch, null, new FarmhandForEachEffect("till_soil"));
+        var loop = new FarmhandForEachLoop(patch, null, new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
 
         var handler = new RecordingHandler(ExecutionState.Running, "in_flight");
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "till_soil");
@@ -314,7 +314,7 @@ public sealed class FarmhandForEachExpansionTests
     [Fact]
     public void OverTheRowBoundThePassSaysHowManyRowsItDidNotAddress()
     {
-        var loop = new FarmhandForEachLoop(Rect(0, 0, 1, 1), null, new FarmhandForEachEffect("cut_weeds"));
+        var loop = new FarmhandForEachLoop(Rect(0, 0, 1, 1), null, new FarmhandForEachEffect(new FarmhandForEachStep("cut_weeds")));
         var handler = new RecordingHandler();
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "cut_weeds");
         var rows = new List<FarmhandForEachRow>();
@@ -333,7 +333,7 @@ public sealed class FarmhandForEachExpansionTests
     [Fact]
     public void AnUnclaimedRowNamesItsKindAndItsTile()
     {
-        var loop = new FarmhandForEachLoop(Rect(60, 18, 2, 1), new[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 1) }, new FarmhandForEachEffect("cut_weeds"));
+        var loop = new FarmhandForEachLoop(Rect(60, 18, 2, 1), new[] { Stride(FarmhandForEachPredicate.ColOperator, 3, 1) }, new FarmhandForEachEffect(new FarmhandForEachStep("cut_weeds")));
         var handler = new RecordingHandler();
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "cut_weeds");
         var rows = new List<FarmhandForEachRow>
@@ -354,7 +354,7 @@ public sealed class FarmhandForEachExpansionTests
     [Fact]
     public void ARefusedNativeEffectKeepsTheEngineReasonCodeAndTheTile()
     {
-        var loop = new FarmhandForEachLoop(Rect(60, 18, 1, 1), null, new FarmhandForEachEffect("chop_tree"));
+        var loop = new FarmhandForEachLoop(Rect(60, 18, 1, 1), null, new FarmhandForEachEffect(new FarmhandForEachStep("chop_tree")));
         var handler = new RecordingHandler(ExecutionState.Failed, "no_native_path", "from=60,18;to=60,18;target_enclosed=true");
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "chop_tree");
 
@@ -376,7 +376,7 @@ public sealed class FarmhandForEachExpansionTests
     public void ReEnteringTheSamePassReplaysEachRowsReceiptInsteadOfApplyingItAgain()
     {
         FarmhandForEachSource patch = Rect(60, 18, 3, 1);
-        var loop = new FarmhandForEachLoop(patch, null, new FarmhandForEachEffect("till_soil"));
+        var loop = new FarmhandForEachLoop(patch, null, new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
         var handler = new RecordingHandler();
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "till_soil");
         FarmhandForEachDispatch dispatch = DispatchTo(router, ledger);
@@ -397,7 +397,7 @@ public sealed class FarmhandForEachExpansionTests
     [Fact]
     public void AnEffectThatThrewKeepsTheRoutersOwnUncertainReceiptAndIsNotRetried()
     {
-        var loop = new FarmhandForEachLoop(Rect(60, 18, 2, 1), null, new FarmhandForEachEffect("till_soil"));
+        var loop = new FarmhandForEachLoop(Rect(60, 18, 2, 1), null, new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
         var handler = new ThrowingHandler();
         var router = new FarmhandActionRouter();
         router.Register(
@@ -418,7 +418,7 @@ public sealed class FarmhandForEachExpansionTests
     [Fact]
     public void AnInvalidLoopIsRefusedBeforeAnyRowIsRead()
     {
-        var loop = new FarmhandForEachLoop(Rect(0, 0, 20, 20), null, new FarmhandForEachEffect("cut_weeds"));
+        var loop = new FarmhandForEachLoop(Rect(0, 0, 20, 20), null, new FarmhandForEachEffect(new FarmhandForEachStep("cut_weeds")));
         loop.IsValid.Should().BeFalse();
         var handler = new RecordingHandler();
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "cut_weeds");
@@ -436,7 +436,7 @@ public sealed class FarmhandForEachExpansionTests
     [Fact]
     public void TheRulesOfAPassAreEnumeratedInTheOrderTheyAreDecided()
     {
-        var own = new FarmhandForEachEffect("cut_weeds");
+        var own = new FarmhandForEachEffect(new FarmhandForEachStep("cut_weeds"));
         var second = new FarmhandForEachRule(new[] { Stride(FarmhandForEachPredicate.RowOperator, 2, 1) }, Plant("coffee"));
         var loop = new FarmhandForEachLoop(Rect(60, 18, 3, 3), null, own, new[] { second });
 

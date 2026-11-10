@@ -35,7 +35,7 @@ public sealed record FarmhandForEachRow(
 /// </para>
 /// <para>
 /// <see cref="Kind"/> is the row's OWN word for what stands there, carried for the one caller that must answer
-/// <see cref="FarmhandForEachEffect.ByKindAction"/>: the classifier beside the row reader is the only thing that can say
+/// <see cref="FarmhandForEachStep.ByKindAction"/>: the classifier beside the row reader is the only thing that can say
 /// which action clears a kind, and it needs the kind to say it.
 /// </para>
 public sealed record FarmhandForEachTarget(
@@ -71,6 +71,15 @@ public enum FarmhandForEachTargetOutcome
 }
 
 /// <summary>
+/// One step of a row's chain, in the words every answer already uses: its position in the chain, the action it was, and
+/// what became of it.
+///
+/// <see cref="Step"/> is the position the caller WROTE (`0` is the first step), so a row's `stopped_at` and this list
+/// name the same step for the same row.
+/// </summary>
+public sealed record FarmhandForEachStepResult(int Step, string ActionId, FarmhandForEachTargetOutcome Outcome, string? ReasonCode);
+
+/// <summary>
 /// One row of a pass, with its own receipt when it produced one.
 ///
 /// <para>
@@ -78,6 +87,12 @@ public enum FarmhandForEachTargetOutcome
 /// first: <c>healed=&lt;occupant&gt;:&lt;clearingAction&gt;</c>, in the catalogue's own names for both halves. The row's
 /// <see cref="Outcome"/> and <see cref="ReasonCode"/> are then the REQUESTED action's, because the clearing swing is a
 /// means and not the answer - a reader asking "was the tile tilled" must not be told "a weed was cut".
+/// </para>
+/// <para>
+/// <see cref="Steps"/> is every step the row took, in the order it took them - one shape whether the row's `do` was a
+/// single action or a chain, so a reader never has to ask which form it is looking at. <see cref="StoppedAt"/> is set only
+/// on a CHAIN that stopped before its last step (<c>&lt;step&gt;:&lt;reasonCode&gt;</c>): a one-action row already says
+/// `refused`/`failed`/`stopped`, and repeating that as a position would be a second spelling of the same fact.
 /// </para>
 /// </summary>
 public sealed record FarmhandForEachTargetResult(
@@ -91,7 +106,9 @@ public sealed record FarmhandForEachTargetResult(
     ExecutionState? State,
     string? ReasonCode,
     string? Evidence,
-    string? Healed = null)
+    string? Healed = null,
+    IReadOnlyList<FarmhandForEachStepResult>? Steps = null,
+    string? StoppedAt = null)
 {
     /// <summary>Where the target is, in the one shape every answer uses - or null when the row carries no tile.</summary>
     public string? Tile => this.X is null || this.Y is null
@@ -128,6 +145,14 @@ public sealed record FarmhandForEachPassResult(
 
     /// <summary>How many rows the pass opened before working them, derived from the rows like every other count here.</summary>
     public int Healed => this.Targets.Count(target => target.Healed is not null);
+
+    /// <summary>
+    /// How many native effects the pass performed, derived from the rows like every other count here.
+    ///
+    /// A one-action pass answers <c>Steps == Decided</c>; a pass of chains answers more, and that is the number a reader
+    /// needs to see that one pass did what four passes used to.
+    /// </summary>
+    public int Steps => this.Targets.Sum(target => target.Steps?.Count ?? 0);
 
     private int Count(FarmhandForEachTargetOutcome outcome) =>
         this.Targets.Count(target => target.Outcome == outcome);
@@ -173,6 +198,12 @@ public static class FarmhandForEachExpansion
 {
     /// <summary>Why a dispatch the router refused is reported, when the router named nothing.</summary>
     public const string DispatchRefusedReason = "for_each_dispatch_refused";
+
+    /// <summary>Why a chain that stopped early but whose stopping step named nothing is reported: silence is not a reason.</summary>
+    private const string StepStoppedWithoutReason = "step_stopped_without_reason";
+
+    /// <summary>The word a row the pass never reached carries when STOP is what stopped it.</summary>
+    private const string StoppedReason = "stopped";
 
     /// <summary>How many characters of the caller's request id a row's own id keeps, so the row id stays an identifier.</summary>
     private const int RowIdentityPrefixLength = 64;
@@ -243,25 +274,102 @@ public static class FarmhandForEachExpansion
             if (stopRequested())
             {
                 stopped = true;
-                targets.Add(Skipped(row, FarmhandForEachTargetOutcome.Stopped, "stopped"));
+                targets.Add(Skipped(row, FarmhandForEachTargetOutcome.Stopped, StoppedReason));
                 continue;
             }
-            var target = new FarmhandForEachTarget(effect.Action, row.X, row.Y, effect.Arguments, KindOf(row));
-            string rowRequestId = RowIdentity(prefix, row, "req");
-            string rowExecutionId = RowIdentity(prefix, row, "exec");
-            FarmhandForEachTargetResult result = DispatchOne(target, row, rowRequestId, rowExecutionId, dispatch);
-            // A ROW THE TILE REFUSED IS A TILE THE PASS HAS NOT FINISHED WITH. `Refused` is the pass's own pre-dispatch
-            // refusal and `Rejected` is the same fact one layer down - the action's admission declined before any native
-            // effect. Nothing else is healed: a `Failed` row ran and may have written, an `Uncertain` one may have, and a
-            // `Cancelled`/`Invalidated` one was stopped - retrying past any of those would apply a side effect twice.
-            if (result.Outcome == FarmhandForEachTargetOutcome.Refused
-                || (result.Outcome == FarmhandForEachTargetOutcome.Failed && result.State == ExecutionState.Rejected))
-                result = Heal(row, target, prefix, result, isActionEnabled, dispatch, stopRequested, ref stopped);
+            FarmhandForEachTargetResult result = DispatchChain(row, effect, prefix, isActionEnabled, dispatch, stopRequested, ref stopped);
             targets.Add(result);
             if (result.Outcome == FarmhandForEachTargetOutcome.Deferred) actorBusy = true;
         }
         return new FarmhandForEachPassResult(targets.AsReadOnly(), omitted, stopped);
     }
+
+    /// <summary>
+    /// ONE ROW'S CHAIN: the steps in the order the caller wrote them, on one tile, in one pass.
+    ///
+    /// <para>
+    /// EVERY STEP IS ITS OWN DISPATCH, through the same table a single action uses. The next step sees what the last one
+    /// did, because the seam reads the live world on the game thread - so a step's preconditions are the action's OWN, and
+    /// this pass keeps no second table of them. A step that is not `Succeeded` ENDS THE CHAIN at that step: nothing is
+    /// rolled back (the world does not roll back a swing), and nothing after it is tried on a tile the previous step did
+    /// not prepare.
+    /// </para>
+    /// <para>
+    /// A BLOCKED STEP IS THE HEAL'S CASE, UNCHANGED: the existing one-clear-one-retry opens the tile for THAT step alone,
+    /// and a clear the catalogue marks destructive is refused as `no_safe_clear` and stops the chain on the same line. The
+    /// chain adds no second clearing policy of its own.
+    /// </para>
+    /// <para>
+    /// `Deferred` IS NOT A STOP. A receipt that has not settled leaves the actor owned by the native body, so the chain (and
+    /// then the pass) ends and a later pass re-enters - and the identities are per row AND per step, so the steps that
+    /// already settled replay instead of running twice.
+    /// </para>
+    /// </summary>
+    private static FarmhandForEachTargetResult DispatchChain(
+        FarmhandForEachRow row,
+        FarmhandForEachEffect effect,
+        string prefix,
+        Func<string, bool> isActionEnabled,
+        FarmhandForEachDispatch dispatch,
+        Func<bool> stopRequested,
+        ref bool stopped)
+    {
+        bool chained = effect.Steps.Length > 1;
+        var steps = new List<FarmhandForEachStepResult>(effect.Steps.Length);
+        FarmhandForEachTargetResult? last = null;
+        for (int index = 0; index < effect.Steps.Length; index++)
+        {
+            FarmhandForEachStep step = effect.Steps[index];
+            // STOP lands between two effects of ONE row exactly as it does between two rows: the step in flight finishes,
+            // the next one does not start, and the steps that ran keep their receipts.
+            if (index > 0 && stopRequested())
+            {
+                stopped = true;
+                return Finish(Skipped(row, FarmhandForEachTargetOutcome.Stopped, StoppedReason), steps, ChainStoppedAt(chained, index, StoppedReason));
+            }
+            var target = new FarmhandForEachTarget(step.Action, row.X, row.Y, step.Arguments, KindOf(row));
+            FarmhandForEachTargetResult stepResult = DispatchOne(
+                target,
+                row,
+                RowIdentity(prefix, row, index, "req"),
+                RowIdentity(prefix, row, index, "exec"),
+                dispatch);
+            // A ROW THE TILE REFUSED IS A TILE THE PASS HAS NOT FINISHED WITH. `Refused` is the pass's own pre-dispatch
+            // refusal and `Rejected` is the same fact one layer down - the action's admission declined before any native
+            // effect. Nothing else is healed: a `Failed` step ran and may have written, an `Uncertain` one may have, and a
+            // `Cancelled`/`Invalidated` one was stopped - retrying past any of those would apply a side effect twice.
+            if (stepResult.Outcome == FarmhandForEachTargetOutcome.Refused
+                || (stepResult.Outcome == FarmhandForEachTargetOutcome.Failed && stepResult.State == ExecutionState.Rejected))
+                stepResult = Heal(row, target, prefix, index, stepResult, isActionEnabled, dispatch, stopRequested, ref stopped);
+            steps.Add(new FarmhandForEachStepResult(index, target.ActionId, stepResult.Outcome, stepResult.ReasonCode));
+            last = stepResult;
+            if (stepResult.Outcome == FarmhandForEachTargetOutcome.Succeeded) continue;
+            // THE CHAIN STOPS WHERE IT STOPPED. A `Deferred` step is the one that carries no `stopped_at`: the actor is busy
+            // and a later pass continues, which is not the same fact as "this tile stopped being worked".
+            return Finish(
+                stepResult,
+                steps,
+                stepResult.Outcome == FarmhandForEachTargetOutcome.Deferred ? null : ChainStoppedAt(chained, index, stepResult.ReasonCode));
+        }
+        return Finish(last!, steps, null);
+    }
+
+    /// <summary>One row's answer with the steps it took, and the step it stopped at when it stopped early.</summary>
+    private static FarmhandForEachTargetResult Finish(
+        FarmhandForEachTargetResult row,
+        IReadOnlyList<FarmhandForEachStepResult> steps,
+        string? stoppedAt) =>
+        row with { Steps = steps, StoppedAt = stoppedAt };
+
+    /// <summary>
+    /// Where a chain stopped, in the row's own receipt: <c>&lt;step&gt;:&lt;reasonCode&gt;</c>.
+    ///
+    /// A ONE-ACTION ROW HAS NONE: `refused`, `failed` and `stopped` already say what happened to it, and a position would be
+    /// a second spelling of the same fact. This word exists for the row that took the first of several steps and not the
+    /// rest, which is the one shape the counts alone cannot describe.
+    /// </summary>
+    private static string? ChainStoppedAt(bool chained, int step, string? reasonCode) =>
+        chained ? string.Create(CultureInfo.InvariantCulture, $"{step}:{Blank(reasonCode) ?? StepStoppedWithoutReason}") : null;
 
     private static FarmhandForEachTargetResult DispatchOne(
         FarmhandForEachTarget target,
@@ -317,6 +425,7 @@ public static class FarmhandForEachExpansion
         FarmhandForEachRow row,
         FarmhandForEachTarget target,
         string prefix,
+        int step,
         FarmhandForEachTargetResult refused,
         Func<string, bool> isActionEnabled,
         FarmhandForEachDispatch dispatch,
@@ -348,16 +457,16 @@ public static class FarmhandForEachExpansion
         FarmhandForEachTargetResult cleared = DispatchOne(
             clearTarget,
             row,
-            RowIdentity(prefix, row, "clear"),
-            RowIdentity(prefix, row, "clear-exec"),
+            RowIdentity(prefix, row, step, "clear"),
+            RowIdentity(prefix, row, step, "clear-exec"),
             dispatch);
         if (cleared.Outcome != FarmhandForEachTargetOutcome.Succeeded) return cleared;
 
         FarmhandForEachTargetResult retried = DispatchOne(
             target,
             row,
-            RowIdentity(prefix, row, "req-retry"),
-            RowIdentity(prefix, row, "exec-retry"),
+            RowIdentity(prefix, row, step, "req-retry"),
+            RowIdentity(prefix, row, step, "exec-retry"),
             dispatch);
         return retried with { Healed = FarmhandForEachHealing.HealedToken(clearance.Occupant, clearer.ActionId) };
     }
@@ -386,10 +495,19 @@ public static class FarmhandForEachExpansion
     /// The row's own dispatch identity, derived from the pass's and not from a counter.
     ///
     /// Deterministic on purpose: re-entering the pass after a STOP, a deferral or a reconnect mints the SAME identity for
-    /// the same row, so the router answers with the receipt it already recorded instead of running the effect twice.
+    /// the same row AND the same step, so the router answers with the receipt it already recorded instead of running the
+    /// effect twice.
+    ///
+    /// THE FIRST STEP KEEPS THE IDENTITY A SINGLE-ACTION LOOP ALREADY GIVES ITS ROW, unsuffixed. A journal holds that
+    /// spelling for a row it dispatched before chains existed, and renaming the row's own first step would replay it as a
+    /// new effect on a tile the world has already moved on.
     /// </summary>
-    private static string RowIdentity(string prefix, FarmhandForEachRow row, string kind) =>
-        string.Create(CultureInfo.InvariantCulture, $"{prefix}-{kind}-r{row.LocalRow}c{row.LocalColumn}");
+    private static string RowIdentity(string prefix, FarmhandForEachRow row, int step, string kind)
+    {
+        // The first step is unsuffixed, so a row and its first step share the identity a single-action loop already mints.
+        string suffix = step == 0 ? string.Empty : step.ToString(CultureInfo.InvariantCulture);
+        return string.Create(CultureInfo.InvariantCulture, $"{prefix}-{kind}{suffix}-r{row.LocalRow}c{row.LocalColumn}");
+    }
 
     /// <summary>The row's own word for what it is, which is what `no_rule_matched` must name.</summary>
     private static string KindOf(FarmhandForEachRow row) =>

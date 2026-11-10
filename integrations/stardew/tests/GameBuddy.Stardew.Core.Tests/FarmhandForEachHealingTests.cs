@@ -45,7 +45,7 @@ public sealed class FarmhandForEachHealingTests
     public void AWeedOnATillableStripIsCutAndItsTileIsTilledInTheSamePass()
     {
         FarmhandForEachSource strip = Strip(60, 18, 6);
-        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect("till_soil"));
+        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
         var world = new TileWorld();
         world.Occupy(62, 18, "weed", "cut_weeds");
 
@@ -86,7 +86,7 @@ public sealed class FarmhandForEachHealingTests
     public void HerOwnCropIsNeverScythedToOpenATillableTile()
     {
         FarmhandForEachSource strip = Strip(60, 18, 6);
-        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect("till_soil"));
+        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
         var world = new TileWorld();
         world.Occupy(62, 18, "crop", "scythe_crop");
 
@@ -119,7 +119,7 @@ public sealed class FarmhandForEachHealingTests
     public void ATileThatStillRefusesAfterOneClearIsRefusedAndNothingIsSweptTwice()
     {
         FarmhandForEachSource strip = Strip(60, 18, 1);
-        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect("till_soil"));
+        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
         var world = new TileWorld();
         world.Occupy(60, 18, "weed", "cut_weeds");
         world.KeepBlocking = true;
@@ -147,7 +147,7 @@ public sealed class FarmhandForEachHealingTests
     public void AnOccupantNoPublishedActionClearsIsRefusedByName()
     {
         FarmhandForEachSource strip = Strip(60, 18, 1);
-        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect("till_soil"));
+        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
         var world = new TileWorld();
         world.Occupy(60, 18, "bush", clearer: null);
 
@@ -168,7 +168,7 @@ public sealed class FarmhandForEachHealingTests
     public void ARowThatAlreadyDispatchedTheActionThatClearsItsOccupantKeepsItsOwnRefusal()
     {
         FarmhandForEachSource strip = Strip(60, 18, 1);
-        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect("break_rock"));
+        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(new FarmhandForEachStep("break_rock")));
         var world = new TileWorld();
         world.Occupy(60, 18, "stone", "break_rock");
         world.ClearRefusal = "tool_level_insufficient";
@@ -190,7 +190,7 @@ public sealed class FarmhandForEachHealingTests
     public void AClearThatItsOwnAdmissionRejectedReportsThatReceipt()
     {
         FarmhandForEachSource strip = Strip(60, 18, 1);
-        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect("till_soil"));
+        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
         var world = new TileWorld();
         world.Occupy(60, 18, "weed", "cut_weeds");
         world.ClearRefusal = "basic_scythe_not_equipped";
@@ -212,7 +212,7 @@ public sealed class FarmhandForEachHealingTests
     public void StopBetweenTheRefusalAndTheClearEndsThePassWithoutSwinging()
     {
         FarmhandForEachSource strip = Strip(60, 18, 2);
-        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect("till_soil"));
+        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
         var world = new TileWorld();
         world.Occupy(60, 18, "weed", "cut_weeds");
 
@@ -258,7 +258,7 @@ public sealed class FarmhandForEachHealingTests
                 examined += 1;
 
                 FarmhandForEachSource strip = Strip(60, 18, 1);
-                var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(requestedAction));
+                var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(new FarmhandForEachStep(requestedAction)));
                 var world = new TileWorld();
                 world.Occupy(60, 18, occupant, clearingAction);
                 world.IsEnabled = actionId => string.Equals(actionId, clearingAction, StringComparison.Ordinal);
@@ -307,7 +307,7 @@ public sealed class FarmhandForEachHealingTests
                 examined += 1;
 
                 FarmhandForEachSource strip = Strip(60, 18, 1);
-                var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(requestedAction));
+                var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(new FarmhandForEachStep(requestedAction)));
                 var world = new TileWorld();
                 world.Occupy(60, 18, occupant, clearingAction);
 
