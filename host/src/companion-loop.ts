@@ -366,10 +366,9 @@ export class CompanionLoop {
       this.#cancelQueuedDelivery = resolveCancelled;
       // The player's Settings may have moved since the previous turn: the model a companion turn runs
       // with is the selection the player holds NOW, exactly as a Chat turn re-reads it before its own
-      // prompt. A reload that fails is not swallowed into the turn - an unusable selection must reach
-      // the player as a failed turn, never as one answered on the model they just left - and the pump
-      // restores this exact batch for the retry, so nothing is lost.
-      if (this.reloadModelSelection !== undefined) await this.reloadModelSelection();
+      // prompt. It is also the one place this turn stands still with a prompt still owed, so it is
+      // where STOP has to be able to win - see `#reloadModelSelectionUnlessSealed`.
+      if (!(await this.#reloadModelSelectionUnlessSealed(cancelled))) return "unobserved";
       // Bind this turn's keyword-gated world-book entries to the exact batch Pi is about
       // to consume, the way the Chat surface binds its own volatile sources immediately
       // before `session.prompt`. The batch id is this turn's own identity, so two turns
@@ -761,6 +760,27 @@ export class CompanionLoop {
       if (this.pump.hasExecutionInFlight) this.#activity.transition("busy");
       else if (!this.pump.hasPendingDelivery) this.#activity.transition("idle");
     }
+  }
+
+  /**
+   * Re-reads this turn's model selection unless STOP seals the turn first.
+   *
+   * <p>
+   * This is the turn's only suspension point between "this turn exists" and "Pi is prompted", and awaiting it plainly
+   * left that window open: a STOP landing here resolved the turn's own cancellation while the turn stood still, and
+   * the turn then resumed into `subscribe` and `sendUserMessage` - a prompt handed to a session STOP had already
+   * sealed. Its listener was revoked moments later by the `finally` below, so nothing was left observing what Pi did
+   * with that message. Racing the two makes the seal and the reload mutually exclusive.
+   * </p>
+   *
+   * @returns `false` when STOP sealed this turn during the reload; the caller must then end the turn unobserved
+   * without prompting Pi.
+   */
+  async #reloadModelSelectionUnlessSealed(cancelled: Promise<void>): Promise<boolean> {
+    if (this.reloadModelSelection === undefined) return true;
+    // A reload that fails keeps its own meaning: an unusable selection fails the turn and the pump restores this exact
+    // batch for the retry. Only the seal outranks it, and only by landing first.
+    return await Promise.race([this.reloadModelSelection().then(() => true), cancelled.then(() => false)]);
   }
 
   /** Evidence loss invalidates the live gate but must not stall Pi/STOP control. */
