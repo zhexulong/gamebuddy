@@ -677,3 +677,27 @@ test("a row identity inside a later step is refused by name", () => {
   assert.equal(result.ok, false);
   assert.equal(result.ok ? "" : result.code, PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL);
 });
+
+/**
+ * THE DESCRIPTION TEACHES THE CHAIN, AND ITS BOUND IS THE READER'S BOUND.
+ *
+ * The form is only reachable if the block the companion reads shows it: a grammar that accepts an array and a description
+ * that only ever shows a single action is `stardew_express_emote` again - named in the prompt, absent from the tool list. So
+ * the teaching block is asserted here, with the step count read from the constant the reader refuses past, and the receipt
+ * words (`steps`, `stopped_at`) the Mod's own row carries.
+ */
+test("the plan description shows the chain and prints the bound the reader enforces", () => {
+  const description = planWorkDescription(ACTIONS);
+  assert.ok(
+    description.includes('do: [{ action: "till_soil" }, { action: "plant_seed", seed: "hops" }]'),
+    "the description shows a two-step chain, or the companion never learns the form exists",
+  );
+  assert.ok(
+    description.includes(`at most ${String(MAX_FOR_EACH_STEPS)} of them`),
+    "the step bound the description prints is the constant the reader refuses past",
+  );
+  assert.ok(
+    description.includes("stopped_at"),
+    "a row that stopped half-done is described in the words the Mod answers it in",
+  );
+});

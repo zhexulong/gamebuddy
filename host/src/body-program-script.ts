@@ -6,6 +6,7 @@ import {
   MAX_FOR_EACH_LOOP_DOCUMENT_CHARS,
   MAX_FOR_EACH_ROWS,
   MAX_FOR_EACH_RULES,
+  MAX_FOR_EACH_STEPS,
   PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL,
   PLAN_FOR_EACH_SOURCES,
   type PlanForEachLoop,
@@ -876,6 +877,12 @@ export function planSettlementNote(nodeCount: number): string {
  * (`host-service.ts` `acceptIntegrationFact` -> `CompanionEventPump.flush`), and a terminal receipt is not a held progress
  * fact, so it starts a follow-up turn (`event-pump.ts` `#hasPendingFactTrigger`). Measured 2026-11-03 (`round29`): 48
  * `program_status` calls, `waitMs` median 30,000, 248 s blocked - the description never said a receipt was coming.
+ *
+ * THE CHAIN SENTENCE AND THE READER'S BOUND ARE ONE FACT. The step count printed below is `MAX_FOR_EACH_STEPS`
+ * interpolated, and `readStepChain` refuses an overlong chain with that same constant in the answer, so a caller is never
+ * taught a shape the compiler then refuses with a different number. Change one and the printed sentence moves with it;
+ * change the sentence's MEANING without changing the reader and the two disagree silently, which is how a form ends up
+ * named in the description and absent from the tool it names.
  */
 export function planWorkDescription(actions: readonly PublishedPlanAction[]): string {
   return (
@@ -890,15 +897,22 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     "  where: [{ col: { every: 3, offset: 0 } }],\n" +
     '  do: { action: "till_soil" }\n' +
     "});\n" +
+    "// A tile's work is a CHAIN when one action does not finish it - till, then sow, in this order:\n" +
+    "builder.for_each({\n" +
+    "  source: { area: { x: 60, y: 18, w: 20, h: 3 } },\n" +
+    '  do: [{ action: "till_soil" }, { action: "plant_seed", seed: "hops" }]\n' +
+    "});\n" +
     "// Or a batch over a snapshot family:\n" +
     "for (const crop of snapshot.cropTargets) {\n" +
     "  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId });\n" +
     "}\n" +
-    'builder.for_each({ source, where, do }) is ONE loop over a collection of live world rows, expanded by the Mod on the game thread: `source` is exactly one of { area: { x, y, w, h } }, { family: "cropTargets" } or { query: { subject } }; `where` is a list of field tests ({ field: "kind", in: ["weed"] }, { field: "health", gt: 0 }) and/or position guards ({ col: { every: 3, offset: 0 } }, { row: { every: 2, offset: 1 } }); `do` is an action from the list above with its own arguments, or null for a row left deliberately alone (a path). Several for_each calls over the SAME source are the rules of that one pass, decided per row by the first rule that claims it - which is how an intercropped patch is one intent. The caller needs no observation first - no target id, no per-tile coordinate - because the rows are read live. ' +
+    'builder.for_each({ source, where, do }) is ONE loop over a collection of live world rows, expanded by the Mod on the game thread: `source` is exactly one of { area: { x, y, w, h } }, { family: "cropTargets" } or { query: { subject } }; `where` is a list of field tests ({ field: "kind", in: ["weed"] }, { field: "health", gt: 0 }) and/or position guards ({ col: { every: 3, offset: 0 } }, { row: { every: 2, offset: 1 } }); `do` is an ORDERED CHAIN of steps worked on ONE tile - each step an action from the list above with its own arguments, at most ' +
+    String(MAX_FOR_EACH_STEPS) +
+    " of them, or a single action (the chain of length one), or null for a row left deliberately alone (a path). Several for_each calls over the SAME source are the rules of that one pass, decided per row by the first rule that claims it - which is how an intercropped patch is one intent. The caller needs no observation first - no target id, no per-tile coordinate - because the rows are read live. " +
     forEachRowIdentityText() +
     "A row no predicate claims is reported as no_rule_matched:<kind>@<x>,<y> rather than skipped, one loop addresses at most " +
     String(MAX_FOR_EACH_ROWS) +
-    " rows, and a loop inside a loop is refused by name. The Mod EXECUTES the loop: each row is decided against the world as it is at that moment and dispatched through the same action path a single step takes, so the node's answer carries `succeeded`/`failed`/`refused`/`left_alone`/`not_matched`/`deferred` counts and ONE ROW PER TILE with its own action, state and reasonCode. A tile that is not on the farm (not_on_farm), a kind `by_kind` cannot resolve (no_action_for_kind:<kind>), an action the live policy disables (row_action_not_enabled:<actionId>) and an argument the action declares that the loop cannot supply (row_argument_missing:<name>) are each NAMED PER ROW rather than skipped - a skipped row reads as a cleared patch. Only { area } is expanded today: { family } and { query } are refused by name as " +
+    " rows, and a loop inside a loop is refused by name. The Mod EXECUTES the loop: each row is decided against the world as it is at that moment and dispatched through the same action path a single step takes, so the node's answer carries `succeeded`/`failed`/`refused`/`left_alone`/`not_matched`/`deferred` counts and ONE ROW PER TILE with its own action, state and reasonCode - and a row worked as a chain also carries its `steps` in the order it took them, plus `stopped_at=<step>:<reasonCode>` when it stopped before its last step, so a tile that stopped half-done says where. A tile that is not on the farm (not_on_farm), a kind `by_kind` cannot resolve (no_action_for_kind:<kind>), an action the live policy disables (row_action_not_enabled:<actionId>) and an argument the action declares that the loop cannot supply (row_argument_missing:<name>) are each NAMED PER ROW rather than skipped - a skipped row reads as a cleared patch. Only { area } is expanded today: { family } and { query } are refused by name as " +
     forEachSourcesUnavailableText() +
     ", and one loop document may be at most " +
     String(MAX_FOR_EACH_LOOP_DOCUMENT_CHARS) +
