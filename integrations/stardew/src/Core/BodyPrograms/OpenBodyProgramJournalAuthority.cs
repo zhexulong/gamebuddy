@@ -622,6 +622,20 @@ public sealed class OpenBodyProgramJournalAuthority
             if (result.RefusalDetail is not null) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
             if (!ValidFactSet(descriptor!, grant, result.Facts)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.FactProvenanceMismatch);
         }
+        // A PARTIAL SETTLEMENT CARRIES BOTH, and that is what makes it a verdict rather than a polite success. It did some
+        // of what it was asked, so the three proof projections are required exactly as a success requires them; it did
+        // not do the rest, so the three reason fields a failure may carry are legal here too. A terminal with no proof at
+        // all is not partial - nothing happened - and belongs in `Failed`.
+        else if (result.Outcome == BodyProgramNodeOutcome.PartiallySucceeded)
+        {
+            if (!BodyProgramValidation.IsOpaqueTerminalProof(result.ReceiptId) || !BodyProgramValidation.IsOpaqueTerminalProof(result.Evidence) || !BodyProgramValidation.IsOpaqueTerminalProof(result.PostconditionVerification)) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.TerminalProofMissing);
+            // No output fact. A fact is the statement that THIS NODE produced it, and the one producer of a partial
+            // settlement - the `for_each` pass - declares none; accepting one here would license a fact nothing proved.
+            if (result.Facts is null || result.Facts.Count != 0) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
+            if ((result.FailureCode is not null && !BodyProgramValidation.IsReasonCode(result.FailureCode))
+                || (result.Hint is not null && !BodyProgramValidation.IsValidNodeHint(result.Hint))
+                || (result.RefusalDetail is not null && !BodyProgramValidation.IsValidRefusalDetail(result.RefusalDetail))) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
+        }
         // A non-success terminal may carry WHY, and nothing that would read as proof of an effect: no facts, no receipt,
         // no evidence, no postcondition. The reason is a reason code (ADR-006 `:163`: "the code is not free-form text"),
         // the hint says where to go instead, and the refusal detail says why in the refusing layer's own words - all three
@@ -636,7 +650,18 @@ public sealed class OpenBodyProgramJournalAuthority
             // The refusal detail is legal on exactly the states the hint is, and bounded separately: 512 characters is a
             // reason, not a payload, and a control character would let it forge a line of its own.
             || (result.RefusalDetail is not null && (result.Outcome is not (BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled) || !BodyProgramValidation.IsValidRefusalDetail(result.RefusalDetail)))) return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
-        BodyProgramNodeState nodeState = result.Outcome switch { BodyProgramNodeOutcome.Succeeded => BodyProgramNodeState.Succeeded, BodyProgramNodeOutcome.Failed => BodyProgramNodeState.Failed, BodyProgramNodeOutcome.Cancelled => BodyProgramNodeState.Cancelled, _ => BodyProgramNodeState.RecoveryRequired };
+        // The two statements are decided ONCE, here: an outcome that proves an effect carries the proof, and one that
+        // names a shortfall carries the reason. `PartiallySucceeded` is in both sets - that is the whole point of it.
+        bool provesEffect = result.Outcome is BodyProgramNodeOutcome.Succeeded or BodyProgramNodeOutcome.PartiallySucceeded;
+        bool namesShortfall = result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled or BodyProgramNodeOutcome.PartiallySucceeded;
+        BodyProgramNodeState nodeState = result.Outcome switch
+        {
+            BodyProgramNodeOutcome.Succeeded => BodyProgramNodeState.Succeeded,
+            BodyProgramNodeOutcome.PartiallySucceeded => BodyProgramNodeState.PartiallySucceeded,
+            BodyProgramNodeOutcome.Failed => BodyProgramNodeState.Failed,
+            BodyProgramNodeOutcome.Cancelled => BodyProgramNodeState.Cancelled,
+            _ => BodyProgramNodeState.RecoveryRequired,
+        };
         // Terminal settle releases every claim this attempt acquired at the
         // HostAdmitted boundary (ADR-006 durable acquire/release transition).
         IReadOnlyDictionary<string, BodyProgramClaimOwnershipState>? released = node.ClaimOwnership is { } claims ? BodyProgramValidation.FreezeMap(claims.ToDictionary(pair => pair.Key, _ => BodyProgramClaimOwnershipState.Released, StringComparer.Ordinal)) : null;
@@ -645,16 +670,16 @@ public sealed class OpenBodyProgramJournalAuthority
             State = nodeState,
             GrantId = null,
             ExecutionBinding = node.ExecutionBinding,
-            ReceiptId = result.Outcome == BodyProgramNodeOutcome.Succeeded ? result.ReceiptId : null,
-            Evidence = result.Outcome == BodyProgramNodeOutcome.Succeeded ? result.Evidence : null,
-            PostconditionVerification = result.Outcome == BodyProgramNodeOutcome.Succeeded ? result.PostconditionVerification : null,
+            ReceiptId = provesEffect ? result.ReceiptId : null,
+            Evidence = provesEffect ? result.Evidence : null,
+            PostconditionVerification = provesEffect ? result.PostconditionVerification : null,
             RecoveryDiagnostic = result.Outcome == BodyProgramNodeOutcome.Uncertain ? "execution_uncertain" : null,
-            FailureCode = result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled ? result.FailureCode : null,
-            Hint = result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled ? result.Hint : null,
+            FailureCode = namesShortfall ? result.FailureCode : null,
+            Hint = namesShortfall ? result.Hint : null,
             // The reason detail rides the same states as the hint, for the same reason: it names why nothing happened. Its
             // bound and its control-character ban are enforced by `BodyProgramValidation.IsValidRefusalDetail` on the write
             // path, on the read-back path and on the wire, so this assignment carries a checked value.
-            RefusalDetail = result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled ? result.RefusalDetail : null,
+            RefusalDetail = namesShortfall ? result.RefusalDetail : null,
             ClaimOwnership = released,
         };
         BodyProgramJournalProgram updated = ReplaceNode(program!, completed) with { Facts = result.Outcome == BodyProgramNodeOutcome.Succeeded ? Array.AsReadOnly(program!.Facts.Concat(result.Facts!).ToArray()) : program!.Facts };
@@ -667,8 +692,13 @@ public sealed class OpenBodyProgramJournalAuthority
          // Pending nodes still inside it: the shape the persistence layer's own comment calls the poison.
          //
          // `Rejected` already computes this closure; the asymmetry was that only one of the two terminals did.
+         //
+         // A PARTIAL SETTLEMENT OWES THE SAME CLOSURE, for the same mechanical reason: a node that consumes what this one
+         // produced can never run, because the fact it needs does not exist. Only a CONSUMING dependent is affected -
+         // `FailedDependents` walks `DependsOn` edges alone, so an ordering-only (`OrderedAfter`) successor of a 58-of-60
+         // pass starts normally, which is the case the state exists for.
          BodyProgramJournalNode[] skippedOnFailure =
-             result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled
+             namesShortfall
                  ? FailedDependents
                      .Compute(
                          updated.Program.Nodes.Select(descriptor => (descriptor.NodeId, descriptor.DependsOn.ToArray())).ToArray(),
@@ -1127,7 +1157,13 @@ public sealed class OpenBodyProgramJournalAuthority
     {
         if (program.State == BodyProgramState.Cancelled || program.State == BodyProgramState.RecoveryRequired) return program.State;
         if (BodyProgramGraphRules.HasExecutableWork(BodyProgramGraphRules.FromJournalNodes(program), BodyProgramGraphRules.StatesOf(program))) return BodyProgramState.Active;
-        return program.Nodes.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected) ? BodyProgramState.Failed : BodyProgramState.Succeeded;
+        // `PartiallySucceeded` is a settlement with no outright failure, so a program whose only shortfall is a partial node
+        // settled `Succeeded`: the plan ran to its end, and each node's row carries what that node did not do. A
+        // `SkippedDependency`, on the other hand, is work that will never run - a node can only be skipped because what it
+        // waited on can never arrive - so it keeps the program `Failed`, exactly as a failed dependency already does.
+        return program.Nodes.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency)
+            ? BodyProgramState.Failed
+            : BodyProgramState.Succeeded;
     }
     private static BodyProgramVerificationReport Rejected(string code, string? node, string path) => new(false, 0, null, new[] { new BodyProgramDiagnostic(BodyProgramDiagnosticSeverity.Error, code, node, path, code, BodyProgramVerifier.PreconditionForCode(code)) });
     private static ActionProgramCandidate ToCandidate(VerifiedBodyProgram program) => new(program.ProgramId, program.Nodes.Select(node => new ActionProgramCandidateNode(node.NodeId, node.ActionId, node.CanonicalArguments.ToDictionary(pair => pair.Key, pair => BodyProgramValidation.ToRuntimeValue(pair.Value), StringComparer.Ordinal), node.DependsOn, node.Bindings)
@@ -1147,7 +1183,7 @@ public sealed class OpenBodyProgramJournalAuthority
                 Nodes = Array.AsReadOnly(program.Nodes.Select(node => node.State switch
                 {
                     BodyProgramNodeState.Pending when node.NodeAttempt == 0 => node,
-                    BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.RecoveryRequired => node,
+                    BodyProgramNodeState.Succeeded or BodyProgramNodeState.PartiallySucceeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.RecoveryRequired => node,
                     _ => node with { State = BodyProgramNodeState.RecoveryRequired, GrantId = null, ExecutionBinding = node.ExecutionBinding, RecoveryDiagnostic = "recovery_required", ClaimOwnership = node.ClaimOwnership is null ? null : BodyProgramValidation.FreezeMap(node.ClaimOwnership.ToDictionary(pair => pair.Key, _ => BodyProgramClaimOwnershipState.Released, StringComparer.Ordinal)) },
                 }).ToArray())
             }).ToArray();

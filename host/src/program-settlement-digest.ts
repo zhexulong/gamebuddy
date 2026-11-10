@@ -81,7 +81,7 @@ export type SettledDigestNode = ReturnType<typeof planBatchAnswer>["nodes"][numb
  *
  * `counts` is over the WHOLE plan even when `nodes` is bounded (`MAX_SETTLED_DIGEST_NODES`), so `omitted` never turns
  * the aggregate into a partial one. Every state is the Mod's own token (`BodyProgramNodeState`), never a Host
- * translation: `succeeded`, `rejected`, `failed`, `cancelled`, `recovery_required`, `abandoned`,
+ * translation: `succeeded`, `partially_succeeded`, `rejected`, `failed`, `cancelled`, `recovery_required`, `abandoned`,
  * `skipped_dependency`, and the Host's own `unknown` for a node the journal did not list.
  *
  * Deliberately absent: `settledAtMs` and any clock. When the journal closed, and how long this Host watched a node in
@@ -271,9 +271,10 @@ export async function watchProgramSettlement(
 /**
  * One line the model can read without parsing twenty rows: `12 of 14 done, 2 rejected`.
  *
- * `done` counts `succeeded` only - a `failed` node is not done. Every OTHER state is named with its own count in a fixed
- * order, so a run that cancelled two nodes and abandoned one cannot be summarised as "12 of 14 done" and read as two
- * silent losses. Built from the same `counts` the fact publishes, so the sentence and the numbers cannot disagree.
+ * `done` counts `succeeded` only - a `failed` node is not done, and neither is a `partially_succeeded` one: it did PART
+ * of its work, and calling that done is the polite lie the state exists to refuse. Every OTHER state is named with its own
+ * count in a fixed order, so a run that partially worked a patch and abandoned a node cannot be summarised as
+ * "N of M done" and read as silent losses. Built from the same `counts` the fact publishes, so the sentence and the numbers cannot disagree.
  */
 export function settledSummary(counts: Readonly<Record<string, number>>, total: number): string {
   const parts = [`${counts.succeeded ?? 0} of ${total} done`];
@@ -286,6 +287,7 @@ export function settledSummary(counts: Readonly<Record<string, number>>, total: 
 const SETTLED_DIGEST_SUMMARY_STATES: readonly string[] = Object.freeze([
   "rejected",
   "failed",
+  "partially_succeeded",
   "cancelled",
   "recovery_required",
   "abandoned",

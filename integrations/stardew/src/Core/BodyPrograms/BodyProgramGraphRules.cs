@@ -133,11 +133,20 @@ internal static class BodyProgramGraphRules
     }
 
     /// <summary>
-    /// The states after which a node will never act again. Terminal is not "succeeded": a failed or vetoed predecessor has
-    /// settled whatever it was going to be, and a successor may start after it once its dependencies allow it.
+    /// The states after which a node will never act again. Terminal is not "succeeded": a failed, partial or vetoed
+    /// predecessor has settled whatever it was going to be, and a successor may start after it once its dependencies
+    /// allow it.
+    ///
+    /// <para>
+    /// `PartiallySucceeded` MUST be here, and it is the whole reason a pass can be reported honestly: an ordering-only
+    /// successor of a 58-of-60 pass starts, because the pass is over. A CONSUMING successor still cannot start - its
+    /// fact does not exist - but `DependenciesSatisfied` says that, and the journal settles it `SkippedDependency`
+    /// instead of leaving it Pending.
+    /// </para>
     /// </summary>
     internal static bool IsTerminal(BodyProgramNodeState state) => state is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed
-        or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.Abandoned;
+        or BodyProgramNodeState.PartiallySucceeded or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected
+        or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.Abandoned;
 
     private static bool DependenciesSatisfied(BodyProgramGraphNode node, IReadOnlyDictionary<string, BodyProgramNodeState> states) =>
         node.DependsOn.All(dependency => states[dependency] == BodyProgramNodeState.Succeeded);

@@ -46,9 +46,13 @@ const PROGRAM_STATE_NAMES = Object.freeze({
 /**
  * The node states, by durable numeric value (`BodyProgramModels.cs:145`).
  *
- * `skipped_dependency` (10) and `abandoned` (11) are Journal-authority states the bridge projection folds into
+ * `skipped_dependency` (10) and `abandoned` (11) are Journal-authority states the bridge projection used to fold into
  * `recovery_required` (`BridgeSession.ToWire`'s default arm). They are named here as the Mod names them, so a
  * journal-sourced node outcome does not inherit that lossy fold.
+ *
+ * `partially_succeeded` (12) is the settlement of a `for_each` pass that did part of its rows. A reader that scores a
+ * program from this file must not have to guess whether a partial pass was done or not done: it is neither, and the
+ * name is the only thing that says so.
  */
 const NODE_STATE_NAMES = Object.freeze({
   1: "pending",
@@ -62,6 +66,7 @@ const NODE_STATE_NAMES = Object.freeze({
   9: "rejected",
   10: "skipped_dependency",
   11: "abandoned",
+  12: "partially_succeeded",
 });
 
 /**

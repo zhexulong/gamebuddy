@@ -512,6 +512,7 @@ export function journalUnavailable(reason: string, missingField = "BodyProgramJo
  */
 const MY_WORK_NODE_BUCKETS: readonly (readonly [string, readonly string[]])[] = Object.freeze([
   ["succeeded", ["succeeded"]],
+  ["partiallySucceeded", ["partially_succeeded"]],
   ["failed", ["failed"]],
   ["cancelled", ["cancelled"]],
   ["rejected", ["rejected"]],
@@ -531,6 +532,7 @@ const MY_WORK_NODE_BUCKETS: readonly (readonly [string, readonly string[]])[] = 
 const MY_WORK_DISPATCHED: ReadonlySet<string> = new Set([
   "running",
   "succeeded",
+  "partially_succeeded",
   "failed",
   "cancelled",
   "recovery_required",

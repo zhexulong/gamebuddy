@@ -67,6 +67,45 @@ public sealed class BodyProgramNodeStateWireTests
         projected.Nodes[0].State.Should().Be("abandoned");
     }
 
+    /// <summary>
+    /// A PARTIAL PASS NAMES ITSELF ON THE WIRE, AND THE FRAME THAT CARRIES IT IS VALID.
+    ///
+    /// <para>
+    /// The state is the middle of three, so both neighbours would be lies about it: `succeeded` would contradict the row
+    /// table the same node carries (58 of 60 tiles), and the catch-all would report a verdict this product can state as one
+    /// it could not name. The second half is the load-bearing one: the wire validator has its own copy of the vocabulary,
+    /// so a state the journal can settle and the frame cannot carry would fail at the ONE boundary where the model reads
+    /// the answer - and it would fail by turning the whole `program_status` frame into `invalid_body_program_result`.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void APartiallySucceededNodeNamesItselfAndItsFrameIsAcceptedByTheWire()
+    {
+        var snapshot = Snapshot(new BodyProgramJournalNode(
+            "n01",
+            BodyProgramNodeState.PartiallySucceeded,
+            1,
+            1,
+            null,
+            Binding("n01"),
+            ReceiptId: "execution_1",
+            Evidence: "{\"state\":\"partially_succeeded\",\"succeeded\":5,\"refused\":1}",
+            PostconditionVerification: "for_each_pass:partially_succeeded:decided=6:succeeded=5:failed=0:refused=1",
+            FailureCode: "row_target_absent:cut_weeds:weedtargets",
+            Hint: "decided=6;succeeded=5;refused=1",
+            RefusalDetail: "decided=6;succeeded=5;refused=1;row_target_absent:cut_weeds:weedtargets=1"));
+
+        BridgeBodyProgramStatusSnapshot projected = BridgeSession.ToBridgeSnapshot(snapshot)!;
+
+        projected.Nodes[0].State.Should().Be("partially_succeeded");
+        // The proof of what happened and the reason for what did not travel TOGETHER on one node, in the fields each is
+        // legal in - which is the whole difference between this state and the two it sits between.
+        projected.Nodes[0].FailureCode.Should().Be("row_target_absent:cut_weeds:weedtargets");
+        projected.Nodes[0].RefusalDetail.Should().NotBeNull();
+        BridgeProtocol.TrySerialize(new BridgeBodyProgramStatusResult("found", projected), out _, out _).Should().BeTrue(
+            "the frame a partial node arrives on is one the wire validator accepts");
+    }
+
     [Fact]
     public void AnUnmappedNodeStateFailsClosedAndNamesItself()
     {

@@ -123,6 +123,21 @@ public sealed class BodyProgramOrderedAfterTests
             .Should().BeTrue();
         BodyProgramGraphRules.EligibleToStart(graph, States(("a", BodyProgramNodeState.SkippedDependency), ("b", BodyProgramNodeState.Pending)), "b")
             .Should().BeTrue();
+        // A pass that did PART of its rows is over too, and this is the case the partial verdict exists for: the ordering
+        // successor of a 58-of-60 strip starts, so a plan can keep going after one refused tile.
+        BodyProgramGraphRules.EligibleToStart(graph, States(("a", BodyProgramNodeState.PartiallySucceeded), ("b", BodyProgramNodeState.Pending)), "b")
+            .Should().BeTrue("a partial pass settled its rows, so what only had to happen after it may start");
+
+        // ...and a CONSUMING successor still may not: a partial pass produces no output fact, so the node that needs one
+        // would fail its binding. That distinction is the graph's, not the verdict's - the journal settles such a node
+        // `SkippedDependency` rather than leaving it Pending for ever.
+        IReadOnlyList<BodyProgramGraphNode> consuming = new[]
+        {
+            new BodyProgramGraphNode("a", Array.Empty<string>(), Array.Empty<string>(), Array.Empty<string>()),
+            new BodyProgramGraphNode("b", new[] { "a" }, Array.Empty<string>(), Array.Empty<string>()),
+        };
+        BodyProgramGraphRules.EligibleToStart(consuming, States(("a", BodyProgramNodeState.PartiallySucceeded), ("b", BodyProgramNodeState.Pending)), "b")
+            .Should().BeFalse("a partial predecessor produced no fact, so a node that consumes it cannot start");
     }
 
     /// <summary>

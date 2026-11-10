@@ -97,7 +97,8 @@ public sealed class ForEachNodeExecutionTests
 
     /// <summary>
     /// `do: { action: "by_kind" }` is resolved by the Mod's classifier, and a kind it cannot name an action for is a ROW
-    /// answer - never a silent skip, which is the defect this form exists to remove.
+    /// answer - never a silent skip, which is the defect this form exists to remove. The row that ran keeps the pass
+    /// PARTIAL rather than cancelling it: one kind with no action is not a verdict on the tile that was worked.
     /// </summary>
     [Fact]
     public void AKindWithNoActionIsARowRefusalAndNotASilentSkip()
@@ -109,7 +110,8 @@ public sealed class ForEachNodeExecutionTests
         harness.Run("{\"source\":{\"area\":{\"x\":4,\"y\":4,\"w\":2,\"h\":1}},\"do\":{\"action\":\"by_kind\"}}");
 
         BodyProgramStatusSnapshot status = harness.Status();
-        status.State.Should().Be(BodyProgramState.Failed);
+        status.State.Should().Be(BodyProgramState.Succeeded, "the plan ran to its end and no node failed outright");
+        status.Nodes.Single().State.Should().Be(BodyProgramNodeState.PartiallySucceeded, harness.Diagnostic);
         status.Nodes.Single().FailureCode.Should().Be("no_action_for_kind:ground", "the row that could not be resolved is named");
         harness.Handler.Requests.Should().ContainSingle("the tillable row really ran; the other one was refused by name");
         harness.Handler.Requests.Single().Args.X.Should().Be(4);
@@ -248,17 +250,71 @@ public sealed class ForEachNodeExecutionTests
     }
 
     /// <summary>
-    /// A FAILED PASS CARRIES ITS COUNTS IN `reasonDetail`, not only in the hint.
+    /// A PASS THAT DID PART OF THE WORK IS NEITHER A SUCCESS NOR A FAILURE, AND THE ROW TABLE SAYS WHICH PART.
+    ///
+    /// <para>
+    /// Measured 2026-11-11 (`round44`): a `cut_weeds` strip is the exact task this form exists for, and the verdict used to
+    /// be all-or-nothing - one refused row of sixty failed the whole node. A companion that sees a 59-of-60 pass reported
+    /// as `failed`, with the refused tile's reason on it and no account of the fifty-nine that worked, concludes that
+    /// batch loops do not work and writes one node per tile. The node now settles `PartiallySucceeded`: the aggregate
+    /// (what happened, row by row) AND the dominant reason plus counts (what did not) ride the SAME node, in the fields
+    /// each is legal in, so the next plan can see both halves.
+    /// </para>
+    /// <para>
+    /// The shape is the real one: a 2x3 strip of which one tile carries nothing for `cut_weeds` to name.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AStripWithOneRefusedTilePartiallySucceedsAndKeepsBothHalvesOfTheAnswer()
+    {
+        using var harness = ForEachHarness.Create();
+        for (int x = 10; x < 12; x++)
+            for (int y = 10; y < 13; y++)
+                if (!(x == 11 && y == 12)) harness.PlaceWeed(x, y);
+
+        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":2,\"h\":3}},\"do\":{\"action\":\"cut_weeds\",\"slot\":0}}");
+
+        BodyProgramStatusSnapshot status = harness.Status();
+        BodyProgramJournalNode node = harness.JournalNode();
+        node.State.Should().Be(
+            BodyProgramNodeState.PartiallySucceeded,
+            "five of six tiles were cut and one had nothing to cut: {0}",
+            node.RefusalDetail);
+        harness.Handler.Requests.Should().HaveCount(5, "each clear tile really ran; the bare one was refused before any native call");
+
+        // THE PROOF OF WHAT HAPPENED, in the field only a node that did something may carry, with the same row vocabulary
+        // a full pass uses - and a `state` word that says which verdict this aggregate is.
+        string evidence = harness.NodeEvidence();
+        evidence.Should().Contain("\"state\":\"partially_succeeded\"", "the aggregate names the verdict it belongs to");
+        evidence.Should().Contain("\"succeeded\":5").And.Contain("\"refused\":1");
+        evidence.Should().Contain("\"state\":\"refused\"", "the row that did not happen is named in the same table");
+        node.ReceiptId.Should().NotBeNull("a partial node proves the effects it did have, so it names a row receipt");
+        node.PostconditionVerification.Should().NotBeNull();
+
+        // THE REASON FOR WHAT DID NOT, in the fields a node that fell short may carry - the refused tile by name, and the
+        // counts beside it so the answer is not one bare code.
+        node.FailureCode.Should().Be("row_target_absent:cut_weeds:weedtargets");
+        node.Hint.Should().Contain("refused=1").And.Contain("succeeded=5");
+        node.RefusalDetail.Should().Contain("decided=6").And.Contain("row_target_absent:cut_weeds:weedtargets=1");
+
+        // THE PROGRAM IS NOT HELD OPEN BY A PARTIAL NODE: it settled, and its own state is not a failure - the shortfall
+        // is the node's, stated on the node.
+        status.State.Should().Be(BodyProgramState.Succeeded);
+    }
+
+    /// <summary>
+    /// A PARTIAL PASS CARRIES ITS COUNTS IN THE REASON DETAIL, exactly as a failed one does.
     ///
     /// <para>
     /// Measured 2026-11-10 (`round42`, day 6): the loop's hint held `decided=9;succeeded=0;failed=1;refused=8;...` and the
     /// detail a reader actually reads said `unknown_reason:failed`, because a failed node's evidence is dropped (ADR-006)
     /// and the aggregate never filled the one free-text field a failure may carry. The counts ARE the answer to "what did
-    /// the pass do", so they travel verbatim, in the same spelling `FailureCode` and the hint use.
+    /// the pass do", so they travel verbatim, in the same spelling `FailureCode` and the hint use - on the partial arm
+    /// too, where they are the only account of the rows that did not happen.
     /// </para>
     /// </summary>
     [Fact]
-    public void AFailedPassCarriesItsCountsInTheReasonDetail()
+    public void APartiallySucceededPassCarriesItsCountsInTheReasonDetail()
     {
         using var harness = ForEachHarness.Create();
         // One crop tile and two bare ones under one rectangle: a mixed pass, which is the shape a reader most needs counted.
@@ -267,9 +323,11 @@ public sealed class ForEachNodeExecutionTests
         harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":3,\"h\":1}},\"do\":{\"action\":\"water_crop\"}}");
 
         BodyProgramStatusSnapshot status = harness.Status();
-        status.State.Should().Be(BodyProgramState.Failed, "two of three rows were refused, so the pass did not finish");
+        status.Nodes.Single().State.Should().Be(
+            BodyProgramNodeState.PartiallySucceeded,
+            "one of three rows ran, so the pass did something and not everything");
         status.Nodes.Single().FailureCode.Should().Be("row_target_absent:water_crop:croptargets");
-        status.Nodes.Single().RefusalDetail.Should().NotBeNull("a failed pass owes a reader its counts");
+        status.Nodes.Single().RefusalDetail.Should().NotBeNull("a pass that fell short owes a reader its counts");
         string detail = status.Nodes.Single().RefusalDetail!;
         detail.Should().Contain("decided=3").And.Contain("succeeded=1").And.Contain("refused=2");
         detail.Should().Contain("row_target_absent:water_crop:croptargets=2");
@@ -462,6 +520,43 @@ public sealed class ForEachNodeExecutionTests
         single.Verification.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "action_not_enabled:cut_weeds");
     }
 
+    /// <summary>
+    /// A PARTIAL SETTLEMENT SURVIVES THE JOURNAL'S OWN READ-BACK.
+    ///
+    /// <para>
+    /// The state is a new durable value, and the write path validating it says nothing about the document the NEXT game
+    /// start decodes: reopen runs the same validator over what was written, and a shape it refuses does not fail loudly - it
+    /// quarantines the save scope (`PersistenceWriteFailed`), which is the failure mode that once made a one-frame animation
+    /// cooldown unplayable. So the round trip is asserted on the real store: close, open again, read the same node.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void APartiallySucceededNodeSurvivesTheJournalReadBack()
+    {
+        using var harness = ForEachHarness.Create();
+        for (int x = 10; x < 12; x++)
+            for (int y = 10; y < 13; y++)
+                if (!(x == 11 && y == 12)) harness.PlaceWeed(x, y);
+
+        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":2,\"h\":3}},\"do\":{\"action\":\"cut_weeds\",\"slot\":0}}");
+        harness.Status().Nodes.Single().State.Should().Be(BodyProgramNodeState.PartiallySucceeded, harness.Diagnostic);
+
+        // The same store, the same scope: this is the file the next session reads.
+        harness.Close();
+        OpenBodyProgramJournalAuthority reopened = OpenBodyProgramJournalAuthority.Open(
+            harness.Store,
+            FarmhandBodyProgramCatalogProjection.Create().Catalog!,
+            new BridgeScope("stardew", "save", "world", "player", "companion"),
+            () => new BodyProgramPolicyIdentity("policy-a", 1),
+            () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        BodyProgramStatusResult status = reopened.Status("program");
+        reopened.Close();
+        status.Code.Should().Be(BodyProgramQueryCode.Found, "a partial node is a shape the read-back validates");
+        status.Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.PartiallySucceeded);
+        status.Snapshot.Nodes.Single().RefusalDetail.Should().Contain("refused=1", "the reason survives with the proof");
+        status.Snapshot.Nodes.Single().Evidence.Should().NotBeNull();
+    }
+
     private static int CountOf(string text, string needle)
     {
         int count = 0;
@@ -652,17 +747,31 @@ public sealed class ForEachNodeExecutionTests
         internal string NodeEvidence() =>
             this.Authority.Snapshot.Programs.Single().Nodes.Single().Evidence ?? string.Empty;
 
+        /// <summary>The node as the DURABLE JOURNAL holds it, for the fields the wire projection does not carry.</summary>
+        internal BodyProgramJournalNode JournalNode() =>
+            this.Authority.Snapshot.Programs.Single().Nodes.Single();
+
         internal string Diagnostic => string.Join(
             ";",
             this.Authority.Events("program", 0, 64).Events.Select(@event => $"{@event.Kind}/{@event.NodeId}"));
 
         public void Dispose()
         {
-            this.Controller.Close();
-            this.Authority.Close();
+            this.Close();
             typeof(Game1).GetField("_player", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.SetValue(null, this.playerBefore);
             typeof(Game1).GetField("netWorldState", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)!.SetValue(null, this.worldStateBefore);
         }
+
+        /// <summary>The two owners closed in their own order, so a test can reopen the same store behind them.</summary>
+        internal void Close()
+        {
+            if (this.closed) return;
+            this.closed = true;
+            this.Controller.Close();
+            this.Authority.Close();
+        }
+
+        private bool closed;
 
         /// <summary>
         /// The node as the WIRE hands it over: the loop arrives tagged, and the bridge boundary turns it into the canonical

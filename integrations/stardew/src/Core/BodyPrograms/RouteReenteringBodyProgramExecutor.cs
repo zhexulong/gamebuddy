@@ -441,34 +441,49 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
             }
             // A rectangle may reach past the farm's own edge. Such a tile is NOT a row - there is nothing there to act on -
             // and it is still in the table by name, because a tile missing from the answer reads as one the pass forgot.
-            outsideFarm.Add((localRow, localColumn, RowJson(x, y, null, NotOnFarmState, TileOutsideFarmReason)));
+            outsideFarm.Add((localRow, localColumn, RowJson(x, y, null, NotOnFarmState, TileOutsideFarmReason, null)));
         }
 
         FarmhandForEachDispatch dispatch = (FarmhandForEachTarget target, string requestId, string executionId, out LocalExecutionReceipt receipt, out string reasonCode) =>
             this.DispatchRow(world, target, requestId, executionId, grant.DeadlineMs, out receipt, out reasonCode);
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, execution.RequestId, rows, dispatch, () => world.StopRequested);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, execution.RequestId, rows, dispatch, () => world.StopRequested, world.IsActionEnabled);
 
         var table = new List<(int LocalRow, int LocalColumn, string Json)>(outsideFarm);
         foreach (FarmhandForEachTargetResult result in pass.Targets)
-            table.Add((result.LocalRow, result.LocalColumn, RowJson(result.X, result.Y, result.Target?.ActionId, StateOf(result.Outcome), result.ReasonCode)));
+            table.Add((result.LocalRow, result.LocalColumn, RowJson(result.X, result.Y, result.Target?.ActionId, StateOf(result.Outcome), result.ReasonCode, result.Healed)));
 
         // A PASS THAT HAS NOT FINISHED IS NOT AN ANSWER. The native body still owns the embodied actor, so the node stays
         // bound-Running and a later tick re-enters this same pass: the row identities are deterministic, so the router
         // answers the settled rows with the receipts it already recorded and the pass continues from the busy one.
-        if (pass.Deferred > 0 && pass.Failed == 0 && pass.Refused == 0 && !pass.Stopped) return null;
-        if (pass.Stopped)
+        ForEachPassVerdict verdict = VerdictFor(pass);
+        if (verdict == ForEachPassVerdict.Continue) return null;
+        if (verdict == ForEachPassVerdict.Cancelled)
             return new BodyProgramTerminalResult(
                 execution, BodyProgramNodeOutcome.Cancelled, Array.Empty<RuntimeFact>(), null, null, null, ForEachStoppedReason,
                 FailureHint(pass), FailureDetail(pass));
-        if (pass.Failed > 0 || pass.Refused > 0) return Failed(execution, DominantReason(pass), FailureHint(pass), FailureDetail(pass));
-        if (pass.Decided == 0) return Failed(execution, "for_each_no_rows", FailureHint(pass), FailureDetail(pass));
-        // A pass that matched no rule did nothing, and "0 rows" is not a success: the caller asked for a patch and the
-        // rows it addressed were all somebody else's. The dominant row code names what the rows actually said.
-        if (pass.Succeeded == 0 && pass.LeftAlone == 0) return Failed(execution, DominantReason(pass), FailureHint(pass), FailureDetail(pass));
+        if (verdict is ForEachPassVerdict.NoRows or ForEachPassVerdict.Failed)
+            return Failed(execution, verdict == ForEachPassVerdict.NoRows ? NoRowsReason : DominantReason(pass), FailureHint(pass), FailureDetail(pass));
 
         int rowsOmitted = 0;
-        string aggregate = Aggregate(pass, table, ref rowsOmitted);
+        string aggregate = Aggregate(pass, table, StateToken(verdict), ref rowsOmitted);
+        // A PARTIAL PASS IS NOT A POLITE SUCCESS. It carries the proof of the rows that did happen (the same aggregate a
+        // full pass carries, whose `state` says which verdict this is) AND the dominant reason plus the counts for the
+        // rows that did not, in the same two fields a failed pass uses. That is the whole answer the caller needs: what
+        // got done, and which tiles did not and why - stated on one node, so the next plan does not have to discover it.
+        if (verdict == ForEachPassVerdict.PartiallySucceeded)
+            return new BodyProgramTerminalResult(
+                execution,
+                BodyProgramNodeOutcome.PartiallySucceeded,
+                Array.Empty<RuntimeFact>(),
+                // A pass that dispatched nothing (every row a deliberate path) has no row receipt, and its own dispatch
+                // identity is the lineage a reader needs to find this attempt.
+                LastReceiptId(pass) ?? execution.ExecutionId,
+                aggregate,
+                $"for_each_pass:partially_succeeded:decided={pass.Decided}:succeeded={pass.Succeeded}:failed={pass.Failed}:refused={pass.Refused}",
+                DominantReason(pass),
+                FailureHint(pass),
+                FailureDetail(pass));
         return new BodyProgramTerminalResult(
             execution,
             BodyProgramNodeOutcome.Succeeded,
@@ -479,6 +494,45 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
             aggregate,
             $"for_each_pass:decided={pass.Decided}:succeeded={pass.Succeeded}:left_alone={pass.LeftAlone}:omitted={pass.Omitted}");
     }
+
+    /// <summary>
+    /// What one pass's own counts decide about the node, as ONE function so a test can ask it directly and a gate can
+    /// enumerate every pass shape the row outcomes can produce.
+    ///
+    /// <para>
+    /// THE VERDICT IS NOT ALL-OR-NOTHING. A pass decides every row on its own, so a single refused row must not cancel
+    /// the fifty-nine that worked: the node settles <see cref="BodyProgramNodeOutcome.PartiallySucceeded"/> and the reason
+    /// for the refused rows rides `FailureCode`/`Hint`/`RefusalDetail` beside the aggregate. Measured `round44`: a
+    /// 60-row `cut_weeds` strip answered `decided=60;succeeded=0;failed=0;refused=60` because the identity seam could not
+    /// name a weed; the run that followed from a single refused row among clear ones was the companion concluding "batch
+    /// loops are unreliable, write one tile at a time" - which is what an all-or-nothing verdict teaches.
+    /// </para>
+    /// <para>
+    /// `Deferred` is not a failure: the native body still owns the actor, so the pass keeps re-entering. `Stopped` is a
+    /// cancellation of the pass, not of its settled rows. Zero succeeded rows is still `Failed` - the pass did nothing,
+    /// and "nothing happened" must never read as its mild neighbour.
+    /// </para>
+    /// </summary>
+    internal static ForEachPassVerdict VerdictFor(FarmhandForEachPassResult pass)
+    {
+        ArgumentNullException.ThrowIfNull(pass);
+        if (pass.Deferred > 0 && pass.Failed == 0 && pass.Refused == 0 && !pass.Stopped) return ForEachPassVerdict.Continue;
+        if (pass.Stopped) return ForEachPassVerdict.Cancelled;
+        if (pass.Decided == 0) return ForEachPassVerdict.NoRows;
+        // A pass that matched no rule did nothing, and "0 rows" is not a success: the caller asked for a patch and the
+        // rows it addressed were all somebody else's. The dominant row code names what the rows actually said.
+        if (pass.Succeeded == 0 && pass.LeftAlone == 0) return ForEachPassVerdict.Failed;
+        if (pass.Failed > 0 || pass.Refused > 0) return pass.Succeeded > 0 ? ForEachPassVerdict.PartiallySucceeded : ForEachPassVerdict.Failed;
+        return ForEachPassVerdict.Succeeded;
+    }
+
+    /// <summary>The word the aggregate's own `state` carries: the verdict, in the wire's vocabulary.</summary>
+    private static string StateToken(ForEachPassVerdict verdict) => verdict switch
+    {
+        ForEachPassVerdict.Succeeded => "succeeded",
+        ForEachPassVerdict.PartiallySucceeded => "partially_succeeded",
+        _ => throw new ArgumentOutOfRangeException(nameof(verdict), verdict, "A pass that did not settle has no aggregate."),
+    };
 
     /// <summary>
     /// One row's native effect, through the router a single node uses.
@@ -690,9 +744,9 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         _ => "not_matched",
     };
 
-    private static string RowJson(int? x, int? y, string? action, string state, string? reasonCode) =>
+    private static string RowJson(int? x, int? y, string? action, string state, string? reasonCode, string? healed) =>
         string.Create(CultureInfo.InvariantCulture,
-            $"{{\"x\":{x?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"y\":{y?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"action\":{JsonText(action)},\"state\":\"{state}\",\"reasonCode\":{JsonText(reasonCode)}}}");
+            $"{{\"x\":{x?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"y\":{y?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"action\":{JsonText(action)},\"state\":\"{state}\",\"reasonCode\":{JsonText(reasonCode)},\"healed\":{JsonText(healed)}}}");
 
     private static string JsonText(string? value) => value is null ? "null" : JsonSerializer.Serialize(value);
 
@@ -702,15 +756,15 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// The counts describe the PASS; <paramref name="rowsOmitted"/> describes THIS TABLE, so a reader can tell a short
     /// table from a short pass. Nothing is dropped from the counts when the table is cut.
     /// </summary>
-    private static string Aggregate(FarmhandForEachPassResult pass, IReadOnlyList<(int LocalRow, int LocalColumn, string Json)> table, ref int rowsOmitted)
+    private static string Aggregate(FarmhandForEachPassResult pass, IReadOnlyList<(int LocalRow, int LocalColumn, string Json)> table, string state, ref int rowsOmitted)
     {
         string header = string.Create(CultureInfo.InvariantCulture,
-            $"{{\"state\":\"succeeded\",\"succeeded\":{pass.Succeeded},\"failed\":{pass.Failed},\"refused\":{pass.Refused},\"left_alone\":{pass.LeftAlone},\"not_matched\":{pass.NotMatched},\"deferred\":{pass.Deferred},\"omitted\":{pass.Omitted}");
+            $"{{\"state\":\"{state}\",\"succeeded\":{pass.Succeeded},\"failed\":{pass.Failed},\"refused\":{pass.Refused},\"left_alone\":{pass.LeftAlone},\"not_matched\":{pass.NotMatched},\"deferred\":{pass.Deferred},\"omitted\":{pass.Omitted}");
         var body = new StringBuilder();
         foreach ((int _, int _, string json) in table.OrderBy(row => row.LocalRow).ThenBy(row => row.LocalColumn))
         {
-            // The tail is `,"rowsOmitted":NN,"rows":[]}` - 40 characters covers it with room for a large count.
-            if (header.Length + body.Length + json.Length + 40 > MaximumAggregateChars)
+            // The tail is `,"healed":NN,"rowsOmitted":NN,"rows":[]}` - 64 characters covers it with room for large counts.
+            if (header.Length + body.Length + json.Length + 64 > MaximumAggregateChars)
             {
                 rowsOmitted += 1;
                 continue;
@@ -718,7 +772,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
             if (body.Length > 0) body.Append(',');
             body.Append(json);
         }
-        return string.Create(CultureInfo.InvariantCulture, $"{header},\"rowsOmitted\":{rowsOmitted},\"rows\":[{body}]}}");
+        return string.Create(CultureInfo.InvariantCulture, $"{header},\"healed\":{pass.Healed},\"rowsOmitted\":{rowsOmitted},\"rows\":[{body}]}}");
     }
 
     /// <summary>
@@ -827,6 +881,9 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
 
     private const string ForEachWorldUnavailable = "for_each_world_unavailable";
 
+    /// <summary>A rectangle whose rows the live world did not yield: nothing was decided, so nothing can be claimed.</summary>
+    private const string NoRowsReason = "for_each_no_rows";
+
     private const string ForEachStoppedReason = "for_each_stopped";
 
     private const string NotOnFarmState = "not_on_farm";
@@ -920,4 +977,34 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         }
         return facts;
     }
+}
+/// <summary>
+/// What one pass's counts decide about the node, as a closed set.
+///
+/// <para>
+/// A separate type rather than five `if` arms inside <c>ExecuteForEach</c> because the DECISION is the contract a caller
+/// (and a gate) needs to ask directly: the arms used to be ordered statements, so "one refused row failed sixty worked
+/// ones" was not a thing anyone could see without running a pass. The population of this enum is every answer a pass can
+/// reach, and <see cref="RouteReenteringBodyProgramExecutor.VerdictFor"/> is the only producer.
+/// </para>
+/// </summary>
+internal enum ForEachPassVerdict
+{
+    /// <summary>The native body still owns the embodied actor; a later tick re-enters the same pass.</summary>
+    Continue = 1,
+
+    /// <summary>STOP arrived between two rows. The rows it settled keep their receipts; the node is cancelled.</summary>
+    Cancelled = 2,
+
+    /// <summary>The source yielded no live row, so nothing was decided and nothing is claimed.</summary>
+    NoRows = 3,
+
+    /// <summary>Not one row did its thing. The pass did nothing, and says so with the dominant row reason.</summary>
+    Failed = 4,
+
+    /// <summary>Some rows did their thing and some did not: the honest middle, with proof and reason on one node.</summary>
+    PartiallySucceeded = 5,
+
+    /// <summary>Every row that was not deliberately left alone did its thing and proved it.</summary>
+    Succeeded = 6,
 }

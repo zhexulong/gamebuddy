@@ -1896,6 +1896,11 @@ export type BodyProgramStopRequest = Readonly<{ programId: string; stopEpoch: nu
  *  - `stopped_succeeded` - stopped, and the receipt proved the effect; the effect IS the answer.
  *  - `stopped_without_success` - stopped short of the effect; it owes a reason, and a settlement that carried none is a
  *    defect the reader must be told about (`unknown_reason:<state>`) instead of having quietly passed over.
+ *
+ * `partially_succeeded` answers `stopped_without_success` rather than a fourth verdict, and the word is exact there: the
+ * node did NOT fully succeed, so it owes the reason for the part that did not happen - while its `state` token, which
+ * travels verbatim on the same row, is what says it also did something. A fourth verdict would be a second spelling of that
+ * distinction in the one place that only needs to know whether a reason is owed.
  */
 export const BODY_PROGRAM_NODE_STATE_VERDICTS = Object.freeze({
   pending: "moving",
@@ -1903,6 +1908,8 @@ export const BODY_PROGRAM_NODE_STATE_VERDICTS = Object.freeze({
   host_admitted: "moving",
   running: "moving",
   succeeded: "stopped_succeeded",
+  // Stopped short of the effect - it did PART of it - so it owes the reason for the rest, exactly as a `failed` node does.
+  partially_succeeded: "stopped_without_success",
   failed: "stopped_without_success",
   cancelled: "stopped_without_success",
   recovery_required: "stopped_without_success",

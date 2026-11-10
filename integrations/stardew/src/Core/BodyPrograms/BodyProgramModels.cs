@@ -178,8 +178,21 @@ public enum BodyProgramNodeState
         /// end as Failed and the save scope becomes writable again.
         /// </summary>
         Abandoned = 11,
+        /// <summary>
+        /// Dispatched, settled, and did PART of what it was asked - some of its rows/parts happened and some did not.
+        /// Terminal, durable value 12 (ADR-006 amendment).
+        ///
+        /// Why it exists: a `for_each` node decides each row on its own, and the node's terminal state is the verdict the
+        /// graph, the settlement digest and the model read. Reporting a 60-tile pass with 58 tiles worked as `Succeeded`
+        /// is a lie the row table would contradict, and reporting it as `Failed` is a lie in the other direction: the
+        /// measured consequence was that the companion concluded "batch loops are unreliable, write one tile at a time".
+        /// This state is the honest middle, so a node with ANY effect keeps the proof of that effect and still names why
+        /// the rest did not happen - which is impossible in either neighbour: `Succeeded` may carry no reason at all and
+        /// `Failed` may carry no proof (`:163`, `:175`).
+        /// </summary>
+        PartiallySucceeded = 12,
     }
-public enum BodyProgramNodeOutcome { Succeeded = 1, Failed = 2, Cancelled = 3, Uncertain = 4 }
+public enum BodyProgramNodeOutcome { Succeeded = 1, Failed = 2, Cancelled = 3, Uncertain = 4, PartiallySucceeded = 5 }
 public enum BodyProgramClaimOwnershipState { NotAcquired = 1, Acquired = 2, Released = 3 }
 
 /// <summary>Immutable action dispatch lineage, bound to one exact accepted node attempt.</summary>
@@ -501,15 +514,16 @@ internal static class BodyProgramValidation
     /// The states a node may carry a refusal detail on: the ones where it settled without succeeding.
     ///
     /// <para>
-    /// One rule for three states rather than a second rule for a fourth case. `Rejected` is included because a veto is
+    /// One rule for four states rather than a second rule for a fifth case. `Rejected` is included because a veto is
     /// also a settlement with no effect - it names its cause in <see cref="BodyProgramJournalNode.RejectionCode"/>, and a
-    /// detail beside it is the same statement one level down. Nothing else may carry one: an in-flight node has not
-    /// refused anything, a `Succeeded` one proves an effect instead, and `RecoveryRequired` already says why in
-    /// <see cref="BodyProgramJournalNode.RecoveryDiagnostic"/>.
+    /// detail beside it is the same statement one level down. `PartiallySucceeded` is included because what part of it did
+    /// NOT happen is a refusal of the same kind, one row at a time, and it is the only field that says which rows and
+    /// why. Nothing else may carry one: an in-flight node has not refused anything, a `Succeeded` one proves an effect
+    /// instead, and `RecoveryRequired` already says why in <see cref="BodyProgramJournalNode.RecoveryDiagnostic"/>.
     /// </para>
     /// </summary>
     internal static bool MayCarryRefusalDetail(BodyProgramNodeState state) => state
-        is BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected;
+        is BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.PartiallySucceeded;
     /// <summary>
     /// The one state that may carry a <see cref="BodyProgramJournalNode.RecoveryDiagnostic"/>: the one whose whole meaning
     /// is "the outcome could not be determined", so the reason there is a diagnostic and not a cause.

@@ -1692,6 +1692,10 @@ string? bodyProgramUnavailableReason = null,
         BodyProgramNodeState.HostAdmitted => "host_admitted",
         BodyProgramNodeState.Running => "running",
         BodyProgramNodeState.Succeeded => "succeeded",
+        // A settled pass that did PART of its rows. Its own arm, because the two neighbours would both be lies about it:
+        // `succeeded` would contradict the row table the same node carries, and the catch-all below would report a
+        // verdict this product can state as a value it could not name.
+        BodyProgramNodeState.PartiallySucceeded => "partially_succeeded",
         BodyProgramNodeState.Failed => "failed",
         BodyProgramNodeState.Cancelled => "cancelled",
         BodyProgramNodeState.RecoveryRequired => "recovery_required",

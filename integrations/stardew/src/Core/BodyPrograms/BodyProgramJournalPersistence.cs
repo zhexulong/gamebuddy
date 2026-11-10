@@ -235,15 +235,15 @@ public static class BodyProgramJournalPersistence
         {
             BodyProgramState.Active => BodyProgramGraphRules.HasExecutableWork(graph, states)
                 && nodes.Values.All(node => node.State is not (BodyProgramNodeState.RecoveryRequired or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Abandoned)),
-            BodyProgramState.Succeeded => nodes.Values.All(node => node.State == BodyProgramNodeState.Succeeded),
-             BodyProgramState.Failed => nodes.Values.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected or BodyProgramNodeState.Abandoned)
+            BodyProgramState.Succeeded => nodes.Values.All(node => node.State is BodyProgramNodeState.Succeeded or BodyProgramNodeState.PartiallySucceeded),
+             BodyProgramState.Failed => nodes.Values.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected or BodyProgramNodeState.Abandoned or BodyProgramNodeState.PartiallySucceeded or BodyProgramNodeState.SkippedDependency)
                  && !BodyProgramGraphRules.HasExecutableWork(graph, states),
             BodyProgramState.Cancelled => nodes.Values.Any(node => node.State == BodyProgramNodeState.Cancelled),
             BodyProgramState.RecoveryRequired => nodes.Values.Any(node => node.State is BodyProgramNodeState.Pending or BodyProgramNodeState.RecoveryRequired)
-                && nodes.Values.All(node => node.State is BodyProgramNodeState.Pending or BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.RecoveryRequired)
+                && nodes.Values.All(node => node.State is BodyProgramNodeState.Pending or BodyProgramNodeState.Succeeded or BodyProgramNodeState.PartiallySucceeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.RecoveryRequired)
                 && nodes.Values.Where(node => node.State == BodyProgramNodeState.Pending).All(node => node.NodeAttempt == 0),
             BodyProgramState.Quarantined => nodes.Values.Any(node => node.State == BodyProgramNodeState.RecoveryRequired)
-                && nodes.Values.All(node => node.State is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.RecoveryRequired),
+                && nodes.Values.All(node => node.State is BodyProgramNodeState.Succeeded or BodyProgramNodeState.PartiallySucceeded or BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.RecoveryRequired),
             _ => false,
         };
         if (!stateValid) refusal = "state_rule:" + program.State;
@@ -306,6 +306,16 @@ public static class BodyProgramJournalPersistence
         {
             if (!hasAttempt || node.RejectionCode is not null || node.FailureCode is not null || node.GrantId is not null || node.ExecutionBinding is null || !hasCompleteProof || node.RecoveryDiagnostic is not null) { refusal = "succeeded_shape"; return false; }
         }
+        else if (node.State == BodyProgramNodeState.PartiallySucceeded)
+        {
+            // The one terminal that carries BOTH statements, so it is validated against both: the proof of what happened
+            // (exactly as a success is), and the reason for what did not (exactly as a failure's is). A partial node with
+            // no proof is not partial - nothing was shown to have happened - and one with a `RejectionCode` or a recovery
+            // diagnostic is claiming two different things about the same attempt.
+            if (!hasAttempt || node.RejectionCode is not null || node.GrantId is not null || node.ExecutionBinding is null
+                || !hasCompleteProof || node.RecoveryDiagnostic is not null
+                || (node.FailureCode is not null && !BodyProgramValidation.IsReasonCode(node.FailureCode))) { refusal = "partially_succeeded_shape"; return false; }
+        }
         else if (node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Cancelled)
         {
             // A dispatched node that did not succeed may name WHY - and only why. `FailureCode` is legal here because it
@@ -340,6 +350,10 @@ public static class BodyProgramJournalPersistence
                 return hasAttempt && node.GrantId is not null && node.ExecutionBinding is not null;
             case BodyProgramNodeState.Succeeded:
                 return true;
+            case BodyProgramNodeState.PartiallySucceeded:
+                // Dispatched, settled, and it kept its proof: the binding and the receipt are what make the partial claim
+                // checkable, so both stay, and the grant is released like every other terminal.
+                return hasAttempt && node.GrantId is null && node.ExecutionBinding is not null && node.ReceiptId is not null;
             case BodyProgramNodeState.Failed:
                 return hasAttempt && node.GrantId is null && node.ExecutionBinding is not null;
             case BodyProgramNodeState.Cancelled:
@@ -422,7 +436,7 @@ public static class BodyProgramJournalPersistence
       private static bool IsClaimOwnershipValidForState(BodyProgramNodeState state, BodyProgramClaimOwnershipState ownership) => state switch
       {
           BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running => ownership == BodyProgramClaimOwnershipState.Acquired,
-          BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed or BodyProgramNodeState.RecoveryRequired or BodyProgramNodeState.Abandoned => ownership == BodyProgramClaimOwnershipState.Released,
+          BodyProgramNodeState.Succeeded or BodyProgramNodeState.PartiallySucceeded or BodyProgramNodeState.Failed or BodyProgramNodeState.RecoveryRequired or BodyProgramNodeState.Abandoned => ownership == BodyProgramClaimOwnershipState.Released,
           // Rejected nodes never acquired (the Host veto lands while the node
           // is still AwaitingHostAdmission), so both NotAcquired and Released
           // are valid on the durable record. Cancelled covers both shapes too:
