@@ -38,7 +38,6 @@ import {
   type TileAreaResult,
   validateBridgeMessage,
 } from "./protocol.js";
-import { parseStrictBridgeJson } from "./strict-bridge-json.js";
 
 export type LocalStardewBridgeState = StardewBridgeConnectionState &
   Readonly<{
@@ -795,7 +794,10 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     if (!this.transport.connected) return;
     let message: BridgeMessage;
     try {
-      message = parseStrictBridgeJson(json) as BridgeMessage;
+      // Plain JSON.parse: the Mod's own serializer (BridgeProtocol.TrySerialize, System.Text.Json over typed records) cannot
+      // emit the same object key twice, and a duplicate could not survive `validateBridgeMessage` below anyway — a
+      // duplicate would take JSON.parse's last value, and that value is what the exact-key schemas then judge.
+      message = JSON.parse(json) as BridgeMessage;
     } catch {
       this.transport.close("malformed_inbound_json");
       return;

@@ -1,10 +1,25 @@
 const MAX_DEPTH = 32;
 
 /**
- * Parses one already length-bounded bridge frame without allowing JSON.parse to
- * collapse duplicate decoded object keys. The named-pipe transport owns byte
- * framing and size limits; this parser owns only JSON grammar and object-key
- * uniqueness.
+ * Duplicate-key detection for the wire-parity tooling that parses REAL Mod-produced frames (`stardew-*-wire-parity.test.ts`,
+ * `integrations/stardew/action-development/src/wire-parity.mjs`). It is NOT on the bridge receive path.
+ *
+ * <p>
+ * `LocalStardewBridge.receive` uses `JSON.parse`. The Mod writes every outbound frame through
+ * `BridgeProtocol.TrySerialize`, which is `System.Text.Json.JsonSerializer.Serialize` over typed records: property names are
+ * compiler-unique under the camelCase policy (a collision throws at metadata creation), a `Dictionary<string, …>` cannot
+ * hold the same key twice, and the only `[JsonExtensionData]` members in the wire models are on inbound Host→Mod request
+ * types. So the producer cannot emit a duplicate, and a duplicate that somehow arrived could not smuggle anything past
+ * `validateBridgeMessage` either — `JSON.parse` would keep its last value and the exact-key schemas would then judge that.
+ * </p>
+ * <p>
+ * What remains load-bearing is the DEV reading: these tools parse what the C# exporter actually emitted, so a serializer
+ * change that starts writing the same key twice — the one shape that would make `JSON.parse` silently last-win — turns
+ * this assertion red here instead of passing quietly in production. Measured 2026-11-10 on a valid 66 KiB snapshot frame
+ * (64 chests x 12 items), N=200, three runs on a loaded box: 0.85-3.0 ms median here against 0.15-0.25 ms for
+ * `JSON.parse`. On the receive path that cost was paid per inbound frame - one 34-minute live run recorded 3,714 inbound
+ * facts plus 80 observed snapshots - which is why the receive path no longer pays it.
+ * </p>
  */
 export function parseStrictBridgeJson(source: string): unknown {
   let offset = 0;
