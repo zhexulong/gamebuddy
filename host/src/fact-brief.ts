@@ -12,7 +12,9 @@
  *
  * <p>
  * THE CLOSED SET is `FACT_BRIEF_BLOCKS`, and the Game surface's prompt floor names all four, once, at session
- * construction (`identity-profile.ts`). A block with nothing to say is omitted rather than emitted empty.
+ * construction (`identity-profile.ts`). A block with nothing to say is omitted rather than emitted empty - except
+ * `<world-state>`, which is emitted on EVERY batch: a session that has heard nothing says `世界：尚未收到观察`, because an
+ * omitted world block reads as "there is nothing there" and the model then answers from what it remembers.
  * </p>
  *
  * <p>
@@ -78,11 +80,29 @@ type SettledNode = Readonly<{
   reasonDetail?: string;
 }>;
 
+/**
+ * One reading of the world, as `<world-state>` states it.
+ *
+ * The snapshot is the Mod's own admitted `Snapshot` payload - never the bounded context projection, which is built for
+ * a dispatch and withholds the target families. `revision` is the snapshot's own, and `ageTurns` is how many delivered
+ * turns ago this reading arrived: `0` is the turn it arrived in.
+ */
+export type WorldStateReading = Readonly<{
+  snapshot: Snapshot;
+  revision: number;
+  ageTurns: number;
+}>;
+
 /** What one delivered batch shows the model. The snapshot is state, everything else is news. */
 export type FactBriefInput = Readonly<{
   inputs: readonly PlayerInput[];
-  /** The snapshot this batch states, and how many delivered turns ago it was observed (`0` is this turn). */
-  snapshot: Readonly<{ fact: WorldFact; ageTurns: number }> | undefined;
+  /**
+   * The world as LAST HEARD, and how many delivered turns ago it was observed (`0` is this turn).
+   *
+   * Not "the snapshot this batch carried": the pump's snapshot slot is consumed by the batch that takes it, so a
+   * block composed from that slot would be absent from every later batch - the blindness this brief exists to end.
+   */
+  snapshot: WorldStateReading | undefined;
   /** The events, in the order the batch delivers them. */
   events: readonly WorldFact[];
   /** The language the player wrote in. The brief is Chinese; this is what a caller checks it against. */
@@ -118,36 +138,61 @@ function composePlayerNote(inputs: readonly PlayerInput[]): string {
 }
 
 /**
- * The snapshot as one paragraph, then the nearby families.
+ * The world as one paragraph, under a first line that says WHICH reading and HOW FRESH it is.
  *
- * THE STATE PARAGRAPH is `formatGameEnvironmentFacts` - the same line the Chat surface's `<runtime-environment>` carries,
- * from the same vocabulary module, so a clock or a map is spelled one way in both places. On top of it: what she is
- * carrying, how old the reading is, and the target families.
+ * THE FIRST LINE IS THE AGE, because the rest of the paragraph reads as the present tense. A reading is not the world:
+ * measured 2026-11-05, six consecutive turns were handed `18:00` while the model's own reasoning read "It's 22:00 now"
+ * in the same turn, and the run ended `companion_did_not_sleep`. The revision is the Mod's own, so two readings can be
+ * told apart without trusting the clock; `本轮无新观察` is the honest label for a re-statement, and `刚刚更新` for the
+ * turn the observation arrived in.
+ *
+ * THE PARAGRAPH is `formatGameEnvironmentFacts` - the same line the Chat surface's `<runtime-environment>` carries, from
+ * the same vocabulary module, so a clock or a map is spelled one way in both places. On top of it: what she is
+ * carrying, and the target families.
  *
  * WHY THE TARGETS ARE HERE. Measured 2026-11-10 (`round44`): 31 of 109 turns called `stardew_observe` and a snapshot was
  * already in the batch that opened 28 of them - the state block was not missing, it was missing the objects she acts on.
  * Not one of those batches named a tile.
+ *
+ * A session that has received nothing yet says so, in the same block: an omitted block would read as "nothing here" and
+ * an invented one would be a world the Mod never published.
  */
-function composeWorldState(snapshot: Readonly<{ fact: WorldFact; ageTurns: number }> | undefined): string {
-  if (snapshot === undefined) return "";
-  const world = snapshot.fact.payload as unknown as Snapshot & {
-    readonly inventoryItemFacts?: readonly Readonly<{ name?: unknown; stack?: unknown }>[];
-  };
-  if (world === null || typeof world !== "object") return "";
+export function composeWorldState(reading: WorldStateReading | undefined): string {
+  if (reading === undefined) return block("world-state", NOTHING_OBSERVED);
+  const world = reading.snapshot;
+  if (world === null || typeof world !== "object") return block("world-state", NOTHING_OBSERVED);
   const parts: string[] = [];
-  // The age comes FIRST and in words, because the paragraph reads as the present tense otherwise. A reading is not the
-  // world: measured 2026-11-05, six consecutive turns were handed `18:00` while the model's own reasoning read "It's
-  // 22:00 now" in the same turn, and the run ended `companion_did_not_sleep`.
-  if (snapshot.ageTurns >= 1) parts.push(`（这是 ${snapshot.ageTurns} 轮之前看到的，世界已经不一样了）`);
+  if (reading.ageTurns >= 1) parts.push(`（这是 ${reading.ageTurns} 轮之前看到的，世界已经不一样了）`);
   const environment = formatGameEnvironmentFacts(world, true);
   if (environment !== "") parts.push(environment);
   const carrying = formatCarrying(world);
   if (carrying !== "") parts.push(carrying);
+  const lines: string[] = [worldStateHeader(reading)];
   const paragraph = parts.join("；");
-  const lines: string[] = [];
   if (paragraph !== "") lines.push(paragraph);
   lines.push(...composeNearbyTargets(world));
-  return lines.length === 0 ? "" : block("world-state", lines.join("\n"));
+  return block("world-state", lines.join("\n"));
+}
+
+/** What `<world-state>` says before any observation has arrived: a statement about the Host, not about the world. */
+const NOTHING_OBSERVED = "世界：尚未收到观察";
+
+/** The block's first line: which revision, and whether this turn brought it. */
+function worldStateHeader(reading: WorldStateReading): string {
+  return reading.ageTurns === 0
+    ? `世界（revision ${String(reading.revision)}，刚刚更新）`
+    : `世界（revision ${String(reading.revision)}，本轮无新观察）`;
+}
+
+/**
+ * The whole answer to an observation that found the revision it was already showing.
+ *
+ * `stardew_observe` used to answer every call with the entire snapshot - measured `round44`: median 20,980 characters
+ * per call, 648,059 over 31 calls, 81.1% of all tool-result text - and most of those calls were made while the batch
+ * that opened the turn already carried the same revision.
+ */
+export function unchangedWorldAnswer(revision: number): string {
+  return `自 revision ${String(revision)} 以来世界没有变化`;
 }
 
 /** How many item rows the pack names before it counts the rest. */
@@ -156,23 +201,24 @@ export const MAX_CARRYING_ROWS = 8;
 /**
  * What she is carrying that is not a tool.
  *
- * `inventoryItemFacts` is the Mod's own bounded inventory publication (36 rows: slot, id, name, stack); the tools are
- * already named by the state line's `手持`, so this prints only their stacks. ABSENT means the Mod did not publish the
- * family at all - the field is gated on the actions that read the inventory - and stays silent, which is a different
- * statement from `身上没有东西`.
+ * `inventoryItemFacts` is the Mod's own bounded inventory publication (36 rows: slot, id, stack) and the name it carries
+ * is `displayName` - the wire's own spelling, the one the shipping bin and every other reader uses. ABSENT means the Mod
+ * did not publish the family at all - the field is gated on the actions that read the inventory - and stays silent,
+ * which is a different statement from `身上没有别的东西`.
  */
-function formatCarrying(
-  world: Snapshot & { readonly inventoryItemFacts?: readonly Readonly<{ name?: unknown; stack?: unknown }>[] },
-): string {
+function formatCarrying(world: Snapshot): string {
   const rows = world.inventoryItemFacts;
   if (!Array.isArray(rows)) return "";
   const named = rows
-    .filter((row) => typeof row?.name === "string" && String(row.name).trim() !== "")
-    .map((row) => ({ name: String(row.name).trim(), stack: Number.isFinite(row.stack) ? Number(row.stack) : 1 }));
+    .filter((row) => typeof row?.displayName === "string" && row.displayName.trim() !== "")
+    .map((row) => ({
+      name: row.displayName.trim(),
+      stack: Number.isFinite(row.stack) ? Number(row.stack) : 1,
+    }));
   if (named.length === 0) return "身上没有别的东西";
-  const shown = named.slice(0, MAX_CARRYING_ROWS).map((row) => `${row.stack} 份 ${row.name}`);
+  const shown = named.slice(0, MAX_CARRYING_ROWS).map((row) => `${String(row.stack)} 份 ${row.name}`);
   const rest = named.length - shown.length;
-  return `身上带着 ${shown.join("、")}${rest > 0 ? ` 其余 ${rest} 种未列出` : ""}`;
+  return `身上带着 ${shown.join("、")}${rest > 0 ? ` 其余 ${String(rest)} 种未列出` : ""}`;
 }
 
 /**
@@ -243,7 +289,6 @@ const WORLD_FACT_KIND_ZH: Readonly<Record<string, string>> = Object.freeze({
   day_started: "新的一天",
   time_milestone: "又过了一个时辰",
   npc_dialogue_presented: "有人跟你说话",
-  execution_stalled: "有个动作卡住不动了",
   companion_arrival: "她到了",
   native_notice: "游戏里冒出个提示",
   night_ended_pass_out: "夜里没撑住，昏过去了",
@@ -276,7 +321,15 @@ function factLine(fact: WorldFact): string {
       return `- ${at}${words}${reason}`;
     }
     case "lifecycle": {
-      const state = typeof fact.payload.state === "string" ? fact.payload.state : "lifecycle";
+      // `state` is what the adapter's own lifecycle event carries; `kind` is what the Mod's day-start lifecycle notice
+      // carries. Either is printed with its reason, because a transport event is the one thing the model must be able
+      // to name (and a run audit greps for it) - there is no Chinese word for "this integration stopped".
+      const state =
+        typeof fact.payload.state === "string"
+          ? fact.payload.state
+          : typeof fact.payload.kind === "string"
+            ? fact.payload.kind
+            : "lifecycle";
       const reason = typeof fact.payload.reasonCode === "string" ? `：${fact.payload.reasonCode}` : "";
       return `- ${at}${state}${reason}`;
     }
@@ -340,11 +393,30 @@ function worldFactLine(fact: WorldFact, at: string): string {
         : [];
       return `- ${at}${speaker}说：「${pages.join(" ")}」${choices.length === 0 ? "" : `（可以答：${choices.join(" / ")}）`}`;
     }
+    case "companion_arrival": {
+      // The fact carries its own model-facing sentence (the Host's words: she has just arrived, and this is the day's
+      // first clock reading). Printing only 她到了 would drop the instruction that makes her open the morning, and with
+      // it the opening `companionArrivalAlreadySaid` looks for.
+      const own = fact.contextProjection?.text;
+      if (typeof own === "string" && own.trim() !== "") return `- ${at}${own.trim()}`;
+      return `- ${at}${WORLD_FACT_KIND_ZH.companion_arrival ?? "她到了"}`;
+    }
+    case "native_notice": {
+      // The engine's own HUD line, quoted verbatim: the whole reason this fact exists is that she may answer what the
+      // game itself said ("It's getting late..."), and a line that only said 有个提示 would drop the words.
+      const notice = typeof fact.payload.notice === "string" ? fact.payload.notice : undefined;
+      const clock =
+        typeof fact.payload.inGameTime === "string" ? formatGameClock(Number(fact.payload.inGameTime), true) : "";
+      return `- ${at}游戏里冒出个提示：${notice === undefined ? "（没有文字）" : `「${notice}」`}${clock === "" ? "" : `（${clock}）`}`;
+    }
     case "execution_stalled": {
+      // The fact exists to say WHICH execution stopped moving and for how long, so the Mod's own identity and labels are
+      // printed verbatim beside the words - the same rule a receipt's `reasonCode` follows.
       const action = typeof fact.payload.actionId === "string" ? fact.payload.actionId : "动作";
       const elapsed = Number(fact.payload.elapsedMs);
       const seconds = Number.isFinite(elapsed) ? Math.round(elapsed / 1000) : undefined;
-      return `- ${at}${action} 卡住了${seconds === undefined ? "" : ` ${seconds} 秒`}`;
+      const last = typeof fact.payload.lastFactKind === "string" ? `，最后一条 ${fact.payload.lastFactKind}` : "";
+      return `- ${at}${action} 卡住不动了${seconds === undefined ? "" : `（已 ${String(seconds)} 秒没有消息${last}）`}`;
     }
     default: {
       const words = WORLD_FACT_KIND_ZH[kind] ?? kind ?? "世界消息";
@@ -382,14 +454,22 @@ function settlementLine(fact: WorldFact): string {
   return `- ${head}${more}${failures.length === 0 ? "" : `：${failures.join("；")}`}`;
 }
 
-/** One failed node in words: the Mod's own hint first, because that is the sentence that says what would fix it. */
+/**
+ * One failed node in words: the Mod's own hint first, because that is the sentence that says what would fix it.
+ *
+ * The node's `reasonCode` is printed BESIDE the sentence when it has one, never replaced by it - a run audit greps for
+ * `shop_counter_out_of_reach`, and a sentence that only said the counter was out of reach would be a second vocabulary
+ * for the same refusal (`round41`: six of those refusals reached the model as a bare code, which is why the sentence
+ * exists; neither half may cost the other).
+ */
 function failureWords(node: SettledNode): string {
   const action = typeof node.actionId === "string" ? node.actionId : "一步";
   const hint = typeof node.hint === "string" && node.hint.trim() !== "" ? node.hint.trim() : undefined;
   const detail =
     typeof node.reasonDetail === "string" && node.reasonDetail.trim() !== "" ? node.reasonDetail.trim() : undefined;
   const code = typeof node.reasonCode === "string" && node.reasonCode !== "" ? node.reasonCode : undefined;
-  const reason = hint ?? detail ?? code;
+  const words = hint ?? detail;
+  const reason = words === undefined ? code : code === undefined ? words : `${code}：${words}`;
   return reason === undefined ? `${action} 没做成` : `${action} 没做成（${reason}）`;
 }
 
