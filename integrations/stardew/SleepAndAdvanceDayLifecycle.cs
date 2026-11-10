@@ -513,6 +513,26 @@ internal sealed class SleepAndAdvanceDayLifecycle
         return Game1.IsMasterGame ? "multiplayer_master" : "multiplayer_client";
     }
 
+    /// <summary>
+    /// Whether a paused clock is this lifecycle's obstacle, given whether the engine's own bed prompt is standing.
+    ///
+    /// <para>
+    /// THE BED PROMPT IS THE REASON THE CLOCK STOPPED. <c>Game1.shouldTimePass()</c> answers false while a modal is up
+    /// (<c>Game1.cs:9300-9303</c>), and the box this lifecycle exists to answer is a modal. So the night's own prompt
+    /// made the night ineligible, the prompt stayed standing because nothing answered it, and the two facts held each
+    /// other up: measured 2026-11-10 (<c>round43</c>, 22:10, FarmHouse) <c>sleep</c> sat accepted and waiting with the
+    /// prompt on screen, <c>answer_dialogue</c> refused the only answer with "dispatch <c>sleep</c> instead", and
+    /// <c>sleep</c> refused its own retry with <c>body_owned_by_day_advance</c> - the night refusing itself. No action
+    /// in the run could cross it.
+    /// </para>
+    /// <para>
+    /// The exemption is the same ONE identity the menu and dialogue gates below already admit
+    /// (<see cref="NativeSleepPrompt"/>), never "a modal is up": a shipping summary, a level-up card or any other
+    /// menu still pauses this lifecycle exactly as before.
+    /// </para>
+    /// </summary>
+    internal static bool RefusesForPausedClock(bool timePasses, bool ownSleepPrompt) => !timePasses && !ownSleepPrompt;
+
     private bool TryEnterEligibility(out string reason)
     {
         reason = "ok";
@@ -521,16 +541,17 @@ internal sealed class SleepAndAdvanceDayLifecycle
         // multiplayer branch is a different machine, but these guards are shared:
         // both paths need a live, unpaused, mobile, non-passed-out actor with no
         // open modal.
-        if (Game1.newDay) { reason = "already_new_day"; return false; }
-        if (!Game1.shouldTimePass()) { reason = "time_paused"; return false; }
-        if (Game1.player.passedOut) { reason = "passed_out"; return false; }
+        //
         // THE ENGINE'S OWN BED PROMPT IS THIS ACTION'S WORKING PRECONDITION, NOT AN OBSTACLE.
         //
         // The companion can arrive at the bed on an earlier attempt and leave the `Sleep` prompt standing - the pager
         // no longer offers it to the Agent, so nobody else answers it. `AwaitingModal` exists to answer exactly this
-        // box, so refusing `menu_open` / `dialogue_up` for it kept the ONE action that can answer it permanently
-        // ineligible, and the only route left was the answer that crosses a day with no receipt behind it.
+        // box, so refusing `menu_open` / `dialogue_up` / a paused clock for it kept the ONE action that can answer it
+        // permanently ineligible, and the only route left was the answer that crosses a day with no receipt behind it.
         bool ownSleepPrompt = NativeSleepPrompt.IsStanding(Game1.activeClickableMenu as DialogueBox);
+        if (Game1.newDay) { reason = "already_new_day"; return false; }
+        if (RefusesForPausedClock(Game1.shouldTimePass(), ownSleepPrompt)) { reason = "time_paused"; return false; }
+        if (Game1.player.passedOut) { reason = "passed_out"; return false; }
         if (Game1.activeClickableMenu is not null && !ownSleepPrompt) { reason = "menu_open"; return false; }
         if (Game1.dialogueUp && !ownSleepPrompt) { reason = "dialogue_up"; return false; }
         if (Game1.eventUp) { reason = "event_up"; return false; }

@@ -728,6 +728,20 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal const string BodyOwnedByActivity = "body_owned_by_activity";
 
     /// <summary>
+    /// The named terminal for a night that was accepted, never began, and was replaced by a newer request for the same
+    /// night.
+    ///
+    /// <para>
+    /// It exists because the alternative was silence. Measured 2026-11-10 (<c>round43</c>, 22:10, FarmHouse): a first
+    /// <c>sleep</c> was accepted and waited, the retry was refused <c>body_owned_by_day_advance</c> against it, and the
+    /// first one then sat <c>running</c> with no terminal receipt and no fact for over three minutes. A request that is
+    /// replaced has to end as something a reader can name, or "still running" is the only thing the run can say about
+    /// it forever.
+    /// </para>
+    /// </summary>
+    internal const string SupersededNightThatHasNotBegun = "sleep_superseded_before_start";
+
+    /// <summary>
     /// The named refusal for the one shape of cutscene the modal family cannot act on: the event is running with
     /// nothing on screen to answer or dismiss.
     ///
@@ -829,28 +843,20 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             owners.Add((BodyOwnedByRide, this.activeMountTransport.ExecutionId, "mount_transport", false, "committed", false));
         if (this.activeBusRide is not null)
             owners.Add((BodyOwnedByRide, this.activeBusRide.ExecutionId, "ride_bus", false, "committed", false));
-        if (this.activeDayAdvance is not null)
+        if (this.activeDayAdvance is not null && !this.NightAcceptedButNotBegun)
         {
-            // The night does NOT own the body until it can actually begin.
+            // The night owns the body only once it can actually begin, and from then on it is COMMITTED.
             //
             // Measured 2026-10-20 (run 01-44-58): the companion dispatched advance_day outdoors, acceptance claimed the
             // body as committed and uninterruptible, the lifecycle then reported not_home for four minutes, and the one
             // action that could fix it - enter_exit, to walk home - was refused as body_owned_by_day_advance. The
-            // engine's own 2:00 AM pass-out was what ended the run. The lifecycle's first phase is
-            // AwaitingEligibility, which is exactly the state "accepted but not yet able to start", and it walks itself
-            // to the bed once the actor is home (WalkingToBed only after the eligibility gate). So while it is still
-            // waiting, the hold is a WALK-UP that the companion may interrupt by walking home; from WalkingToBed onward
-            // it is a committed sleep and the refusal stays what it was.
+            // engine's own 2:00 AM pass-out was what ended the run. A later commit published `interruptible=true` for
+            // that waiting state, but nothing in the product read the flag: the admission refused every action against
+            // it just the same, so the label described a capability the gate denied. The fix belongs at the gate, not in
+            // the wording - see NightAcceptedButNotBegun.
             // A slot whose lifecycle is unavailable is treated as COMMITTED: releasing the body on a guess is the one
             // thing this must never do, and the uninitialised-slot case is what the owner-naming test pins.
-            bool waitingToBegin = this.activeDayAdvance.Lifecycle is { IsAwaitingEligibility: true };
-            owners.Add((
-                BodyOwnedByDayAdvance,
-                this.activeDayAdvance.ExecutionId,
-                "sleep",
-                waitingToBegin,
-                waitingToBegin ? "approaching" : "committed",
-                waitingToBegin));
+            owners.Add((BodyOwnedByDayAdvance, this.activeDayAdvance.ExecutionId, "sleep", false, "committed", false));
         }
         if (this.activePet is not null)
             owners.Add((BodyOwnedByActivity, this.activePet.ExecutionId, "pet_animal", false, "committed", false));
@@ -944,6 +950,56 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     internal static (string ReasonCode, string Evidence) LocalMoveOwner(string? executionId) =>
         (BodyOwnedByMovement, $"owner_execution_id={OwnerToken(executionId)};owner_action=move_to_tile;interruptible=true");
+
+    /// <summary>
+    /// Whether the accepted night has not begun: it has dispatched nothing native - no walk, no answer, no save - and
+    /// is waiting for the actor to satisfy its eligibility gate.
+    ///
+    /// <para>
+    /// A night in this state reserves NOTHING. It is not an owner in the table above and it does not refuse anything in
+    /// the admission, which is what makes the two requests that had to get through able to get through: a WALK-UP (the
+    /// <c>enter_exit</c> that brings the actor home so the night can start) and the night's own re-dispatch. The slot is
+    /// still "work in flight" for <see cref="IsBodySettled"/>, so a STOP never publishes the actor as idle during an
+    /// accepted night - that is the one place the two readings differ, and they differ because they answer different
+    /// questions: "may a request start?" and "is any work pending?".
+    /// </para>
+    /// <para>
+    /// A slot whose lifecycle is unavailable reads as COMMITTED: on an uninitialised or null handle there is no evidence
+    /// that nothing was dispatched, and releasing the body on a guess is the one thing this must never do.
+    /// </para>
+    /// </summary>
+    private bool NightAcceptedButNotBegun => this.activeDayAdvance?.Lifecycle is { IsAwaitingEligibility: true };
+
+    /// <summary>
+    /// Retires the accepted night that has not begun, so the request taking over the slot is the only owner of it.
+    ///
+    /// <para>
+    /// ONE OWNER. Two <c>sleep</c> requests must not become two nights: <see cref="RequestLocalAdvanceDay"/> holds one
+    /// slot, so a second acceptance would overwrite the first handle and leave its request accepted forever - the
+    /// "running with no terminal receipt" the 2026-11-10 measurement recorded. The night being replaced is therefore
+    /// settled FIRST, with its own named code, and only then is the slot free for the request that superseded it. Nothing
+    /// native had been dispatched from the old lifecycle (that is what this state means), so there is nothing to undo:
+    /// it never walked, never answered the prompt and never touched the calendar.
+    /// </para>
+    /// <para>
+    /// This is the executable half of <c>interruptible</c>: a night that has not begun can be taken over by the same
+    /// action that asked for it, exactly as a newer movement directive supersedes a walk in progress. A night that HAS
+    /// begun is not touched here - the table keeps it committed and the refusal keeps its name.
+    /// </para>
+    /// </summary>
+    private void SupersedeNightThatHasNotBegun(string incomingExecutionId)
+    {
+        if (this.activeDayAdvance is not { } pending || !this.NightAcceptedButNotBegun)
+            return;
+        this.activeDayAdvance = null;
+        this.revision++;
+        this.RememberTerminal(
+            pending.RequestId,
+            pending.ExecutionId,
+            ExecutionState.Cancelled,
+            SupersededNightThatHasNotBegun,
+            $"owner_action=sleep;phase=approaching;superseded_by_execution_id={OwnerToken(incomingExecutionId)}");
+    }
 
     /// <summary>
     /// The mechanical admission every executing action shares, in the single
@@ -1081,8 +1137,20 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // list; they were not, and the real gap was the other way round.)
             || this.activeNavigate is not null
             || this.activeFishing is not null
-            || this.activeDayAdvance is not null || this.controller.HasActiveExecution))
+            // The night is an occupier once it can begin, and ONLY then: a night that has not begun dispatches
+            // nothing, so refusing a request against it denies a body nobody is using (that is how the `enter_exit`
+            // that would have brought the actor home was refused until the engine passed it out at 2 AM, and how a
+            // `sleep` retry came back owned by itself). It keeps its slot in this sentence so the body-set gate still
+            // reads the slot, and its one conditional is named here rather than hidden in the describer.
+            || (this.activeDayAdvance is not null && !this.NightAcceptedButNotBegun)
+            || this.controller.HasActiveExecution))
             return this.RejectBodyOwned(requestId, executionId);
+
+        // The request is admitted, and if it IS a night it now owns the slot exclusively: a night already accepted but
+        // not begun cannot keep the handle the next `sleep` is about to take (RequestLocalAdvanceDay holds ONE slot), so
+        // it is retired here with its own terminal rather than being overwritten into a receipt nobody ever closes.
+        if (profile is AdmissionActionabilityProfile.Overnight)
+            this.SupersedeNightThatHasNotBegun(executionId);
 
         return null;
     }

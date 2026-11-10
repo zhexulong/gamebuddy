@@ -109,17 +109,18 @@ public sealed class BodyOwnerNamingTests
     }
 
     [Fact]
-    public void DayAdvanceOwner_IsApproachableWhileTheNightWaitsToBegin()
+    public void DayAdvanceOwner_OwnsNothingUntilTheNightCanBegin()
     {
-        // The night does not own the body until it can start. Measured 2026-10-20 (run 01-44-58): an outdoor
+        // A night does not own the body until it can start. Measured 2026-10-20 (run 01-44-58): an outdoor
         // `advance_day` claimed the body as committed and uninterruptible, the lifecycle then reported `not_home`,
         // and the `enter_exit` that would have walked the actor home was refused as body_owned_by_day_advance - so
-        // nothing could make progress until the engine passed the farmer out at 2:00 AM. While the lifecycle is
-        // still AwaitingEligibility the hold is a walk-up the companion may interrupt; the falsifier is the test
-        // above, which pins that an UNKNOWN lifecycle stays committed (releasing the body on a guess would be worse
-        // than the deadlock it fixes).
-        // A REAL lifecycle, started the way the controller starts one, so the phase under test is the phase the game
-        // produces rather than a fabricated one.
+        // nothing could make progress until the engine passed the farmer out at 2:00 AM.
+        //
+        // The state that answers this is the TABLE, not the wording: while the lifecycle is still awaiting eligibility
+        // it dispatches nothing, so it is not an owner at all and nothing is refused against it. The falsifier is the
+        // test above, which pins that an UNKNOWN lifecycle stays committed (releasing the body on a guess would be
+        // worse than the deadlock it fixes); the takeover and the remedy walkability are pinned by
+        // NightOwnershipCycleTests.
         SleepAndAdvanceDayLifecycle lifecycle = SleepAndAdvanceDayLifecycle.TryStart(new DummyMonitor(), new SleepAndAdvanceDayLifecycleConfig
         {
             Enable = true,
@@ -136,10 +137,17 @@ public sealed class BodyOwnerNamingTests
         object advance = RuntimeHelpers.GetUninitializedObject(advanceType);
         advanceType.GetField("<Lifecycle>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance)!
             .SetValue(advance, lifecycle);
-        LocalExecutionReceipt receipt = Refuse(("activeDayAdvance", advance));
 
-        receipt.ReasonCode.Should().Be("body_owned_by_day_advance");
-        receipt.Evidence.Should().Contain("interruptible=true").And.Contain("phase=approaching").And.Contain("cancel_safe=true");
+        LocalExecutionReceipt? receipt = null;
+        RunWithGameState(() =>
+        {
+            ExecutionManager manager = CreateManager();
+            OccupySlot(manager, "activeDayAdvance", advance);
+            receipt = AdmitForBodyCheck(manager);
+        });
+
+        receipt.Should().BeNull(
+            "a night that has dispatched nothing is not holding the body, so there is nothing for a refusal to name");
     }
 
     [Fact]

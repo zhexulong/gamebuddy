@@ -14,6 +14,11 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// and pedestal slots, and ModEntry.cs:1970 consumes it to decide whether a STOP "body settled"
 /// event may be published — so an actor mid-mount or mid-overnight could be reported as idle.
 ///
+/// The two answer one question about SLOTS. They part company in exactly one STATE, and the last test here
+/// names it: a night that has been accepted and has not begun dispatches nothing, so the admission admits a
+/// walk-up against it while IsBodySettled still reports work pending. That is not a divergence in the set - it
+/// is one slot read by two questions ("may a request start?" and "is anything pending?").
+///
 /// This test reads the two sets out of the source, because the properties are computed expressions
 /// over private fields that a headless run cannot populate without a live controller. It is
 /// deliberately a source test rather than a behaviour test, and it is honest about that: the
@@ -107,5 +112,38 @@ public sealed class BodySettledOwnershipSourceShapeTests
         settled.Should().Contain("activeBusRide");
         settled.Should().Contain("activeDayAdvance");
         settled.Should().Contain("activePedestalTaking");
+    }
+
+    /// <summary>
+    /// THE ONE STATE WHERE THE ADMISSION DOES NOT REFUSE ON A SLOT IT NAMES.
+    ///
+    /// A night that has been accepted and has not begun dispatches nothing - no walk, no answer, no save - so it
+    /// cannot use the body it would refuse a walk-up with. Measured 2026-11-10 (`round43`): the night's own `sleep`
+    /// retry came back `body_owned_by_day_advance` naming itself, in the same state that refused the only answer the
+    /// engine's bed prompt accepts. The exemption is one named fact, and this gate says so: any OTHER conditional
+    /// added to the chain fails here, because each one would be a body the actor is told it cannot have.
+    /// </summary>
+    [Fact]
+    public void TheOnlyStateExemptionInTheChainIsTheNightThatHasNotBegun()
+    {
+        string source = Source("integrations/stardew/farmhandexecutioncontroller.cs");
+        int rejection = source.IndexOf("this.RejectBodyOwned(requestId, executionId)", StringComparison.Ordinal);
+        rejection.Should().BeGreaterThan(0);
+        int chainEnd = source.IndexOf("HasActiveExecution", rejection - 900, StringComparison.Ordinal);
+        chainEnd.Should().BeGreaterThan(0);
+        int chainStart = source.LastIndexOf("this.active is not null", chainEnd, StringComparison.Ordinal);
+        chainStart.Should().BeGreaterThan(0);
+        string chain = source.Substring(chainStart, chainEnd - chainStart);
+
+        var conditionals = System.Text.RegularExpressions.Regex
+            .Matches(chain, @"&&\s*!this\.(\w+)")
+            .Select(match => match.Groups[1].Value)
+            .Distinct()
+            .ToList();
+
+        conditionals.Should().BeEquivalentTo(new[] { "NightAcceptedButNotBegun" });
+        source.Should().Contain(
+            "private bool NightAcceptedButNotBegun => this.activeDayAdvance?.Lifecycle is { IsAwaitingEligibility: true };",
+            "the exemption must be the lifecycle's own eligibility phase, not a flag that outlives it");
     }
 }
