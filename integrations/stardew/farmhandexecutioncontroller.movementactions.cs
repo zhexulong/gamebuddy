@@ -495,7 +495,13 @@ internal sealed partial class ExecutionManager
         MinecartDestinationData destination = resolution.Destination;
         int pricePaid = RideMinecart(destination, resolution.NetworkId, Game1.player);
         if (pricePaid < 0)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "minecart_ticket_unaffordable", $"source={sourceX},{sourceY};target={expectedTargetId};price={destination.Price};money={Game1.player.Money}");
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                "minecart_ticket_unaffordable",
+                $"source={sourceX},{sourceY};target={expectedTargetId};price={destination.Price};currency=money;held={Game1.player.Money}"
+                    + PriceShortfallToken(destination.Price, Game1.player.Money));
 
         LocalTravelSpec specification = new(
             executionId,

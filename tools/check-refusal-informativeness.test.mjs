@@ -20,6 +20,7 @@ import {
   extractModReceiptSites,
   GATE,
   namesSurfaceArgument,
+  priceRefusalSites,
   REFUSAL_CLASSES,
   readActionSurface,
   renderReport,
@@ -266,6 +267,107 @@ test("the resolver reports what it cannot follow instead of guessing", () => {
   assert.equal(sites.length, 0);
   assert.equal(unattributed.length, 1);
   assert.equal(unattributed[0].expression, "resolution . ReasonCode");
+});
+
+// ---------------------------------------------------------------------------
+// The price comparison: one side of a comparison is half a refusal.
+// ---------------------------------------------------------------------------
+
+const SHOP_ACTIONS = "integrations/stardew/farmhandexecutioncontroller.shopactions.cs";
+const MOVEMENT_ACTIONS = "integrations/stardew/farmhandexecutioncontroller.movementactions.cs";
+
+/** A reported `path:line` subject must point at a real line of the file it names. */
+function assertSubjectPointsAt(source, subject, needle) {
+  const at = subject.lastIndexOf(":");
+  const line = Number(subject.slice(at + 1));
+  assert.equal(Number.isInteger(line), true, `subject carries no line: ${subject}`);
+  assert.match(source.split("\n")[line - 1] ?? "", new RegExp(needle, "u"), `${subject} does not point at ${needle}`);
+}
+
+test("every shipped refusal that names a price names the balance beside it", () => {
+  const report = checkRefusalInformativeness();
+  assert.equal(report.counts.priceRefusals >= 2, true, "the price-refusal population is too small to have measured");
+  assert.deepEqual(findingsOf(report, "price_comparison_missing"), []);
+
+  // The shop's own affordability refusal is IN the population by name. Its evidence is rendered by a
+  // member, so this also proves the gate's one-hop follow: without it the population would hold the
+  // minecart fare alone and the site the check was written for would be invisible.
+  const { sites } = extractModReceiptSites({ [SHOP_ACTIONS]: read(SHOP_ACTIONS) });
+  const priced = priceRefusalSites(sites);
+  assert.equal(priced.length, 1, "shop_purchase's insufficient_money refusal must be a price refusal");
+  assert.equal(priced[0].code, "insufficient_money");
+  assert.match(priced[0].evidence.expanded, /;currency=\{ShopCurrencyName\(shopCurrency\)\}/u);
+  assert.match(priced[0].evidence.expanded, /;held=\{currencyHeld\}/u);
+});
+
+test("FALSIFIER: a price refusal that drops the balance is named at its file:line and token", () => {
+  const source = read(SHOP_ACTIONS);
+  const line = lineOf(source, ";held={currencyHeld}");
+  const mutated = mutateLine(SHOP_ACTIONS, line, (text) => text.replace(";held={currencyHeld}", ""));
+
+  const report = run({ [SHOP_ACTIONS]: mutated });
+  const finding = findingsOf(report, "price_comparison_missing").find((item) => item.detail.includes("held="));
+  assert.notEqual(finding, undefined, "a price refusal without the balance must be flagged");
+  assert.match(finding.detail, /insufficient_money/u, "the finding must name the reason code");
+  assertSubjectPointsAt(source, finding.subject, "ExecutionState\\.Rejected");
+});
+
+test("FALSIFIER: a fare refusal that drops the currency names one side of its comparison", () => {
+  const source = read(MOVEMENT_ACTIONS);
+  const line = lineOf(source, ";price={destination.Price};currency=money;held=");
+  const mutated = mutateLine(MOVEMENT_ACTIONS, line, (text) => text.replace(";currency=money", ""));
+
+  const report = run({ [MOVEMENT_ACTIONS]: mutated });
+  const finding = findingsOf(report, "price_comparison_missing").find(
+    (item) => item.subject.startsWith(`${MOVEMENT_ACTIONS}:`) && item.detail.includes("currency="),
+  );
+  assert.notEqual(finding, undefined, "a price with no currency must be flagged");
+  assert.match(finding.detail, /minecart_ticket_unaffordable/u);
+  assertSubjectPointsAt(source, finding.subject, "ExecutionState\\.Rejected");
+});
+
+test("FALSIFIER: a tree with no price refusal blocks the check instead of passing it", () => {
+  const synthetic = [
+    "internal sealed class Probe",
+    "{",
+    "    public void Run(string requestId, string executionId)",
+    "    {",
+    '        this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned_by_teleport", $"owner=teleport");',
+    "    }",
+    "}",
+  ].join("\n");
+  const report = checkRefusalInformativeness({ modSources: { "integrations/stardew/probe.cs": synthetic } });
+  assert.equal(report.counts.priceRefusals, 0);
+  const finding = findingsOf(report, "price_refusal_population_empty")[0];
+  assert.notEqual(finding, undefined, "zero population must be blocked and named, never a pass");
+  assert.equal(report.verdict, "blocked");
+});
+
+test("the one-hop follow reads a helper's own literals and invents nothing for an unrelated one", () => {
+  const synthetic = [
+    "internal sealed class Probe",
+    "{",
+    "    internal static string Priced(string shop)",
+    "    {",
+    '        return $"shop={shop};price=80;currency=money;held=20";',
+    "    }",
+    "",
+    "    internal static string Unpriced(string tile)",
+    "    {",
+    '        return $"tile={tile}";',
+    "    }",
+    "",
+    "    public void Run(string requestId, string executionId, string shop, string tile)",
+    "    {",
+    '        this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_sold_here", Priced(shop));',
+    '        this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "body_owned_by_teleport", Unpriced(tile));',
+    "    }",
+    "}",
+  ].join("\n");
+  const { sites } = extractModReceiptSites({ "integrations/stardew/probe.cs": synthetic });
+  const priced = priceRefusalSites(sites);
+  assert.equal(priced.length, 1, "only the refusal whose helper states a price is a price refusal");
+  assert.equal(priced[0].code, "item_not_sold_here");
 });
 
 test("the CLI is the gate: non-zero while a finding exists, and it prints the matrix", () => {

@@ -54,9 +54,12 @@ public sealed class ShopPurchaseCurrencySourceShapeTests
         request.Should().Contain("currencyAfter < currencyBefore && gained > 0");
         request.Should().Contain("currencyAfter < currencyBefore || gained > 0");
 
-        // The refusal names the currency it could not afford.
-        request.Should().Contain("currency={ShopCurrencyName(shopCurrency)}");
+        // The refusal names the currency it could not afford, rendered from the amount the gate above read.
+        request.Should().Contain(
+            "ShopPurchaseAffordabilityEvidence(target.ShopId, expectedItemId, unitPrice, shopCurrency, currencyHeld)",
+            "the refusal states its comparison through the one renderer that carries both sides of it");
         request.Should().NotContain("money={actor.Money}");
+        request.Should().NotContain("Game1.player.Money", "no purse read may enter the purchase path");
     }
 
     [Fact]

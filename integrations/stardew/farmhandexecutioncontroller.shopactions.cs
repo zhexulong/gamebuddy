@@ -430,6 +430,49 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         };
     }
 
+    /// <summary>
+    /// The shortfall a price refusal appends when the price is out of reach, and nothing when it is not.
+    ///
+    /// <para>
+    /// Stated only for a real gap: `price=80` against `held=80` is exactly affordable, so `short=0` would
+    /// report an absence as a quantity, and a `price=0` charge has no gap to name. One producer, so every
+    /// refusal that names a price spells the gap the same way.
+    /// </para>
+    /// </summary>
+    internal static string PriceShortfallToken(int price, long held)
+    {
+        long shortfall = price - held;
+        return shortfall > 0 ? $";short={shortfall}" : string.Empty;
+    }
+
+    /// <summary>
+    /// The affordability refusal's evidence, rendered from the values the purchase path already resolved.
+    ///
+    /// <para>
+    /// `available=` is the token this refusal has always carried and stays byte-identical; `held=` names the
+    /// same amount as the balance of the currency the price is in. Both exist because the old sentence could
+    /// not be acted on: `price=80;currency=money;available=20` states the price and hides the other side of
+    /// the comparison, and `available=` beside `price=` reads as stock - round42 spent eight `shop_purchase`
+    /// attempts re-asking for goods the purse could not pay for.
+    /// </para>
+    /// <para>
+    /// Currency 0 is the purse, so `held` equals <c>Game1.player.Money</c> only in that case
+    /// (ShopMenu.cs:885 maps 0 to who.Money); otherwise it is the amount of the currency the price is in.
+    /// That is the engine's own mapping, not a second read.
+    /// </para>
+    /// </summary>
+    internal static string ShopPurchaseAffordabilityEvidence(
+        string shopId,
+        string itemId,
+        int unitPrice,
+        int shopCurrency,
+        long currencyHeld)
+    {
+        return $"shop={shopId};item={itemId};price={unitPrice};currency={ShopCurrencyName(shopCurrency)};available={currencyHeld}"
+            + $";held={currencyHeld}"
+            + PriceShortfallToken(unitPrice, currencyHeld);
+    }
+
     public LocalExecutionReceipt RequestLocalShopPurchase(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
@@ -608,7 +651,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 executionId,
                 ExecutionState.Rejected,
                 "insufficient_money",
-                $"shop={target.ShopId};item={expectedItemId};price={unitPrice};currency={ShopCurrencyName(shopCurrency)};available={currencyHeld}");
+                ShopPurchaseAffordabilityEvidence(target.ShopId, expectedItemId, unitPrice, shopCurrency, currencyHeld));
         }
         if (purchasable < 1)
         {

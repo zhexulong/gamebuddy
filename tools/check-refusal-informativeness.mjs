@@ -21,7 +21,9 @@
  *   1. the reason code is a CLOSED vocabulary - a declared family, not a free-form string;
  *   2. the refusal names the ACTION it was about;
  *   3. a failed precondition carries the two values that disagree (`expected` / `actual`);
- *   4. a class the caller can act on carries a remediation.
+ *   4. a class the caller can act on carries a remediation;
+ *   5. a refusal that names a PRICE names the comparison it made: the currency the price is in and the
+ *     amount of it the player holds (`price=` -> `currency=` + `held=`), never one side alone.
  *
  * It reports a matrix (action x refusal class -> informative / not) so the gap is visible on one
  * page. It reports; it does not fix: the Mod and the Host are out of its scope by design.
@@ -32,6 +34,13 @@
  *     (or a member that returns one), and an `out string` carrier filled by the callee that owns the
  *     literals. A code read through an object (`resolution.ReasonCode`) is beyond it. The count is
  *     printed, so a rising number is visible rather than silent.
+ *   - Price evidence built by a member is followed ONE hop into that member's own literals, and only
+ *     for the price comparison: the tokens a helper renders are the tokens the caller receives, but
+ *     widening every evidence check that way would let a helper's prose satisfy checks written for the
+ *     wire.
+ *   - A refusal whose reason code or evidence sits behind two hops (a local assigned from a call that
+ *     calls a helper) is out of reach, exactly as the reason-code resolver is; it is a known ceiling,
+ *     not a silent pass on the site the price check was written for.
  *   - The classes are assigned by the code's own words (the family table below). A code that
  *     matches no family is a finding, not a default: a new kind of refusal needs a decision.
  *   - Remediation is checked at the seam that OWNS it for each class, so a class whose seam is
@@ -398,6 +407,7 @@ export function extractModReceiptSites(sources) {
   for (const [relativePath, source] of Object.entries(sources)) {
     const tokens = tokenize(source);
     const perFile = [];
+    const memberLiterals = methodStringLiterals(tokens);
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index];
       if (token.type !== "word" || token.value !== "ExecutionState") continue;
@@ -412,7 +422,7 @@ export function extractModReceiptSites(sources) {
       const codeGroup = args[stateAt + 1] ?? [];
       const evidenceGroup = args[stateAt + 2] ?? [];
       const location = { path: relativePath, line: lineAt(source, token.offset) };
-      const evidence = evidenceText(evidenceGroup);
+      const evidence = evidenceText(evidenceGroup, memberLiterals);
       const literal = codeGroup.length === 1 ? literalCodeOf(codeGroup[0]) : null;
       if (literal !== null) {
         sites.push({
@@ -503,7 +513,7 @@ function carriedLiterals(name, outParamMethods, methodLiterals) {
 }
 
 /** `null` / absent / `default` are the three ways a site says nothing about the world. */
-function evidenceText(group) {
+function evidenceText(group, memberLiterals = new Map()) {
   const meaningful = group.filter((item) => item.type !== "punct" || item.value !== ",");
   if (meaningful.length === 0) return { kind: "absent" };
   if (meaningful.length === 1 && meaningful[0].type === "word") {
@@ -511,7 +521,18 @@ function evidenceText(group) {
     const kind = word === "null" || word === "default" ? "absent" : "expression";
     return { kind, text: word };
   }
-  return { kind: "expression", text: expressionText(meaningful) };
+  const text = expressionText(meaningful);
+  // One hop into the members this site calls: the detail a helper renders IS the string the caller
+  // receives, so a site that hands its evidence to `ShopPurchaseAffordabilityEvidence(...)` names the
+  // same tokens an inline literal would. Only the price comparison reads `expanded`; every other check
+  // keeps judging the wire text alone (see the limits in this file's header).
+  const rendered = [];
+  for (const [name, literals] of memberLiterals) {
+    if (new RegExp("\\b" + name + "\\s*\\(", "u").test(text)) rendered.push(literals);
+  }
+  return rendered.length === 0
+    ? { kind: "expression", text }
+    : { kind: "expression", text, expanded: text + " " + rendered.join(" ") };
 }
 
 /**
@@ -549,21 +570,27 @@ function declaredReturnsString(tokens, index) {
   return false;
 }
 
-/** Every reason-code literal inside one method/local-function body (one hop, bounded). */
-function codeLiteralsInUnit(tokens, nameIndex) {
+/** The token body of the member declared at `nameIndex`, or null when it has none (expression body, stub). */
+function unitBody(tokens, nameIndex) {
   let open = -1;
   for (let index = nameIndex + 1; index < tokens.length; index += 1) {
     if (tokens[index].value === "{") {
       open = index;
       break;
     }
-    if (tokens[index].value === ";") break;
+    if (tokens[index].value === ";") return null;
   }
-  if (open < 0) return [];
+  if (open < 0) return null;
   const close = matchingClose(tokens, open);
-  if (close < 0) return [];
+  if (close < 0) return null;
   const unit = tokens.slice(open + 1, close);
-  if (unit.length > 4000) return [];
+  return unit.length > 4000 ? null : unit;
+}
+
+/** Every reason-code literal inside one method/local-function body (one hop, bounded). */
+function codeLiteralsInUnit(tokens, nameIndex) {
+  const unit = unitBody(tokens, nameIndex);
+  if (unit === null) return [];
   const codes = [];
   for (const token of unit) {
     const literal = literalCodeOf(token);
@@ -571,6 +598,28 @@ function codeLiteralsInUnit(tokens, nameIndex) {
     if (classifyReasonCode(literal.code) !== null) codes.push(literal.code);
   }
   return codes;
+}
+
+/**
+ * Every string literal inside each declared member body, keyed by member name: the evidence a helper
+ * renders. A declaration is recognised by `declaredReturnsString`, so a CALL of the same shape cannot
+ * lend its neighbouring block's literals to an unrelated site.
+ */
+function methodStringLiterals(tokens) {
+  const byName = new Map();
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (tokens[index].type !== "word" || tokens[index + 1]?.value !== "(") continue;
+    if (tokens[index - 1]?.value === "." || tokens[index - 1]?.value === "new") continue;
+    if (!declaredReturnsString(tokens, index)) continue;
+    const unit = unitBody(tokens, index);
+    if (unit === null) continue;
+    const literals = unit
+      .filter((token) => token.type === "string" || token.type === "interpolated" || token.type === "template")
+      .map((token) => token.value);
+    if (literals.length === 0) continue;
+    byName.set(tokens[index].value, literals.join(" "));
+  }
+  return byName;
 }
 
 // ---------------------------------------------------------------------------
@@ -790,6 +839,7 @@ export function checkRefusalInformativeness({ root = REPOSITORY_ROOT, overrides 
   const projection = extractActionIdProjection(read(SOURCES.bridgeSession));
 
   const codes = collectVocabulary({ receiptSites, preconditionVocabulary, programSites, planSites, remedy });
+  const priceSites = priceRefusalSites(receiptSites.sites);
   const classOf = (code) => codes.get(reasonFamilyOf(code))?.class ?? classifyReasonCode(reasonFamilyOf(code));
   const classNeeds = new Map(REFUSAL_CLASSES.map((entry) => [entry.id, entry.needs]));
 
@@ -813,6 +863,7 @@ export function checkRefusalInformativeness({ root = REPOSITORY_ROOT, overrides 
       toolActions: actions.filter((action) => action.toolCategory !== null),
       targetSites: receiptSites.sites,
     }),
+    ...checkPriceComparison(priceSites),
   ];
 
   const classStatus = new Map();
@@ -845,6 +896,7 @@ export function checkRefusalInformativeness({ root = REPOSITORY_ROOT, overrides 
     counts: Object.freeze({
       actions: actions.length,
       receiptSites: receiptSites.sites.length,
+      priceRefusals: priceSites.length,
       programSites: programSites.length,
       planSites: planSites.length,
       reasonFamilies: codes.size,
@@ -996,6 +1048,73 @@ function checkReceiptFacts({ sites, classOf, classNeeds, argumentNames }) {
   return findings;
 }
 
+/** 6. A refusal that names a price names the comparison it made. */
+
+/**
+ * The tokens a price refusal owes its caller: the price is one side, and the other side is the amount
+ * held in the currency that price is denominated in.
+ *
+ * Measured round42 (live): `shop_purchase` rejected `insufficient_money` eight times on
+ * `shop=SeedShop;item=(O)474;price=80;currency=money;available=20` - goods, price, currency and the
+ * "available" amount all named, and the balance never named AS a balance, because `available=` beside
+ * `price=` reads as stock. The companion could not tell whether she was 5g or 5000g short. The sibling
+ * fixed the round before (`shop_counter_out_of_reach`, naming `owner_tile` ... `actor_tile` ...
+ * `radius=`) is the same family: naming one side of a comparison is half a refusal, not one.
+ *
+ * The population is every Mod refusal whose evidence names `price=`, read from the shipped sources, so a
+ * price refusal written tomorrow is covered by construction and an empty population is a blocked reading
+ * rather than a pass.
+ */
+const PRICE_TOKEN = /(?:^|[;|,{}]\s*)price=/u;
+const PRICE_COMPANIONS = Object.freeze([
+  Object.freeze({
+    token: "currency",
+    matcher: /(?:^|[;|,{}]\s*)currency=/u,
+    requirement: "the currency the price is denominated in",
+  }),
+  Object.freeze({
+    token: "held",
+    matcher: /(?:^|[;|,{}]\s*)held=/u,
+    requirement: "the amount of that currency the player holds",
+  }),
+]);
+
+/** Every Mod refusal site whose evidence states a price, read from the sources rather than a list. */
+export function priceRefusalSites(sites) {
+  return sites.filter(
+    (site) =>
+      site.evidence.kind === "expression" && PRICE_TOKEN.test(site.evidence.expanded ?? site.evidence.text ?? ""),
+  );
+}
+
+function checkPriceComparison(priceSites) {
+  if (priceSites.length === 0)
+    return [
+      finding(
+        "price_refusal_population_empty",
+        SOURCES.modRoot,
+        "no Mod refusal names price=, so the price comparison was not measured: zero population is a blocked reading, not a pass",
+        "argument",
+      ),
+    ];
+  const findings = [];
+  for (const site of priceSites) {
+    const text = site.evidence.expanded ?? site.evidence.text ?? "";
+    for (const companion of PRICE_COMPANIONS) {
+      if (companion.matcher.test(text)) continue;
+      findings.push(
+        finding(
+          "price_comparison_missing",
+          `${site.path}:${site.line}`,
+          `${site.code} names price= but not ${companion.token}= (${companion.requirement}): the refusal states one side of the comparison it made, so the caller cannot act on it`,
+          "argument",
+        ),
+      );
+    }
+  }
+  return findings;
+}
+
 /** 5. Remediation, at the seam that owns it for each class. */
 function checkRemediation({ codes, classOf, classNeeds, planSites, remedy, planLexicon, toolActions, targetSites }) {
   const findings = [];
@@ -1134,7 +1253,7 @@ export function renderReport(report) {
   const lines = [];
   lines.push(`${report.gate} verdict=${report.verdict}`);
   lines.push(
-    `actions=${report.counts.actions} reasonFamilies=${report.counts.reasonFamilies} reasonCodes=${report.counts.reasonCodes} receiptSites=${report.counts.receiptSites} programSites=${report.counts.programSites} planSites=${report.counts.planSites} unattributed=${report.unattributed.length}`,
+    `actions=${report.counts.actions} reasonFamilies=${report.counts.reasonFamilies} reasonCodes=${report.counts.reasonCodes} receiptSites=${report.counts.receiptSites} priceRefusals=${report.counts.priceRefusals} programSites=${report.counts.programSites} planSites=${report.counts.planSites} unattributed=${report.unattributed.length}`,
   );
   const classColumns = REFUSAL_CLASSES.map((entry) => entry.id);
   lines.push("");
