@@ -22,6 +22,19 @@
 //              must NOT bring the probe's. Then the probe's `enabled` is flipped to true in the SAME
 //              book (a real fixture toggle through the product, not a second fixture) and a second turn
 //              must bring it. The flip is the falsifier, so the flag - not the fixture - is the variable.
+//
+//              EACH DIRECTION IS MEASURED IN A CHAT CREATED AFTER ITS BOOK WAS WRITTEN, and that is not
+//              a convenience. The Chat publishes her authored catalogue ONCE, when it mounts
+//              (`host/src/runtime-core.internal.ts:1289-1293`: getSessionId ->
+//              `materializeStableContextForPiSession` -> `publishGameBuddyAuthoredStableCatalog`), and the
+//              only refresh path (`continuity-semantic-production-coordinator.internal.ts:668`) fires on a
+//              MANAGED World Info binding change and on nothing else. `host/src/tavern/companion-world-book-service.ts:218-223`
+//              states the rule in the product's own words: "Editing is invisible to a Chat that is already
+//              mounted ... it picks this change up when it mounts again." The 2026-11-10 run of this
+//              driver flipped the flag INSIDE one mount, took two turns there, and read the world-book
+//              section as 313 bytes in both - correctly, because that mount never saw the fixture at all.
+//              A fixture that the measured turn cannot observe is not a falsifier, so each reading now
+//              comes from a mount that has the book it is asserting about.
 //   sampling   the preset's `samplingParams`. See WHAT THIS RUN CANNOT SAY: no preset is bound to a
 //              chat's runtime in this tree, so the claim cannot be made true by any turn. The reading is
 //              `unobserved`, and the wire's own sampler values are printed beside it so a reader can see
@@ -39,9 +52,11 @@
 //                                   direction has no state to produce in this product, and the run says
 //                                   so by name.
 //
-// WHAT IT WRITES, AND THAT IT PUTS IT BACK: two entries added to her world book and one Memory row.
-// The book is restored to the entries it had (by the same route, CASing on the revision it reads at the
-// end) and the Memory row is archived, so the run leaves the player's durable state as it found it. Every
+// WHAT IT WRITES, AND THAT IT PUTS IT BACK: two entries added to her world book, two Chats created to
+// mount them, and one Memory row. The book is restored to the entries it had (by the same route, CASing
+// on the revision it reads at the end) and the Memory row is archived, so the conversation the player
+// was reading is untouched. The two created Chats stay: they are the mounts, they hold nothing but the
+// two synthetic lines, and deleting them would be a second write this driver has no reading for. Every
 // restore is reported with its outcome; a failed restore is printed, never swallowed.
 //
 // NO CONTENT IS PRINTED. The fact strings, the entry texts and the player's line stay in this process:
@@ -53,6 +68,8 @@ const { join } = require("node:path");const {
 	observe,
 	observationStart,
 	canStartTurn,
+	activateSurface,
+	createChat,
 	REPO_ROOT,
 } = require("./common.cjs");
 
@@ -186,6 +203,33 @@ const API = 1;
 	const claims = { memory: null, worldBook: null };
 	const steps = [];
 
+	/**
+	 * A Chat created now, so it mounts the book as it stands now.
+	 *
+	 * The authored catalogue is published at mount (see this driver's header), so a direction can only be
+	 * measured in a Chat that was created after the write it is about. A create that does not land is
+	 * reported by name and that direction is not taken: a turn read from the previous mount would answer
+	 * a different question and read exactly like a product defect.
+	 */
+	const mountFor = async (direction) => {
+		// The New Chat control lives on the Chats surface; creating lands in the Chat it made.
+		await activateSurface(page, "会话");
+		const created = await createChat(page);
+		say(
+			`worldBook: ${direction} mount created=${created.started} committed=${JSON.stringify(created.committed)} landed=${created.landed}`,
+		);
+		if (created.landed !== true) steps.push({ half: "worldBook", reason: `${direction}_mount_not_created` });
+		if (created.landed !== true) return false;
+		// A mount that has not drawn its composer yet is a turn this driver cannot send: wait for the
+		// field the turn needs, and let `sendTurn` say so by name if it never arrives.
+		await page
+			.waitForFunction(() => document.querySelector("textarea.composer-textarea") !== null, undefined, {
+				timeout: 30000,
+			})
+			.catch(() => undefined);
+		return true;
+	};
+
 	const worldBookHalf = async () => {
 		const companion = await companionHandle();
 		if (companion.handle === null) {
@@ -231,7 +275,10 @@ const API = 1;
 			return;
 		}
 
-		const offTurn = await sendTurn("worldbook-off", `${KEY_ENABLED} and ${KEY_DISABLED} are both in this line`);
+		const offTurn =
+			(await mountFor("off")) === true
+				? await sendTurn("worldbook-off", `${KEY_ENABLED} and ${KEY_DISABLED} are both in this line`)
+				: null;
 		const second = await writeBook(companion.handle, first.body.revision, [
 			...original,
 			control,
@@ -243,7 +290,10 @@ const API = 1;
 		if (second.status !== 200) {
 			steps.push({ half: "worldBook", reason: `book_flip_refused:${second.status}:${second.body?.code ?? "none"}` });
 		}
-		const onTurn = await sendTurn("worldbook-on", `${KEY_ENABLED} and ${KEY_DISABLED} are both in this line`);
+		const onTurn =
+			second.status === 200 && (await mountFor("on")) === true
+				? await sendTurn("worldbook-on", `${KEY_ENABLED} and ${KEY_DISABLED} are both in this line`)
+				: null;
 
 		// Put the player's book back exactly as it was found, and say what happened.
 		const restoreRead = await readBook(companion.handle);
@@ -253,8 +303,8 @@ const API = 1;
 			`worldBook: restored status=${restored === null ? "unobserved:no_book_to_restore_into" : restored.status} entries=${original.length}`,
 		);
 
-		claims.worldBook = { text: TOKEN_DISABLED, control: TOKEN_ENABLED, turns: { carried: onTurn.turnKey, absent: offTurn.turnKey } };
-		if (onTurn.turnKey === null || offTurn.turnKey === null)
+		claims.worldBook = { text: TOKEN_DISABLED, control: TOKEN_ENABLED, turns: { carried: onTurn?.turnKey ?? null, absent: offTurn?.turnKey ?? null } };
+		if (offTurn !== null && onTurn !== null && (onTurn.turnKey === null || offTurn.turnKey === null))
 			steps.push({ half: "worldBook", reason: "a_turn_marked_no_submission_key" });
 	};
 

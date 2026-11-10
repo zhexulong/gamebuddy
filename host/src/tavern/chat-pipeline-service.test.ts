@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { readFile, rm } from "node:fs/promises";
 import test from "node:test";
@@ -2665,5 +2666,180 @@ test(
     assert.equal(remounted.files, 1);
     assert.equal(remounted.greetings, 1);
     assert.deepEqual(remounted.model, output.modelAfterFirstTurn);
+  },
+);
+
+/**
+ * One fixture, three readings of her own world book: the enabled entry rides the turn, the disabled
+ * one does not, and flipping the flag changes what the turn carries.
+ *
+ * The mount is part of the fixture, and that is the fact this test exists for. A Chat publishes her
+ * authored catalogue ONCE, when it mounts
+ * (`runtime-core.internal.ts:1289-1293` → `materializeStableContextForPiSession` →
+ * `publishGameBuddyAuthoredStableCatalog`), and the only refresh path
+ * (`continuity-semantic-production-coordinator.internal.ts:668`) fires on a MANAGED World Info
+ * binding change and on nothing else. So a book edited under an open Chat cannot reach it until that
+ * Chat mounts again - which `companion-world-book-service.ts:218-223` states as the product rule.
+ *
+ * A live run read that rule as a defect: it added two entries to her book, sent a turn, flipped one
+ * entry's `enabled`, sent a second turn, and reported the unchanged world-book section as
+ * "the entry is not injected". The two turns were in one mount, so neither could see the flip. This
+ * test takes the same three readings the right way round - a fixture that reaches the assembly at
+ * every measured turn - and pins the mount rule beside them, so the next reader of that run gets the
+ * answer instead of the same contradiction.
+ */
+test(
+  "her own world book's enabled flag decides what a turn carries, and the flip lands at the next mount",
+  { skip: process.platform !== "win32" ? "requires real Windows production coordinator mount" : false },
+  async () => {
+    const CONTEXT_CONTROL_TEXT = "w4 control entry: the cellar key hangs above the third beam";
+    const CONTEXT_PROBE_TEXT = "w4 probe entry: the lamp oil is on the barn loft shelf";
+    const output = await mounted(`
+  const CONTROL_KEY = "w4controlkey";
+  const PROBE_KEY = "w4probekey";
+  const CONTROL_TEXT = ${JSON.stringify(CONTEXT_CONTROL_TEXT)};
+  const PROBE_TEXT = ${JSON.stringify(CONTEXT_PROBE_TEXT)};
+  const CONTROL_TITLE = "w4 control entry";
+  const PROBE_TITLE = "w4 probe entry";
+  const fx = await fixture();
+  const runtimeCwd = resolveRuntimePaths(principal, fx.root).runtimeCwd;
+  const { updateCompanionWorldBook, readCompanionWorldBook } = await import(new URL("./companion-world-book-service.js", serviceUrl).href);
+  const { macroTable } = await import(new URL("./macro-engine.js", serviceUrl).href);
+  const macros = macroTable({ char: "Companion", locale: "zh-CN" });
+  let startCalls = 0;
+  let draftRevision = 0;
+  let current = { manifest: fx.manifest, authority: fx.authority, lease: fx.lease, service: serviceFor(fx, async () => { startCalls += 1; }) };
+  const bindingFor = (metadata) => Object.freeze({
+    worldBookId: metadata.worldBookId,
+    revision: metadata.revision,
+    canonicalHash: metadata.canonicalHash,
+    provenance: "reviewed-import",
+  });
+  // The player's own edit route, as the surface calls it: one whole entry list CASed on the revision
+  // it read, and the new metadata carried to every Chat thread pinned to the old one.
+  // The fixture book is the two entries under test plus whatever always-on background her book
+  // already carries: every keyword-gated entry she shipped with is dropped, so the ONLY per-turn
+  // candidates are the control and the probe. Without that, a seeded entry whose own word rides the
+  // visible tail comes and goes with the transcript's length and the byte reading below would move for
+  // a reason that is not the flag.
+  const writeBook = async (probeEnabled) => {
+    const book = await readCompanionWorldBook(runtimeCwd);
+    if (book.revision === null) throw new Error("companion_world_book_absent");
+    const rows = book.entries
+      .filter((entry) => entry.title !== CONTROL_TITLE && entry.title !== PROBE_TITLE && entry.constant === true)
+      .map((entry) => ({ title: entry.title, keys: [...entry.keys], constant: entry.constant, enabled: entry.enabled, content: entry.content }));
+    return await updateCompanionWorldBook({
+      path: runtimeCwd + "/worldbook.json",
+      containmentRoot: fx.root,
+      macros,
+      expectedRevision: book.revision,
+      entries: [
+        ...rows,
+        { title: CONTROL_TITLE, keys: [CONTROL_KEY], constant: false, enabled: true, content: CONTROL_TEXT },
+        { title: PROBE_TITLE, keys: [PROBE_KEY], constant: false, enabled: probeEnabled, content: PROBE_TEXT },
+      ],
+      refreshBindings: async (previous, next) => await fx.store().refreshCompanionWorldBookBinding({
+        companionId: principal.companionId,
+        continuityId: principal.continuityId,
+        previous: bindingFor(previous),
+        binding: bindingFor(next),
+      }),
+    });
+  };
+  // A fresh mount of the SAME Chat over the same root - the product's own reload path. The authored
+  // catalogue is republished here, and nowhere else, which is the whole point of this test.
+  const remount = async () => {
+    await current.service.close();
+    await current.lease.close();
+    await current.authority.close();
+    const authority = await createKnownSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(fx.manifest);
+    const lease = await authority.startMountedChatRuntime();
+    current = { manifest: fx.manifest, authority, lease, service: knownServiceFor(fx.manifest, lease, async () => { startCalls += 1; }) };
+    return { chatThreadId: lease.chatThreadId, chatSurfaceSessionId: lease.chatSurfaceSessionId };
+  };
+  /**
+   * One turn whose line names BOTH trigger words, so the only thing that can decide whether an entry
+   * rides it is that entry's own enabled flag - never the absence of its key.
+   */
+  const measure = async (key) => {
+    const startsBefore = startCalls;
+    await current.service.submitAfterResponseCommit(
+      { apiVersion: 1, selectionGeneration: current.lease.browserProjection.selectionGeneration, text: CONTROL_KEY + " and " + PROBE_KEY + " both appear here", locale: "en", expectedDraftRevision: draftRevision },
+      key,
+      async () => undefined,
+    );
+    await waitFor(() => startCalls === startsBefore + 1);
+    draftRevision += 1;
+    const accepted = (await fx.store().resumeThread(current.lease.chatThreadId, current.lease.chatSurfaceSessionId)).currentTurnContextPlan;
+    const reading = {
+      hashes: accepted === undefined ? [] : accepted.volatileSources.map((source) => source.canonicalHash),
+      kinds: accepted === undefined ? [] : accepted.volatileSources.map((source) => source.kind),
+      tokenCount: accepted === undefined ? 0 : accepted.volatileTokenCount,
+    };
+    await driveToTerminal({ manifest: current.manifest, lease: current.lease }, "completed", key);
+    return reading;
+  };
+  const KEY_OFF = "w4off" + "a".repeat(17);
+  const KEY_SAME_MOUNT = "w4same" + "a".repeat(16);
+  const KEY_ON = "w4on" + "a".repeat(18);
+  await writeBook(false);
+  const identity = await remount();
+  const off = await measure(KEY_OFF);
+  // The flip happens while THIS mount is open. Nothing about it reaches this Chat - that is the
+  // product rule, and the reading below is what a probe reads as "the entry is never injected".
+  const flipped = await writeBook(true);
+  const sameMount = await measure(KEY_SAME_MOUNT);
+  const identityAfterRemount = await remount();
+  const on = await measure(KEY_ON);
+  await current.service.close();
+  await current.lease.close();
+  await current.authority.close();
+  process.stdout.write(JSON.stringify({
+    off, sameMount, on,
+    identity, identityAfterRemount,
+    flippedRevision: flipped.revision,
+    controlBytes: CONTROL_TEXT.length,
+    probeBytes: PROBE_TEXT.length,
+  }));
+`);
+    const off = output.off as { hashes: string[]; kinds: string[]; tokenCount: number };
+    const sameMount = output.sameMount as { hashes: string[]; kinds: string[]; tokenCount: number };
+    const on = output.on as { hashes: string[]; kinds: string[]; tokenCount: number };
+    // The two entries' texts, as the catalogue identifies them: `canonicalHash` is the sha256 of the
+    // content the m[1] block renders, so membership here is the entry's TEXT being carried.
+    const hashOf = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
+    const controlHash = hashOf(CONTEXT_CONTROL_TEXT);
+    const probeHash = hashOf(CONTEXT_PROBE_TEXT);
+    // Reading 1 - the fixture reaches the assembly at every measured turn. Without this leg nothing
+    // else here means anything: a fixture that never arrives also reports "the disabled entry is
+    // absent".
+    for (const [label, reading] of [
+      ["off", off],
+      ["same mount after the flip", sameMount],
+    ] as const) {
+      assert.deepEqual(
+        reading.hashes,
+        [controlHash],
+        `the ${label} turn must carry exactly the always-enabled control entry; it carried ${JSON.stringify(reading.hashes)}`,
+      );
+      assert.deepEqual(reading.kinds, ["lorebook_entry"], "a world-book entry is a per-turn lorebook_entry source");
+    }
+    // Reading 2 - a disabled entry's text is absent: the only entry in the book that is off is missing.
+    assert.equal(off.hashes.includes(probeHash), false, "the disabled entry must not ride the turn at all");
+    // Reading 3 - the flip changes what the turn carries, and only after a mount: the same mount keeps
+    // the catalogue it published, the next mount reads the book again.
+    assert.deepEqual(sameMount, off, "a flip under an open Chat must not change that Chat's catalogue");
+    assert.deepEqual(
+      [...on.hashes].sort(),
+      [controlHash, probeHash].sort(),
+      `after the flip and a mount both entries must ride the turn, carried ${JSON.stringify(on.hashes)}`,
+    );
+    assert.ok(
+      on.tokenCount > off.tokenCount,
+      `the assembled world book must grow (off=${off.tokenCount}, on=${on.tokenCount})`,
+    );
+    // The two mounts are the same Chat: the flip is the variable, not the conversation.
+    assert.deepEqual(output.identityAfterRemount, output.identity);
+    void output.flippedRevision;
   },
 );
