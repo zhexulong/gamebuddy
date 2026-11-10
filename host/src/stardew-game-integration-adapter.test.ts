@@ -689,7 +689,7 @@ test("pickup_forage completion evidence requires the contract tile, item, remova
     );
 });
 
-test("pickup_item completion evidence requires the native auto-collect chunk removal", () => {
+test("pickup_item completion evidence requires the native auto-collect and an accounted-for chunk removal", () => {
   const valid =
     "location=Farm;target=item_abcdef0123456789;tile=12,9;item=(O)78;stack=1;native_auto_collect=true;chunk_removed=true;inventory_before=0;inventory_after=1";
   const receipt = {
@@ -698,6 +698,17 @@ test("pickup_item completion evidence requires the native auto-collect chunk rem
     evidence: { detail: valid },
   } as const;
   assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("pickup_item", receipt), true);
+  // The invisible pickup: a chunk of this identity is still on the ground while the backpack grew by exactly the
+  // stack. The inventory is the authority for the pickup and the location is the authority for the removal, so this
+  // shape is a completion - and it must say WHY the chunk is still there rather than claim it is gone.
+  const chunkSurvived = valid.replace("chunk_removed=true", "chunk_removed=false;reason=chunk_still_present");
+  assert.equal(
+    STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("pickup_item", {
+      ...receipt,
+      evidence: { detail: chunkSurvived },
+    }),
+    true,
+  );
   const multiStack = valid
     .replace("stack=1;", "stack=3;")
     .replace("inventory_before=0;inventory_after=1", "inventory_before=5;inventory_after=8");
@@ -710,7 +721,12 @@ test("pickup_item completion evidence requires the native auto-collect chunk rem
   );
   for (const malformed of [
     valid.replace("native_auto_collect=true", "native_auto_collect=false"),
+    // Says the chunk survived, with no reason for it.
     valid.replace("chunk_removed=true", "chunk_removed=false"),
+    // Says the chunk survived, for a reason this action never has.
+    valid.replace("chunk_removed=true", "chunk_removed=false;reason=cleanup_deferred"),
+    // Claims the removal AND excused itself: a truth that needs an excuse is not the truthful shape.
+    `${valid};reason=chunk_still_present`,
     valid.replace("stack=1;", "stack=0;"),
     valid.replace("inventory_after=1", "inventory_after=0"),
     valid.replace("target=item_abcdef0123456789", "target=item bad id"),

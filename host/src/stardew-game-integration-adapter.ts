@@ -3484,8 +3484,9 @@ function hasPickupItemCompletionEvidence(detail: string): boolean {
     "inventory_before",
     "inventory_after",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  // `reason` is the ONE optional key, and it exists only to explain `chunk_removed=false`.
+  if (!expectedKeys.every((key) => key in evidence)) return false;
+  if (Object.keys(evidence).some((key) => key !== "reason" && !expectedKeys.includes(key))) return false;
   const stack = integerEvidenceValue(evidence.stack);
   const before = integerEvidenceValue(evidence.inventory_before);
   const after = integerEvidenceValue(evidence.inventory_after);
@@ -3497,11 +3498,25 @@ function hasPickupItemCompletionEvidence(detail: string): boolean {
     stack !== null &&
     stack >= 1 &&
     evidence.native_auto_collect === "true" &&
-    evidence.chunk_removed === "true" &&
+    chunkRemovalAccountedFor(evidence) &&
     before !== null &&
     after !== null &&
     after >= before + stack
   );
+}
+
+/**
+ * Whether the receipt's `chunk_removed` says what the Mod OBSERVED about the whole location.
+ *
+ * The ground and the backpack are two different authorities: the inventory delta proves the pickup, and the location
+ * proves the removal. This validator used to require `chunk_removed=true` outright, which forced the Mod to state a
+ * removal it had just disproved whenever the engine's cleanup left a chunk of the same identity on the ground
+ * (measured 2026-10-25: `inventory_before=8;inventory_after=9` with the debris still present). A removal therefore
+ * needs no excuse, and a surviving chunk must name itself with `reason=chunk_still_present`.
+ */
+function chunkRemovalAccountedFor(evidence: Readonly<Record<string, string>>): boolean {
+  if (evidence.chunk_removed === "true") return !("reason" in evidence);
+  return evidence.chunk_removed === "false" && evidence.reason === "chunk_still_present";
 }
 
 function hasHarvestCropCompletionEvidence(detail: string): boolean {

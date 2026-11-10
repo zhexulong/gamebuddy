@@ -1933,10 +1933,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             int inventoryAfter = CountQualifiedItem(Game1.player, specification.QualifiedItemId);
             bool inventoryGained = inventoryAfter >= specification.InventoryBefore + specification.Stack;
             bool targetGone = target is null;
-            // ONE evidence shape, and it is the Host's: `hasPickupItemCompletionEvidence` requires exactly these nine keys
-            // (host/src/stardew-game-integration-adapter.ts:3239-3253). A second shape - which is what my earlier fix wrote - let
-            // the Mod mint `Succeeded/item_picked_up` for a receipt the Host then refused as incomplete.
-            string pickupEvidence = $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};native_auto_collect=true;chunk_removed=true;inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}";
+            // The whole-location answer above IS `chunk_removed`, so the field carries it instead of a literal. It was
+            // `chunk_removed=true`, and the branch below - reached only when a chunk of this identity is still on the
+            // ground - therefore shipped a removal the same pass had just disproved. A removal needs no excuse; a
+            // chunk that survived names itself, which is the one shape the Host admits beside `chunk_removed=false`.
+            string chunkRemoved = targetGone ? "true" : "false";
+            string chunkReason = targetGone ? "" : ";reason=chunk_still_present";
+            // ONE evidence shape, and it is the Host's: `hasPickupItemCompletionEvidence`
+            // (host/src/stardew-game-integration-adapter.ts) requires exactly these nine keys, plus `reason` when the chunk
+            // is still there. A second shape - which is what my earlier fix wrote - let the Mod mint
+            // `Succeeded/item_picked_up` for a receipt the Host then refused as incomplete.
+            string pickupEvidence = $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};native_auto_collect=true;chunk_removed={chunkRemoved}{chunkReason};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}";
             if (approachSettled && targetGone && inventoryGained)
             {
                 this.activeItemPickup = null;

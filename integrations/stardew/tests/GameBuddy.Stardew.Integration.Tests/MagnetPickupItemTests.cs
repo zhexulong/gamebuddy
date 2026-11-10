@@ -184,6 +184,44 @@ public sealed class MagnetPickupItemTests
         evidence["inventory_after"].Should().Be("1");
     }
 
+    /// <summary>
+    /// The receipt must report the removal the pass OBSERVED, not the one the Host wanted to read. Measured
+    /// 2026-10-25: the backpack grew by exactly the stack while `FindItemTarget` still found a chunk of the same
+    /// identity on the ground, and the receipt said `chunk_removed=true` anyway - a success resting on a statement the
+    /// same pass had just disproved. The inventory is the authority for the pickup and the location is the authority
+    /// for the removal, so this is still the action's success, and the surviving chunk is named.
+    /// </summary>
+    [Fact]
+    public void ADeliveryWhoseChunkIsStillOnTheGround_SaysTheChunkSurvived()
+    {
+        // A deadline the completion pass can outlast, because the fallback branch is the one a slow walk reaches.
+        using var harness = MagnetPickupHarness.Create(
+            debrisTileX: 4, debrisTileY: 2, heldAtPublication: 0, deadlineOffsetMs: 100);
+        string targetId = harness.PublishTargetId();
+        ExecutionManager manager = harness.Manager;
+
+        harness.StandAt(3, 2);
+        harness.OccupyTile(4, 2);
+        LocalExecutionReceipt accepted = manager.RequestLocalPickupItem(
+            "req_deferred", 4, 2, DroppedItemId, targetId, harness.DeadlineMs);
+        accepted.State.Should().Be(ExecutionState.Accepted, accepted.Evidence);
+
+        // The backpack gains the drop and the chunk stays exactly where it was.
+        harness.DeliversWithoutRemovingTheChunk();
+        harness.WaitForPickupDeadline();
+        LocalExecutionReceipt settled = harness.Settle(manager, "req_deferred", "settled_deferred");
+
+        settled.State.Should().Be(ExecutionState.Succeeded, settled.Evidence);
+        settled.ReasonCode.Should().Be("item_picked_up");
+        Dictionary<string, string> evidence = ParseEvidence(settled.Evidence!);
+        evidence["chunk_removed"].Should().Be(
+            "false", "a chunk of this identity is still lying in the location, which is the fact this field claims");
+        evidence["reason"].Should().Be(
+            "chunk_still_present", "a surviving chunk names itself instead of the receipt claiming a removal");
+        evidence["inventory_before"].Should().Be("0");
+        evidence["inventory_after"].Should().Be("1");
+    }
+
     // ---- the three ways a vanished chunk is NOT this farmer's pickup --------------
 
     /// <summary>
@@ -510,11 +548,13 @@ public sealed class MagnetPickupItemTests
         private readonly Debris debris;
         private readonly int debrisTileX;
         private readonly int debrisTileY;
+        private readonly long deadlineOffsetMs;
 
-        private MagnetPickupHarness(int debrisTileX, int debrisTileY, int heldAtPublication)
+        private MagnetPickupHarness(int debrisTileX, int debrisTileY, int heldAtPublication, long deadlineOffsetMs)
         {
             this.debrisTileX = debrisTileX;
             this.debrisTileY = debrisTileY;
+            this.deadlineOffsetMs = deadlineOffsetMs;
             this.gameBefore = Game1.game1;
             if (this.gameBefore is not null)
             {
@@ -625,7 +665,7 @@ public sealed class MagnetPickupItemTests
 
             // Standing on the tile the drop was published at: the request is the arrival, not the walk.
             this.StandAt(debrisTileX, debrisTileY);
-            this.DeadlineMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000;
+            this.DeadlineMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + this.deadlineOffsetMs;
             this.Manager = new ExecutionManager(
                 new DummyMonitor(),
                 () => FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "pickup_item" }));
@@ -643,8 +683,12 @@ public sealed class MagnetPickupItemTests
         /// <summary>The reach the engine itself reports for this body (Farmer.cs:4139-4142).</summary>
         internal int MagnetRadius => this.Actor.GetAppliedMagneticRadius();
 
-        internal static MagnetPickupHarness Create(int debrisTileX, int debrisTileY, int heldAtPublication) =>
-            new(debrisTileX, debrisTileY, heldAtPublication);
+        internal static MagnetPickupHarness Create(
+            int debrisTileX,
+            int debrisTileY,
+            int heldAtPublication,
+            long deadlineOffsetMs = 30_000) =>
+            new(debrisTileX, debrisTileY, heldAtPublication, deadlineOffsetMs);
 
         /// <summary>The target id the snapshot publishes for the drop, through the production discovery.</summary>
         internal string PublishTargetId()
@@ -674,6 +718,25 @@ public sealed class MagnetPickupItemTests
 
         /// <summary>The chunk leaves the ground for a bag that is not this actor's.</summary>
         internal void SomeoneElseTakesIt() => this.Farm.debris.Remove(this.debris);
+
+        /// <summary>
+        /// The engine's delivery with the chunk STILL on the ground: the deferred / shared-debris cleanup that leaves
+        /// the backpack one drop richer while a chunk of the same identity is still lying there. Production is not
+        /// allowed to call this - the receipt used to say `chunk_removed=true` over it.
+        /// </summary>
+        internal void DeliversWithoutRemovingTheChunk() => this.Actor.Items.Add(NewItem(stack: 1));
+
+        /// <summary>
+        /// Lets the pickup's own deadline pass, so the completion pass takes the branch a slow walk reaches. Bounded:
+        /// the deadline is in the past by the time this returns, whatever the machine's clock resolution is.
+        /// </summary>
+        internal void WaitForPickupDeadline()
+        {
+            for (int attempt = 0; attempt < 200 && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() <= this.DeadlineMs; attempt++)
+                Thread.Sleep(5);
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().Should().BeGreaterThan(
+                this.DeadlineMs, "the deadline must have passed before the completion pass runs");
+        }
 
         /// <summary>The same chunk, reported from a different tile: its opaque id carries no position.</summary>
         internal void MoveChunkTo(int tileX, int tileY) =>
