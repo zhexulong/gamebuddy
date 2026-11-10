@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
 
+import { isTerminalExecutionState } from "./execution-correlation-ledger.js";
+import type { ExecutionState } from "./protocol.js";
+
 export type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" | "world_fact";
 export type WorldFact = Readonly<{
   /** Adapter-owned source label, or Host's explicitly non-world transport label. */
@@ -126,6 +129,15 @@ export const EXECUTION_STALL_REARM_MULTIPLE = 4;
  * therefore evicted and NAMED (`stallWatch.unmeasured`), never silently forgotten.
  */
 export const MAX_WATCHED_EXECUTIONS = 8;
+
+/**
+ * How many unmeasured executions one stall fact carries.
+ *
+ * The fact is model context, not an audit log: the FIRST few name what the watch could not date, and `omitted` says how
+ * many more there were. A list that grows with the run would put the whole receipt window into a prompt, which is the
+ * 2026-10-27 context blow-up this pump bounds everywhere else.
+ */
+export const MAX_STALL_UNMEASURED_SHOWN = 8;
 
 export const HISTORIAN_CHUNK_FALLBACK_TOKENS = 22_879;
 
@@ -639,6 +651,7 @@ export class CompanionEventPump {
     const reading = this.stallWatch;
     const elapsedMs = nowMs - due.lastFactAtMs;
     const eventId = `${EXECUTION_STALL_SEMANTIC_KIND}_${due.executionId}_${String(due.published)}`;
+    const shown = reading.unmeasured.slice(0, MAX_STALL_UNMEASURED_SHOWN);
     return Object.freeze({
       source: EXECUTION_STALL_SOURCE,
       kind: "world_fact" as const,
@@ -658,9 +671,20 @@ export class CompanionEventPump {
         stallFactsSoFar: due.published,
         owner: reading.owner ?? null,
         endsOwnershipWith: reading.endsOwnershipWith ?? null,
+        // A null owner on its own reads as "nobody holds the body". What this fact actually knows when it is null is
+        // narrower: no body-owning transition is in progress, so nothing beyond this execution's own terminal receipt
+        // would release it. Naming that is the difference between "nobody holds it" and "this fact cannot say who does".
+        ...(reading.owner === undefined
+          ? { ownershipAbsentReason: "no_body_owning_transition_in_progress" as const }
+          : {}),
         watched: reading.watched.length,
         evicted: reading.evicted,
-        ...(reading.unmeasured.length === 0 ? {} : { unmeasured: reading.unmeasured }),
+        ...(reading.unmeasured.length === 0
+          ? {}
+          : {
+              unmeasured: shown,
+              omitted: reading.unmeasured.length - shown.length,
+            }),
       }),
     });
   }
@@ -1102,19 +1126,15 @@ function isHeldProgressFact(fact: WorldFact): boolean {
 }
 
 function isTerminalExecutionFact(fact: WorldFact): boolean {
+  // ONE classification of "this execution is over": the ledger's, which the launcher and every correlation consumer
+  // already share. A hand-written list here left `blocked` out, and a blocked execution therefore kept its stall entry -
+  // MEASURED 2026-11-09 (round44): two `navigate_to_destination` executions ended `destination_unreachable`
+  // (`topology=unreachable`) at 11:34:45 and 11:35:58, and a stall fact at 12:01:58 reported `elapsedMs 1560015` for an
+  // execution that had stopped 26 minutes earlier.
   return (
     fact.kind === "execution_receipt" &&
     typeof fact.payload.state === "string" &&
-    [
-      "succeeded",
-      "partially_succeeded",
-      "failed",
-      "cancelled",
-      "expired",
-      "invalidated",
-      "rejected",
-      "uncertain",
-    ].includes(fact.payload.state)
+    isTerminalExecutionState(fact.payload.state as ExecutionState)
   );
 }
 

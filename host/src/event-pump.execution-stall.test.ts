@@ -5,6 +5,7 @@ import {
   EXECUTION_STALL_BOUND_MS,
   EXECUTION_STALL_REARM_MULTIPLE,
   EXECUTION_STALL_SEMANTIC_KIND,
+  MAX_STALL_UNMEASURED_SHOWN,
   MAX_WATCHED_EXECUTIONS,
   type WorldFact,
 } from "./event-pump.js";
@@ -177,6 +178,85 @@ test("an execution the bound evicts while still running is named, not forgotten"
   assert.deepEqual(reading.unmeasured, [{ executionId: "exec_0", reason: "stall_watch_evicted:exec_0" }]);
 });
 
+test("an execution the Mod BLOCKED is over: it leaves the watch, and no stall fact follows it", (t) => {
+  // MEASURED 2026-11-09 (round44): two `navigate_to_destination` executions ended `destination_unreachable`
+  // (`topology=unreachable`) at 11:34:45 and 11:35:58, and a stall fact at 12:01:58 reported `elapsedMs 1560015` for an
+  // execution that had stopped 26 minutes earlier - `owner: null`, `endsWithin: null`, `evicted: 0`. `blocked` is a
+  // terminal receipt, and the classification of "terminal" belongs to the ledger, not to a second list kept here.
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const pump = new CompanionEventPump();
+  pump.enqueueFact(receipt("running", "exec_navigate", { actionId: "navigate_to_destination" }));
+  t.mock.timers.tick(EXECUTION_STALL_BOUND_MS);
+  assert.ok(pump.takeStallFact() !== undefined, "the silence was real while it lasted");
+
+  pump.enqueueFact(
+    receipt("blocked", "exec_navigate", {
+      actionId: "navigate_to_destination",
+      reasonCode: "destination_unreachable",
+      topology: "unreachable",
+    }),
+  );
+  assert.deepEqual(pump.stallWatch.watched, [], "a terminal receipt of ANY state ends the watch entry");
+  assert.equal(pump.stallWatch.nextStallInMs, undefined, "and leaves no deadline for the Host to arm");
+
+  t.mock.timers.tick(EXECUTION_STALL_BOUND_MS * 12);
+  assert.equal(pump.takeStallFact(), undefined, "twenty-four minutes later, a blocked execution is still not a stall");
+});
+
+test("a still-open execution's elapsedMs is the silence since its last fact, not the age of the run", (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const pump = new CompanionEventPump();
+  pump.enqueueFact(receipt("running", "exec_sleep"));
+  t.mock.timers.tick(30_000);
+  pump.enqueueFact(receipt("meaningful_progress", "exec_sleep"));
+  t.mock.timers.tick(EXECUTION_STALL_BOUND_MS);
+
+  const fact = pump.takeStallFact();
+  assert.ok(fact !== undefined, "one bound of silence after the last fact is where it is due");
+  assert.equal(
+    fact.payload.elapsedMs,
+    EXECUTION_STALL_BOUND_MS,
+    "the bound - not the 150 s this execution has existed for, and not a number that keeps growing",
+  );
+  assert.equal(fact.payload.lastFactKind, "execution_receipt:meaningful_progress");
+  assert.equal(pump.takeStallFact(), undefined, "exactly one fact at the bound, never a second in the same instant");
+});
+
+test("a stall fact bounds the executions it cannot date, and counts what it omitted", (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const pump = new CompanionEventPump();
+  const total = MAX_WATCHED_EXECUTIONS * 2 + 1;
+  for (let index = 0; index < total; index += 1) pump.enqueueFact(receipt("running", `exec_${index}`));
+  t.mock.timers.tick(EXECUTION_STALL_BOUND_MS);
+
+  const fact = pump.takeStallFact();
+  assert.ok(fact !== undefined);
+  const unmeasured = fact.payload.unmeasured as readonly unknown[];
+  assert.equal(unmeasured.length, MAX_STALL_UNMEASURED_SHOWN, "the fact is model context, so the list is bounded");
+  assert.equal(fact.payload.omitted, total - MAX_WATCHED_EXECUTIONS - MAX_STALL_UNMEASURED_SHOWN);
+  assert.equal(
+    pump.stallWatch.unmeasured.length,
+    total - MAX_WATCHED_EXECUTIONS,
+    "the pump's own reading still names every one of them",
+  );
+});
+
+test("a stall with no body-owning transition says so instead of a bare null owner", (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const pump = new CompanionEventPump();
+  pump.enqueueFact(receipt("running", "exec_sleep"));
+  t.mock.timers.tick(EXECUTION_STALL_BOUND_MS);
+  const fact = pump.takeStallFact();
+  assert.ok(fact !== undefined);
+  assert.equal(fact.payload.owner, null);
+  assert.equal(fact.payload.endsOwnershipWith, null);
+  assert.equal(
+    fact.payload.ownershipAbsentReason,
+    "no_body_owning_transition_in_progress",
+    "null alone reads as 'nobody holds the body', which is not what this fact knows",
+  );
+});
+
 test("a held body is carried on the stall fact, with what would release it", (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const pump = new CompanionEventPump();
@@ -202,6 +282,11 @@ test("a held body is carried on the stall fact, with what would release it", (t)
   assert.ok(fact !== undefined, "the running execution stalls regardless of why");
   assert.equal(fact.payload.owner, "body_owned_by_day_advance");
   assert.equal(fact.payload.endsOwnershipWith, "sleep", "an answer that stops at 'stuck' is half an answer");
+  assert.equal(
+    "ownershipAbsentReason" in fact.payload,
+    false,
+    "a named owner needs no reason for an absence it does not have",
+  );
 });
 
 test("with no owner_transition named, the release is the fact the guard itself clears on", (t) => {
