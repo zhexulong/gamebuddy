@@ -276,7 +276,12 @@ export function attachNativeCompanionContent(
   // provider ID may only corroborate that binding, never be required for it.
   let tracked: AssistantMessage | undefined;
   let trackedIdentity: Readonly<{ kind: "id" | "responseId"; value: string }> | undefined;
-  let finalizing = false;
+  // There is deliberately no "this observer has finished" latch. One observer covers ONE PROMPT TURN, and a turn
+  // contains one or more assistant messages; finalizing the first is not ending the turn. MEASURED 2026-11-09
+  // (round44): a sticky `finalizing = true` set at the first `stopReason: "stop"` message left every later message
+  // untracked, so its text reached neither a piece nor a named suppression - 5 of 102 turns reported `textParts 2 /
+  // presented 1 / suppressed {}` and the sentences ("剧情还在走，等它放完，我再下矿。") were lost. The binding below
+  // is the per-message state: a message is tracked from its own `message_start` and delivered at its own `message_end`.
   let previewsEnabled = false;
   let allowTextDeltas = false;
   let trackedTextContentIndexes = new Set<number>();
@@ -430,7 +435,7 @@ export function attachNativeCompanionContent(
     remarkTimer = setTimeout(() => {
       remarkTimer = undefined;
       dispatch(async () => {
-        if (revoked || closed || finalizing || workingRemarkReleased || tracked === undefined) return;
+        if (revoked || closed || workingRemarkReleased || tracked === undefined) return;
         const first = pendingSentences.shift();
         if (first === undefined) return;
         if (presentIsEmpty(first)) {
@@ -461,7 +466,7 @@ export function attachNativeCompanionContent(
       // its terminal natural-language response. Bind to exactly one active
       // assistant message at a time; a second start while one is unresolved is
       // foreign/malformed and cannot replace the tracked identity.
-      if (tracked === undefined && !finalizing && isAssistantLifecycleMessage(event.message)) {
+      if (tracked === undefined && isAssistantLifecycleMessage(event.message)) {
         tracked = event.message;
         trackedIdentity = identityOf(event.message);
         trackedTextContentIndexes = new Set<number>();
@@ -476,7 +481,7 @@ export function attachNativeCompanionContent(
       return;
     }
     if (event.type === "message_update") {
-      if (tracked === undefined || finalizing) return;
+      if (tracked === undefined) return;
       const assistantMessageEvent = event.assistantMessageEvent as Readonly<{
         type: string;
         contentIndex?: unknown;
@@ -535,7 +540,6 @@ export function attachNativeCompanionContent(
     // lifecycle. Provider metadata may be absent entirely, but when one was
     // observed it must still match; a contradictory ID is foreign output.
     if (tracked !== undefined && trackedIdentity !== undefined && !matchesIdentity(finalMessage, trackedIdentity)) {
-      finalizing = true;
       tracked = undefined;
       trackedIdentity = undefined;
       trackedTextContentIndexes = new Set<number>();
@@ -595,7 +599,6 @@ export function attachNativeCompanionContent(
         });
         return;
       }
-      finalizing = true;
       const stopReason = readStopReason(finalMessage.stopReason);
       if (stopReason === "aborted") {
         reportMessageText(finalMessage, "aborted");

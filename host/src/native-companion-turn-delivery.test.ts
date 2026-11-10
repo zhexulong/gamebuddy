@@ -152,6 +152,31 @@ test("a turn that also calls tools delivers every one of its text parts, in orde
   ]);
 });
 
+test("a turn that answers and then speaks again delivers both messages, not only the first", async () => {
+  // MEASURED 2026-11-09 (round44): 5 of 102 turns reported `textParts 2 / presented 1 / suppressed {} /
+  // unaccounted 1`, and the lost sentences were ordinary speech - "剧情还在走，等它放完，我再下矿。",
+  // "进屋了，靴子一脱就睡…". One observer covers one prompt turn and Pi may end one message with
+  // `stopReason: "stop"` and still produce another; a latch set at the first answer silenced every later
+  // message while `companion-loop.ts` kept counting its parts as produced.
+  const fx = fakeSession();
+  const recorded = record({ incremental: true });
+  const observer = attachGame(fx, recorded.sinks);
+
+  streamMessage(
+    fx,
+    ["剧情还在走，等它放完，我再下矿。"],
+    assistant([text("剧情还在走，等它放完，我再下矿。")], "stop"),
+  );
+  streamMessage(fx, ["进屋了，靴子一脱就睡…"], assistant([text("进屋了，靴子一脱就睡…")], "stop"));
+  await observer.close();
+
+  assert.deepEqual(words(recorded.pieces), ["剧情还在走，等它放完，我再下矿。", "进屋了，靴子一脱就睡…"]);
+  assert.deepEqual(recorded.messages, [
+    { textParts: 1, suppression: null },
+    { textParts: 1, suppression: null },
+  ]);
+});
+
 test("a turn that only speaks still delivers its text (the case that works must not regress)", async () => {
   const fx = fakeSession();
   const recorded = record({ incremental: true });
