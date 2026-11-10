@@ -185,7 +185,7 @@ Exit 0 only when the action passed, every requested perturbation answered, and t
  * `detail` is the measured state behind the code (a save's identity and mtime, for instance). It travels to the block
  * because a reader deciding whether a world is fresh needs the numbers, and a code alone sends them to the filesystem.
  */
-function refusal(code, cause, detail) {
+export function refusal(code, cause, detail) {
   const error = new Error(code, cause === undefined ? undefined : { cause });
   error.code = code;
   if (detail !== undefined) error.detail = detail;
@@ -669,13 +669,13 @@ export function readFixtureTransaction(fixtureRoot) {
   }
 }
 
-function requireAbsolute(value, code) {
+export function requireAbsolute(value, code) {
   if (typeof value !== "string" || value.length === 0 || !isAbsolute(value)) throw refusal(`${code}:${value}`);
   return resolve(value);
 }
 
 /** The root's one bootstrap-captured binding, or a refusal that names what it found instead. */
-function singleBinding(fixtureRoot) {
+export function singleBinding(fixtureRoot) {
   if (!existsSync(fixtureRoot)) throw refusal(`live_action_fixture_root_missing:${fixtureRoot}`);
   const names = readdirSync(fixtureRoot).filter((name) => name.endsWith(".native-local-binding.json"));
   if (names.length === 0) throw refusal(`live_action_binding_missing:${fixtureRoot}`);
@@ -1146,7 +1146,7 @@ export function buildBlock({
   };
 }
 
-function runFixtureSaveHarness({ plan, cleanup }) {
+export function runFixtureSaveHarness({ plan, cleanup }) {
   const args = [
     "-NoProfile",
     "-ExecutionPolicy",
@@ -1180,7 +1180,7 @@ function runFixtureSaveHarness({ plan, cleanup }) {
  * released (measured 2026-11-08: the lock, the backup and the fixture's own config were all still in place after a run
  * that claimed this step had succeeded).
  */
-function releaseFixture(plan) {
+export function releaseFixture(plan) {
   restoreFixtureTransaction({
     run: (argv) => {
       const { status, stderr } = spawnSync(process.execPath, argv, { cwd: REPO, encoding: "utf8", windowsHide: true });

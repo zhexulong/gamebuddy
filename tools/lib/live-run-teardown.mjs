@@ -105,7 +105,10 @@ export function restoreFixtureTransaction({ run, fixtureRoot, modsPath, releaseD
     "--evidence-dir",
     evidenceDir,
   ]);
-  console.log("fixture transaction restored");
+  // PROGRESS GOES TO STDERR, because the tools that call this publish ONE JSON block on stdout and a caller has to be
+  // able to parse it: measured 2026-11-11, `tools/live-program.mjs --script ...` printed `fixture transaction restored`
+  // before its block, so the run's own product could not be read by `JSON.parse`.
+  process.stderr.write("fixture transaction restored\n");
 }
 
 /**
