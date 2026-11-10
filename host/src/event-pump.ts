@@ -3,6 +3,10 @@ import { randomUUID } from "node:crypto";
 import { isTerminalExecutionState } from "./execution-correlation-ledger.js";
 import { composeFactBrief, type WorldStateReading } from "./fact-brief.js";
 import type { ExecutionState, Snapshot } from "./protocol.js";
+// The Mod's evidence detail is one format with one reader (`key=value;...`), and the body-owner refusal puts the owner
+// it names inside it. Reusing that reader is what keeps the pump and the Agent's refusal guidance from disagreeing
+// about who holds the body.
+import { evidenceDetailOf, evidenceField } from "./stardew-action-remedy.js";
 
 export type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" | "world_fact";
 export type WorldFact = Readonly<{
@@ -268,6 +272,37 @@ export type StallWatchReading = Readonly<{
   evicted: number;
 }>;
 
+/**
+ * A world transition holding the companion's body, as the Mod named it.
+ *
+ * <p>
+ * The CODE alone was the whole record, and that is what made the hold unreleasable: `flush` released it on
+ * `day_started` only, so every transition whose end is not a new day held delivery until the next morning - and the
+ * clock only moves when an action runs, so a held turn is the only thing that could move it. Measured 2026-11-11: a
+ * `body_owned_by_navigation` refusal (a warp, a beeline the Mod owns) froze a whole session.
+ * </p>
+ * <p>
+ * So a transition is a PAIR: the code the Mod refused with, and the owner it named. The owner is what the release
+ * matches on (`#worldTransitionEnds`), because "the transition finished" is a statement about that execution, not
+ * about the pump's clock.
+ * </p>
+ */
+type WorldTransition = Readonly<{
+  /** The Mod's own `body_owned_by_*` refusal code. */
+  code: string;
+  /** The action the refusal named as holding the body (`owner_action`), when it named one. */
+  ownerAction: string | undefined;
+  /** The execution that holds the body (`owner_execution_id`), when the refusal named one. */
+  ownerExecutionId: string | undefined;
+  /**
+   * The newest snapshot revision this pump had admitted when the hold began.
+   *
+   * A releasing snapshot must be NEWER than this: a snapshot the pump already held describes a moment before the
+   * refusal, and a re-published copy of it is not the body being free again.
+   */
+  entrySnapshotRevision: number;
+}>;
+
 /** One execution being timed. Mutable in place: the pump owns it and nothing else holds a reference. */
 type ExecutionWatch = {
   executionId: string;
@@ -331,8 +366,6 @@ export class CompanionEventPump {
    */
   readonly #watch = new Map<string, ExecutionWatch>();
   #evictedExecutions = 0;
-  /** The Mod's own `owner_action` for the transition in progress, when its refusal carried one. */
-  #worldTransitionAction: string | undefined;
   #retryBatch: PendingBatch | undefined;
   /**
    * How many batches this pump has handed to a turn that accepted them.
@@ -487,7 +520,7 @@ export class CompanionEventPump {
     this.#deliveredProgress.clear();
     this.#watch.clear();
     this.#evictedExecutions = 0;
-    this.#worldTransitionAction = undefined;
+    this.#worldTransition = null;
     this.#retryBatch = undefined;
   }
 
@@ -546,20 +579,20 @@ export class CompanionEventPump {
    * </p>
    * <p>
    * While this is set, `flush` delivers nothing: the facts stay queued, nothing is dropped, and the first flush after
-   * the transition ends carries them together with the `day_started` fact that explains where the companion now is.
-   * Player input is queued too - a person typing is not told to wait by our bookkeeping - and STOP never comes through
-   * here at all.
+   * the transition ends carries them together with the fact that ended it. Player input is queued too - a person
+   * typing is not told to wait by our bookkeeping - and STOP never comes through here at all.
    * </p>
    */
-  #worldTransition: string | null = null;
+  #worldTransition: WorldTransition | null = null;
 
   /**
    * Read the transition state off the facts, because that is the one thing both sides already agree on.
    *
    * <p>
-   * ENTERING is the Mod saying the body is no longer ours - `body_owned_by_*` arrives as a refusal code. LEAVING is the
-   * day actually starting, which is also the fact the companion needs in order to know where it now is. A timeout would
-   * be a second authority that can disagree with the game, so there is none.
+   * ENTERING is the Mod saying the body is no longer ours - `body_owned_by_*` arrives as a refusal code, together with
+   * the owner it names. LEAVING is the fact that ends THAT transition, whichever of the game's own statements comes
+   * first (see `#worldTransitionEnds`). A timeout is not one of them: it would be a second authority that can disagree
+   * with the game, and a release on the wrong tick puts the machinery back through the stage.
    * </p>
    */
   #observeWorldTransition(fact: WorldFact): void {
@@ -569,17 +602,47 @@ export class CompanionEventPump {
     );
     const owned = codes.find((code) => code.startsWith("body_owned_by_"));
     if (owned !== undefined) {
-      this.#worldTransition = owned;
-      this.#worldTransitionAction =
-        typeof payload?.owner_action === "string" && payload.owner_action.length > 0 ? payload.owner_action : undefined;
+      this.#worldTransition = Object.freeze({
+        code: owned,
+        ownerAction: bodyOwnerField(payload, "owner_action"),
+        ownerExecutionId: bodyOwnerField(payload, "owner_execution_id"),
+        entrySnapshotRevision: this.#lastSnapshot?.revision ?? -1,
+      });
       return;
     }
+    const hold = this.#worldTransition;
+    if (hold !== null && this.#worldTransitionEnds(hold, fact, payload)) this.#worldTransition = null;
+  }
+
+  /**
+   * Whether this fact is the transition ENDING, in one of the three forms the GAME itself states it.
+   *
+   * <p>
+   * 1. `day_started` - the day actually starting, unchanged: it is the release for a day advance and also the fact the
+   * companion needs in order to know where it now is.
+   * </p>
+   * <p>
+   * 2. The owning execution's own TERMINAL receipt - the game saying the transition it was running has finished. It must
+   * be the OWNER's: the refusal that started the hold is itself a terminal receipt, and an unrelated execution settling
+   * says nothing about this one. When the Mod named an execution that is the identity; `owner_action` is the fallback
+   * for the owners whose execution id the Mod does not know (`owner_execution_id=unknown`).
+   * </p>
+   * <p>
+   * 3. A snapshot NEWER than the hold whose `actionable` is true - the Mod's own admission gate saying the body is free
+   * again. It is the same authority that minted the refusal, so the two cannot disagree about whether a hold is still
+   * there.
+   * </p>
+   */
+  #worldTransitionEnds(hold: WorldTransition, fact: WorldFact, payload: Record<string, unknown> | undefined): boolean {
     const kind =
       typeof payload?.kind === "string" ? payload.kind : typeof payload?.state === "string" ? payload.state : "";
-    if (kind === "day_started") {
-      this.#worldTransition = null;
-      this.#worldTransitionAction = undefined;
+    if (kind === "day_started") return true;
+    if (fact.kind === "execution_receipt" && isTerminalExecutionFact(fact)) {
+      if (hold.ownerExecutionId !== undefined) return fact.executionId === hold.ownerExecutionId;
+      return hold.ownerAction !== undefined && payload?.actionId === hold.ownerAction;
     }
+    if (fact.kind !== "snapshot") return false;
+    return fact.revision > hold.entrySnapshotRevision && payload?.actionable === true;
   }
 
   /** Whether the pump is holding delivery because the body is owned by a world transition. */
@@ -662,7 +725,7 @@ export class CompanionEventPump {
     return Object.freeze({
       watched: Object.freeze(watched),
       nextStallInMs: first === undefined ? undefined : Math.max(0, stallThresholdMs(first.published) - first.elapsedMs),
-      owner: this.#worldTransition ?? undefined,
+      owner: this.#worldTransition?.code,
       endsOwnershipWith: this.#stallEndsOwnershipWith(),
       unmeasured: Object.freeze(unmeasured),
       evicted: this.#evictedExecutions,
@@ -789,18 +852,22 @@ export class CompanionEventPump {
   /**
    * What releases the body from the transition holding it.
    *
-   * Two answers, in the Mod's order of authority: the action its refusal named as holding the body (`owner_action`),
-   * whose ending is what releases it; or, when the Mod named none, the fact the transition guard itself clears on
-   * (`day_started`) - the only answer the Host has, and the same one `#observeWorldTransition` waits for.
+   * <p>
+   * The action the Mod's refusal named as holding the body (`owner_action`), because that execution ending is what
+   * releases it; or, when the Mod named none, the fact the transition guard has always cleared on (`day_started`).
+   * Both are the game's statements - `#worldTransitionEnds` also ends the hold on the owner's terminal receipt and on
+   * a snapshot that shows the body free, and neither is derivable from this one label.
+   * </p>
    */
   #stallEndsOwnershipWith(): string | undefined {
-    if (this.#worldTransition === null) return undefined;
-    return this.#worldTransitionAction ?? "day_started";
+    const hold = this.#worldTransition;
+    if (hold === null) return undefined;
+    return hold.ownerAction ?? "day_started";
   }
 
   public async flush(sink: CompanionTurnSink): Promise<CompanionTurnOutcome | undefined> {
-    // HELD, NOT DROPPED. A companion whose body is in bed does not get woken to read the runtime's bookkeeping; the
-    // facts wait for the transition to end and arrive together with the fact that explains the new day.
+    // HELD, NOT DROPPED. A companion whose body is inside a transition does not get woken to read the runtime's
+    // bookkeeping; the facts wait for the transition to end and arrive together with the fact that ended it.
     if (this.isWorldTransition) return undefined;
     if (this.#delivering || !this.hasPendingDelivery) return undefined;
     this.#delivering = true;
@@ -1176,6 +1243,21 @@ function isHeldFact(fact: WorldFact): boolean {
  */
 function isHeldProgressFact(fact: WorldFact): boolean {
   return isMeaningfulProgressFact(fact) || isProgressSemanticEvent(fact);
+}
+
+/**
+ * One field of the Mod's body-owner refusal: the payload key when the writer put it there, otherwise the Mod's own
+ * evidence detail (`owner_execution_id=exec_1;owner_action=pickup_item;interruptible=false;...`,
+ * `farmhandexecutioncontroller.cs:881`), which is where the body-owner describer actually carries the owner.
+ *
+ * `unknown` is the Mod's own spelling for "this field has no value" (`OwnerToken`), so it is no value here too - a hold
+ * that matched on the literal token could never be released by the execution it was waiting for.
+ */
+function bodyOwnerField(payload: Readonly<Record<string, unknown>> | undefined, key: string): string | undefined {
+  const direct = payload?.[key];
+  if (typeof direct === "string" && direct.length > 0 && direct !== "unknown") return direct;
+  const field = evidenceField(evidenceDetailOf(payload?.evidence), key);
+  return field === null || field.length === 0 || field === "unknown" ? undefined : field;
 }
 
 function isTerminalExecutionFact(fact: WorldFact): boolean {
