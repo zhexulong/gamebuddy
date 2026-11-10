@@ -197,32 +197,94 @@ export type AuthoredContextVolatileSourceCandidate = AuthoredContextVolatileSour
   }>;
 
 /**
- * Whether one of a world book's trigger words fires on the scanned text.
+ * Which boundary rule a key asks for, decided by what the KEY is rather than by the script of the text it is
+ * matched against.
  *
- * A key is a trigger WORD - the card says "this entry is about rain, so put it in the turn
- * that mentions rain" - not a substring. `corpus.includes(key)` fired on `concatenate` for
- * the key `cat`, which dropped an entry about a pet into every turn that happened to spell
- * those three letters inside another word.
+ * One predicate reads this, and the three tiers are the three shapes a world book actually writes:
  *
- * The match stays literal (a key may be a phrase, or carry punctuation such as `mood:quiet`)
- * and the one rule added is that the characters on either side of it are not ASCII word
- * characters. That boundary is deliberately ASCII-only: `\b` refuses every CJK key, because a
- * han character is not a word character in a JS regex and `绿茶` inside `今天喝绿茶` never forms
- * a boundary at all, so a `\b`-based rule would silently stop selecting the product's own
- * Chinese books.
+ *   - `single_han_character` - one han character (`茶`, `锅`). This is the tier the defect lived in: `茶` fired
+ *     inside `绿茶` because no han character was an ASCII word character, so the boundary test passed for a
+ *     reason unrelated to the language. Such a key has to be a word of its own, which the text's own word
+ *     segmentation (`triggerBoundaries`) answers.
+ *   - `han_word` - two or more han characters (`下雨`, `绿茶`, `鹈鹕镇`). A literal substring match, with NO
+ *     boundary test on the han side, because Chinese compounds are compositional: `下雨天` is 下雨 + 天 and
+ *     `天亮` is 天 + 亮, so a boundary here would drop the entry exactly when the player used the word inside a
+ *     longer one. ACCEPTED COST: a two-character key can therefore fire inside an unrelated longer word. That
+ *     is the price of matching the way the language is written, and it is what SillyTavern does too. Being
+ *     stricter than the compatibility target for Chinese is the one outcome a compatibility layer cannot want.
+ *   - `ascii_boundary` - any key carrying a character that is not han (`cat`, `SVE茶`, `moon festival`,
+ *     `mood:quiet`). ASCII word characters bound it, exactly as before these tiers existed: `cat` does not fire
+ *     in `concatenate` and fires in `the cat sat`. That strictness is deliberately NOT extended to `han_word`.
+ *
+ * Tier 1 depends on the ICU dictionaries behind `Intl.Segmenter`, and their contents move between releases.
+ * ACCEPTED COST: whether `茶` stands alone in some sentence is the dictionary's answer, not this file's, and no
+ * test here may pin a segment list to pretend otherwise.
  */
-function triggerKeyMatches(corpus: string, key: string): boolean {
-  const needle = key.normalize("NFC").trim().toLowerCase();
-  if (needle.length === 0) return false;
-  for (let at = corpus.indexOf(needle); at !== -1; at = corpus.indexOf(needle, at + 1)) {
-    if (!isAsciiWordCharacter(corpus.charAt(at - 1)) && !isAsciiWordCharacter(corpus.charAt(at + needle.length)))
-      return true;
-  }
-  return false;
+type TriggerKeyTier = "single_han_character" | "han_word" | "ascii_boundary";
+
+/** One character that is Han in its own right, astral planes included. */
+const HAN_CHARACTER = /^\p{Script=Han}$/u;
+
+/** The ASCII word characters: exactly the set that bounded every key before the Han tiers existed. */
+const ASCII_WORD_CHARACTER = /^[0-9A-Za-z_]$/u;
+
+function triggerKeyTier(needle: string): TriggerKeyTier {
+  // Code points, not UTF-16 units: a Han character outside the basic plane is one character, not two.
+  const characters = [...needle];
+  if (!characters.every((character) => HAN_CHARACTER.test(character))) return "ascii_boundary";
+  return characters.length === 1 ? "single_han_character" : "han_word";
 }
 
-function isAsciiWordCharacter(character: string): boolean {
-  return /^[0-9A-Za-z_]$/u.test(character);
+/**
+ * Whether one of a world book's trigger words fires on the scanned text.
+ *
+ * A key is a trigger WORD - the card says "this entry is about rain, so put it in the turn that mentions
+ * rain" - not an assortment of letters. `corpus.includes(key)` for every key fired on `concatenate` for the key
+ * `cat`, which dropped an entry about a pet into every turn that happened to spell those three letters inside
+ * another word.
+ *
+ * One predicate, three named cases (`triggerKeyTier`): a single han character must be its own word, a multi
+ * character han key is a substring, and anything else keeps the ASCII boundary it has always had. A regex `\b`
+ * cannot express any tier - it forms no boundary inside `绿茶`, where no han character is a word character to it -
+ * which is why the boundary is computed here instead of borrowed.
+ */
+function triggerKeyMatches(text: Readonly<{ corpus: string; boundaries: ReadonlySet<number> }>, key: string): boolean {
+  const needle = key.normalize("NFC").trim().toLowerCase();
+  if (needle.length === 0) return false;
+  switch (triggerKeyTier(needle)) {
+    case "han_word":
+      return text.corpus.includes(needle);
+    case "single_han_character":
+      for (let at = text.corpus.indexOf(needle); at !== -1; at = text.corpus.indexOf(needle, at + 1))
+        if (text.boundaries.has(at) && text.boundaries.has(at + needle.length)) return true;
+      return false;
+    case "ascii_boundary":
+      for (let at = text.corpus.indexOf(needle); at !== -1; at = text.corpus.indexOf(needle, at + 1))
+        if (
+          !ASCII_WORD_CHARACTER.test(text.corpus.charAt(at - 1)) &&
+          !ASCII_WORD_CHARACTER.test(text.corpus.charAt(at + needle.length))
+        )
+          return true;
+      return false;
+  }
+}
+
+/**
+ * The word segmentation of one scanned text, as the UTF-16 offsets a word may stand on. Only tier 1 asks it.
+ *
+ * The locale is fixed rather than the machine's: `zh` carries the dictionary that splits Chinese into words, and
+ * the same turn has to select the same entries on a Windows set to Chinese and one set to English. Segmentation
+ * runs once per selection, not once per key, because a shipped book carries around a hundred keys.
+ *
+ * `corpus.length` is added explicitly: the segmenter reports the START of each segment, and a key that ends at
+ * the end of the text needs that offset to be a boundary too.
+ */
+const TRIGGER_SEGMENTER = new Intl.Segmenter("zh", { granularity: "word" });
+
+function triggerBoundaries(corpus: string): ReadonlySet<number> {
+  const offsets = new Set<number>([0, corpus.length]);
+  for (const segment of TRIGGER_SEGMENTER.segment(corpus)) offsets.add(segment.index);
+  return offsets;
 }
 
 /**
@@ -237,6 +299,8 @@ export function selectAuthoredContextVolatileSourceRefs(
   if (typeof acceptedPlayerText !== "string" || typeof boundedVisibleTail !== "string")
     throw new Error("invalid_chat_turn_context_selection_input");
   const corpus = `${acceptedPlayerText}\n${boundedVisibleTail}`.normalize("NFC").toLowerCase();
+  // One segmentation for the whole turn: every candidate and every key asks the same boundaries.
+  const text = Object.freeze({ corpus, boundaries: triggerBoundaries(corpus) });
   const refs: AuthoredContextVolatileSourceRef[] = [];
   const seen = new Set<string>();
   let tokenCount = 0;
@@ -269,11 +333,11 @@ export function selectAuthoredContextVolatileSourceRefs(
       seen.has(candidate.sourceId)
     )
       throw new Error("invalid_chat_turn_context_volatile_candidate");
-    const primaryMatch = candidate.selectionKeys.some((key) => triggerKeyMatches(corpus, key));
+    const primaryMatch = candidate.selectionKeys.some((key) => triggerKeyMatches(text, key));
     if (!primaryMatch) continue;
 
     if (candidate.secondaryKeys !== undefined && candidate.secondaryKeys.length > 0) {
-      const secondaryMatches = candidate.secondaryKeys.map((key) => triggerKeyMatches(corpus, key));
+      const secondaryMatches = candidate.secondaryKeys.map((key) => triggerKeyMatches(text, key));
       const anySecondary = secondaryMatches.some(Boolean);
       const allSecondary = secondaryMatches.every(Boolean);
       const logic = candidate.selectiveLogic ?? 0;
