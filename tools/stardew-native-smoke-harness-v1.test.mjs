@@ -44,6 +44,24 @@ function hasErrorCode(expected) {
   };
 }
 
+/**
+ * A connected session's registration projection, which is where a runner reads an action's own deadline window.
+ * `hello_ack` publishes it per action (`FarmhandActionDescriptorWire.WatchdogMs`); these tests declare the same shape
+ * with the numbers each case needs.
+ */
+function sessionWithWindows(windows, { revision = 7, execute } = {}) {
+  return {
+    state: {
+      snapshot: { revision },
+      catalogRegistrations: Object.entries(windows).map(([actionId, watchdogMs]) => ({
+        actionId,
+        descriptor: { watchdogMs },
+      })),
+    },
+    execute: execute ?? (async (request) => ({ ...accepted, requestId: request.requestId })),
+  };
+}
+
 test("deadlineAfter creates a safe bounded absolute deadline", () => {
   assert.equal(deadlineAfter(15_000, 1000), 16_000);
   assert.throws(() => deadlineAfter(0, 1000), hasErrorCode("invalid_native_request_timeout"));
@@ -53,7 +71,6 @@ test("deadlineAfter creates a safe bounded absolute deadline", () => {
   assert.throws(() => deadlineAfter(Number.MAX_SAFE_INTEGER, 1000), hasErrorCode("invalid_native_request_timeout"));
   assert.throws(() => deadlineAfter(1, Number.MAX_SAFE_INTEGER), hasErrorCode("invalid_native_deadline_clock"));
 });
-
 test("createNativeScope is Stardew-local and excludes credentials", () => {
   const scope = createNativeScope({
     SaveId: "save",
@@ -76,13 +93,10 @@ test("createNativeScope is Stardew-local and excludes credentials", () => {
 
 test("executeFresh binds the current revision and bounded deadline", async () => {
   const calls = [];
-  const client = {
-    state: { snapshot: { revision: 7 } },
-    execute: async (request) => {
-      calls.push(request);
-      return accepted;
-    },
-  };
+  const client = sessionWithWindows(
+    { move_to_tile: 60_000 },
+    { execute: async (request) => (calls.push(request), accepted) },
+  );
   const snapshot = { revision: 7, actionable: true };
   const receipt = await executeFresh(client, {
     action: "move_to_tile",
@@ -99,10 +113,87 @@ test("executeFresh binds the current revision and bounded deadline", async () =>
   assert.equal(calls[0].deadlineMs <= Date.now() + 15_000, true);
 });
 
+/**
+ * The deadline a runner writes must be one the Mod admits, and the only number that answers that is the action's own
+ * published window. Measured 2026-11-10: `fish_here` publishes 60 s and its runner wrote 120 s, so the action's first
+ * live slice was refused `bridge_rejected:invalid_deadline` after a game launch.
+ */
+test("executeFresh writes the action's published window when the runner names none", async () => {
+  const calls = [];
+  const client = sessionWithWindows(
+    { fish_here: 60_000 },
+    { execute: async (request) => (calls.push(request), accepted) },
+  );
+  await executeFresh(client, {
+    action: "fish_here",
+    args: { x: 118, y: 21, expectedTargetId: "water_254b7a3116211750" },
+    snapshot: { revision: 7, actionable: true },
+    requestId: accepted.requestId,
+    idempotencyKey: "idem-1",
+  });
+  assert.equal(calls.length, 1);
+  // Verbatim: the window is the Mod's, not a number this harness chose from it.
+  assert.equal(calls[0].deadlineMs > Date.now() + 59_000, true);
+  assert.equal(calls[0].deadlineMs <= Date.now() + 60_000, true);
+});
+
+test("executeFresh refuses a window wider than the action publishes", async () => {
+  const calls = [];
+  const client = sessionWithWindows(
+    { fish_here: 60_000 },
+    { execute: async (request) => (calls.push(request), accepted) },
+  );
+  await assert.rejects(
+    executeFresh(client, {
+      action: "fish_here",
+      args: { x: 118, y: 21, expectedTargetId: "water_254b7a3116211750" },
+      snapshot: { revision: 7, actionable: true },
+      requestId: accepted.requestId,
+      idempotencyKey: "idem-1",
+      timeoutMs: 120_000,
+    }),
+    (error) => {
+      assert.ok(error instanceof NativeSmokeHarnessError);
+      assert.equal(error.code, "native_request_window_outside_published:fish_here");
+      assert.match(error.message, /requested=120000:published=60000/u);
+      return true;
+    },
+  );
+  // Nothing may have been sent: a refused window is not a dispatch the Mod gets to answer.
+  assert.equal(calls.length, 0);
+});
+
+test("executeFresh refuses to invent a window for an action this session never advertised", async () => {
+  const client = sessionWithWindows({ move_to_tile: 60_000 });
+  await assert.rejects(
+    executeFresh(client, {
+      action: "fish_here",
+      args: { x: 118, y: 21, expectedTargetId: "water_254b7a3116211750" },
+      snapshot: { revision: 7, actionable: true },
+      requestId: accepted.requestId,
+      idempotencyKey: "idem-1",
+    }),
+    hasErrorCode("native_action_watchdog_unpublished:fish_here"),
+  );
+  const empty = sessionWithWindows({}, { execute: async () => accepted });
+  empty.state.catalogRegistrations = [];
+  await assert.rejects(
+    executeFresh(empty, {
+      action: "fish_here",
+      args: { x: 118, y: 21, expectedTargetId: "water_254b7a3116211750" },
+      snapshot: { revision: 7, actionable: true },
+      requestId: accepted.requestId,
+      idempotencyKey: "idem-1",
+    }),
+    hasErrorCode("native_catalog_registrations_missing"),
+  );
+});
+
 test("executeFresh independently requires a returned execution identity", async () => {
-  const client = {
-    execute: async () => ({ requestId: "request-1", state: "accepted" }),
-  };
+  const client = sessionWithWindows(
+    { move_to_tile: 60_000 },
+    { execute: async () => ({ requestId: "request-1", state: "accepted" }) },
+  );
   await assert.rejects(
     executeFresh(client, {
       action: "move_to_tile",
@@ -488,12 +579,16 @@ test("waitForStableRevision waits for the exact terminal revision and fails clos
 
 // Helpers for the re-observe tests below.
 
-// A client in the shape the harness expects: a cache the harness can read (`state.snapshot`) and an
+// A client in the shape the harness expects: a cache the harness can read (`state.snapshot`), the registration
+// projection it reads an action's own deadline window from (`state.catalogRegistrations`), and an
 // observe/execute pair whose answers the test controls.
 function makeRetryClient({ revisions = [1], receipts = [] } = {}) {
   let i = 0;
   const client = {
-    state: { snapshot: { revision: revisions[0], actionable: true, activeExecution: null, capabilities: [] } },
+    state: {
+      snapshot: { revision: revisions[0], actionable: true, activeExecution: null, capabilities: [] },
+      catalogRegistrations: [{ actionId: "x", descriptor: { watchdogMs: 60_000 } }],
+    },
     observe: async () => ({
       revision: revisions[Math.min(i, revisions.length - 1)],
       actionable: true,

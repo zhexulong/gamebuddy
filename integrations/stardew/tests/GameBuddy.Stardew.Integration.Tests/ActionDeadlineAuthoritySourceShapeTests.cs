@@ -4,16 +4,21 @@ using Xunit;
 namespace GameBuddy.Stardew.Integration.Tests;
 
 /// <summary>
-/// One number, two sides: the deadline the Host puts on a dispatch must be one the Mod accepts.
+/// One number, two sides: the deadline a sender puts on a dispatch must be one the Mod accepts.
 ///
+/// <para>
 /// Measured 2026-10-17 on a real multi-day run: the companion dispatched its own <c>advance_day</c> three times
 /// and every one came back <c>invalid_deadline</c>. The Host sized the deadline from the action's OWN published
 /// watchdog (600 s for the cross-day lifecycle, because a night waits on the other players, the save and the day
-/// start), while <c>BridgeSession.IsFreshExecutionRequest</c> still bounded everything but navigation to one
-/// minute - so the action designed to be waited on for ten minutes could never be accepted at all.
-///
-/// This pins the single authority: the session accepts a deadline up to the requested action's published
-/// watchdog, and falls back to the ordinary bound only when an action publishes none.
+/// start), while <c>BridgeSession.IsFreshExecutionRequest</c> still bounded everything but navigation to one minute.
+/// Measured again 2026-11-10 from the other side: <c>fish_here</c> publishes 60 s and its live runner wrote 120 s,
+/// so the first live slice of that action was refused before it ran.
+/// </para>
+/// <para>
+/// The window therefore lives in ONE declaration (<see cref="GameBuddy.Stardew.Core.Policy.FarmhandActionDeadlineAdmission"/>),
+/// the session reads it rather than computing its own, and the senders are held against its export by
+/// <c>tools/check-action-deadline-agreement.mjs</c>. What is left to pin here is that nothing bypasses it.
+/// </para>
 /// </summary>
 [Trait("kind", "source-shape")]
 public sealed class ActionDeadlineAuthoritySourceShapeTests
@@ -26,25 +31,15 @@ public sealed class ActionDeadlineAuthoritySourceShapeTests
     private static string ReadBridgeSession() => ReadSource(Path.Combine("integrations", "stardew", "BridgeSession.cs"));
 
     [Fact]
-    public void TheSessionBoundsADeadlineByTheActionsOwnPublishedWatchdog()
+    public void TheSessionBoundsADeadlineByTheOneDeclaredWindow()
     {
-        string source = ReadBridgeSession();
-        // The bound comes from the registration the request names, which is the same catalog the Host reads.
-        source.Should().Contain("FarmhandActionCatalog.Registrations");
-        source.Should().Contain("?.Descriptor?.WatchdogMs");
-    }
-
-    [Fact]
-    public void TheHardCodedPerActionSplitIsGone()
-    {
-        // The split is what made the lifecycle action unreachable: ten minutes for one action, one minute for
-        // everything else, regardless of what each action published. Its removal is the fix, so its return would
-        // be the regression - and the check is scoped to the deadline validation, because the action id legitimately
-        // appears elsewhere (dispatch identity, durable admission, receipts).
         string deadlineCheck = DeadlineCheckSource();
-        deadlineCheck.Should().NotContain("request.Action ==", "the deadline no longer branches on a hard-coded action id");
-        deadlineCheck.Should().NotContain("FromMinutes(10)", "the ten-minute ceiling now comes from the navigation action's own published watchdog");
-        deadlineCheck.Should().Contain("Descriptor?.WatchdogMs");
+        deadlineCheck.Should().Contain(
+            "FarmhandActionDeadlineAdmission.WindowMs(request.Action)",
+            "the session reads the admitted window instead of computing one of its own");
+        deadlineCheck.Should().NotContain("WatchdogMs", "a second lookup here is the second spelling the agreement gate exists to remove");
+        deadlineCheck.Should().NotContain("FromMinutes(", "the fallback is the declaration's, not a literal in the session");
+        deadlineCheck.Should().NotContain("request.Action ==", "the deadline does not branch on a hard-coded action id");
     }
 
     /// <summary>The deadline validation method, from its signature to the end of its body.</summary>
@@ -59,15 +54,6 @@ public sealed class ActionDeadlineAuthoritySourceShapeTests
     }
 
     [Fact]
-    public void AnActionWithNoPublishedWatchdogIsStillBounded()
-    {
-        // Fail closed, not open: an action the catalog does not carry must not get an unbounded wait.
-        string source = ReadBridgeSession();
-        source.Should().Contain("publishedWatchdogMs is > 0 ? publishedWatchdogMs.Value : (long)TimeSpan.FromMinutes(1).TotalMilliseconds");
-        source.Should().Contain("publishedWatchdogMs is > 0");
-    }
-
-    [Fact]
     public void TheTwoSidesAgreeOnTheLifecycleWatchdog()
     {
         // The Host clamps a published watchdog to its own maximum dispatch deadline, and the Mod publishes the
@@ -79,8 +65,8 @@ public sealed class ActionDeadlineAuthoritySourceShapeTests
         string hostTools = ReadSource(Path.Combine("host", "src", "game-tools.ts"));
         hostTools.Should().Contain("const MAX_DISPATCH_DEADLINE_MS = 600_000;");
         hostTools.Should().Contain("const DEFAULT_DISPATCH_DEADLINE_MS = 30_000;");
-        // The Mod's ordinary ceiling and the Host's default fallback are the same order of magnitude: a
-        // disagreement there would show up as a rejection the moment an unpublished action is dispatched.
+        // The Host's fallback for an action that publishes no watchdog stays INSIDE the window the Mod admits for
+        // one: it is the dispatch deadline's default, and a default above the ordinary ceiling would be refused.
         hostTools.Should().Contain("Math.min(publishedWatchdogMs, MAX_DISPATCH_DEADLINE_MS)");
     }
 }

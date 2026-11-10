@@ -115,6 +115,12 @@ export const L0_GATES = Object.freeze([
   // the code and what would have to change. It imports the compiler and drives it, so it reads the product's own admission
   // and refusal functions instead of a fifth parser of plan vocabulary.
   "tools/check-plan-legal-fixpoint.mjs",
+  // One number, two parties: the deadline a gate runner writes onto `execution_request` and the window the Mod admits.
+  // Measured 2026-11-10: `fish_here` publishes 60 s, its runner wrote 120 s, and the action's first live slice came back
+  // `bridge_rejected:invalid_deadline` after a game launch. Reads the Mod's own export (`action-deadline-windows.v1.json`)
+  // against every runner's declared window, one file read per member, so it belongs in this rung rather than after a
+  // launch: it is the check that would have refused the run in milliseconds.
+  "tools/check-action-deadline-agreement.mjs",
   "tools/check-prelive-gate-registry.mjs",
 ]);
 

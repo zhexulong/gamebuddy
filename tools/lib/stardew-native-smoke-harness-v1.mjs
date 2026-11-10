@@ -56,6 +56,27 @@ export function deadlineAfter(timeoutMs, now = Date.now()) {
   return now + timeoutMs;
 }
 
+/**
+ * The deadline window the Mod admits for one action, read from THIS session's own advertisement.
+ *
+ * The window is not a runner's opinion: the action publishes its own watchdog on `hello_ack`
+ * (`FarmhandActionDescriptorWire.WatchdogMs`, the same declaration `BridgeSession` bounds a request with), and this
+ * reads that number. Measured 2026-11-10: `fish_here` publishes 60 s and its runner wrote 120 s, so the first live
+ * slice of that action was refused `bridge_rejected:invalid_deadline` thirteen seconds in - after a game launch, with
+ * nothing comparing the two numbers.
+ *
+ * Fails closed: an action this session did not advertise publishes no window, and a runner may not invent one.
+ */
+export function publishedActionWatchdogMs(client, action) {
+  const registrations = client?.state?.catalogRegistrations;
+  if (!Array.isArray(registrations) || registrations.length === 0)
+    throw new NativeSmokeHarnessError("native_catalog_registrations_missing");
+  const watchdogMs = registrations.find((candidate) => candidate?.actionId === action)?.descriptor?.watchdogMs;
+  if (!Number.isSafeInteger(watchdogMs) || watchdogMs <= 0)
+    throw new NativeSmokeHarnessError(`native_action_watchdog_unpublished:${action}`);
+  return watchdogMs;
+}
+
 /** Observe once and reject malformed or stale local state before a request. */
 export async function observeFresh(client, { actionable = false } = {}) {
   if (!client || typeof client.observe !== "function") throw new NativeSmokeHarnessError("invalid_native_client");
@@ -101,7 +122,15 @@ export async function executeFreshAfterReobserve(client, options, { attempts = 3
   throw lastError ?? new NativeSmokeHarnessError("stale_native_snapshot");
 }
 
-/** Submit one fresh, revision-bound request and verify its immediate receipt. */
+/**
+ * Submit one fresh, revision-bound request and verify its immediate receipt.
+ *
+ * THE REQUEST'S DEADLINE IS THE MOD'S OWN WINDOW. `timeoutMs` is a caller's request to be answered inside a NARROWER
+ * window than the action publishes - never a wider one - and omitting it writes the published window verbatim. The
+ * Mod admits a deadline at most its watchdog ahead (`FarmhandActionDeadlineAdmission`), so a runner that wrote its own
+ * number could only ever be refused after a game launch: measured 2026-11-10, `fish_here` publishes 60 s, its runner
+ * wrote 120 s, and the first live slice of the action came back `bridge_rejected:invalid_deadline`.
+ */
 export async function executeFresh(client, { action, args, snapshot, requestId, idempotencyKey, timeoutMs }) {
   if (!client || typeof client.execute !== "function") throw new NativeSmokeHarnessError("invalid_native_client");
   if (typeof action !== "string" || action.length === 0) throw new NativeSmokeHarnessError("invalid_native_action");
@@ -111,13 +140,19 @@ export async function executeFresh(client, { action, args, snapshot, requestId, 
   const cachedRevision = client.state?.snapshot?.revision;
   if (Number.isSafeInteger(cachedRevision) && cachedRevision > snapshot.revision)
     throw new NativeSmokeHarnessError("stale_native_snapshot");
+  const publishedMs = publishedActionWatchdogMs(client, action);
+  if (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > publishedMs))
+    throw new NativeSmokeHarnessError(
+      `native_request_window_outside_published:${action}`,
+      `requested=${String(timeoutMs)}:published=${publishedMs}`,
+    );
   const accepted = await client.execute({
     requestId,
     idempotencyKey,
     action,
     args,
     expectedRevision: snapshot.revision,
-    deadlineMs: deadlineAfter(timeoutMs),
+    deadlineMs: deadlineAfter(timeoutMs ?? publishedMs),
   });
   // The bridge's response is the only source of the execution identity, but
   // it is still untrusted input. Validate request correlation and require the

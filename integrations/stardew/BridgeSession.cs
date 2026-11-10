@@ -1548,21 +1548,13 @@ string? bodyProgramUnavailableReason = null,
     {
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (request.ExpectedRevision != this.executions.Revision) { reasonCode = "stale_snapshot"; return false; }
-        // The bound is the ACTION'S OWN published watchdog, which is the same number the Host reads to size the
-        // request's deadline. One authority, both sides.
-        //
-        // The hard-coded split that used to live here - ten minutes for `navigate_to_destination`, one minute for
-        // everything else - could not accept `advance_day` at all: its watchdog is deliberately 600 s, because a
-        // night waits on the other players, the save and the day start, so the Host sent a deadline the Mod refused
-        // by name (`invalid_deadline`) and a multi-day run could never end a day. Measured 2026-10-17 on run g1:
-        // the companion dispatched its own `advance_day` three times and every one was rejected.
-        long? publishedWatchdogMs = FarmhandActionCatalog.Registrations
-            .FirstOrDefault(candidate => string.Equals(candidate.ActionId, request.Action, StringComparison.Ordinal))
-            ?.Descriptor?.WatchdogMs;
-        // An action with no published watchdog keeps the Host's own default, so an unrecognized action is still
-        // bounded rather than unbounded.
-        long boundMs = publishedWatchdogMs is > 0 ? publishedWatchdogMs.Value : (long)TimeSpan.FromMinutes(1).TotalMilliseconds;
-        long maxDeadlineMs = nowMs + boundMs;
+        // The bound is the ACTION'S OWN published window and it is not computed here: `FarmhandActionDeadlineAdmission`
+        // owns it, the same declaration the senders are held against. The hard-coded split that used to live here -
+        // ten minutes for `navigate_to_destination`, one minute for everything else - could not accept `advance_day`
+        // at all (600 s watchdog, because a night waits on the other players, the save and the day start), and a
+        // local lookup beside it let the number drift from what a sender was told: measured 2026-11-10, `fish_here`
+        // answered `invalid_deadline` to a runner that had written twice the window this file admits.
+        long maxDeadlineMs = nowMs + FarmhandActionDeadlineAdmission.WindowMs(request.Action);
         if (request.DeadlineMs < nowMs || request.DeadlineMs > maxDeadlineMs) { reasonCode = "invalid_deadline"; return false; }
         reasonCode = "accepted"; return true;
     }

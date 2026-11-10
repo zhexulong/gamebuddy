@@ -43,13 +43,15 @@ export async function runFishHereSmoke(client, receipts, _config, { terminalTime
     const water = chooseWaterTarget(snapshot);
 
     const requestId = `native_local_fish_here_${Date.now()}`;
+    // No deadline of this runner's own: the cast is bounded by the window `fish_here` publishes on `hello_ack`, which
+    // is the same number the Mod admits a request with. A runner-written window is how this action's first live slice
+    // was refused `bridge_rejected:invalid_deadline` - 120 s written against a 60 s window.
     const submitted = await executeFresh(client, {
       requestId,
       idempotencyKey: `${requestId}_idem`,
       action: ACTION,
       args: { x: water.x, y: water.y, expectedTargetId: water.targetId },
       snapshot,
-      timeoutMs: 120_000,
     });
     trace.push({
       step: "cast",
@@ -129,7 +131,6 @@ export async function runFishHereSmoke(client, receipts, _config, { terminalTime
       action: ACTION,
       args: { x: water.x, y: water.y, expectedTargetId: mismatchedTargetId },
       snapshot: after,
-      timeoutMs: 30_000,
     });
     trace.push({
       step: "mismatched_binding",

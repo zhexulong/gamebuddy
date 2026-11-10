@@ -701,6 +701,16 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "than a TypeError from the elsewhere assertion",
   },
   {
+    gate: "check-action-deadline-agreement.mjs",
+    reason:
+      "its falsifier is tools/check-action-deadline-agreement.test.mjs, which drives the gate's own derivation over a " +
+      "synthetic surface and the producer's export: a runner writing 120 s against a 60 s window is red and names both " +
+      "numbers (the measured 2026-11-10 `fish_here` refusal), a runner that names no window agrees by construction, a " +
+      "longer LOCAL wait is not a wider request, an action with no gate runner is counted, an empty population and an " +
+      "unreadable export are blocked rather than green, a runner file that cannot be read is blocked and named, and an " +
+      "action the export never names is blocked instead of silently agreed",
+  },
+  {
     gate: "check-stardew-observation-gap.mjs",
     reason:
       "drives three analyzer CLIs over the decompiled tree; its falsifier is " +

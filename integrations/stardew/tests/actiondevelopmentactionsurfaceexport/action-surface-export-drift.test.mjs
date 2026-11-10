@@ -22,10 +22,19 @@ const GENERATED_ARTIFACT = path.join(
   "generated",
   "action-surface.v1.json",
 );
+const GENERATED_DEADLINE_WINDOWS = path.join(
+  TEST_DIRECTORY,
+  "..",
+  "..",
+  "action-development",
+  "contracts",
+  "generated",
+  "action-deadline-windows.v1.json",
+);
 
-function runNoArgumentExporter() {
+function runExporter(args = []) {
   return new Promise((resolve, reject) => {
-    const child = spawn("dotnet", [EXPORT_DLL], {
+    const child = spawn("dotnet", [EXPORT_DLL, ...args], {
       cwd: TEST_DIRECTORY,
       shell: false,
       windowsHide: true,
@@ -57,7 +66,7 @@ function runNoArgumentExporter() {
 
 test("producer exporter bytes do not drift from the generated action-surface artifact", async () => {
   const [exported, artifact] = await Promise.all([
-    runNoArgumentExporter(),
+    runExporter(),
     readFile(GENERATED_ARTIFACT),
   ]);
 
@@ -68,4 +77,23 @@ test("producer exporter bytes do not drift from the generated action-surface art
   assert.equal(artifact.includes(0x0a), false, "artifact must not contain a newline");
   assert.equal(artifact.includes(0x0d), false, "artifact must not contain a carriage return");
   assert.deepEqual(exported, artifact, "producer export bytes differ from the generated artifact");
+});
+
+/**
+ * The admitted deadline windows a sender outside the Mod reads. `tools/check-action-deadline-agreement.mjs` compares
+ * every gate runner's declared deadline against this file, so a stale copy would let a sender be judged against a
+ * window the Mod no longer admits - and a receiver-side change that the export never followed would make the gate
+ * pass on a number nobody admits.
+ */
+test("producer exporter bytes do not drift from the generated action-deadline-windows artifact", async () => {
+  const [exported, artifact] = await Promise.all([
+    runExporter(["--deadline-windows"]),
+    readFile(GENERATED_DEADLINE_WINDOWS),
+  ]);
+
+  assert.equal(exported[0], 0x7b, "export must start with UTF-8 JSON, not a BOM");
+  assert.equal(exported.includes(0x0a), false, "export must not contain a newline");
+  assert.equal(exported.includes(0x0d), false, "export must not contain a carriage return");
+  assert.equal(artifact[0], 0x7b, "artifact must start with UTF-8 JSON, not a BOM");
+  assert.deepEqual(exported, artifact, "the committed windows differ from the producer's own output");
 });
