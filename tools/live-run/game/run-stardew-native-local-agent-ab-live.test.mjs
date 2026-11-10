@@ -2861,63 +2861,6 @@ test("the run bundle publishes the crossing record, and one it cannot judge is r
   );
 });
 
-test("the run bundle carries the Host's own preset answer, and an absent publication is `not_measured`", () => {
-  // The operator's question - "did the live run load the preset?" - is answerable from the run's own record only if the
-  // bundle carries the Host's publication rather than a second reading of the preset file. The Host line is the one
-  // fact this process cannot compute: `sampling` is the EFFECTIVE reading over the composed model.
-  const log = [];
-  const [readCompanionPresetFact] = extractRunnerFunction(
-    RUNNER_SOURCE,
-    ["readCompanionPresetFact", "readHostJsonLines"],
-    { hostLogChunks: log },
-  );
-
-  // (a) THE RED PROOF. With no line at all, the bundle must say WHAT it looked for and must not answer
-  // `generation: null` - that is the published answer for "provisioned with no preset", and a run that never saw the
-  // Host's line cannot give it. A reader that silently reads `null` would report this run as a preset-less one.
-  const absent = readCompanionPresetFact();
-  assert.equal(absent.state, "not_measured");
-  assert.equal(absent.missingField, "COMPANION_PRESET");
-  assert.equal("generation" in absent, false, "an unmeasured publication must not be spellable as `no preset`");
-
-  // (b) The Host's block is carried as the Host wrote it - including its own `generation: null`, which here is the
-  // HOST's statement that this runtime cwd carried no preset, not this process's guess. A trailing carriage return
-  // must not stop the parse: the log is a concatenation of stderr writes.
-  const publication = {
-    card: null,
-    worldbook: null,
-    generation: null,
-    sampling: "not_applied",
-    contextBudget: { not_measured: true, missingField: "model.contextWindow" },
-    prompts: {
-      system: { chars: 12, delivered: true, disposition: "applied", refused: null },
-      postHistory: { chars: 34, delivered: true, disposition: "applied", refused: null },
-      disabled: ["auxiliary"],
-    },
-  };
-  log.push(`COMPANION_PRESET ${JSON.stringify(publication)}\r\n`);
-  const published = readCompanionPresetFact();
-  assert.equal(published.state, "published");
-  assert.equal(published.lines, 1);
-  for (const [key, value] of Object.entries(publication))
-    assert.deepEqual(published[key], value, `the Host's \`${key}\` must reach the bundle unchanged`);
-  assert.equal(published.generation, null, "the Host said `no preset`, and that answer survives as one");
-
-  // A run that re-mounts prints again: the session that served the run is the LAST one published.
-  const remounted = { ...publication, generation: "D:\\root\\preset.json" };
-  log.push(`COMPANION_PRESET ${JSON.stringify(remounted)}\n`);
-  const afterRemount = readCompanionPresetFact();
-  assert.equal(afterRemount.lines, 2);
-  assert.equal(afterRemount.generation, "D:\\root\\preset.json");
-
-  // A line nobody could read is COUNTED, and a bare scalar under the prefix is not a publication either, so neither
-  // can be mistaken for `not_measured` (nothing published) or for a block.
-  log.push("COMPANION_PRESET {not json\n", "COMPANION_PRESET 42\n");
-  const withGarbage = readCompanionPresetFact();
-  assert.equal(withGarbage.unparsable, 2);
-  assert.equal(withGarbage.lines, 2, "the readable blocks are still the ones published");
-});
-
 test("the runner assembles its result in exactly one place, so no exit path can lose a field", () => {
   // Measured 2026-10-21: a run whose trace held 131 dispatches published `attempted: []`, because the result object was
   // assembled once per exit and each literal named only what its author remembered. `multiday` and

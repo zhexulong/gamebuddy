@@ -5517,68 +5517,6 @@ function bundleCrossingRecord(outcome) {
 }
 
 /**
- * What the Game surface did with the companion preset, read from the ONE line per Game runtime the Host publishes
- * (`host/src/tavern/preset-session-publication.ts`, prefix `COMPANION_PRESET`).
- *
- * Read from the Host's own line rather than re-derived here. The `sampling` half is the EFFECTIVE reading over the
- * composed model (`effectivePresetSampling`) - the values the adapter really merges into the request body - and this
- * process cannot see that model. A second derivation from the preset file would be a second opinion about what the
- * wire carried, which is exactly the false green the reading exists to delete.
- *
- * The two states are spelled apart because a reader must never have to guess: `published` carries the Host's block
- * (whose own `generation: null` means "provisioned with no preset"), while a run that never saw a line is
- * `not_measured` WITH the field it looked for. Reporting the absent case as anything weaker - an omitted key, or a
- * `generation: null` of our own making - would answer "no preset was loaded" to a question the run never asked the
- * Host. The LAST line wins when a run re-mounts, because the session that served the run is the last one published.
- */
-function readCompanionPresetFact() {
-  const published = readHostJsonLines(hostLogChunks.join(""), "COMPANION_PRESET");
-  const last = published.records.at(-1);
-  if (last === undefined)
-    return Object.freeze({
-      state: "not_measured",
-      missingField: "COMPANION_PRESET",
-      unparsable: published.unparsable,
-    });
-  return Object.freeze({
-    ...last,
-    state: "published",
-    lines: published.records.length,
-    unparsable: published.unparsable,
-  });
-}
-
-/**
- * Every `PREFIX {json}` line one Host log carries, plus how many such lines could not be read as a block.
- *
- * The log is a concatenation of `process.stderr.write` chunks, so a line can arrive with a trailing carriage return;
- * it is stripped before parsing. A line under the prefix that will not parse, or that parses to something other than an
- * object, is COUNTED rather than dropped: a reader must not have to tell "no line" apart from "a line nobody could
- * read" by guessing, and a bare `42` under this prefix is not a publication either.
- */
-function readHostJsonLines(hostLog, prefix) {
-  const records = [];
-  let unparsable = 0;
-  for (const rawLine of hostLog.split("\n")) {
-    const line = rawLine.replace(/\r+$/u, "");
-    if (!line.startsWith(`${prefix} `)) continue;
-    let parsed;
-    try {
-      parsed = JSON.parse(line.slice(prefix.length + 1));
-    } catch {
-      unparsable += 1;
-      continue;
-    }
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-      unparsable += 1;
-      continue;
-    }
-    records.push(parsed);
-  }
-  return Object.freeze({ records: Object.freeze(records), unparsable });
-}
-
-/**
  * The run's ONE result: the passed, blocked and crashed exit paths all publish through this function.
  *
  * Each exit used to carry its own object literal, so a field added to one was silently absent from the others:
@@ -5994,12 +5932,6 @@ async function writeRunBundle({
               : [],
       },
     },
-    // What the Game surface did with the companion preset, read from the Host's own publication line. This is the
-    // answer to "did the live run load the preset?" that used to require reading code: a published block's
-    // `generation: null` means no preset file was provisioned and its `sampling: "not_applied"` means the preset's
-    // sampler is not in force, while `state: "not_measured"` means the Host never published the fact at all - a
-    // third answer that must not be spelled as the first two.
-    companionPreset: readCompanionPresetFact(),
     timeline: { path: "timeline.jsonl", records: factLog.length, sources: ["player", "smapi", "llm"] },
     actionTrace: { path: "actionTrace.jsonl", records: actionTrace.length },
     keyFrames: { status: "skipped", reason: "headless_environment", dir: null },
