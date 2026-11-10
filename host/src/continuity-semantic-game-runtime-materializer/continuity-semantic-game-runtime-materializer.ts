@@ -787,6 +787,9 @@ function stepAccountNote(compiled: CompiledPlan): Readonly<Record<string, unknow
           inserted: compiled.inserted,
           insertedCount: compiled.insertedCount,
           insertedTruncated: compiled.insertedCount > compiled.inserted.length,
+          // WHICH NODES ARE THE COMPILER'S, exactly. The words beside it say what was written; this says where, so a
+          // reading over the run's node outcomes can join on it without matching a node-id prefix.
+          insertedNodeIds: compiled.insertedNodeIds,
         }),
     ...(compiled.mergedCount === 0 ? {} : { merged: compiled.merged, mergedCount: compiled.mergedCount }),
     ...(compiled.noStepNeededCount === 0

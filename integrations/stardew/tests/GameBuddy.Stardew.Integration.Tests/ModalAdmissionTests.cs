@@ -133,11 +133,11 @@ public sealed class ModalAdmissionTests
             ExecutionManager manager = CreateManager(1001);
 
             // The layering changed with the convergence: the Modal profile decides whether the action
-            // may be ATTEMPTED (only a cutscene outranks a modal), and the HANDLER decides whether a modal
-            // is actually present - because it can name that (`no_modal_present`). So admission ADMITS
-            // here, and the refusal with the specific code is asserted by ModalDismissActionTests /
-            // ModalAnswerDialogueTests. What this pin now protects is that admission does not invent a
-            // modal-obstacle it cannot describe.
+            // may be ATTEMPTED (only a cutscene outranks a modal), and the HANDLER decides what the world
+            // holds - because it can name that (`dismiss_modal` answers the no-op `nothing_to_dismiss` with
+            // `modal=none`; `answer_dialogue` answers `no_modal_present`). So admission ADMITS here, and the
+            // specific answer is asserted by ModalDismissActionTests / ModalAnswerDialogueTests. What this pin
+            // now protects is that admission does not invent a modal-obstacle it cannot describe.
             Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Modal)
                 .Should().BeNull(
                     "an idle body is not an obstacle for the modal family: the handler names the missing modal");
@@ -317,8 +317,9 @@ public sealed class ModalAdmissionTests
             ExecutionManager manager = CreateManager(1001);
 
             // Same layering as above, and the pass-out hour is not an obstacle either: with no modal
-            // mounted the handler refuses with `no_modal_present`, which is the accurate statement. A
-            // PASS-OUT still cannot be ACTED ON, because there is nothing to act on.
+            // mounted the handler answers what the world holds (`dismiss_modal` the no-op
+            // `nothing_to_dismiss`, `answer_dialogue` the refusal `no_modal_present`), which is the accurate
+            // statement. A PASS-OUT still cannot be ACTED ON, because there is nothing to act on.
             Admit(manager, ExecutionManager.AdmissionActionabilityProfile.Modal)
                 .Should().BeNull(
                     "the pass-out hour is not an obstacle for the modal family when no modal is mounted");

@@ -207,21 +207,21 @@ test("wia dismiss chain fails closed when the dismiss is not admitted", async ()
   const originalExecute = client.execute;
   client.execute = async (request) => {
     if (request.action === "dismiss_modal") {
-      // The Modal profile refuses: no modal present (already gone / world race).
+      // A dismissal the world refuses (the box turned out to be a question the caller has to answer).
       return {
         requestId: request.requestId,
         executionId: "dismiss-rejected",
         state: "rejected",
-        reasonCode: "no_modal_present",
+        reasonCode: "modal_not_dismissible",
         revision: request.expectedRevision + 1,
-        evidence: { detail: "no_modal_present" },
+        evidence: { detail: "modal_not_dismissible" },
       };
     }
     return originalExecute(request);
   };
   const result = await runWiaModalDismissChain(client, receipts, config, { loadHostModule: hostLoader() });
   assert.equal(result.state, "blocked");
-  assert.equal(result.reasonCode, "dismiss_missing:state=rejected;reason=no_modal_present");
+  assert.equal(result.reasonCode, "dismiss_missing:state=rejected;reason=modal_not_dismissible");
 });
 test("wia dismiss chain fails closed when the gateway refuses the held body itself", async () => {
   // The regression this phase exists for: a gateway that decides body actionability on its own answer

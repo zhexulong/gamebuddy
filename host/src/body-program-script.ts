@@ -253,6 +253,16 @@ export type CompiledPlan =
         /** Every insertion, including the ones past `MAX_REPORTED_PLAN_INSERTIONS`. */
         insertedCount: number;
         /**
+         * The node IDS this compiler minted, in program order, in full - the population `inserted` names by action.
+         *
+         * `inserted` says WHAT was written and where; this says which nodes are the compiler's, exactly. It exists for
+         * the one reading nobody can derive from a node list: whether a node the author never asked for ever surfaced as
+         * a failure (`inserted_node_refusals`). A prefix match on `auto_` would answer that too and would be a second
+         * spelling of the fact, so the producer states the set it wrote - and a plan that inserted nothing states an
+         * empty array rather than leaving a reader to infer zero from an absent field.
+         */
+        insertedNodeIds: readonly string[];
+        /**
          * Layout facts this plan's own nodes depend on that the snapshot it was compiled against does not carry, one per
          * `layout_facts_absent:call <n>:<fact>`. Bounded; `layoutFactsAbsentCount` is the population.
          */
@@ -450,6 +460,18 @@ export const BODY_YIELDING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["
  * `respond_level_up` is a member even though it can never succeed as the node after a `talk_to_npc`: a dismissal inserted
  * before it would close the dialogue the player is reading and leave the level-up prompt - the modal it actually acts on -
  * untouched. A step whose own precondition is the modal must not be preceded by a step that closes one.
+ *
+ * THE INSERTED STEP CANNOT BE REFUSED ON AN ABSENT MODAL, AND THAT RULE LIVES IN THE MOD, NOT HERE. Whether a modal is open
+ * is a fact of the world at DISPATCH time, and this compiler reads a plan's shape at COMPILE time - so a plan can be right
+ * about needing a dismissal and still meet a world where the engine, the pager or the night lifecycle already closed the
+ * box. `dismiss_modal` answers that world with a NO-OP rather than a refusal: `Succeeded` / `nothing_to_dismiss` with
+ * `evidence: modal=none` (`farmhandexecutioncontroller.modalactions.cs`, and the gate in `ModalDismissActionTests` requires
+ * every argument-free member of the family to resolve that way). The insertion therefore stays UNCONDITIONAL: deciding it
+ * from the snapshot would be this compiler guessing at a world it cannot see, and the fact the plan's shape really does
+ * answer - "the body was yielded, so the step after it needs the body back" - is the fact that decides it. Measured
+ * `round44`: both `no_modal_present` receipts in that run were author-written `dismiss_modal` nodes (`n01`), and the
+ * compiler's `auto_dismiss_` node never ran, so this is the latent case the fix is for - the reading is
+ * `inserted_node_refusals` in the plan account, not a count of that code in the log.
  */
 export const MODAL_CLEARING_PLAN_ACTION_IDS: readonly string[] = Object.freeze([
   "dismiss_modal",
@@ -1029,6 +1051,7 @@ export function compilePlanScript(
     merged: [],
     noStepNeeded: [],
     inserted: [],
+    insertedNodeIds: [],
     argumentOwners: planArgumentOwners(dependencies.actions),
     worldTileByNode: new Map(),
     callOfNode: new Map(),
@@ -1165,6 +1188,7 @@ export function compilePlanScript(
     // never reads as "that was the whole of it".
     inserted: Object.freeze(state.inserted.slice(0, MAX_REPORTED_PLAN_INSERTIONS)),
     insertedCount: state.inserted.length,
+    insertedNodeIds: Object.freeze([...state.insertedNodeIds]),
     layoutFactsAbsent: layout.absent,
     layoutFactsAbsentCount: layout.count,
     ...planCallAccount(state),
@@ -1342,6 +1366,13 @@ type PlanScriptState = {
    * out, and it must not decide whether a node is written.
    */
   inserted: string[];
+  /**
+   * The node ids the compiler MINTED, in program order, in full: the exact population a reader joins node outcomes to.
+   *
+   * Not bounded, unlike `inserted`: the count is what makes an insertion reading possible at all, and a bounded list of
+   * ids would make a long plan's refusals silently uncountable.
+   */
+  insertedNodeIds: string[];
   /**
    * Which call wrote each node, so a fold can name the call whose loop it joined rather than a node id nothing else in
    * the account speaks in.
@@ -1891,8 +1922,8 @@ function emitPlanNode(
   // be a CHAIN: dismissal, then the walk, then the author's step. The fixpoint gate found this on
   // `talk_to_npc` -> `travel` before it reached a run.
   const nextPosition = state.nodes.length + 1;
-  if (dismissal !== null)
-    state.nodes.push(bodyYieldDismissalNode(planNodeId(PLAN_DISMISSAL_NODE_PREFIX, nextPosition), dismissal));
+  const dismissalNodeId = planNodeId(PLAN_DISMISSAL_NODE_PREFIX, nextPosition);
+  if (dismissal !== null) state.nodes.push(bodyYieldDismissalNode(dismissalNodeId, dismissal));
   const approach = transitionApproachNode(
     action,
     canonical,
@@ -1906,8 +1937,14 @@ function emitPlanNode(
   if (authorPosition > MAX_PLAN_NODES) refusePlan(`plan_cap_exceeded:${authorPosition}`, state, requirement);
   const authorNodeId = planNodeId(PLAN_AUTHOR_NODE_PREFIX, authorPosition);
   // The answer shows the program is not exactly the script, once per node and in program order.
-  if (dismissal !== null) state.inserted.push(`inserted=${dismissal.actionId};before=${authorNodeId}`);
-  if (approach !== null) state.inserted.push(`inserted=${approach.actionId};before=${authorNodeId}`);
+  if (dismissal !== null) {
+    state.inserted.push(`inserted=${dismissal.actionId};before=${authorNodeId}`);
+    state.insertedNodeIds.push(dismissalNodeId);
+  }
+  if (approach !== null) {
+    state.inserted.push(`inserted=${approach.actionId};before=${authorNodeId}`);
+    state.insertedNodeIds.push(approach.nodeId);
+  }
   // TWO EDGES, TWO MEANINGS: THE ORDER A SCRIPT WROTE IS NOT A CHAIN OF CONSUMERS.
   //
   // `orderedAfter` says "do not start before this one is terminal, and do not skip me if it failed"; `dependsOn` says

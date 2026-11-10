@@ -4,11 +4,13 @@ using FluentAssertions;
 using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
+using GameBuddy.Stardew.Handlers;
 using Netcode;
 using StardewValley.Network;
 using StardewValley;
 using StardewValley.Menus;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace GameBuddy.Stardew.Integration.Tests;
 
@@ -28,6 +30,13 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class ModalDismissActionTests
 {
     private const string ScopePlayerId = "1001";
+
+    private readonly ITestOutputHelper output;
+
+    public ModalDismissActionTests(ITestOutputHelper output)
+    {
+        this.output = output;
+    }
 
     // ---- success -------------------------------------------------------------
 
@@ -134,16 +143,119 @@ public sealed class ModalDismissActionTests
 
     // ---- rejections ----------------------------------------------------------
 
+    /// <summary>
+    /// THE COMPILER-INSERTED NODE'S DISPATCH: after a body-yielding step, `body-program-script.ts` writes a
+    /// `dismiss_modal` node (`auto_dismiss_*`) because the dialogue a `talk_to_npc` raises holds the body. By the time that
+    /// node runs, the engine or the night lifecycle may already have closed the box - and a node neither the author nor the
+    /// world asked for must not arrive as a FAILURE the companion has to read and answer with a turn.
+    ///
+    /// <para>
+    /// RED PROOF, replayed as the plan the compiler writes: `talk_to_npc` then `chop_tree` compiles to
+    /// `talk_to_npc` -> `auto_dismiss_N` -> `chop_tree`, and dispatching that middle node into a world with NO modal is
+    /// this test. Before this pin it answered `Rejected` / `no_modal_present` (measured `round44`: two author-written
+    /// `dismiss_modal` nodes, `plan_648_0442da48ca242b09` `n01` and its sibling, each one a turn spent on a request whose
+    /// intent already held). It now answers the no-op that lets the following node run.
+    /// </para>
+    /// </summary>
     [Fact]
-    public void Dismiss_IsRejected_WhenNoModalIsPresent()
+    public void Dismiss_WithoutAModal_IsTheNoOp_TheInsertedNodeNeeds()
     {
         RunWithGameState(dialogue: null, action: () =>
         {
             ExecutionManager manager = CreateManager(1001);
 
-            InvokeDismiss(manager, "req_dismiss_none")
-                .ReasonCode.Should().Be("no_modal_present");
+            LocalExecutionReceipt receipt = InvokeModalFamily(manager, "req_dismiss_none", "dismiss_modal");
+
+            receipt.State.Should().Be(ExecutionState.Succeeded,
+                "nothing to dismiss is the end state the caller asked for, so it is not a failure to report");
+            receipt.ReasonCode.Should().Be("nothing_to_dismiss");
+            receipt.Evidence.Should().Be("modal=none",
+                "a success owes the evidence ADR-006 requires, and the only true claim is that no modal was there");
         });
+    }
+
+    /// <summary>
+    /// GATE, not a test: EVERY member of the modal family, dispatched into a world where its precondition is absent, is
+    /// either a no-op or a refusal that names its own fact - never a failure.
+    ///
+    /// <para>
+    /// The population is the Mod's own declaration (`FarmhandActionCatalog.ModalResolvingActionIds`, derived from the
+    /// registration handler group), so a fourth modal action joins this gate in the change that registers it. The
+    /// property is derived too: the Host's compiler can only WRITE a member that declares no argument
+    /// (`body-program-script.ts` `MODAL_CLEARING_PLAN_ACTION_IDS[0]`), so every argument-free member must answer the
+    /// no-op - an argument-free member that refuses is a node the compiler writes and the world refuses, which is the
+    /// defect this gate exists for. A member that declares arguments may refuse, because those arguments are an
+    /// assertion the caller made (`answer_dialogue`'s `responseKey`, `respond_level_up`'s pair), and the refusal must
+    /// name its own fact rather than borrow another's code.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryModalFamilyMember_WithoutItsPrecondition_IsANoOpOrANamedRefusal_NeverAFailure()
+    {
+        string[] population = FarmhandActionCatalog.ModalResolvingActionIds
+            .OrderBy(actionId => actionId, StringComparer.Ordinal)
+            .ToArray();
+        population.Should().NotBeEmpty(
+            "the family is declared by the catalog; an empty population means this gate read nothing and agrees with itself");
+
+        var rows = new List<(string ActionId, bool ArgumentFree, ExecutionState State, string ReasonCode)>();
+        RunWithGameState(dialogue: null, action: () =>
+        {
+            ExecutionManager manager = CreateManager(1001, FarmhandActionCatalog.ModalResolvingActionIds);
+            foreach (string actionId in population)
+            {
+                FarmhandActionDescriptor? descriptor = FarmhandActionCatalog.Registrations
+                    .Single(registration => string.Equals(registration.ActionId, actionId, StringComparison.Ordinal))
+                    .Descriptor;
+                descriptor.Should().NotBeNull(
+                    $"modal_member_without_descriptor:{actionId} - the gate cannot tell whether the compiler may write this "
+                    + "member without its argument contract");
+                int declared = descriptor!.Arguments.Count;
+                LocalExecutionReceipt receipt = InvokeModalFamily(
+                    manager,
+                    $"req_family_without_modal_{actionId}",
+                    actionId);
+                rows.Add((actionId, declared == 0, receipt.State, receipt.ReasonCode));
+            }
+        });
+
+        int noOpAnswers = rows.Count(row => row.State == ExecutionState.Succeeded);
+        int namedRefusals = rows.Count(row => row.State == ExecutionState.Rejected);
+        this.output.WriteLine($"examined {rows.Count} of {population.Length}: {string.Join("; ", rows.Select(row => $"{row.ActionId}={row.State}/{row.ReasonCode}"))}");
+        this.output.WriteLine($"dismiss_without_modal_answers: {noOpAnswers}");
+        this.output.WriteLine($"answer_without_dialogue_refusals: {namedRefusals}");
+
+        foreach ((string actionId, bool argumentFree, ExecutionState state, string reasonCode) in rows)
+        {
+            state.Should().BeOneOf(
+                new[] { ExecutionState.Succeeded, ExecutionState.Rejected },
+                $"modal_family_without_precondition_is_a_failure:{actionId}:{state}/{reasonCode} - the precondition being "
+                + "absent is a fact about the world, not an effect the action failed to produce");
+            if (argumentFree)
+                state.Should().Be(
+                    ExecutionState.Succeeded,
+                    $"inserted_node_refused:{actionId}:{state}/{reasonCode} - the compiler may only write a member that "
+                    + "declares no argument, so such a member must resolve as the no-op rather than a refusal");
+            else
+                reasonCode.Should().NotBe(
+                    "nothing_to_dismiss",
+                    $"one_code_per_fact:{actionId} declares arguments, so its absence refusal must name its own fact "
+                    + "instead of borrowing the no-op's reason");
+        }
+
+        noOpAnswers.Should().BeGreaterThan(0, "no argument-free member answered the no-op, so nothing covers the inserted node");
+        rows.Where(row => row.ArgumentFree).Should().OnlyContain(row => row.State == ExecutionState.Succeeded);
+        rows.Select(row => row.ReasonCode).Distinct(StringComparer.Ordinal).Should().HaveCount(
+            rows.Count,
+            "one_code_per_fact: two members answering the same absent-precondition code would read as one world fact "
+            + "(" + string.Join("; ", rows.Select(row => $"{row.ActionId}={row.ReasonCode}")) + ")");
+        // THE RETIRED CODE STILL HAS ONE HOME: `dismiss_modal` no longer refuses on a missing modal, and
+        // `answer_dialogue` - a caller that asked to ANSWER a question - still does.
+        rows.Single(row => row.ActionId == "dismiss_modal").ReasonCode.Should().Be("nothing_to_dismiss");
+        rows.Single(row => row.ActionId == "answer_dialogue").ReasonCode.Should().Be(
+            "no_modal_present",
+            "retiring the code from dismiss_modal must not delete the fact: a caller that asked to answer a question is "
+            + "entitled to hear that no question was there");
     }
 
     [Fact]
@@ -293,26 +405,33 @@ public sealed class ModalDismissActionTests
         return dialogue;
     }
 
-    private static LocalExecutionReceipt InvokeDismiss(ExecutionManager manager, string requestId)
+    private static LocalExecutionReceipt InvokeDismiss(ExecutionManager manager, string requestId) =>
+        InvokeModalFamily(manager, requestId, "dismiss_modal");
+
+    /// <summary>
+    /// One dispatch through the REAL modal handler, so the family gate exercises the same switch a routed request
+    /// reaches instead of a second copy of the action-to-handler mapping.
+    /// </summary>
+    private static LocalExecutionReceipt InvokeModalFamily(ExecutionManager manager, string requestId, string actionId)
     {
         var request = new BridgeExecutionRequest(
             requestId,
             $"{requestId}_idem",
-            "dismiss_modal",
+            actionId,
             new BridgeExecutionArgs(),
             1,
             // A LIVE deadline: the modal family now validates it through the shared admission, and an
             // expired one is refused with `invalid_deadline` instead of being executed. Epoch-zero + 5s is in
             // 1970, which is what these tests used to pass because the handlers ignored the field.
             DateTimeOffset.UtcNow.AddSeconds(5).ToUnixTimeMilliseconds());
-        return manager.RequestLocalDismissModal(request, manager);
+        return new ModalActionHandler(manager).Execute(request, manager);
     }
 
-    private static ExecutionManager CreateManager(long? actorId)
+    private static ExecutionManager CreateManager(long? actorId, IReadOnlySet<string>? enabledActions = null)
     {
         var scope = new BridgeScope("stardew", "save_probe", "world_probe", ScopePlayerId, "companion_probe");
         var publication = FarmhandCapabilityPublication.Initial(
-            new HashSet<string>(StringComparer.Ordinal) { "dismiss_modal" });
+            enabledActions ?? new HashSet<string>(StringComparer.Ordinal) { "dismiss_modal" });
         var executions = new ExecutionManager(
             new DummyMonitor(),
             () => publication,

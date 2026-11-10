@@ -42,7 +42,7 @@ const answer = (atMs, call, text) => ({
   message: { role: "toolResult", toolCallId: call.id, toolName: call.name, content: [{ type: "text", text }] },
 });
 
-const planCall = (id, nodes, actionId) => ({
+const planCall = (id, nodes, actionId, insertedNodeIds = []) => ({
   id,
   name: "stardew_plan_work",
   arguments: { script: `builder.${actionId}({});` },
@@ -51,6 +51,7 @@ const planCall = (id, nodes, actionId) => ({
     nodeCount: nodes,
     programId: `plan_${id}`,
     nodes: Array.from({ length: nodes }, () => ({ actionId })),
+    ...(insertedNodeIds.length === 0 ? {} : { insertedNodeIds }),
   },
 });
 const refusedPlanCall = (id) => ({
@@ -122,14 +123,27 @@ function sessionFile({ steps, stepMs = 2000, answered = () => true }) {
   return `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
 }
 
-function writeRun({ root, session, withResult, record = RECORD, multiday = null, timeline = null }) {
+function writeRun({
+  root,
+  session,
+  withResult,
+  record = RECORD,
+  multiday = null,
+  timeline = null,
+  programOutcomes = null,
+}) {
   const runDir = join(root, "run");
   mkdirSync(runDir, { recursive: true });
   writeFileSync(join(runDir, "launch.json"), JSON.stringify({ schema: "gamebuddy-live-run-launch/v1" }));
   if (withResult === true)
     writeFileSync(
       join(runDir, "result.json"),
-      JSON.stringify({ state: "blocked", toolTiming: { record }, ...(multiday === null ? {} : { multiday }) }),
+      JSON.stringify({
+        state: "blocked",
+        toolTiming: { record },
+        ...(multiday === null ? {} : { multiday }),
+        ...(programOutcomes === null ? {} : { programOutcomes }),
+      }),
     );
   if (timeline !== null)
     writeFileSync(join(runDir, "timeline.jsonl"), `${timeline.map((row) => JSON.stringify(row)).join("\n")}\n`);
@@ -302,6 +316,88 @@ test("the same actions in fewer, larger plans price lower on both the floor and 
   assert.ok(large.floor < small.floor, `floor did not fall: ${large.floor} vs ${small.floor}`);
   assert.ok(large.ratio < small.ratio, `ratio did not fall: ${large.ratio} vs ${small.ratio}`);
 });
+
+/**
+ * THE INSERTED-NODE READING, AGAINST THE WORLD THE FIX EXISTS FOR.
+ *
+ * The population is the node ids the COMPILER reported, so the fixture carries them exactly as `body-program-script.ts`
+ * publishes them, and the outcome is joined from the run's own bundle. A node the author never wrote that settled as a
+ * failure fails the verdict by name; a run whose plans inserted nothing is `blocked` rather than green.
+ */
+test("an inserted node that settled as a failure is named and fails the verdict", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: sessionFile({
+        steps: [
+          {
+            calls: [
+              planCall("i1", 3, "talk_to_npc", ["auto_dismiss_02"]),
+              statusCall("si1", "plan_i1", [
+                ["n01", "succeeded", "talk_to_npc"],
+                ["auto_dismiss_02", "failed", "dismiss_modal"],
+                ["n03", "succeeded", "chop_tree"],
+              ]),
+            ],
+          },
+        ],
+      }),
+      programOutcomes: [
+        {
+          programId: "plan_i1",
+          nodeOutcomes: [
+            { nodeId: "n01", actionId: "talk_to_npc", state: "succeeded" },
+            {
+              nodeId: "auto_dismiss_02",
+              actionId: "dismiss_modal",
+              state: "failed",
+              reasonCode: "no_modal_present",
+            },
+            { nodeId: "n03", actionId: "chop_tree", state: "succeeded" },
+          ],
+        },
+      ],
+    }),
+    (runDir) => {
+      const result = verdictProcess(runDir);
+      const output = `${result.stdout}${result.stderr}`;
+      assert.match(output, /inserted_nodes\s+1 node\(s\) the compiler wrote across 1 plan\(s\), 1 not succeeded/u);
+      assert.match(
+        output,
+        /inserted_node_failed:auto_dismiss_02:dismiss_modal:no_modal_present - the compiler wrote this node to give the body back/u,
+      );
+      assert.equal(result.status, 1, "an inserted node that failed is the defect this reading exists for");
+    },
+  ));
+
+test("a run whose plans inserted nothing reports the inserted-node gate as blocked, not green", () =>
+  withFixture(
+    () => ({ withResult: true, session: sessionFile({ steps: [{ calls: [planCall("n1", 1, "cut_weeds")] }] }) }),
+    (runDir) => {
+      const result = verdictProcess(runDir);
+      const output = `${result.stdout}${result.stderr}`;
+      assert.match(
+        output,
+        /inserted_nodes\s+blocked: this run's plans inserted nothing, so the gate examined 0 inserted node\(s\) - not green, nothing to check/u,
+      );
+      assert.doesNotMatch(output, /inserted_node_failed/u);
+      assert.notEqual(result.status, 1, "nothing to check is blocked, not red");
+    },
+  ));
+
+test("an inserted node whose outcome was never recorded is unmeasured, not zero", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: sessionFile({ steps: [{ calls: [planCall("u1", 2, "talk_to_npc", ["auto_dismiss_02"])] }] }),
+    }),
+    (runDir) => {
+      const result = verdictProcess(runDir);
+      const output = `${result.stdout}${result.stderr}`;
+      assert.match(output, /1 with no recorded outcome \(unmeasured, not zero\)/u);
+      assert.doesNotMatch(output, /inserted_node_failed/u);
+    },
+  ));
 
 test("a run whose bundle and session never reached its directory says not_measured and names both fields", () =>
   withFixture(

@@ -197,6 +197,12 @@ function insertionsOf(result: CompiledPlan): Readonly<{ inserted: readonly strin
   return { inserted: result.inserted, count: result.insertedCount };
 }
 
+/** The node ids the compiler MINTED, which is the population a run's inserted-node reading joins on. */
+function insertedNodeIdsOf(result: CompiledPlan): readonly string[] {
+  if (!result.ok) assert.fail(`expected a plan beside its inserted node ids, received ${result.reasonCode}`);
+  return result.insertedNodeIds;
+}
+
 /**
  * One builder call for an action, carrying exactly the arguments the surface declares.
  *
@@ -739,6 +745,11 @@ test("a step after talk_to_npc gets the dismissal inserted, and the answer says 
   // The answer states that the program is not exactly the script, and where.
   assert.deepEqual(insertionsOf(result).inserted, ["inserted=dismiss_modal;before=n04"]);
   assert.equal(insertionsOf(result).count, 1);
+  assert.deepEqual(
+    insertedNodeIdsOf(result),
+    ["auto_dismiss_03"],
+    "the node id the compiler minted is published in full: a run's inserted-node reading joins node outcomes on it",
+  );
   assert.deepEqual(accountOf(result).dropped, [], "nothing of hers was thrown away");
   assert.deepEqual(
     accountOf(result).acceptedSteps,
@@ -760,6 +771,43 @@ test("a plan whose steps never hold the body gets no dismissal inserted", () => 
   );
   assert.deepEqual(insertionsOf(result).inserted, []);
   assert.equal(insertionsOf(result).count, 0);
+  assert.deepEqual(
+    insertedNodeIdsOf(result),
+    [],
+    "an empty population is stated, not left to be inferred from an absent field",
+  );
+});
+
+/**
+ * THE PLAN `round44`'S SHAPE COMPILES TO, and the node id it carries.
+ *
+ * The live measurement this unit answers was `talk_to_npc` then a body action - the plan the compiler now repairs - and the
+ * repair is a `dismiss_modal` node whose world may already have closed the box. The Host half of that fix is that the plan
+ * compiles and that the inserted node is named exactly (see `round-verdict.mjs` `measureInsertedNodes`, which prices it,
+ * and `ModalDismissActionTests.EveryModalFamilyMember_WithoutItsPrecondition_IsANoOpOrANamedRefusal_NeverAFailure`, which
+ * requires the absent-modal world to resolve as the no-op).
+ */
+test("the talk-then-chop plan carries the compiler's dismissal, named by the node id a run can price", () => {
+  const result = compile(`
+  builder.talk_to_npc({ x: 13, y: 8, expectedTargetId: "npc_pierre" });
+  builder.chop_tree({ x: 13, y: 8, slot: 0, expectedTargetId: "tree_01" });
+  `);
+  assert.deepEqual(
+    nodesOf(result).map((node) => [node.nodeId, node.actionId]),
+    [
+      ["n01", "talk_to_npc"],
+      ["auto_dismiss_02", "dismiss_modal"],
+      ["n03", "chop_tree"],
+    ],
+    "her two steps, with the dismissal between them and nothing else moved",
+  );
+  assert.deepEqual(insertedNodeIdsOf(result), ["auto_dismiss_02"]);
+  assert.deepEqual(insertionsOf(result).inserted, ["inserted=dismiss_modal;before=n03"]);
+  assert.equal(
+    validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodesOf(result)), nodes: nodesOf(result) }),
+    null,
+    "the repaired program is still one the Mod's own validator accepts",
+  );
 });
 
 /**
@@ -831,7 +879,14 @@ test("the dismissal is inserted for exactly the actions the declaration calls bo
       `${action.actionId}: yielding=${yielding}, insertions=${JSON.stringify(insertions)} ` +
         `(examined ${insertedFor.length + 1} of ${ACTIONS.length} actions; ${insertedFor.length} of the ones before it inserted)`,
     );
-    if (!yielding) continue;
+    if (!yielding) {
+      assert.deepEqual(
+        insertedNodeIdsOf(result),
+        [],
+        `${action.actionId}: nothing was written, so no node id may be claimed as the compiler's`,
+      );
+      continue;
+    }
     insertedFor.push(action.actionId);
     assert.deepEqual(
       nodesOf(result)
@@ -839,6 +894,14 @@ test("the dismissal is inserted for exactly the actions the declaration calls bo
         .slice(0, 2),
       [action.actionId, MODAL_CLEARING_PLAN_ACTION_IDS[0]],
       `${action.actionId} holds the body, so the dismissal stands between it and the next step`,
+    );
+    // THE POPULATION A RUN'S READING JOINS ON: exactly the node the compiler wrote, and only that node.
+    const insertedNodeIds = insertedNodeIdsOf(result);
+    assert.equal(insertedNodeIds.length, 1, `${action.actionId}: one dismissal, one inserted node id`);
+    assert.equal(
+      nodesOf(result).find((node) => node.nodeId === insertedNodeIds[0])?.actionId,
+      MODAL_CLEARING_PLAN_ACTION_IDS[0],
+      `${action.actionId}: the id the compiler claims is the node the compiler wrote`,
     );
   }
   assert.ok(insertedFor.length > 0, "the population of insertions was not empty");

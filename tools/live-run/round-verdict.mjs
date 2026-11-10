@@ -568,6 +568,69 @@ function measureWork(result, turns) {
   };
 }
 
+/**
+ * A PLAN'S LEAST AUTHORED NODE: WHAT BECAME OF THE STEP THE COMPILER WROTE AND NOBODY ASKED FOR.
+ *
+ * <p>
+ * The compiler writes a node into a plan for one reason - the step before it took the body and the step after it needs that
+ * body back (`body-program-script.ts` `BODY_YIELDING_PLAN_ACTION_IDS`) - and a body-yielding step can leave its modal GONE
+ * by the time the dismissal is dispatched, because the engine, the pager or the night lifecycle closed it. A node the
+ * author never wrote must not then arrive as a failure she has to read and answer with a turn.
+ * </p>
+ * <p>
+ * The population is the set of node ids the COMPILER reported (`insertedNodeIds` on the plan answer), never a node-id
+ * prefix and never a substring count: `round44` was summarised as "11 `no_modal_present`" when the truth was two receipts
+ * on author-written `n01` nodes and a compiler-inserted node that never ran once - the attribution this field exists to
+ * make impossible. A plan that inserted nothing contributes nothing, and a node whose outcome was never recorded is
+ * `unmeasured`, not zero.
+ * </p>
+ * <p>
+ * THE READING: an inserted node that did not settle `succeeded` is printed by name
+ * (`inserted_node_failed:<nodeId>:<actionId>:<code>`) and fails the run, because a step whose whole purpose is to give the
+ * body back is not a step whose failure can be absorbed silently. No population at all is `blocked` with its reason rather
+ * than green: a run whose plans inserted nothing has checked nothing.
+ * </p>
+ */
+function measureInsertedNodes(result, turns) {
+  const programmes = Array.isArray(result.programOutcomes) ? result.programOutcomes : [];
+  const outcomes = new Map(
+    programmes
+      .filter((programme) => typeof programme?.programId === "string")
+      .map((programme) => [programme.programId, programme]),
+  );
+  let plans = 0;
+  let nodes = 0;
+  let unmeasuredNodes = 0;
+  const refusals = [];
+  const turnsWithRefusal = new Set();
+  for (const [index, turn] of turns.entries())
+    for (const call of turn.calls) {
+      if (!PLAN_ANSWER_TOOLS.has(call.name)) continue;
+      const answer = call.answer?.payload ?? null;
+      const insertedNodeIds = Array.isArray(answer?.insertedNodeIds) ? answer.insertedNodeIds : [];
+      if (insertedNodeIds.length === 0) continue;
+      plans += 1;
+      const programme = typeof answer.programId === "string" ? (outcomes.get(answer.programId) ?? null) : null;
+      const byNode = new Map((programme?.nodeOutcomes ?? []).map((node) => [node?.nodeId, node ?? null]));
+      for (const nodeId of insertedNodeIds) {
+        nodes += 1;
+        const settled = byNode.get(nodeId) ?? null;
+        if (settled === null) {
+          unmeasuredNodes += 1;
+          continue;
+        }
+        if (settled.state === "succeeded") continue;
+        refusals.push({
+          nodeId,
+          actionId: typeof settled.actionId === "string" ? settled.actionId : null,
+          code: typeof settled.reasonCode === "string" ? settled.reasonCode : (settled.state ?? "unknown"),
+        });
+        turnsWithRefusal.add(index);
+      }
+    }
+  return { plans, nodes, unmeasuredNodes, refusals, turnsSpentExplaining: turnsWithRefusal.size };
+}
+
 /** The per-action durations the bundle recorded, with the cadence sum that must agree with them. */
 function bundleNativeMs(result) {
   const programmes = Array.isArray(result.programOutcomes) ? result.programOutcomes : null;
@@ -720,6 +783,7 @@ function measureEfficiency({ sessionFile, result, repoRoot }) {
       : null;
 
   const work = measureWork(result, turns);
+  const inserted = measureInsertedNodes(result, turns);
   const succeeded = work.states.get("succeeded") ?? 0;
   const buckets = attributeTurns(turns, tTurnMs);
   const families = new Set([...work.families].filter((actionId) => !NAVIGATION_ACTION_IDS.has(actionId)));
@@ -751,6 +815,7 @@ function measureEfficiency({ sessionFile, result, repoRoot }) {
     providerMs: median(messages.map((message) => message.durationMs)),
     wallMs,
     work,
+    inserted,
     succeeded,
     families: [...families].sort(),
     playerTasks: { events: playerTasks.events, distinct: playerTasks.texts.size },
@@ -962,6 +1027,9 @@ function efficiencyLines(options) {
   // verdict's job here is arithmetic, so a wall clock with seconds in no bucket is a defect in this report rather than a
   // reading of the run, and it exits non-zero after printing the seconds it could not place.
   if (accountingFailure(report) !== null) process.exitCode = 1;
+  // A STEP THE COMPILER WROTE IS NOT A STEP WHOSE FAILURE CAN BE ABSORBED: it exists to give the body back to the step after
+  // it, so a run in which one did not succeed is a run whose next node was at risk - named by node, action and code.
+  if (report.inserted.refusals.length > 0) process.exitCode = 1;
   return formatEfficiency(report);
 }
 
@@ -1011,6 +1079,21 @@ function formatEfficiency(report) {
       states.length === 0 ? "" : ` (${states.map(([state, count]) => `${count} ${state}`).join(", ")})`
     }  <- ${work.source}`,
   );
+  if (report.inserted.plans === 0)
+    push(
+      `  ${label("inserted_nodes")} blocked: this run's plans inserted nothing, so the gate examined 0 inserted node(s) - not green, nothing to check`,
+    );
+  else {
+    push(
+      `  ${label("inserted_nodes")} ${report.inserted.nodes} node(s) the compiler wrote across ${report.inserted.plans} plan(s), ${
+        report.inserted.refusals.length
+      } not succeeded${report.inserted.unmeasuredNodes > 0 ? `, ${report.inserted.unmeasuredNodes} with no recorded outcome (unmeasured, not zero)` : ""}${report.inserted.turnsSpentExplaining > 0 ? `, ${report.inserted.turnsSpentExplaining} turn(s) carried one` : ""}  <- plan answers' insertedNodeIds joined to result.json programOutcomes[].nodeOutcomes`,
+    );
+    for (const refusal of report.inserted.refusals)
+      push(
+        `  ${label("")} inserted_node_failed:${refusal.nodeId}:${refusal.actionId ?? "unknown"}:${refusal.code} - the compiler wrote this node to give the body back, and the world answered it as a failure`,
+      );
+  }
   if (work.unmeasuredPrograms > 0)
     push(
       `  ${label("")} not_measured: ${work.unmeasuredPrograms} accepted plan(s) (${work.unmeasuredNodes} nodes) were never polled, so their node states are unknown - not zero`,

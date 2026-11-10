@@ -25,6 +25,19 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// answering them is answer_dialogue's future seam (design 7.4.2), and
     /// closeDialogue would skip the native answer lifecycle.
     ///
+    /// NOTHING TO DISMISS IS THE END STATE THE CALLER ASKED FOR, so it answers `Succeeded` / `nothing_to_dismiss` with
+    /// `evidence: modal=none` rather than a refusal. The absence of a modal is a fact about the WORLD, and a caller that
+    /// asked for "whatever is up, close it" is already where it asked to be - the same shape every idempotent
+    /// set-to-closed action has. It is also the fact the Host's compiler cannot see: `body-program-script.ts` writes a
+    /// `dismiss_modal` node after a body-yielding step (a `talk_to_npc` raises a box the plan cannot observe), and by the
+    /// time that node is dispatched the engine may have closed the box itself. Measured `round44`: the TWO
+    /// `no_modal_present` receipts in the run were author-written nodes, not inserted ones (see the gate in
+    /// `ModalDismissActionTests`: `dismiss_without_modal_answers`), and each one failed a node the caller had to read and
+    /// spend a turn on - for a request whose intent already held. The compiler-inserted node is the same dispatch (no
+    /// node identity reaches a handler), which is why ONE treatment covers both: nothing in this path refuses on a
+    /// missing modal, and `modal=none` states what was (not) done. `answer_dialogue` keeps `no_modal_present`, because a
+    /// caller that asked to ANSWER a question needs to know no question was there.
+    ///
     /// This is the clearance a caller ASKS FOR, and the receipt names it in both terminals of the call
     /// that performed the native close: `cleared_modal=` carries the modal type name and
     /// `close_effect=` states what that close itself changed. There is deliberately NO automatic
@@ -171,7 +184,10 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         IClickableMenu? modal = Game1.activeClickableMenu;
         if (modal is null)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "no_modal_present", null);
+            // The no-op terminal: nothing was dismissed, and the receipt says exactly that. `modal=none` is the evidence
+            // a success owes ADR-006, and it is the whole of the claim - no native call ran, so no `cleared_modal=` or
+            // `close_effect=` may appear beside it.
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Succeeded, "nothing_to_dismiss", "modal=none");
 
         if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
             // The guard reason NAMES the failure (no bound actor / wrong scope / world not ready). This body used
