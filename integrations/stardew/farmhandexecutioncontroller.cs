@@ -2518,6 +2518,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // refuses to open it today (Utility.cs:4305-4317), so a row for it is a counter the caller walks to and cannot
         // buy from - measured round41, two shops published on one tile on a festival day.
         ("shop_purchase", "shopTargets"),
+        // A stump, boulder or meteorite whose tool the actor does not hold at the needed tier is withheld: the engine
+        // refuses that swing (`ResourceClump.performToolAction`, ResourceClump.cs:150-234). Either capability runs the
+        // family, and the row means "measured", not "one of the two was advertised".
+        ("clear_debris", "debrisTargets"),
     };
 
     /// <summary>Explicit Phase 2 wire DTO; call only on the SMAPI game thread while a world is ready.</summary>
@@ -2634,7 +2638,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("collect_crab_pot_output", StringComparer.Ordinal) ? DiscoverCrabPotCollectTargets(player) : null,
             advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? DiscoverBaitCrabPotTargets(player, discoveryExclusions) : null,
             advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? this.DiscoverBaitCrabPotResultTargets(player) : null,
-            (advertisedCapabilities.Contains("clear_debris", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_resource_clump", StringComparer.Ordinal)) ? DiscoverDebrisTargets(player) : null,
+            (advertisedCapabilities.Contains("clear_debris", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_resource_clump", StringComparer.Ordinal)) ? DiscoverDebrisTargets(player, discoveryExclusions) : null,
             // `break_rock`, not `break_rock_source`: the capability word is the ACTION ID, and the old spelling meant this
             // discovery never ran, so the family it publishes was empty in every snapshot.
             advertisedCapabilities.Contains("break_rock", StringComparer.Ordinal) ? DiscoverRockSourceTargets(player) : null,
@@ -3796,7 +3800,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         "weedTargets" => DiscoverWeedTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
         "grassTargets" => DiscoverGrassTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
         "rockSourceTargets" => DiscoverRockSourceTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
-        "debrisTargets" => DiscoverDebrisTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+        // A lookup answers "was this row in the frame", so it records nothing: the frame's own pass is the one that
+        // counts what it withheld, and a second recorder here would count the same clump twice.
+        "debrisTargets" => DiscoverDebrisTargets(player, null).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
         "scytheCropTargets" => DiscoverScytheCropTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
         _ => null,
     };
@@ -4269,7 +4275,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             .Any(tile => Utility.tileWithinRadiusOfPlayer(tile.X, tile.Y, TargetDiscoveryRadius, player));
     }
 
-    private static IReadOnlyList<BridgeDebrisTarget> DiscoverDebrisTargets(Farmer player)
+    private static IReadOnlyList<BridgeDebrisTarget> DiscoverDebrisTargets(Farmer player, DiscoveryExclusionRecorder? exclusions)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeDebrisTarget>();
@@ -4294,7 +4300,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     break;
                 }
             }
-            if (usableSlot < 0) continue;
+            if (usableSlot < 0)
+            {
+                // The clump is HERE and the swing is refused - `ResourceClump.performToolAction` returns false unless
+                // the tool is the matching family at or above this clump's level (ResourceClump.cs:150-234). Dropping
+                // the row was a snapshot reporting a cleared farm to a companion standing beside the boulder. The row
+                // CANNOT be the target itself: `BridgeDebrisTarget.slot` is the inventory slot to swing with and the
+                // Host validates it as a slot, so a clump with no usable tool has no honest value for it. The count is
+                // what is publishable: the clump is there and nothing in the pack would swing it.
+                if (exclusions is not null)
+                    exclusions.Record("debrisTargets", DiscoveryExclusionReasons.ToolInsufficient);
+                continue;
+            }
             result.Add(new BridgeDebrisTarget(BuildDebrisTargetId(location, index, clump), usableSlot, x, y, clump.parentSheetIndex.Value, toolKind, requiredUpgrade, (int)clump.health.Value));
         }
         return result;

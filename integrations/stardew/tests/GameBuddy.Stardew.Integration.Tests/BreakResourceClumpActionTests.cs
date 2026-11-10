@@ -266,7 +266,7 @@ public sealed class BreakResourceClumpActionTests
         discovery.Should().Contain("location.resourceClumps");
         // The capability word is the ACTION ID. A family keyed on an id nobody advertises publishes nothing in any
         // snapshot, and every gate stays green because the field is simply absent.
-        int guard = controller.IndexOf("DiscoverDebrisTargets(player) : null", StringComparison.Ordinal);
+        int guard = controller.IndexOf("DiscoverDebrisTargets(player, discoveryExclusions) : null", StringComparison.Ordinal);
         guard.Should().BeGreaterThanOrEqualTo(0, "the clump family must be projected into the snapshot");
         string window = controller[Math.Max(0, guard - 400)..guard];
         window.Should().Contain("\"break_resource_clump\"", "this action must publish the family it addresses");

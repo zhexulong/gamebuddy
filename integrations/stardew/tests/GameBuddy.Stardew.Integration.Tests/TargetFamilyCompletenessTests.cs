@@ -1466,7 +1466,19 @@ public sealed class TargetFamilyCompletenessTests
         /// </summary>
         internal object DiscoverFamily(string name) => Discover(name);
 
-        private object Discover(string name)
+        /// <summary>
+        /// One discovery family run WITH the recorder it withheld into, so a case can read the exclusion rows beside the
+        /// targets: the two answers the family gives about the same walk.
+        /// </summary>
+        internal (object Targets, IReadOnlyList<BridgeDiscoveryExclusion> Rows) DiscoverExclusions(string name)
+        {
+            object targets = this.Discover(name, out IReadOnlyList<BridgeDiscoveryExclusion> rows);
+            return (targets, rows);
+        }
+
+        private object Discover(string name) => this.Discover(name, out _);
+
+        private object Discover(string name, out IReadOnlyList<BridgeDiscoveryExclusion> exclusions)
         {
             var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "chest_store", "chest_retrieve" });
             var executions = new ExecutionManager(new DummyMonitor(), () => publication);
@@ -1475,13 +1487,16 @@ public sealed class TargetFamilyCompletenessTests
             // gained a parameter (the exclusion recorder, which reports what the family WITHHELD) must not turn this probe
             // into `TargetParameterCountException`, and a probe that assumed the shape would report the family as
             // unconstructable instead of the disagreement it exists to find.
+            var recorder = new DiscoveryExclusionRecorder();
             object?[] arguments = method.GetParameters()
                 .Select(parameter => parameter.ParameterType == typeof(Farmer)
                     ? (object?)this.Actor
                     : parameter.ParameterType == typeof(IList<Item?>) ? this.Actor.Items
-                    : new DiscoveryExclusionRecorder())
+                    : recorder)
                 .ToArray();
-            return method.Invoke(method.IsStatic ? null : executions, arguments)!;
+            object targets = method.Invoke(method.IsStatic ? null : executions, arguments)!;
+            exclusions = recorder.Publish(out _);
+            return targets;
         }
 
         /// <summary>One item carrying exactly the identity the projections read, built without a content manager.</summary>

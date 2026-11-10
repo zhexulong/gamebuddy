@@ -4200,8 +4200,8 @@ export type SnapshotFamilyRule = Readonly<{
  * `tools/stardew-discovery-exclusions-backlog.json` as "not vanilla", not here as a reason.
  *
  * The Mod publishes the same set (`DiscoveryExclusionReasons` in
- * `integrations/stardew/src/Core/Policy/DiscoveryExclusionReasons.cs`), and `host/src/protocol.test.ts` compares the two
- * by name, so a token added on one side alone fails here rather than travelling.
+ * `integrations/stardew/src/Core/Policy/DiscoveryExclusionReasons.cs`). The comparison is
+ * `tools/check-stardew-discovery-exclusions.mjs`, which reads both declarations by name so a token added on one side
  */
 export const DISCOVERY_EXCLUSION_REASONS = Object.freeze([
   // `Tree.tapped`: the engine's own chop refuses it - `if (tapped.Value) { return false; }` in `Tree.performToolAction`
@@ -4228,6 +4228,11 @@ export const DISCOVERY_EXCLUSION_REASONS = Object.freeze([
   // The shop's resolved owner entry carries `ClosedMessage`: `Utility.TryOpenShopMenu` draws it and opens nothing
   // (Utility.cs:4305-4317), over the entries `ShopBuilder.GetCurrentOwners` left after their condition matched.
   "shop_closed_today",
+  // The subject needs a TOOL the actor does not hold at the tier the action needs: `ResourceClump.performToolAction`
+  // dispatches on `parentSheetIndex` and returns false unless the activating tool is the matching family at or above
+  // that clump's upgrade level (ResourceClump.cs:150-234). The boulder stays in the world; a snapshot that omits it says
+  // the farm is clear.
+  "tool_insufficient",
 ] as const);
 
 /**

@@ -110,6 +110,15 @@ public static class DiscoveryExclusionReasons
     /// </summary>
     public const string ShopClosedToday = "shop_closed_today";
 
+    /// <summary>
+    /// The subject needs a TOOL the actor does not hold at the tier the action needs, and the engine refuses the same
+    /// swing: <c>ResourceClump.performToolAction</c> dispatches on <c>parentSheetIndex</c> and returns false unless the
+    /// activating tool is the matching family at or above its own upgrade level for that clump (ResourceClump.cs:150-234;
+    /// the Mod's one copy of that table is <c>TryGetDebrisToolRequirement</c>). A boulder she cannot break is a boulder: it
+    /// stays in the world, so publishing it as nothing is a snapshot that describes a cleared farm.
+    /// </summary>
+    public const string ToolInsufficient = "tool_insufficient";
+
     /// <summary>Every admitted reason. The population the Host's validator and this class are compared against.</summary>
     public static readonly IReadOnlyList<string> All = Array.AsReadOnly(new[]
     {
@@ -123,6 +132,7 @@ public static class DiscoveryExclusionReasons
         WrongHarvestMethod,
         AlreadyBaited,
         ShopClosedToday,
+        ToolInsufficient,
     });
 
     /// <summary>Whether <paramref name="reason"/> is one of the admitted reasons.</summary>

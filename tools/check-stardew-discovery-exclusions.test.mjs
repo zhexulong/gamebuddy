@@ -22,6 +22,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  ACTOR_CAPABILITY_DROPS,
   DISPOSITION_CLASSES,
   STATE_MEMBERS,
   declaredFamilies,
@@ -47,7 +48,9 @@ const method = (name, body) => ({ name, file: `integrations/stardew/${name}.cs`,
 
 const measureWith = (overrides) => {
   // The schema's `family` enum is derived from whatever declaration the case supplies, so a case that narrows the
-  // declared set does not also have to restate the wire side: that drift is its own case.
+  // declared set does not also have to restate the wire side: that drift is its own case. The capability map defaults
+  // to EMPTY for the same reason - these cases state one population at a time - and the real map is asserted by the
+  // real-tree case below.
   const declared = overrides.declared ?? DECLARED;
   return measure({
     methods: [],
@@ -57,6 +60,7 @@ const measureWith = (overrides) => {
     declared,
     wireFamilies: WIRE,
     wireExclusionFamilies: declared.map((entry) => entry.family),
+    capabilityClaims: [],
     ...overrides,
   });
 };
@@ -229,6 +233,130 @@ test("filter positions are the .Where lambdas and the if (...) continue; guards,
     membersFiltered("{ if (tree.tapped.Value) continue; }").map((entry) => entry.token),
     ["already_tapped"],
   );
+});
+
+test("an actor-capability drop that stops publishing its reason is named by family and reason", () => {
+  const claim = {
+    function: "DiscoverDebrisTargets",
+    guard: "usableSlot",
+    member: "IsValidDebrisTool",
+    disposition: "published: debrisTargets tool_insufficient",
+  };
+  const silent = measureWith({
+    methods: [
+      method(
+        "DiscoverDebrisTargets",
+        "{ if (usableSlot < 0) continue; if (IsValidDebrisTool(clump, tool, out _, out _)) { } }",
+      ),
+    ],
+    declared: [],
+    capabilityClaims: [claim],
+  });
+
+  assert.equal(silent.status, "failed");
+  const finding = silent.findings.find((entry) => entry.code === "silent_discovery_drop");
+  assert.ok(finding, JSON.stringify(silent.findings));
+  assert.match(finding.subject, /^DiscoverDebrisTargets:\d+:debrisTargets$/u);
+
+  const published = measureWith({
+    methods: [
+      method(
+        "DiscoverDebrisTargets",
+        '{ if (usableSlot < 0) { exclusions.Record("debrisTargets", DiscoveryExclusionReasons.ToolInsufficient); continue; } if (IsValidDebrisTool(clump, tool, out _, out _)) { } }',
+      ),
+    ],
+    declared: [{ capability: "clear_debris", family: "debrisTargets" }],
+    wireFamilies: [...WIRE, "debrisTargets"],
+    capabilityClaims: [claim],
+  });
+
+  assert.equal(published.status, "passed", JSON.stringify(published.findings));
+  assert.equal(published.population.capabilityDrops, 1);
+});
+
+test("a capability claim whose guard or member is gone is red, so the map cannot drift into fiction", () => {
+  const claim = {
+    function: "DiscoverDebrisTargets",
+    guard: "usableSlot",
+    member: "IsValidDebrisTool",
+    disposition: "published: debrisTargets tool_insufficient",
+  };
+  const noGuard = measureWith({
+    methods: [
+      method("DiscoverDebrisTargets", "{ return IsValidDebrisTool(clump, tool, out _, out _) ? null : null; }"),
+    ],
+    declared: [],
+    capabilityClaims: [claim],
+  });
+  assert.ok(noGuard.findings.some((entry) => entry.code === "capability_claim_unverified"));
+  assert.equal(noGuard.population.capabilityDrops, 0, "an unverified claim is not an examined drop");
+
+  const noMember = measureWith({
+    methods: [method("DiscoverDebrisTargets", "{ if (usableSlot < 0) continue; } ")],
+    declared: [],
+    capabilityClaims: [claim],
+  });
+  assert.ok(noMember.findings.some((entry) => entry.code === "capability_claim_unverified"));
+});
+
+test("a pending capability token goes red the moment it enters the vocabulary", () => {
+  const result = measureWith({
+    methods: [method("DiscoverBuildFarmBuildingTargets", "{ if (Game1.player.Money < data.BuildCost) continue; }")],
+    declared: [],
+    tokens: [...TOKENS, "insufficient_gold"],
+    mirror: [...TOKENS, "insufficient_gold"],
+    capabilityClaims: [
+      {
+        function: "DiscoverBuildFarmBuildingTargets",
+        guard: "Game1.player.Money",
+        member: "Game1.player.Money",
+        disposition: "token pending: insufficient_gold",
+      },
+    ],
+  });
+  assert.ok(result.findings.some((entry) => entry.code === "capability_token_available"));
+  assert.equal(result.status, "failed");
+});
+
+test("a drop on a declared capability member with no disposition is named, not accepted", () => {
+  const result = measureWith({
+    methods: [
+      method("DiscoverAnimalProductTargets", '{ if (!player.couldInventoryAcceptThisItem("(O)1", 1)) continue; }'),
+      method("DiscoverSomeNewFamily", '{ if (!player.couldInventoryAcceptThisItem("(O)1", 1)) continue; }'),
+    ],
+    declared: [],
+    capabilityClaims: [
+      {
+        function: "DiscoverAnimalProductTargets",
+        guard: "couldInventoryAcceptThisItem",
+        member: "couldInventoryAcceptThisItem",
+        disposition: "token pending: inventory_full",
+      },
+    ],
+  });
+  const finding = result.findings.find((entry) => entry.code === "actor_capability_drop_unregistered");
+  assert.ok(finding, JSON.stringify(result.findings));
+  assert.match(finding.subject, /^DiscoverSomeNewFamily:\d+:couldInventoryAcceptThisItem$/u);
+  assert.ok(
+    !result.findings.some(
+      (entry) =>
+        entry.code === "actor_capability_drop_unregistered" && entry.subject.startsWith("DiscoverAnimalProductTargets"),
+    ),
+    "the claimed site is filed, not unregistered",
+  );
+});
+
+test("the real tree: every actor-capability drop is published or filed, and the population is printed", () => {
+  const measured = measure();
+  assert.equal(measured.status, "passed", JSON.stringify(measured.findings));
+  assert.ok(measured.population.scanned > 40, `scanned ${measured.population.scanned}`);
+  assert.ok(
+    measured.population.continueStatements > measured.population.capabilityDrops,
+    "the examined count must be visibly smaller than the drops scanned, or a reader takes it for the whole set",
+  );
+  assert.ok(ACTOR_CAPABILITY_DROPS.some((claim) => claim.disposition === "published: debrisTargets tool_insufficient"));
+  const debris = discoverMethods().find((entry) => entry.name === "DiscoverDebrisTargets");
+  assert.match(debris.body, /exclusions\.Record\("debrisTargets", DiscoveryExclusionReasons\.ToolInsufficient\)/u);
 });
 
 test("the real tree: a non-empty population, the recording families, and one vocabulary in two languages", () => {
