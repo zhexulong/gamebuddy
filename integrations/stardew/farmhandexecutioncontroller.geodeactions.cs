@@ -13,10 +13,15 @@ namespace GameBuddy.Stardew;
 // (Menus/GeodeMenu.cs). There is no world object and no world tile: the "geode spot" is a
 // ClickableComponent inside a menu (`geodeSpot`, myID 998, :46-50), and the four steps are:
 //
-//   OPEN   `case "Blacksmith_Process": Game1.activeClickableMenu = new GeodeMenu();`
-//          (GameLocation.cs:12345-12346) - the parameterless constructor, NOT a
-//          `GeodeMenu(GeodeSpot)` overload as the lane brief assumed (:38). The menu holds no
-//          geode in a slot: the geode is the CURSOR item (`MenuWithInventory.heldItem`,
+//   OPEN   the counter is a TILE: `case "Blacksmith": if (who.TilePoint.Y > tileLocation.Y) return
+//          blacksmith(tileLocation);` (GameLocation.cs:9873-9878). `blacksmith()` finds Clint in the
+//          room's own character list by NAME (:10950-10955 - it compares no tile; the comparison at
+//          :10956-10959 has its result discarded), offers a question dialogue whose responses include
+//          `Process` only when the pack holds something `Utility.IsGeode` accepts (:10992-11009), and
+//          answering it runs `case "Blacksmith_Process":
+//          Game1.activeClickableMenu = new GeodeMenu();` (:12345-12346) - the parameterless
+//          constructor, NOT a `GeodeMenu(GeodeSpot)` overload as the lane brief assumed (:38). The menu
+//          holds no geode in a slot: the geode is the CURSOR item (`MenuWithInventory.heldItem`,
 //          MenuWithInventory.cs:44-55), and the result slot the brief mentioned does not
 //          exist - `geodeTreasure` (:30) is a field, drawn at :504-507.
 //   LOAD   an inventory click puts the geode on the cursor. GeodeMenu's own click path is
@@ -38,6 +43,18 @@ namespace GameBuddy.Stardew;
 //   CLOSE  `Game1.exitActiveMenu()` - what the menu's own okButton/trashCan path calls
 //          (MenuWithInventory.cs:180-190) and what `dismiss_modal` uses for the same class of
 //          operation menu (farmhandexecutioncontroller.modalactions.cs:250).
+//
+// WHAT "CLOSE ENOUGH" MEANS IS THE ENGINE'S ANSWER, NOT A NUMBER WRITTEN HERE. The counter is opened by
+// clicking its tile, and the engine gates that click on the TILE - `Utility.tileWithinRadiusOfPlayer(
+// grabTile, 1, player)` (Game1.cs:11509) - never on the distance to the blacksmith running it; the
+// counter case adds only `who.TilePoint.Y > tileLocation.Y` (:9874), i.e. the actor stands below the
+// counter. So the reach here is those two engine statements, asked through the tree's one
+// `IsWithinRangeOfRequest` (farmhandexecutioncontroller.movementactions.cs:43-44), and the counter tile
+// is read out of the MAP (its Buildings `Action`), which is where the engine reads it too (:7868-7888).
+// `GeodeCounterInteractionRadius = 2` is gone: it was a number no engine member states, applied to
+// Clint's tile rather than to the counter, and it made a player who could open the menu in the game be
+// refused as if the world had refused (the same defect `shop_purchase` paid for in round 42 -
+// farmhandexecutioncontroller.shopactions.cs:30-42).
 //
 // ONE ACTION, and it is one native menu driven to its own terminal: this body opens the menu,
 // loads the geode through the menu's own inventory, clicks the spot through the menu's own
@@ -74,8 +91,10 @@ namespace GameBuddy.Stardew;
 // FAILURE CODES, each naming its own live fact:
 //   * `geode_not_owned` - the named slot is empty, holds something `Utility.IsGeode` refuses, or
 //     holds an id other than the one the request named; also the native pick-up failing.
-//   * `geode_spot_not_reached` - the actor is not in the blacksmith's shop, Clint is not in it,
-//     or the actor is not within reach of his counter.
+//   * `geode_spot_not_reached` - this room's map carries no blacksmith counter tile, Clint is not in
+//     the room, or the actor does not stand where the engine's counter case admits: below the counter
+//     tile and inside the native click radius of it. The evidence names the counter tile(s), the actor's
+//     tile and which of those two engine conditions failed.
 //   * `geode_menu_not_opened` - the menu statement ran and no GeodeMenu was on screen.
 //   * `geode_smash_not_started` - the native click ran and did NOT start the crack. The reason is
 //     read from the menu's own refusal state (`alertTimer` = pack cannot take the result, :157-162;
@@ -87,21 +106,19 @@ namespace GameBuddy.Stardew;
 //   * `open_geode_native_exception` - a native call threw; the effect is unknown.
 internal sealed partial class ExecutionManager
 {
-    /// <summary>The one location whose counter processes geodes (GameLocation.cs:12345).</summary>
+    /// <summary>The vanilla location whose map carries the blacksmith counter (the `open_geode` fixture warps into
+    /// it); the action itself reads the counter out of whatever map the actor is standing on.</summary>
     internal const string GeodeCounterLocationName = "Blacksmith";
 
     /// <summary>The blacksmith who owns that counter; his own dialogue case opens the menu.</summary>
     internal const string GeodeCounterOwnerName = "Clint";
 
+    /// <summary>The Buildings-layer `Action` the blacksmith counter carries: the engine's own case
+    /// (GameLocation.cs:9873-9878), whose "Process Geodes" response is what opens the menu (:12345-12346).</summary>
+    internal const string GeodeCounterTileAction = "Blacksmith";
+
     /// <summary>The fee the native crack takes (`Game1.player.Money -= 25`, GeodeMenu.cs:107).</summary>
     internal const int GeodeProcessingFee = 25;
-
-    /// <summary>
-    /// Chebyshev reach from the actor's tile to Clint's. Clint stands BEHIND his shop counter, so the
-    /// actor's side of it is one tile further than a direct conversation would be; this is the counter
-    /// gap plus the native dialogue tile.
-    /// </summary>
-    internal const int GeodeCounterInteractionRadius = 2;
 
     /// <summary>One frame at the engine's own 60 Hz step, so the menu's animation advances as it would live.</summary>
     internal const int GeodeAnimationStepMs = 16;
@@ -156,7 +173,7 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "geode_not_owned", $"{slotIdentity};item={geode.QualifiedItemId};expected={expectedQualifiedItemId};{GeodeRefusal(RefusalLayerKind.Item, $"slot{slot}:{geode.QualifiedItemId}")}");
 
         if (!TryLocateGeodeCounter(player, location, out RefusalLayerToken counterLayer, out string counterEvidence))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "geode_spot_not_reached", $"{counterEvidence};{GeodeRefusal(counterLayer.Layer, counterLayer.Detail)}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "geode_spot_not_reached", $"{slotIdentity};item={geode.QualifiedItemId};{counterEvidence};{GeodeRefusal(counterLayer.Layer, counterLayer.Detail)}");
 
         string geodeItemId = geode.QualifiedItemId;
         int geodeStack = geode.Stack;
@@ -169,10 +186,11 @@ internal sealed partial class ExecutionManager
             GeodeMenu? menu = null;
             try
             {
-                // The native open (GameLocation.cs:12346). A statement that does not leave a GeodeMenu on screen
-                // leaves an UNKNOWN world rather than a refusal: something else may now be mounted, and that is not
-                // a precondition this action can name.
-                Game1.activeClickableMenu = new GeodeMenu();
+                // The engine's own counter answer (`case "Blacksmith_Process"`, GameLocation.cs:12345-12347): the
+                // location constructs the menu, so this body never spells the constructor. `questionParams` is unused
+                // by that case. A statement that does not leave a GeodeMenu on screen leaves an UNKNOWN world rather
+                // than a refusal: something else may now be mounted, and that is not a precondition this action can name.
+                location!.answerDialogueAction("Blacksmith_Process", Array.Empty<string>());
                 if (Game1.activeClickableMenu is not GeodeMenu opened)
                 {
                     return this.RememberTerminal(
@@ -413,38 +431,100 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// Whether the actor is at the blacksmith's geode counter: the blacksmith's own shop, the blacksmith
-    /// himself in it, and the actor within reach of his counter. The refusal names the fact that was
-    /// missing so a caller can act on it (walk closer, wait for him to be open) instead of guessing.
+    /// Every tile in this location whose Buildings <c>Action</c> is the blacksmith counter (GameLocation.cs:9873-9878),
+    /// read from the raw map layer the way the engine's own click reads it (GameLocation.cs:7868-7888) and parsed the
+    /// way <c>performAction</c> parses it (<c>ArgUtility.SplitBySpace</c>, :8611).
     /// </summary>
-    internal static bool TryLocateGeodeCounter(Farmer player, GameLocation? location, out RefusalLayerToken blocked, out string evidence)
+    internal static List<Point> FindGeodeCounterTiles(GameLocation location)
     {
-        string locationName = location?.NameOrUniqueName ?? "none";
-        if (location is null || !string.Equals(location.NameOrUniqueName, GeodeCounterLocationName, StringComparison.Ordinal))
+        var counters = new List<Point>();
+        xTile.Layers.Layer? buildings = location.map?.GetLayer("Buildings");
+        if (buildings is null)
+            return counters;
+
+        for (int x = 0; x < buildings.LayerWidth; x++)
         {
-            blocked = new RefusalLayerToken(RefusalLayerKind.Range, $"location:{locationName}");
-            evidence = $"location={locationName};expected_location={GeodeCounterLocationName};counter=absent";
+            for (int y = 0; y < buildings.LayerHeight; y++)
+            {
+                string? action = ReadBuildingsLayerAction(buildings, x, y);
+                if (action is null)
+                    continue;
+                string[] parsed = ArgUtility.SplitBySpace(action);
+                if (parsed.Length > 0 && string.Equals(parsed[0], GeodeCounterTileAction, StringComparison.Ordinal))
+                    counters.Add(new Point(x, y));
+            }
+        }
+
+        return counters;
+    }
+
+    /// <summary>
+    /// Whether the actor may open the blacksmith's geode counter from where they stand: this room's map carries the
+    /// counter tile, Clint is in the room, and the two spatial conditions the engine's counter case applies both hold.
+    /// The refusal names which of those facts was missing, so a caller can act on it (walk to the counter, come back
+    /// while he is in) instead of guessing from a distance.
+    /// </summary>
+    internal static bool TryLocateGeodeCounter(
+        Farmer player,
+        GameLocation? location,
+        out RefusalLayerToken blocked,
+        out string evidence)
+    {
+        List<Point> counters = location is null ? new List<Point>() : FindGeodeCounterTiles(location);
+        if (counters.Count == 0)
+        {
+            // No tile carries the action, so `performAction` never reaches `blacksmith()` and no "Process Geodes"
+            // response exists in this room at all (GameLocation.cs:9873-9878).
+            blocked = new RefusalLayerToken(
+                RefusalLayerKind.Range,
+                $"absent@{RefusalProbe.WithoutSpaces(location?.NameOrUniqueName ?? "none")}");
+            evidence = $"counter_action={GeodeCounterTileAction};counter_tiles=0";
             return false;
         }
 
-        NPC? owner = location.characters?.FirstOrDefault(character =>
+        string counterTiles = string.Join(
+            "|",
+            counters.Select(counter => $"{counter.X.ToString(CultureInfo.InvariantCulture)},{counter.Y.ToString(CultureInfo.InvariantCulture)}"));
+
+        NPC? owner = location!.characters?.FirstOrDefault(character =>
             character is not null && string.Equals(character.Name, GeodeCounterOwnerName, StringComparison.Ordinal));
         if (owner is null)
         {
             blocked = new RefusalLayerToken(RefusalLayerKind.Character, $"{GeodeCounterOwnerName}@absent");
-            evidence = $"location={locationName};owner={GeodeCounterOwnerName};owner_present=false";
+            evidence = $"counter_action={GeodeCounterTileAction};counter_tiles={counterTiles};"
+                + $"owner={GeodeCounterOwnerName};owner_present=false";
             return false;
         }
 
-        int actorX = player.TilePoint.X;
-        int actorY = player.TilePoint.Y;
-        int ownerX = owner.TilePoint.X;
-        int ownerY = owner.TilePoint.Y;
-        int distance = Math.Max(Math.Abs(actorX - ownerX), Math.Abs(actorY - ownerY));
-        evidence =
-            $"location={locationName};owner={GeodeCounterOwnerName};owner_present=true;owner_tile={ownerX},{ownerY};"
-            + $"actor_tile={actorX},{actorY};distance={distance};reach={GeodeCounterInteractionRadius}";
-        blocked = new RefusalLayerToken(RefusalLayerKind.Range, $"{GeodeCounterOwnerName}@{ownerX},{ownerY}");
-        return distance <= GeodeCounterInteractionRadius;
+        // The engine's own admission for this counter, as two statements rather than a number of ours: the counter case
+        // runs only for an actor standing BELOW the tile (`who.TilePoint.Y > tileLocation.Y`, GameLocation.cs:9874), and
+        // the click that reaches it is gated on the native radius around the TILE (Game1.cs:11509). Clint's tile is not
+        // part of it - `blacksmith()` finds him by name in the room's character list (:10950-10955).
+        bool Admits(Point counter) =>
+            player.TilePoint.Y > counter.Y && IsWithinRangeOfRequest((counter.X, counter.Y), player);
+
+        foreach (Point counter in counters)
+        {
+            if (!Admits(counter))
+                continue;
+            evidence = $"counter_action={GeodeCounterTileAction};counter_tiles={counterTiles};"
+                + $"counter={CounterPoint(counter)};owner={GeodeCounterOwnerName};owner_present=true";
+            blocked = RefusalLayerToken.None;
+            return true;
+        }
+
+        Point named = counters[0];
+        evidence = $"counter_action={GeodeCounterTileAction};counter_tiles={counterTiles};"
+            + $"counter={CounterPoint(named)};owner={GeodeCounterOwnerName};owner_present=true;"
+            + $"actor_tile={player.TilePoint.X.ToString(CultureInfo.InvariantCulture)},{player.TilePoint.Y.ToString(CultureInfo.InvariantCulture)};"
+            + $"actor_below_counter={(player.TilePoint.Y > named.Y ? "true" : "false")};"
+            + $"within_range_of_request={(IsWithinRangeOfRequest((named.X, named.Y), player) ? "true" : "false")};"
+            + $"radius={NativeInteractionRadius.ToString(CultureInfo.InvariantCulture)}";
+        blocked = new RefusalLayerToken(RefusalLayerKind.Range, $"counter@{CounterPoint(named)}");
+        return false;
     }
+
+    /// <summary>One counter tile as the evidence spells it: `x,y`.</summary>
+    private static string CounterPoint(Point counter) =>
+        $"{counter.X.ToString(CultureInfo.InvariantCulture)},{counter.Y.ToString(CultureInfo.InvariantCulture)}";
 }

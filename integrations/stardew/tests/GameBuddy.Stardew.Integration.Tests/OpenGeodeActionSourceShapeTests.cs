@@ -42,8 +42,9 @@ public sealed class OpenGeodeActionSourceShapeTests
         string executed = MethodBody(source, ExecuteDeclaration);
         string cracked = MethodBody(source, CrackDeclaration);
 
-        executed.Should().Contain("Game1.activeClickableMenu = new GeodeMenu();",
-            "the native open is the statement the blacksmith's own dialogue case runs (GameLocation.cs:12346)");
+        executed.Should().Contain("answerDialogueAction(\"Blacksmith_Process\"",
+            "the native open is the blacksmith counter's own answer (GameLocation.cs:12345-12346), so the location "
+                + "constructs the menu rather than this body");
         executed.Should().Contain("menu.receiveRightClick(",
             "the geode reaches the anvil as the CURSOR item, one unit at a time");
         cracked.Should().Contain("menu.receiveLeftClick(spotCenter.X, spotCenter.Y, playSound: true);",
@@ -109,7 +110,7 @@ public sealed class OpenGeodeActionSourceShapeTests
         string executed = MethodBody(ReadHandlerSource(), ExecuteDeclaration);
 
         int register = executed.IndexOf("this.RegisterModalOwner(executionId);", StringComparison.Ordinal);
-        int open = executed.IndexOf("new GeodeMenu()", StringComparison.Ordinal);
+        int open = executed.IndexOf("answerDialogueAction(", StringComparison.Ordinal);
         int release = executed.IndexOf("this.ReleaseModalOwner(executionId);", StringComparison.Ordinal);
 
         register.Should().BeGreaterThanOrEqualTo(0);
@@ -177,11 +178,15 @@ public sealed class OpenGeodeActionSourceShapeTests
         close.Should().BeGreaterThanOrEqualTo(0);
         read.Should().BeGreaterThan(close, "the postcondition is read after the menu is gone");
 
-        // The world check is the blacksmith's own shop and his own counter, not a bare distance.
+        // The admission is the engine's own counter seam, not a bare distance: the map's counter tile, the blacksmith
+        // in the room's character list, and the two spatial conditions the counter case applies.
         string counter = MethodBody(source, "internal static bool TryLocateGeodeCounter(");
-        counter.Should().Contain("GeodeCounterLocationName");
+        counter.Should().Contain("FindGeodeCounterTiles(", "the counter tile is read out of the map");
         counter.Should().Contain("GeodeCounterOwnerName");
-        counter.Should().Contain("distance <= GeodeCounterInteractionRadius");
+        counter.Should().Contain("IsWithinRangeOfRequest(", "the reach on that tile is the engine's own call");
+        counter.Should().Contain("player.TilePoint.Y > counter.Y", "the counter case runs only from below it (:9874)");
+        counter.Should().NotContain("GeodeCounterInteractionRadius", "no radius of ours may gate the counter");
+        counter.Should().NotContain("owner.TilePoint", "the blacksmith's tile is not what has to be reached");
     }
 
     /// <summary>
