@@ -84,6 +84,10 @@ export const L0_GATES = Object.freeze([
   "tools/check-stardew-fixture-action-coverage.mjs",
   "tools/check-harness-conformance.mjs",
   "tools/check-stardew-task-action-coverage.mjs",
+  // The other half of the same question: the coverage gate asks whether a rotation task NAMES an action, this one asks
+  // whether the world that receives the day actually publishes the family the action addresses. Measured 2026-11-09:
+  // `tend_the_animals` was rotated into a world whose coop had been switched off, and every gate stayed green.
+  "tools/check-stardew-multiday-task-families.mjs",
   "tools/check-game-context-pressure.mjs",
   "tools/check-live-run-verdict-guards.mjs",
   "tools/check-failure-reason-codes.mjs",
@@ -121,6 +125,13 @@ export const L0_GATES = Object.freeze([
   // against every runner's declared window, one file read per member, so it belongs in this rung rather than after a
   // launch: it is the check that would have refused the run in milliseconds.
   "tools/check-action-deadline-agreement.mjs",
+  // The shipped persona prose is the product's identity, and nothing in this tree said so: two lanes rewrote
+  // `default-companion/card.json` and `amber-deepseek-v4.1.json` inside one hour (2026-11-10), the second after the
+  // first rewrite had been restored and the boundary stated in bold. This rung is the refusal - the working tree
+  // against `HEAD`, so a rewrite is red before it is staged, and a change needs `[persona]` plus a line in
+  // `assets/tavern/presets/PERSONA-REVISION.md` in the same commit. 2.0 s here (three git spawns, batched), and it
+  // names the drifting field rather than a file.
+  "tools/check-persona-prose.mjs",
   "tools/check-prelive-gate-registry.mjs",
 ]);
 

@@ -3812,22 +3812,21 @@ if (fixture.FixtureScenario == "native_chest_store_v1")
         }
         // The count is a budget, not a literal: the fixture refuses only when it planted NOTHING, because the\n        // world is then missing the family the crops task needs. It used to demand exactly four, which was true\n        // only while the budget happened to divide to four - measured 2026-10-28, after trees and forage began\n        // taking their share, the division produced three and this refused a world that had every prop it needed.\n        if (plantedCrops <= 0)\n            throw new InvalidOperationException("fixture_native_local_play_session_crop_count_missing");
 
-        // THE ANIMAL HALF OF THE DAY - DISABLED for the multi-day world as of 2026-11-09, and the reason is measured,
-        // not stylistic. Round39 (no coop) armed this world; with the coop placed, fixture setup refuses at
-        // `fixture_native_local_multi_day_home_unreachable:what=field;door=66,15;target=56,11;component_tiles=80;
-        // closest=60,15` - the door's walkable piece no longer reaches the field the crops task stands in. Two runs
-        // died on it, and the second one died AFTER the site search had certified the site, which is the same
-        // "two predicates" shape the coop's own route check was written to end.
+        // THE ANIMAL HALF OF THE DAY. `tend_the_animals` names three farm-animal actions and this world had no animal
+        // at all (measured 2026-11-09), so a play session could never reach one. One coop, one animal, placed where the
+        // crossroads can walk to its door - and one animal rather than a stocked house, because
+        // `DiscoverFarmAnimalPetTargets` filters the engine's own `wasPet` marker and "the animal I touched left the
+        // family" is only unambiguous when the family holds exactly one member.
         //
-        // The animal chain keeps its single-action fixtures (`native_pet_farm_animal_v1`, `native_feed_animal_v1`,
-        // `native_collect_animal_product_v1`), where a warp is explicit and the day's route is not at stake. Putting a
-        // farm building into a world whose contract is "she can walk out and back" needs a site search that measures
-        // the ENGINE's layout after `updateLayout()`, not a simulation before it - that is its own unit of work.
-        this.Monitor.Log(
-            "GameBuddy play-session animal Given is off in the multi-day world: a Coop's footprint cannot yet be placed without severing the door→field route; animal_start=absent",
-            LogLevel.Info);
-        // THE HAY HALF: harmless without a house (the trough family simply publishes nothing), and kept because the
-        // food task's other three actions (feed/pet/collect) live in single-action fixtures where a trough exists.
+        // It is on again, and what it took was the SITE SEARCH measuring the engine instead of a simulation: the search's
+        // own doc comment in `ModEntry.Fixtures.PlaySessionAnimal.cs` records the runs that died refusing
+        // `home_unreachable:what=field` after a search had already certified the site. A world with an animal it cannot
+        // place is a refusal by name (`fixture_native_local_play_session_animal_site_missing`), never a quietly animal-less
+        // world that the rotation still hands `tend_the_animals`.
+        InstallNativeLocalPlaySessionAnimalGiven(player, farm, startTile, requiredReachable);
+        // THE HAY HALF OF THE DAY. The house and its one animal are what the trough belongs to; the hay in the pack is
+        // what makes a trough a published target at all (`DiscoverFeedTroughTargets` requires an owned `(O)178`
+        // stack), so the two Givens only mean something together.
         InstallNativeLocalPlaySessionHayGiven(player);
 
         if (standingTile is null)

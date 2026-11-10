@@ -104,6 +104,32 @@ public sealed partial class ModEntry
             && StardewBodyController.IsWalkableTile(farm, Game1.player, new Vector2(tile.X, tile.Y));
     }
 
+    /// <summary>
+    /// Can one Farm tile be WALKED TO from another, asked with <see cref="NativeLocalMultiDayWalkable"/> as the only
+    /// traversability rule.
+    ///
+    /// <para>
+    /// This exists so choosing where to put a building and judging the world it leaves ask ONE question. The play-session
+    /// animal Given used its own flood, which counted objects but not terrain features and could therefore walk through a
+    /// tree the arm-time assertion treats as a wall - measured 2026-11-09, the search certified a coop site and the
+    /// assertion refused the whole night (`home_unreachable:what=field;door=66,15;target=56,11`).
+    /// </para>
+    ///
+    /// <para>
+    /// A flood that exceeded its budget answers FALSE: no site is chosen on a claim the probe declined to make.
+    /// </para>
+    /// </summary>
+    private static bool NativeLocalMultiDayWalkableFrom(Farm farm, Point from, Point to)
+    {
+        ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
+            from,
+            to,
+            NativeLocalMultiDayWalkable(farm),
+            maxVisited: 8000,
+            findClosestReachable: true);
+        return verdict is { TargetEnclosed: false };
+    }
+
     /// <summary>The Farm tile the actor stands on when it comes out of its own home, refused by name if unusable.</summary>
     private static Point NativeLocalMultiDayDoorStandingSpot(Farmer player, Farm farm)
     {

@@ -24,6 +24,87 @@ public sealed partial class ModEntry
     private const int PlaySessionHayStack = 5;
 
     /// <summary>
+    /// The method that installs this Given's targets. Named through `nameof` so the declaration cannot drift from the
+    /// method it describes; read by `tools/lib/multiday-task-families.mjs`.
+    /// </summary>
+    internal const string PlaySessionAnimalGivenProvider = nameof(InstallNativeLocalPlaySessionAnimalGiven);
+
+    /// <summary>
+    /// The one TARGET FAMILY this Given makes publishable - the world advertisement the multi-day task gate reads.
+    ///
+    /// <para>
+    /// WHY IT IS DECLARED HERE. `tend_the_animals` is one of the multi-day rotation's days, and the family it names is
+    /// `animals_pets`; measured 2026-11-09, this Given was switched off in the composed world and nothing anywhere
+    /// failed - a task went on being rotated into a world with no coop in it, and the single-action gate stayed green
+    /// because its OWN fixture builds a coop. So the world states what it advertises, and the gate reads it: the entry is
+    /// TRUE only while <see cref="InstallNativeLocalPlaySessionAnimalGiven"/> is actually invoked by the composed world,
+    /// which the gate asks of this file rather than trusting this comment.
+    /// </para>
+    ///
+    /// <para>
+    /// The family name is not a taxonomy invented here: `pet_farm_animal`, `feed_animal`, `collect_animal_product` and
+    /// `water_pet_bowl` are all declared `animals_pets` in `FarmhandActionDefinitions.cs`, and coop stock is the only
+    /// target any of them addresses.
+    /// </para>
+    /// </summary>
+    internal const string PlaySessionAnimalGivenFamily = "animals_pets";
+
+    /// <summary>
+    /// Whether the building NOW ON THE FARM is one the multi-day day cannot work around: its door has no approach the
+    /// session can walk to, or the world fails the arm-time assertion with it standing here.
+    ///
+    /// <para>
+    /// Returns null when the day survives, or a named reason when it does not. Both questions are asked with the
+    /// composed world's ONE walkability rule (<see cref="NativeLocalMultiDayWalkable"/>), and the route half is not a
+    /// second implementation of it - it is <see cref="AssertNativeLocalMultiDayHomeReachable"/> itself, caught. That
+    /// assertion is what decides whether the run can start, so a building it would refuse is refused here, with the
+    /// measured message it would have thrown; a private copy of "which routes the day needs" is exactly how the bin went
+    /// unasked while this search only asked about the field.
+    /// </para>
+    ///
+    /// <para>
+    /// IT TAKES THE REAL BUILDING, not a footprint simulated with objects. Adding a stone to every footprint tile left
+    /// out what a building actually does to the map (`GameLocation.updateLayout`, the animal door, the collision the
+    /// engine answers for `occupiesTile`), so the search could pass a site the engine laid out differently. The caller
+    /// therefore keeps the building in `farm.buildings` while this answers.
+    /// </para>
+    /// </summary>
+    private string? RejectsThePlaySessionAnimalBuilding(
+        Farmer player,
+        Farm farm,
+        Building building,
+        Vector2 startTile,
+        Vector2? mustRemainReachable)
+    {
+        Point door = building.getPointForHumanDoor();
+        // Reachable means WALKABLE-TO, and the door tile itself is a building tile an actor never stands on: the
+        // measured fact is an approach tile beside it the session's own start can walk to.
+        Point from = new((int)startTile.X, (int)startTile.Y);
+        bool approach = new[]
+            {
+                new Vector2(door.X, door.Y + 1), new Vector2(door.X - 1, door.Y),
+                new Vector2(door.X + 1, door.Y), new Vector2(door.X, door.Y - 1),
+            }
+            .Any(tile => farm.isTileOnMap(tile)
+                && NativeLocalMultiDayWalkableFrom(farm, from, new Point((int)tile.X, (int)tile.Y)));
+        if (!approach)
+            return $"no_approach:door={door.X},{door.Y}";
+        // The composed world is the one that insists on the route home; a plain play-session world has no such promise to
+        // keep, and asking it there would refuse every site in a farm whose porch and crossroads are different pieces.
+        if (mustRemainReachable is null)
+            return null;
+        try
+        {
+            AssertNativeLocalMultiDayHomeReachable(player, farm);
+            return null;
+        }
+        catch (InvalidOperationException refused)
+        {
+            return $"arm_refused:door={door.X},{door.Y};{refused.Message}";
+        }
+    }
+
+    /// <summary>
     /// The play-session world's ANIMAL Given: one coop holding ONE adult animal, placed where the session's own
     /// crossroads can walk to its door.
     ///
@@ -57,59 +138,17 @@ public sealed partial class ModEntry
     /// this initializer emits no receipt.
     /// </para>
     /// </summary>
-    /// <summary>
-    /// Whether the building just placed is what the multi-day arm-time assertion will refuse, asked the same way.
-    ///
-    /// Returns null when the route survives, or a named reason when it does not. The authority is
-    /// <see cref="StardewBodyController.AssessReachability"/> through <see cref="NativeLocalMultiDayWalkable"/>, from the
-    /// same porch spot the assertion starts at, so this cannot pass a world that assertion would reject.
-    /// </summary>
-    private static string? RejectsTheMultiDayRoute(
-        Farmer player,
-        Farm farm,
-        Vector2 startTile,
-        Vector2? mustRemainReachable,
-        Point door)
-    {
-        Point from;
-        try
-        {
-            from = NativeLocalMultiDayDoorStandingSpot(player, farm);
-        }
-        catch (InvalidOperationException)
-        {
-            // No porch spot to measure from yet: the multi-day assertion will name it, and this Given is not the place
-            // that decides the day cannot start.
-            return null;
-        }
-        Func<Point, bool> walkable = NativeLocalMultiDayWalkable(farm);
-        Point target = mustRemainReachable is { } anchor
-            ? new Point((int)anchor.X, (int)anchor.Y)
-            : new Point((int)startTile.X, (int)startTile.Y);
-        ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
-            from,
-            target,
-            walkable,
-            maxVisited: 8000,
-            findClosestReachable: true);
-        if (verdict is not { } assessed) return $"route_unknown:door={door.X},{door.Y};target={target.X},{target.Y}";
-        return assessed.TargetEnclosed
-            ? $"severed_route:door={door.X},{door.Y};target={target.X},{target.Y};component_tiles={assessed.ComponentTiles}"
-            : null;
-    }
-
     private void InstallNativeLocalPlaySessionAnimalGiven(Farmer player, Farm farm, Vector2 startTile, Vector2? mustRemainReachable)
     {
         Building coop = new(PlaySessionAnimalBuildingType, Vector2.Zero);
-        if (!TryFindNativeLocalPlaySessionAnimalSite(farm, coop, startTile, mustRemainReachable, out _))
+        if (!TryFindNativeLocalPlaySessionAnimalSite(player, farm, coop, startTile, mustRemainReachable, out _, out string measured))
         {
-            // A usable world without the animal beats refusing the whole day: this fixture already degrades its prop
-            // counts the same way ("placed N of M ... before the ground ran out"), and the fact is visible in this line
-            // rather than in a world that silently has one animal fewer.
-            this.Monitor.Log(
-                $"GameBuddy play-session could not place its animal house: no free footprint keeps the ground and the route from {startTile.X},{startTile.Y}; animal_start=absent",
-                LogLevel.Warn);
-            return;
+            // NO SITE IS A REFUSAL, NOT A WORLD WITH ONE ANIMAL FEWER. This used to log a warning and return, and that
+            // line is exactly how a coop could disappear with every gate still green: `tend_the_animals` kept being
+            // rotated into a world with no animal in it. The reason is measured - how many free footprints were tried
+            // and why each was refused - so "there is nowhere to put it" can be answered rather than assumed.
+            throw new InvalidOperationException(
+                $"fixture_native_local_play_session_animal_site_missing:start={startTile.X},{startTile.Y};{measured}");
         }
         coop.ReloadBuildingData(forUpgrade: false, forConstruction: true);
         coop.daysOfConstructionLeft.Value = 0;
@@ -120,38 +159,16 @@ public sealed partial class ModEntry
             throw new InvalidOperationException("fixture_native_local_play_session_animal_interior_missing");
 
         Point door = coop.getPointForHumanDoor();
-        // Reachable means WALKABLE-TO, and the door tile itself is a building tile an actor never stands on: the
-        // measured fact is an approach tile beside it that the session's own start can walk to, asked with the real
-        // building already on the farm.
-        Vector2? approach = new[]
-            {
-                new Vector2(door.X, door.Y + 1), new Vector2(door.X - 1, door.Y),
-                new Vector2(door.X + 1, door.Y), new Vector2(door.X, door.Y - 1),
-            }
-            .Where(tile => farm.isTileOnMap(tile)
-                && !farm.buildings.Any(building => building.occupiesTile((int)tile.X, (int)tile.Y))
-                && farm.isTilePassable(tile)
-                && IsReachableFromStart(farm, startTile, tile))
-            .Cast<Vector2?>()
-            .FirstOrDefault();
-        // The site search SIMULATES the footprint; these two are the same questions asked of the real building. A
-        // simulation that disagreed with the world must not cost the day its ground or its way home, so the house goes
-        // back off the farm and the world carries one animal fewer - named, not silently.
-        //
-        // The route question is asked with the SAME predicate the multi-day arm-time assertion uses (measured
-        // 2026-11-09: this method's private reachability check let a Coop through whose footprint severed door→field,
-        // and the whole run died waiting for a bridge the fixture had made impossible).
-        string? rejected = approach is null
-            ? $"door_unreachable:door={door.X},{door.Y}"
-            : RejectsTheMultiDayRoute(player, farm, startTile, mustRemainReachable, door);
+        // The search measured this building while it stood on the farm, and the world has changed since: the layout is
+        // updated and the interior exists. The same question is asked of the building the world now holds, so a search
+        // and a placement that disagree refuse the whole day BY NAME instead of quietly dropping the animal half.
+        string? rejected = RejectsThePlaySessionAnimalBuilding(player, farm, coop, startTile, mustRemainReachable);
         if (rejected is not null)
         {
             farm.buildings.Remove(coop);
             farm.updateLayout();
-            this.Monitor.Log(
-                $"GameBuddy play-session removed the animal house it had placed at {coop.tileX.Value},{coop.tileY.Value}: {rejected}; animal_start=absent",
-                LogLevel.Warn);
-            return;
+            throw new InvalidOperationException(
+                $"fixture_native_local_play_session_animal_site_rejected:origin={coop.tileX.Value},{coop.tileY.Value};{rejected}");
         }
 
         FarmAnimal animal = new(PlaySessionAnimalType, Game1.random.Next(int.MaxValue), player.UniqueMultiplayerID);
@@ -170,12 +187,23 @@ public sealed partial class ModEntry
         if (animal.wasPet.Value)
             throw new InvalidOperationException("fixture_native_local_play_session_animal_already_petted");
 
+        // THE ASSERTION THE ABSENT COOP NEEDED. The world must now publish the family the `tend_the_animals` day names:
+        // `pet_farm_animal` addresses `location.animals` of the house the actor walks into, so the row exists exactly when
+        // that house holds a grown animal carrying a real engine id - and that id IS the target id the discovery derives
+        // (`BuildFarmAnimalPetTargetId` hashes the location with `animal.myID`). Measured 2026-11-09: with this Given off,
+        // the arm log said `animal_start=absent` and no gate anywhere failed.
+        FarmAnimal published = house.animals.Values.Single();
+        if (published.myID.Value <= 0 || !published.isAdult())
+            throw new InvalidOperationException(
+                $"fixture_native_local_play_session_animal_family_target_missing:family={PlaySessionAnimalGivenFamily};"
+                    + $"animal={published.myID.Value};adult={published.isAdult().ToString().ToLowerInvariant()}");
+
         int walkableAfter = WalkableComponentSize(farm, startTile);
         this.Monitor.Log(
             "GameBuddy native-local-player initialized play-session animal Given before bridge attachment: "
                 + $"building={coop.buildingType.Value};origin={coop.tileX.Value},{coop.tileY.Value};door={door.X},{door.Y};"
-                + $"approach={(int)approach!.Value.X},{(int)approach.Value.Y};start={startTile.X},{startTile.Y};"
-                + $"walkable_after={walkableAfter};animal={animal.myID.Value};type={animal.type.Value};"
+                + $"start={startTile.X},{startTile.Y};walkable_after={walkableAfter};"
+                + $"family={PlaySessionAnimalGivenFamily};family_targets=1;animal={animal.myID.Value};type={animal.type.Value};"
                 + $"tile={(int)animal.Tile.X},{(int)animal.Tile.Y};adult={animal.isAdult().ToString().ToLowerInvariant()};"
                 + $"friendship={animal.friendshipTowardFarmer.Value};was_pet={animal.wasPet.Value.ToString().ToLowerInvariant()};"
                 + $"house_animals={house.animals.Count()};production alone pets, feeds and collects.",
@@ -244,29 +272,47 @@ public sealed partial class ModEntry
     }
 
     /// <summary>
-    /// The first free, walkable-from-the-crossroads footprint for the play-session animal house, measured against the
-    /// ground the props actually left.
+    /// The first free footprint whose REAL building leaves the day its ground and its route, measured on the farm.
     ///
     /// <para>
-    /// Four facts, each one a live reading rather than a guess: the footprint is on the map with no building, object or
-    /// terrain feature on it; the session's start still belongs to a walkable piece of at least
-    /// <see cref="PlaySessionMinimumComponentTiles"/> tiles with the footprint BLOCKED (the same simulation the prop
-    /// search uses for its own guard, so a building that would fence the day in is refused rather than discovered
-    /// afterwards); the coop's door has an approach tile the start can walk to; and, for the composed world, the route
-    /// home survives.
+    /// Three facts, each one a live reading rather than a guess: the footprint is on the map with no building, object or
+    /// terrain feature on it and does not cover the tile the session starts on; the session's start still belongs to a
+    /// walkable piece of at least <see cref="PlaySessionMinimumComponentTiles"/> tiles with the building standing on it;
+    /// and <see cref="RejectsThePlaySessionAnimalBuilding"/> passes - the door has an approach the start can walk to and
+    /// the porch still reaches the field.
+    /// </para>
+    ///
+    /// <para>
+    /// THE BUILDING IS ADDED TO THE FARM AND REMOVED AGAIN, rather than simulated with stones on its footprint. Measured
+    /// 2026-11-09: the simulation and the engine disagreed about the same site, this search certified a coop that severed
+    /// door->field, and the arm-time assertion then refused the whole run - so the day had no animal at all and nothing
+    /// said why. A simulated blocker is not the question; the collision the engine answers for a real building is.
+    /// </para>
+    ///
+    /// <para>
+    /// `measured` is the refusal as a reading - how many free footprints there were and why the first few were refused -
+    /// so "there is nowhere to put it" is a measurement an operator can act on rather than a missing animal.
     /// </para>
     /// </summary>
     private bool TryFindNativeLocalPlaySessionAnimalSite(
+        Farmer player,
         Farm farm,
         Building building,
         Vector2 startTile,
         Vector2? mustRemainReachable,
-        out Vector2 site)
+        out Vector2 site,
+        out string measured)
     {
         site = Vector2.Zero;
+        measured = "no_candidate";
         xTile.Layers.Layer? back = farm.map?.GetLayer("Back");
         if (back is null)
+        {
+            measured = "farm_has_no_back_layer";
             return false;
+        }
+        int freeFootprints = 0;
+        List<string> rejected = new();
         foreach (Point candidate in PlaySessionFixturePlacement.PlaceableCandidates(
             Enumerable.Range(0, back.LayerWidth)
                 .SelectMany(x => Enumerable.Range(0, back.LayerHeight).Select(y => new Point(x, y))),
@@ -296,24 +342,30 @@ public sealed partial class ModEntry
             // whose ORIGIN is two tiles away can still cover the tile the session starts on.
             if (footprint.Contains(startTile))
                 continue;
-            // Block the footprint the way a building would and ask the two questions the day depends on. The props are
-            // placed the same way for their own guard, so choosing and judging ask one question.
-            foreach (Vector2 tile in footprint)
-                farm.objects[tile] = ItemRegistry.Create<StardewValley.Object>("(O)2", 1);
-            bool keepsGround = WalkableComponentSize(farm, startTile) >= PlaySessionMinimumComponentTiles;
-            bool keepsRoute = mustRemainReachable is not { } anchor
-                || IsReachableFromStartPessimistic(
-                    farm,
-                    startTile,
-                    anchor,
-                    tile => farm.objects.ContainsKey(new Vector2(tile.X, tile.Y)));
-            foreach (Vector2 tile in footprint)
-                farm.objects.Remove(tile);
-            if (!keepsGround || !keepsRoute)
+            freeFootprints += 1;
+            // Stand the real building on the real farm, ask the composed world's own question, and take it down again.
+            // The same footprint measured with stones on it asked a different question and got a different answer.
+            //
+            // FINISHED, because that is how the world will hold it: an under-construction footprint answers the collision
+            // question for a work site (`Building.isTilePassable` short-circuits on it), so the door and animal-door tiles
+            // would read differently here than after the day has built it.
+            building.daysOfConstructionLeft.Value = 0;
+            farm.buildings.Add(building);
+            int fieldComponent = WalkableComponentSize(farm, startTile);
+            string? rejection = fieldComponent >= PlaySessionMinimumComponentTiles
+                ? RejectsThePlaySessionAnimalBuilding(player, farm, building, startTile, mustRemainReachable)
+                : $"field_component_too_small:{fieldComponent}";
+            farm.buildings.Remove(building);
+            if (rejection is not null)
+            {
+                // Bounded, because a farm has thousands of candidate origins and the reason only has to be readable.
+                if (rejected.Count < 8) rejected.Add($"{candidate.X},{candidate.Y}:{rejection}");
                 continue;
+            }
             site = new Vector2(candidate.X, candidate.Y);
             return true;
         }
+        measured = $"free_footprints={freeFootprints};rejected={(rejected.Count == 0 ? "none" : string.Join("|", rejected))}";
         return false;
     }
 }

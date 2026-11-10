@@ -57,6 +57,9 @@ public sealed class ModEntryFixtureBoundaryTests
     // cannot sever the door->field route again.
     "NativeLocalMultiDayDoorStandingSpot", "AssertNativeLocalMultiDayHomeReachable", "AssertReachable",
     "NativeLocalMultiDayWalkable",
+    // The same rule as a question about a PAIR of tiles, so selecting a site for a building and judging the world it
+    // leaves cannot use two predicates again.
+    "NativeLocalMultiDayWalkableFrom",
         "InstallNativeLocalTailoringFixture",
         "InitializeNativeLocalColorPlacedObjectFixture",
         // The furniture-and-decoration wave: a placed piece with at least two rotations, and a fence the declared tool
@@ -79,7 +82,9 @@ public sealed class ModEntryFixtureBoundaryTests
         // The play-session world's animal Given: the coop it places and the one adult animal inside it - plus the
         // question that keeps that coop off the door->field route, asked with the multi-day predicate above.
         "InstallNativeLocalPlaySessionAnimalGiven", "TryFindNativeLocalPlaySessionAnimalSite",
-        "RejectsTheMultiDayRoute",
+        // The placeable check: the coop's own footprint, its door's approach and the arm-time assertion itself, all
+        // measured on the real building standing on the real farm rather than on a footprint simulated with stones.
+        "RejectsThePlaySessionAnimalBuilding",
         // The play-session world's hay Given: the one pack stack that makes the coop's troughs published targets.
         "InstallNativeLocalPlaySessionHayGiven",
         "InitializeNativeLocalPetFixture", "InitializeNativeLocalMoveStallProbeFixture",

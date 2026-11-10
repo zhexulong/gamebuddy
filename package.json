@@ -195,7 +195,7 @@
     "test:live-run-artifact-freshness": "node --test tools/check-live-run-artifact-freshness.test.mjs",
     "test:memory-live": "node --test tools/live-run/memory/run-memory-live-loop.test.mjs",
     "test:multiday-loop": "node --test tools/lib/multiday-loop.test.mjs tools/lib/multiday-baseline.test.mjs",
-    "test:multiday-tasks": "node --test tools/lib/multiday-daily-tasks.test.mjs tools/lib/task-purpose.test.mjs",
+    "test:multiday-tasks": "node --test tools/lib/multiday-daily-tasks.test.mjs tools/lib/multiday-task-families.test.mjs tools/lib/task-purpose.test.mjs",
     "test:parser-agreement": "node --test tools/lib/parser-agreement.test.mjs",
     "test:perf-budget": "node --test tools/perf/budget.test.mjs",
     "test:perf-scaling": "node --test tools/check-perf-scaling.test.mjs",
