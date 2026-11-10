@@ -30,10 +30,9 @@ import type { PiProviderEntry } from "./pi-provider-store.js";
  * carries all of them - and they are exactly the family the adapter documents for `samplingParams`
  * (`top_p`, `top_k`, `min_p`, `repetition_penalty`, …).
  *
- * Deliberately NOT carried, each for its own reason: `openai_max_tokens`/`openai_max_context` are first-class
- * fields the provider entry already sets (`models[0].maxTokens` and the declared window) and a free-form copy would
- * be a second, disagreeing cap; `stream_openai` and `n` describe the transport, not the sampler; `seed: -1` is
- * SillyTavern's sentinel for "random", not a value to send.
+ * The fields a preset may carry that are NOT sampler settings are not listed here; they are declared in
+ * `PRESET_FIELDS_NOT_APPLIED` below, one table with one reason each, so a caller reports them by name instead of
+ * re-deriving the sentence.
  */
 export const PRESET_SAMPLING_KEYS = Object.freeze([
   "temperature",
@@ -68,6 +67,53 @@ export function presetSamplingParams(document: Readonly<Record<string, unknown>>
     values[key] = value;
   }
   return Object.freeze(values);
+}
+
+/**
+ * The preset fields this product recognises on import and does NOT send, and why each one is not ours.
+ *
+ * A reading, not a rejection list: import keeps every field an authored preset carries (design §2.2), so a preset
+ * that declares a context budget still imports, keeps its bytes and exports unchanged. What §7 forbids is dropping
+ * such a field SILENTLY, so this table is the one place that says a field was recognised and not applied.
+ *
+ * `openai_max_context` is here rather than carried because "how much context a request has" already has an owner
+ * and it is not a preset: the window is the selected model's own fact (`provider-catalog.ts` `contextWindow`, which
+ * the provider entry writes into the model Pi describes) and the output reserve is the entry's own
+ * `models[0].maxTokens` (`pi-provider-store.ts`). Copying a preset number over either would be a second,
+ * disagreeing cap for one fact - and a preset authored against one endpoint would reshape every request to another.
+ * The product's own shipped preset therefore states none of these; only an imported one may.
+ */
+export const PRESET_FIELDS_NOT_APPLIED = Object.freeze({
+  openai_max_context:
+    "the context window is the selected model's own (provider-catalog.ts contextWindow); the preset has no budget of its own",
+  openai_max_tokens: "the output reserve is the provider entry's own models[0].maxTokens (pi-provider-store.ts)",
+  stream_openai: "the transport is the Host's: this runtime always streams and never reads the flag",
+  seed: 'SillyTavern writes -1 as its "pick randomly" sentinel, so there is no value here to send',
+  n: "one completion per call is the product's shape, so asking for several is not a request this Host makes",
+} as const);
+
+/** One preset field that was recognised on import and deliberately not sent. */
+export type PresetNotAppliedField = Readonly<{
+  field: string;
+  value: unknown;
+  disposition: "not_applied";
+  reason: string;
+}>;
+
+/**
+ * The fields of one preset document this product recognises and does not send, each with its stated reason.
+ *
+ * The population is `PRESET_FIELDS_NOT_APPLIED`, not a caller's list: a field added to that table is reported from
+ * every preset that carries it. A preset field in neither table is not ours to read at all, and saying nothing about
+ * it is the same answer as saying nothing about `prompts`.
+ */
+export function presetFieldsNotApplied(document: Readonly<Record<string, unknown>>): readonly PresetNotAppliedField[] {
+  const reported: PresetNotAppliedField[] = [];
+  for (const [field, reason] of Object.entries(PRESET_FIELDS_NOT_APPLIED)) {
+    if (!(field in document)) continue;
+    reported.push(Object.freeze({ field, value: document[field], disposition: "not_applied" as const, reason }));
+  }
+  return Object.freeze(reported);
 }
 
 /**

@@ -87,7 +87,7 @@ import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-recl
 import { assemblePreset, depthInsertionIndex, type PresetAssembly } from "./preset-assembler.js";
 import { type PresetDocument, type PresetPrompt, promptEntry } from "./preset-document.js";
 import type { MacroContext } from "./preset-macros.js";
-import { PRESET_SAMPLING_KEYS, presetSamplingParams } from "./preset-sampling.js";
+import { PRESET_SAMPLING_KEYS, presetFieldsNotApplied, presetSamplingParams } from "./preset-sampling.js";
 import { createPresetStore, type PresetStore } from "./preset-store.js";
 
 // The store writes through the Host's path lock, whose release needs the reclaimer the runtime binds.
@@ -697,6 +697,48 @@ test("the sampler keys carried are exactly the ones each file declares, as sets 
         `"${key}" is a budget/transport field, not a sampler key (openai.js:1567 sets the budget), so it must not be carried`,
       );
     }
+  });
+});
+
+test("our shipped preset states no context budget, while an imported one that does is accepted and reported not_applied", async () => {
+  await withRealPresets(({ st, amber }) => {
+    // Direction 1 - the product's own file. A generation preset is the product's authored input, so a budget in it
+    // is a second authority for "how much context this request has". How much that is belongs to the selected
+    // model (`provider-catalog.ts` contextWindow) and to the entry's own `models[0].maxTokens`.
+    for (const field of ["openai_max_context", "openai_max_tokens"])
+      assert.equal(
+        Object.hasOwn(amber.file, field),
+        false,
+        `the shipped preset carries "${field}". The context budget is the product's, not the preset's: it is the selected model's own window ` +
+          "(provider-catalog.ts contextWindow) plus the entry's models[0].maxTokens. Delete the field from " +
+          "assets/tavern/presets/amber-deepseek-v4.1.json rather than teaching a reader to honour a second cap.",
+      );
+    assert.deepEqual(
+      presetFieldsNotApplied(amber.document),
+      [],
+      "the shipped preset states no field this product would have to report as not applied",
+    );
+
+    // Direction 2 - somebody else's file, which DOES carry one. Import must keep it (§2.2) and the reading must say
+    // it was recognised and not sent (§7: nothing is dropped silently).
+    assert.equal(
+      Object.hasOwn(st.file, "openai_max_context"),
+      true,
+      "SillyTavern's own Default.json states a context budget; if it stops doing so this direction is no longer measured",
+    );
+    assert.equal(
+      st.document.openai_max_context,
+      st.file.openai_max_context,
+      "import keeps the field verbatim: refusing or rewriting it would break every authored preset that states one",
+    );
+    const budget = presetFieldsNotApplied(st.document).find((entry) => entry.field === "openai_max_context");
+    assert.equal(
+      budget?.disposition,
+      "not_applied",
+      "an imported context budget must be reported, not silently ignored",
+    );
+    assert.equal(budget?.value, st.file.openai_max_context);
+    assert.ok((budget?.reason.length ?? 0) > 0, "the report must say where the real budget lives");
   });
 });
 

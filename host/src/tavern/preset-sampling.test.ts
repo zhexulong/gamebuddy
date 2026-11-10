@@ -12,7 +12,9 @@ import { connectionAuthPath, TavernConnectionStore } from "./connection-store.js
 import { mergeModelProviderEntry, modelProviderEntry, type PiProviderEntry } from "./pi-provider-store.js";
 import {
   effectivePresetSampling,
+  PRESET_FIELDS_NOT_APPLIED,
   PRESET_SAMPLING_KEYS,
+  presetFieldsNotApplied,
   presetSamplingParams,
   type PresetSamplingValues,
   withPresetSampling,
@@ -152,6 +154,30 @@ test("a preset contributes its sampler settings and nothing that owns the reques
   assert.deepEqual(Object.keys(values).sort(), [...PRESET_SAMPLING_KEYS].sort());
   for (const key of ["openai_max_tokens", "openai_max_context", "stream_openai", "n", "seed", "prompts", "model"])
     assert.equal(key in values, false, `${key} is not a sampling value and must not reach the request body`);
+});
+
+test("a preset's budget and transport fields are recognised by name and reported not_applied, never carried", () => {
+  const document = presetDocument();
+  const reported = presetFieldsNotApplied(document);
+  // The population is the declaration: every field the table names AND the fixture carries is reported, in the
+  // table's own order, so a field added to the table cannot be silently unreported.
+  assert.deepEqual(
+    reported.map((entry) => [entry.field, entry.disposition]),
+    Object.keys(PRESET_FIELDS_NOT_APPLIED).map((field) => [field, "not_applied"]),
+  );
+  assert.equal(reported.find((entry) => entry.field === "openai_max_context")?.value, 4095);
+  for (const entry of reported)
+    assert.ok(entry.reason.length > 0, `${entry.field} must say why it is not ours, or the report is a shrug`);
+  // Reported is not carried: the same field must still be absent from the sampling bag.
+  for (const entry of reported)
+    assert.equal(entry.field in presetSamplingParams(document), false, `${entry.field} is reported, not sent`);
+  // A preset that states none of them reports nothing rather than an empty-shaped row per field.
+  assert.deepEqual(presetFieldsNotApplied({ prompts: [] }), []);
+  // One field present, the rest absent: the report follows the document, not the table alone.
+  assert.deepEqual(
+    presetFieldsNotApplied({ prompts: [], openai_max_context: 8000 }).map((entry) => entry.field),
+    ["openai_max_context"],
+  );
 });
 
 test("a preset with no sampler settings contributes nothing, and a non-numeric one is refused by key", () => {
