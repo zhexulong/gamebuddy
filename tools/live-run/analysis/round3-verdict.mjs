@@ -11,7 +11,8 @@
  *    session that produced a confident, wrong "NodeNotEligible 151 -> 2" while the record said 314.
  *  - Counters read ONE file each, and say which.
  *
- * Usage: node tools/live-run/analysis/round3-verdict.mjs [runDir]
+ * Usage: node tools/live-run/analysis/round3-verdict.mjs [runsRoot]   (default `.live-runs/game-ladder`; it reads
+ *        the NEWEST directory under it whose name contains `multiday_routine`, not the directory you name)
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
