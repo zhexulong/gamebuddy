@@ -532,6 +532,15 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:perf-scaling",
   },
   {
+    path: "tools/check-planner-guidance-observation-tools.mjs",
+    reason:
+      "elsewhere: reads two source declarations - the observation tools the adapter mounts, and the text `stardew_plan_work` " +
+      "hands the model - so it needs no install, no build and no run, and it runs on every push in the derived CI gates job " +
+      "through `pnpm check:planner-guidance-observation-tools`; a prelive rung would be a second copy of that reading. " +
+      "Measured at HEAD: `observation tools examined 9 · named 3 · with a reason 6`",
+    runsIn: "pnpm check:planner-guidance-observation-tools",
+  },
+  {
     path: "tools/check-production-pack-load.mjs",
     reason:
       "environment: measured pointer_missing on host/dist/current.json, a generation only the release lane builds",
