@@ -66,14 +66,7 @@ import { buildGameSurfaceAuthoredCatalog } from "../tavern/catalog-service.js";
 import { createMaterializedGameCompanionRuntime } from "../game-runtime-fixed-tools.internal.js";
 import { createRunTrace, writeRunTrace, type RunTrace } from "../run-trace.js";
 import {
-  bindProgramDirectiveLedger,
-  hostOwnedStampField,
-  type ProgramDirectiveSeam,
-  UNBOUND_PROGRAM_DIRECTIVE_SEAM,
-} from "../game-directive.js";
-import {
   validateBodyProgramCandidateRequest,
-  bodyProgramCandidateWire,
   validateBodyProgramEventsResult,
   validateBodyProgramStatusResult,
   validateBodyProgramSubmitResult,
@@ -165,7 +158,6 @@ function createBodyProgramTools(
   revealReaders: () => void,
   runTrace: RunTrace,
   announceSettledFact: (fact: WorldFact) => void,
-  directiveLedger: ProgramDirectiveSeam,
 ): readonly ToolDefinition[] {
   const withPort = async <TResult>(
     request: Record<string, unknown>,
@@ -249,18 +241,7 @@ function createBodyProgramTools(
       },
       onSettled: async (status) => {
         const settledAtMs = await readProgramSettledAtMs(programId).catch(() => null);
-        // THE STAMP IS READ BACK rather than carried by the watch: the Host's ledger is the one place a plan's
-        // authorization lives, so a copy taken at submission could only disagree with it after a supersession.
-        const announced = settlement.report({
-          programId,
-          settledAtMs,
-          compiled: nodes,
-          status,
-          nowMs: Date.now(),
-          directiveId: directiveLedger.read(programId).directiveId,
-        });
-        // Only a program whose ledger was actually announced stops being outstanding work.
-        if (announced !== undefined) directiveLedger.settle(programId);
+        settlement.report({ programId, settledAtMs, compiled: nodes, status, nowMs: Date.now() });
       },
       stillWatching: () => bodyProgramConsumers.get(consumer)?.available === true,
     }).catch(() => undefined);
@@ -268,25 +249,11 @@ function createBodyProgramTools(
 
   // ONE submission path. The raw program tool and the routine tool both hand their candidate here,
   // so a routine can never reach the Mod by a route a model-authored program cannot.
-  const submitProgram = async (candidate: unknown) => {
-    // THE STAMP IS THE HOST'S. A candidate the model wrote that carries one is claiming the player authorized it, which is
-    // the single claim this seam exists to keep out of a model's reach - so the refusal NAMES the field instead of
-    // reporting the whole frame as generically malformed (`game-directive.ts:hostOwnedStampField`).
-    const claimed = hostOwnedStampField(candidate);
-    if (claimed !== null) throw new Error(`model_supplied_directive_stamp:${claimed}`);
-    if (!isBodyProgramCandidateRequest(candidate)) throw new Error("invalid_body_program_tool_arguments");
-    // Stamped HERE, once, and recorded by the Host: a stamp added at a call site is one a second call site can forget.
-    const request: BodyProgramCandidateRequest = Object.freeze({
-      ...directiveLedger.stamp(candidate.programId),
-      programId: candidate.programId,
-      nodes: candidate.nodes,
-    });
-    // WHAT CROSSES THE BRIDGE, in one spelling (`protocol.ts:bodyProgramCandidateWire`): the attached Mod accepts
-    // `{programId, nodes}` only, so the stamp stays Host-side until the Mod unit that stores it lands.
-    const wire = bodyProgramCandidateWire(request);
-    assertFreshBodyProgramPreflight(connection, mountedPolicy, retainedPolicyIdentity, wire);
-    const result = await invoke(wire, validateBodyProgramCandidateRequest, validateBodyProgramSubmitResult, (port) =>
-      port.submit(wire),
+  const submitProgram = async (request: BodyProgramCandidateRequest) => {
+    if (!isBodyProgramCandidateRequest(request)) throw new Error("invalid_body_program_tool_arguments");
+    assertFreshBodyProgramPreflight(connection, mountedPolicy, retainedPolicyIdentity, request);
+    const result = await invoke(request, validateBodyProgramCandidateRequest, validateBodyProgramSubmitResult, (port) =>
+      port.submit(request),
     );
     // Only a recorded program gives the readers anything to answer; a rejected candidate leaves none.
     const details: unknown = result.details;
@@ -345,7 +312,10 @@ function createBodyProgramTools(
         description:
           "Submit a pre-compiled action program: explicit 'nodes', each with 'actionId', 'arguments', 'dependsOn' and 'bindings'.\\nUse it when you already know the exact low-level steps and their arguments in the Mod's '{type, canonicalValue}' form.\\nFor anything you would rather express as a sequence of 'builder.<actionId>({...})' calls, or as a loop over a snapshot\\nfamily, use 'stardew_plan_work' instead - it compiles to the same program and costs less to write.\\n\\nA node's actionId must be currently advertised; an unknown one is refused before anything runs, with diagnostics, and a\\nrefused candidate has no side effects. Nodes carry no deadline - the Mod derives each action's budget from its own\\nwatchdog, so never invent a clock value. 'bindings' maps a CONSUMER ARGUMENT NAME to {nodeId, factName} of a fact an\\nearlier node declares; keep that argument in 'arguments' too, with its observed literal value.",
         parameters: bodyProgramToolParameters("stardew_submit_action_program"),
-        execute: async (_toolCallId, params) => submitProgram(params),
+        execute: async (_toolCallId, params) => {
+          if (!isBodyProgramCandidateRequest(params)) throw new Error("invalid_body_program_tool_arguments");
+          return submitProgram(params);
+        },
       }),
     );
   return Object.freeze([
@@ -1429,14 +1399,6 @@ export function createHostGameRuntimeMaterializer(
         // first and cannot see it - and a fact that arrives before then (it cannot: nothing has been submitted) is
         // dropped by the no-op rather than queued somewhere else.
         let announceHostFact: (fact: WorldFact) => void = () => {};
-        // The same late binding for the directive ledger: the tools are built here, the service that owns
-        // `programId -> directiveId` is built below, and a plan cannot be submitted before both exist.
-        let directiveSeam: ProgramDirectiveSeam = UNBOUND_PROGRAM_DIRECTIVE_SEAM;
-        const hostedDirectives: ProgramDirectiveSeam = Object.freeze({
-          stamp: (programId: string) => directiveSeam.stamp(programId),
-          read: (programId: string) => directiveSeam.read(programId),
-          settle: (programId: string) => directiveSeam.settle(programId),
-        });
         const fixedTools = bodyProgramMounted
           ? createBodyProgramTools(
               bodyProgramConsumer,
@@ -1446,7 +1408,6 @@ export function createHostGameRuntimeMaterializer(
               () => revealProgramReaders(),
               runTrace,
               (fact) => announceHostFact(fact),
-              hostedDirectives,
             )
           : Object.freeze([]);
         const recovery = readStardewRecoveryBindingContext(recoveryContext);
@@ -1572,16 +1533,6 @@ export function createHostGameRuntimeMaterializer(
         // The settled digest rides the pump from here on. `host` is the only layer that owns it, which is why the
         // tools' sink was left unbound until this line.
         announceHostFact = (fact) => host.acceptHostMintedFact(fact);
-        // And the directive ledger, from the layer that owns it - plus a READER for the observation tools, which are built
-        // inside runtime construction and cannot see this service. The reader hangs on the authenticated connection object
-        // because that is the one identity both sides already share (the launcher's own authentication map is keyed by
-        // it); what crosses is a function, never the stamps themselves.
-        directiveSeam = Object.freeze({
-          stamp: (programId: string) => host.stampProgramDirective(programId),
-          read: (programId: string) => host.programDirectiveStamp(programId),
-          settle: (programId: string) => host.settleProgramDirective(programId),
-        });
-        bindProgramDirectiveLedger(execution.connection, () => host.programDirectiveLedger() ?? undefined);
         const operationalGateEvidence =
           options.gameOperationalGateNonceSha256 === undefined
             ? undefined

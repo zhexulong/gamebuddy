@@ -1,4 +1,3 @@
-import { type ProgramDirectiveLedger } from "./game-directive.js";
 import { SNAPSHOT_KEYS } from "./protocol.js";
 import type { BodyProgramStatusResult, DataQueryResult, Snapshot } from "./protocol.js";
 
@@ -562,125 +561,10 @@ export type MyWorkJournal = Readonly<{
 export type MyWorkRequest = Readonly<{ since?: string | undefined; programLimit?: number | undefined }>;
 
 /**
- * What one plan row's directive standing is, in one word.
- *
- * Five words because there are five different facts, and the whole point of the stamp is that they stop being spelled
- * the same way (`round44`: the day's note and yesterday's plan were both "work she was doing"):
- *
- *  - `current`  - admitted under the directive in force now.
- *  - `retired`  - admitted under one that has been superseded or has expired; not authorized today.
- *  - `none`     - admitted while no directive was current: her own decision, which nothing revoked.
- *  - `unrecorded` - the journal knows this program and the Host's ledger does not (a previous session, or one that predates
- *                   the stamp). The absence of a record, never the same word as "no directive".
- *  - `not_measured` - no ledger reader was wired into this session at all, so nothing about any row is known.
- */
-export type MyWorkDirectiveStanding = "current" | "retired" | "none" | "unrecorded" | "not_measured";
-
-/**
- * The directive reading of one journal page: a standing per program, and the partition beside it.
- *
- * `directives` absent means no ledger reader was wired into this session. That is `not_measured`, never an empty
- * reading: a row may only claim a standing when a ledger actually answered for it, so "nobody wired the reader" and
- * "no directive authorized this plan" cannot be read as the same thing.
- */
-function myWorkDirectives(
-  programs: MyWorkJournal["programs"],
-  directives: ProgramDirectiveLedger | undefined,
-): Readonly<{
-  standingOf: ReadonlyMap<string, Readonly<{ directiveId: string | null; standing: MyWorkDirectiveStanding }>>;
-  totals: Readonly<{
-    state: "measured" | "not_measured";
-    current: string | null;
-    plans: Readonly<{
-      read: number;
-      current: number | null;
-      retired: number | null;
-      none: number | null;
-      unrecorded: number | null;
-    }>;
-    summary: string;
-    missingField?: string;
-  }>;
-}> {
-  const standingOf = new Map<string, Readonly<{ directiveId: string | null; standing: MyWorkDirectiveStanding }>>();
-  if (directives === undefined) {
-    for (const program of programs)
-      standingOf.set(program.programId, Object.freeze({ directiveId: null, standing: "not_measured" as const }));
-    return Object.freeze({
-      standingOf,
-      totals: Object.freeze({
-        state: "not_measured" as const,
-        current: null,
-        plans: Object.freeze({
-          read: programs.length,
-          current: null,
-          retired: null,
-          none: null,
-          unrecorded: null,
-        }),
-        missingField: "integration.programDirectiveLedger",
-        summary: "directive: not_measured (missing integration.programDirectiveLedger)",
-      }),
-    });
-  }
-  const current = directives.currentDirectiveId;
-  let currentPlans = 0;
-  let retired = 0;
-  let none = 0;
-  let unrecorded = 0;
-  for (const program of programs) {
-    if (!directives.stamps.has(program.programId)) {
-      unrecorded += 1;
-      standingOf.set(program.programId, Object.freeze({ directiveId: null, standing: "unrecorded" as const }));
-      continue;
-    }
-    const directiveId = directives.stamps.get(program.programId) ?? null;
-    if (directiveId === null) {
-      none += 1;
-      standingOf.set(program.programId, Object.freeze({ directiveId: null, standing: "none" as const }));
-    } else if (directiveId === current) {
-      currentPlans += 1;
-      standingOf.set(program.programId, Object.freeze({ directiveId, standing: "current" as const }));
-    } else {
-      retired += 1;
-      standingOf.set(program.programId, Object.freeze({ directiveId, standing: "retired" as const }));
-    }
-  }
-  const recorded = currentPlans + retired + none;
-  return Object.freeze({
-    standingOf,
-    totals: Object.freeze({
-      state: "measured" as const,
-      current,
-      plans: Object.freeze({
-        read: programs.length,
-        current: currentPlans,
-        retired,
-        none,
-        unrecorded,
-      }),
-      // BOTH NUMBERS WITH THEIR DENOMINATOR, so "4 of 4 plans were authorized by the directive in force" is a reading and
-      // not a bare ratio. With no directive today the answer says `none`, and it still names any retired work: prints a
-      // zero only where the zero is the news.
-      summary:
-        current === null
-          ? retired === 0
-            ? "directive: none"
-            : `directive: none (retired ${String(retired)})`
-          : `plans ${String(recorded)} of ${String(programs.length)} (current ${String(currentPlans)} · retired ${String(retired)})`,
-    }),
-  });
-}
-
-/**
  * The answer, from one journal page. Pure: two calls on one payload answer the same bytes, which is the property the
  * fold-survival test asserts.
  */
-export function myWork(
-  journal: MyWorkJournal,
-  request: MyWorkRequest = {},
-  directives?: ProgramDirectiveLedger,
-): LookupAnswer | LookupUnknown {
+export function myWork(journal: MyWorkJournal, request: MyWorkRequest = {}): LookupAnswer | LookupUnknown {
   // A DAY BOUNDARY IS NOT IN THIS JOURNAL, and this is where saying so is cheaper than guessing.
   //
   // Programs and events carry the Mod's monotonic `atMs` and nothing else about time: no day, no season, no year. Scoping
@@ -728,18 +612,10 @@ export function myWork(
   const boundedTiles = bound(tileRows);
 
   const limit = Math.max(1, request.programLimit ?? MAX_MY_WORK_PROGRAMS);
-  const direction = myWorkDirectives(journal.programs, directives);
-  const programRows = journal.programs.slice(0, limit).map((program) => {
-    const standing = direction.standingOf.get(program.programId);
-    return {
-      programId: program.programId,
-      state: program.state,
-      // The stamp and its standing travel together, so a row under a retired directive is visible as such beside the
-      // `directive.current` in the totals above it - inequality needs no instruction.
-      directiveId: standing?.directiveId ?? null,
-      directiveStanding: standing?.standing ?? ("not_measured" as const),
-    };
-  });
+  const programRows = journal.programs.slice(0, limit).map((program) => ({
+    programId: program.programId,
+    state: program.state,
+  }));
 
   return {
     subject: "my_work",
@@ -757,9 +633,6 @@ export function myWork(
         },
         nodes: nodeTotals,
         executions: nodes.filter((node) => MY_WORK_DISPATCHED.has(node.state)).length,
-        // WHICH DIRECTIVE AUTHORIZED EACH PLAN, and the three-way partition beside it: a retired plan is countable by its
-        // own name rather than by subtracting two other numbers (see `myWorkDirectives`).
-        directive: direction.totals,
       },
       byAction: { rows: boundedActions.rows, omitted: boundedActions.omitted },
       tiles: { rows: boundedTiles.rows, unproven, omitted: boundedTiles.omitted },
@@ -778,7 +651,6 @@ export function myWork(
 export function myWorkFromJournal(
   result: BodyProgramStatusResult,
   request: MyWorkRequest = {},
-  directives?: ProgramDirectiveLedger,
 ): LookupAnswer | LookupUnknown {
   if (result.programs === null)
     return journalUnavailable(
@@ -800,7 +672,6 @@ export function myWorkFromJournal(
       programCount: result.programCount,
     },
     request,
-    directives,
   );
 }
 

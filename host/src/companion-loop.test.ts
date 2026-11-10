@@ -2074,7 +2074,6 @@ function settledDigest(programId: string, nodeState: "succeeded" | "failed") {
   const digest = programSettledDigest({
     programId,
     settledAtMs: 4_242,
-    directiveId: null,
     compiled: [
       {
         nodeId: "n01",

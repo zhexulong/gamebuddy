@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { expireForWorldDay, worldDayFrom, type GameDirective, type WorldDay } from "./game-directive.js";
 
 export type FactKind = "snapshot" | "execution_receipt" | "semantic_event" | "lifecycle" | "world_fact";
 export type WorldFact = Readonly<{
@@ -59,11 +58,6 @@ export type PendingBatch = Readonly<{
   triggerEventIds: readonly string[];
   inputs: readonly PlayerInput[];
   facts: readonly WorldFact[];
-  /**
-   * The directive this batch carried, if any. On the batch so a RETRY delivers what it was composed with: reading the
-   * pump's current record at delivery time would let a superseded directive reach the model under the newer one's name.
-   */
-  directive: GameDirective | null;
   /** Immutable delivery frame retained verbatim if the sink rejects it. */
   serialized: string;
 }>;
@@ -258,27 +252,6 @@ export interface CompanionTurnSink {
 /** Product-neutral Host event pump. It forwards labelled facts; it never plans or interprets receipts. */
 export class CompanionEventPump {
   #snapshot: WorldFact | undefined;
-  /**
-   * The directive in force, latest-only, beside the snapshot and for the same reason.
-   *
-   * `round44` read the note once and then watched 25 plan submissions ignore it while every turn re-read the work it had
-   * superseded, because the note was an utterance and the older work was state. This slot is what makes the note state
-   * too: it is serialised into EVERY batch (`takeBatch`, `takeExpiringOnly`), it is never consumed, and its `state`
-   * field is the only thing a reader has to compare.
-   */
-  #directive: GameDirective | null = null;
-  /** The last world day the world published, so an arriving directive can be stamped with the day it is for. */
-  #worldDay: WorldDay | null = null;
-  /**
-   * A directive arrived and no turn has carried it yet.
-   *
-   * The pump owes exactly ONE turn per issued directive - the moment the player says what today is for - and none of
-   * the restatements may mint one, or the directive would hold the session in a permanent turn loop. Consumed by
-   * `takeBatch`, so "a turn is owed" and "the record is held" stay two different facts.
-   */
-  #directiveAwaitingTurn = false;
-  /** Turns delivered carrying a directive, beside `#deliveredBatches` (`directiveDelivery`). */
-  #deliveredWithDirective = 0;
   readonly #receipts = new Map<string, WorldFact>();
   readonly #semanticEvents = new Map<string, WorldFact>();
   readonly #lifecycle = new Map<string, WorldFact>();
@@ -333,14 +306,6 @@ export class CompanionEventPump {
     this.#observeWorldTransition(frozen);
     this.#observeExecutionProgress(frozen);
     if (fact.kind === "snapshot") {
-      // The world's own calendar is the day boundary (§6.3). Read before the slot rule: the day the world is in is a
-      // fact whether or not this snapshot is the newest one held, and a directive that outlived its day must stop being
-      // readable as authorization the moment the day changes - not the next time somebody asks.
-      const worldDay = worldDayFrom(fact.payload);
-      if (worldDay !== null) {
-        this.#worldDay = worldDay;
-        if (this.#directive !== null) this.#directive = expireForWorldDay(this.#directive, worldDay);
-      }
       if (this.#snapshot === undefined || fact.revision >= this.#snapshot.revision) this.#snapshot = frozen;
       return;
     }
@@ -444,28 +409,6 @@ export class CompanionEventPump {
     this.#inputs.push(Object.freeze({ ...input }));
   }
 
-  /**
-   * The directive in force: latest-only, exactly like the snapshot slot.
-   *
-   * The caller (`CompanionHostService.acceptDirective`) decides supersession - it holds the record it is replacing - so
-   * this is a slot assignment, not a policy. One record, one slot: a second directive cannot sit beside the first, which
-   * is what makes "the older id is absent from the block" true by construction rather than by filtering at serialisation.
-   */
-  public setDirective(directive: GameDirective): void {
-    this.#directive = Object.freeze({ ...directive, worldDay: Object.freeze({ ...directive.worldDay }) });
-    this.#directiveAwaitingTurn = true;
-  }
-
-  /** The directive in force, or `null` - held, not consumed (see `#directive`). */
-  public get directive(): GameDirective | null {
-    return this.#directive;
-  }
-
-  /** The last world day the world published, or `null` before the first snapshot. */
-  public get worldDay(): WorldDay | null {
-    return this.#worldDay;
-  }
-
   /** How many facts the bounds have dropped instead of closing the bridge. Named, because every drop is a loss. */
   public get droppedFacts(): number {
     return this.#droppedFacts;
@@ -476,22 +419,10 @@ export class CompanionEventPump {
     return this.#deliveredBatches;
   }
 
-  /**
-   * The presence denominator and numerator: turns delivered, and how many of them carried a directive.
-   *
-   * Read by `measureDirectiveAlignment`, which publishes `not_measured` rather than `0/0` when no turn was delivered.
-   */
-  public get directiveDelivery(): Readonly<{ turns: number; withDirective: number }> {
-    return Object.freeze({ turns: this.#deliveredBatches, withDirective: this.#deliveredWithDirective });
-  }
-
   /** Dispose-time cancellation boundary; pending facts are never replayed into a closed runtime. */
   public clear(): void {
     this.#generation++;
     this.#snapshot = undefined;
-    this.#directive = null;
-    this.#worldDay = null;
-    this.#directiveAwaitingTurn = false;
     this.#receipts.clear();
     this.#semanticEvents.clear();
     this.#lifecycle.clear();
@@ -512,19 +443,13 @@ export class CompanionEventPump {
       this.#lifecycle.size +
       this.#worldFacts.size +
       this.#inputs.length +
-      (this.#directiveAwaitingTurn ? 1 : 0) +
       (this.#retryBatch === undefined ? 0 : this.#retryBatch.inputs.length + this.#retryBatch.facts.length)
     );
   }
 
   /** True only when pending state can create a Pi turn; held state remains latest-only. */
   public get hasPendingDelivery(): boolean {
-    return (
-      this.#retryBatch !== undefined ||
-      this.#inputs.length > 0 ||
-      this.#directiveAwaitingTurn ||
-      this.#hasPendingFactTrigger()
-    );
+    return this.#retryBatch !== undefined || this.#inputs.length > 0 || this.#hasPendingFactTrigger();
   }
 
   /**
@@ -817,7 +742,6 @@ export class CompanionEventPump {
     try {
       const outcome = (await sink.deliver(pending.serialized, pending.disposition)) ?? undefined;
       this.#deliveredBatches += 1;
-      if (pending.directive !== null) this.#deliveredWithDirective += 1;
       return outcome;
     } catch (error) {
       // Do not revive a batch cleared while its asynchronous delivery was in
@@ -913,9 +837,6 @@ export class CompanionEventPump {
       disposition: "steer",
       triggerEventIds,
       playerInputs: Object.freeze([]),
-      // EVERY batch, including a steer into a running turn: a turn deciding what to do next is exactly the reader that
-      // must not have to guess which directive is in force (see `#directive`).
-      directive: this.#directive,
       worldFacts: deliveredFacts,
       events,
     });
@@ -925,7 +846,6 @@ export class CompanionEventPump {
       triggerEventIds,
       inputs: Object.freeze([]),
       facts: Object.freeze(deliveredFacts),
-      directive: this.#directive,
       serialized,
     });
   }
@@ -958,9 +878,6 @@ export class CompanionEventPump {
     const inputs = this.#inputs.splice(0);
     const snapshot = this.#snapshot;
     this.#snapshot = undefined;
-    // The record is NOT consumed - it is re-stated in every later batch - but the TURN it owes is, exactly once.
-    const directive = this.#directive;
-    this.#directiveAwaitingTurn = false;
     const receipts = [...this.#receipts.values()];
     this.#receipts.clear();
     const semanticEvents = [...this.#semanticEvents.values()];
@@ -1036,7 +953,6 @@ export class CompanionEventPump {
           ...triggersForBatch.map(factEventId),
         ]),
         playerInputs: batchInputs,
-        directive,
         worldFacts: deliveredFacts,
         events,
       });
@@ -1082,7 +998,6 @@ export class CompanionEventPump {
       triggerEventIds: composed.triggerEventIds,
       inputs: batchInputs,
       facts: composed.batchFacts,
-      directive,
       serialized: composed.serialized,
     });
   }

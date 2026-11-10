@@ -70,14 +70,7 @@ test("a settled program reaches the pump as one ledger entry, and opens a turn o
   const outcome = await watchProgramSettlement({
     read: async () => reads.shift() ?? status("plan_1", "succeeded", []),
     onSettled: async (settled) => {
-      reporter.report({
-        programId: "plan_1",
-        settledAtMs: 4_242,
-        directiveId: null,
-        compiled,
-        status: settled,
-        nowMs: 9,
-      });
+      reporter.report({ programId: "plan_1", settledAtMs: 4_242, compiled, status: settled, nowMs: 9 });
     },
     now: () => (clock += 25),
     sleep: async () => undefined,
@@ -120,35 +113,19 @@ test("the digest is minted exactly once per program, and never for a program tha
   const reporter = createProgramSettlementReporter((fact) => announced.push(String(fact.eventId)));
   const running = status("plan_2", "active", [{ nodeId: "n01", state: "running" }]);
   // A still-running plan produces nothing, and - the part that matters - does not spend its one claim.
-  assert.equal(
-    programSettledDigest({ programId: "plan_2", settledAtMs: 1, directiveId: null, compiled, status: running }),
-    undefined,
-  );
-  assert.equal(
-    reporter.report({ programId: "plan_2", settledAtMs: 1, directiveId: null, compiled, status: running }),
-    undefined,
-  );
+  assert.equal(programSettledDigest({ programId: "plan_2", settledAtMs: 1, compiled, status: running }), undefined);
+  assert.equal(reporter.report({ programId: "plan_2", settledAtMs: 1, compiled, status: running }), undefined);
   const settled = status("plan_2", "failed", [{ nodeId: "n01", state: "failed", failureCode: "no_native_path" }]);
-  assert.ok(
-    reporter.report({ programId: "plan_2", settledAtMs: 7, directiveId: null, compiled, status: settled }) !==
-      undefined,
-  );
+  assert.ok(reporter.report({ programId: "plan_2", settledAtMs: 7, compiled, status: settled }) !== undefined);
   // Every later observation of the same settled program is silence.
-  assert.equal(
-    reporter.report({ programId: "plan_2", settledAtMs: 7, directiveId: null, compiled, status: settled }),
-    undefined,
-  );
-  assert.equal(
-    reporter.report({ programId: "plan_2", settledAtMs: 9, directiveId: null, compiled, status: settled }),
-    undefined,
-  );
+  assert.equal(reporter.report({ programId: "plan_2", settledAtMs: 7, compiled, status: settled }), undefined);
+  assert.equal(reporter.report({ programId: "plan_2", settledAtMs: 9, compiled, status: settled }), undefined);
   assert.deepEqual(announced, ["program_settled_plan_2"]);
   // A different program still gets its own.
   assert.ok(
     reporter.report({
       programId: "plan_3",
       settledAtMs: 11,
-      directiveId: null,
       compiled,
       status: status("plan_3", "succeeded", [{ nodeId: "n01", state: "succeeded" }]),
     }) !== undefined,
@@ -158,7 +135,6 @@ test("the digest is minted exactly once per program, and never for a program tha
     reporter.report({
       programId: "plan_4",
       settledAtMs: null,
-      directiveId: null,
       compiled,
       status: { code: "not_found", snapshot: null },
     }),
@@ -172,7 +148,6 @@ test("a plan larger than the digest bound answers its first rows and counts the 
   const fact = programSettledDigest({
     programId: "plan_26",
     settledAtMs: 5,
-    directiveId: null,
     compiled,
     status: status("plan_26", "succeeded", journal),
   });
@@ -194,7 +169,6 @@ test("a plan that settled with one rejection names that node, its code, and the 
   const fact = programSettledDigest({
     programId: "plan_r",
     settledAtMs: 12,
-    directiveId: null,
     compiled,
     status: status("plan_r", "succeeded", [
       { nodeId: "n01", state: "succeeded" },
@@ -233,7 +207,6 @@ test("a refused move's reachability hint reaches the digest row and the text the
   reporter.report({
     programId: "plan_h",
     settledAtMs: 3,
-    directiveId: null,
     compiled,
     status: status("plan_h", "failed", [
       { nodeId: "n01", state: "failed", failureCode: "no_native_path", hint: "closest=49,14;closest_distance=1" },
@@ -279,7 +252,6 @@ test("a node that failed with a next step is a different answer from one that fa
   const hinted = programSettledDigest({
     programId: "plan_with",
     settledAtMs: 1,
-    directiveId: null,
     compiled,
     status: status("plan_with", "failed", [
       { nodeId: "n01", state: "failed", failureCode: "no_native_path", hint: "closest=49,14;closest_distance=1" },
@@ -288,7 +260,6 @@ test("a node that failed with a next step is a different answer from one that fa
   const bare = programSettledDigest({
     programId: "plan_without",
     settledAtMs: 1,
-    directiveId: null,
     compiled,
     status: status("plan_without", "failed", [{ nodeId: "n01", state: "failed", failureCode: "no_native_path" }]),
   });
@@ -308,7 +279,6 @@ test("a node the journal said nothing about stays unreadable, and is never repor
   const fact = programSettledDigest({
     programId: "plan_u",
     settledAtMs: 3,
-    directiveId: null,
     compiled,
     status: status("plan_u", "succeeded", [{ nodeId: "n01", state: "succeeded" }]),
   });
@@ -430,7 +400,6 @@ test("a refused shop purchase reaches the model with the reason the counter gave
   const reported = reporter.report({
     programId: "plan_shop",
     settledAtMs: 4_242,
-    directiveId: null,
     compiled,
     status: status("plan_shop", "failed", [
       { nodeId: "n01", state: "failed", failureCode: "shop_counter_out_of_reach", refusalDetail: detail },
@@ -496,7 +465,6 @@ test("the digest row and the status row for one node are the same answer", () =>
   const digest = programSettledDigest({
     programId: "plan_one",
     settledAtMs: 5,
-    directiveId: null,
     compiled,
     status: { code: "found", snapshot },
   });
@@ -522,7 +490,6 @@ test("a settled program states its aggregate counts over the whole plan, beside 
   const fact = programSettledDigest({
     programId: "plan_agg",
     settledAtMs: 12,
-    directiveId: null,
     compiled,
     status: status("plan_agg", "succeeded", [
       { nodeId: "n01", state: "succeeded" },
@@ -554,7 +521,6 @@ test("a settled program states its aggregate counts over the whole plan, beside 
   const wideFact = programSettledDigest({
     programId: "plan_wide",
     settledAtMs: 1,
-    directiveId: null,
     compiled: wide,
     status: status(
       "plan_wide",
@@ -598,13 +564,7 @@ test("a poll after the settlement answers with the settlement's own ledger, and 
     { nodeId: "n01", state: "succeeded" },
     { nodeId: "n02", state: "failed", failureCode: "weather_blocked" },
   ]);
-  const fact = reporters.report({
-    programId: "plan_poll",
-    settledAtMs: 4_242,
-    directiveId: null,
-    compiled,
-    status: settled,
-  });
+  const fact = reporters.report({ programId: "plan_poll", settledAtMs: 4_242, compiled, status: settled });
   assert.ok(fact !== undefined);
   const poll: SettledProgramAnswer | null = reporters.settled("plan_poll");
   assert.ok(poll !== null, "a program that settled is answerable from the ledger the fact was minted from");
@@ -618,10 +578,7 @@ test("a poll after the settlement answers with the settlement's own ledger, and 
   // The rendering is about WHAT happened: the when lives beside it on the fact, never inside it.
   assert.equal(Object.hasOwn(poll, "settledAtMs"), false, "the fact's own timing is not part of the outcome rendering");
   // Exactly once, and the exactly-once claim does not take the answer away: a later poll still reads the same ledger.
-  assert.equal(
-    reporters.report({ programId: "plan_poll", settledAtMs: 4_242, directiveId: null, compiled, status: settled }),
-    undefined,
-  );
+  assert.equal(reporters.report({ programId: "plan_poll", settledAtMs: 4_242, compiled, status: settled }), undefined);
   assert.deepEqual(reporters.settled("plan_poll"), poll, "the second poll answers the same ledger, not a fresh guess");
   // A program this runtime never settled has no ledger to hand out, and says so rather than answering something else.
   assert.equal(reporters.settled("plan_never"), null);
@@ -641,44 +598,11 @@ test("the settled rendering carries counts, summary, bounded rows and the remain
       { nodeId: "n02", state: "recovery_required", recoveryDiagnostic: "execution_uncertain" },
     ],
   });
-  const rendered = settledProgramAnswer(answer, null);
+  const rendered = settledProgramAnswer(answer);
   assert.equal(rendered.total, 2);
   assert.deepEqual(rendered.counts, { succeeded: 1, recovery_required: 1 });
   assert.equal(rendered.summary, "1 of 2 done, 1 recovery_required");
   assert.equal(rendered.nodes.length, 2);
   assert.equal(rendered.omitted, 0);
   assert.equal(rendered.nodes[1]?.reasonDetail, "execution_uncertain", "the Mod's own diagnostic still rides the row");
-});
-
-/**
- * The directive the plan was admitted under rides the digest and the poll.
- *
- * This is the visible half of the authority: a plan submitted under directive A and settling after A was superseded by B
- * arrives carrying `A`, while the batch the model is reading carries `B`. Unequal ids are the whole signal - no
- * instruction to prefer the newer one is needed, and none is sent.
- */
-test("a settled plan reports the directive it was admitted under, in the fact and in the poll", () => {
-  const compiled = [planNode("n01")];
-  const settled = status("plan_a", "succeeded", [{ nodeId: "n01", state: "succeeded" }]);
-  const reporter = createProgramSettlementReporter(() => undefined);
-  const fact = reporter.report({
-    programId: "plan_a",
-    settledAtMs: 12,
-    compiled,
-    status: settled,
-    directiveId: "d_6_aaaa",
-  });
-  assert.ok(fact !== undefined);
-  assert.equal(fact.payload.directiveId, "d_6_aaaa");
-  // One derivation: the rendering the fact was minted from is the answer a later poll gives, stamp included.
-  assert.equal(reporter.settled("plan_a")?.directiveId, "d_6_aaaa");
-
-  const undirected = programSettledDigest({
-    programId: "plan_b",
-    settledAtMs: 13,
-    directiveId: null,
-    compiled,
-    status: status("plan_b", "succeeded", [{ nodeId: "n01", state: "succeeded" }]),
-  });
-  assert.equal(undirected?.payload.directiveId, null, "no directive is a value, not an absent field");
 });

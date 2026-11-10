@@ -1145,20 +1145,14 @@ test("the plan tool hands its compiled program to the one submission path a mode
     1,
     "the program port has exactly one submission call site",
   );
-  assert.match(source, /const submitProgram = async \(candidate: unknown\) => \{/u);
-  assert.match(source, /const result = await invoke\(wire, validateBodyProgramCandidateRequest,/u);
+  assert.match(source, /const submitProgram = async \(request: BodyProgramCandidateRequest\) => \{/u);
+  assert.match(source, /const result = await invoke\(request, validateBodyProgramCandidateRequest,/u);
   // Both tools enter that one function: the raw tool with its own arguments, the plan tool with what it compiled.
-  assert.match(source, /execute: async \(_toolCallId, params\) => submitProgram\(params\),/u);
-  assert.match(source, /const submitted = await submitProgram\(\{ programId, nodes \}\);/u);
-  // THE STAMP IS THE HOST'S, and the refusal that keeps it out of the model's reach is at this one path: a candidate
-  // carrying `directiveId` is refused BY NAME, and the id a plan is stamped with comes from the Host's own ledger.
   assert.match(
     source,
-    /const claimed = hostOwnedStampField\(candidate\);\n.*?throw new Error\(`model_supplied_directive_stamp:\$\{claimed\}`\);/u,
+    /execute: async \(_toolCallId, params\) => \{\n\s+if \(!isBodyProgramCandidateRequest\(params\)\) throw new Error\("invalid_body_program_tool_arguments"\);\n\s+return submitProgram\(params\);/u,
   );
-  assert.match(source, /\.\.\.directiveLedger\.stamp\(candidate\.programId\),/u);
-  // And what crosses the bridge is the wire subset: the unchanged Mod has no field for the stamp.
-  assert.match(source, /const wire = bodyProgramCandidateWire\(request\);/u);
+  assert.match(source, /const submitted = await submitProgram\(\{ programId, nodes \}\);/u);
   // The plan is compiled and submitted in the same call, inside the same frozen closure as the raw program tool.
   assert.match(
     source,

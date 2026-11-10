@@ -1930,7 +1930,7 @@ async function deliverDialogueGatesForDay(day, tools) {
   }
 }
 
-async function runAgentTurn(text, tools, options = {}) {
+async function runAgentTurn(text, tools) {
   turnStartedAtMs = Date.now();
   // One line per turn, because the only question a memory death leaves open is its SHAPE: flat after the first
   // allocation spread, or growing with turns. `sessionBytes` is the retained-transcript proxy (Pi holds the session
@@ -1959,13 +1959,7 @@ async function runAgentTurn(text, tools, options = {}) {
   const agentTurn = (async () => {
     try {
       const admission = await submitPlayerPrompt({
-        // A DAY'S NOTE IS NOT A MESSAGE. It goes through the Host's directive ingress, which holds it as the day's
-        // authorization and restates it into every later batch; a player's own typed lines (the dialogue gates) keep using
-        // `playerInputs`, which is what a line to be answered and then remembered as history is for.
-        accept:
-          options.asDirective === true
-            ? (promptText, locale) => tools.acceptDirectiveText(promptText, locale)
-            : (promptText, locale) => tools.acceptPlayerText(promptText, locale),
+        accept: (promptText, locale) => tools.acceptPlayerText(promptText, locale),
         text,
         locale: "zh-CN",
         timeoutMs: Number(process.env.GAMEBUDDY_PLAYER_INPUT_ADMISSION_MS ?? 90_000),
@@ -3571,10 +3565,6 @@ let covenantSeed = null;
 let agentTurnResult = null;
 let voiceResult = null;
 let multidayOutcome = null;
-// The directive authority as this run's own Host read it (`measureDirectiveAlignment`): presence over the turns it
-// delivered, alignment over the plans it submitted, and the retired/stale counts beside them. Assigned once, before
-// teardown, because the pump's turn counter and the stamp ledger are the Host's and die with the session.
-let directiveAlignment = null;
 let historianRubricOutcome = null;
 let runSessionRecord = Object.freeze({
   path: undefined,
@@ -4349,9 +4339,7 @@ try {
                   ? promptForLateDay(day)
                   : promptForDayContinuation(day);
             const spokenBefore = presentationPieces.length;
-            // Day one's prompt IS the note: it is the day's directive, so it is delivered as one (see `runAgentTurn`'s
-            // `asDirective`), and the "carry on" turns after it stay ordinary player input.
-            const walked = await runAgentTurn(prompt, tools, { asDirective: turns === 1 });
+            const walked = await runAgentTurn(prompt, tools);
             if (walked.status !== null) status = walked.status;
             agentTurnResult = walked.turn;
             // What THIS turn said, sliced by index so a line cannot be attributed to another turn.
@@ -4552,10 +4540,6 @@ try {
       }
     }
   }
-  // THE DIRECTIVE AUTHORITY'S OWN READING, taken from the Host while both populations are still addressable: of the
-  // turns this run delivered, how many carried the day's directive; and of the plans it submitted, how many were admitted
-  // under the directive in force now. `not_measured`, never 0/0, when a denominator is empty.
-  directiveAlignment = tools.directiveAlignment();
   // The voice lane's terminal playback observation for the companion line this run streamed. The gateway
   // child needs up to ~20s to boot and MiMo probe-ready before a job can stream, so the wait is generous;
   // an unobserved terminal is a blocked voice lane, named.
@@ -5804,11 +5788,6 @@ async function buildRunResult({
     // store rather than inferred, because a run that ends at `stopReason: "length"` is a question about this layer and
     // this layer used to publish nothing at all.
     context: evidence.contextSummary ?? Object.freeze({ observed: false, reasonCode: "context_summary_not_read" }),
-    // THE DIRECTIVE AUTHORITY, MEASURED. `presence` says whether the turns she was given carried the day's directive,
-    // `alignment` whether the plans she submitted were admitted under the directive in force, and `plansUnderRetired`
-    // counts the ones that were not - the reading that makes a stale plan visible in the artifact rather than only in a
-    // report nobody opened. No turns or no plans publishes `not_measured`, never a 0/0 pass.
-    directiveAlignment,
     // The failure dump, built from the same facts the bundle publishes, so the verdict and the dump cannot disagree
     // about why the run is red.
     failure,
@@ -6002,7 +5981,6 @@ async function writeRunBundle({
     // that produced it.
     actionBreadth: result.actionBreadth,
     snapshotCensus: result.snapshotCensus,
-    directiveAlignment: result.directiveAlignment,
     // The run's own cost, in the same place the contract's face of the run carries every other reading: the delivery
     // account is inside `presentation`, and this is its numerator - model turns, plan polls, and what they were spent on.
     runCost: result.runCost,

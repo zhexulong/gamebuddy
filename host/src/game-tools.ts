@@ -23,7 +23,6 @@ import {
   myWorkFromJournal,
   noSnapshot,
 } from "./game-lookup.js";
-import { programDirectiveLedgerFor } from "./game-directive.js";
 import { describeBodyHoldRefusal } from "./stardew-action-remedy.js";
 import { boundObservedSnapshot } from "./stardew-observation-budget.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
@@ -344,10 +343,7 @@ export function createStardewObservationTools(
             state.connected,
           );
         }
-        return lookupResult(
-          myWorkFromJournal(journal, { since }, programDirectiveLedgerFor(integration)),
-          state.connected,
-        );
+        return lookupResult(myWorkFromJournal(journal, { since }), state.connected);
       }
       const snapshot = state.connected ? state.snapshot : null;
       // `data` is answered by the game's own content tables, which no snapshot carries: the tables are engine state and
