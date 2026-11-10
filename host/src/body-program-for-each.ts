@@ -30,16 +30,23 @@ export type PlanForEachScalar = string | number | boolean;
 export type PlanForEachStride = Readonly<{ every: number; offset: number }>;
 
 /**
- * One predicate over a row. TWO SPELLINGS AND NO MORE: a FIELD test, or a POSITION guard on `col`/`row`.
+ * One predicate over a row. THREE SPELLINGS: a FIELD test, a POSITION guard on `col`/`row`, or the OCCUPANT of the tile.
  *
  * Position is the operator the whole form exists for. Trellis crops grow into impassable tiles, so a real farm leaves a
  * walkable column between trellis columns and plants a filler crop between trellis rows; those decisions depend on the
  * row's POSITION, never on what the tile contains, so a dispatch keyed on the row's kind cannot represent them.
+ *
+ * THE OCCUPANT SPELLING IS NOT A SECOND VOCABULARY. `{ occupant: "weed" }` is the field test on the field the Mod's
+ * clearing join reads (`FarmhandForEachHealing.OccupantField`), whose words are the engine's own what-stands-here names -
+ * exactly the words a `Clears` declaration is written in - so the two spellings mean one test and cannot come to disagree.
+ * It exists because `kind` answers a different question: a mixed patch filtered by kind says "work whatever the Mod would
+ * clear with a scythe", and one filtered by occupant says "work the weeds and leave the stones".
  */
 export type PlanForEachPredicate = Readonly<{
   col?: PlanForEachStride;
   row?: PlanForEachStride;
   field?: string;
+  occupant?: string;
   eq?: PlanForEachScalar;
   ne?: PlanForEachScalar;
   lt?: PlanForEachScalar;
@@ -105,6 +112,37 @@ export const PLAN_FOR_EACH_SOURCES: readonly string[] = Object.freeze(["area", "
 
 /** The two axes a repeating position guard claims. */
 export const PLAN_FOR_EACH_AXES: readonly string[] = Object.freeze(["col", "row"]);
+
+/**
+ * The spellings a `where` predicate may be written with: the keys that say WHAT one predicate tests.
+ *
+ * ONE DECLARATION, and every refusal for a word this form does not have is generated from it - a second hand-written copy
+ * of these words beside the message is how a caller ends up told `for_each_where_unrecognised:in` and left to guess what
+ * `where` does accept. Mirrors `FarmhandForEachPredicate.Selectors`, and `body-program-for-each.test.ts` reads that array
+ * out of the Mod and asserts the two are equal, so a spelling added on either side is red on both.
+ */
+export const PLAN_FOR_EACH_PREDICATE_SPELLINGS: readonly string[] = Object.freeze([
+  "field",
+  ...PLAN_FOR_EACH_AXES,
+  "occupant",
+]);
+
+/** The two keys a repeating position guard is written with, declared once for the same reason the spellings are. */
+export const PLAN_FOR_EACH_STRIDE_SPELLINGS: readonly string[] = Object.freeze(["every", "offset"]);
+
+/**
+ * The word both sides answer when a declaration names something the `where` grammar does not have.
+ *
+ * ONE WORD ON BOTH SIDES: the compiler refuses such a declaration before submission and the Mod refuses it again on the
+ * game thread (`FarmhandForEachArguments.WhereUnrecognised`), and the answer is
+ * `<this>:<given>;allowed=<a>,<b>` - the word that was written, then the words that may be written instead.
+ */
+export const FOR_EACH_WHERE_UNRECOGNISED = "for_each_where_unrecognised";
+
+/** `<given>;allowed=<a>,<b>`, with the alternatives taken from the declaration that owns them. */
+export function forEachWhereUnrecognised(given: string, allowed: readonly string[]): string {
+  return `${given};allowed=${allowed.join(",")}`;
+}
 
 /** The comparisons a field predicate offers. `in` is the only one that takes a list. */
 export const PLAN_FOR_EACH_COMPARISONS: readonly string[] = Object.freeze(["eq", "ne", "lt", "lte", "gt", "gte", "in"]);
@@ -181,6 +219,15 @@ export function forEachDocumentLength(loop: PlanForEachLoop): number {
 
 /** How many values one `in` list may carry. */
 export const MAX_FOR_EACH_VALUES = 8;
+
+/**
+ * How long the word `where: { occupant }` names may be.
+ *
+ * The wire's own bound on the SAME fact: a tile row's `occupant` is a string of at most this many characters
+ * (`host/src/protocol.ts` `isBoundedNonEmptyString(value.occupant, 64)`), so a longer one could never match a row the Mod
+ * publishes and is refused where the caller can still see what it wrote.
+ */
+export const MAX_FOR_EACH_OCCUPANT_CHARS = 64;
 
 /** How many arguments one `do` effect may name. */
 export const MAX_FOR_EACH_EFFECT_ARGUMENTS = 16;
@@ -363,28 +410,62 @@ type PredicateReading = Readonly<{ ok: true; predicate: PlanForEachPredicate }> 
 
 function readPredicate(value: unknown, at: string): PredicateReading {
   if (!isRecord(value)) return rejected("loop_where_invalid", `${at}:not_an_object`);
-  const axes = PLAN_FOR_EACH_AXES.filter((axis) => Object.hasOwn(value, axis));
-  if (axes.length > 0) {
-    // A predicate that guards a position AND tests a field is two predicates, and a caller who meant two should write
-    // two: folding them would hide the second from the refusal that names it.
-    if (axes.length > 1 || Object.hasOwn(value, "field")) return rejected("loop_where_invalid", `${at}:ambiguous`);
-    const axis = axes[0]!;
-    const stride = readStride(value[axis], `${at}.${axis}`);
+  // A PREDICATE IS ONE SPELLING OF `PLAN_FOR_EACH_PREDICATE_SPELLINGS`. Zero or two is answered with the list rather than
+  // with the caller's own word back, which is the difference between a refusal and a shrug: `{ in: ["weed"] }` used to be
+  // told `missing_field`, naming neither what it wrote nor what it may write.
+  const spellings = PLAN_FOR_EACH_PREDICATE_SPELLINGS.filter((spelling) => Object.hasOwn(value, spelling));
+  if (spellings.length !== 1) {
+    const given = spellings.length === 0 ? Object.keys(value).join(",") || "empty" : spellings.join(",");
+    return rejected(
+      FOR_EACH_WHERE_UNRECOGNISED,
+      forEachWhereUnrecognised(`${at}:${given}`, PLAN_FOR_EACH_PREDICATE_SPELLINGS),
+    );
+  }
+  const spelling = spellings[0]!;
+  // Anything else beside the one spelling is a second test, and a second test is a second predicate: the caller should
+  // write two, and the alternatives this answer names are the ones the spelling it wrote accepts beside itself.
+  const others = Object.keys(value).filter((key) => key !== spelling);
+  if (spelling === "col" || spelling === "row") {
+    if (others.length > 0)
+      return rejected(
+        FOR_EACH_WHERE_UNRECOGNISED,
+        forEachWhereUnrecognised(`${at}:${others[0]!}`, PLAN_FOR_EACH_PREDICATE_SPELLINGS),
+      );
+    const stride = readStride(value[spelling], `${at}.${spelling}`);
     if (!stride.ok) return stride;
     return Object.freeze({
       ok: true as const,
-      predicate: axis === "col" ? Object.freeze({ col: stride.stride }) : Object.freeze({ row: stride.stride }),
+      predicate: spelling === "col" ? Object.freeze({ col: stride.stride }) : Object.freeze({ row: stride.stride }),
     });
+  }
+  if (spelling === "occupant") {
+    if (others.length > 0)
+      return rejected(
+        FOR_EACH_WHERE_UNRECOGNISED,
+        forEachWhereUnrecognised(`${at}:${others[0]!}`, PLAN_FOR_EACH_PREDICATE_SPELLINGS),
+      );
+    const occupant = value.occupant;
+    // THE WORD IS THE MOD'S TO KNOW: `weed`, `stone`, `crop` are the engine's own names for what stands on a tile, and a
+    // list of them here would be a second vocabulary a new occupant would have to be added to. Only the LENGTH is this
+    // side's fact, and it is the length the wire already bounds that field by.
+    if (typeof occupant !== "string" || occupant.length < 1 || occupant.length > MAX_FOR_EACH_OCCUPANT_CHARS)
+      return rejected("loop_where_invalid", `${at}:occupant`);
+    return Object.freeze({ ok: true as const, predicate: Object.freeze({ occupant }) });
   }
   const field = value.field;
   if (typeof field !== "string" || field.length < 1 || field.length > 64)
-    return rejected("loop_where_invalid", `${at}:missing_field`);
-  const comparisons = PLAN_FOR_EACH_COMPARISONS.filter((comparison) => Object.hasOwn(value, comparison));
-  if (comparisons.length !== 1)
+    return rejected("loop_where_invalid", `${at}:field`);
+  // A WORD THAT IS NOT A COMPARISON IS ANSWERED BEFORE THE COUNT, because naming it is the more useful answer: `equals`
+  // beside `field` says the caller spelled a comparison wrongly, not that a comparison is missing.
+  const unknown = others.find((key) => !PLAN_FOR_EACH_COMPARISONS.includes(key));
+  if (unknown !== undefined)
+    return rejected(
+      FOR_EACH_WHERE_UNRECOGNISED,
+      forEachWhereUnrecognised(`${at}:${unknown}`, PLAN_FOR_EACH_COMPARISONS),
+    );
+  if (others.length !== 1)
     return rejected("loop_where_invalid", `${at}:${field}:one_of:${PLAN_FOR_EACH_COMPARISONS.join(",")}`);
-  const comparison = comparisons[0]!;
-  const unknownKey = Object.keys(value).find((key) => key !== "field" && !PLAN_FOR_EACH_COMPARISONS.includes(key));
-  if (unknownKey !== undefined) return rejected("loop_where_invalid", `${at}:${field}:unknown:${unknownKey}`);
+  const comparison = others[0]!;
   if (comparison === "in") {
     const list = value.in;
     if (!Array.isArray(list) || list.length < 1 || list.length > MAX_FOR_EACH_VALUES)
@@ -421,8 +502,14 @@ function readPredicate(value: unknown, at: string): PredicateReading {
 type StrideReading = Readonly<{ ok: true; stride: PlanForEachStride }> | PlanForEachRejection;
 
 function readStride(value: unknown, at: string): StrideReading {
-  if (!isRecord(value) || !hasOnlyKeys(value, ["every", "offset"]))
-    return rejected("loop_where_invalid", `${at}:expected:every,offset`);
+  if (!isRecord(value))
+    return rejected("loop_where_invalid", `${at}:expected:${PLAN_FOR_EACH_STRIDE_SPELLINGS.join(",")}`);
+  const unknownKey = Object.keys(value).find((key) => !PLAN_FOR_EACH_STRIDE_SPELLINGS.includes(key));
+  if (unknownKey !== undefined)
+    return rejected(
+      FOR_EACH_WHERE_UNRECOGNISED,
+      forEachWhereUnrecognised(`${at}:${unknownKey}`, PLAN_FOR_EACH_STRIDE_SPELLINGS),
+    );
   const every = value.every;
   const offset = value.offset;
   // An offset at or past the stride claims no index at all, and a guard that can never match is indistinguishable from a

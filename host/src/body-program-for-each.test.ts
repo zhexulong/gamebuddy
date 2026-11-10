@@ -5,14 +5,17 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  FOR_EACH_WHERE_UNRECOGNISED,
   forEachRules,
   isForEachLoopDocument,
   MAX_FOR_EACH_LOOP_DOCUMENT_CHARS,
+  MAX_FOR_EACH_OCCUPANT_CHARS,
   MAX_FOR_EACH_ROWS,
   MAX_FOR_EACH_RULES,
   MAX_FOR_EACH_STEPS,
   type PlanForEachLoop,
   type PlanForEachRule,
+  PLAN_FOR_EACH_PREDICATE_SPELLINGS,
   PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL,
   PLAN_FOR_EACH_SOURCES,
   planFormExecutionUnavailableReason,
@@ -699,5 +702,157 @@ test("the plan description shows the chain and prints the bound the reader enfor
   assert.ok(
     description.includes("stopped_at"),
     "a row that stopped half-done is described in the words the Mod answers it in",
+  );
+});
+
+/** One loop document around one `where` predicate, so every case below asks the reader the same question. */
+function loopAround(predicate: unknown): Record<string, unknown> {
+  return { source: { area: { x: 0, y: 0, w: 2, h: 1 } }, where: [predicate], do: { action: "cut_weeds" } };
+}
+
+/**
+ * The spellings the Mod's predicate model declares, read out of `FarmhandForEachPredicate.Selectors` rather than restated
+ * here: the constants are resolved through their own names, so the gate follows a rename instead of going quiet.
+ */
+function modWhereSpellings(): readonly string[] {
+  const source = readFileSync(MOD_RULES_PATH, "utf8");
+  const block = /Selectors\s*=\s*\{([^}]*)\}/u.exec(source);
+  assert.ok(block !== null, "the Mod's predicate model must still declare Selectors; this gate reads it from there");
+  return block[1]!
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((name) => {
+      const declared = new RegExp(`${name}\\s*=\\s*"([a-z0-9_]+)"`, "u").exec(source);
+      assert.ok(declared !== null, `the Mod's Selectors names ${name}, which must still be declared in the same file`);
+      return declared[1]!;
+    });
+}
+
+/**
+ * THE WHERE SPELLINGS ARE ONE DECLARATION IN TWO LANGUAGES.
+ *
+ * POPULATION: the spellings the model declares. The Mod's half is read out of `FarmhandForEachPredicate.Selectors` (the
+ * array its own reader accepts against and its refusal prints), and the Host's `PLAN_FOR_EACH_PREDICATE_SPELLINGS` is
+ * asserted equal to it word for word - so a spelling added on either side is red here, naming the side that drifted.
+ *
+ * PROPERTY: every declared spelling is read by BOTH readers for the same document, and the refusal for a word the grammar
+ * does not have names all of them. What that replaces, measured: `tools/body-program-journal/journal.json` carries
+ * `failureCode: for_each_where_unrecognised:in` - a document the compiler and the wire had already accepted, refused on
+ * the game thread by a word that named nothing the caller could write instead, after which she stopped trying.
+ *
+ * THE MOD'S OTHER HALF is `FarmhandForEachArgumentsTests.EveryDeclaredWhereSpellingIsReadAndTheRefusalNamesThem`, driven
+ * through `TryParseDocument`: a node test cannot call into C#, so the same property is asserted on each side against the
+ * same declaration. Neither half passes alone.
+ */
+test("where_spellings: every spelling the model declares is read by both readers and named by the refusal", () => {
+  const modSpellings = modWhereSpellings();
+  assert.ok(
+    modSpellings.length > 0,
+    "blocked: the Mod's predicate model declares no where spelling, so this gate examined nothing",
+  );
+  for (const spelling of PLAN_FOR_EACH_PREDICATE_SPELLINGS)
+    assert.ok(modSpellings.includes(spelling), `where_readers_disagree:${spelling}:mod`);
+  for (const spelling of modSpellings)
+    assert.ok(PLAN_FOR_EACH_PREDICATE_SPELLINGS.includes(spelling), `where_readers_disagree:${spelling}:host`);
+  assert.deepEqual(
+    PLAN_FOR_EACH_PREDICATE_SPELLINGS,
+    modSpellings,
+    "one declaration, two languages: the order the refusal prints is the Mod's order",
+  );
+
+  // One minimal document per spelling; a spelling with none here is a blocked reading that says so, never a silent skip.
+  const documents: Readonly<Record<string, unknown>> = Object.freeze({
+    field: { field: "kind", eq: "weed" },
+    col: { col: { every: 2, offset: 0 } },
+    row: { row: { every: 2, offset: 0 } },
+    occupant: { occupant: "weed" },
+  });
+  for (const spelling of modSpellings) {
+    const document = documents[spelling];
+    assert.ok(document !== undefined, `where_spelling_unproven:${spelling} - nothing here proves this reader reads it`);
+    const reading = readForEachLoop(loopAround(document), null);
+    assert.ok(
+      reading.ok,
+      `where_readers_disagree:${spelling}:host (${reading.ok ? "" : `${reading.code}:${reading.detail}`})`,
+    );
+    assert.equal(
+      isForEachLoopDocument({ type: "loop", ...loopAround(document) }),
+      true,
+      `the wire must carry ${spelling} too: it runs the same reader`,
+    );
+  }
+
+  // THE REFUSAL ARM, on the word she actually wrote: `{ in: [...] }` is a comparison with nothing to compare.
+  const refused = readForEachLoop(loopAround({ in: ["weed"] }), null);
+  assert.equal(refused.ok, false, "a predicate with no selector is not a predicate");
+  assert.equal(
+    refused.ok ? "" : refused.code,
+    FOR_EACH_WHERE_UNRECOGNISED,
+    "the refusal names the fact: this word is not one this form has",
+  );
+  const detail = refused.ok ? "" : refused.detail;
+  const allowed = detail.split(";allowed=")[1]?.split(",") ?? [];
+  for (const spelling of modSpellings)
+    assert.ok(allowed.includes(spelling), `where_spelling_not_in_refusal:${spelling} - the refusal says ${detail}`);
+  assert.deepEqual(
+    allowed,
+    modSpellings,
+    "the alternatives are the declaration, in its order, not a list written beside the message",
+  );
+  assert.ok(
+    detail.startsWith("predicate[0]:in;"),
+    `the refusal also names the row of the declaration that broke it, received ${detail}`,
+  );
+});
+
+/**
+ * `occupant` IS THE TILE'S OWN FACT, AND THE CALLER WRITES ONE WORD FOR IT.
+ *
+ * A mixed patch is the measured case: filtering by `kind` asks "whatever the Mod would clear with a scythe", which sent a
+ * weed tool at the stones and reported the stones as worked. The occupant words are the engine's own - the same words the
+ * Mod's `Clears` declarations are written in - and this side neither invents nor validates a vocabulary, it only bounds the
+ * word by the length the wire already bounds that field by.
+ */
+test("an occupant predicate is read, compiled, carried by the wire, and bounded like the field it tests", () => {
+  const document = loopAround({ occupant: "weed" });
+  const reading = readForEachLoop(document, null);
+  assert.ok(
+    reading.ok,
+    `a tile's occupant is one of the spellings this form has (${reading.ok ? "" : `${reading.code}:${reading.detail}`})`,
+  );
+  assert.deepEqual(
+    reading.loop.where,
+    [{ occupant: "weed" }],
+    "the predicate travels as the caller wrote it, because the Mod reads the same word on the game thread",
+  );
+
+  const compiled = compile(
+    `builder.for_each({ source: { area: ${PATCH} }, where: [{ occupant: "weed" }], do: { action: "cut_weeds" } });`,
+  );
+  assert.deepEqual(forEachRules(loopOf(nodesOf(compiled)[0]!))[0]?.where, [{ occupant: "weed" }]);
+
+  const description = planWorkDescription(ACTIONS);
+  assert.ok(
+    description.includes('{ occupant: "weed" }'),
+    "the teaching block shows the spelling, or the companion never learns it exists",
+  );
+  assert.ok(
+    description.includes(FOR_EACH_WHERE_UNRECOGNISED),
+    "the description prints the refusal both sides answer, so a wrong spelling is recognisable when it arrives",
+  );
+
+  // RANGE: the word is bounded where the row's own `occupant` field is bounded, and an empty word claims nothing.
+  const tooLong = readForEachLoop(loopAround({ occupant: "x".repeat(MAX_FOR_EACH_OCCUPANT_CHARS + 1) }), null);
+  assert.equal(tooLong.ok ? "" : tooLong.detail, "predicate[0]:occupant");
+  assert.equal(readForEachLoop(loopAround({ occupant: "" }), null).ok, false);
+  // AND IT IS ONE TEST: a second spelling beside it is refused rather than folded into it, and that refusal is generated
+  // from the same declaration the one above is - so a hand-written list in either message is red here.
+  const twoTests = readForEachLoop(loopAround({ occupant: "weed", eq: "weed" }), null);
+  assert.equal(twoTests.ok ? "" : twoTests.code, FOR_EACH_WHERE_UNRECOGNISED);
+  assert.deepEqual(
+    (twoTests.ok ? "" : twoTests.detail).split(";allowed=")[1]?.split(","),
+    [...PLAN_FOR_EACH_PREDICATE_SPELLINGS],
+    "a second test beside `occupant` is refused with the spellings this form has, not with a list written beside the message",
   );
 });
