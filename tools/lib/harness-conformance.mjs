@@ -333,6 +333,12 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // Red on real history: round41's own bundle, which carried `pieceCount: 59` and thirteen records, exits 1 here.
   "check-presentation-delivery-account.mjs",
   "check-live-run-silence.mjs",
+  // Prints `plan_legal_fixpoint examined N pairs (Y=…, X=…) · accepted … · repaired … · dead ends …` plus a `checks[]`
+  // verdict (pair fixpoint, modal-target declaration), which is the report this suite reads. Its falsifier is
+  // tools/check-plan-legal-fixpoint.test.mjs: the round42 pair replayed from PRE_FIX_REVISION is a dead end, an `ok`
+  // answer that dropped a step is a dead end, a plan-level refusal with a workable remedy is repaired, a refusal naming
+  // no remedy is a dead end even when one exists by hand, and an empty or unpublished population is `blocked`.
+  "check-plan-legal-fixpoint.mjs",
   // Prints `preset_macros examined N macros violations M status ...` on every run, which is the report the conformance
   // suite reads; its falsifier is tools/check-preset-macros.test.mjs, which injects a module-level variable table (the
   // two-calls-share-state violation) and a preset carrying an unimplemented macro.

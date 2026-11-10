@@ -108,6 +108,13 @@ export const L0_GATES = Object.freeze([
   // `git init` and applies there, never into `vendor/`), so it runs on the ladder rather than in a document -
   // the same reason the totality audit is in this rung.
   "tools/check-vendor-patches-apply.mjs",
+  // The plan's own legality, as a FIXPOINT over two of our rules rather than either one: every body-yielding action (the
+  // compiler's exported declaration) crossed with every published action (the emitted surface) must either compile into a
+  // program carrying both steps, or be refused with a remedy that compiles when written. Round42 spent four programs on
+  // `talk_to_npc` -> `shop_purchase` and bought nothing; this rung costs a pure compilation per pair and names the pair,
+  // the code and what would have to change. It imports the compiler and drives it, so it reads the product's own admission
+  // and refusal functions instead of a fifth parser of plan vocabulary.
+  "tools/check-plan-legal-fixpoint.mjs",
   "tools/check-prelive-gate-registry.mjs",
 ]);
 
