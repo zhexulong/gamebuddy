@@ -4,6 +4,9 @@ import {
   assessBundleDeliveryAccount,
   deliveryAccountClause,
   describeDeliveryAccount,
+  EXECUTION_STALL_PREFIX,
+  MAX_BUNDLE_STALL_FACTS,
+  readStallWatch,
   readTurnDeliveryRecords,
   summarizeDeliveryAccount,
   TURN_DELIVERY_PREFIX,
@@ -11,6 +14,77 @@ import {
 
 /** One `NATIVE_COMPANION_TURN_DELIVERY` line, in the shape `host/src/companion-loop.ts` prints. */
 const line = (account) => `NATIVE_COMPANION_TURN_DELIVERY ${JSON.stringify(account)}`;
+
+/** One `EXECUTION_STALL` line, in the shape `host/src/host-service.ts` prints. */
+const stall = (payload) => `${EXECUTION_STALL_PREFIX}${JSON.stringify(payload)}`;
+
+/** One stall fact as the Host publishes it, with the fields a bundle keeps and the ones it re-reads from the last. */
+const stallFact = (overrides = {}) => ({
+  atMs: 1_764_000_000_000,
+  kind: "execution_stalled",
+  executionId: "exec_navigate",
+  actionId: "navigate_to_destination",
+  elapsedMs: 120_000,
+  lastFactKind: "execution_receipt:running",
+  stallFactsSoFar: 1,
+  owner: null,
+  endsOwnershipWith: null,
+  ownershipAbsentReason: "no_body_owning_transition_in_progress",
+  watched: 1,
+  evicted: 0,
+  ...overrides,
+});
+
+test("the bundle carries the stall facts the Host published, bounded, with what it omitted stated as zero when nothing", () => {
+  const text = [stall(stallFact()), stall(stallFact({ elapsedMs: 480_000, stallFactsSoFar: 2 }))].join("\n");
+  const watched = readStallWatch(text);
+  assert.equal(watched.facts.length, 2);
+  assert.equal(watched.omitted, 0, "a healthy run states omitted 0 rather than leaving the field out");
+  assert.equal(watched.watched, 1, "the pump's own reading, off the last fact");
+  assert.equal(watched.evicted, 0);
+  assert.equal(watched.notMeasured, null);
+  assert.deepEqual(watched.facts[1], {
+    atMs: 1_764_000_000_000,
+    executionId: "exec_navigate",
+    actionId: "navigate_to_destination",
+    elapsedMs: 480_000,
+    lastFactKind: "execution_receipt:running",
+    stallFactsSoFar: 2,
+    owner: null,
+    endsOwnershipWith: null,
+    ownershipAbsentReason: "no_body_owning_transition_in_progress",
+    watched: 1,
+    evicted: 0,
+  });
+});
+
+test("a run with more stalls than the bundle keeps says how many it hid", () => {
+  const lines = [];
+  for (let index = 0; index < MAX_BUNDLE_STALL_FACTS + 3; index += 1)
+    lines.push(stall(stallFact({ executionId: `exec_${index}`, stallFactsSoFar: 1 })));
+  const watched = readStallWatch(lines.join("\n"));
+  assert.equal(watched.facts.length, MAX_BUNDLE_STALL_FACTS);
+  assert.equal(watched.omitted, 3);
+  assert.equal(
+    watched.facts[0].executionId,
+    "exec_0",
+    "in arrival order: the first stall is the one that explains the run",
+  );
+});
+
+test("a run that published no stall fact says not_measured instead of reporting zero stuck bodies", () => {
+  const silent = readStallWatch("NATIVE_COMPANION_TURN_DELIVERY {}\nCOMPANION_ACTIVITY {}\n");
+  assert.deepEqual(silent.facts, []);
+  assert.equal(silent.omitted, 0);
+  assert.equal(silent.watched, null, "a zero here would be a claim that nothing was stuck");
+  assert.equal(silent.evicted, null);
+  assert.equal(silent.notMeasured, "host_published_no_stall_fact");
+
+  const unreadable = readStallWatch("EXECUTION_STALL {not json\n");
+  assert.equal(unreadable.notMeasured, "execution_stall_fact_unreadable");
+  assert.equal(unreadable.unreadable, 1);
+  assert.equal(unreadable.watched, null);
+});
 
 test("a run's pieces and its account are the same population, and the reaction sounds are named as such", () => {
   // The round41 shape, reduced: 46 text parts presented as 46 pieces, plus the one sound each of the thirteen turns

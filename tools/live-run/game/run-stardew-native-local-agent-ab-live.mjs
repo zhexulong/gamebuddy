@@ -75,6 +75,7 @@ import { assessCompanionInteraction, assessSpokenUtterances } from "../../lib/co
 import {
   deliveryAccountClause,
   describeDeliveryAccount,
+  readStallWatch,
   readTurnDeliveryRecords,
   summarizeDeliveryAccount,
 } from "../../lib/presentation-delivery-account.mjs";
@@ -1388,6 +1389,11 @@ function summarizePresentationEvidence() {
   // `not_measured` rather than an empty array when the channel published nothing, so "nobody woke her" is never
   // spelled the same way as "the field is empty".
   const activity = summarizeActivity(readActivityPoints(hostLog));
+  // Executions that stopped making progress, off the same log and in the same shape: the Host prints one stall fact per
+  // arming (`host-service.ts` `#publishStallFact`), and until this field nothing in the bundle could say a body was
+  // stuck. The parser owns the cap and the count of what it dropped. NOT read by `round-verdict.mjs` yet - the verdict
+  // bucket for this field is another lane's follow-up, so the bundle publishes it and no rung claims it.
+  const stallWatch = readStallWatch(hostLog);
   return Object.freeze({
     // Each piece carries `atMs` on the run clock, and the turn's own start is published beside them, so a reader can
     // place a spoken line against a dispatch instead of only against its own turn. Before this the silence gate had
@@ -1404,6 +1410,7 @@ function summarizePresentationEvidence() {
     // `delivery_account` clause), not a number a reader has to notice.
     deliveryAccount,
     activity,
+    stallWatch,
   });
 }
 /** Exact configuration answer for voice in this run; `enabled:false` carries the reason. */

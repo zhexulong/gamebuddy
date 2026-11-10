@@ -22,6 +22,27 @@
 export const TURN_DELIVERY_PREFIX = "NATIVE_COMPANION_TURN_DELIVERY ";
 
 /**
+ * The Host's own stall line (`host/src/host-service.ts` `#publishStallFact`): an execution that stopped making
+ * progress.
+ *
+ * <p>
+ * It travels stderr beside the delivery line, which is why it reached no bundle for as long as nothing parsed it:
+ * MEASURED 2026-11-09 (round44), ten stall facts existed in the Host's own log and `presentation` in the run's
+ * `result.json` carried no trace of any of them. A fact that describes a stuck body is not a log detail - it is the
+ * answer to "why did nothing happen for half an hour" - so the bundle keeps it.
+ * </p>
+ */
+export const EXECUTION_STALL_PREFIX = "EXECUTION_STALL ";
+
+/**
+ * Stall facts one bundle keeps. The parser owns the cap AND the count of what it dropped.
+ *
+ * A stall re-arms at 120 s, 480 s, 840 s, ... (`EXECUTION_STALL_REARM_MULTIPLE`), so a long refusal is a handful of
+ * facts, not one per bound; the cap is the bound on a pathological run, and `omitted` is what it hid.
+ */
+export const MAX_BUNDLE_STALL_FACTS = 20;
+
+/**
  * The one line a reader and a log grep can act on when the three measured part populations do not agree.
  *
  * It is a fixed shape rather than prose because it is the run's delivery VERDICT: every number names the population it
@@ -52,6 +73,70 @@ export function readTurnDeliveryRecords(logText) {
     }
   }
   return Object.freeze({ records: Object.freeze(records), unparsable });
+}
+
+/**
+ * What the run's log says about executions that stopped making progress, in the shape a bundle publishes.
+ *
+ * <p>
+ * `facts` are the stall facts in arrival order; `omitted` counts the ones the cap hid, so a healthy run states `0`
+ * rather than leaving the field out. `watched` and `evicted` are the pump's own reading carried on the LAST fact (how many
+ * executions were timed, and how many the record's bound dropped while still running) - both `null` when nothing was
+ * published, with `notMeasured` naming why. A zero there would be a claim that nothing was stuck, which is the one
+ * answer this must never invent.
+ * </p>
+ */
+export function readStallWatch(logText) {
+  const facts = [];
+  let published = 0;
+  let unreadable = 0;
+  for (const line of String(logText ?? "").split("\n")) {
+    if (!line.startsWith(EXECUTION_STALL_PREFIX)) continue;
+    let payload;
+    try {
+      payload = JSON.parse(line.slice(EXECUTION_STALL_PREFIX.length));
+    } catch {
+      unreadable += 1;
+      continue;
+    }
+    if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+      unreadable += 1;
+      continue;
+    }
+    published += 1;
+    if (facts.length < MAX_BUNDLE_STALL_FACTS) facts.push(Object.freeze(boundedStallFact(payload)));
+  }
+  const last = facts.at(-1);
+  return Object.freeze({
+    facts: Object.freeze(facts),
+    omitted: published - facts.length,
+    watched: last === undefined ? null : last.watched,
+    evicted: last === undefined ? null : last.evicted,
+    notMeasured:
+      published > 0 ? null : unreadable > 0 ? "execution_stall_fact_unreadable" : "host_published_no_stall_fact",
+    ...(unreadable === 0 ? {} : { unreadable }),
+  });
+}
+
+/** The fields one stall fact publishes: identity, how long it has been silent, and what would release it. */
+function boundedStallFact(payload) {
+  return {
+    atMs: numberOrNull(payload.atMs),
+    executionId: typeof payload.executionId === "string" ? payload.executionId : null,
+    actionId: typeof payload.actionId === "string" ? payload.actionId : null,
+    elapsedMs: numberOrNull(payload.elapsedMs),
+    lastFactKind: typeof payload.lastFactKind === "string" ? payload.lastFactKind : null,
+    stallFactsSoFar: numberOrNull(payload.stallFactsSoFar),
+    owner: typeof payload.owner === "string" ? payload.owner : null,
+    endsOwnershipWith: typeof payload.endsOwnershipWith === "string" ? payload.endsOwnershipWith : null,
+    ownershipAbsentReason: typeof payload.ownershipAbsentReason === "string" ? payload.ownershipAbsentReason : null,
+    watched: numberOrNull(payload.watched),
+    evicted: numberOrNull(payload.evicted),
+  };
+}
+
+function numberOrNull(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 /**

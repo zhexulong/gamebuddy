@@ -618,6 +618,17 @@ test("the run records chunked-presentation evidence so the presence mechanism is
   assert.match(RUNNER_SOURCE, /presentation: presentationEvidence,/u);
   assert.match(RUNNER_SOURCE, /deliveryAccountClause\(presentationEvidence\.deliveryAccount\)/u);
   assert.doesNotMatch(RUNNER_SOURCE, /presentation: summarizePresentationEvidence\(\),/u);
+  // Stall facts are read off the SAME mirrored Host log, through the parser that owns the cap: until this field the
+  // bundle carried no trace of an execution that stopped making progress (MEASURED 2026-11-09 round44: ten stall facts
+  // existed in the Host's own log and `presentation` named none of them).
+  assert.match(RUNNER_SOURCE, /readStallWatch,/u);
+  assert.match(RUNNER_SOURCE, /const stallWatch = readStallWatch\(hostLog\);/u);
+  assert.match(RUNNER_SOURCE, /stallWatch,/u);
+  assert.doesNotMatch(
+    RUNNER_SOURCE,
+    /EXECUTION_STALL /u,
+    "the runner does not parse the line itself: the prefix and the cap live in tools/lib/presentation-delivery-account.mjs",
+  );
   // Recorded before the single-shot voice gate: chunk evidence must not depend
   // on voice being enabled or on a piece being the first one.
   assert.doesNotMatch(RUNNER_SOURCE, /if \(voiceStarted \|\| typeof text/);
