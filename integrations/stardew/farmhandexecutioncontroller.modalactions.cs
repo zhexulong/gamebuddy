@@ -197,6 +197,29 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         string modalType = modal.GetType().Name;
 
+        if (modal is ShopMenu)
+        {
+            // A SHOP COUNTER IS AN ACTION'S OWN STATE, NOT A MODAL NOBODY OWNS - so this channel never closes one.
+            //
+            // `shop_purchase` opens the counter with `Utility.TryOpenShopMenu` (farmhandexecutioncontroller.shopactions.cs)
+            // and closes whatever is still mounted on its way out; its click loop stops the moment the mounted menu is
+            // no longer the exact one it opened (`ReferenceEquals(stillOpen, menu)`), and a purchase is several ticks
+            // long. `Game1.exitActiveMenu()` here therefore does not resolve a modal - it cancels a transaction that is
+            // standing in the counter, or destroys the counter a following step was meant to use, and the close path
+            // says nothing about it afterwards.
+            //
+            // The whitelist above stays what it is: an audit of the CLOSE PATH (`ShopMenu` overrides neither
+            // `exitThisMenu` nor `cleanupBeforeExit`, so its close is a pure cancel). That is a different question from
+            // "may THIS channel close it", and a shop is the one menu whose answer is no.
+            return this.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Rejected,
+                "modal_not_dismissible",
+                $"modal_type={modalType};menu_is_a_shop=true;shop_purchase_opens_its_own=true",
+                hint: "menu_is_a_shop:shop_purchase_opens_its_own");
+        }
+
         if (modal is DialogueBox dialogue)
         {
             if (dialogue.isQuestion)

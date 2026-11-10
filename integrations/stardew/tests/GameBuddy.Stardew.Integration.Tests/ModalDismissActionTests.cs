@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.Serialization;
 using FluentAssertions;
 using GameBuddy.Stardew.Core;
+using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Handlers;
@@ -273,6 +274,151 @@ public sealed class ModalDismissActionTests
         });
     }
 
+    /// <summary>
+    /// THE INSERTED DISMISS NEVER CLOSES A SHOP.
+    ///
+    /// <para>
+    /// The compiler writes `dismiss_modal` after a body-yielding step (`body-program-script.ts`
+    /// `MODAL_CLEARING_PLAN_ACTION_IDS[0]`), and a dialogue can leave a `ShopMenu` mounted. `ShopMenu` is in the audited
+    /// whitelist - its CLOSE path is a pure cancel, which is the criterion that list states - so this handler used to
+    /// close it with `Game1.exitActiveMenu()`. That is not a dismissal: `shop_purchase` opens the counter with
+    /// `Utility.TryOpenShopMenu` and stops clicking the moment the mounted menu is no longer the exact object it opened
+    /// (`farmhandexecutioncontroller.shopactions.cs` `ReferenceEquals(stillOpen, menu)`), and it closes whatever is still
+    /// mounted on its way out. A close from here cancels the transaction standing in the counter and reports
+    /// `modal_dismissed`, which is the plan's own state reported as a stranger's modal.
+    /// </para>
+    /// <para>
+    /// The refusal IS the remedy: it names the menu kind and the action that owns the counter, and the counter is still
+    /// mounted afterwards.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Dismiss_OfAShop_IsRefused_AndTheCounterStaysMounted()
+    {
+        ShopMenu shop = CreateShop();
+        RunWithGameState(menu: shop, action: () =>
+        {
+            LocalExecutionReceipt receipt = InvokeDismiss(CreateManager(1001), "req_dismiss_shop");
+
+            receipt.State.Should().Be(ExecutionState.Rejected);
+            receipt.ReasonCode.Should().Be("modal_not_dismissible");
+            receipt.Evidence.Should().Contain("modal_type=ShopMenu");
+            receipt.Evidence.Should().Contain("menu_is_a_shop=true");
+            receipt.Evidence.Should().Contain("shop_purchase_opens_its_own=true",
+                "the refusal names the action that owns the counter; a refusal that names nothing is a request to retry");
+            receipt.Hint.Should().Be("menu_is_a_shop:shop_purchase_opens_its_own",
+                "the evidence never reaches the companion for a failed node - the hint is the only field that does");
+            ReferenceEquals(Game1.activeClickableMenu, shop).Should().BeTrue(
+                "the counter the plan is standing in is still mounted: nothing on this path closed it");
+        });
+    }
+
+    /// <summary>
+    /// GATE, not a test: over EVERY modal kind the engine can present, the family's compiler-writable member either
+    /// resolves as a no-op or refuses naming the SAME remedy the pump's own hold names - and no kind is closed by
+    /// surprise.
+    ///
+    /// <para>
+    /// The population is the catalog's family crossed with the kinds the live classifier returns, so a fourth modal
+    /// action or a new kind of modal joins this gate in the change that introduces it. The property is what the three
+    /// faces of this defect have in common: whether a node is stopped at the pump's start gate or at this handler, the
+    /// caller must be told which ACTION clears the world - one fact, one spelling. The kinds are read through the
+    /// product's own classifier (`WorldModel.MountedModal`) and the remedies through the pump's own gate
+    /// (`BodyProgramDispatchGate.HoldOf`), so neither side can drift without this failing by kind.
+    /// </para>
+    /// <para>
+    /// THE PLAIN BOX IS DECIDED HERE AND EXECUTED AT SOURCE. `DialogueBox.closeDialogue` ends by restoring
+    /// `Game1.player.CanMove` and clearing its `movementDirections` (`DialogueBox.cs:222-228`) - the native close owns the
+    /// actor's release, which is why it is the audited path - so its success terminal cannot be produced in a probe
+    /// process that has no player. The pins in this file that read the handler's source cover that close; the row below
+    /// covers the ANSWER: which modal the pump allows, and which action it names as the way through.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryModalKind_MeetsANoOpOrANamedRefusal_AndNoShopIsEverClosed()
+    {
+        (string Kind, Func<(DialogueBox? Dialogue, IClickableMenu? Menu, bool DialogueUp)> Mount, bool Dispatch)[] kinds =
+        {
+            ("none", static () => (null, null, false), true),
+            ("question", static () => (CreateDialogue(isQuestion: true), null, false), true),
+            ("plain", static () => (CreateDialogue(isQuestion: false), null, false), false),
+            ("shop", static () => (null, CreateShop(), false), true),
+        };
+        string compilerWritableMember = FarmhandActionCatalog.ModalResolvingActionIds
+            .Where(actionId => FarmhandActionCatalog.Registrations.Single(registration => registration.ActionId == actionId).Descriptor!.Arguments.Count == 0)
+            .OrderBy(actionId => actionId, StringComparer.Ordinal)
+            .First();
+
+        // The action whose body a modal holds: any registered action that is not in the family. Its own hold is the
+        // pump's answer for the same screen, and the remedy tokens this handler must agree with come from there.
+        string bodyOwningAction = FarmhandActionCatalog.Registrations
+            .Select(registration => registration.ActionId)
+            .First(actionId => !FarmhandActionCatalog.IsModalResolving(actionId));
+
+        var rows = new List<(string Kind, ExecutionState? State, string ReasonCode, string Evidence, string Hint, bool ShopStillMounted, string? Remedy)>();
+        foreach ((string kind, Func<(DialogueBox? Dialogue, IClickableMenu? Menu, bool DialogueUp)> mount, bool dispatch) in kinds)
+        {
+            (DialogueBox? dialogue, IClickableMenu? menu, bool dialogueUp) = mount();
+            BodyProgramHold? hold = BodyProgramDispatchGate.HoldOf(
+                bodyOwningAction,
+                cutsceneUp: false,
+                modal: WorldModel.MountedModal(menu ?? dialogue, dialogueUp),
+                actorCanMove: false);
+            string? remedy = hold is null ? null : RemedyToken(hold.Value.Evidence);
+            if (!dispatch)
+            {
+                rows.Add((kind, null, string.Empty, string.Empty, string.Empty, false, remedy));
+                continue;
+            }
+
+            RunWithGameState(dialogue: dialogue, menu: menu, dialogueUp: dialogueUp, action: () =>
+            {
+                LocalExecutionReceipt receipt = InvokeModalFamily(CreateManager(1001, FarmhandActionCatalog.ModalResolvingActionIds), $"req_kind_{kind}", compilerWritableMember);
+                bool mounted = menu is not null && ReferenceEquals(Game1.activeClickableMenu, menu);
+                rows.Add((kind, receipt.State, receipt.ReasonCode, receipt.Evidence ?? string.Empty, receipt.Hint ?? string.Empty, mounted, remedy));
+            });
+        }
+
+        foreach ((string kind, ExecutionState? state, string reasonCode, string evidence, string hint, bool shopStillMounted, string? remedy) in rows)
+            this.output.WriteLine($"{kind}: {compilerWritableMember}={state?.ToString() ?? "decided_at_source"}/{reasonCode};remedy={remedy ?? "none"};evidence={evidence};hint={hint}");
+
+        rows.Select(row => row.Kind).Should().BeEquivalentTo(
+            new[] { "none", "question", "plain", "shop" },
+            "a kind that is not examined is a kind nobody decided");
+
+        foreach ((string kind, ExecutionState? state, string reasonCode, string evidence, string hint, bool shopStillMounted, string? remedy) in rows)
+        {
+            if (state is null)
+            {
+                remedy.Should().Be(
+                    "dismiss_it=dismiss_modal",
+                    "a plain box is closed by dismiss_modal, and that is the only way through: a hold naming anything else would leave the caller stuck on an informational line");
+                FarmhandActionCatalog.ModalResolvingActionIds.Should().Contain("dismiss_modal");
+                continue;
+            }
+
+            state.Value.Should().BeOneOf(
+                new[] { ExecutionState.Succeeded, ExecutionState.Rejected },
+                $"modal_kind_is_a_failure:{kind}:{state}/{reasonCode} - the world's shape is not an effect the action failed to produce");
+            if (kind == "shop")
+                shopStillMounted.Should().BeTrue(
+                    "a dismissal must never close a counter: shop_purchase opens it and closes it itself, and its click loop "
+                    + "stops the moment the mounted menu is not the object it opened");
+            if (state == ExecutionState.Succeeded)
+            {
+                // A no-op and a real dismissal are both successes, and the evidence says which: `modal=none` when nothing
+                // was there, `cleared_modal=` when something was closed.
+                (evidence.Contains("modal=none", StringComparison.Ordinal) || evidence.Contains("cleared_modal=", StringComparison.Ordinal))
+                    .Should().BeTrue($"a success owes the evidence ADR-006 requires, and for {kind} it must say what it did: {evidence}");
+                continue;
+            }
+            remedy.Should().NotBeNull(
+                $"the pump reports a hold for a {kind} modal, so the same world cannot leave this handler with no remedy to name");
+            (evidence + ";" + hint).Should().Contain(
+                remedy!,
+                $"one fact one spelling: the pump names '{remedy}' for a {kind} modal, so the refusal must name the same action rather than a second word for it");
+        }
+    }
 
     /// <summary>
     /// A question refusal hands the caller the KEYS and the PROMPT, in the field that actually reaches it.
@@ -408,6 +554,39 @@ public sealed class ModalDismissActionTests
         return dialogue;
     }
 
+    /// <summary>
+    /// A FormatterServices shop counter. The one member the close path reads on the menu itself is `readyToClose`, which
+    /// reads `heldItem` (null here) and `animations` (`ShopMenu.cs:1255`); the empty list is what makes the PRE-fix path
+    /// runnable headless, so the reading it produces is "this channel closed the counter" rather than an exception about a
+    /// field a probe never set.
+    /// </summary>
+    private static ShopMenu CreateShop()
+    {
+        ShopMenu shop = (ShopMenu)FormatterServices.GetUninitializedObject(typeof(ShopMenu));
+        typeof(ShopMenu)
+            .GetField("animations", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .SetValue(shop, new TemporaryAnimatedSpriteList());
+        return shop;
+    }
+
+    /// <summary>
+    /// The action a hold names as its remedy, in the field the hold uses for it - or null when the hold names none (a
+    /// cutscene, a transient body lock, an unaudited menu).
+    /// </summary>
+    private static string? RemedyToken(string evidence)
+    {
+        foreach (string field in evidence.Split(';'))
+        {
+            int equals = field.IndexOf('=', StringComparison.Ordinal);
+            if (equals < 0) continue;
+            string key = field[..equals];
+            string value = field[(equals + 1)..];
+            if (key is "answer_it" or "dismiss_it") return key + "=" + value;
+            if (key == "shop_purchase_opens_its_own") return key;
+        }
+        return null;
+    }
+
     private static LocalExecutionReceipt InvokeDismiss(ExecutionManager manager, string requestId) =>
         InvokeModalFamily(manager, requestId, "dismiss_modal");
 
@@ -535,8 +714,17 @@ public sealed class ModalDismissActionTests
         object? menuBefore = menuField.GetValue(null);
         bool dialogueUpBefore = Game1.dialogueUp;
         int timeOfDayBefore = Game1.timeOfDay;
+        // `Game1.exitActiveMenu` assigns through the `activeClickableMenu` SETTER, which drains `nextClickableMenu` after
+        // it has already cleared the menu - and that queue is null in a probe process, so a native close throws with the
+        // menu already gone. An empty queue is what lets a close complete here, which is what makes "the counter was
+        // closed" an observable reading instead of an exception about a field no test set.
+        List<IClickableMenu>? nextMenusBefore = Game1.nextClickableMenu;
+        Game1? gameBefore = Game1.game1;
         try
         {
+            // The setter reads `Game1.game1` for the text-entry handle, and that instance is null in a probe process.
+            if (Game1.game1 is null) Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
+            Game1.nextClickableMenu = new List<IClickableMenu>();
             menuField.SetValue(null, (object?)dialogue ?? menu);
             Game1.dialogueUp = dialogueUp;
             action();
@@ -546,6 +734,8 @@ public sealed class ModalDismissActionTests
             menuField.SetValue(null, menuBefore);
             Game1.dialogueUp = dialogueUpBefore;
             Game1.timeOfDay = timeOfDayBefore;
+            Game1.nextClickableMenu = nextMenusBefore!;
+            Game1.game1 = gameBefore!;
         }
     }
 
