@@ -147,7 +147,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Rejected,
                 night,
-                $"{BuildFarmBuildingIdentity(expectedTargetId, location, targetX, targetY, buildingType)};{DescribeBuildFarmBuildingUnspent(resolution.Data!)}");
+                $"{BuildFarmBuildingIdentity(expectedTargetId, location, targetX, targetY, buildingType)};{DescribeBuildFarmBuildingUnspent(resolution.Data!)};blocked_by={RefusalLayerToken.None.Format()}");
 
         // 5.2: out of the interaction reach, walk in rather than refuse. The reach is this
         // family's Chebyshev-1 of the named footprint tile; every position-independent check
@@ -177,7 +177,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Rejected,
                 night,
-                $"{BuildFarmBuildingIdentity(targetId, location, x, y, buildingType)};{DescribeBuildFarmBuildingUnspent(resolution.Data!)}");
+                $"{BuildFarmBuildingIdentity(targetId, location, x, y, buildingType)};{DescribeBuildFarmBuildingUnspent(resolution.Data!)};blocked_by={RefusalLayerToken.None.Format()}");
         if (!IsTileWithinChebyshevRadius(Game1.player, x, y, 1))
             return this.RememberTerminal(
                 requestId,
@@ -307,6 +307,13 @@ internal sealed partial class ExecutionManager
         string identity = $"target={liveId};location={location.NameOrUniqueName};tile={x},{y};building_type={buildingType}";
 
         if (FindFarmBuildingSiteBlockage(location, data, x, y) is { } blockage)
+            // THIS REFUSAL NAMES THE RULE, NOT A BLOCKED LAYER, and that is decided rather than
+            // forgotten: `not_buildable`, `actor_in_footprint`, `additional_placement_tile`,
+            // `human_door_blocked` and `off_map` are each more specific than any word in the closed
+            // `RefusalLayerKind` vocabulary, so a `blocked_by=` here would trade the distinction the
+            // caller acts on for a token that says less. The refusal-naming ratchet is not moved by it:
+            // its population is `RememberTerminal(... Rejected ...)` call sites, and this evidence arrives
+            // through `resolution.Evidence` at calls that existed before this refusal did.
             return BuildFarmBuildingSiteResolution.Reject(
                 "build_farm_building_site_blocked",
                 $"build_site_blocked:{blockage.X},{blockage.Y}:{blockage.Why};{identity};footprint={data.Size.X}x{data.Size.Y};published={expectedTargetId};{DescribeBuildFarmBuildingUnspent(data)}");
@@ -405,6 +412,16 @@ internal sealed partial class ExecutionManager
     /// `not_daylight:1840:daylight_ends_1800`. A reason code, not evidence prose, because a caller can
     /// then ask "not daylight" without parsing a sentence - and because the boundary it prints is read
     /// from the engine on the same call.
+    /// </para>
+    ///
+    /// <para>
+    /// THE EVIDENCE A REFUSAL BUILT ON THIS CARRIES `blocked_by=none`, which is a reading and not a
+    /// shrug: the site resolution every such refusal follows has just run and refused nothing - the type
+    /// exists, the location is buildable, the whole footprint and the human door are placeable, the
+    /// published id still matches, and the actor can pay - so no layer of the closed vocabulary is in the
+    /// way. `none` here is not the "the probe did not run" stand-in either: something did look, and the
+    /// clock is not a layer the vocabulary has (fourteen words, none of them time). The code carries the
+    /// clock; `blocked_by` answers the other question.
     /// </para>
     /// </summary>
     internal static string? DescribeBuildFarmBuildingDaylightRefusal(GameLocation location)
