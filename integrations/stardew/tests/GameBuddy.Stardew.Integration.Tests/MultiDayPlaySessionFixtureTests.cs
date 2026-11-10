@@ -62,25 +62,35 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
     }
 
     [Fact]
-    public void TheGivenPinsEverySkillSoNoLevelUpMenuCanArriveMidRun()
+    public void TheGivenStartsHerSkillsWhereANewSaveStartsThem()
     {
-        // `showEndOfNightStuff` pushes one LevelUpMenu per entry in `player.newLevels` (Game1.cs:9130-9134), and that
-        // menu is correctly NOT dismissible - its close hook writes the level perk. Refusing a PENDING level-up was
-        // not enough: the companion earns experience while it works, so a mid-run level-up would arm the very menu
-        // the run cannot pass. A maxed skill cannot level again, which is what makes the guarantee structural.
+        // The shortcut this replaces: every skill pinned to 10 (with the ten professions that implies) so the night's own
+        // LevelUpMenu could not arrive. A maxed skill cannot level again, so the shortcut made the level-up path
+        // unprovable in the one world that runs several nights - and it described a farmer nobody plays, because real work
+        // levels Farming and Foraging within the first days.
         string source = ReadMultiDayGivenSource();
-        source.Should().Contain("PinnedSkills = { \"Farming\", \"Fishing\", \"Foraging\", \"Mining\", \"Combat\" }");
-        source.Should().Contain("player.setSkillLevel(skill, 10)", "the engine's own setter keeps experiencePoints consistent");
-        // Every pin is asserted, and the notices the pin itself queued are cleared and re-asserted empty.
-        source.Should().Contain("fixture_native_local_multi_day_skills_not_maxed");
+        source.Should().NotContain("setSkillLevel(skill, 10)", "that pin is what kept the menu from ever appearing");
+        source.Should().NotContain("skills_pinned=", "the arm log must report the skills the run has, not a pin");
+        source.Should().NotContain("mastery_hint", "no mastery hint can fire in a level-0 world, so nothing may report one");
+
+        // A new save's five skills at 0, with the experience each level's base is read against, and nothing else on them.
+        foreach (string skill in new[] { "farmingLevel", "fishingLevel", "foragingLevel", "miningLevel", "combatLevel" })
+            source.Should().Contain($"player.{skill}.Value = 0;", $"{skill} must start where a new save starts it");
+        source.Should().Contain("player.experiencePoints[skill] = 0;");
+        // A new save carries no professions, and the branch world needs both level-5 cards to be live choices.
+        source.Should().Contain("player.professions.Clear();");
+        source.Should().Contain("fixture_native_local_multi_day_professions_not_cleared");
+        // The starting point is ASSERTED, not assumed: a save that arrived with a level on it would change the question.
+        source.Should().Contain("fixture_native_local_multi_day_skills_not_reset");
         source.Should().Contain("player.newLevels.Clear();");
         source.Should().Contain("fixture_native_local_multi_day_pending_level_up");
-        // The mastery side effect of five maxed skills is a REAL persistent write (Game1.cs:9135-9141), so it is
-        // reported rather than left to be discovered on the first rollover.
-        source.Should().Contain("\"gotMasteryHint\"");
-        source.Should().Contain("mastery_hint_already_armed=");
-        source.Should().Contain("mastery_cave_visited=");
-        source.Should().Contain("guarantee=first_rollover_may_add_gotMasteryHint");
+
+        // The arm log names the property the world now has instead of the lock it used to carry.
+        source.Should().Contain("guarantee=her_work_may_raise_one_and_respond_level_up_answers_it");
+        source.Should().Contain("skills={skills}", "the reported skills are the player's own fields, read back after the write");
+
+        // And the branch world still arms its MILESTONE from below it, so both candidates are live choices.
+        source.Should().Contain("player.setSkillLevel(MilestoneSkillName, MilestoneLevel - 1)");
     }
 
             [Fact]
@@ -178,21 +188,20 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
     }
 
     [Fact]
-    public void ThePinnedSkillsArriveWithTheirProfessionsOrTheEngineReOffersThemEveryMorning()
+    public void TheBranchWorldsMilestoneIsTheOnePendingLevelUp()
     {
-        // Measured 2026-10-17 (run g15, from the product's own refusal evidence): pinning all five skills to 10
-        // WITHOUT professions left `pending_level_ups=11` at the next morning, because the engine re-queues a missed
-        // 5/10 choice for every skill that reached it (level_up=0@5;0@10;1@5;1@10;...). Ten milestone menus is not a
-        // world a companion can be asked to play, and it is not the world a mature save has.
+        // Measured 2026-10-17 (run g15, from the product's own refusal evidence): pinning skills to 10 WITHOUT professions
+        // left `pending_level_ups=11` at the next morning, because the engine re-queues a missed 5/10 choice. The lock that
+        // produced that is gone; what remains to pin is the only entry this Given still arms by hand - the branch world's
+        // milestone, which is what `respond_level_up`'s profession half has to be shown.
         string source = ReadMultiDayGivenSource();
-        source.Should().Contain("player.professions.Add(levelFiveProfession);");
-        source.Should().Contain("player.professions.Add(levelTenProfession);");
-        source.Should().Contain("int levelFiveProfession = professionSkill * 6;");
-        source.Should().Contain("int levelTenProfession = levelFiveProfession + 2;");
-        source.Should().Contain("fixture_native_local_multi_day_profession_not_granted");
-        // The arm log reports the count, so a run's own log says whether the world carried them.
-        source.Should().Contain("professions={player.professions.Count}");
-        source.Should().Contain("guarantee=skills_pinned_with_their_professions");
+        source.Should().Contain("player.newLevels.Add(new Point(PendingLevelUpSkill, MilestoneLevel));");
+        source.Should().Contain("fixture_native_local_multi_day_pending_level_up_not_armed");
+        // The ordinary world arms nothing: a hand-written entry would prove that a queue entry can be answered, never that
+        // her own work raises one.
+        // The arm log reports the count and the pair, so a run's own log says what the night will ask about.
+        source.Should().Contain("pending_level_ups={player.newLevels.Count}");
+        source.Should().Contain("pending_level_up=");
     }
 
     [Fact]

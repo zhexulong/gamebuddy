@@ -28,18 +28,20 @@ namespace GameBuddy.Stardew.Core.Tests;
 public sealed class RolloverMenuOwnershipSourceShapeTests
 {
     [Fact]
-    public void TheLifecycleCommitsTheShippingSummaryItself()
+    public void TheLifecycleCommitsTheSummaryItRaisesAndNothingElse()
     {
-        // Both behaviours have to exist in the same file: the lifecycle closes the summary, and does NOT close the
+        // Both behaviours live in the same file: the lifecycle closes the settlement sheet, and does NOT close the
         // level-up menu. Asserting them together is what stops a future edit from "fixing" one into the other.
         //
-        // The identity is the engine's own type, in one place (`IsRolloverSettlementMenu`), and every wait that meets the
-        // summary reaches it through `AdvanceEngineCrossingMenu` - one spelling, so a phase that opened a menu cannot
-        // grow a second opinion about which menu it may advance.
+        // WHICH menu is WHICH is the declaration's business (`OvernightMenus`), asserted by
+        // `OvernightMenuForwardActionTests`; what is pinned here is the source shape of the commit itself: one identity,
+        // one reach, shared by every wait that meets it.
         string source = ReadLifecycleSource();
-        source.Should().Contain("activeMenu is ShippingMenu", "the lifecycle must recognise the summary it raises");
-        source.Should().Contain("CommitShippingSummary", "and close it through the engine's commit path");
+        source.Should().Contain("CommitShippingSummary", "the lifecycle must close the settlement sheet it raises");
         source.Should().Contain("AdvanceEngineCrossingMenu", "which the waits for the crossing share");
+        // The commit is reachable from ONE place: `SettleStandingSettlementMenu` asks the declaration what the standing
+        // menu is, so a phase that opened a menu cannot grow a second opinion about which one it may close.
+        source.Should().Contain("IsRolloverSettlementMenu(standing)");
     }
 
     [Fact]
@@ -53,11 +55,18 @@ public sealed class RolloverMenuOwnershipSourceShapeTests
     }
 
     [Fact]
-    public void TheLevelUpMenuIsNeverClosedByTheLifecycle()
+    public void TheLifecycleNamesTheLevelUpMenusAnswerAndNeverTakesIt()
     {
+        // The declaration has to NAME `respond_level_up`: that name is what the overnight-menu gate asserts against the
+        // published modal family, and it is how a reader of this file learns whose step the menu is. What the lifecycle
+        // must never do is take that step - closing the menu writes the level's perk and, at a milestone, a profession.
         string source = ReadLifecycleSource();
-        source.Should().NotContain("is LevelUpMenu", "closing a level-up menu grants a perk; that decision is the companion's");
-        source.Should().NotContain("respond_level_up", "the lifecycle must not answer a level-up on the companion's behalf");
+        source.Should().Contain("\"respond_level_up\"", "the declaration must name the companion's own answer");
+        source.Should().NotContain("RequestLocalRespondLevelUp", "the lifecycle must not answer a level-up on her behalf");
+        source.Should().NotContain("is LevelUpMenu", "no type test here may reach a close");
+        source.Should().NotContain("getLevelPerk", "granting the perk is the companion's answer, not a side effect of waiting");
+        // And the summary it DOES close is still the only member it closes: the declaration says which, the gate checks it.
+        source.Should().Contain("OvernightMenuForwardAction.LifecycleCommits");
     }
 
     [Fact]

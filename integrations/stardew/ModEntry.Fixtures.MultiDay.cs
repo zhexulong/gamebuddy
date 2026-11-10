@@ -9,14 +9,6 @@ namespace GameBuddy.Stardew;
 public sealed partial class ModEntry
 {
     /// <summary>
-    /// The five skills, all of which the multi-day Given pins to 10.
-    ///
-    /// These are the names `Farmer.setSkillLevel` accepts (Farmer.cs:7181-7233, resolved through
-    /// `getSkillNumberFromName`), and the same five that gate the mastery hint (Game1.cs:9135).
-    /// </summary>
-    private static readonly string[] PinnedSkills = { "Farming", "Fishing", "Foraging", "Mining", "Combat" };
-
-    /// <summary>
     /// The skill the branch scenario leaves free to reach its level-5 MILESTONE: Combat (4), whose level-5
     /// profession is NOT pre-chosen so both candidates are live choices.
     /// </summary>
@@ -202,13 +194,14 @@ public sealed partial class ModEntry
     /// non-empty (Game1.cs:9119-9121), and then clears the bin (Game1.cs:8220), so
     /// exactly ONE shippable object in the bin yields a menu on the first rollover
     /// and none afterwards.</item>
-    /// <item><b>No LevelUpMenu, ever</b>: <c>showEndOfNightStuff</c> also pushes a
-    /// LevelUpMenu per entry in <c>player.newLevels</c> (Game1.cs:9126-9134), and
-    /// that menu is correctly NOT dismissible - its close hook writes the level perk
-    /// (LevelUpMenu.cs:629-643) - so a run that produced one could only stop by name.
-    /// This fixture grants no experience and refuses to arm while the save still
-    /// carries a pending level-up, which is the only way the guarantee can be
-    /// established rather than assumed.</item>
+    /// <item><b>Her skills start where a new save starts them</b>: all five at level 0, no professions, nothing
+    /// pending. <c>showEndOfNightStuff</c> pushes one LevelUpMenu per entry in <c>player.newLevels</c>
+    /// (Game1.cs:9126-9134), and that menu is NOT dismissible - its close hook writes the level perk
+    /// (LevelUpMenu.cs:629-643) - so a night that raises it holds the new day until `respond_level_up` answers it. This
+    /// Given used to pin every skill to 10 so that menu could not arrive, which made the path unprovable in the one world
+    /// that runs several nights and described a farmer nobody plays. The menu is published, admitted while it holds the
+    /// actor, and answerable with one ordinary-level `confirm`, so the world arms her real starting point and lets the
+    /// work she does raise whatever it earns.</item>
     /// </list>
     /// </para>
     /// </summary>
@@ -268,110 +261,71 @@ public sealed partial class ModEntry
         if (shippingBin.CountItemStacks() != 1)
             throw new InvalidOperationException("fixture_native_local_multi_day_bin_seed_failed");
 
-        // (4) No pending level-up, and no level-up CAN arrive during the run.
+        // (4) HER SKILLS, WHERE A NEW SAVE STARTS THEM: all five at 0, no professions, nothing pending.
         //
-        // `showEndOfNightStuff` pushes one LevelUpMenu per entry in `player.newLevels` (Game1.cs:9130-9134), and
-        // that menu is correctly NOT dismissible (its close hook writes the level perk). Refusing a PENDING
-        // level-up was not enough on its own: the companion earns experience while it works, so a mid-run level-up
-        // would arm the very menu the run cannot pass (the plan records this as a certainty, not a risk). Pinning
-        // every skill to 10 removes the possibility, because a maxed skill cannot level again.
+        // This Given used to pin every skill to 10 (and grant the ten professions that implies) so that no LevelUpMenu
+        // could arrive: `showEndOfNightStuff` pushes one LevelUpMenu per entry in `player.newLevels` (Game1.cs:9130-9134)
+        // and a menu nobody answers holds the new day for as long as it stands (Game1.cs:4292-4305). That lock made the
+        // level-up path unprovable in the one world that runs several nights, and it is not the world she plays in: real
+        // work levels Farming and Foraging within the first days, so a night that raises that menu is the ordinary case.
         //
-        // The engine's own setter is used, so `experiencePoints` is left consistent with the level it reports
-        // (Farmer.cs:7181-7233 -> `getBaseExperienceForLevel`). It also queues a HUD notice per level gained, and
-        // those notices are exactly `player.newLevels`; clearing them here discards the fixture's own doing rather
-        // than a player's pending choice.
-        foreach (string skill in PinnedSkills)
-        {
-            if (armProfessionMilestone && skill == MilestoneSkillName)
-                continue;
-            if (!player.setSkillLevel(skill, 10))
-                throw new InvalidOperationException($"fixture_native_local_multi_day_skill_not_pinned:{skill}");
-        }
-        if (armProfessionMilestone && !player.setSkillLevel(MilestoneSkillName, MilestoneLevel - 1))
-            throw new InvalidOperationException($"fixture_native_local_level_up_branch_skill_not_set:{MilestoneSkillName}");
-        // The guarantees below depend on the pinned skills, so the pin is ASSERTED rather than assumed. The branch
-        // Given is the ONE exception: its milestone skill is deliberately left below 10.
-        if (player.farmingLevel.Value != 10 || player.fishingLevel.Value != 10 || player.foragingLevel.Value != 10
-            || player.miningLevel.Value != 10 || (!armProfessionMilestone && player.combatLevel.Value != 10))
-            throw new InvalidOperationException("fixture_native_local_multi_day_skills_not_maxed");
+        // The menu needs no lock: `respond_level_up` answers it (`choice: "confirm"` for an ordinary level, which takes
+        // no decision), it is admitted while the menu holds the actor, and a real multi-day run has already crossed a
+        // night through it - 2026-10-22 (`.live-runs/game-ladder/2026-10-22T06-19-06-618Z-multiday_routine`):
+        // `level_up_resolved` for skill=4 level=6, then `day_advanced` with dayBefore=4 dayAfter=5.
+        //
+        // The levels are written DIRECTLY, because `Farmer.setSkillLevel` only ever RAISES one - it returns false at or
+        // above the value asked for (Farmer.cs:7187-7231) - and so cannot express a starting point. The experience is
+        // written with them: a level whose experience disagrees with it is a level the day's first XP re-earns, and the
+        // level-up that follows would arrive with a pair nothing expected.
+        player.farmingLevel.Value = 0;
+        player.fishingLevel.Value = 0;
+        player.foragingLevel.Value = 0;
+        player.miningLevel.Value = 0;
+        player.combatLevel.Value = 0;
+        // Skill numbers 0..4 are Farming, Fishing, Foraging, Mining, Combat (`getSkillNumberFromName`'s own order).
+        for (int skill = 0; skill < 5; skill += 1)
+            player.experiencePoints[skill] = 0;
+        // A new save carries no professions either, and clearing them is what makes this world's level 0 mean level 0
+        // for the branch Given below, whose two level-5 cards must both be live choices.
+        player.professions.Clear();
         player.newLevels.Clear();
+
+        // The starting point is ASSERTED rather than assumed: a save that reached this world with a level already on it
+        // would quietly change the question the run answers.
+        if (player.farmingLevel.Value != 0 || player.fishingLevel.Value != 0 || player.foragingLevel.Value != 0
+            || player.miningLevel.Value != 0 || player.combatLevel.Value != 0)
+            throw new InvalidOperationException("fixture_native_local_multi_day_skills_not_reset");
+        if (player.professions.Count != 0)
+            throw new InvalidOperationException($"fixture_native_local_multi_day_professions_not_cleared:{player.professions.Count}");
         if (player.newLevels.Count != 0)
             throw new InvalidOperationException($"fixture_native_local_multi_day_pending_level_up:{player.newLevels.Count}");
 
-        // (4c-ii) The professions those maxed skills imply, or the engine re-offers them EVERY day boundary.
+        // (4d) The BRANCH Given's pending MILESTONE: combat at level 4 with its level-5 profession UNCHOSEN, so both
+        // level-5 cards are live choices the companion has to be shown.
         //
-        // Measured 2026-10-17 (run g15, from the product's own refusal evidence): pinning all five skills to 10
-        // WITHOUT professions left `pending_level_ups=11` at the next morning - `level_up=0@5;0@10;1@5;1@10;...` -
-        // because the engine re-queues a missed 5/10 choice for every skill that reached it. Ten milestone menus
-        // is not a world a companion can be asked to play through, and it is not the world a mature save has: a
-        // farmer at level 10 has already chosen. So this Given chooses for it, once, as declared state, exactly
-        // the way a real save arrives - and takes the level-up dimension out of the scenario's question, which is
-        // "do days cross".
+        // The pair it arms is combat at level 5 - the milestone the engine offers as a CHOICE (`LevelUpMenu.cs:94`
+        // makes 5 and 10 the profession chooser), and `getLevelPerk(4, ..)` writes `maxHealth += 5`
+        // (LevelUpMenu.cs:659-686) - so the two candidates come from the product's own projection rather than from a
+        // card this Given invented.
         //
-        // The ids are the engine's own: per skill `6*s + 0/1` at level 5 and, at level 10, `+2/+3` when the level-5
-        // choice was `+0`, otherwise `+4/+5` (LevelUpMenu.cs:421-437). Taking the left branch at each milestone is
-        // one coherent, legal character.
-        int professionSkill = 0;
-        foreach (string skill in PinnedSkills)
-        {
-            // The branch Given leaves the milestone skill's level-5 profession UNCHOSEN, which is exactly what makes
-            // its two candidates live choices.
-            if (armProfessionMilestone && skill == MilestoneSkillName)
-            {
-                professionSkill += 1;
-                continue;
-            }
-            int levelFiveProfession = professionSkill * 6;
-            int levelTenProfession = levelFiveProfession + 2;
-            player.professions.Add(levelFiveProfession);
-            player.professions.Add(levelTenProfession);
-            if (!player.professions.Contains(levelFiveProfession) || !player.professions.Contains(levelTenProfession))
-                throw new InvalidOperationException($"fixture_native_local_multi_day_profession_not_granted:{skill}");
-            professionSkill += 1;
-        }
-
-        // (4d) ONE pending ORDINARY level-up, declared as part of this Given.
-        //
-        // The world now meets the one menu a real multi-day companion cannot avoid, so the run has to resolve it
-        // through the product's own `respond_level_up` instead of stopping on it (measured 2026-10-17: the first
-        // run that crossed a night ended `actor_held_by_unclosable_menu:LevelUpMenu`). Two independent reviews
-        // found that a world which can never raise the menu makes the fix unprovable here, so the given arms it on
-        // purpose.
-        //
-        // The pair is combat at level 6: an ORDINARY level (5 and 10 are the profession milestones, which the
-        // engine only offers as a choice), and `getLevelPerk(4, ..)` writes `maxHealth += 5` (LevelUpMenu.cs:663-665),
-        // which is a harmless, permanent, real perk. Combat is already pinned at 10, so nothing the companion does
-        // can raise it into a milestone; the entry itself is synthetic (a real actor would have it from gaining the
-        // level), and it is reported in the arm log rather than hidden.
-        // The BRANCH Given arms the MILESTONE itself: combat at level 5, whose two professions are the choices the
-        // companion has to be shown. It used to arm the ordinary entry below in BOTH worlds, which the projection
-        // correctly reports as no milestone at all - so the branch world could never satisfy the gate it exists for
-        // (measured: `milestone_not_projected:0` with `pendingLevelUpChoices: []`, combat left at 4).
+        // The ORDINARY world arms nothing: an ordinary level is what her own work produces, and a synthetic entry
+        // described as "seen rather than hidden" only ever proved that a hand-written queue entry can be answered. It is
+        // her XP or nothing, which is why the skills above start where a new save starts.
         const int PendingLevelUpSkill = 4;
-        // Only the BRANCH Given arms a pending level-up, and it arms a REAL milestone.
-        //
-        // This used to arm `(4, 6)` in the ordinary world too, described as seen rather than hidden. Level 6 is an
-        // ordinary level with one legal answer, so the queue entry pushed a LevelUpMenu with nothing to choose: the
-        // product's own projection reported `pendingLevelUpChoices: []`, and `respond_level_up` could not satisfy it.
-        // Measured 2026-10-25 on every multi-day run - the companion said it outright: "得你自己点一下选技能，不然睡不下去".
-        //
-        // The paragraph above this method has always claimed "No LevelUpMenu, ever" for this world. Now the code agrees
-        // with it: nothing is queued unless a scenario asked for a milestone.
         if (armProfessionMilestone)
         {
+            // The engine's own setter keeps `experiencePoints` consistent with the level it reports, and the HUD notice
+            // it queues for the level gained is the FIXTURE's doing rather than a player's pending choice - so it is
+            // discarded before the one declared entry is armed.
+            if (!player.setSkillLevel(MilestoneSkillName, MilestoneLevel - 1))
+                throw new InvalidOperationException($"fixture_native_local_level_up_branch_skill_not_set:{MilestoneSkillName}");
+            player.newLevels.Clear();
             player.newLevels.Add(new Point(PendingLevelUpSkill, MilestoneLevel));
             if (player.newLevels.Count != 1)
                 throw new InvalidOperationException(
                     $"fixture_native_local_multi_day_pending_level_up_not_armed:{player.newLevels.Count}");
         }
-
-        // (4b) The mastery side effect of five maxed skills, recorded rather than left to be discovered.
-        //
-        // The first rollover adds `gotMasteryHint` to `player.mailReceived` and queues a global message
-        // (Game1.cs:9135-9141). Both are REAL world writes - mail is persistent and the message is a UI event - so
-        // the fixture reports which one the run will produce instead of pretending the pin is free.
-        bool masteryHintAlreadyArmed = player.mailReceived.Contains("gotMasteryHint");
-        bool masteryCaveVisited = player.locationsVisited.Contains("MasteryCave");
 
         // NOTE: this Given deliberately writes NO stamina. An earlier version armed 12 points "so the
         // fatigue/self-heal assertion stays reachable", but the threshold it named lives in a DIFFERENT scenario
@@ -380,11 +334,21 @@ public sealed partial class ModEntry
         // likely. A scenario-only accommodation with no assertion behind it does not belong in the world.
 
         this.nativeLocalPlayerFixtureInitialized = true;
+        // The skills the arm log reports come from the PLAYER's own fields, not from a constant beside them: what the run
+        // starts with is what the run read back, or the assertion above would have refused it.
+        string skills = string.Join(",", new[]
+        {
+            player.farmingLevel.Value,
+            player.fishingLevel.Value,
+            player.foragingLevel.Value,
+            player.miningLevel.Value,
+            player.combatLevel.Value,
+        });
         string pendingGuarantees = armProfessionMilestone
             ? "guarantee=one_pending_level_up_is_a_profession_milestone;guarantee=the_milestone_skill_is_left_unchosen"
-            : "guarantee=one_pending_level_up_is_an_ordinary_level;guarantee=skills_pinned_with_their_professions";
+            : "guarantee=no_pending_level_up_at_arm_time;guarantee=her_work_may_raise_one_and_respond_level_up_answers_it";
         this.Monitor.Log(
-            $"GameBuddy native-local-player initialized multi-day precondition before bridge attachment: season={Game1.currentSeason};day={Game1.dayOfMonth};days_played={Game1.stats.DaysPlayed};landslide={(Game1.stats.DaysPlayed < 5 ? "closed" : "open")};time={Game1.timeOfDay};stamina={player.Stamina}/{player.MaxStamina};home={home.NameOrUniqueName};bed={bedSpot.X},{bedSpot.Y};actor_tile={player.Tile.X},{player.Tile.Y};shipped={shippedItemId};bin_stacks={shippingBin.CountItemStacks()};pending_level_ups={player.newLevels.Count};pending_level_up={(player.newLevels.Count > 0 ? $"{player.newLevels[0].X}@{player.newLevels[0].Y}" : "none")};skills_pinned={string.Join(",", PinnedSkills)}@{10};professions={player.professions.Count};stamina={player.stamina};mastery_hint_already_armed={masteryHintAlreadyArmed.ToString().ToLowerInvariant()};mastery_cave_visited={masteryCaveVisited.ToString().ToLowerInvariant()};guarantee=first_rollover_pushes_ShippingMenu;{pendingGuarantees};guarantee=first_rollover_may_add_gotMasteryHint;production alone dispatches advance_day and dismiss_modal and emits receipts.",
+            $"GameBuddy native-local-player initialized multi-day precondition before bridge attachment: season={Game1.currentSeason};day={Game1.dayOfMonth};days_played={Game1.stats.DaysPlayed};landslide={(Game1.stats.DaysPlayed < 5 ? "closed" : "open")};time={Game1.timeOfDay};stamina={player.Stamina}/{player.MaxStamina};home={home.NameOrUniqueName};bed={bedSpot.X},{bedSpot.Y};actor_tile={player.Tile.X},{player.Tile.Y};shipped={shippedItemId};bin_stacks={shippingBin.CountItemStacks()};pending_level_ups={player.newLevels.Count};pending_level_up={(player.newLevels.Count > 0 ? $"{player.newLevels[0].X}@{player.newLevels[0].Y}" : "none")};skills={skills};professions={player.professions.Count};stamina={player.stamina};guarantee=first_rollover_pushes_ShippingMenu;{pendingGuarantees};production alone dispatches advance_day, dismiss_modal and respond_level_up and emits receipts.",
             LogLevel.Info);
     }
 }

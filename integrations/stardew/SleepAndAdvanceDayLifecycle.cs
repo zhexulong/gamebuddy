@@ -51,7 +51,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// The day fact is the authority; a client observes the rollover over the
     /// network without saving locally at all, so this must never block.
     /// </summary>
-    private const int SaveBoundaryFrameBudget = 300;
+    internal const int SaveBoundaryFrameBudget = 300;
 
     /// <summary>
     /// Bounds how long the lifecycle may wait to become eligible. The operational
@@ -150,6 +150,12 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// lifecycle itself had just advanced.
     /// </summary>
     private SettlementMenuOutcome engineCrossingMenuOutcome;
+
+    /// <summary>
+    /// The last `menu=...;step=...;phase=...` this lifecycle wrote about the engine's menu owning a frame, so a menu that
+    /// stands for a whole model turn writes one line instead of thousands.
+    /// </summary>
+    private string? engineCrossingMenuDetail;
 
     /// <summary>
     /// Terminal outcome handed back to the owning execution. The lifecycle is the
@@ -882,13 +888,124 @@ internal sealed class SleepAndAdvanceDayLifecycle
         BindingFlags.Instance | BindingFlags.NonPublic);
 
     /// <summary>
-    /// Whether a standing menu is the morning-after settlement this lifecycle owns.
+    /// Every menu the engine can put on screen for the night, and the step that moves each one.
     ///
-    /// Deliberately one type. `ShippingMenu` presents numbers and its own click action only starts the outro
-    /// (ShippingMenu.cs:690-696), so committing it takes no decision. `LevelUpMenu` grants a perk when it closes and a
-    /// `DialogueBox` carries a question, so neither is residue a terminal may settle.
+    /// <para>
+    /// THE POPULATION IS THE ENGINE'S, declared once because TWO questions read it: which menu this lifecycle may close
+    /// (the settlement sheet, and nothing else), and which menus own a frame of the wait for the crossing.
+    /// `showEndOfNightStuff` (Game1.cs:9112-9161) makes exactly these three pushes onto `Game1.endOfNightMenus`, and the
+    /// new day does not begin until that stack has drained - the gate is
+    /// `showingEndOfNightStuff && endOfNightMenus.Count == 0 && activeClickableMenu == null` (Game1.cs:4292-4305). A menu
+    /// standing there is therefore never a modal the actor is stuck behind: each one has a step, and this table names it.
+    /// </para>
+    /// <para>
+    /// The level-up member is not an accommodation: a companion earns experience while it works, so a night that raises
+    /// that menu is the ordinary case. The multi-day Given used to pin every skill to 10 so this menu could not arrive,
+    /// which made the path unprovable in the one world that runs several nights; the world now starts where a new save
+    /// starts and lets her work raise it.
+    /// </para>
+    /// <para>
+    /// <see cref="OvernightMenuForwardActionViolations"/> holds the property every member must keep, and
+    /// `OvernightMenuForwardActionTests` runs it over this declaration and names the member that broke it.
+    /// </para>
     /// </summary>
-    internal static bool IsRolloverSettlementMenu(IClickableMenu? activeMenu) => activeMenu is ShippingMenu;
+    internal static readonly IReadOnlyList<OvernightMenu> OvernightMenus = new[]
+    {
+        new OvernightMenu(
+            typeof(ShippingMenu),
+            OvernightMenuForwardAction.LifecycleCommits,
+            null,
+            "presents numbers, and its own click only starts the outro (ShippingMenu.cs:690-696), so closing it takes no decision and this lifecycle performs that click itself"),
+        new OvernightMenu(
+            typeof(SaveGameMenu),
+            OvernightMenuForwardAction.EngineDrives,
+            null,
+            "its own update runs the save and exits the menu (SaveGameMenu.cs:56-135), so it advances with no action and no decision"),
+        new OvernightMenu(
+            typeof(LevelUpMenu),
+            OvernightMenuForwardAction.CompanionAnswers,
+            "respond_level_up",
+            "closing it grants the level's perk and, at a milestone, writes a profession (LevelUpMenu.cs:629-648), so the answer is the companion's and never the lifecycle's"),
+    };
+
+    /// <summary>What moves one member of <see cref="OvernightMenus"/>.</summary>
+    internal enum OvernightMenuForwardAction
+    {
+        /// <summary>The lifecycle performs the menu's own step: the settlement sheet's `okClicked`.</summary>
+        LifecycleCommits,
+
+        /// <summary>The menu advances itself: nothing to dispatch and nothing to decide.</summary>
+        EngineDrives,
+
+        /// <summary>The menu holds the crossing until a published action answers it.</summary>
+        CompanionAnswers,
+    }
+
+    /// <summary>One overnight menu: the engine's own type, what moves it, and why that is the step.</summary>
+    internal sealed record OvernightMenu(
+        Type MenuType,
+        OvernightMenuForwardAction Forward,
+        string? ActionId,
+        string Reason);
+
+    /// <summary>The declaration's entry for a menu TYPE, or null when the engine raised nothing for the night.</summary>
+    internal static OvernightMenu? OvernightMenuFor(Type? menuType) =>
+        menuType is null ? null : OvernightMenus.FirstOrDefault(entry => entry.MenuType == menuType);
+
+    /// <summary>The same lookup for a standing menu. The engine's own instance is the caller's; its type is the fact.</summary>
+    internal static OvernightMenu? OvernightMenuFor(IClickableMenu? activeMenu) => OvernightMenuFor(activeMenu?.GetType());
+
+    /// <summary>
+    /// Whether a standing menu is the morning-after settlement this lifecycle commits.
+    ///
+    /// Deliberately one member of the declaration. `ShippingMenu` presents numbers and its own click action only starts
+    /// the outro (ShippingMenu.cs:690-696), so committing it takes no decision. `LevelUpMenu` grants a perk when it
+    /// closes and a `DialogueBox` carries a question, so neither is residue a terminal may settle.
+    /// </summary>
+    internal static bool IsRolloverSettlementMenu(IClickableMenu? activeMenu) =>
+        OvernightMenuFor(activeMenu) is { Forward: OvernightMenuForwardAction.LifecycleCommits };
+
+    /// <summary>
+    /// What each declared overnight menu must satisfy, as the list of members that broke it: either a PUBLISHED
+    /// modal-family action answers the menu, or the entry states why the menu needs no action at all.
+    ///
+    /// <para>
+    /// WHY the modal family and not "some published action": <see cref="AdmissionActionabilityProfile.Modal"/> is the
+    /// only profile exempt from `body_owned` and from the menu hold, and a menu's answer necessarily arrives while the
+    /// menu stands. Measured 2026-10-17 (run g18): the family listed the two dialogue ids, `respond_level_up` was not one
+    /// of them, every dispatch was refused, and the night ended `actor_held_by_unclosable_menu:LevelUpMenu`.
+    /// </para>
+    /// <para>
+    /// `modalResolvingActionIds` is a parameter rather than a read of the catalog so the RULE can be driven with the
+    /// population and each other's failures: the same family minus `respond_level_up` is precisely that run.
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<string> OvernightMenuForwardActionViolations(
+        IEnumerable<OvernightMenu> menus,
+        IReadOnlyCollection<string> modalResolvingActionIds)
+    {
+        List<string> violations = new();
+        int examined = 0;
+        foreach (OvernightMenu menu in menus)
+        {
+            examined++;
+            string name = menu.MenuType.Name;
+            // One code for both shapes of the same defect: a menu with no published answer, and a menu nobody explained.
+            if (menu.Forward == OvernightMenuForwardAction.CompanionAnswers)
+            {
+                if (menu.ActionId is not { Length: > 0 } actionId || !modalResolvingActionIds.Contains(actionId))
+                    violations.Add($"overnight_menu_without_forward_action:{name}:action={menu.ActionId ?? "none"}");
+            }
+            else if (string.IsNullOrWhiteSpace(menu.Reason))
+            {
+                violations.Add($"overnight_menu_without_forward_action:{name}:reason=empty");
+            }
+        }
+        // A population of zero agrees with itself, so it is blocked by name instead of passing quietly.
+        if (examined == 0)
+            violations.Add("overnight_menu_population_empty");
+        return violations;
+    }
 
     /// <summary>
     /// Commit a standing morning-after summary through the engine seam, or refuse a menu whose close would take a
@@ -1038,19 +1155,17 @@ internal sealed class SleepAndAdvanceDayLifecycle
     }
 
     /// <summary>
-    /// Advance the engine's own end-of-night menu while this lifecycle waits for its crossing, and report whether this
+    /// Deal with the engine's own end-of-night menu while this lifecycle waits for its crossing, and report whether this
     /// frame belonged to that crossing.
     ///
     /// <para>
     /// THE MENU THE ENGINE RAISES FOR THE NIGHT IS A STEP OF THE NIGHT, NOT A MODAL HOLDING THE ACTOR.
-    /// `showEndOfNightStuff` (Game1.cs:9112-9161) pushes `ShippingMenu`, then `SaveGameMenu`, then any `LevelUpMenu`
-    /// onto `Game1.endOfNightMenus`, and the new day does not begin until that stack has drained: the gate is
-    /// `showingEndOfNightStuff && endOfNightMenus.Count == 0 && activeClickableMenu == null` (Game1.cs:4292-4305), which
-    /// is what reaches `globalFadeToClear(doMorningStuff)` (Game1.cs:4304) and, through `OnDayStarted`
-    /// (Game1.cs:4400), SMAPI's `DayStarted`. Of the three, `SaveGameMenu` drives itself (`update` runs the save and
-    /// exits, SaveGameMenu.cs:56-97) and `LevelUpMenu` grants a perk when it closes (LevelUpMenu.cs:487-501, which is
-    /// why <see cref="IsRolloverSettlementMenu"/> admits one type and not three); the summary only needs the click whose
-    /// seam is `okClicked` (ShippingMenu.cs:690-696).
+    /// `showEndOfNightStuff` (Game1.cs:9112-9161) pushes the settlement sheet, then any `SaveGameMenu`, then one
+    /// `LevelUpMenu` per pending level onto `Game1.endOfNightMenus`, and the new day does not begin until that stack has
+    /// drained: the gate is `showingEndOfNightStuff && endOfNightMenus.Count == 0 && activeClickableMenu == null`
+    /// (Game1.cs:4292-4305), which is what reaches `globalFadeToClear(doMorningStuff)` (Game1.cs:4304) and, through
+    /// `OnDayStarted` (Game1.cs:4400), SMAPI's `DayStarted`. Which step moves which menu is <see cref="OvernightMenus"/>,
+    /// and this method reads it rather than re-deciding.
     /// </para>
     /// <para>
     /// MEASURED 2026-11-09 (`round42`, night 1): the bed prompt was answered, the summary was mounted, the world
@@ -1059,14 +1174,34 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// waits looked at the menu the engine had raised for the very night they were waiting on. The same wait expired
     /// on its own day-start budget in the 2026-11-05 run (`delta=1;day_started=false;menu=ShippingMenu` for 100 s).
     /// </para>
+    /// <para>
+    /// THE TWO MEMBERS THIS LIFECYCLE DOES NOT ADVANCE ARE STILL THE CROSSING'S FRAMES, and both were spending a wait's
+    /// budget before the declaration existed. A `LevelUpMenu` is answered by the companion's own `respond_level_up`,
+    /// which takes a whole turn to arrive while the menu is on screen; the save boundary allows 300 frames (5 s) and then
+    /// reports `save_boundary_not_observed`, so a night whose save was taken right after the level-ups described itself as
+    /// a night that never saved. The `SaveGameMenu` is in the same window and has the same owner (itself).
+    /// </para>
     /// </summary>
     /// <returns>
-    /// True when the engine's own end-of-night menu was standing, so the caller may not spend this frame on its own
+    /// True when one of the engine's end-of-night menus was standing, so the caller may not spend this frame on its own
     /// budget. False when no such menu stands, and also when one could not be reached - in that case the terminal is
     /// already reported, which <see cref="finished"/> carries to the caller.
     /// </returns>
     private bool AdvanceEngineCrossingMenu()
     {
+        OvernightMenu? standing = OvernightMenuFor(Game1.activeClickableMenu);
+        if (standing is null)
+            return false;
+        // `SaveGameMenu` drains itself and `LevelUpMenu` is the companion's to answer: neither is this lifecycle's to
+        // close, and neither may be charged to a wait's budget.
+        if (standing.Forward != OvernightMenuForwardAction.LifecycleCommits)
+        {
+            string step = standing.Forward == OvernightMenuForwardAction.EngineDrives
+                ? "engine_drives"
+                : $"companion_answers:{standing.ActionId}";
+            this.RecordEngineCrossingMenu(standing, step);
+            return true;
+        }
         SettlementMenuOutcome outcome = this.SettleStandingSettlementMenu();
         if (outcome == SettlementMenuOutcome.CommitUnavailable)
         {
@@ -1075,16 +1210,22 @@ internal sealed class SleepAndAdvanceDayLifecycle
         }
         if (outcome == SettlementMenuOutcome.NotPresent)
             return false;
-        // Recorded once per distinct outcome rather than once per frame: the menu stands for seconds while its outro
-        // runs, and sixty identical trace lines say less than the one that names the step.
-        if (this.engineCrossingMenuOutcome != outcome)
-        {
-            this.engineCrossingMenuOutcome = outcome;
-            this.trace.Add(
-                $"engine_crossing_menu;menu={Game1.activeClickableMenu?.GetType().Name ?? "none"};"
-                    + $"commit={DescribeSettlementMenuOutcome(outcome)};phase={this.phase}");
-        }
+        this.engineCrossingMenuOutcome = outcome;
+        this.RecordEngineCrossingMenu(standing, $"commit={DescribeSettlementMenuOutcome(outcome)}");
         return true;
+    }
+
+    /// <summary>
+    /// Name the menu that owns this frame once per distinct step, not once per frame: the menu stands for seconds - or
+    /// for a whole model turn - and sixty identical trace lines say less than the one that names the step and its owner.
+    /// </summary>
+    private void RecordEngineCrossingMenu(OvernightMenu standing, string step)
+    {
+        string detail = $"menu={standing.MenuType.Name};step={step};phase={this.phase}";
+        if (this.engineCrossingMenuDetail == detail)
+            return;
+        this.engineCrossingMenuDetail = detail;
+        this.trace.Add($"engine_crossing_menu;{detail}");
     }
     private bool AnswerSleepPrompt()
     {
@@ -1235,7 +1376,9 @@ internal sealed class SleepAndAdvanceDayLifecycle
 
         switch (DecideSaveBoundary(
             this.NightSavedObserved,
-            IsRolloverSettlementMenu(Game1.activeClickableMenu),
+            // Every one of the engine's end-of-night menus holds the transition to the new day (Game1.cs:4292-4305), so a
+            // frame on which one stands is the crossing's and no wait may charge it to a budget.
+            OvernightMenuFor(Game1.activeClickableMenu) is not null,
             this.saveBoundaryFrames,
             SaveBoundaryFrameBudget))
         {
