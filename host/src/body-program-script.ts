@@ -188,6 +188,13 @@ type PlanCallRejection = Readonly<{
  */
 const MAX_REPORTED_PLAN_REJECTIONS = 16;
 
+/**
+ * How many insertions one answer spells out, bounded for the same reason the rejection list is: a loop over a
+ * body-yielding family can insert the same dismissal dozens of times, and the repetition would spend the turn's context
+ * saying one thing. `insertedCount` is not bounded, so the answer still states the population.
+ */
+const MAX_REPORTED_PLAN_INSERTIONS = 16;
+
 export type CompiledPlan =
   | Readonly<{
       ok: true;
@@ -198,6 +205,17 @@ export type CompiledPlan =
       rejected: readonly PlanCallRejection[];
       /** Every refusal, including the ones past `MAX_REPORTED_PLAN_REJECTIONS`. */
       rejectedCount: number;
+      /**
+       * The nodes this compiler INSERTED into the list the script wrote, in program order, one entry per node, spelled
+       * `inserted=<actionId>;before=<nodeId>`: what it wrote, and the node it wrote that immediately before.
+       *
+       * Present because the program that runs is NOT the program the author wrote, and an author who cannot see the
+       * difference reads a node list that disagrees with her script for no stated reason. Bounded;
+       * `insertedCount` is the population.
+       */
+      inserted: readonly string[];
+      /** Every insertion, including the ones past `MAX_REPORTED_PLAN_INSERTIONS`. */
+      insertedCount: number;
       /**
        * Layout facts this plan's own nodes depend on that the snapshot it was compiled against does not carry, one per
        * `layout_facts_absent:call <n>:<fact>`. Bounded; `layoutFactsAbsentCount` is the population.
@@ -289,8 +307,21 @@ const EQUIP_TOOL_ACTION_ID = "equip_tool";
 /** The published action whose one job is putting the body on (or beside) a tile; a transition's approach step uses it. */
 const MOVE_TO_TILE_ACTION_ID = "move_to_tile";
 
-/** The id prefix a node the compiler inserted carries, so an audit can tell it from one the author asked for. */
-const PLAN_INSERTED_NODE_PREFIX = "auto_walk_";
+/**
+ * The id prefixes a plan node carries, so a reader can tell the compiler's own nodes from the author's.
+ *
+ * The author's steps are `n<position>`; the walk the compiler writes to reach a transition is `auto_walk_<position>`, and
+ * the dismissal it writes after a body-yielding step is `auto_dismiss_<position>`. The number is the position the node
+ * holds in the program that runs, which is the one numbering every part of the answer agrees on.
+ */
+const PLAN_AUTHOR_NODE_PREFIX = "n";
+const PLAN_WALK_NODE_PREFIX = "auto_walk_";
+const PLAN_DISMISSAL_NODE_PREFIX = "auto_dismiss_";
+
+/** One plan node id, in the positional scheme the rest of the answer reads it by. */
+function planNodeId(prefix: string, position: number): string {
+  return `${prefix}${String(position).padStart(2, "0")}`;
+}
 
 /**
  * The two location transitions whose `x`/`y` name a door or warp SOURCE tile the body must already be beside, and which
@@ -330,18 +361,25 @@ const TRANSITION_SOURCE_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["ent
 const WORLD_RESETTING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["sleep"]);
 
 /**
- * Actions that SUCCEED and leave the body unable to act, so nothing may follow them in the same plan.
+ * Actions that SUCCEED and leave the body unable to act, so the step after them needs the modal cleared first.
  *
  * `talk_to_npc` raises a native dialogue: `drawDialogue` sets `player.CanMove = false` and mounts a `DialogueBox`, and the
  * Mod reports the node `Succeeded` while that box is still up (`farmhandexecutioncontroller.npcactions.cs:255`, whose own
- * evidence records `player_can_move_after`). Every following body-owning node is then refused, so a plan that says "talk,
- * then walk away" is a plan whose second half cannot run.
+ * evidence records `player_can_move_after`). Every following body-owning node is refused by the game while the box is up,
+ * so "talk, then buy" needs a dismissal between the two steps.
  *
- * The dialogue must NOT be auto-dismissed - it is the line the player is reading - so the refusal belongs here, at the
- * plan shape, exactly where `sleep` is refused as a mid-plan step: no argument can fix it, and answering at run time would
- * spend a whole submission to learn something the compiler already knew.
+ * THE DISMISSAL IS WRITTEN, NOT DEMANDED. Measured round42 (live, day 6): four separate programs were refused
+ * `plan_script_action_after_body_yield:shop_purchase:talk_to_npc:dismiss_first=dismiss_modal` - the author wrote "talk to
+ * the shopkeeper, then buy seeds" four times, was told the same remedy four times, and bought no seed in any of those
+ * turns. The rule was right and the remedy was mechanical: one node of an action the Mod already publishes, in the one
+ * position nothing else competes for. `emitPlanNode` writes it and reports it (`inserted=...;before=...`).
+ *
+ * A DECLARED SET for the same reason as `WORLD_RESETTING_PLAN_ACTION_IDS`: the surface publishes no "this leaves the body
+ * held" property (`postcondition.name` says `npc_talked` and nothing about the dialogue box), so there is nothing to
+ * derive membership from yet. Exported so the gate in `body-program-script.test.ts` reads THIS declaration instead of a
+ * second hand-written copy, and so an empty set fails that gate loudly instead of passing over nothing.
  */
-const BODY_YIELDING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["talk_to_npc"]);
+export const BODY_YIELDING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["talk_to_npc"]);
 
 /**
  * The actions that RESTORE actionability after a body-yielding one, so a plan can carry on instead of stopping.
@@ -351,10 +389,11 @@ const BODY_YIELDING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["talk_to
  * seam for the question branch that `dismiss_modal` refuses on purpose. Nothing needed inventing; the plan simply had to
  * be allowed to say it.
  *
- * Without this the refusal above would be wrong in the other direction: "talk, then carry on" HAS a correct shape, and a
- * companion that was told only "nothing may follow" would finish the conversation by standing still.
+ * `dismiss_modal` is FIRST because it is the one of the two the compiler can write itself: it declares no argument, while
+ * `answer_dialogue` demands a `responseKey` only the author can choose. That is why the inserted step, and the refusal
+ * that answers when an insertion is impossible, both name `MODAL_CLEARING_PLAN_ACTION_IDS[0]`.
  */
-const MODAL_CLEARING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["dismiss_modal", "answer_dialogue"]);
+export const MODAL_CLEARING_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["dismiss_modal", "answer_dialogue"]);
 
 const MAX_PLAN_SCRIPT_CHARS = 8192;
 /** The engine's message is the caller's to fix; it is bounded because it reaches a model's context. */
@@ -898,6 +937,7 @@ export function compilePlanScript(
     builderCalls: 0,
     rejected: [],
     rejectedCount: 0,
+    inserted: [],
     argumentOwners: planArgumentOwners(dependencies.actions),
     worldTileByNode: new Map(),
   };
@@ -1015,6 +1055,11 @@ export function compilePlanScript(
     // the same sentence; `rejectedCount` is not. Narrowing happens here, once, and never decides whether the plan runs.
     rejected: Object.freeze(state.rejected.slice(0, MAX_REPORTED_PLAN_REJECTIONS)),
     rejectedCount: state.rejectedCount,
+    // The insertions, narrowed the same way and for the same reason: a loop over a body-yielding family would otherwise
+    // repeat one sentence once per iteration. `insertedCount` is the population, so a bounded list never reads as "that
+    // was the whole of it".
+    inserted: Object.freeze(state.inserted.slice(0, MAX_REPORTED_PLAN_INSERTIONS)),
+    insertedCount: state.inserted.length,
     layoutFactsAbsent: layout.absent,
     layoutFactsAbsentCount: layout.count,
   });
@@ -1133,6 +1178,13 @@ type PlanScriptState = {
   /** Every refusal, `rejected` list included, so a bounded list never reads as "that was all of them". */
   rejectedCount: number;
   /**
+   * The nodes the compiler inserted, in program order, each one `inserted=<actionId>;before=<nodeId>`.
+   *
+   * Kept in full here and narrowed once, where the plan is built: the bound is how many an answer can afford to spell
+   * out, and it must not decide whether a node is written.
+   */
+  inserted: string[];
+  /**
    * The vocabulary's own answer to "which actions declare this argument name", built once per compile.
    *
    * An unknown argument is nearly always a name carried over from another action (`water_crop` with a `slot`, because
@@ -1163,7 +1215,7 @@ function createPlanBuilder(
   for (const action of actions)
     methods.set(action.actionId, (arguments_) => {
       state.builderCalls += 1;
-      atPlanCall(state, action.actionId, () => emitPlanNode(action, arguments_, snapshot, state));
+      atPlanCall(state, action.actionId, () => emitPlanNode(action, arguments_, snapshot, actions, state));
     });
   const equipFor = (actionId: unknown, target: unknown) => {
     state.builderCalls += 1;
@@ -1240,7 +1292,7 @@ function equipForAction(
     rejectPlanCall(`plan_script_equip_unavailable:${EQUIP_TOOL_ACTION_ID}`, state, requirementOf(action));
   // Written through the same emitter as every other node, so the equip step is validated against `equip_tool`'s own
   // declared argument (a semantic tool category, never a slot) exactly as a hand-written call would be.
-  emitPlanNode(equip, { tool: category }, snapshot, state);
+  emitPlanNode(equip, { tool: category }, snapshot, actions, state);
   return slot;
 }
 
@@ -1587,6 +1639,7 @@ function emitPlanNode(
   action: PublishedPlanAction,
   arguments_: unknown,
   snapshot: Snapshot,
+  actions: readonly PublishedPlanAction[],
   state: PlanScriptState,
 ): void {
   state.calls += 1;
@@ -1603,18 +1656,13 @@ function emitPlanNode(
       state,
       requirement,
     );
-  if (
-    previousNode !== undefined &&
-    BODY_YIELDING_PLAN_ACTION_IDS.includes(previousNode.actionId) &&
-    !MODAL_CLEARING_PLAN_ACTION_IDS.includes(action.actionId)
-  )
-    // The reason names the step that would make it legal, because the author's next move is to add it - not to guess why
-    // the dialogue they just opened is in the way.
-    rejectPlanCall(
-      `plan_script_action_after_body_yield:${action.actionId}:${previousNode.actionId}:dismiss_first=${MODAL_CLEARING_PLAN_ACTION_IDS[0]}`,
-      state,
-      requirement,
-    );
+  // THE BODY A DIALOGUE TOOK IS GIVEN BACK BY THE COMPILER, NOT BY THE AUTHOR.
+  //
+  // Decided before the arguments, for the same reason the world-reset refusal above is: no argument can fix a step
+  // written while the body is held, so answering with an argument problem would send the author back to a call that
+  // still cannot run. Written into the program below, immediately after the yielding node and immediately before the
+  // author's own - nothing else moves.
+  const dismissal = bodyYieldDismissal(previousNode, action, actions, requirement, state);
   // An action that declares no argument is called with none.
   const accepted = arguments_ === undefined && action.arguments.length === 0 ? {} : arguments_;
   if (typeof accepted !== "object" || accepted === null || Array.isArray(accepted))
@@ -1669,14 +1717,29 @@ function emitPlanNode(
   }
   // A transition is written as the walk plus the door: the walk is the compiler's because the Mod refuses the door
   // on distance alone, and the node the author wrote still runs in the order the author wrote it.
-  const approach = transitionApproachNode(action, canonical, state);
-  if (approach !== null) {
-    // One statement became two nodes, so the cap is checked against both: a walk that pushed the program past the wire
-    // bound would be refused as a malformed request instead of as a plan that is too long.
-    if (state.nodes.length + 2 > MAX_PLAN_NODES)
-      refusePlan(`plan_cap_exceeded:${state.nodes.length + 2}`, state, requirement);
-    state.nodes.push(approach);
-  }
+  //
+  // THE DISMISSAL IS PUSHED FIRST, and the walk is computed with it already in place. Two nodes ordered after the same
+  // predecessor are two nodes the Mod's claim rule refuses (`resource_conflict`), so the compiler's own insertions have to
+  // be a CHAIN: dismissal, then the walk, then the author's step. The fixpoint gate found this on
+  // `talk_to_npc` -> `travel` before it reached a run.
+  const nextPosition = state.nodes.length + 1;
+  if (dismissal !== null)
+    state.nodes.push(bodyYieldDismissalNode(planNodeId(PLAN_DISMISSAL_NODE_PREFIX, nextPosition), dismissal));
+  const approach = transitionApproachNode(
+    action,
+    canonical,
+    state,
+    planNodeId(PLAN_WALK_NODE_PREFIX, state.nodes.length + 1),
+  );
+  if (approach !== null) state.nodes.push(approach);
+  // EVERY NODE THE COMPILER WRITES IS ONE THE WIRE CARRIES, so the cap is checked against all of them: a program past
+  // the bound would be refused as a malformed request instead of as a plan that is too long.
+  const authorPosition = state.nodes.length + 1;
+  if (authorPosition > MAX_PLAN_NODES) refusePlan(`plan_cap_exceeded:${authorPosition}`, state, requirement);
+  const authorNodeId = planNodeId(PLAN_AUTHOR_NODE_PREFIX, authorPosition);
+  // The answer shows the program is not exactly the script, once per node and in program order.
+  if (dismissal !== null) state.inserted.push(`inserted=${dismissal.actionId};before=${authorNodeId}`);
+  if (approach !== null) state.inserted.push(`inserted=${approach.actionId};before=${authorNodeId}`);
   // TWO EDGES, TWO MEANINGS: THE ORDER A SCRIPT WROTE IS NOT A CHAIN OF CONSUMERS.
   //
   // `orderedAfter` says "do not start before this one is terminal, and do not skip me if it failed"; `dependsOn` says
@@ -1710,11 +1773,10 @@ function emitPlanNode(
   const tile = planWorldTileOf(action, canonical);
   const producer = tile === null ? undefined : planProducerOnTile(state, tile);
   const previous = state.nodes[state.nodes.length - 1]?.nodeId;
-  const nodeId = `n${String(state.nodes.length + 1).padStart(2, "0")}`;
-  if (tile !== null) state.worldTileByNode.set(nodeId, tile);
+  if (tile !== null) state.worldTileByNode.set(authorNodeId, tile);
   state.nodes.push(
     Object.freeze({
-      nodeId,
+      nodeId: authorNodeId,
       actionId: action.actionId,
       arguments: Object.freeze(canonical),
       dependsOn: Object.freeze(producer === undefined ? [] : [producer]),
@@ -1724,6 +1786,61 @@ function emitPlanNode(
       bindings: Object.freeze({}),
     }),
   );
+}
+
+/**
+ * The dismissal the compiler writes, and the node it has to follow: everything needed to place it without asking the
+ * question a second time.
+ */
+type PlanBodyYieldDismissal = Readonly<{ actionId: string; afterNodeId: string }>;
+
+/**
+ * The dismissal this call needs written before it, or `null` when the step before it left the body free.
+ *
+ * `dismiss_modal` is the step because it is the one body-clearing action the Mod publishes with NO arguments; the other,
+ * `answer_dialogue`, demands a `responseKey` only the author can choose, so writing it would be the compiler deciding
+ * what the player said.
+ *
+ * The refusal survives for the one shape this compiler cannot fix: no published action it could write (an older Mod, or a
+ * vocabulary that stopped advertising the id), or a published one that now demands an argument nobody here can supply.
+ * Then the author is told what she was told before - `dismiss_first=<id>` names the step she has to write.
+ */
+function bodyYieldDismissal(
+  previousNode: PlanNode | undefined,
+  action: PublishedPlanAction,
+  actions: readonly PublishedPlanAction[],
+  requirement: PlanArgumentRequirement,
+  state: PlanScriptState,
+): PlanBodyYieldDismissal | null {
+  if (previousNode === undefined) return null;
+  if (!BODY_YIELDING_PLAN_ACTION_IDS.includes(previousNode.actionId)) return null;
+  if (MODAL_CLEARING_PLAN_ACTION_IDS.includes(action.actionId)) return null;
+  const dismissalId = MODAL_CLEARING_PLAN_ACTION_IDS[0]!;
+  const published = actions.find((candidate) => candidate.actionId === dismissalId);
+  if (published === undefined || published.arguments.length > 0)
+    rejectPlanCall(
+      `plan_script_action_after_body_yield:${action.actionId}:${previousNode.actionId}:dismiss_first=${dismissalId}`,
+      state,
+      requirement,
+    );
+  return Object.freeze({ actionId: dismissalId, afterNodeId: previousNode.nodeId });
+}
+
+/**
+ * The dismissal node itself: no arguments, ordered after the step that yielded the body, consuming nothing.
+ *
+ * `dependsOn` stays empty for the same reason the walk's does - if the dialogue never opened, the dismissal is attempted
+ * and refused by its own gate, which names that nothing was open, where a skip names nothing.
+ */
+function bodyYieldDismissalNode(nodeId: string, dismissal: PlanBodyYieldDismissal): PlanNode {
+  return Object.freeze({
+    nodeId,
+    actionId: dismissal.actionId,
+    arguments: Object.freeze({}),
+    dependsOn: Object.freeze([]),
+    orderedAfter: Object.freeze([dismissal.afterNodeId]),
+    bindings: Object.freeze({}),
+  });
 }
 
 /**
@@ -1772,12 +1889,14 @@ function planProducerOnTile(state: PlanScriptState, tile: string): string | unde
  * Nothing is prepended when the node immediately before already walks to that same tile: the author wrote the walk and
  * a second one would be a no-op submission. The id is `auto_walk_<position>` rather than `n<position>` so a journal
  * reader can tell which plan node the compiler wrote, while the author's own nodes keep the order, arguments and
- * relative position its script gave them.
+ * relative position its script gave them. The position is passed in rather than derived here, because the dismissal
+ * written after a body-yielding step occupies a position too and the whole program is numbered once.
  */
 function transitionApproachNode(
   action: PublishedPlanAction,
   canonical: Readonly<Record<string, PlanArgument>>,
   state: PlanScriptState,
+  nodeId: string,
 ): PlanNode | null {
   if (!TRANSITION_SOURCE_PLAN_ACTION_IDS.includes(action.actionId)) return null;
   const x = canonical.x;
@@ -1798,7 +1917,7 @@ function transitionApproachNode(
   )
     return null;
   return Object.freeze({
-    nodeId: `${PLAN_INSERTED_NODE_PREFIX}${String(state.nodes.length + 1).padStart(2, "0")}`,
+    nodeId,
     actionId: MOVE_TO_TILE_ACTION_ID,
     arguments: Object.freeze({ x: walkX, y: walkY }),
     // A walk consumes nothing: where the body stands is not a piece of world state another step produced (`move_to_tile`

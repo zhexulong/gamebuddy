@@ -5,9 +5,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  BODY_YIELDING_PLAN_ACTION_IDS,
   type CompiledPlan,
   compilePlanScript,
   MAX_PLAN_NODES,
+  MODAL_CLEARING_PLAN_ACTION_IDS,
   type PublishedPlanAction,
   planActionsFromRegistrations,
   planProgramId,
@@ -165,6 +167,42 @@ type PlanNode = Extract<CompiledPlan, { ok: true }>["program"]["nodes"][number];
 function nodesOf(result: CompiledPlan): readonly PlanNode[] {
   if (!result.ok) assert.fail(`expected a plan, received ${result.reasonCode}`);
   return result.program.nodes;
+}
+
+/**
+ * The nodes the compiler wrote into the program, and their population.
+ *
+ * Read through the plan they stand beside, so a test cannot assert an insertion on a compile that produced no program:
+ * without a plan nothing runs and no insertion means anything.
+ */
+function insertionsOf(result: CompiledPlan): Readonly<{ inserted: readonly string[]; count: number }> {
+  if (!result.ok) assert.fail(`expected a plan beside the insertions, received ${result.reasonCode}`);
+  return { inserted: result.inserted, count: result.insertedCount };
+}
+
+/**
+ * One builder call for an action, carrying exactly the arguments the surface declares.
+ *
+ * The VALUES are deliberately plain: the tests that use this are about the SHAPE of the program (which nodes exist, in
+ * what order), never about a target, and every argument's kind is the surface's own declaration - so a filler of the
+ * right kind keeps this helper from becoming a table of actions, which is the thing a gate must not be.
+ */
+function builderCall(actionId: string): string {
+  const supplied = surfaceArguments(actionId).map((argument) => `${argument.name}: ${probeValue(argument)}`);
+  return supplied.length === 0 ? `builder.${actionId}();` : `builder.${actionId}({ ${supplied.join(", ")} });`;
+}
+
+function probeValue(argument: Readonly<{ type: string; enum?: readonly string[] }>): string {
+  switch (argument.type) {
+    case "integer":
+      return "12";
+    case "boolean":
+      return "true";
+    case "destination_selector":
+      return '{ kind: "label", label: "probe" }';
+    default:
+      return JSON.stringify(argument.enum?.[0] ?? "probe");
+  }
 }
 
 const WATER_BY_DOOR = `
@@ -641,29 +679,220 @@ builder.cut_weeds({ x: 12, y: 8, slot: 0, expectedTargetId: "debris_01" });
   ]);
 });
 
-test("a node compiled after talk_to_npc is refused, because the dialogue leaves the body unable to act", () => {
-  // `talk_to_npc` SUCCEEDS and leaves a native `DialogueBox` up with `player.CanMove = false`
-  // (`farmhandexecutioncontroller.npcactions.cs:255`). Every following body-owning node is then refused at run time, so the
-  // plan shape is where the refusal belongs - the same place, and for the same reason, that `sleep` is refused mid-plan.
+/**
+ * ROUND42, the shape that cost the day: the rule is real, and the remedy is mechanical, so the compiler writes it.
+ *
+ * Measured live on day 6: four separate programs were refused
+ * `plan_script_action_after_body_yield:shop_purchase:talk_to_npc:dismiss_first=dismiss_modal` - one per attempt at "talk
+ * to the shopkeeper, then buy seeds" - and not one of them reached the purchase, so no seed was bought in any of those
+ * turns. One published node, in one position nothing else competes for, is not a judgement call the author should have to
+ * remember: it is a step of the program, and this compiler writes the program.
+ */
+test("a step after talk_to_npc gets the dismissal inserted, and the answer says where", () => {
   const result = compile(`
   builder.move_to_tile({ x: 12, y: 8 });
-  builder.talk_to_npc({ x: 13, y: 8, expectedTargetId: "npc_abigail" });
-  builder.move_to_tile({ x: 12, y: 8 });
+  builder.talk_to_npc({ x: 13, y: 8, expectedTargetId: "npc_pierre" });
+  builder.shop_purchase({ expectedTargetId: "shop_pierre", expectedQualifiedItemId: "(O)472", quantity: 1 });
   `);
-  // The refused call is named and the two steps before it still compile: talking to her IS the work the script asked for.
+  const nodes = nodesOf(result);
+  // Her steps, in her order, with nothing moved: the dismissal goes immediately after the dialogue that held the body and
+  // immediately before the step that needs it.
+  assert.deepEqual(
+    nodes.map((node) => [node.nodeId, node.actionId]),
+    [
+      ["n01", "move_to_tile"],
+      ["n02", "talk_to_npc"],
+      ["auto_dismiss_03", "dismiss_modal"],
+      ["n04", "shop_purchase"],
+    ],
+  );
+  // The body was held, nothing was consumed: the dismissal waits for the dialogue and the purchase waits for the
+  // dismissal - which is also what makes the pair legal for the Mod's ordering rule (every action claims `embodied_actor`).
+  assert.deepEqual(
+    nodes.map((node) => node.dependsOn),
+    [[], [], [], []],
+  );
+  assert.deepEqual(
+    nodes.map((node) => node.orderedAfter ?? []),
+    [[], ["n01"], ["n02"], ["auto_dismiss_03"]],
+  );
+  assert.deepEqual(nodes[2]!.arguments, {}, "the compiler invents no argument the author did not choose");
+  // The answer states that the program is not exactly the script, and where.
+  assert.deepEqual(insertionsOf(result).inserted, ["inserted=dismiss_modal;before=n04"]);
+  assert.equal(insertionsOf(result).count, 1);
+  assert.deepEqual(rejectionsOf(result), [], "nothing was refused");
+  // And what the Mod receives is a request its own validator accepts.
+  assert.equal(validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }), null);
+});
+
+test("a plan whose steps never hold the body gets no dismissal inserted", () => {
+  const result = compile(`
+  builder.move_to_tile({ x: 12, y: 8 });
+  builder.water_crop({ x: 12, y: 8, expectedTargetId: "crop_01" });
+  `);
   assert.deepEqual(
     nodesOf(result).map((node) => node.actionId),
-    ["move_to_tile", "talk_to_npc"],
+    ["move_to_tile", "water_crop"],
+  );
+  assert.deepEqual(insertionsOf(result).inserted, []);
+  assert.equal(insertionsOf(result).count, 0);
+});
+
+/**
+ * The author who already wrote the step keeps HER program: an insertion is a repair, never a policy.
+ *
+ * Both body-clearing actions, read from the declaration instead of re-listed here: whichever one she wrote, the compiler
+ * must see that the body is already free and leave the node list alone.
+ */
+test("a body-clearing step the author wrote herself is not inserted twice", () => {
+  assert.ok(MODAL_CLEARING_PLAN_ACTION_IDS.length > 0, "the clearing declaration names at least one action");
+  for (const clearingActionId of MODAL_CLEARING_PLAN_ACTION_IDS) {
+    const result = compile(`
+    builder.talk_to_npc({ x: 13, y: 8, expectedTargetId: "npc_pierre" });
+    ${builderCall(clearingActionId)}
+    builder.move_to_tile({ x: 12, y: 8 });
+    `);
+    assert.deepEqual(
+      nodesOf(result).map((node) => node.actionId),
+      ["talk_to_npc", clearingActionId, "move_to_tile"],
+      `${clearingActionId} already gives the body back, so no second dismissal is written after it`,
+    );
+    assert.deepEqual(insertionsOf(result).inserted, [], `${clearingActionId}: nothing was inserted`);
+  }
+});
+
+/**
+ * THE INSERTION IS A PROPERTY OF THE DECLARATION, NOT OF TWO ACTION IDS.
+ *
+ * Both halves read the product's own declarations and neither re-lists them: the yielding set is the exported declaration
+ * `emitPlanNode` itself checks, and the population is every action the builder generates. The property is the pair rule -
+ * a dismissal appears if and only if the step before it is in the yielding set - so an action that starts holding the body,
+ * or stops, moves this gate instead of escaping it.
+ *
+ * The population is printed in every failure message and a zero population FAILS, because a check that examines nothing
+ * agrees with itself.
+ */
+test("the dismissal is inserted for exactly the actions the declaration calls body-yielding", () => {
+  assert.ok(BODY_YIELDING_PLAN_ACTION_IDS.length > 0, "the yielding declaration names at least one action");
+  assert.ok(ACTIONS.length > 20, `the vocabulary is a real population, not ${ACTIONS.length} actions`);
+  const insertedFor: string[] = [];
+  for (const action of ACTIONS) {
+    const result = compile(`${builderCall(action.actionId)}\nbuilder.move_to_tile({ x: 11, y: 10 });`);
+    const insertions = insertionsOf(result).inserted;
+    const dismissals = insertions.filter((entry) => entry.includes(`=${MODAL_CLEARING_PLAN_ACTION_IDS[0]};`));
+    const yielding = BODY_YIELDING_PLAN_ACTION_IDS.includes(action.actionId);
+    assert.equal(
+      dismissals.length,
+      yielding ? 1 : 0,
+      `${action.actionId}: yielding=${yielding}, insertions=${JSON.stringify(insertions)} ` +
+        `(examined ${insertedFor.length + 1} of ${ACTIONS.length} actions; ${insertedFor.length} of the ones before it inserted)`,
+    );
+    if (!yielding) continue;
+    insertedFor.push(action.actionId);
+    assert.deepEqual(
+      nodesOf(result)
+        .map((node) => node.actionId)
+        .slice(0, 2),
+      [action.actionId, MODAL_CLEARING_PLAN_ACTION_IDS[0]],
+      `${action.actionId} holds the body, so the dismissal stands between it and the next step`,
+    );
+  }
+  assert.ok(insertedFor.length > 0, "the population of insertions was not empty");
+});
+
+/**
+ * THE REFUSAL SURVIVES FOR THE ONE THING THIS COMPILER CANNOT FIX, and keeps its name.
+ *
+ * When the vocabulary it was handed publishes no body-clearing action, there is nothing to insert: a node naming an id the
+ * attached Mod does not advertise would be refused by the wire with a code that names nothing the author can add. Then she
+ * is told exactly what she was told before.
+ */
+test("with no published dismissal to write, the refusal keeps its name", () => {
+  const withoutDismissal = ACTIONS.filter((action) => action.actionId !== MODAL_CLEARING_PLAN_ACTION_IDS[0]);
+  const result = compilePlanScript(
+    {
+      script:
+        'builder.talk_to_npc({ x: 13, y: 8, expectedTargetId: "npc_pierre" });\n' +
+        "builder.move_to_tile({ x: 12, y: 8 });",
+    },
+    { snapshot: snapshot(), actions: withoutDismissal },
   );
   assert.deepEqual(rejectionsOf(result), [
     {
-      call: 3,
+      call: 2,
       actionId: "move_to_tile",
-      reasonCode: "plan_script_action_after_body_yield:move_to_tile:talk_to_npc:dismiss_first=dismiss_modal",
+      reasonCode: `plan_script_action_after_body_yield:move_to_tile:talk_to_npc:dismiss_first=${MODAL_CLEARING_PLAN_ACTION_IDS[0]}`,
     },
   ]);
 });
 
+/**
+ * NO PAIR IS A DEAD END: every body-yielding action followed by every other action either compiles, or is refused with a
+ * remedy that this same compiler accepts when the remedy is applied mechanically.
+ *
+ * <p>
+ * This is the assertion the round42 run paid for. A refusal is a PROMISE - "write this step and the program runs" - and a
+ * promise the compiler does not honour costs a turn in which nothing happens, which is how four programs died on
+ * `talk_to_npc` + `shop_purchase` without buying a seed. The remedy is applied the only mechanical way it can be: the
+ * action id the refusal names, inserted between the two steps. A pair whose remedy does not compile is a dead end and is
+ * listed by name.
+ * </p>
+ * <p>
+ * A pair the compiler never finished measuring - `plan_script_timeout`, the compile's own 50 ms budget expiring while the
+ * machine is busy - is NOT a dead end: it is not measured, and it is counted as such rather than passing silently. Every
+ * pair is retried once before it is written off, so one busy moment does not decide the verdict.
+ * </p>
+ */
+test("every body-yielding pair either compiles or names a remedy that fixes it", () => {
+  assert.ok(BODY_YIELDING_PLAN_ACTION_IDS.length > 0, "the yielding declaration names at least one action");
+  const pairs = BODY_YIELDING_PLAN_ACTION_IDS.flatMap((yieldingId) =>
+    ACTIONS.filter((action) => action.actionId !== yieldingId).map((action) => [yieldingId, action.actionId] as const),
+  );
+  assert.ok(pairs.length > 20, `the pair population is a real population, not ${pairs.length} pairs`);
+  // The budget is wall-clock, so a compile can expire on a loaded machine. A timed-out compile is retried once and, if it
+  // still expires, counted as NOT MEASURED rather than read as a verdict about the pair.
+  const measured = (script: string): CompiledPlan | null => {
+    const first = compile(script);
+    if (first.ok || !first.reasonCode.startsWith("plan_script_timeout")) return first;
+    const second = compile(script);
+    return second.ok || !second.reasonCode.startsWith("plan_script_timeout") ? second : null;
+  };
+  const deadEnds: string[] = [];
+  const notMeasured: string[] = [];
+  let asWritten = 0;
+  let repaired = 0;
+  for (const [yieldingId, dependentId] of pairs) {
+    const pair = measured(`${builderCall(yieldingId)}\n${builderCall(dependentId)}`);
+    if (pair === null) {
+      notMeasured.push(`${yieldingId}->${dependentId}`);
+      continue;
+    }
+    if (pair.ok) {
+      asWritten += 1;
+      continue;
+    }
+    const named = /dismiss_first=([a-z0-9_]+)/u.exec(pair.reasonCode)?.[1];
+    if (named === undefined) {
+      deadEnds.push(`${yieldingId}->${dependentId}: refused with no remedy (${pair.reasonCode})`);
+      continue;
+    }
+    const remedy = measured(`${builderCall(yieldingId)}\n${builderCall(named)}\n${builderCall(dependentId)}`);
+    if (remedy === null) {
+      notMeasured.push(`${yieldingId}->${dependentId}:${named}`);
+      continue;
+    }
+    if (!remedy.ok) {
+      deadEnds.push(`${yieldingId}->${dependentId}: remedy ${named} does not compile (${remedy.reasonCode})`);
+      continue;
+    }
+    repaired += 1;
+  }
+  const population =
+    `${pairs.length} pairs, ${pairs.length - notMeasured.length} measured (${asWritten} compiled as written, ${repaired} ` +
+    `only after the named remedy), ${notMeasured.length} not measured`;
+  assert.ok(pairs.length - notMeasured.length > 0, `no pair was measured: ${population}`);
+  assert.deepEqual(deadEnds, [], `${deadEnds.length} dead ends of ${population}:\n${deadEnds.join("\n")}`);
+});
 test("a modal-clearing step is what makes a continuation legal after talk_to_npc", () => {
   // The primitive was never missing: `dismiss_modal` closes an informational DialogueBox
   // (`farmhandexecutioncontroller.modalactions.cs:129-131`). So "talk, then carry on" has a correct shape, and the plan rule
