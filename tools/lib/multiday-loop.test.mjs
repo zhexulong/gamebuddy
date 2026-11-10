@@ -6,8 +6,9 @@ import test from "node:test";
 
 import { assessMultiDayBaseline } from "./multiday-baseline.mjs";
 import {
-  closeIsEngineCommitted,
   classifyActorHold,
+  closeIsEngineCommitted,
+  crossingsFromEvidence,
   decideHeldMenu,
   readHeldMenu,
   runMultiDayLoop,
@@ -520,4 +521,82 @@ test("a cutscene cannot outrank a calendar that already moved", async () => {
   const outcome = await watchRollover(transitionAfterCrossing, { dayBefore: 6, timeoutMs: 600_000, ...advancing });
   assert.equal(outcome.crossed, true, "the day moved, so the night was crossed - whatever is on screen now");
   assert.equal(outcome.dayAfter, 7);
+});
+
+// THE CROSSINGS ARE THE NIGHTS THAT HAPPENED, NOT THE NIGHTS SOMEBODY WATCHED.
+//
+// Measured 2026-11-10 (round44): three `sleep` receipts reached `day_advanced`, the world published three `day_started`
+// facts, and the artifact said `crossings: 2` because the third night was crossed inside the closing day's turn, after
+// which no watcher runs.
+const receipt = (requestId) => ({ requestId, reasonCode: "day_advanced" });
+const watched = (day) => ({ day, terminal: { state: "succeeded", reasonCode: "day_advanced" }, menus: [] });
+
+test("a night crossed after the watcher stopped still counts, and is named post_watch", () => {
+  const result = crossingsFromEvidence({
+    sleepReceipts: [receipt("r1"), receipt("r2"), receipt("r3")],
+    dayStartedDays: [5, 6, 7],
+    dayRecords: [watched(1), watched(2)],
+    recorded: 2,
+  });
+  assert.equal(result.crossings, 3);
+  assert.equal(result.witness, "sleep_receipts+day_started_facts");
+  assert.deepEqual(result.observed, ["watch", "watch", "post_watch"]);
+  assert.equal(result.watched, 2);
+  assert.equal(result.postWatch, 1);
+  // ALL FOUR NUMBERS, EACH WITH ITS OWN SOURCE, so a reader can see which one was the lie rather than being handed one.
+  assert.deepEqual(
+    result.sources.map((entry) => [entry.name, entry.crossings]),
+    [
+      ["sleep_receipts", 3],
+      ["day_started_facts", 3],
+      ["day_records", 2],
+      ["recorded", 2],
+    ],
+  );
+  assert.equal(result.disagreement, "crossings_disagree:sleep_receipts=3:day_started_facts=3:day_records=2:recorded=2");
+});
+
+test("two evidence sources that disagree produce no number at all, and the disagreement names both", () => {
+  const result = crossingsFromEvidence({
+    sleepReceipts: [receipt("r1"), receipt("r2"), receipt("r3")],
+    dayStartedDays: [5, 6],
+    dayRecords: [watched(1), watched(2)],
+    recorded: 2,
+  });
+  assert.equal(result.crossings, null, "a run that cannot say how many nights it lived has no number");
+  assert.equal(result.witness, null);
+  assert.deepEqual(result.observed, []);
+  assert.match(result.disagreement, /crossings_disagree:sleep_receipts=3:day_started_facts=2/u);
+});
+
+test("a redelivered receipt is the same night, and an unreadable source is not a count of none", () => {
+  const redelivered = crossingsFromEvidence({
+    sleepReceipts: [receipt("r1"), receipt("r1"), receipt("r2")],
+    dayStartedDays: [5, 6],
+    dayRecords: [watched(1), watched(2)],
+    recorded: 2,
+  });
+  assert.equal(redelivered.crossings, 2);
+  assert.equal(redelivered.postWatch, 0);
+  assert.equal(redelivered.disagreement, null);
+
+  // Nothing readable: the artifact's own number is all there is, and it says so rather than reading as evidence.
+  const recordsOnly = crossingsFromEvidence({ recorded: 2 });
+  assert.equal(recordsOnly.crossings, 2);
+  assert.equal(recordsOnly.witness, "recorded");
+  assert.equal(recordsOnly.sources.find((entry) => entry.name === "sleep_receipts").crossings, null);
+  assert.equal(recordsOnly.postWatch, 2, "a crossing nothing watched is post_watch, not watched");
+
+  const nothing = crossingsFromEvidence({});
+  assert.equal(nothing.crossings, null);
+  assert.equal(nothing.witness, null);
+  assert.equal(nothing.disagreement, null, "no source was readable, so nothing disagrees");
+});
+
+test("an empty evidence list is a run that crossed nothing, which is a measurement and not a missing field", () => {
+  const result = crossingsFromEvidence({ sleepReceipts: [], dayStartedDays: [], dayRecords: [], recorded: 0 });
+  assert.equal(result.crossings, 0);
+  assert.deepEqual(result.observed, []);
+  assert.equal(result.postWatch, 0);
+  assert.equal(result.disagreement, null);
 });

@@ -18,6 +18,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
+import { worldDayStartsFromFacts } from "../lib/multiday-baseline.mjs";
+import { crossingsFromEvidence } from "../lib/multiday-loop.mjs";
 import { census, format, formatCensus, reading } from "../lib/reading.mjs";
 
 const LADDER = ".live-runs/game-ladder";
@@ -208,6 +210,85 @@ function mentionedLines({ text, token, source }) {
   });
 }
 
+/**
+ * Every row of the run's own timeline, or `null` with the reason it could not be read.
+ *
+ * The timeline is the run's record of every fact it received, and it is the one file where both halves of a crossing
+ * live: the Mod's `execution_receipt` for the night that ended, and the world's own `day_started` fact for the day it
+ * opened. A single unparsable line refuses the whole file rather than half-reading it, and `null` is "not measured" -
+ * never zero nights, which is a fact about a run that crossed nothing.
+ */
+function readTimeline(runDir) {
+  const path = join(runDir, "timeline.jsonl");
+  if (!existsSync(path))
+    return {
+      path: null,
+      rows: null,
+      why: "this run has no timeline.jsonl, so neither its receipts nor its facts were read",
+    };
+  const rows = [];
+  for (const line of readFileSync(path, "utf8").split(/\r?\n/u)) {
+    if (line.trim().length === 0) continue;
+    try {
+      rows.push(JSON.parse(line));
+    } catch {
+      return {
+        path,
+        rows: null,
+        why: "timeline.jsonl holds a line that is not JSON, so it was refused rather than half-read",
+      };
+    }
+  }
+  return { path, rows, why: null };
+}
+
+/**
+ * The run's crossings from its own evidence, beside the four numbers that produced them.
+ *
+ * The rule itself lives in `multiday-loop.mjs` (`crossingsFromEvidence`), beside the loop whose closed night it counts:
+ * this function only reads the files and renders what came back. A reader must be able to see WHY the number is not the
+ * one the artifact published, so every source prints with its own file and the disagreement prints with all of them.
+ */
+function crossingsBlock(runDir, result) {
+  const timeline = readTimeline(runDir);
+  const multiday = result.multiday ?? null;
+  const derivation = crossingsFromEvidence({
+    sleepReceipts: timeline.rows === null ? null : timeline.rows.filter((row) => row?.type === "execution_receipt"),
+    dayStartedDays: timeline.rows === null ? null : worldDayStartsFromFacts(timeline.rows),
+    dayRecords: Array.isArray(multiday?.dayRecords) ? multiday.dayRecords : null,
+    recorded: typeof multiday?.crossings === "number" ? multiday.crossings : null,
+  });
+  return { timelinePath: timeline.path, timelineWhy: timeline.why, derivation };
+}
+
+function crossingsLines({ timelineWhy, derivation }) {
+  const label = (name) => `${name.padEnd(19)}`;
+  const statusLabel = (name) => `    ${name.padEnd(18)}`;
+  const lines = [];
+  const push = (line) => lines.push(line);
+  push(
+    derivation.crossings === null
+      ? `${label("nights")} crossings not_decided: the evidence sources disagree, so this verdict states all of them rather than picking one`
+      : `${label("nights")} crossings ${String(derivation.crossings)} by the run's own evidence: ${String(derivation.watched)} watched, ${String(derivation.postWatch)} post_watch  (witness ${String(derivation.witness)})`,
+  );
+  for (const entry of derivation.sources)
+    push(
+      `${statusLabel(entry.name)} ${
+        entry.crossings === null ? "not_measured" : String(entry.crossings)
+      }  <- ${entry.source}`,
+    );
+  if (derivation.observed.length > 0)
+    push(
+      `${statusLabel("observed")} ${derivation.observed.join(", ")}  (a post_watch night was crossed after the watcher stopped, so it was not watched)`,
+    );
+  if (timelineWhy !== null) push(`${statusLabel("timeline")} ${timelineWhy}`);
+  if (derivation.disagreement !== null)
+    push(
+      `${statusLabel("DISAGREEMENT")} ${derivation.disagreement}  <- the loop counted the nights it watched and this artifact published that count as the nights it lived`,
+    );
+  return lines;
+}
+
 // 7. EFFICIENCY: the floor this run could have cost, and where the wall clock actually went.
 //
 // The floor is NOT "this run, done faster". It is: given the work that reached a terminal state, and given that one plan
@@ -217,15 +298,23 @@ function mentionedLines({ text, token, source }) {
 // zero there would be indistinguishable from a run that did nothing.
 const PLAN_ANSWER_TOOLS = new Set(["stardew_plan_work", "stardew_submit_action_program"]);
 const PROGRAM_STATUS_TOOL = "stardew_action_program_status";
-// A question is anything the companion asked the WORLD - observe, tiles, shape, look_up, scene, search, catalog - and it
-// is derived as "every stardew tool that is not one of these", so a tool added tomorrow lands in `questions` (whose cost
-// is a real conversation with the player) instead of landing nowhere.
-const NOT_A_QUESTION_TOOLS = new Set([
+// A question is anything the companion asked the WORLD - observe, tiles, shape, look_up, scene, search, catalog.
+//
+// TWO BUCKETS, AND WHY `other` IS GONE. Measured 2026-11-10 (round44): `other` was 117 turns and 919.6 s - 45 % of the
+// wall clock - and it described nothing: 107 of those turns made NO tool call at all (865.4 s, 42.6 %) and 10 were
+// `ctx_reduce` (54.2 s). A bucket that is 45 % of a run is not a residual, it is the answer with its name left out. A
+// turn with no tool call is the model speaking only (and is where the recoverable cost of a fact batch that starts a
+// turn for one line actually lives); a turn that called a bookkeeping tool priced the run's management, not its work.
+// Everything else falls into `questions` (a real conversation with the player), an accepted or refused dispatch, or a
+// poll - so a tool added tomorrow still lands in a named bucket instead of landing nowhere.
+const HOUSEKEEPING_TOOLS = new Set([
   PROGRAM_STATUS_TOOL,
   "stardew_stop_action",
   "stardew_execution_status",
   "stardew_action_program_events",
   "ctx_reduce",
+  "ctx_search",
+  "my_work",
 ]);
 // Walking to a target is how an objective is reached, not an objective of its own: counted as a family it would add one
 // to every run's objective count whatever the companion was asked to do.
@@ -529,6 +618,13 @@ function percentOf(part, whole) {
     : "not_measured";
 }
 
+/** The share a reader compares ACROSS runs, to a tenth: a whole percent hides the difference between 42.6 and 43.4. */
+function shareToATenth(part, whole) {
+  return Number.isFinite(part) && Number.isFinite(whole) && whole > 0
+    ? `${((part / whole) * 100).toFixed(1)}%`
+    : "not_measured";
+}
+
 const seconds = (ms) => (Number.isFinite(ms) ? `${(ms / 1000).toFixed(1)}s` : "not_measured");
 const ratio = (actual, floor) =>
   Number.isFinite(actual) && Number.isFinite(floor) && floor > 0 ? `${(actual / floor).toFixed(1)}x` : "not_measured";
@@ -547,7 +643,9 @@ function isWaitingOnTheGame(turn, gapMs) {
  * BUCKETS SUM TO THE TURN COUNT BY CONSTRUCTION: each assistant turn is attributed once, by its first call (a turn that
  * dispatches and then polls is a dispatch turn - the poll is part of that dispatch's cost). Seconds are attributed one
  * turn per gap from it to the NEXT turn, so `sum(buckets) + silence = measured wall` holds exactly: a gap longer than
- * 3 x T_turn keeps T_turn for the turn itself and gives the remainder to `silence`, which is the stall class.
+ * 3 x T_turn keeps T_turn for the turn itself and gives the remainder to `silence`, which is the stall class. The only
+ * time that can reach no bucket is a stretch bounded by a turn whose timestamp cannot be read, and that is printed as
+ * MISSING rather than absorbed.
  */
 function measureEfficiency({ sessionFile, result, repoRoot }) {
   if (sessionFile === null) return { missing: "no_session" };
@@ -557,7 +655,9 @@ function measureEfficiency({ sessionFile, result, repoRoot }) {
 
   const gaps = turns.map((turn, index) => {
     const nextAtMs = index + 1 < turns.length ? turns[index + 1].atMs : lastEventAtMs;
-    return Number.isFinite(nextAtMs) ? Math.max(0, nextAtMs - turn.atMs) : null;
+    // A turn whose own timestamp cannot be read has no measurable gap on either side of it; `null` says so, and the
+    // accounting line names the seconds that therefore reach no bucket instead of silently folding them into one.
+    return Number.isFinite(nextAtMs) && Number.isFinite(turn.atMs) ? Math.max(0, nextAtMs - turn.atMs) : null;
   });
   const tTurnMs = median(gaps.slice(0, -1)) ?? median(turns.map((turn) => turn.durationMs));
   const firstAtMs = turns[0].atMs;
@@ -614,17 +714,30 @@ function attributeTurns(turns, gaps, tTurnMs) {
     ["questions", { turns: 0, ms: 0 }],
     ["dispatches", { turns: 0, ms: 0 }],
     ["refused_dispatches", { turns: 0, ms: 0 }],
-    ["other", { turns: 0, ms: 0 }],
+    ["housekeeping", { turns: 0, ms: 0 }],
+    ["speech_only", { turns: 0, ms: 0 }],
   ]);
-  const counts = { pollsBeforeDispatch: 0, unansweredTurns: 0, silenceMs: 0, silenceGaps: 0, silenceWaitingMs: 0 };
+  const counts = {
+    pollsBeforeDispatch: 0,
+    unansweredTurns: 0,
+    silenceMs: 0,
+    silenceGaps: 0,
+    silenceWaitingMs: 0,
+    unmeasuredGaps: 0,
+  };
+  // The speech-only turns' own durations, kept so the bucket can print the MEDIAN turn rather than only its total: a
+  // share says where the wall went, a median says what one such turn costs the next run that wants to avoid it.
+  const speechDurations = [];
   let dispatchedSoFar = 0;
   for (let index = 0; index < turns.length; index += 1) {
     const turn = turns[index];
     const first = turn.calls[0] ?? null;
     const bucket = bucketOfTurn(first, () => dispatchedSoFar, counts);
     if (bucket === "dispatches") dispatchedSoFar += 1;
+    if (bucket === "speech_only" && Number.isFinite(turn.durationMs)) speechDurations.push(turn.durationMs);
 
     const gapMs = gaps[index];
+    if (gapMs === null) counts.unmeasuredGaps += 1;
     const ownMs = gapMs === null ? 0 : Math.min(gapMs, gapMs > 3 * tTurnMs ? tTurnMs : gapMs);
     const overMs = gapMs === null ? 0 : Math.max(0, gapMs - ownMs);
     if (overMs > 0) {
@@ -637,6 +750,7 @@ function attributeTurns(turns, gaps, tTurnMs) {
   }
   return {
     buckets: [...buckets.entries()].map(([name, bucket]) => ({ name, ...bucket })),
+    speechOnlyTurnMs: median(speechDurations),
     ...counts,
   };
 }
@@ -644,29 +758,42 @@ function attributeTurns(turns, gaps, tTurnMs) {
 /**
  * Which bucket one turn belongs to.
  *
- * `polls` means polls AFTER a programme was already dispatched. A status call before the first dispatch learns nothing
- * about work in flight, so it lands in `other` and the block says how many.
+ * `polls` means polls AFTER a programme was already dispatched: a status call before the first dispatch learns nothing
+ * about work in flight, so it is a check on the machine (housekeeping) and the block says how many.
+ *
+ * A dispatch whose ANSWER never arrived stays a dispatch: the turn issued one, so its cost is a dispatch's cost, and the
+ * `unanswered` line names it so it is never read as a refusal.
  */
 function bucketOfTurn(first, dispatchedSoFar, counts) {
-  if (first === null) return "other";
+  if (first === null) return "speech_only";
   if (PLAN_ANSWER_TOOLS.has(first.name)) {
     const answer = first.answer?.payload ?? null;
     if (answer === null || typeof answer.accepted !== "boolean") {
       counts.unansweredTurns += 1;
-      return "other";
+      return "dispatches";
     }
     return answer.accepted ? "dispatches" : "refused_dispatches";
   }
   if (first.name === PROGRAM_STATUS_TOOL) {
     if (dispatchedSoFar() > 0) return "polls";
     counts.pollsBeforeDispatch += 1;
-    return "other";
+    return "housekeeping";
   }
-  if (NOT_A_QUESTION_TOOLS.has(first.name)) return "other";
-  return first.name.startsWith("stardew_") ? "questions" : "other";
+  if (HOUSEKEEPING_TOOLS.has(first.name)) return "housekeeping";
+  return first.name.startsWith("stardew_") ? "questions" : "housekeeping";
 }
 
 const notMeasured = (field) => `not_measured (${field})`;
+
+/** The wall clock that reached no bucket at all: positive when seconds are missing, negative on the impossible side. */
+function accountingMissingMs(report) {
+  if (report.wallMs === null) return 0;
+  const measured = report.buckets.reduce((total, bucket) => total + bucket.ms, 0) + report.silenceMs;
+  return report.wallMs - measured;
+}
+
+/** Below this the two sides of the accounting are the same number read twice; above it, one of them is wrong. */
+const ACCOUNTING_TOLERANCE_MS = 1000;
 
 function efficiencyLines(options) {
   const report = measureEfficiency(options);
@@ -681,13 +808,17 @@ function efficiencyLines(options) {
       `efficiency          not_measured (session ${report.sessionFile})`,
       "  field             session assistant messages - the record holds none, so there is no turn to price",
     ];
+  // A BLOCK WHOSE BUCKETS DO NOT ADD UP MUST FAIL, not print shares that are fractions of different wholes. The
+  // verdict's job here is arithmetic, so a wall clock with seconds in no bucket is a defect in this report rather than a
+  // reading of the run, and it exits non-zero after printing the seconds it could not place.
+  if (Math.abs(accountingMissingMs(report)) >= ACCOUNTING_TOLERANCE_MS) process.exitCode = 1;
   return formatEfficiency(report);
 }
 
 function formatEfficiency(report) {
   const { work, succeeded, families, playerTasks, objectives } = report;
   const label = (name) => `${name.padEnd(19)}`;
-  const statusLabel = (name) => `    ${name.padEnd(17)}`;
+  const statusLabel = (name) => `    ${name.padEnd(18)}`;
   const shares = (ms) => percentOf(ms, report.wallMs);
   const crossCheckAgrees =
     report.crossCheck.turnWalk === report.crossCheck.parse && report.crossCheck.parse === report.crossCheck.answers;
@@ -754,18 +885,33 @@ function formatEfficiency(report) {
   push(
     `${statusLabel("silence")} ${String(0).padStart(4)}  ${seconds(report.silenceMs).padStart(8)}  ${shares(report.silenceMs)}${silenceNote(report)}`,
   );
+  const missingMs = accountingMissingMs(report);
   push(
     `  ${label("accounting")} ${totalBucketTurns} bucket turns ${totalBucketTurns === report.turns ? "=" : "!="} ${report.turns} measured | ${seconds(
       measuredMs,
-    )} bucket seconds ${report.wallMs !== null && Math.abs(measuredMs - report.wallMs) < 1000 ? "=" : "!="} ${seconds(report.wallMs)} wall`,
+    )} bucket seconds ${Math.abs(missingMs) < ACCOUNTING_TOLERANCE_MS ? "=" : "!="} ${seconds(report.wallMs)} wall,${
+      Math.abs(missingMs) < ACCOUNTING_TOLERANCE_MS
+        ? " nothing unaccounted"
+        : ` ${missingMs > 0 ? "MISSING" : "SURPLUS"} ${seconds(Math.abs(missingMs))} in no bucket`
+    }`,
+  );
+  if (Math.abs(missingMs) >= ACCOUNTING_TOLERANCE_MS)
+    push(
+      `  ${label("ACCOUNTING FAILURE")} ${seconds(Math.abs(missingMs))} of the ${seconds(report.wallMs)} wall reaches no bucket (${String(
+        report.unmeasuredGaps,
+      )} turn(s) with no readable timestamp): the buckets do not add up, so no share here can be read`,
+    );
+  const speech = report.buckets.find((bucket) => bucket.name === "speech_only") ?? { turns: 0, ms: 0 };
+  push(
+    `  ${label("speech_only_share")} ${shareToATenth(speech.ms, report.wallMs)} of the wall in ${String(speech.turns)} turn(s) that made no tool call, median turn ${seconds(report.speechOnlyTurnMs)} - the largest recoverable cost is not polling, it is how often a fact batch starts a turn that produces only words`,
   );
   if (report.unansweredTurns > 0 || report.crossCheck.parse !== report.crossCheck.answers)
     push(
-      `  ${label("unanswered")} ${report.crossCheck.parse - report.crossCheck.answers} answered call(s) are missing and ${report.unansweredTurns} turn(s) received no answer at all - counted as other, not as refusals`,
+      `  ${label("unanswered")} ${report.crossCheck.parse - report.crossCheck.answers} answered call(s) are missing and ${report.unansweredTurns} turn(s) received no answer at all - priced as dispatches, not as refusals`,
     );
   if (report.pollsBeforeDispatch > 0)
     push(
-      `  ${label("")} ${report.pollsBeforeDispatch} status call(s) came before any dispatch, so they are in other rather than polls`,
+      `  ${label("")} ${report.pollsBeforeDispatch} status call(s) came before any dispatch, so they are in housekeeping rather than polls`,
     );
   push(`  ${label("cross-check")} ${crossCheckText(report.crossCheck, crossCheckAgrees)}`);
   push(`  ${label("reading")} ${readingText(report, largest)}`);
@@ -812,10 +958,17 @@ function readingText(report, largest) {
     report.floorWallMs === null
       ? " (wall not_measured: no native time reached this run)"
       : ` (${seconds(report.floorWallMs)})`;
+  const speech = report.buckets.find((bucket) => bucket.name === "speech_only") ?? { turns: 0, ms: 0 };
+  // THE SECOND LARGEST RECOVERABLE COST, SAID OUT LOUD. Polling was the leading suspect and it is 1 % of this run;
+  // speech-only turns are the number to beat, so the reading names them rather than leaving the reader to subtract.
+  const recoverable =
+    speech.turns === 0
+      ? ""
+      : `; speech_only is ${shareToATenth(speech.ms, report.wallMs)} of the wall, so the largest recoverable cost is not polling but how often a fact batch starts a turn that produces only words`;
   return `with the same work at ${width} nodes per plan and zero polls, this run would have cost ${turns}${wall}, ${ratio(
     report.wallMs,
     report.floorWallMs,
-  )} less wall clock; the largest single bucket was ${largest.name} at ${seconds(largest.ms)} (${percentOf(largest.ms, report.wallMs)})`;
+  )} less wall clock; the largest single bucket was ${largest.name} at ${seconds(largest.ms)} (${percentOf(largest.ms, report.wallMs)})${recoverable}`;
 }
 
 const rows = [];
@@ -966,6 +1119,17 @@ record(
 // 4. Night attribution, from the harness's own assessment.
 const assessment = result.multiday?.assessment ?? result.assessment ?? null;
 const dayRecords = result.multiday?.dayRecords ?? result.dayRecords ?? [];
+// THE CROSSINGS, FROM THE EVIDENCE RATHER THAN FROM THE NIGHTS THAT WERE WATCHED.
+//
+// Measured 2026-11-10 (round44): three `sleep` receipts reached `day_advanced`, the world published three
+// `day_started` facts, and the artifact said `crossings: 2` because the third night was crossed inside the CLOSING
+// day's turn, after which no watcher runs. The count was named for the nights that happened and counted the nights
+// somebody watched, so this row and the block below it state both, and name the crossing nobody watched.
+const crossings = crossingsBlock(runDir, result);
+const crossingsText =
+  crossings.derivation.crossings === null
+    ? "crossed=not_decided (the evidence sources disagree: see the nights block)"
+    : `crossed=${String(crossings.derivation.crossings)} (evidence: ${String(crossings.derivation.watched)} watched, ${String(crossings.derivation.postWatch)} post_watch)`;
 // A night that was never crossed has no mechanism to judge, so "no violation" is not a pass - it is the absence of
 // evidence. Measured 2026-11-01 on `round20`: `crossed=0, nightsNull=1` reported PASS, which is a green tick over a run
 // that never reached the thing this criterion exists to check. `nightsNull` is not the signal either: it counts days whose
@@ -982,8 +1146,8 @@ record(
     ? "no assessment in result.json"
     : nightsJudged === 0
       ? `no night was crossed, so there is no mechanism to judge (daysCrossed=0, days recorded=${dayRecords.length})`
-      : `crossed=${assessment.daysCrossed} passOut=${assessment.passOutNights} unobserved=${assessment.unobservedNights ?? "n/a"}`,
-  resultPath,
+      : `${crossingsText} passOut=${assessment.passOutNights} unobserved=${assessment.unobservedNights ?? "n/a"}`,
+  crossings.timelinePath === null ? resultPath : `${resultPath} + ${crossings.timelinePath}`,
 );
 
 // 5. Same-map villager coordinates in the rendered prompt. Same record, same reason: `本图可去: Shane(72,18)` exists
@@ -1032,4 +1196,5 @@ process.stdout.write(`run   ${runDir}\n`);
 process.stdout.write(`state ${result.state ?? "?"}  verdict ${result.sessionVerdict ?? "?"}\n\n`);
 for (const row of rows)
   process.stdout.write(`${row.name.padEnd(width)}  ${row.verdict.padEnd(14)} ${row.detail}\n    <- ${row.source}\n`);
+process.stdout.write(`\n${crossingsLines(crossings).join("\n")}\n`);
 process.stdout.write(`\n${efficiency.join("\n")}\n`);

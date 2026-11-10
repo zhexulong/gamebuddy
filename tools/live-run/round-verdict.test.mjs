@@ -20,7 +20,9 @@ const SESSION_RELATIVE = ["runtime-root", "contexts", "ctx-1", "surface-sessions
 
 const assistantTurn = (atMs, calls) => ({
   type: "message",
-  timestamp: iso(atMs),
+  // A turn whose timestamp cannot be read is a real shape (a killed run), and it is the one case where the bucket
+  // seconds cannot add up to the measured wall - so the fixture has to be able to write one.
+  timestamp: typeof atMs === "string" ? atMs : iso(atMs),
   message: {
     role: "assistant",
     durationMs: 1000,
@@ -103,7 +105,7 @@ function sessionFile({ steps, stepMs = 2000, answered = () => true }) {
   const at = (index) => START + (index + 1) * stepMs;
   entries.push(playerTask(START + 500, "门前横着开一条长地，三格宽、二十格长，清出来种上。"));
   steps.forEach((step, index) => {
-    entries.push(assistantTurn(at(index), step.calls));
+    entries.push(assistantTurn(step.timestamp ?? at(index), step.calls));
     for (const call of step.calls) {
       if (call.answer === undefined || !answered(index, call)) continue;
       const text = typeof call.answer === "string" ? call.answer : JSON.stringify(call.answer);
@@ -113,12 +115,17 @@ function sessionFile({ steps, stepMs = 2000, answered = () => true }) {
   return `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
 }
 
-function writeRun({ root, session, withResult, record = RECORD }) {
+function writeRun({ root, session, withResult, record = RECORD, multiday = null, timeline = null }) {
   const runDir = join(root, "run");
   mkdirSync(runDir, { recursive: true });
   writeFileSync(join(runDir, "launch.json"), JSON.stringify({ schema: "gamebuddy-live-run-launch/v1" }));
   if (withResult === true)
-    writeFileSync(join(runDir, "result.json"), JSON.stringify({ state: "blocked", toolTiming: { record } }));
+    writeFileSync(
+      join(runDir, "result.json"),
+      JSON.stringify({ state: "blocked", toolTiming: { record }, ...(multiday === null ? {} : { multiday }) }),
+    );
+  if (timeline !== null)
+    writeFileSync(join(runDir, "timeline.jsonl"), `${timeline.map((row) => JSON.stringify(row)).join("\n")}\n`);
   if (session !== null) {
     const path = join(runDir, ...SESSION_RELATIVE);
     mkdirSync(join(path, ".."), { recursive: true });
@@ -127,15 +134,19 @@ function writeRun({ root, session, withResult, record = RECORD }) {
   return runDir;
 }
 
-function runVerdict(runDir, { cwd = REPO, extraArgs = [] } = {}) {
+function verdictProcess(runDir, { cwd = REPO, extraArgs = [] } = {}) {
   const appData = join(runDir, "..", "appdata");
   mkdirSync(appData, { recursive: true });
-  const result = spawnSync(process.execPath, [VERDICT, runDir, ...extraArgs], {
+  return spawnSync(process.execPath, [VERDICT, runDir, ...extraArgs], {
     cwd,
     encoding: "utf8",
     env: { ...process.env, APPDATA: appData },
     maxBuffer: 32 * 1024 * 1024,
   });
+}
+
+function runVerdict(runDir, options = {}) {
+  const result = verdictProcess(runDir, options);
   const output = `${result.stdout}${result.stderr}`;
   assert.notEqual(result.status, 2, `the verdict refused the run directory:\n${output}`);
   return output;
@@ -196,7 +207,16 @@ test("the status-call count is read twice and the two readings are asserted to a
       assert.equal(bucketTurns(block, "questions"), 1);
       assert.equal(bucketTurns(block, "dispatches"), 1);
       assert.equal(bucketTurns(block, "refused_dispatches"), 1);
-      assert.equal(bucketTurns(block, "other"), 1);
+      assert.equal(
+        bucketTurns(block, "housekeeping"),
+        1,
+        "a stop_action turn priced the run's bookkeeping, not a residual bucket",
+      );
+      assert.doesNotMatch(
+        block,
+        /^ {4}other\b/mu,
+        "there is no residual bucket: every turn lands in one that names what it did",
+      );
       assert.match(block, /accounting\s+6 bucket turns = 6 measured/u);
       assert.match(block, /actions_done\s+4 nodes reached `succeeded` of 4 with a known state/u);
       assert.match(block, /objectives_done\s+2 = 1 declared player task\(s\)[^+]*\+ 1 target families \(till_soil\)/u);
@@ -297,7 +317,7 @@ test("a stopped run prints the buckets it can measure and not_measured for what 
     }),
     (runDir) => {
       const block = efficiencyBlock(runVerdict(runDir));
-      assert.match(block, /dispatches {11}1 /u);
+      assert.match(block, /dispatches\s+1 /u);
       assert.match(block, /questions\s+1\s/u);
       assert.match(
         block,
@@ -329,3 +349,127 @@ test("the declared cap is read from the file that enforces it, and named when it
       );
     },
   ));
+
+// THE CROSSINGS NUMBER. The loop counted the nights it watched and the artifact published that count as the nights the
+// run lived; these fixtures are the shapes that difference takes, and the evidence that answers it.
+const sleepReceipt = (atMs, requestId) => ({
+  type: "execution_receipt",
+  atMs,
+  reasonCode: "day_advanced",
+  requestId,
+  evidence: { detail: "state=passed;reason=day_advanced;entered_via=native_sleep_prompt;day_before=4;day_after=5" },
+});
+const dayStartedFact = (day) => ({
+  type: "world_fact",
+  worldFactKind: "day_started",
+  worldFactPayload: { eventId: `day_started_day_${String(day)}` },
+});
+const watchedNight = (day) => ({
+  day,
+  terminal: { state: "succeeded", reasonCode: "day_advanced" },
+  after: { dayOfMonth: 5 },
+  menus: [],
+});
+const twoTurns = () => sessionFile({ steps: [{ calls: [observeCall("c1")] }, { calls: [] }] });
+
+test("a night crossed after the watcher stopped is counted, named post_watch beside all four numbers", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: twoTurns(),
+      multiday: {
+        crossings: 2,
+        dayRecords: [watchedNight(1), watchedNight(2)],
+        assessment: { daysCrossed: 2, passOutNights: 0, unobservedNights: 0 },
+      },
+      timeline: [
+        sleepReceipt(1794310882971, "r1"),
+        sleepReceipt(1794311627708, "r2"),
+        sleepReceipt(1794312231618, "r3"),
+        dayStartedFact(5),
+        dayStartedFact(6),
+        dayStartedFact(7),
+      ],
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(output, /nights\s+crossings 3 by the run's own evidence: 2 watched, 1 post_watch/u);
+      assert.match(output, /sleep_receipts\s+3\s+<- timeline\.jsonl/u);
+      assert.match(output, /day_started_facts\s+3\s+<- timeline\.jsonl/u);
+      assert.match(output, /day_records\s+2\s+<- result\.json multiday\.dayRecords/u);
+      assert.match(output, /recorded\s+2\s+<- result\.json multiday\.crossings/u);
+      assert.match(output, /observed\s+watch, watch, post_watch/u);
+      assert.match(
+        output,
+        /DISAGREEMENT\s+crossings_disagree:sleep_receipts=3:day_started_facts=3:day_records=2:recorded=2/u,
+      );
+      assert.match(output, /4 night mechanism\s+PASS\s+crossed=3 \(evidence: 2 watched, 1 post_watch\)/u);
+      assert.doesNotMatch(output, /crossings 2 by the run's own evidence/u, "the watched count is not the crossings");
+    },
+  ));
+
+test("evidence sources that disagree are printed with all their numbers rather than reconciled into one", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: twoTurns(),
+      multiday: {
+        crossings: 2,
+        dayRecords: [watchedNight(1), watchedNight(2)],
+        assessment: { daysCrossed: 2, passOutNights: 0, unobservedNights: 0 },
+      },
+      timeline: [
+        sleepReceipt(1, "r1"),
+        sleepReceipt(2, "r2"),
+        sleepReceipt(3, "r3"),
+        dayStartedFact(5),
+        dayStartedFact(6),
+      ],
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(output, /nights\s+crossings not_decided/u);
+      assert.match(output, /DISAGREEMENT\s+crossings_disagree:sleep_receipts=3:day_started_facts=2/u);
+      assert.match(output, /4 night mechanism\s+PASS\s+crossed=not_decided/u);
+      assert.doesNotMatch(output, /crossings 3 by the run's own evidence/u, "two evidence sources, no single number");
+    },
+  ));
+
+test("a tool-less turn is speech_only, a plan turn is a dispatch, and no residual bucket holds either", () => {
+  const steps = [];
+  for (let index = 0; index < 20; index += 1) steps.push({ calls: [] });
+  for (let index = 0; index < 20; index += 1) steps.push({ calls: [planCall(`p${index}`, 1, "cut_weeds")] });
+  withFixture(
+    () => ({ withResult: true, session: sessionFile({ steps }) }),
+    (runDir) => {
+      const block = efficiencyBlock(runVerdict(runDir));
+      assert.equal(bucketTurns(block, "speech_only"), 20);
+      assert.equal(bucketTurns(block, "dispatches"), 20);
+      assert.doesNotMatch(block, /^ {4}other\b/mu, "the 45 % bucket that described nothing is gone");
+      assert.match(block, /accounting\s+40 bucket turns = 40 measured/u);
+      assert.match(block, /bucket seconds = \S+ wall, nothing unaccounted/u);
+      assert.match(block, /speech_only_share\s+[\d.]+% of the wall in 20 turn\(s\) that made no tool call/u);
+      assert.match(block, /median turn \d+\.\d+s/u);
+      assert.match(block, /the largest recoverable cost is not polling/u);
+    },
+  );
+});
+
+test("seconds that reach no bucket fail the verdict loudly, naming how many", () => {
+  const steps = [
+    { calls: [observeCall("c1")] },
+    { calls: [observeCall("c2")], timestamp: "not-a-date" },
+    { calls: [observeCall("c3")] },
+  ];
+  withFixture(
+    () => ({ withResult: true, session: sessionFile({ steps }) }),
+    (runDir) => {
+      const result = verdictProcess(runDir);
+      const output = `${result.stdout}${result.stderr}`;
+      assert.equal(result.status, 1, `an unbalanced accounting must exit non-zero:\n${output}`);
+      assert.match(output, /accounting\s+.*MISSING \d+\.\ds in no bucket/u);
+      assert.match(output, /ACCOUNTING FAILURE\s+\d+\.\ds of the \d+\.\ds wall reaches no bucket/u);
+      assert.match(output, /the buckets do not add up, so no share here can be read/u);
+    },
+  );
+});

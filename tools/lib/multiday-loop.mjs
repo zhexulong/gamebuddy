@@ -376,6 +376,133 @@ export async function runMultiDayLoop({ crossNights, dayTurn, nightWatch, onDay 
     completed: dayRecords.length === crossNights,
     dayRecords,
     reasonCode: null,
+    // THE NIGHTS THIS LOOP WATCHED, which is not the same number as the nights the run lived: the closing day above
+    // ends in a night of its own, and by then no watcher is running. `crossingsFromEvidence` is what counts crossings.
     daysCrossed: dayRecords.length,
+  });
+}
+
+/** The Mod's own word for a night that crossed - the reason a `sleep` terminal and the timeline's receipt both carry. */
+const CROSSING_REASON = "day_advanced";
+
+/** One crossing per request: a redelivered terminal is the same night, a second request would be a second night. */
+function distinctRequests(receipts) {
+  const seen = new Set();
+  let unidentified = 0;
+  for (const receipt of receipts) {
+    const requestId = typeof receipt?.requestId === "string" && receipt.requestId.length > 0 ? receipt.requestId : null;
+    if (requestId === null) unidentified += 1;
+    else seen.add(requestId);
+  }
+  return seen.size + unidentified;
+}
+
+/**
+ * The nights a run crossed, from what the run recorded had HAPPENED rather than from the nights a watcher saw.
+ *
+ * WHY THIS IS NOT THE LOOP'S OWN COUNT. Measured 2026-11-10 (round44, `2026-11-10T11-30-16-268Z-multiday_routine`): her
+ * `sleep` reached `state=passed;reason=day_advanced` three times (1794310882971, 1794311627708, 1794312231618), the world
+ * published `day_started_day_5`/`_6`/`_7` once each, and the artifact reported `crossings: 2` - because the third
+ * crossing happened inside the CLOSING day's turn, after which no night watcher runs. The number was labelled with the
+ * nights that happened and counted the nights that were watched, which is the whole defect: two honest numbers, one
+ * false claim.
+ *
+ * FOUR SOURCES, each with its own file and its own sentence:
+ *   - `sleepReceipts`: the timeline's execution receipts whose reason is `day_advanced`, one per request. This is the Mod
+ *     saying a lifecycle crossed a night, and it is the only source that says HOW as well as that it happened;
+ *   - `dayStartedDays`: the world's own `day_started_day_<n>` facts, distinct by day. The crossing witness that cannot
+ *     be hidden by which dispatch channel carried the night;
+ *   - `dayRecords`: the loop's iterations - one per night the watcher saw. It is the WATCH, not the run;
+ *   - `recorded`: the number the artifact published, kept so a reader can see what was claimed.
+ *
+ * `null` is "could not be read" and an empty array is "read, and the run crossed nothing" - the two are never merged,
+ * because a count nobody could read must not be judged as a count of none.
+ *
+ * When the two EVIDENCE sources disagree the crossings are `null`: a run that cannot say how many nights it lived has no
+ * number, and printing either one would be picking. When they agree they are the answer even if the loop's records are
+ * fewer - a crossing discovered after the watcher stopped still counts, and `observed` says `post_watch` for it so nobody
+ * reads it as watched. Every disagreement is named with all the numbers that produced it.
+ */
+export function crossingsFromEvidence({
+  sleepReceipts = null,
+  dayStartedDays = null,
+  dayRecords = null,
+  recorded = null,
+} = {}) {
+  const receiptCrossings =
+    sleepReceipts === null
+      ? null
+      : distinctRequests(
+          (Array.isArray(sleepReceipts) ? sleepReceipts : []).filter(
+            (receipt) => receipt?.reasonCode === CROSSING_REASON,
+          ),
+        );
+  const startedCrossings =
+    dayStartedDays === null
+      ? null
+      : new Set((Array.isArray(dayStartedDays) ? dayStartedDays : []).filter((day) => Number.isInteger(day))).size;
+  const watchedCrossings = Array.isArray(dayRecords) ? dayRecords.length : null;
+  const recordedCrossings = Number.isInteger(recorded) ? recorded : null;
+
+  const sources = Object.freeze([
+    Object.freeze({
+      name: "sleep_receipts",
+      crossings: receiptCrossings,
+      source: "timeline.jsonl execution receipts with reasonCode day_advanced, one per requestId",
+    }),
+    Object.freeze({
+      name: "day_started_facts",
+      crossings: startedCrossings,
+      source: "timeline.jsonl world facts, one per distinct day_started_day_<n>",
+    }),
+    Object.freeze({
+      name: "day_records",
+      crossings: watchedCrossings,
+      source: "result.json multiday.dayRecords - one per night the watcher saw",
+    }),
+    Object.freeze({ name: "recorded", crossings: recordedCrossings, source: "result.json multiday.crossings" }),
+  ]);
+
+  let crossings = null;
+  let witness = null;
+  if (receiptCrossings !== null && startedCrossings !== null && receiptCrossings !== startedCrossings) {
+    // TWO EVIDENCE SOURCES, TWO NUMBERS: the run cannot state one.
+  } else if (receiptCrossings !== null && startedCrossings !== null) {
+    crossings = receiptCrossings;
+    witness = "sleep_receipts+day_started_facts";
+  } else if (receiptCrossings !== null) {
+    crossings = receiptCrossings;
+    witness = "sleep_receipts";
+  } else if (startedCrossings !== null) {
+    crossings = startedCrossings;
+    witness = "day_started_facts";
+  } else if (recordedCrossings !== null) {
+    crossings = recordedCrossings;
+    witness = "recorded";
+  } else if (watchedCrossings !== null) {
+    crossings = watchedCrossings;
+    witness = "day_records";
+  }
+
+  const watched = watchedCrossings ?? 0;
+  const observed =
+    crossings === null
+      ? []
+      : Array.from({ length: crossings }, (_, index) => (index < watched ? "watch" : "post_watch"));
+
+  const readable = sources.filter((entry) => entry.crossings !== null);
+  const disagreement =
+    readable.length > 1 && new Set(readable.map((entry) => entry.crossings)).size > 1
+      ? `crossings_disagree:${readable.map((entry) => `${entry.name}=${String(entry.crossings)}`).join(":")}`
+      : null;
+
+  return Object.freeze({
+    crossings,
+    witness,
+    observed: Object.freeze(observed),
+    watched: observed.filter((entry) => entry === "watch").length,
+    postWatch: observed.filter((entry) => entry === "post_watch").length,
+    sources,
+    disagreement,
   });
 }
