@@ -335,13 +335,19 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
 
         bool occupied = false;
         string kind = FarmhandForEachKindActions.GroundKind;
-        string occupant = "none";
+        // The CONTAINER the thing lives in (the engine's three collections), which a predicate may test, and the OCCUPANT,
+        // which is the engine's own name for the thing itself in the vocabulary `FarmhandActionDescriptor.Clears` is
+        // written in. Two facts, two fields: a tile's `occupant` is what a declaration is read against, and `container` is
+        // where it is stored.
+        string container = "none";
+        string occupant = FarmhandForEachHealing.NoOccupant;
 
         foreach (ResourceClump clump in this.farm.resourceClumps)
         {
             if (clump.Tile != tile) continue;
             occupied = true;
-            occupant = "resourceClump";
+            container = "resourceClump";
+            occupant = StardewBodyController.ClumpOccupant(clump.parentSheetIndex.Value);
             kind = ExecutionManager.TryGetDebrisToolRequirement(clump, out string toolKind, out _)
                 ? ClearableKind.Map("resourceClump", toolKind) ?? FarmhandForEachKindActions.ObjectKind
                 : FarmhandForEachKindActions.ObjectKind;
@@ -351,8 +357,11 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
         if (!occupied && this.farm.objects.TryGetValue(tile, out StardewValley.Object? item) && item is not null)
         {
             occupied = true;
-            occupant = "object";
+            container = "object";
             string detail = item.QualifiedItemId == "(O)2" ? "stone" : item.IsWeeds() ? "weed" : string.Empty;
+            // An object this pass cannot name is `object` - the word the tile query publishes for it - and no declaration
+            // clears that word, so a refused row on such a tile is refused BY NAME instead of guessed at.
+            occupant = detail.Length > 0 ? detail : "object";
             kind = ClearableKind.Map("object", detail) ?? FarmhandForEachKindActions.ObjectKind;
         }
 
@@ -361,22 +370,31 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
             && this.farm.terrainFeatures.TryGetValue(tile, out TerrainFeature? feature)
             && feature is not null)
         {
-            occupant = "terrain";
+            container = "terrain";
             switch (feature)
             {
                 case Grass:
                     occupied = true;
+                    occupant = "grass";
                     kind = ClearableKind.Map("terrain", "grass") ?? FarmhandForEachKindActions.GroundKind;
                     break;
                 case HoeDirt hoed:
                     dirt = hoed;
                     occupied = hoed.crop is not null;
+                    occupant = hoed.crop is null ? FarmhandForEachHealing.NoOccupant : "crop";
                     kind = hoed.crop is null
                         ? FarmhandForEachKindActions.SoilKind
                         : ClearableKind.Map("terrain", "crop") ?? FarmhandForEachKindActions.GroundKind;
                     break;
+                // A TREE is the one terrain feature whose two phases are two different published actions, so the two
+                // words are the two `Clears` occupants those actions declare: a standing tree and its stump.
+                case Tree tree:
+                    occupied = true;
+                    occupant = tree.stump.Value ? "tree_stump" : "tree";
+                    break;
                 default:
                     occupied = true;
+                    occupant = "terrain";
                     break;
             }
         }
@@ -385,12 +403,13 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
         // the Hoe itself reads `Diggable`.
         bool tillable = this.farm.doesTileHaveProperty(x, y, "Diggable", "Back") is not null;
         if (!occupied && dirt is null && tillable) kind = FarmhandForEachKindActions.EmptyTillableKind;
-        if (kind == FarmhandForEachKindActions.SoilKind) occupant = "terrain";
+        if (kind == FarmhandForEachKindActions.SoilKind) container = "terrain";
 
         var fields = new Dictionary<string, FarmhandForEachValue>(StringComparer.Ordinal)
         {
             ["kind"] = FarmhandForEachValue.Of(kind),
-            ["occupant"] = FarmhandForEachValue.Of(occupant),
+            ["container"] = FarmhandForEachValue.Of(container),
+            [FarmhandForEachHealing.OccupantField] = FarmhandForEachValue.Of(occupant),
             ["tillable"] = FarmhandForEachValue.Of(tillable),
             ["hoed"] = FarmhandForEachValue.Of(dirt is not null),
             // `HoeDirt.state` is the engine's own word for it: 0 dry, 1 watered.

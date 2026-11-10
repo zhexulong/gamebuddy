@@ -224,7 +224,7 @@ public sealed class FarmhandForEachExpansionTests
         var handler = new RecordingHandler();
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "plant_seed");
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_1", AreaRows(patch), DispatchTo(router, ledger), () => false);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_1", AreaRows(patch), DispatchTo(router, ledger), () => false, _ => true);
 
         pass.Decided.Should().Be(60, "20 columns by 3 rows is one intent and the measured patch");
         pass.Omitted.Should().Be(0);
@@ -276,7 +276,7 @@ public sealed class FarmhandForEachExpansionTests
             if (handler.Requests.Count == 3) stopRequested = true;
         };
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_stop", AreaRows(patch), DispatchTo(router, ledger), () => stopRequested);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_stop", AreaRows(patch), DispatchTo(router, ledger), () => stopRequested, _ => true);
 
         pass.Stopped.Should().BeTrue();
         pass.Succeeded.Should().Be(3, "the third effect ran to completion before STOP was consulted again");
@@ -301,7 +301,7 @@ public sealed class FarmhandForEachExpansionTests
         var handler = new RecordingHandler(ExecutionState.Running, "in_flight");
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "till_soil");
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_busy", AreaRows(patch), DispatchTo(router, ledger), () => false);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_busy", AreaRows(patch), DispatchTo(router, ledger), () => false, _ => true);
 
         handler.Requests.Should().HaveCount(1, "one native body at a time");
         pass.Deferred.Should().Be(60, "the row that started it and the 59 that must wait for it");
@@ -321,7 +321,7 @@ public sealed class FarmhandForEachExpansionTests
         for (int index = 0; index < 100; index++)
             rows.Add(new FarmhandForEachRow(index, 0, 0, index, Row()));
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_bound", rows, DispatchTo(router, ledger), () => false);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_bound", rows, DispatchTo(router, ledger), () => false, _ => true);
 
         pass.Decided.Should().Be(FarmhandForEachSource.MaximumRows);
         pass.Omitted.Should().Be(100 - FarmhandForEachSource.MaximumRows);
@@ -342,7 +342,7 @@ public sealed class FarmhandForEachExpansionTests
             new(61, 18, 1, 0, Row("rock")),
         };
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_miss", rows, DispatchTo(router, ledger), () => false);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_miss", rows, DispatchTo(router, ledger), () => false, _ => true);
 
         pass.NotMatched.Should().Be(1);
         pass.Targets[0].ReasonCode.Should().Be("no_rule_matched:rock@60,18");
@@ -358,7 +358,7 @@ public sealed class FarmhandForEachExpansionTests
         var handler = new RecordingHandler(ExecutionState.Failed, "no_native_path", "from=60,18;to=60,18;target_enclosed=true");
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "chop_tree");
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_refused", AreaRows(Rect(60, 18, 1, 1)), DispatchTo(router, ledger), () => false);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_refused", AreaRows(Rect(60, 18, 1, 1)), DispatchTo(router, ledger), () => false, _ => true);
 
         pass.Failed.Should().Be(1);
         pass.Targets[0].ReasonCode.Should().Be("no_native_path");
@@ -381,8 +381,8 @@ public sealed class FarmhandForEachExpansionTests
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "till_soil");
         FarmhandForEachDispatch dispatch = DispatchTo(router, ledger);
 
-        FarmhandForEachPassResult first = FarmhandForEachExpansion.Expand(loop, "pass_replay", AreaRows(patch), dispatch, () => false);
-        FarmhandForEachPassResult second = FarmhandForEachExpansion.Expand(loop, "pass_replay", AreaRows(patch), dispatch, () => false);
+        FarmhandForEachPassResult first = FarmhandForEachExpansion.Expand(loop, "pass_replay", AreaRows(patch), dispatch, () => false, _ => true);
+        FarmhandForEachPassResult second = FarmhandForEachExpansion.Expand(loop, "pass_replay", AreaRows(patch), dispatch, () => false, _ => true);
 
         handler.Requests.Should().HaveCount(3, "three rows, three native effects, however many times the pass is entered");
         second.Succeeded.Should().Be(3);
@@ -405,7 +405,7 @@ public sealed class FarmhandForEachExpansionTests
             handler);
         var ledger = new Ledger();
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_throw", AreaRows(Rect(60, 18, 2, 1)), DispatchTo(router, ledger), () => false);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_throw", AreaRows(Rect(60, 18, 2, 1)), DispatchTo(router, ledger), () => false, _ => true);
 
         handler.Calls.Should().Be(2, "each row is its own effect: an unknown result on one tile does not stop the next");
         pass.Failed.Should().Be(2);
@@ -423,7 +423,7 @@ public sealed class FarmhandForEachExpansionTests
         var handler = new RecordingHandler();
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "cut_weeds");
 
-        Action expand = () => FarmhandForEachExpansion.Expand(loop, "pass_invalid", AreaRows(Rect(0, 0, 1, 1)), DispatchTo(router, ledger), () => false);
+        Action expand = () => FarmhandForEachExpansion.Expand(loop, "pass_invalid", AreaRows(Rect(0, 0, 1, 1)), DispatchTo(router, ledger), () => false, _ => true);
 
         expand.Should().Throw<ArgumentException>();
         handler.Requests.Should().BeEmpty();

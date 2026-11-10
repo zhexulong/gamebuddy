@@ -70,7 +70,16 @@ public enum FarmhandForEachTargetOutcome
     Stopped = 7,
 }
 
-/// <summary>One row of a pass, with its own receipt when it produced one.</summary>
+/// <summary>
+/// One row of a pass, with its own receipt when it produced one.
+///
+/// <para>
+/// <see cref="Healed"/> is the one word this record adds to the receipt, and it is set only on a row the pass opened
+/// first: <c>healed=&lt;occupant&gt;:&lt;clearingAction&gt;</c>, in the catalogue's own names for both halves. The row's
+/// <see cref="Outcome"/> and <see cref="ReasonCode"/> are then the REQUESTED action's, because the clearing swing is a
+/// means and not the answer - a reader asking "was the tile tilled" must not be told "a weed was cut".
+/// </para>
+/// </summary>
 public sealed record FarmhandForEachTargetResult(
     int? X,
     int? Y,
@@ -81,7 +90,8 @@ public sealed record FarmhandForEachTargetResult(
     string? ExecutionId,
     ExecutionState? State,
     string? ReasonCode,
-    string? Evidence)
+    string? Evidence,
+    string? Healed = null)
 {
     /// <summary>Where the target is, in the one shape every answer uses - or null when the row carries no tile.</summary>
     public string? Tile => this.X is null || this.Y is null
@@ -115,6 +125,9 @@ public sealed record FarmhandForEachPassResult(
     public int NotMatched => this.Count(FarmhandForEachTargetOutcome.NotMatched);
 
     public int StopObserved => this.Count(FarmhandForEachTargetOutcome.Stopped);
+
+    /// <summary>How many rows the pass opened before working them, derived from the rows like every other count here.</summary>
+    public int Healed => this.Targets.Count(target => target.Healed is not null);
 
     private int Count(FarmhandForEachTargetOutcome outcome) =>
         this.Targets.Count(target => target.Outcome == outcome);
@@ -172,17 +185,23 @@ public static class FarmhandForEachExpansion
     /// <param name="rows">The live rows the source yields, in the source's own order.</param>
     /// <param name="dispatch">The Mod's dispatch seam, once per decided target.</param>
     /// <param name="stopRequested">Whether STOP has arrived; consulted between two effects, never during one.</param>
+    /// <param name="isActionEnabled">
+    /// The live action policy, asked about a CLEARING action the caller never named. It is the same set the row itself is
+    /// checked against, so a heal cannot reach an action the policy disables.
+    /// </param>
     public static FarmhandForEachPassResult Expand(
         FarmhandForEachLoop loop,
         string requestId,
         IEnumerable<FarmhandForEachRow> rows,
         FarmhandForEachDispatch dispatch,
-        Func<bool> stopRequested)
+        Func<bool> stopRequested,
+        Func<string, bool> isActionEnabled)
     {
         ArgumentNullException.ThrowIfNull(loop);
         ArgumentNullException.ThrowIfNull(rows);
         ArgumentNullException.ThrowIfNull(dispatch);
         ArgumentNullException.ThrowIfNull(stopRequested);
+        ArgumentNullException.ThrowIfNull(isActionEnabled);
         if (!loop.IsValid) throw new ArgumentException("The loop is not one this product can run.", nameof(loop));
         if (string.IsNullOrWhiteSpace(requestId)) throw new ArgumentException("A pass needs a request identity.", nameof(requestId));
 
@@ -231,6 +250,13 @@ public static class FarmhandForEachExpansion
             string rowRequestId = RowIdentity(prefix, row, "req");
             string rowExecutionId = RowIdentity(prefix, row, "exec");
             FarmhandForEachTargetResult result = DispatchOne(target, row, rowRequestId, rowExecutionId, dispatch);
+            // A ROW THE TILE REFUSED IS A TILE THE PASS HAS NOT FINISHED WITH. `Refused` is the pass's own pre-dispatch
+            // refusal and `Rejected` is the same fact one layer down - the action's admission declined before any native
+            // effect. Nothing else is healed: a `Failed` row ran and may have written, an `Uncertain` one may have, and a
+            // `Cancelled`/`Invalidated` one was stopped - retrying past any of those would apply a side effect twice.
+            if (result.Outcome == FarmhandForEachTargetOutcome.Refused
+                || (result.Outcome == FarmhandForEachTargetOutcome.Failed && result.State == ExecutionState.Rejected))
+                result = Heal(row, target, prefix, result, isActionEnabled, dispatch, stopRequested, ref stopped);
             targets.Add(result);
             if (result.Outcome == FarmhandForEachTargetOutcome.Deferred) actorBusy = true;
         }
@@ -255,6 +281,79 @@ public static class FarmhandForEachExpansion
             : receipt.State.IsTerminal() ? FarmhandForEachTargetOutcome.Failed
             : FarmhandForEachTargetOutcome.Deferred;
         return Result(row, target, outcome, receipt.ExecutionId, receipt.State, receipt.ReasonCode, receipt.Evidence);
+    }
+
+    /// <summary>
+    /// One refused row's second chance: clear what stands on the tile with the action the CATALOGUE names for it, then
+    /// retry the requested action on the same tile, in the same pass.
+    ///
+    /// <para>
+    /// THE BOUND IS ONE CLEAR AND ONE RETRY. A tile that still refuses after a swing at the thing on it is reported as the
+    /// refusal it is - clearing is not a search, and a pass that kept swinging would be spending the actor's stamina on a
+    /// guess.
+    /// </para>
+    /// <para>
+    /// THE CLEARING SWING IS A NATIVE EFFECT AND STOP IS CONSULTED BEFORE IT, not after: the row's requested action was
+    /// refused without running, so this is the boundary the STOP lands on.
+    /// </para>
+    /// <para>
+    /// A CLEAR THAT DID NOT HAPPEN IS THE ANSWER. Its own receipt (outcome, reason, evidence) is reported verbatim rather
+    /// than being folded into the row's original refusal: the clearing action's admission is the thing that has to be fixed,
+    /// and it names the tool or the argument it needs (`basic_scythe_not_equipped`, `row_argument_missing:slot`).
+    /// </para>
+    /// <para>
+    /// THE RETRY MINTS ITS OWN IDENTITY because the row's first attempt already recorded a receipt against the row's own:
+    /// the router replays by request id, so retrying under the same one would answer with the refusal it is retrying past.
+    /// The identity is still derived from the row, so re-entering the pass replays the clear and the retry in the same order.
+    /// </para>
+    /// </summary>
+    private static FarmhandForEachTargetResult Heal(
+        FarmhandForEachRow row,
+        FarmhandForEachTarget target,
+        string prefix,
+        FarmhandForEachTargetResult refused,
+        Func<string, bool> isActionEnabled,
+        FarmhandForEachDispatch dispatch,
+        Func<bool> stopRequested,
+        ref bool stopped)
+    {
+        FarmhandForEachClearance clearance = FarmhandForEachHealing.ClearanceFor(row.Fields, target.ActionId, isActionEnabled);
+        if (clearance.Outcome == FarmhandForEachClearanceOutcome.KeepRefusal) return refused;
+        if (clearance.Outcome == FarmhandForEachClearanceOutcome.NoPublishedActionClears)
+            return Result(
+                row,
+                target,
+                FarmhandForEachTargetOutcome.Refused,
+                refused.ExecutionId,
+                refused.State,
+                clearance.RefusalReasonCode,
+                refused.Evidence);
+
+        FarmhandClearingOffer clearer = clearance.Clearer!;
+        if (stopRequested())
+        {
+            stopped = true;
+            return Skipped(row, FarmhandForEachTargetOutcome.Stopped, "stopped");
+        }
+        // THE CLEARING ACTION'S OWN ARGUMENTS ARE ITS OWN. The row's `do` scalars belong to the requested action, and
+        // carrying them across would be the pass inventing a call nobody wrote; a clearer that declares an argument this
+        // row cannot supply is refused by name (`row_argument_missing:<argument>`), which is the fact to report.
+        var clearTarget = new FarmhandForEachTarget(clearer.ActionId, row.X, row.Y, null);
+        FarmhandForEachTargetResult cleared = DispatchOne(
+            clearTarget,
+            row,
+            RowIdentity(prefix, row, "clear"),
+            RowIdentity(prefix, row, "clear-exec"),
+            dispatch);
+        if (cleared.Outcome != FarmhandForEachTargetOutcome.Succeeded) return cleared;
+
+        FarmhandForEachTargetResult retried = DispatchOne(
+            target,
+            row,
+            RowIdentity(prefix, row, "req-retry"),
+            RowIdentity(prefix, row, "exec-retry"),
+            dispatch);
+        return retried with { Healed = FarmhandForEachHealing.HealedToken(clearance.Occupant, clearer.ActionId) };
     }
 
     private static FarmhandForEachTargetResult Result(

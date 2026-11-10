@@ -437,6 +437,112 @@ public sealed class ForEachNodeExecutionTests
     }
 
     /// <summary>
+    /// A REFUSED TILE IS OPENED BY THE ACTION ITS OCCUPANT'S OWN DECLARATION NAMES, and the heal reaches the evidence.
+    ///
+    /// <para>
+    /// Measured `round44`: one pass over a strip answered `worked 34 · not_matched 26`, and the tiles it did not work were
+    /// the ones with something standing on them - a pass had one action per row and no way to say "there is a stump here;
+    /// break it and try again". The clearing action is not chosen by this file: it is the one whose `Clears` declaration
+    /// names the occupant the live row published (`stump`), read from the catalogue through the same live policy every row
+    /// is checked against.
+    /// </para>
+    /// <para>
+    /// The two facts the receipt owes are asserted here rather than at the pass's own seam, because a reader of the node
+    /// sees only this: the pass-level `healed` count and the row's own `healed=&lt;occupant&gt;:&lt;clearingAction&gt;`.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ARefusedTileIsOpenedByTheActionItsOccupantDeclaresAndTheHealReachesTheEvidence()
+    {
+        using var harness = ForEachHarness.Create(enabledActions: new[] { "till_soil", "break_resource_clump" });
+        harness.PlaceClump(10, 10, ResourceClump.stumpIndex);
+        bool refused = false;
+        harness.Handler.RefuseWith = request =>
+        {
+            // The tile refuses the hoe until the stump is gone; the clear removes it, and the retry is the same hoe.
+            if (request.Action != "till_soil" || request.Args.X != 10 || refused) return null;
+            refused = true;
+            return "soil_not_diggable:occupied:stump";
+        };
+
+        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":2,\"h\":1}},\"do\":{\"action\":\"till_soil\"}}");
+
+        BodyProgramStatusSnapshot status = harness.Status();
+        status.State.Should().Be(BodyProgramState.Succeeded, harness.Diagnostic);
+        harness.Handler.Requests.Select(request => request.Action).Should().Equal(
+            new[] { "till_soil", "break_resource_clump", "till_soil", "till_soil" },
+            "the hoe was refused, the stump was broken, and the hoe ran on the same tile - then the second tile");
+
+        string evidence = harness.NodeEvidence();
+        evidence.Should().Contain("\"healed\":1", "the pass says how many tiles it had to open");
+        evidence.Should().Contain(
+            "\"healed\":\"healed=stump:break_resource_clump\"",
+            "and the row names the occupant and the action that removed it, in the catalogue's own words");
+        evidence.Should().Contain("\"succeeded\":2").And.Contain("\"refused\":0").And.Contain("\"failed\":0");
+    }
+
+    /// <summary>
+    /// THE JOIN'S OTHER HALF: every occupant a `Clears` declaration names must be a word the ROW READER publishes.
+    ///
+    /// <para>
+    /// The pass heals by asking the catalogue "what removes `&lt;occupant&gt;`", where the occupant comes from the live row.
+    /// Two vocabularies therefore have to agree - the declarations' and the reader's - and two copies that agree today are
+    /// a disagreement scheduled for later. So the population is the catalogue's own occupant set and the assertion is the
+    /// reader's answer for a tile carrying each one: a `Clears` declaration naming an occupant no row can ever carry fails
+    /// here by name, instead of becoming a heal that can never fire.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryOccupantTheCatalogueClearsIsNamedByTheRowReader()
+    {
+        using var harness = ForEachHarness.Create();
+        var fixtures = new Dictionary<string, Action<int, int>>(StringComparer.Ordinal)
+        {
+            ["stump"] = (x, y) => harness.PlaceClump(x, y, ResourceClump.stumpIndex),
+            ["hollow_log"] = (x, y) => harness.PlaceClump(x, y, ResourceClump.hollowLogIndex),
+            ["meteorite"] = (x, y) => harness.PlaceClump(x, y, ResourceClump.meteoriteIndex),
+            ["boulder"] = (x, y) => harness.PlaceClump(x, y, ResourceClump.boulderIndex),
+            ["quarry_boulder"] = (x, y) => harness.PlaceClump(x, y, ResourceClump.quarryBoulderIndex),
+            ["mine_rock_1"] = (x, y) => harness.PlaceClump(x, y, ResourceClump.mineRock1Index),
+            ["mine_rock_2"] = (x, y) => harness.PlaceClump(x, y, ResourceClump.mineRock2Index),
+            ["mine_rock_3"] = (x, y) => harness.PlaceClump(x, y, ResourceClump.mineRock3Index),
+            ["mine_rock_4"] = (x, y) => harness.PlaceClump(x, y, ResourceClump.mineRock4Index),
+            ["tree"] = (x, y) => harness.PlaceTree(x, y, stump: false),
+            ["tree_stump"] = (x, y) => harness.PlaceTree(x, y, stump: true),
+            ["stone"] = harness.PlaceStone,
+            ["weed"] = harness.PlaceWeed,
+            ["grass"] = harness.PlaceGrass,
+            ["crop"] = (x, y) => harness.PlaceCrop(x, y, seedIndex: "472"),
+        };
+
+        var failures = new List<string>();
+        var occupants = FarmhandActionCatalog.Registrations
+            .Where(registration => registration.Descriptor?.Clears is { Occupants.Count: > 0 })
+            .SelectMany(registration => registration.Descriptor!.Clears!.Occupants)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        for (int index = 0; index < occupants.Length; index++)
+        {
+            string occupant = occupants[index];
+            if (!fixtures.TryGetValue(occupant, out Action<int, int>? place))
+            {
+                failures.Add($"clears_declared_but_no_row_names_it:{occupant}");
+                continue;
+            }
+            int x = index % MapWidth;
+            int y = 10 + (index / MapWidth);
+            place(x, y);
+            string? read = harness.World.ReadRow(x, y, 0, 0)?.Fields[FarmhandForEachHealing.OccupantField].Text;
+            if (!string.Equals(read, occupant, StringComparison.Ordinal))
+                failures.Add($"row_occupant_mismatch:{occupant}:{read ?? "no_row"}");
+        }
+
+        occupants.Should().NotBeEmpty("the catalogue declares clearing actions, so the population is never empty");
+        failures.Should().BeEmpty(
+            $"every occupant a `Clears` declaration names must be a word the row reader publishes; examined {occupants.Length}");
+    }
+
+    /// <summary>
     /// A SEED ROW'S IDENTITY IS (slot, tile, item), and the row's own `do` declares the two the tile does not decide.
     ///
     /// The family publishes one row per held stack, so no observation carries a row for "a bare tile" - which is exactly
@@ -607,7 +713,7 @@ public sealed class ForEachNodeExecutionTests
             // path a single action takes. `water_crop`, `harvest_crop`, `cut_weeds` and `plant_seed` are registered too:
             // their rows carry a minted identity, and a row the world cannot name must be refused BEFORE it reaches this
             // table.
-            foreach (string actionId in new[] { "till_soil", "water_crop", "harvest_crop", "cut_weeds", "plant_seed" })
+            foreach (string actionId in new[] { "till_soil", "water_crop", "harvest_crop", "cut_weeds", "plant_seed", "break_resource_clump" })
             {
                 FarmhandActionRegistration registration = FarmhandActionCatalog.Registrations.Single(entry => entry.ActionId == actionId);
                 this.Router.Register(registration, this.Handler);
@@ -697,6 +803,32 @@ public sealed class ForEachNodeExecutionTests
 
         /// <summary>The weed standing on a tile, for a test that must call the family's own id function with it.</summary>
         internal StardewValley.Object WeedAt(int x, int y) => (StardewValley.Object)this.Farm.objects[new Vector2(x, y)];
+
+        /// <summary>
+        /// A resource clump anchored on one tile, built by the engine's own constructor from the index its own constants
+        /// name - so `FarmhandForEachFarmWorld` reads it with the same predicate production does.
+        /// </summary>
+        internal void PlaceClump(int x, int y, int parentSheetIndex) =>
+            this.Farm.resourceClumps.Add(new ResourceClump(parentSheetIndex, 1, 1, new Vector2(x, y)));
+
+        /// <summary>A stone in the object layer: the engine's own `(O)2`, which is what `break_rock` declares it clears.</summary>
+        internal void PlaceStone(int x, int y) =>
+            this.Farm.objects[new Vector2(x, y)] = TargetFamilyCompletenessTests.TargetFamilyWorld.PlacedObject("(O)2", name: "Stone", category: -2);
+
+        /// <summary>A grass tuft, built the way the crop fixture is: the reader names it by its type, not by its state.</summary>
+        internal void PlaceGrass(int x, int y) =>
+            this.Farm.terrainFeatures[new Vector2(x, y)] = (Grass)FormatterServices.GetUninitializedObject(typeof(Grass));
+
+        /// <summary>
+        /// A tree in either phase. `Tree`'s constructor reads game data this process never loads, so the fixture seeds the
+        /// one field the row reader asks about - the phase - and nothing else.
+        /// </summary>
+        internal void PlaceTree(int x, int y, bool stump)
+        {
+            var tree = (Tree)FormatterServices.GetUninitializedObject(typeof(Tree));
+            SetInstanceField(tree, "stump", new NetBool(stump));
+            this.Farm.terrainFeatures[new Vector2(x, y)] = tree;
+        }
 
         private static void SetInstanceField(object target, string name, object? value) =>
             target.GetType()
@@ -804,6 +936,12 @@ public sealed class ForEachNodeExecutionTests
     {
         internal List<BridgeExecutionRequest> Requests { get; } = new();
 
+        /// <summary>
+        /// The one stand-in's one knob: the reason the native body would refuse this request, or null when it would not.
+        /// It is how a case reproduces "the tile refused the action" without a game.
+        /// </summary>
+        internal Func<BridgeExecutionRequest, string?>? RefuseWith { get; set; }
+
         public LocalExecutionReceipt Execute(BridgeExecutionRequest request, IExecutionLedger ledger)
         {
             this.Requests.Add(request);
@@ -811,6 +949,8 @@ public sealed class ForEachNodeExecutionTests
                 && dispatch.TryGetBoundExecutionId(request.RequestId, out string bound)
                     ? bound
                     : request.RequestId;
+            if (this.RefuseWith?.Invoke(request) is { Length: > 0 } refusal)
+                return ledger.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, refusal, null);
             return ledger.RememberTerminal(
                 request.RequestId,
                 executionId,
