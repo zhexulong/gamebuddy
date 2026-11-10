@@ -241,6 +241,13 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "on-demand",
   },
   {
+    path: "tools/audit-run-reading-shape.mjs",
+    reason:
+      "elsewhere: static scan of the analysis scripts for a count that never reached tools/lib/reading.mjs, so it " +
+      "needs no game, no run and no artifact; runs on every push in the CI gates job",
+    runsIn: "pnpm audit:run-reading-shape",
+  },
+  {
     path: "tools/audit-stardew-action-admission-ledger.mjs",
     reason:
       "report: re-derives the ledger of design/architecture/stardew-action-execution-kernel.md and prints the drift " +
