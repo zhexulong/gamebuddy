@@ -90,6 +90,56 @@ test("the worldbook reader takes the always-on entries from the file, not from a
   );
 });
 
+/**
+ * The worldbook's own `enabled: false`, as an expectation that flips with the flag.
+ *
+ * The book is ONE fixture and the flag is its only changing field: the same file is rewritten with
+ * `enabled` flipped and the expectation has to follow. That is the falsifier for the world-book half of
+ * the injection proof - a reader that ignored the flag would return the same list for both books and
+ * neither reading would mean anything.
+ */
+test("an entry the book switches off is expected to reach nothing, and flipping the flag changes that", () => {
+  const directory = mkdtempSync(join(tmpdir(), "capability-enabled-"));
+  const path = join(directory, "worldbook.json");
+  const book = (enabled) => ({
+    entries: [
+      { entryId: "on", title: "reaches", constant: true, keys: ["农场"] },
+      { entryId: "off", title: "switched off", constant: true, keys: ["灯塔"], enabled },
+    ],
+  });
+  const expectationOf = (enabled) => {
+    writeFileSync(path, JSON.stringify(book(enabled)));
+    return worldbookExpectation(path);
+  };
+
+  const switchedOff = expectationOf(false);
+  assert.deepEqual(
+    switchedOff.alwaysOn.map((entry) => entry.entryId),
+    ["on"],
+    "a disabled constant entry reaches nothing, so the prompt must not be expected to carry it",
+  );
+  assert.deepEqual(
+    switchedOff.disabled.map((entry) => entry.entryId),
+    ["off"],
+    "the switched-off entry is named rather than dropped: its absence from the request is the other half of the claim",
+  );
+
+  const switchedOn = expectationOf(true);
+  assert.deepEqual(
+    switchedOn.alwaysOn.map((entry) => entry.entryId),
+    ["on", "off"],
+    "the same book with the flag flipped must now expect the entry - otherwise the flag is not being read",
+  );
+  assert.deepEqual(switchedOn.disabled, [], "nothing is switched off in this reading");
+
+  const absentFlag = expectationOf(undefined);
+  assert.deepEqual(
+    absentFlag.alwaysOn.map((entry) => entry.entryId),
+    ["on", "off"],
+    "an entry with no `enabled` field is enabled - the product's own rule (`WorldBookEntry.enabled`, host/src/worldbook.ts)",
+  );
+});
+
 /* ---------- continuity across turns ---------- */
 
 const rowOf = (order, role, handle) => ({ order, role, handle, text: handle });

@@ -5,8 +5,8 @@
  *     expected 4, received 0 — the exact shape of the 2026-11-05 run that reported
  *     `DONE-CAPTURE failed=0 of 20 (skipped=0)` above 115 screenshots dated two days earlier.
  *
- * The population is the set of `out:` names in the phase's own DRIVERS table, so a driver added
- * tomorrow is covered without editing this file. Every driver is marked done, which is what makes the
+ * The population is the roster the phase runs (`drivers.mjs`), imported rather than copied, so a driver
+ * added tomorrow is covered without editing this file. Every driver is marked done, which is what makes the
  * phase reach its own decision without spawning a browser: nothing is executed, and the question is
  * only whether that is reported as success.
  */
@@ -20,9 +20,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { KIT_ROOT, defaultStageFor, runPaths, saveRunConfig } from "../lib/config.mjs";
+import { DRIVERS } from "./drivers.mjs";
 
 const PHASE = join(KIT_ROOT, "phases", "capture.mjs");
-const DRIVER_OUTPUTS = [...readFileSync(PHASE, "utf8").matchAll(/out: "([^"]+\.txt)"/gu)].map((match) => match[1]);
+/** The roster itself, imported: the same list the phase runs and the report reconciles. */
+const DRIVER_OUTPUTS = DRIVERS.map((driver) => driver.out);
 
 async function fabricateStage() {
   const outRoot = join(await mkdtemp(join(tmpdir(), "frontend-capture-gate-")), "out");

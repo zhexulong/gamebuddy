@@ -11,27 +11,18 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { KIT_ROOT, loadRunConfig, REPO_ROOT, runPaths } from "../lib/config.mjs";
+import { DRIVERS } from "./drivers.mjs";
 
-const DRIVER_OUTS = [
-  "a-surfaces",
-  "b-characters",
-  "c-settings",
-  "d-game",
-  "e-chats-rows",
-  "f-turn-variant",
-  "g-defects",
-  "h-probe",
-  "i-followup",
-  "j-card-import",
-  "k-chat-select",
-  "l-new-surfaces",
-  "m-opening-picker",
-  "n-message-edit",
-  "o-companion-picture",
-  "p-rewind-delete",
-  "q-companion-world-book",
-  "r-card-export",
-];
+/**
+ * The drivers whose facts files this report reconciles.
+ *
+ * Derived from the roster the capture phase runs (`drivers.mjs`), never kept here. The copy that used to
+ * live in this file stopped at `r-card-export` while the phase went on adding drivers, so every driver
+ * after it wrote its `INJECTION` / `CAPABILITY` lines into a file this report never opened - and the
+ * report's own silence list, the one mechanism that tells a driver that measured nothing from a driver
+ * that never ran, could not name them either because it is built from this list too.
+ */
+const DRIVER_OUTS = DRIVERS.map((driver) => driver.key);
 
 /* ---------- tiny JSON-block parser for the driver fact files ---------- */
 
@@ -992,7 +983,6 @@ const STALE_BATCH_WINDOW_MS = 10 * 60 * 1000;
 const EXIT_STALE_EVIDENCE = 5;
 
 const REPORT_OUTPUT_NAMES = new Set(["README.txt", "REPORT.txt"]);
-const CAPTURE_PHASE = join(KIT_ROOT, "phases", "capture.mjs");
 
 const pathMtime = (path) => {
   try {
@@ -1071,17 +1061,12 @@ function citedArtifacts(paths) {
 }
 
 /**
- * The facts files a run is supposed to write, from the authority that decides it: the capture phase's own
- * DRIVERS table. A driver added tomorrow is therefore covered without editing this file. capture.mjs runs
- * the phase at module scope and cannot be imported, so its table is read as text - the same reading
- * capture-gate.test.mjs takes of the same table.
+ * The facts files a run is supposed to write, from the authority that decides it: the capture roster
+ * (`drivers.mjs`), imported rather than scraped. A driver added tomorrow is therefore covered without
+ * editing this file, and this set cannot drift from the one the phase runs.
  */
 function declaredFactsFiles() {
-  try {
-    return [...readFileSync(CAPTURE_PHASE, "utf8").matchAll(/out:\s*"([^"]+\.txt)"/gu)].map((match) => match[1]);
-  } catch {
-    return [];
-  }
+  return DRIVERS.map((driver) => driver.out);
 }
 
 function examineEvidence(paths, run) {

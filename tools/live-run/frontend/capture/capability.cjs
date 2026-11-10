@@ -46,17 +46,31 @@ function loadChromium() {
 	throw new Error("no playwright found");
 }
 
-/** The worldbook's always-on entries and the keys that gate the rest. Read from the file, not typed. */
+/**
+ * The worldbook's always-on entries, the keys that gate the rest, and the entries the book switches off.
+ *
+ * Read from the file, not typed. `enabled: false` is the product's own SillyTavern switch
+ * (`host/src/worldbook.ts`, `WorldBookEntry.enabled`): the entry is kept, listed and editable, and
+ * "reaches nothing: not the always-on block, not the per-turn candidates, not the lookup tools". So an
+ * expectation built without reading it would demand that the prompt carry an entry the product must not
+ * carry - a reading that blames the product for obeying its own rule, and that no live run could ever
+ * satisfy. The `disabled` list is returned rather than dropped because the other direction of the same
+ * claim is read from it: these entries must be absent from the request.
+ */
 function worldbookExpectation(worldbookPath) {
 	const book = JSON.parse(readFileSync(worldbookPath, "utf8"));
 	const entries = Array.isArray(book.entries) ? book.entries : [];
-	const constant = entries.filter((entry) => entry.constant === true);
-	const gated = entries.filter(
+	const reaches = entries.filter((entry) => entry.enabled !== false);
+	const constant = reaches.filter((entry) => entry.constant === true);
+	const gated = reaches.filter(
 		(entry) => entry.constant !== true && Array.isArray(entry.keys) && entry.keys.length > 0,
 	);
 	return {
 		alwaysOn: constant.map((entry) => ({ entryId: entry.entryId, title: entry.title, keys: entry.keys || [] })),
 		gated: gated.map((entry) => ({ entryId: entry.entryId, title: entry.title, keys: entry.keys })),
+		disabled: entries
+			.filter((entry) => entry.enabled === false)
+			.map((entry) => ({ entryId: entry.entryId, title: entry.title, keys: entry.keys || [] })),
 	};
 }
 
