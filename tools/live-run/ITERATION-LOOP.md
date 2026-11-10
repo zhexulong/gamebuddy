@@ -1,5 +1,11 @@
 # Iteration loop: make `multiday_routine` pass
 
+> **Read this first if you are about to fix something a run printed.** A long run measures; it does not discover the
+> same defect twice. Every named failure code becomes a 40-second slice (`node tools/live-action.mjs --action <id>`,
+> or `node tools/live-program.mjs` for a plan form) before it becomes a fix — and every fix lands with the **gate that
+> catches its whole class**, because the fix buys one instance and the class stays alive without one.
+> The loop below (and the skill `.agents/skills/stardew-live-loop/SKILL.md`) is the run-level view of that rule.
+
 **Purpose.** Replace "run once, report, ask" with a bounded loop that keeps going until the scenario passes or the
 recorded blocker is a decision rather than a defect.
 

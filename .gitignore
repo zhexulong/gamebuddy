@@ -23,6 +23,8 @@ legacy/
 /.agents/skills/*
 !/.agents/skills/stardew-action-closure-batching/
 !/.agents/skills/stardew-action-closure-batching/**
+!/.agents/skills/stardew-live-loop/
+!/.agents/skills/stardew-live-loop/**
 !/.agents/parked-skills/
 !/.agents/parked-skills/stardew-vertical-slice/
 !/.agents/parked-skills/stardew-vertical-slice/**
