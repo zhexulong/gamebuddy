@@ -364,6 +364,20 @@ function createBodyProgramTools(
               ...(compiled.reasonCode.startsWith("plan_script_unknown_action:")
                 ? { legalActionIds: legalPlanActionIds(actions) }
                 : {}),
+              // WHAT BECAME OF EVERY CALL SHE WROTE. A refusal that only says "no plan" leaves her guessing which of her
+              // steps was the one that broke it; `dropped` names the calls that will not run and `acceptedSteps` the ones
+              // that compiled, so the correction is one edit and one resubmission. `rejected` is the same refusals with
+              // the action each call named and every argument it omitted - the detail a correction is written from.
+              dropped: compiled.dropped,
+              droppedCount: compiled.droppedCount,
+              droppedTruncated: compiled.droppedCount > compiled.dropped.length,
+              acceptedSteps: compiled.acceptedSteps,
+              acceptedStepsCount: compiled.acceptedStepsCount,
+              ...(compiled.mergedCount === 0 ? {} : { merged: compiled.merged, mergedCount: compiled.mergedCount }),
+              ...(compiled.noStepNeededCount === 0
+                ? {}
+                : { noStepNeeded: compiled.noStepNeeded, noStepNeededCount: compiled.noStepNeededCount }),
+              rejected: compiled.rejected,
             });
           }
           const nodes = compiled.program.nodes;
@@ -390,6 +404,17 @@ function createBodyProgramTools(
             if (typeof code !== "string") throw new Error("body_program_protocol_invalid");
             span.end({ programId, submitted: code, layoutFactsAbsent: compiled.layoutFactsAbsentCount });
             const accepted = code === "accepted" || code === "idempotent";
+            // The Mod refused the candidate outright: nothing of this plan is in the world, so there is no program
+            // identity to record and no settlement to read. Its own code is the reason, and the compiler's account of
+            // every call she wrote travels beside it.
+            if (!accepted)
+              return planDetails({
+                accepted,
+                nodeCount: nodes.length,
+                programId,
+                submitted: code,
+                ...layoutFactsNote(compiled),
+              });
             // AWAITED, because the original design says so and the shape drifted away from it.
             //
             // `design/architecture/game-runtime-hierarchical-proposal.md` writes the intended surface as
@@ -406,33 +431,6 @@ function createBodyProgramTools(
             //
             // And the cap is deliberately NOT lowered: `program-status-wait.ts` records that answering instantly put the
             // model in an 84-call loop (round4, 459 s) because "it did not finish" is not something a caller can act on.
-            // What the compiler refused, beside what it kept. A permissive compile is fine; a permissive answer is not:
-            // round39 submission 28 wrote six statements, two of them (`pickup_item`) were refused a node for a missing
-            // required argument, and the answer said `{accepted: true, nodeCount: 5}` with nothing else, so the companion
-            // planned around an item it never picked up.
-            const refused = Object.freeze({
-              droppedCount: compiled.rejectedCount,
-              // `dropped` is a bounded diagnostic list, not the population: when a loop refuses more times than the answer can
-              // afford, `droppedTruncated` says so instead of leaving a reader to compare lengths and guess.
-              droppedTruncated: compiled.rejectedCount > compiled.rejected.length,
-              dropped: compiled.rejected.map((rejection) =>
-                Object.freeze({
-                  call: rejection.call,
-                  actionId: rejection.actionId,
-                  reasonCode: rejection.reasonCode,
-                  ...(rejection.missingArguments === undefined ? {} : { missingArguments: rejection.missingArguments }),
-                }),
-              ),
-            });
-            if (!accepted)
-              return planDetails({
-                accepted,
-                nodeCount: nodes.length,
-                programId,
-                submitted: code,
-                ...refused,
-                ...layoutFactsNote(compiled),
-              });
             // Recorded the moment the Mod accepts it: this is the identity a STOP has to name, and nothing else in the
             // Host knows which program is currently in the world.
             lastAcceptedProgramId = programId;
@@ -450,11 +448,11 @@ function createBodyProgramTools(
                 settled: answer.settled,
                 remaining: answer.remaining,
                 nodes: answer.nodes,
-                ...refused,
                 // What the plan assumed that the snapshot it was compiled against could not answer. Beside the plan rather
                 // than in front of it: the warning is a fact the companion learns from, and a plan that blocked on it would
                 // leave her no way to say "water them anyway".
                 ...layoutFactsNote(compiled),
+                ...stepAccountNote(compiled),
                 ...beside,
               });
             /**
@@ -740,6 +738,38 @@ function planDetails(details: Readonly<Record<string, unknown>>) {
   return Object.freeze({
     content: [{ type: "text" as const, text: JSON.stringify(details) }],
     details: Object.freeze(details),
+  });
+}
+
+/**
+ * The difference between the plan she wrote and the program that runs, on an ACCEPTED plan.
+ *
+ * <p>
+ * Empty when there is none, for the same reason `layoutFactsNote` is: an ordinary plan should not spend payload saying
+ * nothing. Present with a count and a `truncated` flag the moment the compiler wrote a step she did not (`inserted`),
+ * folded two loops into one pass (`merged`) or found a step already true (`noStepNeeded`).
+ * </p>
+ * <p>
+ * `dropped` cannot appear here, and that is the invariant rather than a coincidence: a plan with a refused call is refused
+ * whole by the compiler, so an accepted answer always carries every step she wrote. Measured at `3d249ff1`:
+ * `builder.talk_to_npc(...); builder.shop_purchase(...)` came back `ok: true` with ONE node, and the answer said the plan
+ * was accepted - which is the shape this answer may never be able to produce again.
+ * </p>
+ */
+function stepAccountNote(compiled: CompiledPlan): Readonly<Record<string, unknown>> {
+  if (!compiled.ok) return {};
+  return Object.freeze({
+    ...(compiled.insertedCount === 0
+      ? {}
+      : {
+          inserted: compiled.inserted,
+          insertedCount: compiled.insertedCount,
+          insertedTruncated: compiled.insertedCount > compiled.inserted.length,
+        }),
+    ...(compiled.mergedCount === 0 ? {} : { merged: compiled.merged, mergedCount: compiled.mergedCount }),
+    ...(compiled.noStepNeededCount === 0
+      ? {}
+      : { noStepNeeded: compiled.noStepNeeded, noStepNeededCount: compiled.noStepNeededCount }),
   });
 }
 

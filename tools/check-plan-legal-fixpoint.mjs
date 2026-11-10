@@ -40,6 +40,22 @@
  * <why>`): it can only run when a modal is open, so declaring that it leaves the body held would write a dismissal
  * after the very step that cleared it.
  *
+ * THE THIRD AND FOURTH ASSERTIONS read the SAME answers, because a pair table cannot see the defect that matters most:
+ *
+ *   3. NO FORGED SUCCESS - an `ok` answer means every step the author wrote is in the program. An `ok` answer that says
+ *                        it dropped a call is red, named `forged_success:<shape>:<dropped>`. That is the shape that
+ *                        shipped at `3d249ff1` and again round40 (`accepted: true` beside `droppedCount: 15`), and it is
+ *                        the most expensive answer this product can give: the companion plans around work that never ran
+ *                        and nothing in the program or the answer disagrees with her.
+ *   4. NO VANISHED CALL - the compiler answers with four lists that PARTITION the author's calls (`acceptedSteps`,
+ *                        `merged`, `noStepNeeded`, `dropped`), so their counts must sum to the number of calls the script
+ *                        made, each call must land in exactly one, and no list may be a window narrower than its own
+ *                        count. Named `plan_account_gap|_double|_truncated|_unplaceable:<shape>:...`.
+ *
+ * Both read an answer's own account, in whichever spelling it says it in: `dropped` on today's answer, the `rejected`
+ * records on one from before the field existed - so `--revision 3d249ff1` is red for the FORGED reason and `blocked`
+ * for the accounting one ("not measured") rather than green over nothing.
+ *
  * WHAT IS READ, and how (no fifth parser):
  *   - the compiler MODULE, imported and driven: `compilePlanScript` and `planActionsFromRegistrations` are the
  *     product's own admission and refusal functions, so a new rule or a new argument shape is covered the same run;
@@ -55,8 +71,9 @@
  * could not write.
  *
  * Usage:
- *   node tools/check-plan-legal-fixpoint.mjs                     # the gate; exit 1 on a dead end, a contradiction, or a
- *                                                               # population it could not measure
+ *   node tools/check-plan-legal-fixpoint.mjs                     # the gate; exit 1 on a dead end, a contradiction, a forged
+ *                                                               # success, an account that does not add up, or a population
+ *                                                               # it could not measure
  *   node tools/check-plan-legal-fixpoint.mjs --json              # the reading, machine-readable
  *   node tools/check-plan-legal-fixpoint.mjs --revision <rev>    # the RED PROOF: the compiler as that commit had it
  *
@@ -65,9 +82,20 @@
  *
  * red-proof: history  `--revision 3d249ff1894040dc2f0a960486dff1ff04992946` (the commit before the compiler wrote the
  *            dismissal) -> `plan_dead_end:talk_to_npc->shop_purchase:...:dismiss_first=dismiss_modal`, 94 of 96 pairs
- *            dead, exit 1 (tools/check-plan-legal-fixpoint.test.mjs)
+ *            dead, and the same pair named `forged_success:pair:talk_to_npc->shop_purchase:n02:plan_script_action_after_
+ *            body_yield:shop_purchase:talk_to_npc:dismiss_first=dismiss_modal`, exit 1
+ *            (tools/check-plan-legal-fixpoint.test.mjs)
+ * red-proof: history  the same run prints `... forged 188 · accounted 0` and `call_accounting: blocked` over 474 answers:
+ *            a compiler from before the account existed cannot pass assertion 4, it can only fail to be measured by it
+ *            (tools/check-plan-legal-fixpoint.test.mjs)
  * red-proof: inject   an `ok` answer carrying only the first of the two steps -> `accepted_without_step` dead end, not
  *            `accepted` - the shape the pre-fix compiler actually returned (tools/check-plan-legal-fixpoint.test.mjs)
+ * red-proof: inject   an `ok` answer whose own refusals name a call -> `forged_success:<shape>:<dropped>`, with its
+ *            accounting clean, so the finding is the forged success and nothing else
+ *            (tools/check-plan-legal-fixpoint.test.mjs)
+ * red-proof: inject   an account that loses a call, lists one twice, cuts a list short of its count, or numbers a step
+ *            past the calls written -> `plan_account_gap|_double|_truncated|_unplaceable:<shape>`
+ *            (tools/check-plan-legal-fixpoint.test.mjs)
  * red-proof: inject   a plan-level refusal naming `dismiss_first=<id>` whose application compiles -> `repaired`, no
  *            dead end (tools/check-plan-legal-fixpoint.test.mjs)
  * red-proof: inject   a refusal naming no remedy while `[Y, <clearing>, X]` compiles by hand -> `refused` dead end that
@@ -331,6 +359,100 @@ export function remediesNamedIn(reasonCode) {
   return Object.freeze([...new Set(named)]);
 }
 
+/** How many builder calls a script the gate itself wrote makes: one per `builder.<id>(`. */
+export function callsIn(script) {
+  return [...String(script).matchAll(/builder\.[a-z0-9_]+\(/gu)].length;
+}
+
+/**
+ * What an answer says about the calls that were thrown away, in whichever of its two spellings it says it.
+ *
+ * The current answer carries `dropped` (`n03:plan_script_...`); the answer from before that field existed carries the
+ * same refusals as `rejected` records, and an `ok` answer carrying THAT is exactly the forged success this check exists
+ * for - so the older spelling is read rather than skipped. A check that could only see the newest field would report the
+ * defect it was written for as zero violations on the history it was written against.
+ */
+export function droppedNamesOf(compiled) {
+  if (Array.isArray(compiled?.dropped) && compiled.dropped.length > 0) return compiled.dropped;
+  const rejected = compiled?.rejected;
+  if (!Array.isArray(rejected)) return [];
+  // Rendered in the grammar the current answer uses - `n02:<code>` - so a finding from an older revision reads exactly
+  // like one from today's, and a reader is not asked to translate two spellings of the same fact.
+  return rejected.map((rejection) => `n${String(rejection?.call).padStart(2, "0")}:${String(rejection?.reasonCode)}`);
+}
+
+/**
+ * THE THIRD ASSERTION: what an answer says about the calls its own script wrote.
+ *
+ * <p>
+ * Two halves, one sentence each. <b>NO FORGED SUCCESS</b> - an `ok` answer means every step the author wrote is in the
+ * program, so an `ok` answer that says it dropped a call is the shape that shipped at `3d249ff1`
+ * (`talk_to_npc` + `shop_purchase` compiled to ONE node and `ok: true`) and at round40 (`accepted: true` beside
+ * `droppedCount: 15`). <b>NO VANISHED CALL</b> - the compiler's four lists partition her calls, so their counts must sum
+ * to the number of calls the script made, each call must land in exactly one of them, and none may be a silent window.
+ * A call in none of them is the defect; a call in two would hide it.
+ * </p>
+ * <p>
+ * The population is every answer the pair reading already compiled - the same scripts, the same compiler - and the
+ * authored call count is read from the script THIS GATE WROTE, which is the authority on what was asked for. An answer
+ * that carries no account at all (a compiler from before the field existed) is not measured, and `statusOf` blocks the
+ * run when nothing was: "0 violations" over an empty population is the silence this gate exists to break.
+ * </p>
+ */
+export function readPlanCallTally(answers) {
+  let ok = 0;
+  let refused = 0;
+  let measured = 0;
+  const forged = [];
+  const faults = [];
+  for (const { shape, script, compiled } of answers) {
+    if (compiled?.ok === true) {
+      ok += 1;
+      const dropped = droppedNamesOf(compiled);
+      if (dropped.length > 0) forged.push(`forged_success:${shape}:${dropped[0]}`);
+    } else refused += 1;
+    // The account is only answerable by a compiler that keeps one.
+    if (!Array.isArray(compiled?.acceptedSteps)) continue;
+    measured += 1;
+    const calls = callsIn(script);
+    const lists = [
+      ["acceptedSteps", compiled.acceptedSteps, compiled.acceptedStepsCount],
+      ["merged", compiled.merged, compiled.mergedCount],
+      ["noStepNeeded", compiled.noStepNeeded, compiled.noStepNeededCount],
+      ["dropped", compiled.dropped, compiled.droppedCount],
+    ];
+    const counted = lists.reduce((total, [, entries, count]) => total + (Number(count) || 0), 0);
+    if (counted !== calls)
+      faults.push(
+        `plan_account_gap:${shape}:the script made ${calls} call(s) and the answer accounts for ${counted} ` +
+          `(acceptedSteps ${compiled.acceptedStepsCount}, merged ${compiled.mergedCount}, noStepNeeded ` +
+          `${compiled.noStepNeededCount}, dropped ${compiled.droppedCount})`,
+      );
+    const seen = new Map();
+    for (const [list, entries, count] of lists) {
+      if (!Array.isArray(entries) || entries.length !== count)
+        faults.push(
+          `plan_account_truncated:${shape}:${list} spells ${Array.isArray(entries) ? entries.length : 0} of ${String(count)} ` +
+            `entries, so the list is a window and the count cannot be read against it`,
+        );
+      for (const entry of Array.isArray(entries) ? entries : []) {
+        // The call's own position is the first field of every entry, whatever the list: `n07`, `n07:into=n03:...`.
+        const step = String(entry).split(":")[0];
+        const previous = seen.get(step);
+        if (previous !== undefined)
+          faults.push(`plan_account_double:${shape}:${step} is in both ${previous} and ${list}`);
+        seen.set(step, list);
+        const named = /^n(\d+)$/u.exec(step);
+        if (named === null || Number(named[1]) < 1 || Number(named[1]) > calls)
+          faults.push(
+            `plan_account_unplaceable:${shape}:${list} names ${step}, which is not one of the ${calls} calls written`,
+          );
+      }
+    }
+  }
+  return Object.freeze({ examined: answers.length, ok, refused, measured, forged, faults });
+}
+
 /** What a pair is, as one name, so a finding and the pair it names cannot drift apart. */
 function pairName(yieldingId, dependentId) {
   return `${yieldingId}->${dependentId}`;
@@ -353,6 +475,21 @@ export function readPlanLegalFixpoint({
   const byId = new Map(actions.map((action) => [action.actionId, action]));
   const unmeasured = [];
   const deadEnds = [];
+  /**
+   * Every answer this reading is judged on, by the script that produced it.
+   *
+   * Recorded HERE rather than by a second pass, so the call-account assertion below and the pair assertion above are
+   * driven by the same compiles of the same scripts: two populations measured separately would be two populations that
+   * can disagree, and the one that drifts would be the one nobody reads.
+   */
+  const answers = new Map();
+  const examine = (shape, script) => {
+    const known = answers.get(script);
+    if (known !== undefined) return known.compiled;
+    const compiled = compile(script);
+    answers.set(script, { shape, script, compiled });
+    return compiled;
+  };
 
   // EVERY X MUST BE WRITABLE ALONE. A pair whose second step this gate cannot express says nothing about the product,
   // and counting it as a dead end would blame the tree for a fixture it does not own.
@@ -362,7 +499,7 @@ export function readPlanLegalFixpoint({
       unmeasured.push(`plan_population_unwritable:${action.actionId}:${alone.reason}`);
       continue;
     }
-    const compiled = compile(alone.script);
+    const compiled = examine(`alone:${action.actionId}`, alone.script);
     if (!carriesSteps(compiled, [action.actionId]))
       unmeasured.push(
         `plan_population_unwritable:${action.actionId}:${compiled?.ok === true ? "accepted_without_the_step" : compiled?.reasonCode}`,
@@ -383,17 +520,17 @@ export function readPlanLegalFixpoint({
       const dependentId = action.actionId;
       const written = scriptFor(actions, [yieldingId, dependentId]);
       if (!written.ok) continue;
-      const compiled = compile(written.script);
+      const compiled = examine(`pair:${pairName(yieldingId, dependentId)}`, written.script);
       if (carriesSteps(compiled, [yieldingId, dependentId])) {
         accepted += 1;
         continue;
       }
-      const repairedBy = repairedByRemedy({ compile, actions, yieldingId, dependentId });
+      const repairedBy = repairedByRemedy({ examine, actions, yieldingId, dependentId });
       if (repairedBy !== null) {
         repaired += 1;
         continue;
       }
-      deadEnds.push(deadEndOf({ compile, actions, yieldingId, dependentId, compiled, modalClearingActionIds }));
+      deadEnds.push(deadEndOf({ examine, actions, yieldingId, dependentId, compiled, modalClearingActionIds }));
     }
   }
 
@@ -428,35 +565,51 @@ export function readPlanLegalFixpoint({
       repaired,
       deadEnds: Object.freeze(deadEnds),
     }),
+    answers: readPlanCallTally([...answers.values()]),
     contradictions: Object.freeze(contradictions),
     unmeasured: Object.freeze(unmeasured),
   });
 }
 
 /** The remedy a plan-level refusal named, if inserting it really compiles; `null` when nothing named works. */
-function repairedByRemedy({ compile, actions, yieldingId, dependentId }) {
+function repairedByRemedy({ examine, actions, yieldingId, dependentId }) {
   const written = scriptFor(actions, [yieldingId, dependentId]);
   if (!written.ok) return null;
-  const compiled = compile(written.script);
+  const compiled = examine(`pair:${pairName(yieldingId, dependentId)}`, written.script);
   // Only a REFUSED plan can be repaired: an `ok` answer that dropped the step ran without it, and inserting a step into
   // a plan that was already accepted is not applying a remedy to anything.
   if (compiled?.ok !== false) return null;
   for (const remedyId of remediesNamedIn(compiled.reasonCode)) {
     const applied = scriptFor(actions, [yieldingId, remedyId, dependentId]);
-    if (applied.ok && carriesSteps(compile(applied.script), [yieldingId, remedyId, dependentId])) return remedyId;
+    if (
+      applied.ok &&
+      carriesSteps(examine(`hand:${pairName(yieldingId, dependentId)}+${remedyId}`, applied.script), [
+        yieldingId,
+        remedyId,
+        dependentId,
+      ])
+    )
+      return remedyId;
   }
   return null;
 }
 
 /** One dead end: the pair, the code that made it one, and what would have to change for the pair to stop being one. */
-function deadEndOf({ compile, actions, yieldingId, dependentId, compiled, modalClearingActionIds }) {
+function deadEndOf({ examine, actions, yieldingId, dependentId, compiled, modalClearingActionIds }) {
   const kind = compiled?.ok === true ? "accepted_without_step" : "refused";
   const code =
     compiled?.ok === true ? (compiled.rejected?.[0]?.reasonCode ?? "accepted_without_the_step") : compiled?.reasonCode;
   const named = compiled?.ok === true ? remediesNamedIn(compiled.rejected?.[0]?.reasonCode ?? "") : [];
   const handWritten = modalClearingActionIds.filter((actionId) => {
     const applied = scriptFor(actions, [yieldingId, actionId, dependentId]);
-    return applied.ok && carriesSteps(compile(applied.script), [yieldingId, actionId, dependentId]);
+    return (
+      applied.ok &&
+      carriesSteps(examine(`hand:${pairName(yieldingId, dependentId)}+${actionId}`, applied.script), [
+        yieldingId,
+        actionId,
+        dependentId,
+      ])
+    );
   });
   const carried = compiled?.ok === true ? (compiled.program?.nodes ?? []).length : 0;
   const change =
@@ -478,11 +631,22 @@ function deadEndOf({ compile, actions, yieldingId, dependentId, compiled, modalC
   });
 }
 
-/** The verdict: a reading that measured nothing cannot pass, whatever it found. */
+/**
+ * The verdict: a reading that measured nothing cannot pass, whatever it found.
+ *
+ * `failed` BEATS `blocked`, and that order is deliberate: a revision that predates a field blocks one assertion while
+ * the others still find a real defect, and reporting `blocked` over a found defect would report the weaker fact first.
+ * `blocked` therefore means "nothing failed, and something was not measured".
+ */
 export function statusOf(reading) {
-  if (reading.pairs.examined === 0) return "blocked";
-  if (reading.unmeasured.length > 0) return "blocked";
-  if (reading.pairs.deadEnds.length > 0 || reading.contradictions.length > 0) return "failed";
+  if (
+    reading.pairs.deadEnds.length > 0 ||
+    reading.contradictions.length > 0 ||
+    reading.answers.forged.length > 0 ||
+    reading.answers.faults.length > 0
+  )
+    return "failed";
+  if (reading.pairs.examined === 0 || reading.unmeasured.length > 0 || reading.answers.measured === 0) return "blocked";
   return "passed";
 }
 
@@ -501,6 +665,10 @@ export function checksOf(reading) {
         : "passed";
   const contradictionStatus =
     reading.population.modalTargeted.length === 0 ? "blocked" : reading.contradictions.length > 0 ? "failed" : "passed";
+  const forgedStatus =
+    reading.answers.examined === 0 ? "blocked" : reading.answers.forged.length > 0 ? "failed" : "passed";
+  const accountStatus =
+    reading.answers.measured === 0 ? "blocked" : reading.answers.faults.length > 0 ? "failed" : "passed";
   return Object.freeze([
     Object.freeze({ id: "pair_fixpoint", status: pairStatus, examined: reading.pairs.examined }),
     Object.freeze({
@@ -508,6 +676,8 @@ export function checksOf(reading) {
       status: contradictionStatus,
       examined: reading.population.modalTargeted.length,
     }),
+    Object.freeze({ id: "no_forged_success", status: forgedStatus, examined: reading.answers.examined }),
+    Object.freeze({ id: "call_accounting", status: accountStatus, examined: reading.answers.measured }),
   ]);
 }
 
@@ -526,10 +696,25 @@ export function summaryOf(reading) {
   );
 }
 
+/**
+ * The second population line: what every compiled answer claimed about the calls its own script made.
+ *
+ * `refused` is a count of answers, not of calls - a refusal is one answer that will run nothing - and `accounted` is
+ * how many of them carried the four lists at all, so a reader can tell "nothing was wrong" from "nothing was read".
+ */
+export function answerSummaryOf(reading) {
+  const answers = reading.answers;
+  return (
+    `plan_legal_fixpoint answers examined ${answers.examined} · ok ${answers.ok} · refused ${answers.refused} · ` +
+    `forged ${answers.forged.length} · accounted ${answers.measured}`
+  );
+}
+
 function report(reading, { json }) {
   const status = statusOf(reading);
   if (!json) {
     process.stdout.write(`${summaryOf(reading)}\n`);
+    process.stdout.write(`${answerSummaryOf(reading)}\n`);
     process.stdout.write(
       `plan_legal_fixpoint_modal_targets examined ${reading.population.modalTargeted.length} published actions its own adapter ` +
         `names as acting on a modal (${reading.population.modalTargeted.join(",") || "none"}) · contradictions ${reading.contradictions.length}\n`,
@@ -538,12 +723,20 @@ function report(reading, { json }) {
       process.stdout.write(`plan_dead_end:${deadEnd.pair}:${deadEnd.code}\n`);
       process.stdout.write(`  what would have to change: ${deadEnd.change}\n`);
     }
+    for (const forged of reading.answers.forged) process.stdout.write(`${forged}\n`);
+    for (const fault of reading.answers.faults) process.stdout.write(`${fault}\n`);
     for (const contradiction of reading.contradictions) process.stdout.write(`${contradiction}\n`);
     for (const line of reading.unmeasured) process.stdout.write(`${line}\n`);
     if (reading.pairs.examined === 0)
       process.stdout.write(
         "plan_legal_fixpoint_blocked: the pair population is empty (a yielding declaration with no published action, or no " +
           "published action at all), so nothing was judged - a gate whose population is empty agrees with itself\n",
+      );
+    if (reading.answers.measured === 0)
+      process.stdout.write(
+        "plan_legal_fixpoint_blocked: no compiled answer carried the account of its own calls (the four lists), so the " +
+          "forged-success and vanished-call assertions were not measured - a compiler from before the field existed is " +
+          "not a compiler that passed this\n",
       );
     process.stdout.write(`plan_legal_fixpoint status ${status}\n`);
   }

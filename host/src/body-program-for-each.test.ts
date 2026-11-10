@@ -151,14 +151,20 @@ test("the row bound the compiler enforces is the bound the Mod's own rules decla
  * own Core suite makes per tile.
  */
 test("loops over one source compose into one pass whose rules keep the order the caller wrote them in", () => {
-  const nodes = nodesOf(
-    compile(
-      `builder.for_each({ source: { area: ${PATCH} }, where: [{ col: { every: 3, offset: 0 } }], do: { action: "plant_seed", seed: "hops" } });
+  const compiled = compile(
+    `builder.for_each({ source: { area: ${PATCH} }, where: [{ col: { every: 3, offset: 0 } }], do: { action: "plant_seed", seed: "hops" } });
        builder.for_each({ source: { area: ${PATCH} }, where: [{ col: { every: 3, offset: 1 } }], do: { action: "plant_seed", seed: "coffee" } });
        builder.for_each({ source: { area: ${PATCH} }, where: [{ col: { every: 3, offset: 2 } }], do: null });`,
-    ),
   );
+  const nodes = nodesOf(compiled);
   assert.equal(nodes.length, 1, "one patch is one intent: the three calls are three rules of it");
+  // AND THE ANSWER SAYS SO. Two of her three calls changed the program without becoming nodes of their own, which is a
+  // fact she cannot read off the node list: named here, it is the difference between "the compiler folded my loops" and
+  // "the compiler lost two of my steps".
+  assert.deepEqual(compiled.merged, ["n02:into=n01:same_source", "n03:into=n01:same_source"]);
+  assert.equal(compiled.mergedCount, 2);
+  assert.deepEqual(compiled.acceptedSteps, ["n01"], "only the first call became a node");
+  assert.deepEqual(compiled.dropped, [], "a fold is not a drop, and the answer distinguishes them");
   const loop = loopOf(nodes[0]!);
   const rules = forEachRules(loop);
   assert.equal(rules.length, 3);
@@ -185,24 +191,23 @@ test("loops over different sources stay separate passes, so the inverse of compo
   for (const node of nodes) assert.equal(forEachRules(loopOf(node)).length, 1);
 });
 
-/** A loop that has to be refused costs its own call, and the steps the caller wrote around it still compile. */
-test("a refused loop is one dropped call and not the whole batch", () => {
+/**
+ * A loop that has to be refused refuses the plan it was written in - nothing runs - and the answer names both halves:
+ * the call that was dropped, and the steps the caller wrote around it that compiled.
+ */
+test("a refused loop refuses the plan, and the answer names the loop and the steps beside it", () => {
   const result = compile(
     `builder.till_soil({ x: 60, y: 18 });
      builder.for_each({ source: { area: { x: 0, y: 0, w: 20, h: 20 } }, do: { action: "cut_weeds" } });
      builder.till_soil({ x: 61, y: 18 });`,
   );
-  assert.equal(result.ok, true);
-  assert.deepEqual(
-    nodesOf(result).map((node) => node.actionId),
-    ["till_soil", "till_soil"],
-  );
-  if (!result.ok) return;
-  assert.equal(result.rejectedCount, 1);
-  assert.deepEqual(
-    result.rejected.map((entry) => entry.reasonCode),
-    ["plan_script_loop_too_large:400:64"],
-  );
+  assert.equal(result.ok, false, "a plan that lost a step must not be reported as accepted");
+  assert.deepEqual(result.ok ? [] : result.rejected.map((entry) => entry.reasonCode), [
+    "plan_script_loop_too_large:400:64",
+  ]);
+  assert.deepEqual(result.dropped, ["n02:plan_script_loop_too_large:400:64"]);
+  assert.deepEqual(result.acceptedSteps, ["n01", "n03"], "the two tiles she wrote around the loop did compile");
+  assert.equal(result.droppedCount, 1);
 });
 
 /** `by_kind` is a reference to the Mod's own classifier, so it is accepted while naming no action of its own. */
@@ -377,16 +382,16 @@ test("a row identity the caller wrote is refused by name, and the name is the Mo
     `builder.till_soil({ x: 60, y: 18 });
      builder.for_each({ source: { area: ${PATCH} }, do: { action: "harvest_crop", expectedQualifiedItemId: "(O)24", expectedTargetId: "crop_0123456789abcdef" } });`,
   );
-  assert.equal(result.ok, true, "the step the caller wrote beside the refused loop still compiles");
-  if (!result.ok) return;
+  assert.equal(
+    result.ok,
+    false,
+    "the plan is refused, so the refused loop cannot be dispatched with an identity nobody minted",
+  );
   assert.deepEqual(
-    result.rejected.map((entry) => entry.reasonCode),
+    result.ok ? [] : result.rejected.map((entry) => entry.reasonCode),
     [`plan_script_${PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL}:harvest_crop`],
     "the refused call is named by the action whose row identity the caller tried to write",
   );
-  assert.deepEqual(
-    nodesOf(result).map((node) => node.actionId),
-    ["till_soil"],
-    "the loop is dropped rather than dispatched with an identity nobody minted",
-  );
+  assert.deepEqual(result.dropped, [`n02:plan_script_${PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL}:harvest_crop`]);
+  assert.deepEqual(result.acceptedSteps, ["n01"], "the tile she wrote first compiled, and is named beside the refusal");
 });

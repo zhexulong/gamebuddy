@@ -180,13 +180,13 @@ type PlanCallRejection = Readonly<{
 }>;
 
 /**
- * How many refusals one answer carries back, and why the count is separate from the list.
+ * How many authored calls one answer spells out in each of its lists, and why the count is separate from the list.
  *
- * A loop over a family the snapshot publishes can call the builder hundreds of times; a hundred refusal entries would spend
- * the turn's context on the same sentence repeated. The list is bounded, `rejectedCount` is not, so the answer says how
- * many there were without carrying all of them.
+ * A loop over a family the snapshot publishes can call the builder hundreds of times, so a hundred entries per list would
+ * spend the turn's context on the same sentence repeated. The lists are bounded and the counts are not, so the answer says
+ * how many there were without carrying all of them.
  */
-const MAX_REPORTED_PLAN_REJECTIONS = 16;
+const MAX_REPORTED_PLAN_CALLS = 16;
 
 /**
  * How many insertions one answer spells out, bounded for the same reason the rejection list is: a loop over a
@@ -195,48 +195,88 @@ const MAX_REPORTED_PLAN_REJECTIONS = 16;
  */
 const MAX_REPORTED_PLAN_INSERTIONS = 16;
 
+/**
+ * What became of every call the author wrote, by the one numbering a REFUSED plan still has: the position of her call.
+ *
+ * `n01` is her FIRST CALL - not node `n01`, which a plan that was refused does not have, and which the compiler's own
+ * insertions displace for every call after them. Every list is bounded (see `MAX_REPORTED_PLAN_CALLS`) and every count is
+ * not, so a bounded list never reads as "that was the whole of it".
+ *
+ * THE FOUR LISTS PARTITION HER CALLS: each call lands in exactly one of `acceptedSteps`, `merged`, `noStepNeeded` and
+ * `dropped`, so their counts sum to the number of calls she wrote. That is the invariant `tools/check-plan-legal-fixpoint.mjs`
+ * asserts over the whole published vocabulary, and the reason an `ok` answer can no longer hide a step that was thrown away.
+ */
+export type PlanCallAccount = Readonly<{
+  /** Her calls whose own step is a node of the program. */
+  acceptedSteps: readonly string[];
+  acceptedStepsCount: number;
+  /**
+   * Her loops that joined an EARLIER node's loop instead of becoming their own: `n07:into=n03:same_source`.
+   *
+   * A `for_each` over a source a previous `for_each` already names is a second RULE of that one pass - the Mod expands one
+   * pass per source - so the call did change the program, just not into a node of its own. Named because a fold the author
+   * cannot see is the program quietly disagreeing with her script, which is the same defect as a drop one notch softer: the
+   * result still looks right.
+   */
+  merged: readonly string[];
+  mergedCount: number;
+  /** Her calls that had nothing to do: `n04:equip_for:already_held`, the tool the action needs was already in hand. */
+  noStepNeeded: readonly string[];
+  noStepNeededCount: number;
+  /** Her calls that were refused: `n03:plan_script_...`, so that step of hers is not going to run. */
+  dropped: readonly string[];
+  droppedCount: number;
+}>;
+
 export type CompiledPlan =
-  | Readonly<{
-      ok: true;
-      scriptSource: string;
-      snapshotRevision: number;
-      program: Readonly<{ nodes: readonly PlanNode[] }>;
-      /** The calls that were refused while the rest of the script compiled. Empty is the ordinary case. */
-      rejected: readonly PlanCallRejection[];
-      /** Every refusal, including the ones past `MAX_REPORTED_PLAN_REJECTIONS`. */
-      rejectedCount: number;
-      /**
-       * The nodes this compiler INSERTED into the list the script wrote, in program order, one entry per node, spelled
-       * `inserted=<actionId>;before=<nodeId>`: what it wrote, and the node it wrote that immediately before.
-       *
-       * Present because the program that runs is NOT the program the author wrote, and an author who cannot see the
-       * difference reads a node list that disagrees with her script for no stated reason. Bounded;
-       * `insertedCount` is the population.
-       */
-      inserted: readonly string[];
-      /** Every insertion, including the ones past `MAX_REPORTED_PLAN_INSERTIONS`. */
-      insertedCount: number;
-      /**
-       * Layout facts this plan's own nodes depend on that the snapshot it was compiled against does not carry, one per
-       * `layout_facts_absent:call <n>:<fact>`. Bounded; `layoutFactsAbsentCount` is the population.
-       */
-      layoutFactsAbsent: readonly string[];
-      layoutFactsAbsentCount: number;
-    }>
-  | Readonly<{
-      ok: false;
-      scriptSource: string;
-      snapshotRevision: number | null;
-      reasonCode: string;
-      /** Present when the refusal was a builder call, so the answer names what that action demands. */
-      requirement?: PlanArgumentRequirement;
-      /** Every argument the refused call left out, so a correction fixes all of them and not only the first. */
-      missingArguments?: readonly string[];
-      rejected: readonly PlanCallRejection[];
-      rejectedCount: number;
-      /** Present when the script threw, so the answer says what the engine said and where. */
-      threw?: PlanScriptThrow;
-    }>;
+  | Readonly<
+      {
+        ok: true;
+        scriptSource: string;
+        snapshotRevision: number;
+        program: Readonly<{ nodes: readonly PlanNode[] }>;
+        /**
+         * The nodes this compiler INSERTED into the list the script wrote, in program order, one entry per node, spelled
+         * `inserted=<actionId>;before=<nodeId>`: what it wrote, and the node it wrote that immediately before.
+         *
+         * Present because the program that runs is NOT the program the author wrote, and an author who cannot see the
+         * difference reads a node list that disagrees with her script for no stated reason. Bounded;
+         * `insertedCount` is the population.
+         */
+        inserted: readonly string[];
+        /** Every insertion, including the ones past `MAX_REPORTED_PLAN_INSERTIONS`. */
+        insertedCount: number;
+        /**
+         * Layout facts this plan's own nodes depend on that the snapshot it was compiled against does not carry, one per
+         * `layout_facts_absent:call <n>:<fact>`. Bounded; `layoutFactsAbsentCount` is the population.
+         */
+        layoutFactsAbsent: readonly string[];
+        layoutFactsAbsentCount: number;
+      } & PlanCallAccount
+    >
+  | Readonly<
+      {
+        ok: false;
+        scriptSource: string;
+        snapshotRevision: number | null;
+        reasonCode: string;
+        /** Present when the refusal was a builder call, so the answer names what that action demands. */
+        requirement?: PlanArgumentRequirement;
+        /** Every argument the refused call left out, so a correction fixes all of them and not only the first. */
+        missingArguments?: readonly string[];
+        /**
+         * The refused calls, in the order the script wrote them: the call's position, the action it named, and why.
+         *
+         * `dropped` beside it is this list rendered as the names the author reads; this one carries the per-call detail
+         * (the action, and every argument the call omitted) that a correction is written from.
+         */
+        rejected: readonly PlanCallRejection[];
+        /** Every refusal, including the ones past `MAX_REPORTED_PLAN_CALLS`. */
+        rejectedCount: number;
+        /** Present when the script threw, so the answer says what the engine said and where. */
+        threw?: PlanScriptThrow;
+      } & PlanCallAccount
+    >;
 
 /**
  * How many targets ONE PLAN can name, which is what the observation budget sizes its per-stack window against.
@@ -784,7 +824,7 @@ export function planShape(actions: readonly PublishedPlanAction[], request: Plan
  */
 export function planWorkDescription(actions: readonly PublishedPlanAction[]): string {
   return (
-    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message, so end your turn and speak to the player. Every answer carries `nodes`: one row per node you wrote, at its own `index`, with the Mod's `state` (`succeeded` when the step did the thing and its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` when it has not stopped yet), a `reasonCode` when it did not succeed, and the `tile` it named - plus `settled`, true only when every node has stopped, and `remaining`, how many have not. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared, with no per-action tool beside them; ask stardew_plan_shape ONCE for every action the script will call - it takes a list - and every argument it lists is required. A piece of work with a SHAPE - a 3-wide 20-long strip, the row along a fence, the 5x5 around the shed - is one RECTANGLE to query, not a reason to observe again: stardew_observe shows only a square window around you, stardew_inspect_tiles answers exactly the rectangle you name, and stardew_look_up answers what this session already holds with no round trip; all three are reads, so asking costs the plan no node, and each one's own description says what it takes. One call the compiler refuses does not void the batch: the nodes around it compile and the answer names the refused call by position, so write the whole piece of work and read back which steps were dropped. Stop when builder.isFull() is true and plan the rest in the next call, in this shape:\n" +
+    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message, so end your turn and speak to the player. Every answer carries `nodes`: one row per node you wrote, at its own `index`, with the Mod's `state` (`succeeded` when the step did the thing and its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` when it has not stopped yet), a `reasonCode` when it did not succeed, and the `tile` it named - plus `settled`, true only when every node has stopped, and `remaining`, how many have not. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared, with no per-action tool beside them; ask stardew_plan_shape ONCE for every action the script will call - it takes a list - and every argument it lists is required. A piece of work with a SHAPE - a 3-wide 20-long strip, the row along a fence, the 5x5 around the shed - is one RECTANGLE to query, not a reason to observe again: stardew_observe shows only a square window around you, stardew_inspect_tiles answers exactly the rectangle you name, and stardew_look_up answers what this session already holds with no round trip; all three are reads, so asking costs the plan no node, and each one's own description says what it takes. One call the compiler refuses voids the whole plan - nothing runs - and the answer names which calls were dropped beside which ones compiled, so repair that step and resend the same piece of work. Stop when builder.isFull() is true and plan the rest in the next call, in this shape:\n" +
     `${planActionVocabularyText(actions)}\n` +
     "// Sequential steps - one call per step, in order:\n" +
     "builder.move_to_tile({ x: 10, y: 20 });\n" +
@@ -953,9 +993,13 @@ export function compilePlanScript(
     builderCalls: 0,
     rejected: [],
     rejectedCount: 0,
+    acceptedSteps: [],
+    merged: [],
+    noStepNeeded: [],
     inserted: [],
     argumentOwners: planArgumentOwners(dependencies.actions),
     worldTileByNode: new Map(),
+    callOfNode: new Map(),
   };
   const frozen = deepFreeze(structuredClone(snapshot));
   const sandbox = Object.freeze({
@@ -1006,8 +1050,8 @@ export function compilePlanScript(
   }
   // A script may swallow a refusal with its own try/catch; a refusal that ends the SCRIPT still ends it, because the
   // node it asked for was not added and a program missing that node is not the plan the companion wrote. A refusal that
-  // ends only its own CALL never reaches here: the call boundary answers it, and the nodes written before and after it
-  // stand. That is the whole of the difference between `refusePlan` and `rejectPlanCall`.
+  // ends only its own CALL never reaches here: the call boundary answers it and the script carries on, so every call is
+  // accounted for by name at the end - and a plan with any call refused is refused whole there.
   if (state.refusal !== null)
     return refused(state.refusal, scriptSource, snapshotRevision, state.requirement, state.missingArguments, state);
   // A script that produced no node has asked for nothing, in one of three ways that need different answers:
@@ -1059,6 +1103,23 @@ export function compilePlanScript(
       undefined,
       state,
     );
+  // AN `ok: true` ANSWER IS A PROMISE THAT EVERY STEP THE AUTHOR WROTE IS IN THE PROGRAM, and the promise is answered
+  // here rather than left to the caller to check against `dropped`.
+  //
+  // It was not, and the price is measured twice. At `3d249ff1`, `builder.talk_to_npc(...); builder.shop_purchase(...)`
+  // answered `ok: true` and carried ONE node: the purchase was refused, the plan was submitted without it, and the answer
+  // reported a successful plan (the fixpoint gate in `tools/check-plan-legal-fixpoint.mjs` is what found it). Round40 is
+  // the same shape from the other end: `accepted: true` beside `droppedCount: 15`. A plan that runs part of the work while
+  // its answer says it ran all of it is the most expensive answer this product can give - the companion plans around a seed
+  // she never bought, and neither the program nor the answer disagrees with her.
+  //
+  // So a refused call now refuses the PLAN: nothing runs, the first refusal's own code is the reason (unchanged), and
+  // `dropped` beside `acceptedSteps` says which of her steps went missing and which ones compiled - one edit and one
+  // resubmission, instead of a turn spent discovering what the program left out.
+  if (state.rejectedCount > 0) {
+    const first = state.rejected[0]!;
+    return refused(first.reasonCode, scriptSource, snapshotRevision, state.requirement, first.missingArguments, state);
+  }
   // What this plan assumed and the snapshot it read could not answer. Read from the SAME nodes that are about to be
   // submitted, so the warning describes the plan rather than the script.
   const layout = layoutFactsAbsent(state.nodes, dependencies.actions, snapshot);
@@ -1067,17 +1128,14 @@ export function compilePlanScript(
     scriptSource,
     snapshotRevision,
     program: Object.freeze({ nodes: Object.freeze([...state.nodes]) }),
-    // The answer's rejection list is bounded because a loop over a published family can refuse hundreds of times with
-    // the same sentence; `rejectedCount` is not. Narrowing happens here, once, and never decides whether the plan runs.
-    rejected: Object.freeze(state.rejected.slice(0, MAX_REPORTED_PLAN_REJECTIONS)),
-    rejectedCount: state.rejectedCount,
-    // The insertions, narrowed the same way and for the same reason: a loop over a body-yielding family would otherwise
-    // repeat one sentence once per iteration. `insertedCount` is the population, so a bounded list never reads as "that
-    // was the whole of it".
+    // The insertions are narrowed the same way the call account is and for the same reason: a loop over a body-yielding
+    // family would otherwise repeat one sentence once per iteration. `insertedCount` is the population, so a bounded list
+    // never reads as "that was the whole of it".
     inserted: Object.freeze(state.inserted.slice(0, MAX_REPORTED_PLAN_INSERTIONS)),
     insertedCount: state.inserted.length,
     layoutFactsAbsent: layout.absent,
     layoutFactsAbsentCount: layout.count,
+    ...planCallAccount(state),
   });
 }
 
@@ -1154,6 +1212,45 @@ export function planResourceConflictCodes(
   return Object.freeze(conflicts);
 }
 
+/**
+ * What became of every call the author wrote, rendered from the state the script left behind.
+ *
+ * The four lists are built HERE and nowhere else, so no caller can spell the same fact a second way: `acceptedSteps` from
+ * the calls that produced their own node, `merged`/`noStepNeeded` from the calls whose work was done another way, and
+ * `dropped` from the refusals - the same records `rejected` carries, rendered as the names an author reads. A refusal
+ * raised before the script ran (an empty script, a bad snapshot) has no state and therefore no calls, which is a true
+ * account of zero rather than a missing one.
+ */
+function planCallAccount(state: PlanScriptState | undefined): PlanCallAccount {
+  const bounded = <TValue>(entries: readonly TValue[]): readonly TValue[] =>
+    Object.freeze(entries.slice(0, MAX_REPORTED_PLAN_CALLS));
+  const rejected = state?.rejected ?? [];
+  const acceptedSteps = state?.acceptedSteps ?? [];
+  const merged = state?.merged ?? [];
+  const noStepNeeded = state?.noStepNeeded ?? [];
+  return Object.freeze({
+    acceptedSteps: bounded(acceptedSteps.map(planStepName)),
+    acceptedStepsCount: acceptedSteps.length,
+    merged: bounded(merged),
+    mergedCount: merged.length,
+    noStepNeeded: bounded(noStepNeeded),
+    noStepNeededCount: noStepNeeded.length,
+    dropped: bounded(rejected.map((rejection) => `${planStepName(rejection.call)}:${rejection.reasonCode}`)),
+    droppedCount: state?.rejectedCount ?? 0,
+  });
+}
+
+/**
+ * One of the author's calls by its position in her script, in the spelling every account in the answer uses.
+ *
+ * The `n` prefix is the one the answer already gives her own nodes, and it is here for the same reason: it is the name of
+ * a step SHE wrote, at the position she wrote it - which is the only numbering a refused plan still has, because a plan
+ * that does not run has no nodes to point at.
+ */
+function planStepName(call: number): string {
+  return planNodeId(PLAN_AUTHOR_NODE_PREFIX, call);
+}
+
 function refused(
   reasonCode: string,
   scriptSource: string,
@@ -1171,8 +1268,9 @@ function refused(
     ...(requirement === undefined ? {} : { requirement }),
     ...(missingArguments === undefined ? {} : { missingArguments }),
     ...(threw === undefined ? {} : { threw }),
-    rejected: Object.freeze(state === undefined ? [] : state.rejected.slice(0, MAX_REPORTED_PLAN_REJECTIONS)),
+    rejected: Object.freeze(state === undefined ? [] : state.rejected.slice(0, MAX_REPORTED_PLAN_CALLS)),
     rejectedCount: state?.rejectedCount ?? 0,
+    ...planCallAccount(state),
   });
 }
 
@@ -1189,10 +1287,22 @@ type PlanScriptState = {
    * names, so a companion can point at the call it wrote.
    */
   builderCalls: number;
-  /** The calls whose node was refused, in the order the script wrote them, bounded to `MAX_REPORTED_PLAN_REJECTIONS`. */
+  /** The calls whose node was refused, in the order the script wrote them, narrowed once where the answer is built. */
   rejected: PlanCallRejection[];
   /** Every refusal, `rejected` list included, so a bounded list never reads as "that was all of them". */
   rejectedCount: number;
+  /**
+   * The calls whose own step became a node, by position: the `acceptedSteps` half of the account.
+   *
+   * Recorded where the node is written rather than derived from `builderCalls - rejectedCount` afterwards, because a call
+   * can be honoured WITHOUT adding a node (a `for_each` that merges into an earlier pass, an `equipFor` whose tool is
+   * already in hand) and a subtraction would count those as steps that do not exist.
+   */
+  acceptedSteps: number[];
+  /** The calls whose loop joined an earlier node's loop, `n07:into=n03:same_source`. */
+  merged: string[];
+  /** The calls that had nothing to do, `n04:equip_for:already_held`. */
+  noStepNeeded: string[];
   /**
    * The nodes the compiler inserted, in program order, each one `inserted=<actionId>;before=<nodeId>`.
    *
@@ -1200,6 +1310,11 @@ type PlanScriptState = {
    * out, and it must not decide whether a node is written.
    */
   inserted: string[];
+  /**
+   * Which call wrote each node, so a fold can name the call whose loop it joined rather than a node id nothing else in
+   * the account speaks in.
+   */
+  callOfNode: Map<string, number>;
   /**
    * The vocabulary's own answer to "which actions declare this argument name", built once per compile.
    *
@@ -1301,8 +1416,13 @@ function equipForAction(
       state,
       requirementOf(action),
     );
-  // The tool the action must name is already in hand, so the plan is the action alone.
-  if (publishedToolSlot(snapshot) === slot) return slot;
+  // The tool the action must name is already in hand, so the plan is the action alone - which is a call that had nothing
+  // to do, not a call that was ignored: an author who cannot tell those apart cannot tell whether the compiler saw her
+  // `equipFor` at all.
+  if (publishedToolSlot(snapshot) === slot) {
+    state.noStepNeeded.push(`${planStepName(state.builderCalls)}:equip_for:already_held`);
+    return slot;
+  }
   const equip = actions.find((candidate) => candidate.actionId === EQUIP_TOOL_ACTION_ID);
   if (equip === undefined)
     rejectPlanCall(`plan_script_equip_unavailable:${EQUIP_TOOL_ACTION_ID}`, state, requirementOf(action));
@@ -1802,6 +1922,9 @@ function emitPlanNode(
       bindings: Object.freeze({}),
     }),
   );
+  // Her step is in the program, so her call is accounted for and cannot also appear as dropped, merged or unneeded.
+  state.acceptedSteps.push(state.builderCalls);
+  state.callOfNode.set(authorNodeId, state.builderCalls);
 }
 
 /**
@@ -1952,7 +2075,8 @@ function transitionApproachNode(
  *
  * A loop this product could never run is refused BY NAME with the part of the declaration that broke it - a source the
  * caller did not write, a rectangle past the row bound with its own count, a stride that claims no index, an action the
- * surface does not publish - so one bad loop costs one call and not the batch around it.
+ * surface does not publish - so one bad loop is one named refusal beside the loops that did read, and the author corrects
+ * that call rather than rewriting the script.
  */
 function emitForEachNode(value: unknown, actions: readonly PublishedPlanAction[], state: PlanScriptState): void {
   state.calls += 1;
@@ -1983,6 +2107,13 @@ function emitForEachNode(value: unknown, actions: readonly PublishedPlanAction[]
         ...previous,
         arguments: Object.freeze({ loop: Object.freeze({ type: "loop" as const, ...merged }) }),
       });
+      // HER LOOP DID CHANGE THE PROGRAM, just not into a node of its own: a second rule over the same source is a rule
+      // of that one pass. Named, because a fold she cannot see is the program quietly disagreeing with her script - and
+      // the result still looks right, which makes it harder to notice than a drop.
+      const into = state.callOfNode.get(previous.nodeId);
+      state.merged.push(
+        `${planStepName(state.builderCalls)}:into=${into === undefined ? previous.nodeId : planStepName(into)}:same_source`,
+      );
       return;
     }
   }
@@ -1999,6 +2130,8 @@ function emitForEachNode(value: unknown, actions: readonly PublishedPlanAction[]
       bindings: Object.freeze({}),
     }),
   );
+  state.acceptedSteps.push(state.builderCalls);
+  state.callOfNode.set(state.nodes[state.nodes.length - 1]!.nodeId, state.builderCalls);
 }
 
 /**
@@ -2135,12 +2268,12 @@ function refusePlan(
 }
 
 /**
- * Refuses ONE builder call. The nodes written before and after it stand, and the answer names this call.
+ * Refuses ONE builder call: recorded, named, and answered to the call boundary so the script carries on.
  *
- * This is the difference the user's own words asked for: writing thirty nodes used to mean thirty chances for the whole
- * batch to be thrown away on one bad argument, so the batch was kept small on purpose. A node that cannot run is not a
- * reason to discard the nodes that can - the plan is what the script asked for MINUS the steps the compiler refused BY
- * NAME, and the companion reads which calls those were.
+ * The other calls still compile - a batch of thirty is not thirty chances for a typo to tell its author nothing - but the
+ * PLAN is refused at the end, because a program that runs twenty-nine of her thirty steps is not the program she wrote.
+ * The answer therefore carries both halves: `dropped` names the calls that will not run, and `acceptedSteps` names the ones
+ * that compiled, so the correction is one edit and one resubmission.
  */
 function rejectPlanCall(
   reasonCode: string,
@@ -2158,7 +2291,8 @@ function rejectPlanCall(
 
 /**
  * The one boundary every builder call passes through: a refusal that ends only its call is answered HERE, so the script's
- * own `try/catch` cannot silently shorten a plan and cannot see a refusal either - there is nothing for it to catch.
+ * own `try/catch` cannot shorten a plan silently and cannot see a refusal either - there is nothing for it to catch. Every
+ * refusal is recorded, and the plan is refused whole once the script is done if there is even one.
  */
 function atPlanCall<TResult>(state: PlanScriptState, actionId: string | null, run: () => TResult): TResult | undefined {
   try {
@@ -2167,7 +2301,7 @@ function atPlanCall<TResult>(state: PlanScriptState, actionId: string | null, ru
     if (!(error instanceof PlanScriptRefusal) || error.wholeScript) throw error;
     // Every refusal is recorded and the list is narrowed once, where the plan is built. A capacity comparison here
     // would read as a business gate that refuses the script; this boundary only decides how many rejections the
-    // answer can afford to spell out (see `MAX_REPORTED_PLAN_REJECTIONS`).
+    // answer can afford to spell out (see `MAX_REPORTED_PLAN_CALLS`).
     state.rejected.push(
       Object.freeze({
         call: state.builderCalls,

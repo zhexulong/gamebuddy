@@ -22,10 +22,13 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  answerSummaryOf,
   carriesSteps,
+  checksOf,
   loadPlanCompiler,
   PRE_FIX_REVISION,
   readModalTargetedActionIds,
+  readPlanCallTally,
   readPlanLegalFixpoint,
   readPublishedActions,
   remediesNamedIn,
@@ -51,6 +54,25 @@ function stepsIn(script) {
 }
 
 /**
+ * The call account a CORRECT compiler answers with for a script whose every call became a step: nothing dropped, nothing
+ * folded, nothing already true. Derived from the script rather than written out, because the script is the authority on
+ * how many calls were asked for - the same authority the gate itself reads.
+ */
+function accountOf(script) {
+  const steps = stepsIn(script);
+  return {
+    acceptedSteps: steps.map((_, index) => `n${String(index + 1).padStart(2, "0")}`),
+    acceptedStepsCount: steps.length,
+    merged: [],
+    mergedCount: 0,
+    noStepNeeded: [],
+    noStepNeededCount: 0,
+    dropped: [],
+    droppedCount: 0,
+  };
+}
+
+/**
  * A script by SHAPE rather than by count: what the gate writes alone, the pair under judgement, and the pair with a
  * remedy inserted. The doubles below answer per shape, which is the only thing they are allowed to know.
  */
@@ -66,6 +88,7 @@ function programOf(script) {
     reasonCode: undefined,
     rejected: [],
     rejectedCount: 0,
+    ...accountOf(script),
     program: { nodes: stepsIn(script).map((actionId, index) => ({ nodeId: `n${index + 1}`, actionId })) },
   };
 }
@@ -94,7 +117,20 @@ test("the gate names the round42 pair a dead end on the revision that produced i
   assert.ok(pinned, `the pair four round42 programs died on was not named:\n${output.slice(0, 4000)}`);
   // The code is the compiler's own, unchanged: the dropped call, and the step it told the author to write instead.
   assert.match(pinned, /plan_script_action_after_body_yield:shop_purchase:talk_to_npc:dismiss_first=dismiss_modal$/u);
-  assert.match(output, /^(?:.*\n)*plan_legal_fixpoint status failed$/mu, "the verdict line has to say why it failed");
+  // AND THE ANSWER THAT PAIR CAME BACK IN IS NAMED FORGED, on the same run: `ok: true` while one of the author's two
+  // steps was thrown away. This is the assertion the unit exists for, and it fires on the commit that shipped the shape.
+  const forged = output.split("\n").find((line) => line.startsWith("forged_success:pair:talk_to_npc->shop_purchase:"));
+  assert.ok(forged, `the forged success was not named:\n${output.slice(0, 4000)}`);
+  assert.match(
+    forged,
+    /:n02:plan_script_action_after_body_yield:shop_purchase:talk_to_npc:dismiss_first=dismiss_modal$/u,
+  );
+  // The call-accounting assertion cannot be measured on a compiler that keeps no account, and says so instead of passing.
+  assert.match(
+    output,
+    /plan_legal_fixpoint answers examined \d+ · ok \d+ · refused \d+ · forged [1-9]\d* · accounted 0$/mu,
+  );
+  assert.match(output, /plan_legal_fixpoint status failed$/mu, "the verdict line has to say why it failed");
 });
 
 test("a pair whose program carries both steps is accepted, and nothing is reported", () => {
@@ -142,7 +178,182 @@ test("an accepted answer that dropped the step is a dead end, not an acceptance"
   assert.equal(shopPurchase.kind, "accepted_without_step");
   assert.match(shopPurchase.code, /dismiss_first=dismiss_modal$/u);
   assert.deepEqual(shopPurchase.handWritten, ["dismiss_modal"], "the step that would have made it legal is named");
+  // AND IT IS NAMED FORGED: the same answer, read as the broken promise it is rather than as a dead end in a table.
+  assert.ok(
+    judged.answers.forged.some((line) => line.startsWith("forged_success:pair:talk_to_npc->shop_purchase:")),
+    `the forged success was not named: ${JSON.stringify(judged.answers.forged.slice(0, 3))}`,
+  );
   assert.equal(statusOf(judged), "failed");
+});
+
+/**
+ * THE FORGED-SUCCESS ASSERTION, seen red on a double that can only fail it one way.
+ *
+ * The answer is internally consistent everywhere except in the one fact that matters: its account says both calls were
+ * accepted, and its own `rejected` list says the second one was refused. The accounting is clean, so the run below is
+ * red for the FORGED reason alone - a falsifier that isolates the assertion instead of firing three at once.
+ */
+test("an ok answer whose own refusals name a call is a forged success, and the call is named", () => {
+  const forged = (script) => {
+    const steps = stepsIn(script);
+    if (shapeOf(script) !== "pair") return programOf(script);
+    return {
+      ...programOf(script),
+      rejected: [{ call: 2, actionId: steps[1], reasonCode: BODY_YIELD_REFUSAL(steps) }],
+      rejectedCount: 1,
+    };
+  };
+  const judged = readPlanLegalFixpoint({
+    compile: forged,
+    actions,
+    bodyYieldingActionIds: ["talk_to_npc"],
+    modalClearingActionIds: ["dismiss_modal"],
+    modalTargetedActionIds: MODAL_TARGETED,
+  });
+  assert.deepEqual(
+    judged.answers.faults,
+    [],
+    "the account adds up: this finding is the forged success, not a bookkeeping slip",
+  );
+  const named = judged.answers.forged.find((line) =>
+    line.startsWith("forged_success:pair:talk_to_npc->shop_purchase:"),
+  );
+  assert.ok(named, `the forged success was not named: ${JSON.stringify(judged.answers.forged.slice(0, 3))}`);
+  assert.match(
+    named,
+    /:n02:plan_script_action_after_body_yield:shop_purchase:talk_to_npc:dismiss_first=dismiss_modal$/u,
+  );
+  assert.equal(statusOf(judged), "failed");
+  const check = checksOf(judged).find((entry) => entry.id === "no_forged_success");
+  assert.equal(check?.status, "failed");
+  assert.ok(check.examined > 0, "and it says what it examined");
+});
+
+/**
+ * THE ACCOUNTING ASSERTION, seen red in each of the four ways a call can go missing from it.
+ *
+ * One double per defect, each otherwise a correct compiler, so a failure names the one thing that broke instead of a
+ * sentence nothing can act on. The population here is the account's own answers, which is the set the rule is about.
+ */
+test("a call the account loses, doubles or cuts off is a fault with its own name", () => {
+  const accounting = (reshape) => {
+    const compile = (script) => {
+      const answer = programOf(script);
+      return { ...answer, ...reshape(answer) };
+    };
+    return readPlanLegalFixpoint({
+      compile,
+      actions,
+      bodyYieldingActionIds: ["talk_to_npc"],
+      modalTargetedActionIds: MODAL_TARGETED,
+    });
+  };
+  const gap = accounting((answer) => ({ acceptedSteps: answer.acceptedSteps.slice(0, 1), acceptedStepsCount: 1 }));
+  assert.ok(
+    gap.answers.faults.some((line) => line.startsWith("plan_account_gap:pair:talk_to_npc->")),
+    `a call that vanished must be named: ${JSON.stringify(gap.answers.faults.slice(0, 3))}`,
+  );
+  assert.equal(statusOf(gap), "failed");
+
+  const doubled = accounting((answer) => ({
+    dropped: ["n01:plan_script_unknown_action:x"],
+    droppedCount: 1,
+    acceptedStepsCount: answer.acceptedStepsCount + 1,
+  }));
+  assert.ok(
+    doubled.answers.faults.some((line) => line.startsWith("plan_account_double:pair:talk_to_npc->")),
+    `a call in two lists must be named: ${JSON.stringify(doubled.answers.faults.slice(0, 3))}`,
+  );
+
+  const truncated = accounting((answer) => ({ merged: ["n01:into=n01:same_source"], mergedCount: 5 }));
+  assert.ok(
+    truncated.answers.faults.some((line) => line.startsWith("plan_account_truncated:pair:talk_to_npc->")),
+    `a window that does not equal its count must be named: ${JSON.stringify(truncated.answers.faults.slice(0, 3))}`,
+  );
+
+  const unplaceable = accounting(() => ({
+    acceptedSteps: ["n09"],
+    acceptedStepsCount: 1,
+  }));
+  assert.ok(
+    unplaceable.answers.faults.some((line) => line.startsWith("plan_account_unplaceable:")),
+    `a step numbered past the calls written must be named: ${JSON.stringify(unplaceable.answers.faults.slice(0, 3))}`,
+  );
+});
+
+/**
+ * A COMPILER THAT KEEPS NO ACCOUNT BLOCKS THE ASSERTION INSTEAD OF PASSING IT.
+ *
+ * This is the shape `--revision` produces on a commit from before the account existed: the forged-success assertion still
+ * runs (it reads what the answer says about refusals), and the accounting one reports `blocked` with its population at
+ * zero rather than a green tick over nothing.
+ */
+test("a compiler that answers no account blocks the call-accounting check, never passes it", () => {
+  const judged = readPlanLegalFixpoint({
+    compile: (script) => ({
+      ok: true,
+      reasonCode: undefined,
+      rejected: [],
+      rejectedCount: 0,
+      program: { nodes: stepsIn(script).map((actionId, index) => ({ nodeId: `n${index + 1}`, actionId })) },
+    }),
+    actions,
+    bodyYieldingActionIds: ["talk_to_npc"],
+    modalTargetedActionIds: MODAL_TARGETED,
+  });
+  assert.equal(judged.answers.measured, 0);
+  assert.equal(judged.answers.forged.length, 0, "an answer that says nothing about a drop is not a forged success");
+  assert.deepEqual(
+    checksOf(judged).map((entry) => [entry.id, entry.status]),
+    [
+      ["pair_fixpoint", "passed"],
+      ["modal_target_declaration", "passed"],
+      ["no_forged_success", "passed"],
+      ["call_accounting", "blocked"],
+    ],
+  );
+  assert.equal(statusOf(judged), "blocked", "nothing failed, and one rule was not measured");
+  assert.match(answerSummaryOf(judged), /forged 0 · accounted 0$/u);
+});
+
+/** The reading itself: the tally is a function of the answers, and it names the shape and the call it caught. */
+test("the tally reads a forged answer's shape and call, and an honest one names nothing", () => {
+  const honest = readPlanCallTally([
+    {
+      shape: "alone:till_soil",
+      script: "builder.till_soil({ x: 0, y: 0 });",
+      compiled: programOf("builder.till_soil({ x: 0, y: 0 });"),
+    },
+  ]);
+  assert.deepEqual(honest, {
+    examined: 1,
+    ok: 1,
+    refused: 0,
+    measured: 1,
+    forged: [],
+    faults: [],
+  });
+  const forged = readPlanCallTally([
+    {
+      shape: "pair:talk_to_npc->shop_purchase",
+      script: "builder.talk_to_npc({});\nbuilder.shop_purchase({});",
+      compiled: {
+        ok: true,
+        dropped: ["n02:plan_script_action_after_body_yield:shop_purchase:talk_to_npc:dismiss_first=dismiss_modal"],
+        droppedCount: 1,
+        acceptedSteps: ["n01"],
+        acceptedStepsCount: 1,
+        merged: [],
+        mergedCount: 0,
+        noStepNeeded: [],
+        noStepNeededCount: 0,
+      },
+    },
+  ]);
+  assert.deepEqual(forged.forged, [
+    "forged_success:pair:talk_to_npc->shop_purchase:n02:plan_script_action_after_body_yield:shop_purchase:talk_to_npc:dismiss_first=dismiss_modal",
+  ]);
+  assert.deepEqual(forged.faults, []);
 });
 
 test("a plan-level refusal whose named remedy compiles is repaired, not a dead end", () => {

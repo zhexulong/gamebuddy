@@ -134,10 +134,10 @@ function refusalOf(result: CompiledPlan): string {
 }
 
 /**
- * The calls a compile refused while the rest of the script compiled.
+ * The calls a compile refused, read from the refusal they are part of.
  *
- * A refused call is not a refused plan any more, so every gate below reads the calls by name and by position instead of
- * asserting that nothing came out.
+ * A plan with even one refused call is refused WHOLE (`ok: false`), so there is nothing to read from an accepted answer:
+ * `ok` means every step the author wrote is in the program.
  */
 function rejectionsOf(result: CompiledPlan): readonly Readonly<{
   call: number;
@@ -145,8 +145,24 @@ function rejectionsOf(result: CompiledPlan): readonly Readonly<{
   reasonCode: string;
   missingArguments?: readonly string[];
 }>[] {
-  if (!result.ok) assert.fail(`expected a plan beside the refusals, received ${result.reasonCode}`);
+  if (result.ok) assert.fail("expected a refusal: a plan with a refused call is refused whole");
   return result.rejected;
+}
+
+/**
+ * What became of every call the script wrote, on either answer.
+ *
+ * The four lists partition the author's calls - each one lands in exactly one - so their counts sum to the number of
+ * builder calls the script made. That is the invariant `tools/check-plan-legal-fixpoint.mjs` asserts over the published
+ * vocabulary, and the reason an `ok` answer can no longer hide a step that was thrown away.
+ */
+function accountOf(result: CompiledPlan) {
+  return {
+    acceptedSteps: result.acceptedSteps,
+    merged: result.merged,
+    noStepNeeded: result.noStepNeeded,
+    dropped: result.dropped,
+  };
 }
 
 /** The action shape a refused builder call answered with, read from the result the materializer publishes. */
@@ -667,16 +683,18 @@ builder.move_to_tile({ x: 12, y: 8 });
 builder.sleep();
 builder.cut_weeds({ x: 12, y: 8, slot: 0, expectedTargetId: "debris_01" });
 `);
-  // The refused step cannot exist in the plan, and the walk and the sleep either side of it are exactly the plan the
-  // script asked for minus that step. Both halves matter: a plan that kept the step would aim at a world that is gone,
-  // and a refusal that discarded the walk as well would be the all-or-nothing batch this change removed.
-  assert.deepEqual(
-    nodesOf(result).map((node) => node.actionId),
-    ["move_to_tile", "sleep"],
-  );
+  // The refused step cannot exist in the plan - a node after `sleep` aims at a world that is gone - so nothing of this
+  // script runs, and the answer names the step that was thrown away beside the two that compiled around it.
+  assert.equal(refusalOf(result), "plan_script_action_after_world_reset:cut_weeds:sleep");
   assert.deepEqual(rejectionsOf(result), [
     { call: 3, actionId: "cut_weeds", reasonCode: "plan_script_action_after_world_reset:cut_weeds:sleep" },
   ]);
+  assert.deepEqual(accountOf(result).dropped, ["n03:plan_script_action_after_world_reset:cut_weeds:sleep"]);
+  assert.deepEqual(
+    accountOf(result).acceptedSteps,
+    ["n01", "n02"],
+    "the walk and the sleep are steps of hers that compiled",
+  );
 });
 
 /**
@@ -720,7 +738,12 @@ test("a step after talk_to_npc gets the dismissal inserted, and the answer says 
   // The answer states that the program is not exactly the script, and where.
   assert.deepEqual(insertionsOf(result).inserted, ["inserted=dismiss_modal;before=n04"]);
   assert.equal(insertionsOf(result).count, 1);
-  assert.deepEqual(rejectionsOf(result), [], "nothing was refused");
+  assert.deepEqual(accountOf(result).dropped, [], "nothing of hers was thrown away");
+  assert.deepEqual(
+    accountOf(result).acceptedSteps,
+    ["n01", "n02", "n03"],
+    "both of her steps are in the program - the third node is the purchase she wrote at call 3",
+  );
   // And what the Mod receives is a request its own validator accepts.
   assert.equal(validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }), null);
 });
@@ -775,9 +798,29 @@ test("a body-clearing step the author wrote herself is not inserted twice", () =
 test("the dismissal is inserted for exactly the actions the declaration calls body-yielding", () => {
   assert.ok(BODY_YIELDING_PLAN_ACTION_IDS.length > 0, "the yielding declaration names at least one action");
   assert.ok(ACTIONS.length > 20, `the vocabulary is a real population, not ${ACTIONS.length} actions`);
+  // The pair is written for every action, so the population stays whole. An action that rebuilds the world cannot be
+  // followed by ANY step - that is the other rule, and it is measured as its own named refusal rather than skipped here,
+  // because a skipped member would be a hole exactly where the two rules meet.
+  const worldResetting = SURFACE.filter((action) => action.postcondition?.name === "day_advanced").map(
+    (action) => action.actionId,
+  );
+  assert.ok(
+    worldResetting.length > 0,
+    "the surface still declares the day_advanced postcondition, so the pair has a hole to name",
+  );
   const insertedFor: string[] = [];
+  let refusedAsWorldReset = 0;
   for (const action of ACTIONS) {
     const result = compile(`${builderCall(action.actionId)}\nbuilder.move_to_tile({ x: 11, y: 10 });`);
+    if (worldResetting.includes(action.actionId)) {
+      assert.equal(
+        refusalOf(result),
+        `plan_script_action_after_world_reset:move_to_tile:${action.actionId}`,
+        `${action.actionId} rebuilds the world, so no step may follow it - named here rather than dropped from the population`,
+      );
+      refusedAsWorldReset += 1;
+      continue;
+    }
     const insertions = insertionsOf(result).inserted;
     const dismissals = insertions.filter((entry) => entry.includes(`=${MODAL_CLEARING_PLAN_ACTION_IDS[0]};`));
     const yielding = BODY_YIELDING_PLAN_ACTION_IDS.includes(action.actionId);
@@ -798,6 +841,11 @@ test("the dismissal is inserted for exactly the actions the declaration calls bo
     );
   }
   assert.ok(insertedFor.length > 0, "the population of insertions was not empty");
+  assert.equal(
+    refusedAsWorldReset,
+    worldResetting.length,
+    `every world-resetting action was measured by its own refusal (${refusedAsWorldReset} of ${worldResetting.length})`,
+  );
 });
 
 /**
@@ -824,6 +872,16 @@ test("with no published dismissal to write, the refusal keeps its name", () => {
       reasonCode: `plan_script_action_after_body_yield:move_to_tile:talk_to_npc:dismiss_first=${MODAL_CLEARING_PLAN_ACTION_IDS[0]}`,
     },
   ]);
+  assert.equal(
+    refusalOf(result),
+    `plan_script_action_after_body_yield:move_to_tile:talk_to_npc:dismiss_first=${MODAL_CLEARING_PLAN_ACTION_IDS[0]}`,
+    "the code is the refusal's own, unchanged, and the step beside it did not run",
+  );
+  assert.deepEqual(
+    accountOf(result).acceptedSteps,
+    ["n01"],
+    "the dialogue she wrote compiled; the step after it broke",
+  );
 });
 
 /**
@@ -1006,15 +1064,15 @@ test("every action the surface declares day_advanced refuses a step written afte
   assert.ok(dayAdvanced.length > 0, "the surface still declares the day_advanced postcondition");
   for (const actionId of dayAdvanced) {
     const result = compile(`builder.${actionId}();\nbuilder.move_to_tile({ x: 11, y: 10 });`);
-    assert.deepEqual(
-      nodesOf(result).map((node) => node.actionId),
-      [actionId],
-      `${actionId} declares day_advanced, so it is the last node of the plan it starts`,
-    );
     assert.equal(
-      rejectionsOf(result)[0]?.reasonCode,
+      refusalOf(result),
       `plan_script_action_after_world_reset:move_to_tile:${actionId}`,
       `${actionId} declares day_advanced, so a plan may not write a node after it`,
+    );
+    assert.deepEqual(
+      accountOf(result).acceptedSteps,
+      ["n01"],
+      `${actionId} is the step that compiled, and the walk after it is the one that did not`,
     );
   }
 });
@@ -1416,17 +1474,14 @@ test("the builder admits and refuses exactly the lifecycles the Mod's catalog do
 });
 
 test("a refused call is reported instead of swallowed, and a clock or a throw is named", () => {
-  // A try/catch around the builder can no longer turn a refused step into a silently shorter plan, because the refusal is
-  // answered at the call boundary and never thrown into the script: the call is reported by name and the walk beside it
-  // still compiles. Silently shorter was the danger; reported and shorter is the point.
+  // A try/catch around the builder cannot turn a refused step into a silently shorter plan: the refusal is answered at
+  // the call boundary and never thrown into the script, so the script's own catch sees nothing - and when the script is
+  // done the plan is refused, with the call named and the walk beside it accounted for as one that compiled. Silently
+  // shorter was the danger; named and refused is the point.
   const swallowed = compile(`
 try { builder.move_to_tile({ x: 10, y: 10, unexpected: 1 }); } catch (error) {}
 builder.move_to_tile({ x: 11, y: 10 });
 `);
-  assert.deepEqual(
-    nodesOf(swallowed).map((node) => node.actionId),
-    ["move_to_tile"],
-  );
   assert.deepEqual(rejectionsOf(swallowed), [
     {
       call: 1,
@@ -1434,6 +1489,10 @@ builder.move_to_tile({ x: 11, y: 10 });
       reasonCode: "plan_script_unknown_argument:move_to_tile.unexpected:allowed:x,y:declared_by:none",
     },
   ]);
+  assert.deepEqual(accountOf(swallowed).dropped, [
+    "n01:plan_script_unknown_argument:move_to_tile.unexpected:allowed:x,y:declared_by:none",
+  ]);
+  assert.deepEqual(accountOf(swallowed).acceptedSteps, ["n02"], "the walk she wrote second did compile");
   assert.equal(refusalOf(compile("throw new TypeError('nope');")), "plan_script_threw:TypeError");
   assert.equal(refusalOf(compile("while (true) {}")), "plan_script_timeout:50");
   assert.equal(refusalOf(compile("   ")), "plan_script_invalid");
@@ -1931,6 +1990,28 @@ for (const animal of snapshot.animalProductTargets ?? []) {
 });
 
 /**
+ * A CALL THAT HAD NOTHING TO DO IS NAMED, NOT COUNTED AS A STEP.
+ *
+ * `equipFor` answers the slot the action must name, and when the surface says that slot is already the held tool it writes
+ * no equip step. That is the compiler thinking about her call and finding it already true - which is a different fact from
+ * "the compiler ignored my step", and the only way she can tell them apart is being told which one happened.
+ */
+test("a call that needed no step is named as such, and the step beside it is not", () => {
+  const result = compile(
+    "const slot = builder.equipFor('cut_weeds');\nbuilder.cut_weeds({ x: 5, y: 6, slot, expectedTargetId: 'weed_01' });",
+    { currentToolSlot: 3, toolSlots: [{ slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" }] },
+  );
+  assert.deepEqual(
+    nodesOf(result).map((node) => node.actionId),
+    ["cut_weeds"],
+    "the scythe is in hand, so no equip step is written",
+  );
+  assert.deepEqual(accountOf(result).noStepNeeded, ["n01:equip_for:already_held"]);
+  assert.deepEqual(accountOf(result).acceptedSteps, ["n02"], "the cut itself is the step that compiled");
+  assert.deepEqual(accountOf(result).dropped, []);
+});
+
+/**
  * `cut_weeds` declares `tool:scythe` on the surface, so the helper must honour that claim. When the pack publishes the
  * category the slot is resolved and no equip step is written (the tool is in hand); when the pack publishes no
  * categories the refusal names the CATEGORY it could not resolve - never "requirement undeclared", which would be a
@@ -2373,15 +2454,20 @@ test("a shape call for several actions answers the ones that exist and names the
 });
 
 /**
- * ONE BAD NODE MUST NOT VOID THE BATCH.
+ * ONE REFUSED CALL REFUSES THE PLAN, AND THE ANSWER STILL NAMES EVERY CALL SHE WROTE.
  *
  * This is the first of the fourteen voided batches measured in `.tmp/fork-why-slow.jsonl`, replayed verbatim: six calls,
- * two of which pass every argument and four of which omit `expectedQualifiedItemId` on a `harvest_crop` that declares
- * it. The whole plan was refused, so the companion's own words - "write 30 nodes and any one miss zeroes the batch" -
- * were the measurement, and it kept its bets at an average of 2.8 nodes per plan. The three walks are executable work
- * and must survive; the refusal names which call failed, by its 1-based position in the script.
+ * two of which pass every argument and four of which omit `expectedQualifiedItemId` on a `harvest_crop` that declares it.
+ * The companion's own words - "write 30 nodes and any one miss zeroes the batch" - are why it kept its bets at 2.8 nodes
+ * per plan.
+ *
+ * The half-fix was to run the other five nodes anyway, and it cost more than the all-or-nothing it replaced: the answer
+ * said `accepted: true` (round40: `accepted: true` beside `droppedCount: 15`; at `3d249ff1` the round42 talk-then-buy
+ * pair) while a step the companion had planned around never ran. So the plan is refused WHOLE - nothing runs, so nothing
+ * is a lie - and the answer hands back both halves of the account: the calls that were dropped, and the calls that
+ * compiled, so the correction is one edit and one resubmission instead of a rediscovered plan.
  */
-test("a node that is refused does not void the nodes around it, and the answer names the call", () => {
+test("a refused call refuses the whole plan, and the answer names every call that was dropped or kept", () => {
   const measured = `
 builder.move_to_tile({ x: 60, y: 11 });
 builder.harvest_crop({ x: 60, y: 10, expectedTargetId: "crop_72f6ce55311cf7c3" });
@@ -2391,18 +2477,14 @@ builder.move_to_tile({ x: 59, y: 14 });
 builder.harvest_crop({ x: 58, y: 14, expectedQualifiedItemId: "(O)24", expectedTargetId: "crop_5481d34df6f60c18" });
 `;
   const result = compile(measured, { ...SOURCE_SNAPSHOT });
-  assert.ok(result.ok, "the three walks are a plan even though one harvest was refused");
   // Calls 2, 4 and 6 were the same mistake in the measured session; this replay supplies the argument on 4 and 6 so the
-  // gate reads as "one refused call kept five nodes", which is the property, not the session's arithmetic.
-  // The script wrote move, harvest, move, harvest, move; call 2's harvest is refused, so the plan keeps the other four
-  // nodes in the order the script wrote them. Two ids and a shape rather than a five-id copy of the published list, and
-  // the shape is what this case is about - the order survives a refusal.
-  const written = { move: "move_to_tile", harvest: "harvest_crop" } as const;
-  assert.deepEqual(
-    result.program.nodes.map((node) => node.actionId),
-    ["move", "move", "harvest", "move", "harvest"].map((name) => (name === "move" ? written.move : written.harvest)),
+  // reading is "one refused call, five that were fine", which is the property, not the session's arithmetic.
+  assert.equal(
+    refusalOf(result),
+    "plan_script_missing_argument:harvest_crop.expectedQualifiedItemId:string:snapshot.harvestTargets[].qualifiedHarvestItemId",
+    "the first refused call's own code, unchanged, is the reason nothing runs",
   );
-  assert.deepEqual(result.rejected, [
+  assert.deepEqual(result.ok ? null : result.rejected, [
     {
       call: 2,
       actionId: "harvest_crop",
@@ -2411,32 +2493,24 @@ builder.harvest_crop({ x: 58, y: 14, expectedQualifiedItemId: "(O)24", expectedT
       missingArguments: ["expectedQualifiedItemId"],
     },
   ]);
-  // The accepted nodes keep the order the script wrote them in - every step waits for the one before it to be terminal,
-  // and none of them consumes another - and the plan is still one the Mod accepts.
-  assert.deepEqual(
-    result.program.nodes.map((node) => node.dependsOn),
-    [[], [], [], [], []],
-  );
-  assert.deepEqual(
-    result.program.nodes.map((node) => node.orderedAfter ?? []),
-    [[], ["n01"], ["n02"], ["n03"], ["n04"]],
-  );
-  assert.equal(
-    validateBodyProgramCandidateRequest({
-      programId: planProgramId(11, result.program.nodes),
-      nodes: result.program.nodes,
-    }),
-    null,
-  );
+  assert.deepEqual(accountOf(result).dropped, [
+    "n02:plan_script_missing_argument:harvest_crop.expectedQualifiedItemId:string:snapshot.harvestTargets[].qualifiedHarvestItemId",
+  ]);
+  // THE OTHER FIVE ARE NOT LOST SILENTLY IN EITHER DIRECTION: they are named as the calls that compiled, in the order she
+  // wrote them, so she can resend them with the one broken step repaired.
+  assert.deepEqual(accountOf(result).acceptedSteps, ["n01", "n03", "n04", "n05", "n06"]);
+  assert.equal(result.acceptedStepsCount, 5);
+  assert.equal(result.droppedCount, 1);
+  assert.equal(result.mergedCount + result.noStepNeededCount, 0, "every call is in exactly one of the four lists");
 });
 
 /**
  * The dependent case, with the one dependency a script can actually express: `equipFor` ANSWERS a slot, and the call
  * after it consumes that answer. When the equip step is refused there is no slot, so the action that would have named it
  * must not become a node - it is refused too, not silently written with a missing argument the Mod would hit at runtime.
- * Both refusals are reported against the call that caused them.
+ * Both refusals are named against the call that caused them, and the plan they are part of runs nothing.
  */
-test("a call that consumes a refused call's answer does not run, and dependencies stay closed", () => {
+test("a call that consumes a refused call's answer does not run, and both are named", () => {
   const result = compile(
     `
 builder.move_to_tile({ x: 12, y: 8 });
@@ -2446,26 +2520,21 @@ builder.cut_weeds({ x: 10, y: 10, slot: slot, expectedTargetId: 'weed_01' });
     // No pack slot publishes a category at all, so the scythe cannot be resolved and the equip step is refused by name.
     {},
   );
-  assert.ok(result.ok, "the walk written before the refusal is still a plan");
   assert.deepEqual(
-    result.program.nodes.map((node) => node.actionId),
-    ["move_to_tile"],
-  );
-  assert.deepEqual(
-    result.rejected.map(({ call, actionId }) => ({ call, actionId })),
+    rejectionsOf(result).map(({ call, actionId }) => ({ call, actionId })),
     [
       { call: 2, actionId: "cut_weeds" },
       { call: 3, actionId: "cut_weeds" },
     ],
   );
-  assert.equal(result.rejected[0]?.reasonCode, "plan_script_tool_slot_unresolved:cut_weeds:scythe");
-  assert.match(result.rejected[1]?.reasonCode ?? "", /^plan_script_argument_not_canonical:cut_weeds\.slot:/u);
-  assert.match(result.rejected[1]?.reasonCode ?? "", /:got:missing$/u);
-  // The graph stays closed over the nodes that were accepted: a refused call leaves no id behind for anyone to name.
-  const accepted = new Set(result.program.nodes.map((node) => node.nodeId));
-  for (const node of result.program.nodes)
-    for (const dependency of node.dependsOn)
-      assert.ok(accepted.has(dependency), `${node.nodeId} depends on ${dependency}, which no accepted node declares`);
+  assert.equal(result.ok ? null : result.rejected[0]?.reasonCode, "plan_script_tool_slot_unresolved:cut_weeds:scythe");
+  assert.match(
+    result.ok ? "" : (result.rejected[1]?.reasonCode ?? ""),
+    /^plan_script_argument_not_canonical:cut_weeds\.slot:/u,
+  );
+  assert.match(result.ok ? "" : (result.rejected[1]?.reasonCode ?? ""), /:got:missing$/u);
+  assert.deepEqual(accountOf(result).acceptedSteps, ["n01"], "the walk before the refusal compiled, and is named");
+  assert.equal(result.droppedCount, 2);
 });
 
 /**
@@ -2489,4 +2558,57 @@ builder.move_to_tile({ x: 10 });
       { call: 2, actionId: "move_to_tile", missingArguments: ["y"] },
     ],
   );
+});
+/**
+ * EVERY CALL SHE WROTE IS ACCOUNTED FOR EXACTLY ONCE, over the whole published vocabulary.
+ *
+ * This is the compiler's half of `tools/check-plan-legal-fixpoint.mjs`: that gate drives the same property across the
+ * pairs its own reading builds, and this one over every action the surface publishes, alone. The population is the
+ * vocabulary itself - never a list written here - and a zero population FAILS, because a check that examined nothing
+ * agrees with itself.
+ *
+ * A call in NONE of the four lists is the defect the whole account exists for (an `ok` answer carrying a step that was
+ * quietly thrown away); a call in TWO of them is a bookkeeping bug that would hide the first. Both are named with the
+ * entry that broke, so the next reader knows which action and which list.
+ */
+test("every authored call is accounted for exactly once, across the whole published vocabulary", () => {
+  assert.ok(ACTIONS.length > 20, `the vocabulary is a real population, not ${ACTIONS.length} actions`);
+  const faults: string[] = [];
+  let examined = 0;
+  const accountOfScript = (script: string, calls: number, label: string) => {
+    const result = compile(script, { ...SOURCE_SNAPSHOT });
+    examined += 1;
+    const lists = {
+      acceptedSteps: result.acceptedSteps,
+      merged: result.merged,
+      noStepNeeded: result.noStepNeeded,
+      dropped: result.dropped,
+    };
+    const counted = result.acceptedStepsCount + result.mergedCount + result.noStepNeededCount + result.droppedCount;
+    if (counted !== calls)
+      faults.push(
+        `${label}: ${calls} call(s) written, ${counted} accounted for (${JSON.stringify(lists)}) examined ${examined}`,
+      );
+    const seen = new Map<string, string>();
+    for (const [list, entries] of Object.entries(lists))
+      for (const entry of entries) {
+        // The call's own position is the first field of every entry, whatever the list: `n07`, `n07:into=n03:...`.
+        const step = entry.split(":")[0]!;
+        const previous = seen.get(step);
+        if (previous !== undefined)
+          faults.push(`${label}: ${step} is in both ${previous} and ${list} (examined ${examined})`);
+        seen.set(step, list);
+      }
+  };
+  for (const action of ACTIONS) accountOfScript(builderCall(action.actionId), 1, action.actionId);
+  // The shapes that put more than one disposition in one script: a body-yielding step (an insertion, both calls accepted),
+  // and a script whose second call cannot be written at all (one accepted, one dropped).
+  accountOfScript(
+    'builder.talk_to_npc({ x: 13, y: 8, expectedTargetId: "npc_pierre" });\nbuilder.move_to_tile({ x: 12, y: 8 });',
+    2,
+    "talk_to_npc->move_to_tile",
+  );
+  accountOfScript("builder.move_to_tile({ x: 12, y: 8 });\nbuilder.move_to_tile({ x: 12 });", 2, "second call refused");
+  assert.ok(examined > 20, `the account was measured over ${examined} answers`);
+  assert.deepEqual(faults, [], faults.join("\n"));
 });

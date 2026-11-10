@@ -1283,15 +1283,18 @@ test("the plan tool hands its compiled program to the one submission path a mode
   assert.match(source, /requiredArguments: compiled\.requirement\.requiredArguments,/u);
   // The shape of one action (or one family) stays reachable as a read-only tool instead of 95 schemas in every context.
   assert.match(source, /name: "stardew_plan_shape",/u);
-  // A permissive compile is fine; a permissive answer is not. Measured on a live run: six statements, two refused
-  // for a missing required argument, and the answer said `{accepted: true, nodeCount: 5}` with nothing else, so the
-  // companion planned around an item it never picked up. Both answer branches must carry what was refused.
-  assert.match(source, /droppedCount: compiled\.rejectedCount,/u);
-  assert.match(source, /dropped: compiled\.rejected\.map\(/u);
-  assert.equal(
-    [...source.matchAll(/\.\.\.refused,/gu)].length,
-    2,
-    "both the accepted and the refused answer branch must spread the refusal summary",
+  // A PERMISSIVE COMPILE IS FINE; A PERMISSIVE ANSWER IS NOT. Measured on a live run: six statements, two refused for a
+  // missing required argument, and the answer said `{accepted: true, nodeCount: 5}` with nothing else, so the companion
+  // planned around an item it never picked up. The answer now carries the compiler's account of every call she wrote -
+  // which ones were dropped, and which ones compiled - on the branch where nothing ran, because that is the only branch
+  // a refused call can reach: a plan with a dropped step is refused whole and never submitted.
+  assert.match(source, /droppedCount: compiled\.droppedCount,/u);
+  assert.match(source, /acceptedSteps: compiled\.acceptedSteps,/u);
+  assert.match(source, /droppedTruncated: compiled\.droppedCount > compiled\.dropped\.length,/u);
+  assert.match(
+    source,
+    /\.\.\.stepAccountNote\(compiled\),/u,
+    "an accepted answer still states the steps the compiler wrote or folded, not only the ones the author wrote",
   );
   // A caller that names one action writes `actionId`; the schema says `actionIds`. The reader accepts both.
   assert.match(source, /value\.actionIds === undefined \? value\.actionId : value\.actionIds/u);
