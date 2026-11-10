@@ -350,6 +350,15 @@ export function runCheck({ root = REPOSITORY_ROOT, mode = "worktree", range = nu
     revisionRecordUpdated: pendingRecord !== contents.get(`HEAD:${PERSONA_REVISION_FILE}`),
     label: mode === "staged" ? "the staged commit" : "the working tree",
   });
+  // A drift in the WORKING TREE is not a violation: nothing has been shipped, and a writer may be mid-edit. The
+  // property is about commits, which the `staged` and `range` arms judge. This arm still refuses to pass - exit 2,
+  // every drifting field named - so a reader cannot mistake "mid-edit" for "unchanged", and cannot mistake it for
+  // "someone committed prose without a decision" either. The three zeroes stay distinct: not measured, blocked, zero.
+  if (mode === "worktree" && verdict.status === "failed")
+    return blocked(
+      `uncommitted_persona_edit:${changes.length}_prose_field(s)_differ_from_HEAD:the_commit_is_what_is_judged`,
+      [...lines, ...verdict.findings],
+    );
   return { status: verdict.status, reason: null, lines: [...lines, ...verdict.findings], findings: verdict.findings };
 }
 

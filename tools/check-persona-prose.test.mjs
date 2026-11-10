@@ -220,6 +220,22 @@ test("each half of the decision alone is red, and the half that is missing is th
   assert.match(stdout, /prose commits 2 · changed 2/mu);
 });
 
+test("an uncommitted rewrite is blocked rather than a violation, and the same drift staged is a violation", (context) => {
+  const root = repository({ [CARD]: card("shipped prose"), [REVISION]: "# Persona revisions\n" }, context);
+  writeFiles(root, { [CARD]: card("mid-edit prose") });
+  const worktree = run(root);
+  assert.equal(worktree.status, 2, "a working-tree drift is not a shipped change, so it cannot be a violation");
+  assert.match(worktree.stdout, /uncommitted_persona_edit:1_prose_field\(s\)_differ_from_HEAD/);
+  assert.match(
+    worktree.stdout,
+    new RegExp(`${VIOLATION}:${CARD.replaceAll("/", "/")}`),
+    "the drifting field is still named",
+  );
+  git(root, ["add", "-A"]);
+  const staged = run(root, ["--staged", "--message", "chore: rewrite without a decision"]);
+  assert.equal(staged.status, 1, "the commit is the unit that ships, so the staged arm is where it is a violation");
+});
+
 test("a change that is not prose is green and prints a measured zero", (context) => {
   const preset = "assets/tavern/presets/amber.json";
   const document = (temperature) =>
@@ -231,15 +247,22 @@ test("a change that is not prose is green and prints a measured zero", (context)
   assert.match(stdout, /prose commits 0 · changed 0/mu);
 });
 
-test("the uncommitted rewrite the incidents actually took is red in the working tree, and green once restored", (context) => {
+test("the uncommitted rewrite the incidents actually took is blocked in the working tree, and a violation once staged", (context) => {
   const root = repository({ [CARD]: card("x".repeat(20)) }, context);
   writeFiles(root, { [CARD]: card("y".repeat(8)) });
   const staged = run(root, ["--staged"]);
   assert.equal(staged.status, 0, "the rewrite is not in the index yet, and the staged form says so");
 
+  // The working tree is not what ships: this arm names the drift and refuses to pass (exit 2), but it does not
+  // accuse anyone of committing prose without a decision - that is the staged arm's question, asked one line down.
   const worktree = run(root);
-  assert.equal(worktree.status, 1);
+  assert.equal(worktree.status, 2);
+  assert.match(worktree.stdout, /uncommitted_persona_edit:1_prose_field/);
   assert.equal(worktree.stdout.includes(`${VIOLATION}:${CARD}:data.system_prompt:20->8`), true, worktree.stdout);
+
+  git(root, ["add", "-A"]);
+  const stagedNow = run(root, ["--staged", "--message", "chore: rewrite without a decision"]);
+  assert.equal(stagedNow.status, 1, "once it is in the index, the same drift is the violation the gate exists for");
 });
 
 test("the staged form reds on a prose change with no message supplied, and greens with the marker and the register", (context) => {
@@ -287,7 +310,9 @@ test("the two parsers that read git's own output hold on the real shipped docume
   // bytes, and a character slice would cut its Chinese dialogue and stop it being JSON.
   const spec = `HEAD:${CARD.replace("card.json", "worldbook.json")}`;
   const text = batchContents(repositoryRoot, [spec]).get(spec);
-  assert.equal(JSON.parse(text).entries.length, 8);
+  // The count is not the fact this test protects: it proves the byte-length slice survives multi-byte prose, and a
+  // pinned entry count would age every time the shipped worldbook gains a line (it went 8 -> 11 on 2026-11-10).
+  assert.ok(JSON.parse(text).entries.length > 0, "the real document parses, and it is not empty");
   assert.notEqual(Buffer.byteLength(text), text.length);
 
   // `%x01`-separated `git log` records, one per commit, in order, with the message that decides the marker.
