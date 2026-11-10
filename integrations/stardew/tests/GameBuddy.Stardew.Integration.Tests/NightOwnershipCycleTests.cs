@@ -30,6 +30,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// ownership of a night that has not begun, the takeover of a night nobody can finish, and the walkability of the remedy
 /// the refusal names.
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the behaviour cases drive a night/ownership cycle through real execution, and the shape pin fixes the evidence strings that cycle publishes. Keep them together: the pin is the only thing that notices a renamed evidence key, and the behaviour cases are the only thing that shows the key is produced by a real cycle rather than a fixture.
 public sealed class NightOwnershipCycleTests
 {
     private const string ScopePlayerId = "1001";

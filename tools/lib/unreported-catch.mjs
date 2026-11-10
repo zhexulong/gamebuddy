@@ -316,6 +316,15 @@ export const DECLARED = Object.freeze([
       "the same `readJson` contract as the management client: `undefined` is handed to the body decoder and " +
       "becomes a thrown protocol error, never a silent absence",
   }),
+  Object.freeze({
+    path: "dialogue-web/src/components/use-composed-bootstrap.ts",
+    witness: "// The first-paint cache stands in; nothing about the conversation depends on this read.",
+    sites: 1,
+    reason:
+      "the language the surface paints with is a preference, and the first-paint cache is the answer when the " +
+      "Host cannot answer: the player still gets a language, the conversation does not depend on the read, and " +
+      "a notice about it would be the only thing on a first frame that is otherwise ready",
+  }),
 ]);
 
 /** Every catch clause in the tree, with what it does and whether that counts as reporting. */

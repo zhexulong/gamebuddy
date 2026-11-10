@@ -706,6 +706,17 @@ const DECLARED = Object.freeze([
     witness: "reclamation of the ",
     sites: 1,
   }),
+  Object.freeze({
+    kind: "silent-catch",
+    path: "tools/live-program.mjs",
+    symbol: "closeSession",
+    witness: "/* a bridge that is already gone owes no unsubscribe */",
+    sites: 1,
+    reason:
+      "this is the teardown of a run that already decided its verdict: `restore` carries what the teardown " +
+      "actually managed, and a close failure here would replace that measured line with a second one about a " +
+      "session the run is finished with",
+  }),
 ]);
 
 function declarationProblems(declared) {

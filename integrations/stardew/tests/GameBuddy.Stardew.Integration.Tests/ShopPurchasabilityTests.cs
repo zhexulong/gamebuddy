@@ -21,6 +21,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// half (discovery asks this and records the exclusion) is pinned by name in the second test.
 /// </para>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the behaviour cases decide what a shop offers now, and the shape pin asserts that the discovery path asks the engine's own `OpensNow(resolvedOwner)` rather than re-deriving opening hours. Keep them together: if that call is renamed, the behaviour cases would still pass against a re-implementation and the pin is what fails, so it has to live where the reader of those cases will see it.
 public sealed class ShopPurchasabilityTests
 {
     private const string ClosedToday = "Pierre's shop is closed today.";

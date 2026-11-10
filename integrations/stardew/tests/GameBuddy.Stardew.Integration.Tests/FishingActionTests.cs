@@ -44,6 +44,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </item>
 /// </list>
 /// </summary>
+// MIXED SHAPE AND BEHAVIOUR: the behaviour cases measure what a fishing action does, and the shape pins fix the source constructs they depend on. Keep them together: a pin that guarded a construct nothing else used would be dead weight, and a behaviour case whose construct drifted silently would read green against the wrong code.
 public sealed class FishingActionTests
 {
     private const string FishingPartial = "integrations/stardew/farmhandexecutioncontroller.fishingactions.cs";
