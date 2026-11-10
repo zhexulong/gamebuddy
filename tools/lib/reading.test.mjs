@@ -21,7 +21,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { census, crossCheck, format, formatCensus, reading, ReadingError, verdictFrom } from "./reading.mjs";
+import { census, crossCheck, format, formatCensus, ReadingError, reading, verdictFrom } from "./reading.mjs";
 
 const WINDOW = Object.freeze({
   start: Date.parse("2026-11-10T09:01:00.000Z"),

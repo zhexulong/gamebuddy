@@ -15,7 +15,7 @@
  * Usage: node tools/live-run/round-verdict.mjs [run-dir]
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
 import { census, format, formatCensus, reading } from "../lib/reading.mjs";
@@ -966,7 +966,6 @@ record(
 // 4. Night attribution, from the harness's own assessment.
 const assessment = result.multiday?.assessment ?? result.assessment ?? null;
 const dayRecords = result.multiday?.dayRecords ?? result.dayRecords ?? [];
-const nightsNull = dayRecords.filter((day) => day?.night === null || day?.night === undefined).length;
 // A night that was never crossed has no mechanism to judge, so "no violation" is not a pass - it is the absence of
 // evidence. Measured 2026-11-01 on `round20`: `crossed=0, nightsNull=1` reported PASS, which is a green tick over a run
 // that never reached the thing this criterion exists to check. `nightsNull` is not the signal either: it counts days whose
