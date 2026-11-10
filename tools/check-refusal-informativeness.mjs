@@ -395,6 +395,24 @@ export function readActionSurface(source) {
 // Reads: the Mod's rejected-receipt sites.
 // ---------------------------------------------------------------------------
 
+/** The C# control keywords whose parenthesised condition is not an argument list. */
+const CONTROL_KEYWORDS = Object.freeze(
+  new Set(["if", "while", "for", "foreach", "switch", "catch", "using", "lock", "fixed", "when"]),
+);
+
+/**
+ * True when the `(` at `open` opens an ARGUMENT LIST rather than a grouping or a control condition: the token before it
+ * must name a callee. `receipt.State != ExecutionState.Rejected` inside an `if`, and `(a && b == ExecutionState.Rejected)`
+ * inside a boolean group, both look like `( ... )` to a balance scanner and each invented a "receipt site" whose reason
+ * code was empty.
+ */
+function isCallParenthesis(tokens, open) {
+  const before = tokens[open - 1];
+  if (before === undefined) return false;
+  if (before.type === "word") return !CONTROL_KEYWORDS.has(before.value);
+  return before.value === ")" || before.value === "]" || before.value === ">";
+}
+
 /**
  * Every place the Mod answers with a rejected receipt: the reason code it names, and the evidence
  * it carries. An evidence argument of `null` is the shape that cost a live run to discover.
@@ -413,7 +431,7 @@ export function extractModReceiptSites(sources) {
       if (token.type !== "word" || token.value !== "ExecutionState") continue;
       if (tokens[index + 1]?.value !== "." || tokens[index + 2]?.value !== "Rejected") continue;
       const open = enclosingCallOpen(tokens, index);
-      if (open < 0) continue;
+      if (open < 0 || !isCallParenthesis(tokens, open)) continue;
       const close = matchingClose(tokens, open);
       if (close < 0) continue;
       const args = splitTopLevel(tokens.slice(open + 1, close), ",");
@@ -428,6 +446,7 @@ export function extractModReceiptSites(sources) {
         sites.push({
           ...location,
           code: literal.code,
+          codeExpression: literal.code,
           parameterised: literal.parameterised,
           evidence,
           resolvedBy: "literal",
@@ -451,13 +470,21 @@ export function extractModReceiptSites(sources) {
           ? undefined
           : (literalsByName.get(entry.name) ?? carriedLiterals(entry.name, outParamMethods, methodLiterals));
       if (resolved === undefined || resolved.size === 0) {
-        unattributed.push({ ...entry.location, expression: entry.expression });
+        unattributed.push({
+          ...entry.location,
+          expression: entry.expression,
+          codeExpression: entry.expression,
+          evidence: entry.evidence,
+        });
         continue;
       }
       for (const code of resolved)
         sites.push({
           ...entry.location,
           code,
+          // The expression the site SPELLS, which is what a bare-evidence ledger classifies on: a
+          // carrier such as `scopeReason` is one decision even when it resolves to six literals.
+          codeExpression: entry.expression,
           parameterised: false,
           evidence: entry.evidence,
           resolvedBy: `name:${entry.name}`,
@@ -842,6 +869,7 @@ export function checkRefusalInformativeness({ root = REPOSITORY_ROOT, overrides 
   const priceSites = priceRefusalSites(receiptSites.sites);
   const classOf = (code) => codes.get(reasonFamilyOf(code))?.class ?? classifyReasonCode(reasonFamilyOf(code));
   const classNeeds = new Map(REFUSAL_CLASSES.map((entry) => [entry.id, entry.needs]));
+  const bareRefusals = checkBareRefusals(receiptSites);
 
   const findings = [
     ...checkClosedVocabulary(codes),
@@ -864,6 +892,7 @@ export function checkRefusalInformativeness({ root = REPOSITORY_ROOT, overrides 
       targetSites: receiptSites.sites,
     }),
     ...checkPriceComparison(priceSites),
+    ...bareRefusals.findings,
   ];
 
   const classStatus = new Map();
@@ -893,6 +922,12 @@ export function checkRefusalInformativeness({ root = REPOSITORY_ROOT, overrides 
         .sort((left, right) => left.family.localeCompare(right.family)),
     ),
     unattributed: Object.freeze(receiptSites.unattributed.sort((left, right) => left.path.localeCompare(right.path))),
+    bareAllowed: Object.freeze(bareRefusals.bareAllowed),
+    bareUnaccounted: Object.freeze(
+      bareRefusals.unaccounted.sort((left, right) =>
+        `${left.path}:${left.line}`.localeCompare(`${right.path}:${right.line}`),
+      ),
+    ),
     counts: Object.freeze({
       actions: actions.length,
       receiptSites: receiptSites.sites.length,
@@ -901,6 +936,9 @@ export function checkRefusalInformativeness({ root = REPOSITORY_ROOT, overrides 
       planSites: planSites.length,
       reasonFamilies: codes.size,
       reasonCodes: [...codes.values()].reduce((total, entry) => total + entry.codes.size, 0),
+      bareRefusals: bareRefusals.counts.sites,
+      bareAllowed: bareRefusals.counts.allowed,
+      bareUnaccounted: bareRefusals.counts.unaccounted,
     }),
     findings: Object.freeze(
       dedupe(findings).sort((left, right) =>
@@ -1046,6 +1084,120 @@ function checkReceiptFacts({ sites, classOf, classNeeds, argumentNames }) {
     );
   }
   return findings;
+}
+
+/**
+ * The refusals ALLOWED to carry no evidence, one line per reason-code expression, each stating why that expression is
+ * the whole of what the site knew.
+ *
+ * The defect class this list exists for: a handler reads a value to make a decision and then throws it away, so the
+ * caller is told the action failed and not what the world had - `watering_can_empty` with no `water_left=`, a
+ * `farm_required` that never names the location it just tested. Every entry below is a family whose code IS the fact
+ * ("the save is not loaded", "a different soul holds the body"), and every other bare site in the tree now publishes
+ * what its guard read.
+ *
+ * The list EXPIRES: an entry whose expression no bare site uses any more fails as
+ * `refusal_allow_list_entry_expired`, so a family that gets fixed cannot leave its excuse behind, and an entry cannot rot
+ * into a blanket permission nobody re-read.
+ */
+export const BARE_REFUSALS_WITH_NOTHING_TO_SAY = Object.freeze([
+  Object.freeze({
+    code: "scopeReason",
+    why: "the scope proof's own refusal word: WHICH identity fact refused is the whole answer, and on the failing branch there is no actor to describe",
+  }),
+  Object.freeze({
+    code: "guardReason",
+    why: "the same carrier on the request-shaped handlers: the code names the identity fact and the failing branch holds no value to publish",
+  }),
+  Object.freeze({
+    code: "toolRefusalCode",
+    why: "the declared-tool selection's refusal word: the selection never happened, so there are no selection facts, and the code names the claim or the failed postcondition",
+  }),
+  Object.freeze({
+    code: "world_not_ready",
+    why: "the save is not loaded: there is no world value in scope to publish, and the code is the entire fact",
+  }),
+  Object.freeze({
+    code: "missing_expected_target_id",
+    why: "the argument was blank or absent, and the empty argument IS the fact the code names",
+  }),
+  Object.freeze({
+    code: "missing_expected_item",
+    why: "the same for the item argument: nothing was named, so there is nothing to quote back",
+  }),
+  Object.freeze({ code: "emote_busy", why: "the actor is emoting: a single boolean state behind the code" }),
+  Object.freeze({
+    code: "actor_moving",
+    why: "the body is already moving: the code names the state, and the ownership slots it also read are the guard's own booleans",
+  }),
+  Object.freeze({
+    code: "vault_not_completed",
+    why: "the save's own mail flag ccVault is absent, and the code names the missing flag",
+  }),
+  Object.freeze({
+    code: "no_driver",
+    why: "the save's own canDriveYourselfToday and the driver-on-duty test are both false: one fact, named",
+  }),
+  Object.freeze({
+    code: "location_unavailable",
+    why: "the actor's currentLocation is null, so there is no location to name",
+  }),
+]);
+
+/**
+ * A bare refusal is honest only when its code says everything the site knew.
+ *
+ * The population is every rejected-receipt site the Mod ships, taken from the same extraction the rest of this gate
+ * reads - no second walk and no hand-written action list. A site whose evidence argument is `null` must be accounted
+ * for by {@link BARE_REFUSALS_WITH_NOTHING_TO_SAY}; one that is not read a value and then refused anyway. The failure
+ * names the exact site as `refusal_drops_a_fact_it_read:<file>:<line>:<code>`, which is a one-line change while the
+ * handler is still open.
+ */
+export function checkBareRefusals({ sites, unattributed }) {
+  const findings = [];
+  const allowed = new Map(BARE_REFUSALS_WITH_NOTHING_TO_SAY.map((entry) => [entry.code, entry]));
+  const used = new Map();
+  const unaccounted = [];
+  const everySite = [...sites, ...unattributed.map((entry) => ({ ...entry, code: entry.codeExpression }))];
+  for (const site of everySite) {
+    if (site.evidence?.kind !== "absent") continue;
+    const expression = site.codeExpression ?? site.code;
+    const entry = allowed.get(expression);
+    if (entry === undefined) {
+      unaccounted.push({ path: site.path, line: site.line, code: expression });
+      findings.push(
+        finding(
+          "refusal_drops_a_fact_it_read",
+          `${site.path}:${site.line}:${expression}`,
+          `${expression} refuses with no evidence and is not on the list of codes that ARE the fact: publish what the guard read as bounded key=value fields, or state here why there is nothing to say`,
+        ),
+      );
+      continue;
+    }
+    used.set(expression, (used.get(expression) ?? 0) + 1);
+  }
+  const bareAllowed = [];
+  for (const entry of BARE_REFUSALS_WITH_NOTHING_TO_SAY) {
+    const count = used.get(entry.code) ?? 0;
+    if (count === 0) {
+      findings.push(
+        finding(
+          "refusal_allow_list_entry_expired",
+          entry.code,
+          `no bare refusal uses ${entry.code} any more, so this exemption has outlived the site it was written for: delete it, or the next bare site of that shape will hide behind it`,
+        ),
+      );
+      continue;
+    }
+    bareAllowed.push({ code: entry.code, sites: count, why: entry.why });
+  }
+  const allowedSites = [...used.values()].reduce((total, count) => total + count, 0);
+  return {
+    findings,
+    unaccounted,
+    bareAllowed,
+    counts: { sites: allowedSites + unaccounted.length, allowed: allowedSites, unaccounted: unaccounted.length },
+  };
 }
 
 /** 6. A refusal that names a price names the comparison it made. */
@@ -1255,6 +1407,12 @@ export function renderReport(report) {
   lines.push(
     `actions=${report.counts.actions} reasonFamilies=${report.counts.reasonFamilies} reasonCodes=${report.counts.reasonCodes} receiptSites=${report.counts.receiptSites} priceRefusals=${report.counts.priceRefusals} programSites=${report.counts.programSites} planSites=${report.counts.planSites} unattributed=${report.unattributed.length}`,
   );
+  lines.push(
+    `bareRefusals=${report.counts.bareRefusals} allowed=${report.counts.bareAllowed} unaccounted=${report.counts.bareUnaccounted}`,
+  );
+  for (const entry of report.bareAllowed) lines.push(`  allowed ${entry.code} x${entry.sites} - ${entry.why}`);
+  for (const site of report.bareUnaccounted)
+    lines.push(`  refusal_drops_a_fact_it_read:${site.path}:${site.line}:${site.code}`);
   const classColumns = REFUSAL_CLASSES.map((entry) => entry.id);
   lines.push("");
   lines.push(`class verdicts: ${classColumns.map((id) => `${id}=${report.classVerdicts[id]}`).join(" ")}`);

@@ -15,6 +15,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  BARE_REFUSALS_WITH_NOTHING_TO_SAY,
+  checkBareRefusals,
   checkRefusalInformativeness,
   classifyReasonCode,
   extractModReceiptSites,
@@ -381,5 +383,90 @@ test("the CLI is the gate: non-zero while a finding exists, and it prints the ma
   assert.equal(
     printed.some((line) => line.startsWith("findings=")),
     report.findings.length > 0,
+  );
+});
+
+test("the bare-refusal population is the whole Mod, and every bare site is accounted for", () => {
+  // The population is derived by the same walk the rest of the gate uses, so there is no second list to keep in step.
+  const report = checkRefusalInformativeness();
+  assert.equal(report.counts.bareRefusals > 0, true, "zero bare refusals means the derivation stopped matching");
+  assert.equal(
+    report.counts.bareRefusals,
+    report.counts.bareAllowed + report.counts.bareUnaccounted,
+    "every bare site is either published or exempted",
+  );
+  assert.equal(report.counts.bareUnaccounted, 0, JSON.stringify(report.bareUnaccounted));
+  // An exemption without a reason is a blanket permission, which is what this list exists to prevent.
+  for (const entry of report.bareAllowed) {
+    assert.equal(typeof entry.why, "string");
+    assert.equal(entry.why.length > 40, true, `${entry.code} needs a reason a reader can act on`);
+    assert.equal(entry.sites > 0, true, `${entry.code} is listed with no site`);
+  }
+});
+
+test("FALSIFIER: a refusal that read the location and refused with null is named at its own line", () => {
+  // The shipped shape this class is named for: `ship_item` tested the actor's location and then answered
+  // `farm_required` with no evidence, while the NEXT line names that same location.
+  const relativePath = "integrations/stardew/farmhandexecutioncontroller.shippingactions.cs";
+  const source = read(relativePath);
+  const published = '"farm_required",\n                $"location=';
+  assert.equal(source.includes(published), true, "the shipped site must publish the location it tested");
+  const mutated = source.replace(published, '"farm_required", null); // $"location=');
+  assert.notEqual(mutated, source);
+
+  const report = run({ [relativePath]: mutated });
+  const findings = findingsOf(report, "refusal_drops_a_fact_it_read");
+  assert.equal(findings.length, 1, "the one de-published site is the one finding");
+  assert.match(findings[0].subject, new RegExp(`^${relativePath}:\\d+:farm_required$`, "u"));
+  assert.equal(report.counts.bareUnaccounted, 1);
+  // And the same site, restored, is the baseline again: the gate is about the fact, not about the file.
+  assert.equal(findingsOf(checkRefusalInformativeness(), "refusal_drops_a_fact_it_read").length, 0);
+});
+
+test("FALSIFIER: an exemption with no bare site left expires instead of granting blanket permission", () => {
+  // A tree with no bare sites at all: every entry is stale, so every entry must be named. This is the direction a
+  // ratchet usually gets wrong - the list keeps passing because the thing it excused is gone.
+  const empty = checkBareRefusals({ sites: [], unattributed: [] });
+  assert.equal(empty.findings.length, BARE_REFUSALS_WITH_NOTHING_TO_SAY.length);
+  assert.equal(
+    empty.findings.every((item) => item.id === "refusal_allow_list_entry_expired"),
+    true,
+  );
+  assert.deepEqual(
+    empty.findings.map((item) => item.subject).sort(),
+    BARE_REFUSALS_WITH_NOTHING_TO_SAY.map((entry) => entry.code).sort(),
+  );
+
+  // And one code that IS the fact stays quiet while the rest expire, so the list is a classification, not a veto.
+  const site = (path, line, code) => ({ path, line, code, codeExpression: code, evidence: { kind: "absent" } });
+  const oneHonest = checkBareRefusals({ sites: [site("a.cs", 1, "world_not_ready")], unattributed: [] });
+  assert.equal(
+    oneHonest.findings.some((item) => item.subject === "world_not_ready"),
+    false,
+    "a code whose words ARE the fact is not a finding",
+  );
+  assert.equal(oneHonest.counts.allowed, 1);
+
+  // A code that reads a value is a finding wherever it sits, and the failure names file:line:code.
+  const dropped = checkBareRefusals({ sites: [site("b.cs", 7, "farm_required")], unattributed: [] });
+  assert.deepEqual(
+    dropped.findings.filter((item) => item.id === "refusal_drops_a_fact_it_read").map((item) => item.subject),
+    ["b.cs:7:farm_required"],
+  );
+  assert.deepEqual(dropped.unaccounted, [{ path: "b.cs", line: 7, code: "farm_required" }]);
+});
+
+test("an unattributed receipt site is judged on its evidence like any other", () => {
+  // The resolver stops at codes it cannot follow, and those sites used to be judged by nothing at all: a bare
+  // `null` behind an unresolvable carrier was invisible. An unattributed `null` must still be a finding.
+  const report = checkBareRefusals({
+    sites: [],
+    unattributed: [
+      { path: "c.cs", line: 3, expression: "mysteryCode", codeExpression: "mysteryCode", evidence: { kind: "absent" } },
+    ],
+  });
+  assert.deepEqual(
+    report.findings.filter((item) => item.id === "refusal_drops_a_fact_it_read").map((item) => item.subject),
+    ["c.cs:3:mysteryCode"],
   );
 });
