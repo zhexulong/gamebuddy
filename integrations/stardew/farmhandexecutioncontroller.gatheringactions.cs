@@ -90,12 +90,23 @@ internal sealed partial class ExecutionManager
     private const int ChunkDriftTolerance = 3;
 
     /// <summary>
-    /// Requests pickup through target-version Debris lifecycle. Ordinary debris
-    /// has no click action: its own GameLocation update magnetizes it to an
-    /// eligible nearby Farmer and calls Debris.collect. The bridge only waits
-    /// for that native delivery; it never calls collect, removes chunks, or
-    /// mutates inventory itself.
+    /// Requests pickup through the engine's own magnet: the body is walked into the rectangle <c>Debris.playerInRange</c>
+    /// reads, and <c>Debris.updateChunks</c> then does the collecting.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Ordinary debris has no click action: its own GameLocation update magnetizes it to an eligible nearby Farmer and
+    /// calls <c>Debris.collect</c>. The walk therefore goes to a STAND tile inside the engine's pixel rectangle, not to
+    /// the chunk's own tile - which is the fact this path had wrong, and the reason a chunk lying where no body can
+    /// stand was answered `no_native_path` / `no_reachable_approach` while it was collectable from the tile beside it.
+    /// The bridge never waits on, calls, or replaces <c>Debris.collect</c>, removes a chunk, or moves an item.
+    /// </para>
+    /// <para>
+    /// The geometry lives in <see cref="MagneticPickupReach"/>: the reach is read from the engine on every request and
+    /// the stand tile is chosen by the predicates the body controller already answers, so nothing here spells a tile
+    /// count. When the body is already inside the rectangle no walk is armed at all, and the accepted receipt says so.
+    /// </para>
+    /// </remarks>
     public LocalExecutionReceipt RequestLocalPickupItem(string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
         if (this.receiptsByRequestId.TryGetValue(requestId, out LocalExecutionReceipt? existing))
@@ -120,28 +131,26 @@ internal sealed partial class ExecutionManager
             return admissionRejection;
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
-        (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? target = FindItemTarget(location, Game1.player, expectedTargetId, expectedQualifiedItemId, radius: 8);
+        (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? target =
+            FindItemTarget(location, expectedTargetId, expectedQualifiedItemId);
         if (target is null)
         {
-            // The chunk is not in the reaching radius. Two very different facts hide behind that one answer, and they
-            // must not be collapsed into one refusal:
+            // Three different facts hide behind "no chunk of this identity is on the ground", and one refusal for all of
+            // them is a lie about two:
             //
-            //   MOVED - the chunk is still lying on the ground somewhere in this location, just not where the action
-            //           can reach it. Nothing has been collected, so this must never settle as a pickup.
-            //   GONE  - the chunk has left the ground. The engine's own magnet is the common cause: it delivers a
-            //           chunk to a nearby Farmer straight into their backpack, which is this action's SUCCESS, not its
-            //           failure. Round 18 spent six turns of re-observation on drops the companion was already carrying
-            //           because the magnet got there first and this preflight called it `item_target_changed`.
-            (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? stillOnGround =
-                FindItemTarget(location, Game1.player, expectedTargetId, expectedQualifiedItemId, radius: int.MaxValue);
-            if (stillOnGround is not null)
-            {
-                Point liveTile = GetChunkTile(stillOnGround.Value.Chunk);
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_moved", $"expected={targetX},{targetY};actual={liveTile.X},{liveTile.Y}");
-            }
+            //   CHANGED - something else of this item now lies on the address the caller named. The same tile, a
+            //             different chunk: a stack that lost half its count to another farmer's magnet is the common
+            //             one. Reported as CHANGED with both identities and the shared tile, never as a move.
+            //   GONE    - nothing is there. The engine's own magnet is the common cause: it delivers a chunk straight
+            //             into a nearby Farmer's backpack, which is this action's SUCCESS when the actor's own count of
+            //             the item rose from where it stood while the chunk was still on the ground (round 18 spent six
+            //             turns of re-observation on drops the companion was already carrying).
+            //   neither - a stale or forged address. Nothing was collected and nothing moved, so nothing is claimed.
+            if (FindChunkOnTile(location, targetX, targetY, expectedQualifiedItemId) is { } changed)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_changed", $"expected={expectedTargetId};actual={changed.TargetId};tile={targetX},{targetY}");
             if (this.TrySettleMagnetCollectedItem(requestId, executionId, boundActor, location, expectedTargetId, expectedQualifiedItemId, targetX, targetY) is LocalExecutionReceipt collected)
                 return collected;
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_changed", $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_changed", $"expected={expectedTargetId};actual=none;tile={targetX},{targetY}");
         }
         Point liveTargetTile = GetChunkTile(target.Value.Chunk);
         if (liveTargetTile.X != targetX || liveTargetTile.Y != targetY)
@@ -160,34 +169,65 @@ internal sealed partial class ExecutionManager
             //
             // So the coordinate is corroboration with a tolerance: a chunk within `ChunkDriftTolerance` tiles of where
             // the caller saw it is the same chunk that has moved; further away it may be an index that now points at
-            // something else, and that stays a refusal.
+            // something else, and that stays a refusal. Either way the TILE moved, so `item_target_moved` is true here
+            // and the two tiles are named.
             int driftX = Math.Abs(liveTargetTile.X - targetX);
             int driftY = Math.Abs(liveTargetTile.Y - targetY);
             if (Math.Max(driftX, driftY) > ChunkDriftTolerance)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_moved", $"expected={targetX},{targetY};actual={liveTargetTile.X},{liveTargetTile.Y}");
-            targetX = liveTargetTile.X;
-            targetY = liveTargetTile.Y;
         }
         if (!Game1.player.couldInventoryAcceptThisItem(target.Value.Debris.item ?? ItemRegistry.Create(expectedQualifiedItemId, target.Value.Stack)))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"target={expectedTargetId}");
 
+        // WHERE the body stands. The engine's rectangle is the whole requirement: a chunk inside it is collected, and
+        // a chunk on a tile nobody can stand on is collected from beside it. No standable tile inside the rectangle is
+        // the one geometry no walk can fix, and it is refused as that rather than as a tile the world does not have.
+        int magnetRadius = MagneticPickupReach.ReachPixels(Game1.player);
+        Vector2 magnetSubject = MagneticPickupReach.Subject(target.Value.Debris);
+        (int X, int Y) actorTile = ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y);
+        (int X, int Y)? standTile = MagneticPickupReach.WithinMagnet(magnetSubject, Game1.player.StandingPixel, magnetRadius)
+            ? actorTile
+            : MagneticPickupReach.SelectStandTile(
+                magnetSubject,
+                (liveTargetTile.X, liveTargetTile.Y),
+                actorTile,
+                Game1.player.StandingPixel,
+                magnetRadius,
+                tile => StardewBodyController.IsStandableTile(location, Game1.player, new Vector2(tile.X, tile.Y))
+                    && !IsWarpBufferTile(location, tile),
+                StardewBodyController.BuildWalkableComponent(location, Game1.player) is { } walkable
+                    ? tile => walkable(new Vector2(tile.X, tile.Y))
+                    : _ => true);
+        if (standTile is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_out_of_reach",
+                $"tile={liveTargetTile.X},{liveTargetTile.Y};actor={actorTile.X},{actorTile.Y};radius={magnetRadius};stand_at=none"
+                    + DescribeApproachRange(liveTargetTile.X, liveTargetTile.Y, standingTileAsked: true));
+
         int beforeCount = CountQualifiedItem(Game1.player, expectedQualifiedItemId);
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((requestedDeadlineMs - nowMs) * 60d / 1000d));
-        // The body controller drives this native approach. Debris.updateChunks
-        // owns magnetic delivery and Debris.collect on following game updates;
-        // the bridge never calls collect or touches chunks/inventory directly.
-        LocalMoveSpec approach = new(executionId, requestId, new Vector2(liveTargetTile.X, liveTargetTile.Y), true, this.revision, this.tick + deadlineTicks, requestedDeadlineMs);
+        // `within_magnet` is a claim about the stand tile, not about where the body happens to be now: every acceptance
+        // below is dispatched to a tile the engine's own rectangle contains, and `stand_at` names it.
+        string magnetFacts = $"within_magnet=true;radius={magnetRadius};stand_at={standTile.Value.X},{standTile.Value.Y}";
+        // The body controller drives the walk. `Debris.updateChunks` owns magnetic delivery and `Debris.collect` on
+        // following game updates; the bridge never calls collect or touches chunks/inventory directly.
         this.activeItemPickup = new LocalItemPickupSpec(executionId, requestId, location.NameOrUniqueName, liveTargetTile.X, liveTargetTile.Y, expectedTargetId, expectedQualifiedItemId, target.Value.Stack, beforeCount, this.revision, requestedDeadlineMs);
-        this.active = approach;
-        if (!this.controller.TryStart(approach, Game1.player, this.tick, out string reasonCode, out string? approachEvidence))
+        if (standTile.Value != actorTile)
         {
-            this.active = null;
-            this.activeItemPickup = null;
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, approachEvidence ?? $"target={expectedTargetId};tile={targetX},{targetY}");
+            // Exact arrival on the chosen tile, not adjacency to it: the tile is standable and reachable by
+            // construction, so a plan to it exists, and finishing a step short could leave the body outside the very
+            // rectangle this walk exists to enter.
+            LocalMoveSpec approach = new(executionId, requestId, new Vector2(standTile.Value.X, standTile.Value.Y), false, this.revision, this.tick + deadlineTicks, requestedDeadlineMs);
+            this.active = approach;
+            if (!this.controller.TryStart(approach, Game1.player, this.tick, out string reasonCode, out string? approachEvidence))
+            {
+                this.active = null;
+                this.activeItemPickup = null;
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, approachEvidence ?? $"target={expectedTargetId};{magnetFacts}");
+            }
         }
 
         LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision,
-            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};stack={target.Value.Stack};inventory_before={beforeCount};native_auto_collect=true");
+            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={liveTargetTile.X},{liveTargetTile.Y};item={expectedQualifiedItemId};stack={target.Value.Stack};inventory_before={beforeCount};native_auto_collect=true;{magnetFacts}");
         this.Remember(accepted);
         this.AddTrace(accepted);
         return accepted;

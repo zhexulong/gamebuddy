@@ -1921,12 +1921,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             StardewValley.GameLocation? location = Game1.player.currentLocation;
             bool sameLocation = location is not null && string.Equals(location.NameOrUniqueName, specification.Location, StringComparison.Ordinal);
             // Do not terminally inspect a pickup while the approach is still
-            // owned by the body controller. Debris may collect once adjacency
-            // is reached, but the native route must first settle; then this
-            // postcondition verifies the exact opaque chunk and inventory.
+            // owned by the body controller. Debris may collect once the body is
+            // inside the magnet, but the native route must first settle; then
+            // this postcondition verifies the exact opaque chunk and inventory.
             bool approachSettled = this.active is null && !this.controller.HasActiveExecution;
+            // Asked of the WHOLE location, because that is what `chunk_removed` claims: no chunk of this identity is left
+            // anywhere. A bounded search could call a chunk nine tiles away removed while the receipt said so.
             (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? target = sameLocation && location is not null
-                ? FindItemTarget(location, Game1.player, specification.TargetId, specification.QualifiedItemId, radius: 8)
+                ? FindItemTarget(location, specification.TargetId, specification.QualifiedItemId)
                 : null;
             int inventoryAfter = CountQualifiedItem(Game1.player, specification.QualifiedItemId);
             bool inventoryGained = inventoryAfter >= specification.InventoryBefore + specification.Stack;
@@ -4938,7 +4940,25 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"item_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? FindItemTarget(StardewValley.GameLocation location, Farmer player, string expectedTargetId, string expectedQualifiedItemId, int radius)
+    private static (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? FindItemTarget(StardewValley.GameLocation location, string expectedTargetId, string expectedQualifiedItemId) =>
+        FindItemChunk(location, expectedQualifiedItemId, expectedTargetId, tileX: null, tileY: null);
+
+    /// <summary>
+    /// A chunk of this item lying on ONE tile, whatever its opaque identity says.
+    ///
+    /// This is the answer "something else of this item is on the address the caller named" - a stack that lost half its
+    /// count, a chunk re-indexed onto that tile - which is a CHANGED target and never a moved one.
+    /// </summary>
+    private static (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? FindChunkOnTile(
+        StardewValley.GameLocation location, int tileX, int tileY, string expectedQualifiedItemId) =>
+        FindItemChunk(location, expectedQualifiedItemId, expectedTargetId: null, tileX, tileY);
+
+    /// <summary>
+    /// The one enumeration of this item's ground chunks: by opaque identity anywhere in the location, or - when no
+    /// identity is asked for - the first one standing on a named tile.
+    /// </summary>
+    private static (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? FindItemChunk(
+        StardewValley.GameLocation location, string expectedQualifiedItemId, string? expectedTargetId, int? tileX, int? tileY)
     {
         for (int debrisIndex = 0; debrisIndex < location.debris.Count; debrisIndex++)
         {
@@ -4951,7 +4971,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 Point tile = GetChunkTile(chunk);
                 string targetId = BuildItemTargetId(location, debrisIndex, chunkIndex, debris, qualifiedItemId);
-                if (targetId == expectedTargetId && IsTileWithinChebyshevRadius(player, tile.X, tile.Y, radius))
+                bool matched = expectedTargetId is null
+                    ? tile.X == tileX && tile.Y == tileY
+                    : string.Equals(targetId, expectedTargetId, StringComparison.Ordinal);
+                if (matched)
                     return (debris, debrisIndex, chunkIndex, chunk, targetId, qualifiedItemId, Math.Max(1, debris.item?.Stack ?? 1));
                 chunkIndex++;
             }

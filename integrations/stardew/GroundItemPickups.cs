@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using Microsoft.Xna.Framework;
+using StardewValley;
 
 namespace GameBuddy.Stardew;
 
@@ -85,4 +87,123 @@ internal sealed class GroundItemPickupLedger
 
     internal GroundItemPublication? Recall(string targetId) =>
         this.byTargetId.TryGetValue(targetId, out GroundItemPublication? publication) ? publication : null;
+}
+
+/// <summary>
+/// Where a body stands for <c>pickup_item</c>, measured by the engine's magnet instead of by the chunk's tile.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <c>Debris.playerInRange</c> (Debris.cs:582-595) is the engine's whole answer to "may this farmer's body pull that
+/// chunk in": per axis, <c>|position + 32 - farmer.StandingPixel| &lt;= farmer.GetAppliedMagneticRadius()</c>. It is a
+/// PIXEL rectangle around the body, <c>Debris.updateChunks</c> asks it on every update for an ordinary OBJECT /
+/// ARCHAEOLOGY / RESOURCE drop (Debris.cs:652-655) and calls <c>Debris.collect</c> for the Farmer it names, and a chunk
+/// that leaves the rectangle is handed back to nobody (Debris.cs:678). Standing on the chunk's own tile was therefore
+/// never the requirement - being inside that rectangle is, and a rectangle leaves room to stand beside a chunk.
+/// </para>
+/// <para>
+/// The distinction the tile rule lost is the one that made this action ask a pathfinding question nobody had to
+/// answer: a chunk can lie where no farmer can stand - a rock-pool edge, a doorway, the tile under an object - and it
+/// is still collectable from the tile next to it. Measured across runs: <c>no_native_path</c>,
+/// <c>no_reachable_approach</c> and <c>item_target_moved</c> for a chunk whose tile had not moved at all, all three the
+/// same defect committed by the same line, <c>new LocalMoveSpec(..., liveTargetTile, ...)</c>.
+/// </para>
+/// <para>
+/// The number is read from the engine on every call (<see cref="ReachPixels"/>); nothing here spells a tile count.
+/// The geometry is arithmetic over supplied predicates, in the shape <see cref="GameBuddy.Stardew.Core.ApproachTileSelector"/>
+/// established, so the rule is testable without a world and the caller keeps the game questions.
+/// </para>
+/// </remarks>
+internal static class MagneticPickupReach
+{
+    /// <summary>
+    /// The half-tile <c>Debris.playerInRange</c> adds to a debris position to reach the centre of its cell
+    /// (Debris.cs:590-592, <c>position.X + 32f</c>).
+    /// </summary>
+    internal const float ChunkCentreOffset = 32f;
+
+    /// <summary>The actor's own magnet reach in pixels, from the engine's own rule (Farmer.cs:4139-4142).</summary>
+    internal static int ReachPixels(Farmer farmer) => farmer.GetAppliedMagneticRadius();
+
+    /// <summary>
+    /// The position the engine measures the rectangle from: the mean of this debris's chunks, which is what
+    /// <c>Debris.approximatePosition</c> (Debris.cs:572-580) hands <c>playerInRange</c> on every update.
+    ///
+    /// Asked only about a debris whose chunk a caller has just found, so <see cref="Debris.Chunks"/> is never empty
+    /// where this answer decides anything.
+    /// </summary>
+    internal static Vector2 Subject(Debris debris)
+    {
+        Vector2 total = default;
+        int chunks = 0;
+        foreach (Chunk chunk in debris.Chunks)
+        {
+            total += chunk.position.Value;
+            chunks++;
+        }
+
+        return chunks == 0 ? total : total / chunks;
+    }
+
+    /// <summary>Whether a body standing on <paramref name="standingPixel"/> is inside the engine's rectangle.</summary>
+    internal static bool WithinMagnet(Vector2 subject, Point standingPixel, int reachPixels) =>
+        Math.Abs(subject.X + ChunkCentreOffset - standingPixel.X) <= reachPixels
+        && Math.Abs(subject.Y + ChunkCentreOffset - standingPixel.Y) <= reachPixels;
+
+    /// <summary>
+    /// The tile the body should stand on: the nearest one to where it already is that lies inside the engine's
+    /// rectangle, or <see langword="null"/> when the rectangle holds no tile this body could stand on and walk to.
+    /// </summary>
+    /// <remarks>
+    /// Null is the honest answer and the caller's refusal: a chunk in the middle of a pond whose bank is three tiles
+    /// away is out of a 128-pixel magnet's reach, and no walk would change that. The candidate window is the radius in
+    /// tiles plus one - the slack covers the subject being the debris's mean rather than the published chunk's own
+    /// position, and the actor's standing pixel not being its tile's centre - while the DECISION is the engine's own
+    /// predicate, so a wider window can only cost iterations, never correctness.
+    /// </remarks>
+    internal static (int X, int Y)? SelectStandTile(
+        Vector2 subject,
+        (int X, int Y) subjectTile,
+        (int X, int Y) actorTile,
+        Point actorStandingPixel,
+        int reachPixels,
+        Func<(int X, int Y), bool> isStandable,
+        Func<(int X, int Y), bool> isReachable)
+    {
+        int tileSize = Game1.tileSize;
+        // The body keeps its own sub-tile standing offset, so a candidate's standing pixel is this actor's own
+        // reading moved by whole tiles. Nothing here assumes the offset is the tile's centre.
+        int offsetX = actorStandingPixel.X - actorTile.X * tileSize;
+        int offsetY = actorStandingPixel.Y - actorTile.Y * tileSize;
+        int rings = reachPixels / tileSize + 1;
+
+        (int X, int Y)? best = null;
+        int bestDistance = int.MaxValue;
+        for (int x = subjectTile.X - rings; x <= subjectTile.X + rings; x++)
+        {
+            for (int y = subjectTile.Y - rings; y <= subjectTile.Y + rings; y++)
+            {
+                (int X, int Y) candidate = (x, y);
+                Point standing = new(x * tileSize + offsetX, y * tileSize + offsetY);
+                if (!WithinMagnet(subject, standing, reachPixels))
+                    continue;
+
+                // Nearest to where the body already is, so the shortest walk that suffices wins; ties are decided by
+                // lowest y then lowest x, because one world state has to yield one tile.
+                int distance = Math.Abs(x - actorTile.X) + Math.Abs(y - actorTile.Y);
+                if (distance > bestDistance)
+                    continue;
+                if (distance == bestDistance && best is { } current
+                    && (candidate.Y > current.Y || (candidate.Y == current.Y && candidate.X > current.X)))
+                    continue;
+                if (!isStandable(candidate) || !isReachable(candidate))
+                    continue;
+
+                best = candidate;
+                bestDistance = distance;
+            }
+        }
+
+        return best;
+    }
 }
