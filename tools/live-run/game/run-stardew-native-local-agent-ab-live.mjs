@@ -78,6 +78,7 @@ import {
   readTurnDeliveryRecords,
   summarizeDeliveryAccount,
 } from "../../lib/presentation-delivery-account.mjs";
+import { readActivityPoints, summarizeActivity } from "../../lib/companion-activity.mjs";
 import { assertLiveRunArtifactFresh } from "../../lib/live-run-artifact-freshness.mjs";
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
 import { redactLiveRunText } from "../core/capture-text.mjs";
@@ -1334,13 +1335,18 @@ function summarizePresentationEvidence() {
   // The run does not get to decide whether its own account adds up: the pieces are counted where they were committed
   // (the port above) and the account is read back out of the Host's own lines, so the two cannot be the same
   // derivation. `DELIVERY_ACCOUNT` is printed once per run, in words, so the answer is in the log as well as the bundle.
-  const delivery = readTurnDeliveryRecords(hostLogChunks.join(""));
+  const hostLog = hostLogChunks.join("");
+  const delivery = readTurnDeliveryRecords(hostLog);
   const deliveryAccount = summarizeDeliveryAccount({
     records: delivery.records,
     unparsable: delivery.unparsable,
     piecesProduced: presentationPieces.length,
   });
   console.error("DELIVERY_ACCOUNT", describeDeliveryAccount(deliveryAccount));
+  // What she was doing BETWEEN the pieces, off the same log the delivery account is read from. Bounded, and
+  // `not_measured` rather than an empty array when the channel published nothing, so "nobody woke her" is never
+  // spelled the same way as "the field is empty".
+  const activity = summarizeActivity(readActivityPoints(hostLog));
   return Object.freeze({
     // Each piece carries `atMs` on the run clock, and the turn's own start is published beside them, so a reader can
     // place a spoken line against a dispatch instead of only against its own turn. Before this the silence gate had
@@ -1356,6 +1362,7 @@ function summarizePresentationEvidence() {
     // paced surface emitted ahead of them, and whatever is left over. A non-zero remainder is a blocked run (the
     // `delivery_account` clause), not a number a reader has to notice.
     deliveryAccount,
+    activity,
   });
 }
 /** Exact configuration answer for voice in this run; `enabled:false` carries the reason. */

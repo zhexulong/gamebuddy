@@ -434,6 +434,27 @@ export class CompanionEventPump {
     return this.#inputs.length > 0 || (this.#retryBatch?.inputs.length ?? 0) > 0;
   }
 
+  /**
+   * Whether the Mod is executing something for the companion, read from the receipts this pump still holds.
+   *
+   * <p>
+   * Derived, not flagged: an execution receipt's window slot is its own `executionId`
+   * (`stardew-integration-launcher-body-program.internal.ts:toWorldFact` sets `correlationId` to it), so the terminal
+   * receipt for an execution REPLACES the `accepted`/`running` one and "does any held receipt describe an execution that
+   * has not settled" is the whole question. There is no second map to keep in step, and therefore nothing that can
+   * disagree with the receipts it summarises.
+   * </p>
+   * <p>
+   * What it does NOT claim: the windows hold only what a turn has not delivered (`takeBatch` empties them), so `false`
+   * means "this pump is holding no unfinished execution", not "nothing in the world is running". That is the honest
+   * reading for `companion-activity.ts`, whose `busy` is published where the pump's own view is the answer.
+   * </p>
+   */
+  public get hasExecutionInFlight(): boolean {
+    for (const fact of this.#receipts.values()) if (!isTerminalExecutionFact(fact)) return true;
+    return false;
+  }
+
   public async flush(sink: CompanionTurnSink): Promise<CompanionTurnOutcome | undefined> {
     // HELD, NOT DROPPED. A companion whose body is in bed does not get woken to read the runtime's bookkeeping; the
     // facts wait for the transition to end and arrive together with the fact that explains the new day.

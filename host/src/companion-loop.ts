@@ -1,4 +1,5 @@
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import { createCompanionActivityIndicator } from "./companion-activity.js";
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-attestation.js";
 import { isRefusedTurnEvent } from "./companion-turn-refusal.js";
@@ -101,6 +102,17 @@ export type CompanionTurnModelReload = () => Promise<void>;
  */
 export class CompanionLoop {
   readonly #pump = new CompanionEventPump();
+  /**
+   * What the player could be shown she is doing, derived from what this loop already knows (`companion-activity.ts`).
+   *
+   * <p>
+   * Presentation only: it carries no words, enters no prompt and never reaches Pi, so it cannot be spoken as dialogue
+   * and cannot change what a turn decides. Every transition below reads a fact the loop already has - a batch became a
+   * turn, Pi consumed it, her text arrived, a tool started or returned, the pump's own windows - so there is no second
+   * copy of any of them to disagree.
+   * </p>
+   */
+  readonly #activity = createCompanionActivityIndicator();
   #turnObserver: CompanionTurnObserver | undefined;
   #inFlight: Promise<CompanionTurnOutcome> | undefined;
   #cancelQueuedDelivery: (() => void) | undefined;
@@ -328,6 +340,22 @@ export class CompanionLoop {
     let aheadPieces = 0;
     /** Did Pi classify the message it ended on as a provider failure or a cancellation? Read from the raw stream. */
     let assistantFailed = false;
+    /**
+     * Publishes `speaking` for the text now arriving.
+     *
+     * Guarded by the state machine's own current state rather than a flag of its own: text arrives as a delta, again as
+     * the message's final commit, and a second time for every later message in the same turn, and all of those are the
+     * same state. A tool call in between has already moved the state on, which is what makes the next utterance a
+     * transition - so the guard and the transitions cannot disagree.
+     */
+    const noteTextArriving = (): void => {
+      if (this.#activity.current === "speaking") return;
+      this.#activity.transition("speaking");
+    };
+    // TURN CREATED. A batch became a turn, so she is thinking about it from this moment - published before anything
+    // below can fail, because a turn that dies in the next statement is exactly the silence the player has to be able
+    // to read as an ending rather than as a crash.
+    this.#activity.transition("thinking");
     try {
       if (tracksPlayerDelivery) this.#queuedPlayerDelivery = true;
       this.#cancelQueuedDelivery = resolveCancelled;
@@ -369,7 +397,15 @@ export class CompanionLoop {
         // event stream because this is the only layer that sees it - the pump sees batches, and `turnOutcome` collapses
         // "acted" and "spoke" into `completed`. `tool_execution_start` is the one event type that fires for every tool a
         // turn runs, including a `stardew_plan_work` batch, and it is the SDK's own name for it.
-        if (event.type === "tool_execution_start") producedWork = true;
+        if (event.type === "tool_execution_start") {
+          producedWork = true;
+          this.#activity.transition("working");
+        }
+        // A tool call has returned, and what happens next is decided by what it left behind: an execution this pump
+        // still holds an unsettled receipt for is her body working in the world (`busy`), and otherwise she is composing
+        // the next step (`thinking`). Staying at `working` would report a tool that is no longer running.
+        if (event.type === "tool_execution_end")
+          this.#activity.transition(this.pump.hasExecutionInFlight ? "busy" : "thinking");
         // The turn's own ending facts, read from Pi's raw stream: a surface that projects native content classifies
         // them too, but that observer exists only where a presenter is installed, and "was this a turn at all" is not
         // a presentation question.
@@ -388,7 +424,12 @@ export class CompanionLoop {
                 "no_presentation_lease",
                 (suppressedByReason.get("no_presentation_lease") ?? 0) + assistantFacts.textParts,
               );
-            if (assistantFacts.hasText) producedText = true;
+            if (assistantFacts.hasText) {
+              producedText = true;
+              // The text paths with no projection attached (a reduced adapter, or a turn that carried no presentation
+              // source) never see a delta, so the message's own record is where `speaking` is published for them.
+              noteTextArriving();
+            }
             if (assistantFacts.hasToolCall) producedToolCall = true;
             if (assistantFacts.failed) assistantFailed = true;
           }
@@ -429,6 +470,9 @@ export class CompanionLoop {
                   // lane when a voice sink is attached; without one they stay
                   // unprojected at delta granularity.
                   onPreviewDelta: async (delta) => {
+                    // Her text has started arriving. Published outside the voice branch below, because voice is one
+                    // consumer of the preview lane and not the lane itself.
+                    noteTextArriving();
                     if (this.voiceSink === undefined) return;
                     try {
                       await voiceBegin;
@@ -521,6 +565,11 @@ export class CompanionLoop {
           }
           if (sourceEventId !== undefined && batchId !== undefined)
             this.#emitLiveEvidence((sink) => sink.piTurnAccepted({ batchId, sourceEventId, disposition }));
+          // PROVIDER WAITING. Pi has consumed this exact batch, so the request is out and nothing has come back yet.
+          // Same state as the turn's own start, published separately because the two answer different questions: the
+          // first says a turn exists, this one dates the request - and a run whose first answer took 902 s
+          // (`round39`) is only explainable against the moment the provider was actually asked.
+          this.#activity.transition("thinking");
           resolveStarted();
           return;
         }
@@ -693,6 +742,14 @@ export class CompanionLoop {
         }
       }
       if (beganPresentation) this.#turnObserver?.endBatch(batchId);
+      // The turn is over, and what is left is the pump's own answer. An unsettled execution it still holds is `busy` -
+      // her body is working even though the model has stopped. An empty pump is `idle`, the state `round39`'s audit
+      // could not establish for any stretch of a run: it is published here, once per turn that ends, so a reader can
+      // tell "nobody woke her" from "she was working on something". Pending delivery is neither - the next turn's
+      // `thinking` follows immediately, and publishing `idle` between two back-to-back turns would report a stillness
+      // that never happened.
+      if (this.pump.hasExecutionInFlight) this.#activity.transition("busy");
+      else if (!this.pump.hasPendingDelivery) this.#activity.transition("idle");
     }
   }
 
