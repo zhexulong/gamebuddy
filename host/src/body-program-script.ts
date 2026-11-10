@@ -202,9 +202,15 @@ const MAX_REPORTED_PLAN_INSERTIONS = 16;
  * insertions displace for every call after them. Every list is bounded (see `MAX_REPORTED_PLAN_CALLS`) and every count is
  * not, so a bounded list never reads as "that was the whole of it".
  *
- * THE FOUR LISTS PARTITION HER CALLS: each call lands in exactly one of `acceptedSteps`, `merged`, `noStepNeeded` and
- * `dropped`, so their counts sum to the number of calls she wrote. That is the invariant `tools/check-plan-legal-fixpoint.mjs`
- * asserts over the whole published vocabulary, and the reason an `ok` answer can no longer hide a step that was thrown away.
+ * THE FOUR LISTS PARTITION THE CALLS THE SCRIPT REACHED: each call lands in exactly one of `acceptedSteps`, `merged`,
+ * `noStepNeeded` and `dropped`, so their counts sum to the number of builder calls the script made. That is the invariant
+ * `tools/check-plan-legal-fixpoint.mjs` asserts over the whole published vocabulary, and the reason an `ok` answer can no
+ * longer hide a step that was thrown away.
+ *
+ * The limit is stated rather than hidden: a refusal that ends the WHOLE script (a builder method the surface does not
+ * publish, the call cap, the node cap, a throw, a timeout) stops the interpreter, so the calls after it were never
+ * reached and cannot be enumerated here. That answer carries its own `reasonCode`, which names the call it died on
+ * (`plan_script_unknown_action:<name>`), and the lists name the calls that had compiled before it.
  */
 export type PlanCallAccount = Readonly<{
   /** Her calls whose own step is a node of the program. */

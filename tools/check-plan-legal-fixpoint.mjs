@@ -50,7 +50,9 @@
  *   4. NO VANISHED CALL - the compiler answers with four lists that PARTITION the author's calls (`acceptedSteps`,
  *                        `merged`, `noStepNeeded`, `dropped`), so their counts must sum to the number of calls the script
  *                        made, each call must land in exactly one, and no list may be a window narrower than its own
- *                        count. Named `plan_account_gap|_double|_truncated|_unplaceable:<shape>:...`.
+ *                        count. Named `plan_account_gap|_double|_truncated|_unplaceable:<shape>:...`. The stated limit:
+ *                        a refusal that ends the WHOLE script stops the interpreter, so the calls after it were never
+ *                        reached; this population writes published action ids only, so no answer here is that shape.
  *
  * Both read an answer's own account, in whichever spelling it says it in: `dropped` on today's answer, the `rejected`
  * records on one from before the field existed - so `--revision 3d249ff1` is red for the FORGED reason and `blocked`
