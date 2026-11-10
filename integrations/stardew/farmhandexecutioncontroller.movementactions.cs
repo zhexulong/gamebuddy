@@ -603,11 +603,13 @@ internal sealed partial class ExecutionManager
             IReadOnlyList<BridgeDoor> exits = DiscoverExitTiles(Game1.player);
             // Measured 2026-11-14 (`round42`, day 6): she stood on `(3,11)`, the farmhouse door was at `(3,12)`, and she
             // named her own tile. One orthogonal step was all that stood between her and the way out, so that request is
-            // the transition rather than a refusal. The step is not taken by MOVING the body onto the warp tile: the
-            // engine fires a warp from `Farmer.MovePositionImpl` (Farmer.cs:8586) and from nothing else, so a position
-            // write would leave the body parked on a buffer tile design §3.1.1 forbids and fire no trigger; the door is
-            // entered from where she stands, exactly as the native click entry does at its own radius-1 gate.
-            if (AdjacentExitStep(exits, (sourceX, sourceY), actorTile) is { } step)
+            // the transition rather than a refusal - and the rule is the GOAL ("leave this location"), not the coordinate
+            // she named: a request that names a DIFFERENT door which resolves never reaches this branch, so honouring the
+            // named door and taking the one beside her cannot disagree. The step is not taken by MOVING the body onto the
+            // warp tile: the engine fires a warp from `Farmer.MovePositionImpl` (Farmer.cs:8586) and from nothing else, so a
+            // position write would leave the body parked on a buffer tile design §3.1.1 forbids and fire no trigger; the
+            // door is entered from where she stands, exactly as the native click entry does at its own radius-1 gate.
+            if (AdjacentExitStep(exits, actorTile) is { } step)
             {
                 doorPoint = new Microsoft.Xna.Framework.Point(step.X, step.Y);
                 doorWarp = isDoor ? ResolveDoorWarp(location, doorPoint) : null;
@@ -801,28 +803,24 @@ internal sealed partial class ExecutionManager
     /// The exit tile a refused request may still leave from, or null when this request is not that case.
     ///
     /// <para>
-    /// All three conditions are load-bearing. The tile must be an exit this location publishes, it must be ONE
-    /// ORTHOGONAL STEP from the actor (the single step that stood in the way), and the caller must have aimed at it -
-    /// within the native interaction radius. Without the third, any request for an unrelated tile would teleport a
-    /// companion who merely happened to be standing beside a door out of the location she was working in, which is the
-    /// one thing a refusal must never do.
+    /// The rule is the GOAL, not the coordinate: <c>enter_exit</c> and <c>travel</c> mean "leave this location", so when
+    /// the nearest exit this location publishes is ONE ORTHOGONAL STEP from the actor, that exit is the way out - whether
+    /// or not the tile she named was the door. The named tile is where she thought the way out was; she stood on `3,11`
+    /// and named `3,11` while the door was at `3,12` (`round42`), and a request naming a DIFFERENT door that resolves is
+    /// honoured before this decision is ever reached, because the caller runs only when the named tile resolved nothing.
     /// </para>
     /// </summary>
     internal static (int X, int Y, int Distance)? AdjacentExitStep(
         IReadOnlyList<BridgeDoor> exits,
-        (int X, int Y) requested,
         (int X, int Y) actor)
     {
         IReadOnlyList<BridgeDoor> ordered = ExitsNearestFirst(exits, actor);
         if (ordered.Count == 0) return null;
 
         BridgeDoor nearest = ordered[0];
-        int distance = ExitDistance((nearest.SourceX, nearest.SourceY), actor);
         if (Math.Abs(nearest.SourceX - actor.X) + Math.Abs(nearest.SourceY - actor.Y) != 1)
             return null;
-        if (ExitDistance((nearest.SourceX, nearest.SourceY), requested) > NativeInteractionRadius)
-            return null;
-        return (nearest.SourceX, nearest.SourceY, distance);
+        return (nearest.SourceX, nearest.SourceY, ExitDistance((nearest.SourceX, nearest.SourceY), actor));
     }
 
     /// <summary>

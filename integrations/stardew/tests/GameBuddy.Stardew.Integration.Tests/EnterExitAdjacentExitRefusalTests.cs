@@ -16,8 +16,8 @@ using Xunit;
 namespace GameBuddy.Stardew.Integration.Tests;
 
 /// <summary>
-/// A transition refusal must name the exits this location actually has, and a request one step off a published
-/// exit must be the transition rather than a refusal.
+/// A transition refusal must name the exits this location actually has, and a request whose way out is one step away
+/// must be the transition rather than a refusal.
 ///
 /// <para>
 /// Measured 2026-11-14 (`round42`, day 6, a companion who could not leave the farmhouse): she stood on `(3,11)`
@@ -32,62 +32,102 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// This is the second member of one family. `round19` refused `Farm(41,65)-&gt;Forest` as
 /// <c>door_not_available</c> seven times across three minutes while the companion stood on the adjacent tile;
 /// that fix taught the action to RESOLVE a warp from either table, and this one teaches the refusal to NAME the
-/// tile it resolved - and, when the actor is one orthogonal step from it, to take that step instead of refusing.
+/// tile it resolved - and, when the nearest exit is one orthogonal step away, to enter it instead of refusing.
+/// The rule is the GOAL (<c>enter_exit</c> means "leave this location"), not the coordinate she named: a request
+/// that names a different door which resolves is honoured before this decision is reached.
 /// </para>
 ///
 /// <para>
-/// The refusals below are driven through the REAL request path against a headless world built the way
+/// Every case below drives the REAL request path against a headless world built the way
 /// <c>ApproachClassificationTests.HeadlessWorld</c> builds one: a real <see cref="GameLocation"/>, a real
 /// <see cref="Farmer"/> and the <c>Game1</c> statics the engine and <c>Context.IsWorldReady</c> dereference. The
-/// one thing that cannot run here is the engine's own warp: <c>Farm.warpFarmer</c> dereferences a live game
-/// (<c>Farmer.warpFarmer</c>, Farmer.cs:5416 -&gt; <c>Halt()</c> -&gt; <c>Sprite</c>), so the adjacency DECISION is
-/// asserted on the production function that makes it and the live run proves the arrival.
+/// arrival is asserted from the ENGINE's own warp request (<c>Game1.locationRequest</c> and the arrival tile it
+/// carries, Farmer.cs:5408 -&gt; Game1.cs:10028-10030) rather than from the Mod's receipt, because a receipt is a
+/// claim. The engine completes that move on a later frame (`performWarpFarmer` only raises the fade and sets the
+/// request), so the frame that lands the body and raises `Warped` belongs to the live run.
 /// </para>
 /// </summary>
 public sealed class EnterExitAdjacentExitRefusalTests
 {
-    private const string TransitionMethod = "private LocalExecutionReceipt RequestLocalDoorTransition";
-
     /// <summary>
-    /// The exact `round42` row, through the real request path: the refusal names the door at `(3,12)`, its
-    /// distance from the actor's own tile, and the tile the caller asked for.
+    /// A refusal names the door even when the actor is too far to step onto it - the `round42` answer minus the
+    /// step: the exits this location publishes, the nearest one, and how far it is from her own tile.
     /// </summary>
     [Fact]
-    public void TheRefusalNamesTheDoorTheActorIsStandingBeside()
+    public void TheRefusalNamesTheNearestDoorAndItsDistance()
     {
         using var world = HeadlessWorld.Create();
         world.Location.warps.Add(new Warp(3, 12, "Farm", 64, 15, flipFarmer: false));
-        world.PlaceActorAt(3, 11);
+        world.PlaceActorAt(5, 9);
 
         LocalExecutionReceipt receipt = world.RequestEnterExit(9, 9);
 
         receipt.State.Should().Be(ExecutionState.Rejected);
         receipt.ReasonCode.Should().Be("door_not_available");
         receipt.Evidence.Should().Be(
-            "source=9,9;warps=1;you=3,11;nearest=3,12;distance=1;doors=3,12->Farm",
+            "source=9,9;warps=1;you=5,9;nearest=3,12;distance=3;doors=3,12->Farm",
             "the refusal knows where the door is; naming the count of the warp list alone is the round42 defect");
     }
 
     /// <summary>
-    /// The exact `round42` request: she named her OWN tile, the door was one row below it, and one orthogonal step
-    /// is what stood in the way. The decision is the production function the request path asks, run against the
-    /// exits the production discovery reads out of a live location.
+    /// The exact `round42` line, asked of the formatter the refusal uses, so the shape of the answer is pinned even
+    /// for the geometry that now succeeds: `source=3,11;warps=1` became this.
     /// </summary>
     [Fact]
-    public void TheOneStepOffTheDoorIsTheTransitionRatherThanARefusal()
+    public void TheRound42RefusalLineCarriesEveryFactItHad()
     {
         using var world = HeadlessWorld.Create();
         world.Location.warps.Add(new Warp(3, 12, "Farm", 64, 15, flipFarmer: false));
         world.PlaceActorAt(3, 11);
 
-        ExecutionManager.AdjacentExitStep(
-                ExecutionManager.DiscoverExitTiles(Game1.player), (3, 11), (3, 11))
-            .Should().Be((3, 12, 1), "she asked to leave and the way out is one step south of her");
+        string evidence = ExecutionManager.DescribeExitRefusal(
+            (3, 11), world.Location.warps.Count, (3, 11), ExecutionManager.DiscoverExitTiles(Game1.player));
+
+        evidence.Should().Be("source=3,11;warps=1;you=3,11;nearest=3,12;distance=1;doors=3,12->Farm");
+    }
+
+    /// <summary>
+    /// The `round42` request itself: she named her OWN tile, the door was one row below it, and one orthogonal step
+    /// is what stood in the way. The decision is the production function the request path asks, run against the exits
+    /// the production discovery reads out of a live location.
+    /// </summary>
+    [Fact]
+    public void TheOneStepBesideHerIsTheTransitionWhateverTileSheNamed()
+    {
+        using var world = HeadlessWorld.Create();
+        world.Location.warps.Add(new Warp(3, 12, "Farm", 64, 15, flipFarmer: false));
+        world.PlaceActorAt(3, 11);
+
+        ExecutionManager.AdjacentExitStep(ExecutionManager.DiscoverExitTiles(Game1.player), (3, 11))
+            .Should().Be((3, 12, 1), "enter_exit means leave this location, and the way out is one step south of her");
+    }
+
+    /// <summary>
+    /// The transition really leaves: after the request, the ENGINE's own pending warp names the target location and
+    /// the arrival tile, and the receipt says which door was used. Read from the engine, never from the receipt.
+    /// </summary>
+    [Fact]
+    public void TheTransferLeavesThroughTheDoorTheEngineAndTheReceiptBothName()
+    {
+        using var world = HeadlessWorld.Create();
+        world.Location.warps.Add(new Warp(3, 12, "Farm", 64, 15, flipFarmer: false));
+        world.LoadDestination("Farm", 100, 100);
+        world.PlaceActorAt(3, 11);
+
+        LocalExecutionReceipt receipt = world.RequestEnterExit(3, 11);
+
+        receipt.State.Should().Be(ExecutionState.Accepted, $"the way out is one step away ({receipt.Evidence})");
+        receipt.Evidence.Should().Contain("approach=adjacent_door;door=3,12");
+
+        Game1.isWarping.Should().BeTrue("the engine's own transition must have started, not merely be reported");
+        Game1.locationRequest.Name.Should().Be("Farm");
+        Game1.xLocationAfterWarp.Should().Be(64);
+        Game1.yLocationAfterWarp.Should().Be(15);
     }
 
     /// <summary>
     /// The same one step for an EDGE WARP, which lives in `location.warps` and in no door table: the `round19`
-    /// shape (`Farm(41,65)->Forest`), so the family is covered by a second map shape and both tables are named.
+    /// shape (`Farm(41,65)-&gt;Forest`), so the family is covered by a second map shape and both tables are named.
     /// </summary>
     [Fact]
     public void TheSameOneStepWorksForAnEdgeWarpTheDoorTableNeverHolds()
@@ -96,15 +136,15 @@ public sealed class EnterExitAdjacentExitRefusalTests
         world.Location.warps.Add(new Warp(41, 65, "Forest", 56, 33, flipFarmer: false));
         world.PlaceActorAt(41, 64);
 
-        ExecutionManager.AdjacentExitStep(
-                ExecutionManager.DiscoverExitTiles(Game1.player), (41, 65), (41, 64))
+        ExecutionManager.AdjacentExitStep(ExecutionManager.DiscoverExitTiles(Game1.player), (41, 64))
             .Should().Be((41, 65, 1), "round19's tile is an edge warp; the actor stands one tile north of it");
 
-        // And the refusal for a tile the caller aimed elsewhere names that exit, so the second shape carries the
-        // naming half too rather than only the decision.
+        // The naming half of the same shape, from a tile she could not step from: five rows away, so the refusal
+        // must answer rather than leave.
+        world.PlaceActorAt(41, 60);
         LocalExecutionReceipt receipt = world.RequestEnterExit(45, 60);
         receipt.ReasonCode.Should().Be("door_not_available");
-        receipt.Evidence.Should().Be("source=45,60;warps=1;you=41,64;nearest=41,65;distance=1;doors=41,65->Forest");
+        receipt.Evidence.Should().Be("source=45,60;warps=1;you=41,60;nearest=41,65;distance=5;doors=41,65->Forest");
     }
 
     /// <summary>
@@ -118,25 +158,8 @@ public sealed class EnterExitAdjacentExitRefusalTests
         world.Location.warps.Add(new Warp(3, 12, "Farm", 64, 15, flipFarmer: false));
         world.PlaceActorAt(2, 11);
 
-        ExecutionManager.AdjacentExitStep(
-                ExecutionManager.DiscoverExitTiles(Game1.player), (2, 11), (2, 11))
+        ExecutionManager.AdjacentExitStep(ExecutionManager.DiscoverExitTiles(Game1.player), (2, 11))
             .Should().BeNull("a diagonal door is two orthogonal steps away");
-    }
-
-    /// <summary>
-    /// The rescue must not teleport a companion out of the location she is working in: a request for a tile she did
-    /// NOT aim at stays a refusal even while she stands beside a door.
-    /// </summary>
-    [Fact]
-    public void ARequestThatDidNotAimAtTheDoorIsNotARescue()
-    {
-        using var world = HeadlessWorld.Create();
-        world.Location.warps.Add(new Warp(3, 12, "Farm", 64, 15, flipFarmer: false));
-        world.PlaceActorAt(3, 11);
-
-        ExecutionManager.AdjacentExitStep(
-                ExecutionManager.DiscoverExitTiles(Game1.player), (9, 9), (3, 11))
-            .Should().BeNull("the caller asked about (9,9); leaving the location is not the answer to that");
     }
 
     /// <summary>
@@ -152,13 +175,13 @@ public sealed class EnterExitAdjacentExitRefusalTests
         world.Location.warps.Add(new Warp(2, 2, "Beach", 20, 4, flipFarmer: false));
         world.Location.warps.Add(new Warp(1, 1, "Town", 20, 12, flipFarmer: false));
         world.Location.warps.Add(new Warp(4, 4, "Forest", 56, 33, flipFarmer: false));
-        world.PlaceActorAt(2, 1);
+        world.PlaceActorAt(9, 1);
 
         LocalExecutionReceipt receipt = world.RequestEnterExit(9, 9);
 
         receipt.Evidence.Should().Be(
-            "source=9,9;warps=5;you=2,1;nearest=1,1;distance=1;"
-            + "doors=1,1->Town|2,2->Beach|3,3->Mountain");
+            "source=9,9;warps=5;you=9,1;nearest=5,5;distance=4;"
+            + "doors=5,5->Desert|4,4->Forest|3,3->Mountain");
     }
 
     /// <summary>
@@ -183,6 +206,12 @@ public sealed class EnterExitAdjacentExitRefusalTests
     /// A real headless world: a 16x16 <see cref="GameLocation"/>, a real <see cref="Farmer"/> and the
     /// <c>Game1</c> statics both the engine and <c>Context.IsWorldReady</c> dereference (the shape
     /// <c>ApproachClassificationTests.HeadlessWorld</c> established, kept local to the cases it serves).
+    ///
+    /// <para>
+    /// The engine's own warp request is part of the statics a case can move, so it is captured on entry and restored
+    /// on exit beside the player and the world state: a case that leaves `Game1.isWarping` set would make the next
+    /// case read a warp that belongs to this one.
+    /// </para>
     /// </summary>
     private sealed class HeadlessWorld : IDisposable
     {
@@ -193,9 +222,22 @@ public sealed class EnterExitAdjacentExitRefusalTests
                 .GetProperty("IsWorldReady", BindingFlags.Public | BindingFlags.Static)!
                 .GetGetMethod()!.GetMethodBody()!.GetILAsByteArray()!, 1))!;
 
+        private static readonly FieldInfo WarpingField = typeof(Game1)
+            .GetField("_isWarping", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        private static readonly FieldInfo ScreenFadeField = typeof(Game1)
+            .GetField("screenFade", BindingFlags.NonPublic | BindingFlags.Static)!;
+
         private readonly Game1? gameBefore;
         private readonly Farmer? playerBefore;
         private readonly object? worldStateBefore;
+        private readonly LocationRequest locationRequestBefore;
+        private readonly int warpXBefore;
+        private readonly int warpYBefore;
+        private readonly bool warpingBefore;
+        private readonly IList<GameLocation>? locationsBefore;
+        private readonly byte multiplayerModeBefore;
+        private readonly object? screenFadeBefore;
 
         private HeadlessWorld()
         {
@@ -204,6 +246,13 @@ public sealed class EnterExitAdjacentExitRefusalTests
             this.worldStateBefore = typeof(Game1)
                 .GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
                 .GetValue(null);
+            this.locationRequestBefore = Game1.locationRequest;
+            this.warpXBefore = Game1.xLocationAfterWarp;
+            this.warpYBefore = Game1.yLocationAfterWarp;
+            this.warpingBefore = Game1.isWarping;
+            this.locationsBefore = Game1.game1?._locations;
+            this.multiplayerModeBefore = Game1.multiplayerMode;
+            this.screenFadeBefore = ScreenFadeField.GetValue(null);
         }
 
         public GameLocation Location { get; private set; } = null!;
@@ -258,6 +307,14 @@ public sealed class EnterExitAdjacentExitRefusalTests
             buffs.Dirty = false;
             SetField(actor, "buffs", buffs);
             SetField(actor, "mailReceived", new NetStringHashSet());
+            // The engine's own `Halt()` runs on the transition path (`Farmer.warpFarmer` -> `Halt`), and it dereferences
+            // three members whose initializers never ran on an uninitialized instance: `movementDirections.Clear()`,
+            // `IsSitting()` (`isSitting.Value`) and the location it came from. Each gets its honest empty value.
+            SetField(actor, "movementDirections", new List<int>());
+            SetField(actor, "isSitting", new NetBool(false));
+            SetField(actor, "isEmoteAnimating", false);
+            SetField(actor, "facingDirection", new StardewValley.Network.NetDirection(2));
+            SetField(actor, "previousLocationName", string.Empty);
             actor.position.Set(new Vector2(9 * 64 + 8, 9 * 64));
             actor.currentLocation = location;
             typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, actor);
@@ -268,6 +325,26 @@ public sealed class EnterExitAdjacentExitRefusalTests
             Context.IsWorldReady.Should().BeTrue("the headless world must satisfy the readiness gate the body checks");
 
             return world;
+        }
+
+        /// <summary>
+        /// Gives the engine a loaded location to warp TO, so the transition can be read from `Game1.locationRequest`
+        /// instead of from the Mod's receipt. A CLIENT-mode game is simulated (`multiplayerMode = 1`) because
+        /// `performWarpFarmer` calls `hostSetup()` on the destination only while `IsMasterGame`; a host's map-loading
+        /// setup needs the real content pipeline, and the arrival tile the engine records is the fact under test.
+        /// </summary>
+        public void LoadDestination(string name, int width, int height)
+        {
+            var destination = new GameLocation();
+            var map = new xTile.Map();
+            map.AddLayer(new xTile.Layers.Layer("Back", map, new xTile.Dimensions.Size(width, height), new xTile.Dimensions.Size(64, 64)));
+            destination.map = map;
+            SetField(destination, "name", new NetString(name));
+            Game1.game1!._locations = new List<GameLocation> { destination };
+            Game1.multiplayerMode = 1;
+            // `performWarpFarmer` ends in `Game1.fadeScreenToBlack()`, which is `screenFade.FadeScreenToBlack()` -
+            // a static the real game constructs at startup.
+            ScreenFadeField.SetValue(null, new StardewValley.BellsAndWhistles.ScreenFade(() => false, () => { }));
         }
 
         public void PlaceActorAt(int x, int y) => Game1.player.position.Set(new Vector2(x * 64 + 8, y * 64));
@@ -299,6 +376,14 @@ public sealed class EnterExitAdjacentExitRefusalTests
             typeof(Game1)
                 .GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
                 .SetValue(null, this.worldStateBefore);
+            Game1.locationRequest = this.locationRequestBefore;
+            Game1.xLocationAfterWarp = this.warpXBefore;
+            Game1.yLocationAfterWarp = this.warpYBefore;
+            WarpingField.SetValue(null, this.warpingBefore);
+            Game1.multiplayerMode = this.multiplayerModeBefore;
+            ScreenFadeField.SetValue(null, this.screenFadeBefore);
+            if (Game1.game1 is not null && this.locationsBefore is not null)
+                Game1.game1._locations = this.locationsBefore;
             Game1.game1 = this.gameBefore!;
         }
     }

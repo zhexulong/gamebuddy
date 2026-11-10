@@ -139,7 +139,7 @@ public sealed class TransitionTileIsResolvableSourceShapeTests
     }
 
     /// <summary>
-    /// A request one orthogonal step off a published exit is the transition, and the receipt says which door was
+    /// A request whose nearest exit is one orthogonal step away is the transition, and the receipt says which door was
     /// used - the `round42` family member, after `round19` taught the same path to resolve from either table.
     /// </summary>
     [Fact]
@@ -147,13 +147,22 @@ public sealed class TransitionTileIsResolvableSourceShapeTests
     {
         string transition = EnclosingMethodBody(Read(MovementActions), "private LocalExecutionReceipt RequestLocalDoorTransition");
 
-        transition.Should().Contain("AdjacentExitStep(exits, (sourceX, sourceY), actorTile)",
-            "the one step that stood in the way must be taken instead of refused");
+        transition.Should().Contain("AdjacentExitStep(exits, actorTile)",
+            "the one step that stood in the way must be taken instead of refused, and the decision reads the actor's "
+            + "tile only: `enter_exit` means leave this location, so it must not also demand that the tile she named was "
+            + "the door");
         transition.Should().Contain("approach=adjacent_door;door=",
             "a substituted door is named in the receipt, exactly as every other approach leg in this Mod is");
         transition.Should().Contain("DispatchNativeDoor(location, doorPoint",
             "the native entry must run at the DOOR tile - dispatching at the caller's tile would run whatever Action sits "
             + "there and bypass every native door gate");
+
+        int unresolvedGuard = transition.IndexOf("if (warp is null || warp.TargetName is null or \"\")", StringComparison.Ordinal);
+        int rescue = transition.IndexOf("AdjacentExitStep(exits, actorTile)", StringComparison.Ordinal);
+        unresolvedGuard.Should().BeGreaterThanOrEqualTo(0);
+        rescue.Should().BeGreaterThan(unresolvedGuard,
+            "a request that names a DIFFERENT door which resolves is honoured: the one-step rescue may only run once the "
+            + "named tile resolved nothing");
     }
 
     private static string Read(string file) =>
