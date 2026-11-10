@@ -651,6 +651,8 @@ export async function runMountedProviderStart(
       turnId: scope.facts.turnId,
       idempotencyKey: scope.facts.idempotencyKey,
     });
+    // The preset in force is assembled from the catalogue read path; the vendored request-segment seam was reverted
+    // (1103fbc8), so this turn has nothing to refresh here.
     const promptSettled = settlePrompt();
     promptPromise = promptSettled.then(() => undefined);
     const first = await Promise.race([
