@@ -120,8 +120,9 @@ public sealed class EnterExitWarpActionSourceShapeTests
     }
 
     /// <summary>
-    /// The tile this fixture arms cannot be published: it is absent from
-    /// <c>location.doors</c>, which is the only source <c>DiscoverDoorTargets</c> reads.
+    /// The tile this fixture arms cannot be published: it is absent from every table
+    /// <c>DiscoverDoorTargets</c> reads - it is neither a Buildings-layer <c>Warp</c> action,
+    /// nor a building's human door, nor an entry in <c>location.warps</c>.
     /// The runner therefore derives its target from the actor's own tile — and must not
     /// grow a dependency on a <c>doorTargets</c> entry that can never exist.
     /// </summary>

@@ -3042,45 +3042,74 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return null;
     }
 
-    private static IReadOnlyList<BridgeDoor> DiscoverDoorTargets(Farmer player)
+    /// <summary>
+    /// Every tile this location offers as a way out, asked of the two tables the ENGINE keeps, in the order the game
+    /// itself resolves them: the door table <c>updateDoors</c> builds, the human door of each building standing here, and
+    /// the location's own warp list.
+    ///
+    /// <para>
+    /// The third source is what this family was missing. <c>location.doors</c> only ever holds a Buildings-layer tile
+    /// whose <c>Action</c> property contains "Warp" (<c>GameLocation.updateDoors</c>, GameLocation.cs:17586-17641), and a
+    /// farm building's INTERIOR carries its exit in <c>warps</c> instead: <c>Building.updateInteriorWarps</c> rewrites the
+    /// interior warp whose target is the parent location (Building.cs:1799-1816), and the engine reads
+    /// <c>indoors.warps[0]</c> as the tile a building's entrance puts the player on (GameLocation.cs:2203). Switching on
+    /// <c>FarmHouse</c>/<c>Cabin</c> therefore published the farmhouse's own exit and NOTHING for a shed, barn, coop or
+    /// greenhouse: inside every one of those a companion was told <c>doorTargets: []</c> by a location whose warp list
+    /// held the way out one tile away.
+    /// </para>
+    ///
+    /// <para>
+    /// A row carries no source field - <c>BridgeDoor</c> is the five warp coordinates and the wire's <c>hasOnlyKeys</c>
+    /// would refuse a sixth - so the source is read off the tile: the door table names tiles the map declared with an
+    /// <c>Action</c>, the warps list names every tile the map's own <c>Warp</c> property declared, and the one tile of a
+    /// building that appears in NEITHER is its human door (the tile a player clicks). Dedup is by SOURCE TILE with the
+    /// earliest table owning the row, because one tile can be both a gated door and a plain warp and the gated one is the
+    /// tile the native click entry knows.
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<BridgeDoor> DiscoverDoorTargets(Farmer player)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeDoor>();
         Dictionary<(int X, int Y), BridgeDoor> result = new();
         foreach ((Microsoft.Xna.Framework.Point point, string target) in location.doors.Pairs)
         {
-            StardewValley.Warp? warp = location.getWarpFromDoor(point, player);
-            if (warp is null || string.IsNullOrWhiteSpace(warp.TargetName)
-                || point.X < 0 || point.Y < 0 || point.X > 1000 || point.Y > 1000
-                || warp.TargetX < 0 || warp.TargetY < 0 || warp.TargetX > 1000 || warp.TargetY > 1000)
-                continue;
-            result[(point.X, point.Y)] = new BridgeDoor(point.X, point.Y, warp.TargetName, warp.TargetX, warp.TargetY);
+            if (DescribeDoor(point.X, point.Y, location.getWarpFromDoor(point, player)) is { } door)
+                result.TryAdd((door.SourceX, door.SourceY), door);
         }
         foreach (StardewValley.Buildings.Building building in location.buildings)
         {
             if (!building.HasIndoors()) continue;
             Microsoft.Xna.Framework.Point point = building.getPointForHumanDoor();
-            StardewValley.Warp? warp = ResolveDoorWarp(location, point);
-            if (warp is null || string.IsNullOrWhiteSpace(warp.TargetName)
-                || point.X < 0 || point.Y < 0 || point.X > 1000 || point.Y > 1000
-                || warp.TargetX < 0 || warp.TargetY < 0 || warp.TargetX > 1000 || warp.TargetY > 1000)
-                continue;
-            result[(point.X, point.Y)] = new BridgeDoor(point.X, point.Y, warp.TargetName, warp.TargetX, warp.TargetY);
+            if (DescribeDoor(point.X, point.Y, ResolveDoorWarp(location, point)) is { } door)
+                result.TryAdd((door.SourceX, door.SourceY), door);
         }
-
-        if (location is StardewValley.Locations.FarmHouse or StardewValley.Locations.Cabin)
+        // The location's own warp list, with the `warps` family's predicate: a transition that moves a PLAYER, with a
+        // publishable source and destination. An edge exit's source is -1 on one axis, which is the engine's own
+        // encoding and not a defect, so the range is the ONE declaration of it (`FarmhandWarpCoordinateRange`).
+        foreach (StardewValley.Warp warp in location.warps)
         {
-            foreach (StardewValley.Warp warp in location.warps.Where(candidate => !candidate.npcOnly.Value
-                && string.Equals(candidate.TargetName, "Farm", StringComparison.Ordinal)))
-            {
-                if (warp.X < 0 || warp.Y < 0 || warp.X > 1000 || warp.Y > 1000
-                    || warp.TargetX < 0 || warp.TargetY < 0 || warp.TargetX > 1000 || warp.TargetY > 1000)
-                    continue;
-                result[(warp.X, warp.Y)] = new BridgeDoor(warp.X, warp.Y, warp.TargetName, warp.TargetX, warp.TargetY);
-            }
+            if (warp is null || warp.npcOnly.Value || string.IsNullOrWhiteSpace(warp.TargetName)) continue;
+            if (!FarmhandWarpCoordinateRange.IsPublishableSource(warp.X, warp.Y)
+                || !FarmhandWarpCoordinateRange.IsPublishableDestination(warp.TargetX, warp.TargetY))
+                continue;
+            result.TryAdd((warp.X, warp.Y), new BridgeDoor(warp.X, warp.Y, warp.TargetName, warp.TargetX, warp.TargetY));
         }
 
         return result.Values.Take(64).ToArray();
+    }
+
+    /// <summary>
+    /// One door row, or null when this tile cannot be published: the engine resolved no warp for it, the warp names no
+    /// target, or a coordinate lies outside <see cref="FarmhandWarpCoordinateRange"/>'s publishable range.
+    /// </summary>
+    private static BridgeDoor? DescribeDoor(int sourceX, int sourceY, StardewValley.Warp? warp)
+    {
+        if (warp is null || string.IsNullOrWhiteSpace(warp.TargetName)) return null;
+        if (!FarmhandWarpCoordinateRange.IsPublishableSource(sourceX, sourceY)
+            || !FarmhandWarpCoordinateRange.IsPublishableDestination(warp.TargetX, warp.TargetY))
+            return null;
+        return new BridgeDoor(sourceX, sourceY, warp.TargetName, warp.TargetX, warp.TargetY);
     }
 
 
