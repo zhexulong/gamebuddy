@@ -418,6 +418,9 @@ function createBodyProgramTools(
                 nodeCount: nodes.length,
                 programId,
                 submitted: code,
+                // WHY, in the Mod's own words. Without it the answer is one word - `rejected` - and the node, the rule
+                // and the detail that would let her fix the plan are all on the other side of the bridge.
+                ...planRefusalAnswer(submitted.details.verification, code),
                 ...layoutFactsNote(compiled),
               });
             // AWAITED, because the original design says so and the shape drifted away from it.
@@ -760,6 +763,74 @@ function planDetails(details: Readonly<Record<string, unknown>>) {
   return Object.freeze({
     content: [{ type: "text" as const, text: JSON.stringify(details) }],
     details: Object.freeze(details),
+  });
+}
+
+/** How many of the Mod's diagnostics a refusal repeats; its wire bound allows 64, a plan answer is re-read every turn. */
+export const MAX_PLAN_VERIFICATION_DIAGNOSTICS = 8;
+
+/** How much of one diagnostic's own text a refusal repeats before the cut is marked. */
+export const MAX_PLAN_VERIFICATION_TEXT_CHARS = 240;
+
+/** One of the Mod's own diagnostic messages, verbatim, cut at the bound with the cut marked rather than silent. */
+function boundedPlanDiagnosticText(value: string): string {
+  return value.length > MAX_PLAN_VERIFICATION_TEXT_CHARS
+    ? `${value.slice(0, MAX_PLAN_VERIFICATION_TEXT_CHARS)}\u2026`
+    : value;
+}
+
+/**
+ * The Mod's own account of WHY it refused a plan: the node that broke a rule, the rule's code, and its own text.
+ *
+ * <p>
+ * MEASURED at `516e2559`: the Mod answers `submitted: "rejected"` with `details.verification` - the rejected node ids and
+ * one diagnostic per violation - and the plan answer carried only `submitted: rejected`. She was handed a refusal with no
+ * node, no rule and no detail, so the only correction available to her was to guess.
+ * </p>
+ *
+ * <p>
+ * EVERY STRING HERE IS THE MOD'S OWN. This projects, it never rephrases: `code`, `path` and `message` are what the other
+ * side wrote. The single change is LENGTH - one message is cut at `MAX_PLAN_VERIFICATION_TEXT_CHARS` with the cut marked,
+ * and the list is cut at `MAX_PLAN_VERIFICATION_DIAGNOSTICS` with the population beside it - because a plan answer is
+ * tool-result text the model re-reads every turn, and 64 full diagnostics would crowd out the plan itself.
+ * </p>
+ *
+ * <p>
+ * WHEN THE FIELD IS ABSENT the answer SAYS SO with the code the Mod answered: `verification_absent:<submitted>` is a
+ * statement about THIS answer (a reason exists on the other side and did not arrive here), never a silence that reads as
+ * "the Mod gave no reason".
+ * </p>
+ */
+export function planRefusalAnswer(verification: unknown, submitted: string): Readonly<Record<string, unknown>> {
+  const record = isRecord(verification) ? verification : undefined;
+  const listed = Array.isArray(record?.diagnostics) ? record.diagnostics : [];
+  const diagnostics = listed
+    .filter(isRecord)
+    .map((row) =>
+      Object.freeze({
+        severity: typeof row.severity === "string" ? row.severity : "",
+        code: typeof row.code === "string" ? row.code : "",
+        nodeId: typeof row.nodeId === "string" ? row.nodeId : null,
+        path: typeof row.path === "string" ? row.path : "",
+        message: boundedPlanDiagnosticText(typeof row.message === "string" ? row.message : ""),
+      }),
+    )
+    // A row carrying no code carries no reason, so it is not a diagnostic this answer may present as one.
+    .filter((row) => row.code !== "");
+  if (diagnostics.length === 0) return Object.freeze({ verificationAbsent: `verification_absent:${submitted}` });
+  const shown = Object.freeze(diagnostics.slice(0, MAX_PLAN_VERIFICATION_DIAGNOSTICS));
+  return Object.freeze({
+    verification: Object.freeze({
+      catalogRevision: Number.isSafeInteger(record?.catalogRevision) ? (record?.catalogRevision as number) : null,
+      // The ids she has to look at, in the Mod's order and without repeats. An empty list is the true answer for a
+      // refusal the Mod did not scope to a node, and it sits beside diagnostics that still name the rule.
+      rejectedNodeIds: Object.freeze([
+        ...new Set(diagnostics.map((row) => row.nodeId).filter((nodeId): nodeId is string => nodeId !== null)),
+      ]),
+      diagnostics: shown,
+      diagnosticsCount: diagnostics.length,
+      diagnosticsTruncated: diagnostics.length > shown.length,
+    }),
   });
 }
 

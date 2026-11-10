@@ -36,7 +36,12 @@ import { StardewExecutionRecoverySupervisor } from "../stardew-execution-recover
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { createTestGameRuntimeMaterializer } from "./continuity-semantic-game-runtime-materializer.test-support.js";
-import { gameTurnWorldStateText } from "./continuity-semantic-game-runtime-materializer.js";
+import {
+  gameTurnWorldStateText,
+  MAX_PLAN_VERIFICATION_DIAGNOSTICS,
+  MAX_PLAN_VERIFICATION_TEXT_CHARS,
+  planRefusalAnswer,
+} from "./continuity-semantic-game-runtime-materializer.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
 
@@ -1343,5 +1348,120 @@ test("the plan tool hands its compiled program to the one submission path a mode
   assert.match(
     source,
     /runTrace\.begin\("plan\.script", \{\n\s+scriptSource: compiled\.scriptSource,\n\s+snapshotRevision: compiled\.snapshotRevision \?\? -1,\n\s+producedProgram: compiled\.ok \? JSON\.stringify\(compiled\.program\) : "",/u,
+  );
+});
+
+/**
+ * A REFUSED PLAN REACHES HER WITH THE REASON THE MOD WROTE, NOT WITH THE WORD `rejected`.
+ *
+ * Measured at `516e2559`: `details.verification` carries one diagnostic per violation - the rejected node id, the rule's
+ * own code and the Mod's own sentence - and the plan answer carried none of it. A refusal she cannot read is a refusal
+ * she can only answer by guessing, and a guess is where an invented world fact comes from.
+ *
+ * The first half drives the projector with the Mod's own result shape. The second half is what makes that a fix rather
+ * than a helper: the plan tool's refusal branch has to SPEND it, or the model still receives one word.
+ */
+test("a refused plan carries the rejected node and the Mod's own reason, and names the absence when it has neither", async () => {
+  type VerificationAnswer = Readonly<{
+    catalogRevision: number | null;
+    rejectedNodeIds: readonly string[];
+    diagnostics: readonly Readonly<{ code: string; nodeId: string | null; message: string }>[];
+    diagnosticsCount: number;
+    diagnosticsTruncated: boolean;
+  }>;
+  const verificationOf = (answer: Readonly<Record<string, unknown>>): VerificationAnswer => {
+    assert.ok(
+      answer.verification !== undefined,
+      `the refusal answer must carry the Mod's verification, received ${JSON.stringify(answer)}`,
+    );
+    return answer.verification as VerificationAnswer;
+  };
+
+  const rejectedNode = "n02";
+  const answered = verificationOf(
+    planRefusalAnswer(
+      {
+        accepted: false,
+        catalogRevision: 7,
+        diagnostics: [
+          {
+            severity: "error",
+            code: "argument_out_of_range",
+            nodeId: rejectedNode,
+            path: "nodes[1].arguments.x",
+            message: "x must be within the map, received 40",
+          },
+        ],
+      },
+      "rejected",
+    ),
+  );
+  assert.deepEqual(answered.rejectedNodeIds, [rejectedNode], "the node the Mod refused reaches her by id");
+  assert.equal(answered.diagnostics[0]?.code, "argument_out_of_range", "and the rule it broke, by the Mod's own code");
+  assert.equal(
+    answered.diagnostics[0]?.message,
+    "x must be within the map, received 40",
+    "verbatim: this projects the reason, it never paraphrases it",
+  );
+  assert.equal(answered.catalogRevision, 7, "and the catalogue revision the refusal was decided against");
+
+  // BOTH BOUNDS ARE NAMED RATHER THAN SILENT: a message past its bound is cut with the cut marked, and a list past its
+  // bound is counted beside the rows that did fit - so a reader never takes a cut sentence for the Mod's whole one, nor
+  // a short list for the whole population.
+  const many = Array.from({ length: MAX_PLAN_VERIFICATION_DIAGNOSTICS + 2 }, (_, index) => ({
+    severity: "error",
+    code: `rule_${String(index)}`,
+    nodeId: `n${String(index).padStart(2, "0")}`,
+    path: `nodes[${String(index)}]`,
+    message: "x".repeat(MAX_PLAN_VERIFICATION_TEXT_CHARS + 40),
+  }));
+  const bounded = verificationOf(
+    planRefusalAnswer({ accepted: false, catalogRevision: 1, diagnostics: many }, "rejected"),
+  );
+  assert.equal(bounded.diagnostics.length, MAX_PLAN_VERIFICATION_DIAGNOSTICS);
+  assert.equal(bounded.diagnosticsCount, many.length, "the population stays whole beside the rows that fit");
+  assert.equal(bounded.diagnosticsTruncated, true);
+  assert.equal(
+    bounded.diagnostics[0]?.message,
+    `${"x".repeat(MAX_PLAN_VERIFICATION_TEXT_CHARS)}…`,
+    "the cut is marked, so the Mod's last words are not mistaken for its last word",
+  );
+
+  // ABSENCE IS SAID, and said with the code the Mod answered, so a rejection this Host received no reason for is named
+  // rather than presented as an answer that had none to give.
+  const reasonsAbsent = [
+    undefined,
+    null,
+    { accepted: false, catalogRevision: 1, diagnostics: [] },
+    {
+      accepted: false,
+      catalogRevision: 1,
+      diagnostics: [{ severity: "error", code: "", nodeId: null, path: "", message: "" }],
+    },
+  ];
+  for (const absent of reasonsAbsent)
+    assert.deepEqual(
+      planRefusalAnswer(absent, "rejected"),
+      { verificationAbsent: "verification_absent:rejected" },
+      `a rejection with no reason must name its absence, received ${JSON.stringify(absent)}`,
+    );
+
+  // AND THE PLAN TOOL SPENDS IT. Without this the projector could exist and the model would still read one word.
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
+  const source = await readFile(
+    join(root, "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts"),
+    "utf8",
+  );
+  const refusalAt = source.indexOf("if (!accepted)");
+  assert.notEqual(refusalAt, -1, "the plan tool still has a branch for a submission the Mod did not accept");
+  // Read as CODE: a comment that quotes the call is not the call, and pinning the whole window would accept one.
+  const branch = source
+    .slice(refusalAt, refusalAt + 900)
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("//"));
+  assert.ok(
+    branch.some((line) => /planRefusalAnswer\(submitted\.details\.verification, code\)/u.test(line)),
+    `a rejected plan must reach the model carrying its node ${rejectedNode} and its reason ` +
+      `${String(answered.diagnostics[0]?.code)}, and the refusal branch carries the Mod's verification`,
   );
 });
