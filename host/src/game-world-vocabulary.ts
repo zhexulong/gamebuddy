@@ -758,7 +758,8 @@ export function nearbyTargetFamilies(snapshot: Snapshot): readonly NearbyTargetF
           ? undefined
           : `${label} ${shown.map((tile) => `(${tile.x},${tile.y})`).join(" ")}${
               omitted > 0 ? ` 其余 ${omitted} 格未列出` : ""
-            }`;    families.push(Object.freeze({ family, label, nearest, total: value.length, omitted, rendered }));
+            }`;
+    families.push(Object.freeze({ family, label, nearest, total: value.length, omitted, rendered }));
   }
   return Object.freeze(families);
 }

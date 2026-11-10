@@ -59,7 +59,8 @@ import {
   renderGameEnvironmentFactsObservation,
   type GameEnvironmentFactsRender,
 } from "./game-world-vocabulary.js";
-import type { ExecutionReceipt } from "./protocol.js";import {
+import type { ExecutionReceipt } from "./protocol.js";
+import {
   createProviderTurnHeaderScope,
   PROVIDER_TURN_HEADER_EXTENSION_NAME,
   type ProviderTurnHeaderScope,
@@ -943,8 +944,7 @@ function assertMagicContextSurfaceSignature(surface: "chat" | "game", systemProm
  */
 function withPresetMain(floor: string, preset: GameSessionPreset | null): string {
   if (preset === null) return floor;
-  for (const overlap of presetOverlaps({ preset, floor }))
-    process.stderr.write(`${formatPresetOverlap(overlap)}\n`);
+  for (const overlap of presetOverlaps({ preset, floor })) process.stderr.write(`${formatPresetOverlap(overlap)}\n`);
   const segment = renderPresetMainSegment(preset.main);
   return segment.length === 0 ? floor : `${floor}\n${segment}`;
 }

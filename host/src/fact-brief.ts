@@ -138,8 +138,7 @@ function composeWorldState(snapshot: Readonly<{ fact: WorldFact; ageTurns: numbe
   // The age comes FIRST and in words, because the paragraph reads as the present tense otherwise. A reading is not the
   // world: measured 2026-11-05, six consecutive turns were handed `18:00` while the model's own reasoning read "It's
   // 22:00 now" in the same turn, and the run ended `companion_did_not_sleep`.
-  if (snapshot.ageTurns >= 1)
-    parts.push(`（这是 ${snapshot.ageTurns} 轮之前看到的，世界已经不一样了）`);
+  if (snapshot.ageTurns >= 1) parts.push(`（这是 ${snapshot.ageTurns} 轮之前看到的，世界已经不一样了）`);
   const environment = formatGameEnvironmentFacts(world, true);
   if (environment !== "") parts.push(environment);
   const carrying = formatCarrying(world);
@@ -162,7 +161,9 @@ export const MAX_CARRYING_ROWS = 8;
  * family at all - the field is gated on the actions that read the inventory - and stays silent, which is a different
  * statement from `身上没有东西`.
  */
-function formatCarrying(world: Snapshot & { readonly inventoryItemFacts?: readonly Readonly<{ name?: unknown; stack?: unknown }>[] }): string {
+function formatCarrying(
+  world: Snapshot & { readonly inventoryItemFacts?: readonly Readonly<{ name?: unknown; stack?: unknown }>[] },
+): string {
   const rows = world.inventoryItemFacts;
   if (!Array.isArray(rows)) return "";
   const named = rows
