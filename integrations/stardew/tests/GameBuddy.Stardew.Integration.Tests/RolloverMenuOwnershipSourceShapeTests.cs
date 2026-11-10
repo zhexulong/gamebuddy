@@ -32,9 +32,14 @@ public sealed class RolloverMenuOwnershipSourceShapeTests
     {
         // Both behaviours have to exist in the same file: the lifecycle closes the summary, and does NOT close the
         // level-up menu. Asserting them together is what stops a future edit from "fixing" one into the other.
+        //
+        // The identity is the engine's own type, in one place (`IsRolloverSettlementMenu`), and every wait that meets the
+        // summary reaches it through `AdvanceEngineCrossingMenu` - one spelling, so a phase that opened a menu cannot
+        // grow a second opinion about which menu it may advance.
         string source = ReadLifecycleSource();
-        source.Should().Contain("is ShippingMenu uncommittedShipping", "the lifecycle must recognise the summary it raises");
+        source.Should().Contain("activeMenu is ShippingMenu", "the lifecycle must recognise the summary it raises");
         source.Should().Contain("CommitShippingSummary", "and close it through the engine's commit path");
+        source.Should().Contain("AdvanceEngineCrossingMenu", "which the waits for the crossing share");
     }
 
     [Fact]

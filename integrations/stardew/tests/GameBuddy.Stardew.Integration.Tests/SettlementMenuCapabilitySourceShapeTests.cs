@@ -49,20 +49,33 @@ public sealed class SettlementMenuCapabilitySourceShapeTests
         Regex.Replace(Regex.Replace(source, @"/\*[\s\S]*?\*/", string.Empty), @"(^|[^:])//.*$", "$1", RegexOptions.Multiline);
 
     [Fact]
-    public void TheCapabilityIsExactlyThePhaseThatCommits()
+    public void TheCapabilityNamesEveryPhaseThatCommitsTheSummary()
     {
-        // Read the property rather than restating it: a second spelling of "can commit" is the defect this test exists to
-        // prevent, so the assertion names the phase the commit branch is actually in.
+        // Read the property rather than restate the set: a second spelling of "can commit" is the defect this test
+        // exists to prevent, so the assertion takes its population from the file's own `case` labels and requires the
+        // property to cover every phase in which the commit is reachable.
         string lifecycle = ReadLifecycleSource();
         string capability = MethodBody(lifecycle, "internal bool CanStillCommitSettlementMenu");
-        capability.Should().Contain("Phase.AwaitingModal");
 
-        // And the phase is only reachable through the walk, which is why a pass-out night can never reach it.
-        string walking = MethodBody(lifecycle, "case Phase.WalkingToBed:");
-        walking.Should().Contain(
-            "WalkToBed()",
-            "the commit phase is entered from the walk, so an engine-forced night never arrives there");
-        walking.Should().Contain("Phase.AwaitingModal");
+        // The modal the rollover raises before the prompt, and the three waits for the crossing itself: those are the
+        // phases that meet the summary, and `AdvanceEngineCrossingMenu` is what each of them advances it with.
+        foreach (string phase in new[] { "AwaitingModal", "AwaitingSettlement", "AwaitingSave", "AwaitingDayStart" })
+        {
+            capability.Should().Contain($"Phase.{phase}", $"{phase} meets the summary and must keep ownership of it");
+            lifecycle.Should().Contain($"case Phase.{phase}:", $"Phase.{phase} must be a phase this lifecycle really has");
+        }
+
+        // And the commit is reachable in each of them, which is what the capability claims. The night the engine took by
+        // its own 2:00 AM pass-out never walks to the bed, so the capability may not be reachable only through the walk.
+        foreach (string owner in new[]
+        {
+            "private bool AnswerSleepPrompt(",
+            "private bool ObserveSaveBoundary(",
+            "private bool EvaluateDayStart(",
+        })
+        {
+            MethodBody(lifecycle, owner).Should().Contain($"AdvanceEngineCrossingMenu", $"{owner} meets the summary");
+        }
     }
 
     [Fact]

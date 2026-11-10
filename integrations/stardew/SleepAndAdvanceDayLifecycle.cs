@@ -142,6 +142,16 @@ internal sealed class SleepAndAdvanceDayLifecycle
     private SettlementMenuOutcome settlementMenuOutcome;
 
     /// <summary>
+    /// What this lifecycle did with the engine's own end-of-night menu while it waited for its crossing.
+    ///
+    /// Separate from <see cref="settlementMenuOutcome"/> because the two are different acts at different times: this one
+    /// is the crossing's own step (the night could not begin until it drained), that one is what the terminal left
+    /// standing after it had already finished. A receipt that reported only the latter said `none` about the menu the
+    /// lifecycle itself had just advanced.
+    /// </summary>
+    private SettlementMenuOutcome engineCrossingMenuOutcome;
+
+    /// <summary>
     /// Terminal outcome handed back to the owning execution. The lifecycle is the
     /// mechanism owner; the wire receipt is still minted by the one execution
     /// ledger, so both the evidence file and the bridge receipt describe the same
@@ -276,10 +286,12 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// Whether this lifecycle still has a way to commit a standing settlement sheet.
     ///
     /// <para>
-    /// The ONLY phase that commits one is <see cref="Phase.AwaitingModal"/> (`:424`), and that phase is reached from
-    /// exactly one place: `WalkToBed()` returning true (`:404-405`). A night the engine took by its own 2:00 AM pass-out
-    /// never walks to the bed - the engine moves the actor - so its lifecycle can sit in `AwaitingSave` or
-    /// `AwaitingReadyBarrier` for ever with no route to the commit.
+    /// The phases that commit one are the ones that meet it: <see cref="Phase.AwaitingModal"/> (the rollover pushes the
+    /// summary before the prompt, `Game1.cs:9112-9161`) and the three waits for this lifecycle's own crossing
+    /// (<see cref="Phase.AwaitingSettlement"/>, <see cref="Phase.AwaitingSave"/>, <see cref="Phase.AwaitingDayStart"/>),
+    /// where the summary is the engine's next step of the very night being crossed and
+    /// <see cref="AdvanceEngineCrossingMenu"/> advances it. A night the engine took by its own 2:00 AM pass-out never
+    /// walks to the bed - the engine moves the actor - and reaches the summary through the crossing waits instead.
     /// </para>
     /// <para>
     /// MEASURED 2026-10-31: the clock read 2600 (02:00), the engine warped to FarmHouse and ran `NewDay`, the new day
@@ -290,7 +302,10 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// its capability, and the two come apart exactly here.
     /// </para>
     /// </summary>
-    internal bool CanStillCommitSettlementMenu => !this.finished && this.phase == Phase.AwaitingModal;
+    internal bool CanStillCommitSettlementMenu => !this.finished && this.phase is Phase.AwaitingModal
+        or Phase.AwaitingSettlement
+        or Phase.AwaitingSave
+        or Phase.AwaitingDayStart;
 
     /// <summary>The native event edges this lifecycle consumes, forwarded by ModEntry.</summary>
     internal void ObserveSaved()
@@ -451,19 +466,15 @@ internal sealed class SleepAndAdvanceDayLifecycle
                 // A ShippingMenu arriving here is not a question and not a surprise: the rollover pushes it BEFORE the
                 // sleep prompt is raised, so a night that begins with yesterday's takings on screen waited forever. It
                 // asks nothing - `okClicked` only starts the outro (ShippingMenu.cs:690-696) and the settlement itself
-                // happened before the menu existed - so the lifecycle closes it the same way `dismiss_modal` does, and
+                // happened before the menu existed - so the lifecycle advances it the same way `dismiss_modal` does, and
                 // for the same reason: leaving it standing makes the day-start budget expire and the night report
                 // `blocked/day_start_not_observed`, which reads like a hang.
                 //
                 // A LevelUpMenu is deliberately NOT handled here: closing one grants a perk, and on a milestone that
                 // grants whatever branch the closer happened to pick. That decision is the companion's, and a proxy
                 // taking it was measured to be the wrong division of labour.
-                if (Game1.activeClickableMenu is ShippingMenu uncommittedShipping)
-                {
-                    if (this.CommitShippingSummary(uncommittedShipping) == SettlementMenuOutcome.CommitUnavailable)
-                        this.Finish("blocked", "shipping_summary_commit_unavailable", null);
-                    return false;
-                }
+                if (this.AdvanceEngineCrossingMenu())
+                    return this.finished;
                 if (Game1.activeClickableMenu is not DialogueBox)
                     return false;
                 this.CaptureDayBaseline();
@@ -632,6 +643,10 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// <c>day_advanced</c> before DayStarted would let the Agent act mid-save, so
     /// the counter alone must wait, and exhausting the wait must report
     /// <c>day_start_not_observed</c> instead of forging success.
+    ///
+    /// <paramref name="engineCrossingMenuStanding"/> is the fact that the engine's own end-of-night menu is holding the
+    /// transition to the new day (<c>Game1.cs:4292-4305</c>). It is deliberately NOT a way to claim the day started: it
+    /// only keeps the wait honest about who owns the frame.
     /// </summary>
     internal enum DayStartOutcome
     {
@@ -645,7 +660,8 @@ internal sealed class SleepAndAdvanceDayLifecycle
         int delta,
         bool dayStartedObserved,
         int dayStartWaitFrames,
-        int budget)
+        int budget,
+        bool engineCrossingMenuStanding)
     {
         if (delta == 0)
             return DayStartOutcome.Waiting;
@@ -653,6 +669,13 @@ internal sealed class SleepAndAdvanceDayLifecycle
             return DayStartOutcome.UnexpectedDelta;
         if (dayStartedObserved)
             return DayStartOutcome.Confirmed;
+        // The engine's own end-of-night menu is the crossing's next step, and `DayStarted` cannot arrive until it drains
+        // (Game1.cs:4292-4305): a frame spent on it is not a frame without a day start, so the wait may not call an
+        // exhausted budget a missing day while that menu owns the step. The lifecycle's wall-clock deadline still
+        // bounds the wait, so a menu that never drains still expires - as `lifecycle_deadline_exceeded`, which is what
+        // it is.
+        if (engineCrossingMenuStanding)
+            return DayStartOutcome.Waiting;
         if (dayStartWaitFrames < budget)
             return DayStartOutcome.Waiting;
         return DayStartOutcome.NotObserved;
@@ -966,9 +989,10 @@ internal sealed class SleepAndAdvanceDayLifecycle
     ///
     /// The rollover pushes `ShippingMenu` onto `Game1.endOfNightMenus` (Game1.cs:9112-9160) and, until `okClicked`
     /// starts its outro, that menu holds the actor for every later request as well as for `advance_day`'s own
-    /// eligibility gate (`menu_open`). `Phase.AwaitingModal` was the ONLY code that ever looked at it, so a night that
-    /// settled before reaching that phase - or through a day-start route that never went through the modal at all -
-    /// handed the actor back with the menu standing and nothing left to own it.
+    /// eligibility gate (`menu_open`). A night that settled before reaching `Phase.AwaitingModal` - or through a
+    /// day-start route that never went through the modal at all - used to hand the actor back with the menu standing
+    /// and nothing left to own it, which is why the crossing waits reach it through
+    /// <see cref="AdvanceEngineCrossingMenu"/> and why the terminal discharges it once more before letting go.
     ///
     /// That second route is the measured one (2026-10-26): `DayStarted` fires both when the active menu LEAVES a
     /// ShippingMenu/SaveGameMenu (Game1.cs:1686-1703) AND on the day-transition game mode settling (Game1.cs:4393-4395),
@@ -990,6 +1014,56 @@ internal sealed class SleepAndAdvanceDayLifecycle
             return SettlementMenuOutcome.NotPresent;
         // IsRolloverSettlementMenu admits exactly one type, so this cast cannot fail.
         return this.CommitShippingSummary((ShippingMenu)standing!);
+    }
+
+    /// <summary>
+    /// Advance the engine's own end-of-night menu while this lifecycle waits for its crossing, and report whether this
+    /// frame belonged to that crossing.
+    ///
+    /// <para>
+    /// THE MENU THE ENGINE RAISES FOR THE NIGHT IS A STEP OF THE NIGHT, NOT A MODAL HOLDING THE ACTOR.
+    /// `showEndOfNightStuff` (Game1.cs:9112-9161) pushes `ShippingMenu`, then `SaveGameMenu`, then any `LevelUpMenu`
+    /// onto `Game1.endOfNightMenus`, and the new day does not begin until that stack has drained: the gate is
+    /// `showingEndOfNightStuff && endOfNightMenus.Count == 0 && activeClickableMenu == null` (Game1.cs:4292-4305), which
+    /// is what reaches `globalFadeToClear(doMorningStuff)` (Game1.cs:4304) and, through `OnDayStarted`
+    /// (Game1.cs:4400), SMAPI's `DayStarted`. Of the three, `SaveGameMenu` drives itself (`update` runs the save and
+    /// exits, SaveGameMenu.cs:56-97) and `LevelUpMenu` grants a perk when it closes (LevelUpMenu.cs:487-501, which is
+    /// why <see cref="IsRolloverSettlementMenu"/> admits one type and not three); the summary only needs the click whose
+    /// seam is `okClicked` (ShippingMenu.cs:690-696).
+    /// </para>
+    /// <para>
+    /// MEASURED 2026-11-09 (`round42`, night 1): the bed prompt was answered, the summary was mounted, the world
+    /// published `day_started day_5` - and the receipt that owns the crossing ended
+    /// `blocked/lifecycle_deadline_exceeded`, so the harness recorded the night as `sleep_unsettled`. Nothing in the
+    /// waits looked at the menu the engine had raised for the very night they were waiting on. The same wait expired
+    /// on its own day-start budget in the 2026-11-05 run (`delta=1;day_started=false;menu=ShippingMenu` for 100 s).
+    /// </para>
+    /// </summary>
+    /// <returns>
+    /// True when the engine's own end-of-night menu was standing, so the caller may not spend this frame on its own
+    /// budget. False when no such menu stands, and also when one could not be reached - in that case the terminal is
+    /// already reported, which <see cref="finished"/> carries to the caller.
+    /// </returns>
+    private bool AdvanceEngineCrossingMenu()
+    {
+        SettlementMenuOutcome outcome = this.SettleStandingSettlementMenu();
+        if (outcome == SettlementMenuOutcome.CommitUnavailable)
+        {
+            this.Finish("blocked", "shipping_summary_commit_unavailable", null);
+            return true;
+        }
+        if (outcome == SettlementMenuOutcome.NotPresent)
+            return false;
+        // Recorded once per distinct outcome rather than once per frame: the menu stands for seconds while its outro
+        // runs, and sixty identical trace lines say less than the one that names the step.
+        if (this.engineCrossingMenuOutcome != outcome)
+        {
+            this.engineCrossingMenuOutcome = outcome;
+            this.trace.Add(
+                $"engine_crossing_menu;menu={Game1.activeClickableMenu?.GetType().Name ?? "none"};"
+                    + $"commit={DescribeSettlementMenuOutcome(outcome)};phase={this.phase}");
+        }
+        return true;
     }
     private bool AnswerSleepPrompt()
     {
@@ -1047,6 +1121,22 @@ internal sealed class SleepAndAdvanceDayLifecycle
             return false;
         }
 
+        // THE ENGINE'S OWN END-OF-NIGHT MENU IS THIS MODAL'S SUCCESSOR, NOT ITS REPLACEMENT.
+        //
+        // Answering `Yes` runs `Sleep_Yes` -> `startSleep` -> `doSleep` -> `Game1.NewDay`, and the rollover's own
+        // `showEndOfNightStuff` then mounts the summary (Game1.cs:9112-9161). So a summary here means the modal DID
+        // settle - into the crossing it asked about - and a settle wait that counted frames against it reported
+        // `modal_not_settled` about the one modal that settled exactly as the engine intends (and, on the night that
+        // was measured, let the receipt expire while the day was already being crossed).
+        if (this.AdvanceEngineCrossingMenu())
+        {
+            if (this.finished)
+                return true;
+            this.trace.Add($"modal_settled_into_engine_crossing_menu;frames={this.settleFrames}");
+            this.phase = this.multiPlayer ? Phase.AwaitingReadyBarrier : Phase.AwaitingSave;
+            return false;
+        }
+
         if (Game1.activeClickableMenu is null && !Game1.dialogueUp && Game1.player.CanMove)
         {
             this.trace.Add($"modal_settled;frames={this.settleFrames}");
@@ -1060,6 +1150,49 @@ internal sealed class SleepAndAdvanceDayLifecycle
         this.trace.Add($"modal_settlement_budget_exhausted;frames={this.settleFrames}");
         this.Finish("blocked", "modal_not_settled", null);
         return true;
+    }
+
+    /// <summary>
+    /// One frame of the save-boundary wait, separated from the live game so the night it was measured on can be
+    /// replayed headless.
+    /// </summary>
+    internal enum SaveBoundaryOutcome
+    {
+        /// <summary>The save may still begin: spend the frame on the budget and keep waiting.</summary>
+        Waiting,
+
+        /// <summary>
+        /// The engine's own end-of-night menu stands, so the save cannot begin yet and this frame is the crossing's
+        /// rather than the wait's.
+        /// </summary>
+        EngineMenuHoldsTheFrame,
+
+        /// <summary>This night's save was observed.</summary>
+        Saved,
+
+        /// <summary>The budget expired with no save: the transition is taken without one, and the receipt says so.</summary>
+        NotObserved,
+    }
+
+    /// <summary>
+    /// The save-boundary decision. See <see cref="ObserveSaveBoundary"/> for what each reading means and for the night
+    /// that produced the middle one.
+    ///
+    /// The ORDER is the invariant: an observed save outranks everything, and the engine's own menu outranks the budget -
+    /// a summary standing where the save should be is the crossing's next step, and the wait has not missed anything
+    /// yet. Only a frame on which nothing of the engine's owned the step may count against the budget.
+    /// </summary>
+    internal static SaveBoundaryOutcome DecideSaveBoundary(
+        bool saved,
+        bool engineCrossingMenuStanding,
+        int frames,
+        int budget)
+    {
+        if (saved)
+            return SaveBoundaryOutcome.Saved;
+        if (engineCrossingMenuStanding)
+            return SaveBoundaryOutcome.EngineMenuHoldsTheFrame;
+        return frames >= budget ? SaveBoundaryOutcome.NotObserved : SaveBoundaryOutcome.Waiting;
     }
 
     /// <summary>
@@ -1079,33 +1212,46 @@ internal sealed class SleepAndAdvanceDayLifecycle
             return false;
         }
 
-        if (this.NightSavedObserved)
+        switch (DecideSaveBoundary(
+            this.NightSavedObserved,
+            IsRolloverSettlementMenu(Game1.activeClickableMenu),
+            this.saveBoundaryFrames,
+            SaveBoundaryFrameBudget))
         {
-            if (!this.savedTraceLogged)
-            {
-                this.trace.Add("saved_observed");
-                this.savedTraceLogged = true;
-            }
-            this.phase = Phase.AwaitingDayStart;
-            return false;
-        }
+            case SaveBoundaryOutcome.Saved:
+                if (!this.savedTraceLogged)
+                {
+                    this.trace.Add("saved_observed");
+                    this.savedTraceLogged = true;
+                }
+                this.phase = Phase.AwaitingDayStart;
+                return false;
 
-        // No save is in flight and none was seen. Give the native pipeline a
-        // bounded window, then continue: the day fact is the authority, and a
-        // client observes the rollover over the network without saving at all.
-        this.saveBoundaryFrames++;
-        if (this.saveBoundaryFrames >= SaveBoundaryFrameBudget)
-        {
-            // The budget expiring is a FACT ABOUT THIS NIGHT, not an internal detail: the transition that follows is
-            // taken without an observed save, and a receipt that does not say so reads as if one happened. Measured
-            // 2026-10-17/18 (run g28): `AwaitingSave -> AwaitingDayStart` fired exactly 300 frames after the wait
-            // began - the budget, not a save - while `is_saving=false` for the whole run, and the receipt could not
-            // state that because the fact lived only in this in-memory trace.
-            this.saveBoundaryNotObserved = true;
-            this.trace.Add("save_boundary_not_observed");
-            this.phase = Phase.AwaitingDayStart;
+            case SaveBoundaryOutcome.EngineMenuHoldsTheFrame:
+                // The save cannot begin until the engine's own menu drains (Game1.cs:4292-4305), so this frame is the
+                // crossing's and the budget is not spent on it. The terminal this call may reach is reported through
+                // `finished`, which the caller reads as its own return value.
+                this.AdvanceEngineCrossingMenu();
+                return this.finished;
+
+            case SaveBoundaryOutcome.NotObserved:
+                // The budget expiring is a FACT ABOUT THIS NIGHT, not an internal detail: the transition that follows is
+                // taken without an observed save, and a receipt that does not say so reads as if one happened. Measured
+                // 2026-10-17/18 (run g28): `AwaitingSave -> AwaitingDayStart` fired exactly 300 frames after the wait
+                // began - the budget, not a save - while `is_saving=false` for the whole run, and the receipt could not
+                // state that because the fact lived only in this in-memory trace.
+                this.saveBoundaryNotObserved = true;
+                this.trace.Add("save_boundary_not_observed");
+                this.phase = Phase.AwaitingDayStart;
+                return false;
+
+            default:
+                // No save is in flight and none was seen. Give the native pipeline a
+                // bounded window, then continue: the day fact is the authority, and a
+                // client observes the rollover over the network without saving at all.
+                this.saveBoundaryFrames++;
+                return false;
         }
-        return false;
     }
 
     /// <summary>
@@ -1166,6 +1312,12 @@ internal sealed class SleepAndAdvanceDayLifecycle
 
     private bool EvaluateDayStart()
     {
+        // The engine's own summary may still be standing between this night and its new day: advancing it is the
+        // crossing's next step, and this frame is the crossing's rather than the day-start budget's.
+        bool engineCrossingMenuStanding = this.AdvanceEngineCrossingMenu();
+        if (this.finished)
+            return true;
+
         if (Game1.game1.IsSaving)
             this.savingObserved = true;
 
@@ -1182,10 +1334,15 @@ internal sealed class SleepAndAdvanceDayLifecycle
             return false;
         }
 
-        switch (DecideDayStart(delta, this.NightDayStartedObserved, this.dayStartWaitFrames, DayStartFrameBudget))
+        switch (DecideDayStart(
+            delta,
+            this.NightDayStartedObserved,
+            this.dayStartWaitFrames,
+            DayStartFrameBudget,
+            engineCrossingMenuStanding))
         {
             case DayStartOutcome.Waiting:
-                if (delta != 0)
+                if (delta != 0 && !engineCrossingMenuStanding)
                     this.dayStartWaitFrames++;
                 if (this.dayStartWaitFrames % 120 == 0 && this.trace.Count < 64)
                     this.trace.Add(
@@ -1271,6 +1428,10 @@ internal sealed class SleepAndAdvanceDayLifecycle
             // Published unconditionally: "none" is the ordinary case, and its absence would leave a reader unable to
             // tell an owned settlement from a receipt written before the menu was ever looked at.
             $"shipping_summary_settled={DescribeSettlementMenuOutcome(this.settlementMenuOutcome)}",
+            // What the crossing itself did with the engine's own end-of-night menu. The summary is a step of the night
+            // (Game1.cs:4292-4305), so a receipt that crossed a night where one was mounted and says `none` here hides
+            // the step the lifecycle took to get there.
+            $"engine_crossing_menu={DescribeSettlementMenuOutcome(this.engineCrossingMenuOutcome)}",
         };
         if (this.dayBaselineCaptured)
         {
@@ -1334,6 +1495,8 @@ internal sealed class SleepAndAdvanceDayLifecycle
             chain.Add("saved");
         if (this.NightDayStartedObserved)
             chain.Add("day_started");
+        if (this.engineCrossingMenuOutcome is SettlementMenuOutcome.Committed or SettlementMenuOutcome.AlreadyCommitted)
+            chain.Add("engine_crossing_menu");
         if (this.settlementMenuOutcome is SettlementMenuOutcome.Committed or SettlementMenuOutcome.AlreadyCommitted)
             chain.Add("shipping_summary_committed");
         return chain.ToArray();

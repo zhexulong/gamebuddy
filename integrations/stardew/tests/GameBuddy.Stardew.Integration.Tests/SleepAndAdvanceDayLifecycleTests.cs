@@ -312,7 +312,8 @@ public sealed class SleepAndAdvanceDayLifecycleTests
             delta: 1,
             dayStartedObserved: false,
             dayStartWaitFrames: 0,
-            budget: 3600).Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.Waiting);
+            budget: 3600,
+            engineCrossingMenuStanding: false).Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.Waiting);
     }
 
     [Fact]
@@ -322,7 +323,8 @@ public sealed class SleepAndAdvanceDayLifecycleTests
             delta: 1,
             dayStartedObserved: true,
             dayStartWaitFrames: 0,
-            budget: 3600).Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.Confirmed);
+            budget: 3600,
+            engineCrossingMenuStanding: false).Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.Confirmed);
     }
 
     [Fact]
@@ -334,7 +336,8 @@ public sealed class SleepAndAdvanceDayLifecycleTests
             delta: 1,
             dayStartedObserved: false,
             dayStartWaitFrames: 3600,
-            budget: 3600).Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.NotObserved);
+            budget: 3600,
+            engineCrossingMenuStanding: false).Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.NotObserved);
     }
 
     [Fact]
@@ -344,7 +347,8 @@ public sealed class SleepAndAdvanceDayLifecycleTests
             delta: 0,
             dayStartedObserved: false,
             dayStartWaitFrames: 0,
-            budget: 3600).Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.Waiting);
+            budget: 3600,
+            engineCrossingMenuStanding: false).Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.Waiting);
     }
 
     [Fact]
@@ -355,7 +359,85 @@ public sealed class SleepAndAdvanceDayLifecycleTests
             delta: 2,
             dayStartedObserved: true,
             dayStartWaitFrames: 0,
-            budget: 3600).Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.UnexpectedDelta);
+            budget: 3600,
+            engineCrossingMenuStanding: false).Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.UnexpectedDelta);
+    }
+
+    // --- The engine's own end-of-night menu ------------------------------------
+    //
+    // `showEndOfNightStuff` (Game1.cs:9112-9161) pushes the summary onto `Game1.endOfNightMenus`, and the new day does
+    // not begin until that stack has drained (Game1.cs:4292-4305). A summary standing after the sleep prompt was
+    // answered is therefore a STEP OF THE CROSSING, not a modal holding the actor: the two waits below must not spend
+    // their budget on it, and must not read it as a night that failed to cross.
+
+    [Fact]
+    public void TheNightThatCrossedBehindTheEngineSummaryIsNotReadAsAnUnsettledOne()
+    {
+        // MEASURED 2026-11-09 (`round42`, night 1), verbatim from the run:
+        //   execution_receipt  reasonCode=lifecycle_deadline_exceeded   (the sleep request)
+        //   world_fact         day_started  day_5                       <- the night DID cross
+        //   MULTIDAY_NIGHT     {"day":1,"cause":"sleep_unsettled","bedTime":2040,"menus":["ShippingMenu"]}
+        //
+        // Replayed through the two waits that night actually spent its time in, frame by frame: the summary stood for
+        // the whole of them, so not one frame of either wait was the night's own.
+        const int budget = 300;
+        int frames = 0;
+        for (int frame = 0; frame < budget * 2; frame += 1)
+        {
+            SleepAndAdvanceDayLifecycle.SaveBoundaryOutcome decision = SleepAndAdvanceDayLifecycle.DecideSaveBoundary(
+                saved: false,
+                engineCrossingMenuStanding: true,
+                frames,
+                budget);
+            decision.Should().Be(
+                SleepAndAdvanceDayLifecycle.SaveBoundaryOutcome.EngineMenuHoldsTheFrame,
+                "the save cannot begin while the engine's own summary stands, so no frame of this wait is the night's");
+            if (decision == SleepAndAdvanceDayLifecycle.SaveBoundaryOutcome.Waiting)
+                frames += 1;
+        }
+
+        frames.Should().Be(0, "a save that could not start is not a save the night missed");
+
+        // And the day-start wait on the same frames: the counter had moved 4 -> 5, `DayStarted` had not arrived, and the
+        // budget was spent - the reading that used to end this night without the crossing it had already taken.
+        SleepAndAdvanceDayLifecycle.DecideDayStart(
+                delta: 1,
+                dayStartedObserved: false,
+                dayStartWaitFrames: budget,
+                budget,
+                engineCrossingMenuStanding: true)
+            .Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.Waiting);
+    }
+
+    [Fact]
+    public void ANightNothingCrossesStillExpiresWhenNoEngineMenuOwnsTheStep()
+    {
+        // The distinction the fix must not lose: `sleep_unsettled` has to stay reachable, so a wait with nothing of the
+        // engine's standing still spends its budget and still reports the day as unobserved.
+        SleepAndAdvanceDayLifecycle.DecideSaveBoundary(
+            saved: false,
+            engineCrossingMenuStanding: false,
+            frames: 300,
+            budget: 300).Should().Be(SleepAndAdvanceDayLifecycle.SaveBoundaryOutcome.NotObserved);
+
+        SleepAndAdvanceDayLifecycle.DecideDayStart(
+                delta: 1,
+                dayStartedObserved: false,
+                dayStartWaitFrames: 300,
+                budget: 300,
+                engineCrossingMenuStanding: false)
+            .Should().Be(SleepAndAdvanceDayLifecycle.DayStartOutcome.NotObserved);
+    }
+
+    [Fact]
+    public void ASaveThatDidArriveOutranksTheEngineMenuThatWasStanding()
+    {
+        // The order is the invariant: the menu fact may not hold a save the engine has already taken.
+        SleepAndAdvanceDayLifecycle.DecideSaveBoundary(
+            saved: true,
+            engineCrossingMenuStanding: true,
+            frames: 299,
+            budget: 300).Should().Be(SleepAndAdvanceDayLifecycle.SaveBoundaryOutcome.Saved);
     }
 
     // --- Fresh event edge ------------------------------------------------------
