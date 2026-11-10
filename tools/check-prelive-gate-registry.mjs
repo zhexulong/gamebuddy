@@ -640,6 +640,17 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "on-demand",
   },
   {
+    path: "tools/check-stardew-invented-gates.mjs",
+    reason:
+      "debt: measured red at HEAD - one gating constant states a number no engine member backs " +
+      "(`GeodeCounterInteractionRadius = 2`, geodeactions.cs:104, `ours=2:engine=unstated`, measured against the " +
+      "owner's tile rather than the counter), which is the fix this gate asks for and not a wiring gap; adopting it " +
+      "in a rung would also need `ref/external/StardewValleyDecompiled`, which prelive runs without. Its falsifier " +
+      "suite runs in CI through `pnpm test:stardew-invented-gates` (the tool-test corpus), where the real-tree arm " +
+      "skips itself when the decompiled tree is absent",
+    runsIn: "on-demand",
+  },
+  {
     path: "tools/check-stardew-loop-closure.mjs",
     reason:
       "environment: measured stardew_decompile_root_missing; it counts call sites in ref/external/StardewValleyDecompiled",
