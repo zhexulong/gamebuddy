@@ -128,6 +128,10 @@ public sealed class FarmhandActionSurfaceExportTests
             // is what the Host's mount arms require: an artifact that omits it withdraws the action from the Agent with
             // no error raised.
             if (action.TryGetProperty("nativeBinding", out _)) declared.Add("nativeBinding");
+            // `synthetic` is present only on the actions that perform their effect without the NPC counter the player
+            // would use (`build_farm_building`). It is a CONDITIONAL member, not a flag on every row: the Mod omits it
+            // when it is false, so its presence is the claim and its absence says the counter was used.
+            if (action.TryGetProperty("synthetic", out _)) declared.Add("synthetic");
             action.EnumerateObject().Select(property => property.Name).Should().Equal(declared);
             action.GetProperty("resourceTemplate").EnumerateObject().Select(property => property.Name)
                 .Should().Equal("claims");
@@ -243,6 +247,34 @@ public sealed class FarmhandActionSurfaceExportTests
         actions.Should().Contain(action => action.ActionId == "clear_debris");
         actions.Select(action => action.ActionId).Should().BeEquivalentTo(
             FarmhandActionCatalog.Registrations.Select(registration => registration.ActionId));
+    }
+
+    [Fact]
+    public void SyntheticIsPublishedOnlyOnTheActionsThatBypassTheirCounter()
+    {
+        using JsonDocument document = JsonDocument.Parse(FarmhandActionSurfaceExport.SerializeToJson());
+        JsonElement actions = document.RootElement.GetProperty("actions");
+
+        // The expected set is the CATALOG's own declarations, not a list here: an action that stops being synthetic
+        // leaves this expectation with no edit, and one that starts being synthetic joins it the same way.
+        string[] declared = FarmhandActionCatalog.Registrations
+            .Where(registration => registration.Descriptor!.Synthetic)
+            .Select(registration => registration.ActionId)
+            .ToArray();
+        declared.Should().NotBeEmpty("build_farm_building places a structure without Robin's counter, so the population is not empty today");
+
+        string[] published = actions.EnumerateArray()
+            .Where(action => action.TryGetProperty("synthetic", out _))
+            .Select(action => action.GetProperty("actionId").GetString()!)
+            .ToArray();
+        published.Should().BeEquivalentTo(declared);
+
+        // And the VALUE is the claim: a published `false` would say the same thing as omitting it.
+        foreach (JsonElement action in actions.EnumerateArray())
+        {
+            if (!action.TryGetProperty("synthetic", out JsonElement synthetic)) continue;
+            synthetic.GetBoolean().Should().BeTrue($"{action.GetProperty("actionId").GetString()} publishes a synthetic effect");
+        }
     }
 
     [Fact]

@@ -93,6 +93,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\RefillWateringCanWholeMapSourceShapeTests.cs" Link="RefillWateringCanWholeMapSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\RolloverMenuOwnershipSourceShapeTests.cs" Link="RolloverMenuOwnershipSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\SettlementMenuCapabilitySourceShapeTests.cs" Link="SettlementMenuCapabilitySourceShapeTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\SyntheticEffectDeclarationTests.cs" Link="SyntheticEffectDeclarationTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ShipItemCarriedItemTests.cs" Link="ShipItemCarriedItemTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\TargetPublicationOrderTests.cs" Link="TargetPublicationOrderTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ToolApproachContractSourceShapeTests.cs" Link="ToolApproachContractSourceShapeTests.cs" />

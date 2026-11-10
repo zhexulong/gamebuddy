@@ -52,7 +52,20 @@ public sealed record FarmhandActionDescriptorProjection(
     /// no binding keeps the exact wire shape it had before.
     /// </para>
     /// </summary>
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? NativeBinding = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? NativeBinding = null,
+    /// <summary>
+    /// This action performs its effect without the NPC counter the player would use, and null on every action that does
+    /// go through one.
+    ///
+    /// <para>
+    /// Published because the artifact is the only descriptor a consumer outside a running game can read, and this is the
+    /// one fact that separates "the companion commissioned a building from Robin" from "the companion spent the wood and
+    /// placed the building itself". Omitted when null, like `Approach`, `TargetFamily` and `NativeBinding`, so an action
+    /// that goes through its counter keeps the exact wire shape it had before - and so the member is a claim only where
+    /// the claim is true.
+    /// </para>
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Synthetic = null
 );
 
 /// <summary>
@@ -163,7 +176,8 @@ public static class FarmhandActionSurfacePublication
                 ? new FarmhandActionApproachRequirementProjection(approach.Relation, approach.WithinTiles)
                 : null,
             TargetFamily: descriptor.TargetFamily,
-            NativeBinding: descriptor.NativeBinding);
+            NativeBinding: descriptor.NativeBinding,
+            Synthetic: descriptor.Synthetic ? true : null);
     }
 
     private static void ValidateIdentity(string value, string name)

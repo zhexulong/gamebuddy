@@ -531,6 +531,19 @@ test("descriptor with unknown keys is rejected by isValidActionDescriptor", () =
   assert.equal(isModDescriptorComplete("express_emote", unknownKeyDescriptor as never), false);
 });
 
+/**
+ * `synthetic` is the one field that separates a counter purchase from an effect the Mod performs itself
+ * (`build_farm_building` spends the gold and wood and calls `GameLocation.buildStructure`, never Robin's carpenter
+ * menu). It is published only where the claim is true, so it is admitted as `true` and refused in every other shape:
+ * a `false` would be a second spelling of absent, and a non-boolean is a value the Mod's projection cannot produce.
+ */
+test("a descriptor's synthetic claim is admitted only as true, and absent on every other action", () => {
+  assert.equal(isValidActionDescriptor({ ...VALID_EXPRESS_EMOTE_DESCRIPTOR, synthetic: true }), true);
+  assert.equal(isValidActionDescriptor(VALID_EXPRESS_EMOTE_DESCRIPTOR), true);
+  assert.equal(isValidActionDescriptor({ ...VALID_EXPRESS_EMOTE_DESCRIPTOR, synthetic: false }), false);
+  assert.equal(isValidActionDescriptor({ ...VALID_EXPRESS_EMOTE_DESCRIPTOR, synthetic: "true" }), false);
+});
+
 test("when published, complete descriptor and capability are present, candidate tools ARE mounted", () => {
   const publishedCatalog: readonly ActionRegistration[] = [
     {

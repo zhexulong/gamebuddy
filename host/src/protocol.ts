@@ -1814,6 +1814,16 @@ export type ActionRegistrationDescriptor = Readonly<{
    * to the action-id rule: `move_to_tile` is a snake_case verb phrase and `toolSlots` is a serialized property.
    */
   targetFamily?: string;
+  /**
+   * `true` on an action whose effect happens WITHOUT the NPC counter the player would use: the Mod spends the cost and
+   * places the result itself instead of opening the shop or menu that owns the transaction (`build_farm_building`
+   * deducts the `Data/Buildings` cost and materials and calls `GameLocation.buildStructure`, never Robin's carpenter
+   * menu). ABSENT on every action that does go through its counter - the Mod omits the member when it is false - so a
+   * reader can tell a counter purchase from one the companion performed on its own.
+   *
+   * Present-but-`false` is refused: the member is a claim, and the Mod never publishes the opposite of one.
+   */
+  synthetic?: boolean;
 }>;
 
 export type ActionRegistration = Readonly<{
@@ -5557,6 +5567,11 @@ const KNOWN_ACTION_DESCRIPTOR_KEYS = [
   "approach",
   "postcondition",
   "targetFamily",
+  // The one fact that separates a counter purchase from an effect the Mod performs on its own
+  // (`build_farm_building`). It has to be admitted here because this list is the exact-key gate over the descriptor the
+  // hello_ack publishes: a member the Mod starts sending and this list lacks refuses the WHOLE registration list as
+  // `invalid_hello_ack`.
+  "synthetic",
   // The observation binding an action declares. It was in this list when `sceneTarget` entered the catalog (see the
   // note at line 2555), and it went missing while three action lanes merged - which the Mod experiences as
   // `invalid_hello_ack` for the WHOLE registration list, because `hasOnlyKeys` refuses the ack rather than the one
@@ -5705,6 +5720,12 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
       !/^[a-z][a-zA-Z0-9]{0,63}$/.test(value.targetFamily)
     )
       return false;
+  }
+
+  if ("synthetic" in value && value.synthetic !== undefined) {
+    // Only ever `true`. The Mod omits the member on every action that goes through its counter, so a published `false`
+    // would be a second spelling of "absent" - and a second spelling is how a descriptor outlives the fact it named.
+    if (value.synthetic !== true) return false;
   }
 
   return true;

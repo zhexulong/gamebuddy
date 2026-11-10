@@ -259,7 +259,26 @@ public sealed record FarmhandClearingDeclaration(IReadOnlyList<string> Occupants
 /// obstruction.
 /// </para>
 /// </param>
-public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null, FarmhandExecutionAcceptanceFacts? Acceptance = null, FarmhandActionApproachRequirement? Approach = null, long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs, string? TargetFamily = null, FarmhandClearingDeclaration? Clears = null);
+/// <param name="Synthetic">
+/// This action performs its effect without the NPC counter the player would use.
+///
+/// <para>
+/// WHY IT IS DECLARED. `build_farm_building` deducts the `Data/Buildings` cost and materials itself and calls
+/// `GameLocation.buildStructure` directly: it never opens Robin's carpenter menu, never waits for the hours she works, and
+/// never joins her build queue. That is a deliberate product decision, and before this field it was indistinguishable
+/// from a normal counter purchase - the descriptor, the artifact and the receipt all described a building that appeared,
+/// and none of them said the transaction a player would have made at her counter never happened. A caller reading the
+/// published surface could not tell the two apart.
+/// </para>
+/// <para>
+/// FALSE IS THE DEFAULT AND IS NOT PUBLISHED: an action that does go through the counter says nothing, and the artifact
+/// omits the member, so the field is a claim only where the claim is true. `synthetic_effect_undeclared`
+/// (`integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/SyntheticEffectDeclarationTests.cs`) derives its
+/// population from this catalogue plus the handlers' own placement settlements, so an action that starts bypassing a
+/// counter without saying so fails there by name.
+/// </para>
+/// </param>
+public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null, FarmhandExecutionAcceptanceFacts? Acceptance = null, FarmhandActionApproachRequirement? Approach = null, long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs, string? TargetFamily = null, FarmhandClearingDeclaration? Clears = null, bool Synthetic = false);
 /// <summary>The only ordinary-Farmhand operation membership and descriptor source.</summary>
 public sealed record FarmhandActionRegistration(string ActionId, string FamilyId, int IdentityVersion, FarmhandActionLifecycle Lifecycle, FarmhandOperationKind Kind, FarmhandActionHandlerGroup? HandlerGroup, FarmhandActionDescriptor? Descriptor = null);
 public enum FarmhandActionHandlerGroup { Movement, Farming, Gathering, MachinesAndAnimals, ResourceTools, Expression, WorldLifecycle, Modal }
@@ -778,7 +797,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // changes and are deferred. The cost the seam does NOT charge (the Data/Buildings BuildCost
         // and BuildMaterials) is debited by the handler itself, because the only native debit lives
         // on the menu (CarpenterMenu.ConsumeResources) and driving the menu is forbidden.
-        E("build_farm_building", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("buildingType", "string"), new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "farm_building_built", "GameLocation.buildStructure")), FarmhandActionLifecycle.LiveVerified, "farmBuildingTargets"),
+        E("build_farm_building", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("buildingType", "string"), new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "farm_building_built", "GameLocation.buildStructure", Synthetic: true)), FarmhandActionLifecycle.LiveVerified, "farmBuildingTargets"),
         // Accepting the day's help-wanted quest. The handler carries ONLY the write half of
         // Billboard.receiveLeftClick's acceptQuestButton branch (Menus/Billboard.cs:363-374): the
         // daily/accepted/daysLeft fields on Game1.questOfTheDay, the quest-log entry and
