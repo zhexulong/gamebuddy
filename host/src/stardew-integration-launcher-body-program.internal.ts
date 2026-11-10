@@ -42,48 +42,19 @@ import type {
   TileAreaRequest,
 } from "./protocol.js";
 
-/** Liveness check carried by one exact authenticated connection association. */
-type StardewConnectionAuthentication = Readonly<{
-  isLive(): boolean;
-}>;
-
 /**
- * Exact authenticated Stardew connection registry, launcher-owned and never
- * exported as a registrar. Only the authenticated launch construction mints
- * one association for the precise frozen wrapper it returns; the Stardew
- * adapter asserts association plus current liveness through
- * {@link assertAuthenticatedStardewConnection} before reading any
- * identity/scope/state/status/tools/cancel. Structural copies, forged
- * wrappers, and caller-supplied state are distinct objects absent from this
- * map, so every adapter entry point rejects them.
+ * The one liveness fact the Stardew adapter checks: this launcher-owned connection may still be used.
+ *
+ * It replaces an association map that also refused structural copies, and that half protected nothing: this
+ * constructor is the only place a `StardewBridgeConnection` is built, so a copy could only be written by code in
+ * the same heap that already holds the constructor. Liveness is different - `close()` leaves the same frozen
+ * wrapper on the handle, so a dead connection stays reachable and must be refused.
+ *
+ * The fact is read from the connection's own `executionGate`, which `disconnect()` clears before the bridge is
+ * closed, so there is no second source to disagree with.
  */
-const authenticatedStardewConnections = new WeakMap<object, StardewConnectionAuthentication>();
-
-/**
- * Construction-private authenticated association. The authenticated Stardew
- * launch production registers exactly its one real connection once; adapter
- * entry points assert liveness through
- * {@link assertAuthenticatedStardewConnection}. Deliberately not exported:
- * no production or test module may mint an association outside the exact
- * launch construction.
- */
-function registerAuthenticatedStardewConnection(connection: StardewBridgeConnection, isLive: () => boolean): void {
-  if (authenticatedStardewConnections.has(connection)) throw new Error("duplicate_authenticated_stardew_connection");
-  authenticatedStardewConnections.set(connection, { isLive });
-}
-
-/**
- * Adapter-owned authority gate, exported only as the narrow assertion the
- * Stardew adapter consumes. The connection must be the exact wrapper that an
- * authenticated launch registered, and it must still be live (not revoked or
- * bridge-closed). Structural copies, caller-state, and self-comparison never
- * appear in the association map and reject before any data is read.
- */
-export function assertAuthenticatedStardewConnection(connection: GameConnection): StardewBridgeConnection {
-  const authentication = authenticatedStardewConnections.get(connection);
-  if (authentication === undefined || !authentication.isLive())
-    throw new Error("stardew_connection_not_authenticated_or_not_live");
-  return connection as StardewBridgeConnection;
+export function requireLiveConnection(connection: GameConnection): asserts connection is StardewBridgeConnection {
+  if (connection.executionGate?.executable !== true) throw new Error("stardew_connection_not_live");
 }
 
 /** Private authenticated Farmhand Body Program transport, never carried by a launch handle. */
@@ -320,13 +291,6 @@ export async function createStardewIntegrationLaunchHandleFromAuthenticatedBridg
       dataQuery: (request: DataQueryRequest) => bridge.dataQuery(request),
       tileArea: (request: TileAreaRequest) => bridge.tileArea(request),
     });
-    // Mint exactly one authenticated association for the exact frozen wrapper
-    // returned by this launch handle. The adapter refuses any structural copy,
-    // forged wrapper, or caller state because only this exact object is bound.
-    registerAuthenticatedStardewConnection(
-      connection,
-      () => executionGate.executable === true && bridge.state.connected,
-    );
     const receiptRecovery: ExactReceiptRecoveryPort | undefined =
       identity.continuityId === undefined
         ? undefined

@@ -33,7 +33,6 @@ import { observeMaterializedProductionRuntimeForTest } from "./continuity-semant
 import { assertReceiptBackedLaunch } from "./integration-launcher.js";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { createBuildWindowsStaleLockReclaimer } from "./windows-stale-lock-reclaimer/index.js";
-import type { GameConnection } from "./game-connection.js";
 import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
 import {
   validateBodyProgramCandidateRequest,
@@ -52,7 +51,7 @@ import {
   STARDEW_INTEGRATION_LAUNCHER,
 } from "./stardew-integration-launcher.js";
 import {
-  assertAuthenticatedStardewConnection,
+  requireLiveConnection,
   materializeAuthenticatedStardewLaunchPorts,
 } from "./stardew-integration-launcher-body-program.internal.js";
 
@@ -2210,28 +2209,29 @@ test("authenticated launch association has a lexical owner and generic handles e
   assert.equal(Object.hasOwn(launch, "associateAuthenticatedStardewLaunch"), false);
 });
 
-test("connection registrar and mint WeakMap stay lexical to the launcher producer; facade exports no registrar", async () => {
+test("the connection liveness check stays lexical to the launcher producer; facade exports no registrar", async () => {
   const facadeSource = await readFile(new URL("./game-connection.js", import.meta.url), "utf8");
   assert.doesNotMatch(facadeSource, /registerAuthenticatedStardewConnection/);
   assert.doesNotMatch(facadeSource, /authenticatedStardewConnections/);
-  assert.doesNotMatch(facadeSource, /assertAuthenticatedStardewConnection/);
+  assert.doesNotMatch(facadeSource, /requireLiveConnection/);
   assert.doesNotMatch(facadeSource, /isAuthenticatedStardewConnectionLive/);
   const producerSource = await readFile(
     new URL("./stardew-integration-launcher-body-program.internal.js", import.meta.url),
     "utf8",
   );
-  assert.match(producerSource, /const authenticatedStardewConnections = new WeakMap/);
-  assert.match(producerSource, /function registerAuthenticatedStardewConnection\(/);
-  assert.doesNotMatch(producerSource, /export\s+(?:async\s+)?function\s+registerAuthenticatedStardewConnection/);
-  assert.doesNotMatch(producerSource, /export\s*\{[^}]*registerAuthenticatedStardewConnection/);
+  // Expiry of the deleted forgery gate. The association map must stay gone: keyed on the wrapper, it existed to
+  // refuse objects this file never minted, and the constructor is the only place a connection is built.
+  assert.doesNotMatch(producerSource, /authenticatedStardewConnections/);
+  assert.doesNotMatch(producerSource, /registerAuthenticatedStardewConnection/);
+  assert.match(producerSource, /export function requireLiveConnection\(/);
   const facade = await import("./game-connection.js");
   assert.equal("registerAuthenticatedStardewConnection" in facade, false);
-  assert.equal("assertAuthenticatedStardewConnection" in facade, false);
+  assert.equal("requireLiveConnection" in facade, false);
   assert.equal("isAuthenticatedStardewConnectionLive" in facade, false);
   const producer = await import("./stardew-integration-launcher-body-program.internal.js");
   assert.equal("registerAuthenticatedStardewConnection" in producer, false);
   assert.equal("authenticatedStardewConnections" in producer, false);
-  assert.equal(typeof producer.assertAuthenticatedStardewConnection, "function");
+  assert.equal(typeof producer.requireLiveConnection, "function");
 });
 
 test("launcher-owned preview presentation accessor rejects an ordinary handle", () => {
@@ -2399,7 +2399,7 @@ function snapshotFrame(payload: Snapshot): Buffer {
   } satisfies BridgeMessage);
 }
 
-test("exact authentication admits only the minted launch connection and rejects structural copies, forged scopes, and revoked handles", async () => {
+test("a closed launch connection is refused by the liveness check and by every adapter entry point", async () => {
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
     const client = await LocalStardewBridgeClient.connectFarmhand(
       scope,
@@ -2415,55 +2415,22 @@ test("exact authentication admits only the minted launch connection and rejects 
       // The minted wrapper is live and drives the exact-identity entry points.
       assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actorId(real), scope.playerId);
       assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.readState(real).connected, true);
-      assert.doesNotThrow(() => assertAuthenticatedStardewConnection(real));
-      // Structural copies of the wrapper are distinct objects the authenticated
-      // association map never minted: every auth-gated entry point rejects them
-      // before any identity/state/data is read.
-      const realScope = real.scope as unknown as Scope;
-      const structuralCopy = Object.freeze({
-        ...real,
-        state: { ...(real.state as Record<string, unknown>) },
-      }) as GameConnection;
-      const forgedScope = Object.freeze({
-        ...real,
-        scope: Object.freeze({ ...realScope, worldId: "world_forged_01" }),
-      }) as GameConnection;
-      for (const fake of [structuralCopy, forgedScope]) {
-        assert.throws(
-          () => STARDEW_GAME_INTEGRATION_ADAPTER.readState(fake),
-          /stardew_connection_not_authenticated_or_not_live/,
-        );
-        assert.throws(
-          () => STARDEW_GAME_INTEGRATION_ADAPTER.actorId(fake),
-          /stardew_connection_not_authenticated_or_not_live/,
-        );
-        assert.throws(
-          () => STARDEW_GAME_INTEGRATION_ADAPTER.worldScope(fake),
-          /stardew_connection_not_authenticated_or_not_live/,
-        );
-        assert.throws(
-          () => STARDEW_GAME_INTEGRATION_ADAPTER.status(fake),
-          /stardew_connection_not_authenticated_or_not_live/,
-        );
-        assert.throws(
-          () => STARDEW_GAME_INTEGRATION_ADAPTER.createToolSet({ connection: fake }),
-          /stardew_connection_not_authenticated_or_not_live/,
-        );
-        assert.throws(
-          () => STARDEW_GAME_INTEGRATION_ADAPTER.cancelExecution(fake, "req_01", "exec_01", "cancelled"),
-          /stardew_connection_not_authenticated_or_not_live/,
-        );
-      }
-      // Revocation: the exact wrapper stops being live once the launch closes.
+      assert.doesNotThrow(() => requireLiveConnection(real));
+      // The forgery half is gone: a structural copy of this wrapper is served now, because only liveness is a
+      // state the launcher can really lose. The handle still hands out the same frozen wrapper after `close()`,
+      // dead - so every entry point that used to refuse copies is asserted against the connection that stops
+      // being usable.
       launch.close();
-      assert.throws(
-        () => assertAuthenticatedStardewConnection(real),
-        /stardew_connection_not_authenticated_or_not_live/,
-      );
-      assert.throws(
+      assert.throws(() => requireLiveConnection(real), /stardew_connection_not_live/);
+      for (const read of [
         () => STARDEW_GAME_INTEGRATION_ADAPTER.readState(real),
-        /stardew_connection_not_authenticated_or_not_live/,
-      );
+        () => STARDEW_GAME_INTEGRATION_ADAPTER.actorId(real),
+        () => STARDEW_GAME_INTEGRATION_ADAPTER.worldScope(real),
+        () => STARDEW_GAME_INTEGRATION_ADAPTER.status(real),
+        () => STARDEW_GAME_INTEGRATION_ADAPTER.createToolSet({ connection: real }),
+        () => STARDEW_GAME_INTEGRATION_ADAPTER.cancelExecution(real, "req_01", "exec_01", "cancelled"),
+      ])
+        assert.throws(read, /stardew_connection_not_live/);
     } finally {
       launch.close();
     }

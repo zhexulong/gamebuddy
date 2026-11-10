@@ -1256,19 +1256,13 @@ test("dig_artifact_spot completion evidence is strict and source-only", () => {
   );
 });
 /**
- * A structural copy of the adapter connection surface without any
- * authenticated-launch mint. Production exact authentication registers only
- * the one frozen wrapper returned by the launch producer; every entry point
- * that reads identity/scope/state/status/tools/cancel must fail closed on
- * copies, forged wrappers, and caller-supplied state.
+ * A connection object that no launch minted. Only its liveness fence decides whether the adapter serves it:
+ * `executable: false` is exactly the state a launcher sets before closing, and it is the one fact every
+ * adapter entry point reads.
  */
-function unauthenticatedStructuralConnection(
-  scope: Readonly<{ integrationId: string }> = {
-    integrationId: "stardew",
-  },
-): GameConnection {
+function structuralConnection(executable: boolean): GameConnection {
   return Object.freeze({
-    scope: Object.freeze(scope),
+    scope: Object.freeze({ integrationId: "stardew" }),
     module: STARDEW_GAME_INTEGRATION_ADAPTER,
     state: Object.freeze({
       connected: true,
@@ -1280,7 +1274,7 @@ function unauthenticatedStructuralConnection(
       latestReceipt: null,
       latestReasonCode: null,
     }),
-    executionGate: Object.freeze({ executable: true }),
+    executionGate: Object.freeze({ executable }),
   });
 }
 
@@ -1338,75 +1332,47 @@ test("completion predicate is decided only by catalog source semantics, never ba
   );
 });
 
-test("exact authentication rejects structural copies and forged scopes that no launch minted", () => {
-  const structural = unauthenticatedStructuralConnection();
-  // A forged integration scope is still a distinct, unregistered wrapper:
-  // exact authentication is a prerequisite for any identity/state read, so a
-  // copied object can never reach the adapter's scope grammar checks.
-  const forgedScope = unauthenticatedStructuralConnection({
-    integrationId: "test-arcade",
+test("every adapter entry point refuses a connection whose launcher liveness fence is closed", () => {
+  const dead = structuralConnection(false);
+  for (const call of [
+    () => STARDEW_GAME_INTEGRATION_ADAPTER.readState(dead),
+    () => STARDEW_GAME_INTEGRATION_ADAPTER.actorId(dead),
+    () => STARDEW_GAME_INTEGRATION_ADAPTER.worldScope(dead),
+    () =>
+      STARDEW_GAME_INTEGRATION_ADAPTER.assertIdentityBinding(dead, {
+        companionId: "companion_structural_01",
+        saveId: "save_structural_01",
+        worldId: "world_structural_01",
+      }),
+    () => STARDEW_GAME_INTEGRATION_ADAPTER.status(dead),
+    () => STARDEW_GAME_INTEGRATION_ADAPTER.createToolSet({ connection: dead }),
+    () =>
+      STARDEW_GAME_INTEGRATION_ADAPTER.cancelExecution(
+        dead,
+        "request_structural_01",
+        "execution_structural_01",
+        "cancelled",
+      ),
+  ])
+    assert.throws(call, /stardew_connection_not_live/);
+  // A connection that carries no fence at all is not live either.
+  const unfenced: GameConnection = Object.freeze({
+    scope: Object.freeze({ integrationId: "stardew" }),
+    module: STARDEW_GAME_INTEGRATION_ADAPTER,
+    state: dead.state,
   });
-  // A caller-supplied state copy of the same structural surface is also an
-  // unauthenticated object even when every observed field looks current.
-  const forgedStateCopy = Object.freeze({
-    ...structural,
-    state: Object.freeze({
-      connected: true,
-      sessionId: "session_forged_01",
-      capabilities: [],
-      catalogRevision: 99,
-      enabledActionIds: [],
-      snapshot: null,
-      latestReceipt: null,
-      latestReasonCode: null,
-    }),
-  });
-  for (const fake of [structural, forgedScope, forgedStateCopy]) {
-    assert.throws(
-      () => STARDEW_GAME_INTEGRATION_ADAPTER.readState(fake),
-      /stardew_connection_not_authenticated_or_not_live/,
-    );
-    assert.throws(
-      () => STARDEW_GAME_INTEGRATION_ADAPTER.actorId(fake),
-      /stardew_connection_not_authenticated_or_not_live/,
-    );
-    assert.throws(
-      () => STARDEW_GAME_INTEGRATION_ADAPTER.worldScope(fake),
-      /stardew_connection_not_authenticated_or_not_live/,
-    );
-    assert.throws(
-      () =>
-        STARDEW_GAME_INTEGRATION_ADAPTER.assertIdentityBinding(fake, {
-          companionId: "companion_structural_01",
-          saveId: "save_structural_01",
-          worldId: "world_structural_01",
-        }),
-      /stardew_connection_not_authenticated_or_not_live/,
-    );
-    assert.throws(
-      () => STARDEW_GAME_INTEGRATION_ADAPTER.status(fake),
-      /stardew_connection_not_authenticated_or_not_live/,
-    );
-    assert.throws(
-      () => STARDEW_GAME_INTEGRATION_ADAPTER.createToolSet({ connection: fake }),
-      /stardew_connection_not_authenticated_or_not_live/,
-    );
-    assert.throws(
-      () =>
-        STARDEW_GAME_INTEGRATION_ADAPTER.cancelExecution(
-          fake,
-          "request_structural_01",
-          "execution_structural_01",
-          "cancelled",
-        ),
-      /stardew_connection_not_authenticated_or_not_live/,
-    );
-  }
+  assert.throws(() => STARDEW_GAME_INTEGRATION_ADAPTER.readState(unfenced), /stardew_connection_not_live/);
   // Descriptor, tool-name mapping, and cancellation-tool identification stay
   // structural and never open an authenticated data path.
   assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.descriptor.integrationId, "stardew");
   assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionIdForToolName("stardew_move_to_tile"), "move_to_tile");
   assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.isCancellationTool("stardew_cancel"), false);
+});
+
+test("a connection no launch minted is served while its liveness fence is open", () => {
+  const structural = structuralConnection(true);
+  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.readState(structural).connected, true);
+  assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.status(structural).connected, true);
 });
 
 /**

@@ -24,7 +24,7 @@ import { createStardewActionTools, createStardewObservationTools } from "./game-
 import { createStardewKnowledgeTools, type KnowledgeBundle } from "./knowledge.js";
 import type { ActionRegistration, ExecutionReceipt } from "./protocol.js";
 import { isQualifiedItemId } from "./protocol-target-facts.js";
-import { assertAuthenticatedStardewConnection } from "./stardew-integration-launcher-body-program.internal.js";
+import { requireLiveConnection } from "./stardew-integration-launcher-body-program.internal.js";
 
 const STARDew_ACTION_ENTRIES = STARDEW_ACTION_ADAPTERS.map(({ actionId }) => ({
   actionId,
@@ -101,13 +101,13 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
     defaultPolicy: DEFAULT_INTEGRATION_ACTION_POLICY,
     parsePolicy: (value: unknown): IntegrationActionPolicy => parseActionPolicy(value),
     actorId: (connection) => {
-      const authenticated = assertAuthenticatedStardewConnection(connection);
-      if (!/^[A-Za-z0-9_-]{1,128}$/.test(authenticated.scope.playerId))
-        throw new Error("integration_identity_mismatch");
-      return authenticated.scope.playerId;
+      requireLiveConnection(connection);
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(connection.scope.playerId)) throw new Error("integration_identity_mismatch");
+      return connection.scope.playerId;
     },
     assertIdentityBinding: (connection, identity: IntegrationIdentityBinding) => {
-      const scope = assertAuthenticatedStardewConnection(connection).scope;
+      requireLiveConnection(connection);
+      const scope = connection.scope;
       if (
         scope.companionId !== identity.companionId ||
         identity.saveId === undefined ||
@@ -119,7 +119,8 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
       }
     },
     worldScope: (connection) => {
-      const scope = assertAuthenticatedStardewConnection(connection).scope;
+      requireLiveConnection(connection);
+      const scope = connection.scope;
       return Object.freeze({
         integrationId: scope.integrationId,
         saveId: scope.saveId,
@@ -135,7 +136,8 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
       trace,
     }: IntegrationToolContext) => {
       const mountedPolicy = (policy ?? DEFAULT_ACTION_POLICY) as ActionPolicy;
-      const integration = assertAuthenticatedStardewConnection(connection);
+      requireLiveConnection(connection);
+      const integration = connection;
       // Executable tools require the launcher-owned liveness fence. A missing
       // or revoked gate is never a legacy admission path; observations remain
       // available because they do not dispatch gameplay operations.
@@ -166,7 +168,8 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
       bundleVersion: isKnowledgeBundle(knowledge) ? knowledge.bundleVersion : null,
     }),
     status: (connection): IntegrationStatusDetails => {
-      const state = assertAuthenticatedStardewConnection(connection).state;
+      requireLiveConnection(connection);
+      const state = connection.state;
       return {
         connected: state.connected,
         capabilities: [...state.capabilities],
@@ -176,7 +179,8 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
       };
     },
     readState: (connection): IntegrationStateView => {
-      const integration = assertAuthenticatedStardewConnection(connection);
+      requireLiveConnection(connection);
+      const integration = connection;
       const state = integration.state;
       return {
         connected: state.connected,
@@ -202,7 +206,8 @@ function createStardewGameIntegrationAdapter(): GameIntegrationAdapter {
       };
     },
     cancelExecution: (connection, requestId, executionId, reasonCode) => {
-      const integration = assertAuthenticatedStardewConnection(connection);
+      requireLiveConnection(connection);
+      const integration = connection;
       if (typeof integration.cancel !== "function") return "integration_cancel_unavailable";
       return integration.cancel(requestId, executionId, reasonCode);
     },
