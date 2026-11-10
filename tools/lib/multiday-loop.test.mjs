@@ -9,9 +9,13 @@ import {
   classifyActorHold,
   closeIsEngineCommitted,
   crossingsFromEvidence,
+  decideDayWake,
   decideHeldMenu,
+  QUIET_BOUND_MS,
   readHeldMenu,
   runMultiDayLoop,
+  WAKE_REASON,
+  WAKE_SUPPRESSION,
   watchRollover,
 } from "./multiday-loop.mjs";
 
@@ -599,4 +603,124 @@ test("an empty evidence list is a run that crossed nothing, which is a measureme
   assert.deepEqual(result.observed, []);
   assert.equal(result.postWatch, 0);
   assert.equal(result.disagreement, null);
+});
+
+// WHAT MAY START A MODEL TURN.
+//
+// The harness woke her once per programme and paid 1912.8 s of model time for 2035.8 s of wall on `round44` (109 prompt
+// turns for four days, 73 of them producing no dispatch at all). A settlement is not a reason to think: it is the
+// moment the harness learns that the thing it was waiting for has stopped, and the decision below says whether that
+// stopping left anything for her to decide.
+const ROUND44_SETTLEMENT = Object.freeze({
+  // Not the first prompt of the day: this is the loop re-entering after a turn settled.
+  turnIndex: 1,
+  // The day's task purpose has not been achieved, so the day's objective is still open.
+  objectiveMet: false,
+  // The body has an accepted programme whose terminal has not arrived: the Mod's own pass continues.
+  programRunning: true,
+  admissionPending: false,
+  // The session has been quiet for three bounds; the wake is NOT being withheld for want of quiet.
+  quietMs: QUIET_BOUND_MS * 3,
+  lateDay: false,
+  dayEndOffered: false,
+  stalled: false,
+});
+
+test("a settlement with a continuable pass in hand does not wake her", () => {
+  const wake = decideDayWake(ROUND44_SETTLEMENT);
+  assert.equal(wake.wake, false, "the Mod's own pass owns the next move, so there is nothing for her to decide");
+  assert.equal(wake.reason, WAKE_SUPPRESSION.bodyStillWorking);
+});
+
+test("an accepted dispatch with no terminal is body work, whatever the snapshot says the actor is free", () => {
+  // `activeExecution` is the Mod's projection of the execution it is running; an admission it accepted and has not
+  // terminated is a pass that WILL re-enter, and a wake on it would be a wake on a pass that is still going.
+  const admitted = decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false, admissionPending: true });
+  assert.equal(admitted.wake, false);
+  assert.equal(admitted.reason, WAKE_SUPPRESSION.bodyStillWorking);
+});
+
+test("a quiet session that has not been quiet for the bound is not a wake either", () => {
+  const recent = decideDayWake({
+    ...ROUND44_SETTLEMENT,
+    programRunning: false,
+    quietMs: QUIET_BOUND_MS - 1,
+  });
+  assert.equal(recent.wake, false);
+  assert.equal(recent.reason, WAKE_SUPPRESSION.quietPeriod);
+});
+
+test("an unmeasured quiet is not a licence to wake her", () => {
+  for (const quietMs of [null, undefined, Number.NaN]) {
+    const wake = decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false, quietMs });
+    assert.equal(wake.wake, false, `quietMs=${String(quietMs)} cannot say the session is quiet`);
+    assert.equal(wake.reason, WAKE_SUPPRESSION.quietPeriod);
+  }
+});
+
+test("the day's work being done is not a wake before the day is nearly over", () => {
+  const done = decideDayWake({ ...ROUND44_SETTLEMENT, objectiveMet: true, programRunning: false });
+  assert.equal(done.wake, false);
+  assert.equal(done.reason, WAKE_SUPPRESSION.objectiveMet);
+});
+
+test("the day-end offer is made once, and asks rather than ordering", () => {
+  const offer = decideDayWake({
+    ...ROUND44_SETTLEMENT,
+    objectiveMet: true,
+    programRunning: false,
+    lateDay: true,
+  });
+  assert.equal(offer.wake, true);
+  assert.equal(offer.reason, WAKE_REASON.dayEndOffer, "a day-end offer is not a continuation of the day's work");
+  const again = decideDayWake({
+    ...ROUND44_SETTLEMENT,
+    objectiveMet: true,
+    programRunning: false,
+    lateDay: true,
+    dayEndOffered: true,
+  });
+  assert.equal(again.wake, false, "an offer that repeats until answered is the ping this change removes");
+  assert.equal(again.reason, WAKE_SUPPRESSION.alreadyOffered);
+});
+
+test("the day-end offer never pre-empts a pass that can still continue", () => {
+  const busy = decideDayWake({
+    ...ROUND44_SETTLEMENT,
+    objectiveMet: true,
+    programRunning: true,
+    lateDay: true,
+  });
+  assert.equal(busy.wake, false, "a pass that can continue is the owner, whatever the clock says");
+  assert.equal(busy.reason, WAKE_SUPPRESSION.bodyStillWorking);
+});
+
+test("a stalled body wakes her whatever the objective and the body say", () => {
+  // The one thing this change must NOT remove: a stall is the body not continuing, so it is exactly the moment she is
+  // the only thing left that can decide.
+  for (const objectiveMet of [true, false]) {
+    const wake = decideDayWake({ ...ROUND44_SETTLEMENT, objectiveMet, stalled: true });
+    assert.equal(wake.wake, true, `objectiveMet=${String(objectiveMet)} must not silence a stall`);
+    assert.equal(wake.reason, WAKE_REASON.stallWake);
+  }
+});
+
+test("the first prompt of a day is the day's own opening, whatever the world is doing", () => {
+  const opening = decideDayWake({ ...ROUND44_SETTLEMENT, turnIndex: 0 });
+  assert.equal(opening.wake, true, "a day begins by asking her, and that is not a settlement-driven wake");
+  assert.equal(opening.reason, WAKE_REASON.dayStart);
+});
+
+test("the day loop can reach every wake reason it declares, and no other", () => {
+  const produced = new Set([
+    decideDayWake({ ...ROUND44_SETTLEMENT, turnIndex: 0 }).reason,
+    decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false, quietMs: QUIET_BOUND_MS * 2 }).reason,
+    decideDayWake({ ...ROUND44_SETTLEMENT, stalled: true }).reason,
+    decideDayWake({ ...ROUND44_SETTLEMENT, objectiveMet: true, programRunning: false, lateDay: true }).reason,
+  ]);
+  assert.deepEqual(
+    [...produced].sort(),
+    [WAKE_REASON.continuation, WAKE_REASON.dayEndOffer, WAKE_REASON.dayStart, WAKE_REASON.stallWake].sort(),
+    "the day loop produces exactly the four reasons it owns; `player_input` belongs to the session-goal call site",
+  );
 });

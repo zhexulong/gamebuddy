@@ -820,6 +820,10 @@ function measureEfficiency({ sessionFile, result, repoRoot }) {
     families: [...families].sort(),
     playerTasks: { events: playerTasks.events, distinct: playerTasks.texts.size },
     objectives,
+    // What the RUN said about why it woke her, and about every settlement it did not turn into a prompt. Neither can be
+    // recovered from the session - a prompt that was never issued leaves no record there - so an absent account is
+    // `not_measured` by field name rather than a zero that reads as "nothing was suppressed".
+    wakes: result?.multiday?.wakes ?? null,
     wCap,
     floorTurns,
     floorTurnsAtCap: wCap === null ? null : Math.ceil(succeeded / wCap) + objectives,
@@ -1103,6 +1107,46 @@ function formatEfficiency(report) {
   );
   push(
     `  ${label("")} navigation excluded from families: ${[...NAVIGATION_ACTION_IDS].join(", ")} (how a target is reached, not an objective)`,
+  );
+  // THE WAKE READING. `round44` spent 1912.8 s of a 2035.8 s wall in the model because the harness re-prompted on every
+  // settlement: 109 prompt turns for four objectives, 73 of them dispatching nothing. The two arithmetic readings come
+  // from what this verdict already measures; the third exists only in the run's own account.
+  push(
+    `  ${label("wakes_per_objective")} ${
+      objectives > 0
+        ? `${(report.turns / objectives).toFixed(1)} = ${report.turns} prompt turns / ${objectives} objectives`
+        : notMeasured("the run declared no objective, so there is nothing to divide the prompt turns by")
+    }`,
+  );
+  push(
+    `  ${label("wall_ms_in_model")} ${shareToATenth(turnMs, report.wallMs)} = ${seconds(turnMs)} model / ${seconds(
+      report.wallMs,
+    )} wall  <- the buckets' seconds against the measured wall`,
+  );
+  const wakeReasonLine = (byReason) =>
+    Object.entries(byReason)
+      .map(([reason, count]) => `${reason} ${count}`)
+      .join(", ");
+  push(
+    `  ${label("continuation_prompts_issued")} ${
+      report.wakes === null
+        ? notMeasured("result.json multiday.wakes was not published by this run")
+        : `${report.wakes.continuationPromptsIssued} of ${report.turns} prompt turns (${wakeReasonLine(report.wakes.byReason ?? {})})`
+    }`,
+  );
+  push(
+    `  ${label("continuation_prompts_suppressed")} ${
+      report.wakes === null
+        ? notMeasured("result.json multiday.wakes was not published by this run")
+        : `${report.wakes.continuationPromptsSuppressed}: ${wakeReasonLine(report.wakes.suppressedByReason ?? {})}`
+    }`,
+  );
+  push(
+    `  ${label("day_end_offers")} ${
+      report.wakes === null
+        ? notMeasured("result.json multiday.wakes was not published by this run")
+        : `${report.wakes.dayEndOffers} of ${report.turns} prompt turns - the day's work was done and the day was nearly over, so the offer asks and never dispatches`
+    }`,
   );
   push(
     `  ${label("floor_turns")} ${

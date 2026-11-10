@@ -19,7 +19,7 @@ import {
   parseReceiptEvidence,
   worldNightEndingsFromFacts,
 } from "../../lib/multiday-baseline.mjs";
-import { watchRollover } from "../../lib/multiday-loop.mjs";
+import { decideDayWake, QUIET_BOUND_MS, WAKE_REASON, WAKE_REASONS, watchRollover } from "../../lib/multiday-loop.mjs";
 import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mjs";
 import { killedReasonCode, reclamationRecord } from "../../lib/live-run-teardown.mjs";
 import { appendTurnMemory, summarizeHostMemory, turnMemoryPoint } from "../../lib/live-run-memory.mjs";
@@ -1761,11 +1761,14 @@ test("waitForSessionQuiet reaches quiet when only body_trace pings follow a term
   assert.ok(start >= 0, "the quiet wait must exist");
   const actionTrace = [];
   const factLog = [];
+  // The runner's own predicate, evaluated here rather than restated: a copy would be a second spelling of "the world
+  // moved", and the two would drift the day one of them learned a new fact type.
+  const meaningfulSource = /const meaningfulFact = [\s\S]*?;\n/u.exec(RUNNER_SOURCE)[0];
   const build = new Function(
     "actionTrace",
     "factLog",
     "LADDER",
-    `return (async () => { ${source.slice(start, end)}; return waitForSessionQuiet; })();`,
+    `return (async () => { ${meaningfulSource} ${source.slice(start, end)}; return waitForSessionQuiet; })();`,
   );
   const waitForSessionQuiet = await build(actionTrace, factLog, "6");
   let tick = 0;
@@ -1836,6 +1839,7 @@ test("a second turn does not answer with the first turn's program", async () => 
     "MOD_HEARTBEAT_STALL_MS",
     "bridgeDisconnections",
     "waitForSessionQuiet",
+    "WAKE_REASONS",
     // The turn's own memory instrument: the sampler, the point it builds and the bounded series it appends to. Supplied
     // as real implementations - the turn records what the sampler measured, and a double here would assert the wiring
     // against a number no run produced. (Until they were bound, this eval could not even run the turn: `round40`'s
@@ -1881,6 +1885,7 @@ return { runAgentTurn, stall: () => worldStallReason, memory: () => hostMemory }
     declaredStallMs,
     Object.freeze([]),
     async (turn) => turn,
+    WAKE_REASONS,
     // The real instrument, and a sampler whose readings the test can reason about: the turn's record is what is under
     // test here, not the operating system's free memory.
     () => ({ rssMb: 316, freeMb: 2048, heapUsedMb: 208 }),
@@ -1890,7 +1895,7 @@ return { runAgentTurn, stall: () => worldStallReason, memory: () => hostMemory }
   const previousWaitSeconds = process.env.GAMEBUDDY_AGENT_WAIT_SECONDS;
   process.env.GAMEBUDDY_AGENT_WAIT_SECONDS = "5";
   try {
-    const firstTurn = await runAgentTurn("first turn", {});
+    const firstTurn = await runAgentTurn("first turn", {}, { reason: WAKE_REASON.dayStart });
     assert.deepEqual(statusQueries, ["p_day1"], "turn 1 polls the program turn 1 submitted");
     assert.equal(firstTurn.turn.steerObserved, true, "the fixture's turn 1 did reach the session");
     assert.equal(stall(), null, "a turn whose program succeeded is not a stall");
@@ -1898,7 +1903,7 @@ return { runAgentTurn, stall: () => worldStallReason, memory: () => hostMemory }
     heartbeatSilentMs = declaredStallMs + 30_000;
     statusQueries.length = 0;
     const samplesBefore = heartbeatSamples;
-    const secondTurn = await runAgentTurn("second turn", {});
+    const secondTurn = await runAgentTurn("second turn", {}, { reason: WAKE_REASON.continuation });
 
     assert.match(
       String(stall()),
@@ -4297,4 +4302,197 @@ test("the day's shortage fact is composed once, on the first turn, and published
   assert.match(RUNNER_SOURCE, /const seedFacts = \[\];/);
   assert.match(RUNNER_SOURCE, /if \(dayFact !== null\) seedFacts\.push\(Object\.freeze\(\{ day, \.\.\.dayFact \}\)\);/);
   assert.match(RUNNER_SOURCE, /\n    seedFacts,/);
+});
+
+// WHAT MAY WAKE HER: a gate over every place the runner can put a prompt in front of the model.
+//
+// The population is the RUNNER'S OWN SOURCE, scanned for prompt calls, not a list someone maintains: a call site added
+// next month is examined without anyone remembering to add it here. Each one must declare one of the five wake reasons,
+// and the reason set itself is guarded against quiet growth by requiring a producer a test can actually reach.
+const RUNNER_FILE = "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs";
+const PROMPT_CALL = "runAgentTurn(";
+
+/** The runner's source with comment CONTENT blanked, so a comment that mentions a call is not read as one.
+ *
+ * Blanked rather than deleted: every newline survives, so the line a failure names is the line a reader can open.
+ */
+function withoutComments(source) {
+  const kept = [...source];
+  const blank = (from, to) => {
+    for (let at = from; at < to && at < kept.length; at += 1) if (kept[at] !== "\n") kept[at] = " ";
+  };
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (char === "/" && next === "/") {
+      const start = index;
+      while (index < source.length && source[index] !== "\n") index += 1;
+      blank(start, index);
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      const start = index;
+      index += 2;
+      while (index < source.length && !(source[index] === "*" && source[index + 1] === "/")) index += 1;
+      index = Math.min(index + 2, source.length);
+      blank(start, index);
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      const quote = char;
+      index += 1;
+      while (index < source.length) {
+        if (source[index] === "\\") {
+          index += 2;
+          continue;
+        }
+        if (source[index] === quote) {
+          index += 1;
+          break;
+        }
+        index += 1;
+      }
+      continue;
+    }
+    index += 1;
+  }
+  return kept.join("");
+}
+
+/** One call's argument list, from the opening parenthesis to its match, with strings left intact. */
+function callArguments(source, parenAt) {
+  let depth = 0;
+  for (let index = parenAt; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '"' || char === "'" || char === "`") {
+      const quote = char;
+      index += 1;
+      while (index < source.length && source[index] !== quote) index += source[index] === "\\" ? 2 : 1;
+      continue;
+    }
+    if (char === "(") depth += 1;
+    else if (char === ")") {
+      depth -= 1;
+      if (depth === 0) return source.slice(parenAt, index + 1);
+    }
+  }
+  return source.slice(parenAt);
+}
+
+/** Every place the runner can prompt the model: the call, and the line it starts on. */
+function promptCallSites(source) {
+  const code = withoutComments(source);
+  const sites = [];
+  for (let at = code.indexOf(PROMPT_CALL); at >= 0; at = code.indexOf(PROMPT_CALL, at + 1)) {
+    // The definition is not a call site.
+    if (code.slice(Math.max(0, at - "function ".length), at) === "function ") continue;
+    sites.push({ line: code.slice(0, at).split("\n").length, text: callArguments(code, at + PROMPT_CALL.length - 1) });
+  }
+  return sites;
+}
+
+/** The wake reason one call site declares, or null when it declares none. */
+function declaredWakeReason(text) {
+  // `wake.reason` is a DERIVED declaration: the day loop's prompt carries the answer `decideDayWake` gave, and
+  // `runAgentTurn` refuses anything outside the set at run time, so the reason cannot be anything the set does not name.
+  // The structural test above is what keeps `wake` the decision's own answer rather than something else called `wake`.
+  const match = /reason:\s*(?:wake\.reason|WAKE_REASON\.([A-Za-z]+)|"([a-z_]+)")/u.exec(text);
+  if (match === null) return null;
+  if (/reason:\s*wake\.reason/u.test(text)) return "wake.reason";
+  return match[1] === undefined ? match[2] : (WAKE_REASON[match[1]] ?? `WAKE_REASON.${match[1]}`);
+}
+
+/** What a call site's declaration must be: a member of the set, or the decision's own answer. */
+const isDeclaredWakeReason = (reason) => reason === "wake.reason" || WAKE_REASONS.includes(reason);
+
+test("every place the harness can prompt the model declares one of the declared wake reasons", () => {
+  const sites = promptCallSites(RUNNER_SOURCE);
+  assert.ok(sites.length > 0, "examined 0 prompt call sites - a check whose population is empty agrees with itself");
+  console.log(
+    `wake gate: examined ${String(sites.length)} prompt call site(s): ${sites.map((s) => s.line).join(", ")}`,
+  );
+  for (const site of sites) {
+    const reason = declaredWakeReason(site.text);
+    assert.ok(isDeclaredWakeReason(reason), `prompt_without_a_declared_reason:${RUNNER_FILE}:${String(site.line)}`);
+  }
+});
+
+/** The day turn, which is where a settlement could turn into a prompt. */
+function dayTurnSource(source) {
+  const start = source.indexOf("dayTurn: async (day) => {");
+  const end = source.indexOf("nightWatch: async (day) =>", start);
+  assert.ok(start >= 0 && end > start, "the multi-day scenario must have a day turn");
+  return source.slice(start, end);
+}
+
+test("the day loop asks the wake decision before it prompts, so a settlement alone cannot wake her", () => {
+  // Measured 2026-11-10 (round44): 109 prompt turns for four days, 73 of them dispatching nothing, because the loop
+  // re-prompted the moment a turn settled. The property is structural - the decision must sit BETWEEN the settlement and
+  // the prompt - so it is asserted on the loop's own shape rather than on one behaviour of one branch.
+  const loop = dayTurnSource(RUNNER_SOURCE);
+  const decisionAt = loop.indexOf("const wake =");
+  assert.ok(decisionAt >= 0, "the day loop must decide whether to wake her");
+  const gateAt = loop.indexOf("if (wake.wake !== true)");
+  assert.ok(gateAt > decisionAt, "the decision's own answer must be the thing that gates the prompt");
+  const promptAt = loop.indexOf(PROMPT_CALL);
+  assert.ok(promptAt > gateAt, "the prompt must come after the gate, not before it");
+  assert.match(
+    loop.slice(gateAt, promptAt),
+    /continue;/u,
+    "a suppressed wake must wait for the next poll, not fall through to the prompt",
+  );
+  assert.ok(
+    loop.indexOf("promptForDayContinuation(") > gateAt,
+    "the carry-on prompt must be reachable only through the wake decision",
+  );
+  assert.match(loop, /reason: wake\.reason/u, "the prompt must carry the decision's own reason");
+});
+
+/** A world with nothing in it: the baseline every producer below varies one fact of. */
+const IDLE_DAY = Object.freeze({
+  turnIndex: 1,
+  objectiveMet: false,
+  programRunning: false,
+  admissionPending: false,
+  quietMs: QUIET_BOUND_MS * 2,
+  lateDay: false,
+  dayEndOffered: false,
+  stalled: false,
+});
+
+const WAKE_PRODUCERS = Object.freeze({
+  day_start: () => decideDayWake({ ...IDLE_DAY, turnIndex: 0 }).reason,
+  continuation: () => decideDayWake(IDLE_DAY).reason,
+  stall_wake: () => decideDayWake({ ...IDLE_DAY, stalled: true }).reason,
+  day_end_offer: () => decideDayWake({ ...IDLE_DAY, objectiveMet: true, lateDay: true }).reason,
+  // A session goal is a PLAYER turn, so its reason is declared at its own call site: this reads that site rather than
+  // restating it, which is what makes "reachable" a fact about the runner instead of about this table.
+  player_input: () => {
+    const goals = RUNNER_SOURCE.slice(RUNNER_SOURCE.indexOf('if (SCENARIO === "morning_routine") {'));
+    const site = promptCallSites(goals)[0];
+    return site === undefined ? null : declaredWakeReason(site.text);
+  },
+});
+
+test("every declared wake reason is reachable from a test, and no reason is declared without one", () => {
+  for (const reason of WAKE_REASONS) {
+    const produce = WAKE_PRODUCERS[reason];
+    assert.equal(typeof produce, "function", `declared_reason_unreachable:${reason}`);
+    assert.equal(produce(), reason, `declared_reason_unreachable:${reason}`);
+  }
+  assert.deepEqual(
+    Object.keys(WAKE_PRODUCERS).sort(),
+    [...WAKE_REASONS].sort(),
+    "a declared reason with no producer, or a producer for a reason nobody declared",
+  );
+});
+
+test("the multi-day result publishes the wake account the verdict reads", () => {
+  // The three readings cannot be reconstructed from the session alone - a prompt that was never issued leaves no
+  // record there - so the runner has to publish them by name.
+  assert.match(RUNNER_SOURCE, /continuationPromptsIssued:/u);
+  assert.match(RUNNER_SOURCE, /continuationPromptsSuppressed:/u);
+  assert.match(RUNNER_SOURCE, /suppressedByReason:/u);
+  assert.match(RUNNER_SOURCE, /quietBoundMs: QUIET_BOUND_MS/u);
 });

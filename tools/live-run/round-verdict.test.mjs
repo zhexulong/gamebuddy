@@ -628,3 +628,67 @@ test("seconds that reach no bucket fail the verdict loudly, naming how many", ()
     },
   );
 });
+
+// THE WAKE ACCOUNT, as the verdict must read it.
+//
+// The wall clock of a live run is 94% model time because the harness wakes her per programme rather than per objective.
+// Two of the three readings are arithmetic on what the verdict already measures (prompt turns and the objectives they
+// served, the buckets' seconds against the wall); the third - what was suppressed, and why - exists nowhere but in the
+// runner's own account, so a run that did not publish it must say so by field name instead of printing a zero.
+const WAKE_STEPS = [
+  { calls: [observeCall("c1")] },
+  { calls: [planCall("c2", 4, "till_soil")] },
+  {
+    calls: [
+      statusCall(
+        "c3",
+        "plan_c2",
+        ["n1", "n2", "n3", "n4"].map((node) => [node, "succeeded", "till_soil"]),
+      ),
+    ],
+  },
+  { calls: [refusedPlanCall("c4")] },
+  { calls: [stopCall("c5")] },
+  { calls: [observeCall("c6")] },
+];
+
+test("the verdict prices the wakes: how many per objective, and the model's share of the wall", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      multiday: {
+        wakes: {
+          total: 6,
+          continuationPromptsIssued: 2,
+          continuationPromptsSuppressed: 3,
+          suppressedByReason: { body_still_working: 2, objective_met: 1 },
+          byReason: { day_start: 1, continuation: 2, stall_wake: 0, day_end_offer: 1, player_input: 0 },
+        },
+      },
+      session: sessionFile({ steps: WAKE_STEPS }),
+    }),
+    (runDir) => {
+      const block = efficiencyBlock(runVerdict(runDir));
+      // Six prompt turns serving two objectives: the number the round44 baseline is stated in.
+      assert.match(block, /wakes_per_objective\s+3\.0 = 6 prompt turns \/ 2 objectives/u);
+      // The model's own seconds against the measured wall, not against the buckets' own sum.
+      assert.match(block, /wall_ms_in_model\s+[1-9]\d?\.\d% = 6\.0s model \/ \d+\.\ds wall/u);
+      assert.match(block, /continuation_prompts_issued\s+2 of 6 prompt turns/u);
+      assert.match(block, /day_start 1, continuation 2, stall_wake 0, day_end_offer 1, player_input 0/u);
+      assert.match(block, /continuation_prompts_suppressed\s+3: body_still_working 2, objective_met 1/u);
+    },
+  ));
+
+test("a run that published no wake account says so by field name, never as a zero", () =>
+  withFixture(
+    () => ({ withResult: true, session: sessionFile({ steps: WAKE_STEPS }) }),
+    (runDir) => {
+      const block = efficiencyBlock(runVerdict(runDir));
+      assert.match(block, /wakes_per_objective\s+3\.0 = 6 prompt turns \/ 2 objectives/u);
+      assert.match(
+        block,
+        /continuation_prompts_issued\s+not_measured \(result\.json multiday\.wakes was not published by this run\)/u,
+        "an absent account is not an account of zero suppressions",
+      );
+    },
+  ));

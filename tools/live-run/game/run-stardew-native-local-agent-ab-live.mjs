@@ -29,7 +29,15 @@ import { turnSettled } from "../../lib/turn-settled.mjs";
 import { once } from "node:events";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { runMultiDayLoop, watchRollover } from "../../lib/multiday-loop.mjs";
+import {
+  decideDayWake,
+  QUIET_BOUND_MS,
+  runMultiDayLoop,
+  WAKE_REASON,
+  WAKE_REASONS,
+  WAKE_SUPPRESSION_REASONS,
+  watchRollover,
+} from "../../lib/multiday-loop.mjs";
 import {
   assessMultiDayBaseline,
   MAXIMUM_BASELINE_DAYS,
@@ -604,6 +612,18 @@ const taskPurposes = [];
 // world as it stood then. It is recorded because "she was handed the supply and still did not go" and "nothing ever
 // told her" are different findings, and only this list tells them apart.
 const seedFacts = [];
+// EVERY PROMPT THE HARNESS ISSUED, BY WHY IT WAS ISSUED, and every settlement it deliberately did not turn into one.
+//
+// These two counts cannot be reconstructed from a session: a prompt that was never sent leaves no record there, and the
+// difference between "the harness waited" and "the harness was never asked" is exactly what `round44` could not say
+// while it spent 94% of its wall clock on model turns. `wakeAccount` is the run's own statement of both.
+const wakeAccount = { issued: Object.create(null), suppressed: Object.create(null) };
+const recordWake = (reason) => {
+  wakeAccount.issued[reason] = (wakeAccount.issued[reason] ?? 0) + 1;
+};
+const recordWakeSuppression = (reason) => {
+  wakeAccount.suppressed[reason] = (wakeAccount.suppressed[reason] ?? 0) + 1;
+};
 // What the companion could actually see during the session. Sampled WHILE the
 // session runs (the surface a turn can rely on), never read after teardown: the
 // post-run snapshot is empty in practice, which silently emptied the audit's
@@ -1597,6 +1617,71 @@ function terminalReceiptFor(facts, requestId) {
   return undefined;
 }
 
+/**
+ * How long the world has published nothing that means it moved.
+ *
+ * `null` is "cannot be read" and never zero: a quiet nobody measured must not license a wake. The sources are the ones
+ * `waitForSessionQuiet` already watches - a receipt, lifecycle or error fact, and a flat dispatch's own settlement -
+ * plus the moment the last turn began, because a turn during which the world published nothing at all is a measured
+ * quiet rather than an unmeasured one. Without that third source a run whose first turns produced no receipts would
+ * suppress its own day forever, which is the failure this bound exists to avoid in the other direction.
+ */
+function quietMsNow() {
+  let lastFactAtMs = null;
+  for (let at = factLog.length - 1; at >= 0; at -= 1) {
+    if (!meaningfulFact(factLog[at])) continue;
+    lastFactAtMs = factLog[at].atMs ?? null;
+    break;
+  }
+  const lastDispatchAtMs = actionTrace.at(-1)?.settledAtMs ?? null;
+  const readable = [lastFactAtMs, lastDispatchAtMs, turnStartedAtMs].filter((value) => Number.isFinite(value));
+  if (readable.length === 0) return null;
+  return Date.now() - Math.max(...readable);
+}
+
+/**
+ * Whether the Mod holds a pass it can still continue.
+ *
+ * Two facts, and the second is the one a turn boundary hides: a dispatch answers `accepted` while its terminal arrives
+ * later as a receipt fact, so a turn can settle with the work still in the body's hands. `activeExecution` is the
+ * snapshot's projection of the same thing, kept beside it because a program whose admission never reached a receipt is
+ * visible in neither window alone.
+ */
+function bodyWorkNow() {
+  const admitted = new Set();
+  const settled = new Set();
+  for (const entry of factLog) {
+    const receipt = recordedReceipt(entry);
+    const requestId = entry?.requestId;
+    if (receipt === null || typeof requestId !== "string") continue;
+    if (TERMINAL_STATES.has(receipt.state)) settled.add(requestId);
+    else admitted.add(requestId);
+  }
+  for (const requestId of settled) admitted.delete(requestId);
+  return Object.freeze({
+    programRunning: (client.state?.snapshot?.activeExecution ?? null) !== null || admitted.size > 0,
+    admissionPending: admitted.size > 0,
+  });
+}
+
+/**
+ * The Host's own stall facts that have arrived since the last look.
+ *
+ * The pump owns the bound and the re-arm (`EXECUTION_STALL_BOUND_MS`, `EXECUTION_STALL_REARM_MULTIPLE`); the runner reads
+ * only what it published, through the parser the bundle already uses for the same lines - one reading of a stall, not
+ * two. The cursor is a chunk index plus the partial line that straddled the last read: the log is appended to and never
+ * rewritten, so nothing already read is read again.
+ */
+const stallReadCursor = { chunk: 0, carry: "" };
+function newStallFacts() {
+  if (stallReadCursor.chunk >= hostLogChunks.length) return [];
+  const text = stallReadCursor.carry + hostLogChunks.slice(stallReadCursor.chunk).join("");
+  stallReadCursor.chunk = hostLogChunks.length;
+  const lines = text.split("\n");
+  stallReadCursor.carry = lines.pop() ?? "";
+  return readStallWatch(lines.join("\n")).facts;
+}
+
 // Actions that MOVE the actor, LOOK at the world, or change only the actor's own gear.
 // A play session that did nothing but these has not played: run H attempted 14 actions,
 // got 14 refusals and one successful walk, harvested nothing, and still reported `passed`
@@ -1789,15 +1874,16 @@ function deriveRungVerdict(clauses) {
  * steer reached the session; none of them observed means the result must say so
  * instead of pretending the agent chose to do nothing.
  */
-async function waitForSessionQuiet(turn, { dispatchesBeforeTurn, quietMs = 20_000, timeoutMs = 300_000 } = {}) {
-  // Quiet = no NEW dispatch and no NEW meaningful fact for a sustained window.
-  // Meaningful = execution_receipt / lifecycle / error. The Mod pings semantic_event/body_trace every few
-  // seconds; counting that as motion made the window unreachable, so it is excluded. The previous version had a
-  // real bug: it sliced by a TIMESTAMP (factLog.slice(lastFactAt), where lastFactAt was ms) and checked the
-  // WHOLE slice since the turn for any meaningful fact, so quiet was unreachable whenever a meaningful fact had
-  // EVER arrived. Track the last-observed INDEX and check only the newly-appended facts each second.
-  const meaningful = (entry) =>
-    entry?.type === "execution_receipt" || entry?.type === "lifecycle" || entry?.type === "error";
+/** Facts that mean the world moved. Per-tile chatter (`body_trace`, route progress) is not motion. */
+const meaningfulFact = (entry) =>
+  entry?.type === "execution_receipt" || entry?.type === "lifecycle" || entry?.type === "error";
+
+async function waitForSessionQuiet(turn, { dispatchesBeforeTurn, quietMs = QUIET_BOUND_MS, timeoutMs = 300_000 } = {}) {
+  // Quiet = no NEW dispatch and no NEW meaningful fact for a sustained window. The window itself is `QUIET_BOUND_MS`,
+  // which is also what the day loop's wake decision reads, so a wake and the turn it starts cannot disagree about what
+  // "quiet" means. The previous version had a real bug: it sliced by a TIMESTAMP (factLog.slice(lastFactAt), where
+  // lastFactAt was ms) and checked the WHOLE slice since the turn for any meaningful fact, so quiet was unreachable
+  // whenever a meaningful fact had EVER arrived. Track the last-observed INDEX and check only the newly-appended facts.
   let lastSeenDispatch = dispatchesBeforeTurn;
   let lastSeenFact = factLog.length;
   let lastActionAt = Date.now();
@@ -1810,7 +1896,7 @@ async function waitForSessionQuiet(turn, { dispatchesBeforeTurn, quietMs = 20_00
       lastSeenDispatch = actionTrace.length;
       lastActionAt = Date.now();
     }
-    const factMoved = factLog.slice(lastSeenFact).some(meaningful);
+    const factMoved = factLog.slice(lastSeenFact).some(meaningfulFact);
     if (factMoved) {
       lastSeenFact = factLog.length;
       lastFactAt = Date.now();
@@ -1937,7 +2023,12 @@ async function deliverDialogueGatesForDay(day, tools) {
   }
 }
 
-async function runAgentTurn(text, tools) {
+async function runAgentTurn(text, tools, wake) {
+  // EVERY prompt states why the model is being woken, and the reason is a closed set (`WAKE_REASONS`). A prompt issued
+  // because something settled, with no reason it can name, is the defect this harness was paying 94% of its wall clock
+  // for (round44: 109 prompt turns for four days, 73 of them dispatching nothing).
+  const wakeReason = wake?.reason;
+  if (!WAKE_REASONS.includes(wakeReason)) throw new Error(`prompt_without_a_declared_reason:${String(wakeReason)}`);
   turnStartedAtMs = Date.now();
   // One line per turn, because the only question a memory death leaves open is its SHAPE: flat after the first
   // allocation spread, or growing with turns. `sessionBytes` is the retained-transcript proxy (Pi holds the session
@@ -2297,6 +2388,15 @@ const LATE_DAY_MINUTES = 19 * 60;
 
 // A day contains turns; this bounds how many, for the harness only. It is not a limit on the day.
 const MAX_TURNS_PER_DAY = Number(process.env.GAMEBUDDY_MULTIDAY_MAX_TURNS_PER_DAY ?? 40);
+
+/**
+ * How often a day loop that may NOT wake her re-asks the world whether it now may.
+ *
+ * A poll rather than a timer per condition: the facts that decide a wake arrive on four different channels (a
+ * programme's terminal receipt, the in-game clock, the Host's stall fact, the day's own purpose), and one cadence over
+ * all of them cannot miss one. One second is below the resolution of anything it reads and far above the cost of asking.
+ */
+const WAKE_POLL_MS = 1_000;
 const MULTIDAY_NIGHT_TIMEOUT_MS = (() => {
   const requested = Number.parseInt(process.env.GAMEBUDDY_MULTIDAY_NIGHT_TIMEOUT_MS ?? "", 10);
   if (Number.isInteger(requested) && requested > 0) return requested;
@@ -4236,6 +4336,22 @@ try {
       ? `（第 ${String(day)} 天，天已经黑了。该收工就收工：想睡就回床上躺下，这一天才算过去；还想接着干也行。）`
       : `(Day ${String(day)}, and it is late - the sky is dark. If you are done, go to bed and sleep and the day ends; if you want to keep working, that is yours to choose.)`;
   /**
+   * What the harness says when the Host says her body has stopped making progress.
+   *
+   * A FACT and no instruction: which execution, how long it has been silent, what it last said, and what would release
+   * it. Whether to stop it, resume it or work around it is hers, which is the same division of labour every other
+   * prompt here keeps - the harness is the one that noticed, not the one that decides.
+   */
+  const promptForStall = (stall) => {
+    const executionId = String(stall?.executionId ?? "an execution");
+    const silentSeconds = String(Math.round((stall?.elapsedMs ?? 0) / 1000));
+    const lastFact = String(stall?.lastFactKind ?? "unknown");
+    const owner = typeof stall?.owner === "string" && stall.owner.length > 0 ? stall.owner : null;
+    return localeKey === "zh"
+      ? `（${executionId} 已经 ${silentSeconds} 秒没有任何进展，最后一条事实是 ${lastFact}${owner === null ? "" : `，身体被 ${owner} 占着`}。接下来怎么办由你决定。）`
+      : `(${executionId} has made no progress for ${silentSeconds}s; its last fact was ${lastFact}${owner === null ? "" : `, and the body is held by ${owner}`}. What happens next is yours to decide.)`;
+  };
+  /**
    * The day's prompt with the world's own shortage fact appended, or the prompt alone - the composition lives in
    * `seed-shortage.mjs` so its once-per-day property is testable rather than asserted here.
    *
@@ -4324,9 +4440,41 @@ try {
             dayOfMonth: client.state?.snapshot?.dayOfMonth ?? null,
             traceIndex: actionTrace.length,
           });
+          // WHICH TASK THIS DAY WAS ASKED FOR, named once: the wake decision asks whether its purpose is achieved, and
+          // the day's own verdict asks the same question of the same task. Two calls would let the run be woken for a
+          // task it was not asked to do.
+          const dayTask = taskForDay(day);
+          // Whether this day's day-end offer has been made. ONE per day: an offer repeated until answered is the ping
+          // this change exists to remove.
+          let dayEndOffered = false;
           while (!nightCrossedIn(dayScope)) {
-            turns += 1;
             const clock = readWorldClock();
+            // Whether the model is woken at all is decided BEFORE anything is asked of her, from facts and never from
+            // the fact that a turn just settled. A settlement only says that what the harness was waiting for stopped;
+            // the facts below say whether that stop left her anything to decide.
+            const body = bodyWorkNow();
+            const stallFacts = newStallFacts();
+            const wake = decideDayWake({
+              turnIndex: turns,
+              objectiveMet: judgeTaskPurpose(dayTask, receiptsSince(factsBefore)).state === "achieved",
+              programRunning: body.programRunning,
+              admissionPending: body.admissionPending,
+              quietMs: quietMsNow(),
+              lateDay: clock.unknown === false && clock.minutes !== null && clock.minutes >= LATE_DAY_MINUTES,
+              dayEndOffered,
+              stalled: stallFacts.length > 0,
+            });
+            if (wake.wake !== true) {
+              // The Mod's own pass continues, or nothing has moved for long enough to call it stopped. Either way the
+              // next move is not hers yet, so the harness waits and asks again rather than paying a model turn to find
+              // out that it had nothing to say.
+              recordWakeSuppression(wake.reason);
+              await new Promise((resolve) => setTimeout(resolve, WAKE_POLL_MS));
+              continue;
+            }
+            turns += 1;
+            recordWake(wake.reason);
+            if (wake.reason === WAKE_REASON.dayEndOffer) dayEndOffered = true;
             // The day's shortage fact, read from the world as it stands at the FIRST turn of the day: what the task
             // asks for, what she holds, and where the missing seed is sold. Null when there is nothing to say (the task
             // declares no patch, or the pack already covers it), and then the prompt is untouched.
@@ -4342,11 +4490,15 @@ try {
             const prompt =
               turns === 1
                 ? withDayFact(promptForDay(day), dayFact)
-                : clock.unknown === false && clock.minutes !== null && clock.minutes >= LATE_DAY_MINUTES
+                : wake.reason === WAKE_REASON.dayEndOffer
                   ? promptForLateDay(day)
-                  : promptForDayContinuation(day);
+                  : wake.reason === WAKE_REASON.stallWake
+                    ? promptForStall(stallFacts.at(-1) ?? null)
+                    : clock.unknown === false && clock.minutes !== null && clock.minutes >= LATE_DAY_MINUTES
+                      ? promptForLateDay(day)
+                      : promptForDayContinuation(day);
             const spokenBefore = presentationPieces.length;
-            const walked = await runAgentTurn(prompt, tools);
+            const walked = await runAgentTurn(prompt, tools, { reason: wake.reason });
             if (walked.status !== null) status = walked.status;
             agentTurnResult = walked.turn;
             // What THIS turn said, sliced by index so a line cannot be attributed to another turn.
@@ -4416,7 +4568,6 @@ try {
           // answers "did anything in the world change"; `judgeTaskPurpose` answers "was THIS day's purpose
           // achieved", from the task's own criterion (`task-purpose.mjs`). Measured: a `go_mining` day declared
           // `[travel, enter_mine, break_rock]` broke rocks on the surface, and the second question was never asked.
-          const dayTask = taskForDay(day);
           taskPurposes.push(
             Object.freeze({ day, task: dayTask, ...judgeTaskPurpose(dayTask, receiptsSince(factsBefore)) }),
           );
@@ -4476,6 +4627,24 @@ try {
       nights: crossing.dayRecords,
     });
     console.error("MULTIDAY_CROSSINGS", crossingSummary);
+    // THE WAKE ACCOUNT, in one line, because it is the run's answer to "why did the harness think 109 times for four
+    // days": what it issued and by which reason, and every settlement it deliberately did not turn into a prompt.
+    const wakeByReason = Object.fromEntries(WAKE_REASONS.map((reason) => [reason, wakeAccount.issued[reason] ?? 0]));
+    const wakeSuppressedByReason = Object.fromEntries(
+      WAKE_SUPPRESSION_REASONS.map((reason) => [reason, wakeAccount.suppressed[reason] ?? 0]),
+    );
+    const wakesIssued = Object.values(wakeByReason).reduce((total, count) => total + count, 0);
+    const wakesSuppressed = Object.values(wakeSuppressedByReason).reduce((total, count) => total + count, 0);
+    console.error(
+      "MULTIDAY_WAKES",
+      JSON.stringify({
+        issued: wakesIssued,
+        byReason: wakeByReason,
+        suppressed: wakesSuppressed,
+        suppressedByReason: wakeSuppressedByReason,
+        quietBoundMs: QUIET_BOUND_MS,
+      }),
+    );
     multidayOutcome = Object.freeze({
       crossings: crossing.daysCrossed,
       // A day scope captured while the world was still arriving makes every later reading of that day suspect, so it
@@ -4488,6 +4657,21 @@ try {
       completed: crossing.completed,
       reasonCode: crossing.reasonCode,
       crossingSummary,
+      // Why the model was woken at all, by reason, and every settlement that deliberately did not become a prompt. The
+      // verdict reads this for `continuation_prompts_issued`/`_suppressed`; neither can be reconstructed from a session,
+      // because a prompt that was never issued leaves no record there.
+      wakes: Object.freeze({
+        total: wakesIssued,
+        byReason: Object.freeze(wakeByReason),
+        continuationPromptsIssued: wakeByReason[WAKE_REASON.continuation] ?? 0,
+        dayEndOffers: wakeByReason[WAKE_REASON.dayEndOffer] ?? 0,
+        stallWakes: wakeByReason[WAKE_REASON.stallWake] ?? 0,
+        continuationPromptsSuppressed: wakesSuppressed,
+        suppressedByReason: Object.freeze(wakeSuppressedByReason),
+        // The bound the decision waited out, published so a reader can tell "nothing moved" from "nothing moved for
+        // long enough": the same number `waitForSessionQuiet` uses, stated once.
+        quietBoundMs: QUIET_BOUND_MS,
+      }),
       // Judged by the ONE baseline module, so the gate and the runner cannot disagree about what a crossing is.
       // The day COUNT is reconciled against the world's own `day_started` facts, not against the loop's own iterations:
       // measured 2026-11-06 (`round38`), two watched nights sat beside five world day starts and the assessment read a
@@ -4507,7 +4691,7 @@ try {
     // admitted, so the first companion bubble's elapsed time is measured from the
     // real turn boundary, not from process start.
     const firstSpokenBefore = presentationPieces.length;
-    const firstTurn = await runAgentTurn(prompt, tools);
+    const firstTurn = await runAgentTurn(prompt, tools, { reason: WAKE_REASON.dayStart });
     status = firstTurn.status;
     agentTurnResult = firstTurn.turn;
     sessionTurns.push(
@@ -4529,7 +4713,7 @@ try {
     if (SCENARIO === "morning_routine") {
       for (const [index, goal] of SESSION_GOALS.entries()) {
         const spokenBefore = presentationPieces.length;
-        const next = await runAgentTurn(goal, tools);
+        const next = await runAgentTurn(goal, tools, { reason: WAKE_REASON.playerInput });
         if (next.status !== null) status = next.status;
         sessionTurns.push(
           Object.freeze({

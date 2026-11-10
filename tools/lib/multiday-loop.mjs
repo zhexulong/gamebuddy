@@ -506,3 +506,108 @@ export function crossingsFromEvidence({
     disagreement,
   });
 }
+
+/**
+ * THE WAKE DECISION: whether a settlement is a reason to think.
+ *
+ * Measured 2026-11-10 (`round44`): 109 prompt turns for four days, 2035.8 s of wall of which 1912.8 s (94%) was model
+ * time, and 73 of those turns dispatched nothing at all. The harness re-prompted the moment a turn settled, so the model
+ * was woken roughly 1.3 times per programme at about 18 s a wake, to be told only "carry on".
+ *
+ * A settlement is not a reason. It is the moment the harness learns that what it was waiting for has stopped, and the
+ * only thing that makes the stop interesting is that nothing else can move: the body has no pass left to continue, the
+ * world has been quiet for a bound, and the day's objective is still open. Then she is the only thing left that can
+ * decide. Anything else waits - the Mod's own pass owns the next move.
+ *
+ * THE REASONS ARE A CLOSED SET, and
+ * `tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs` refuses a sixth: every prompt call site in the
+ * runner must declare one of these, and each one must have a producer a test can reach. Adding a reason is therefore a
+ * change to this set, not a string at a call site.
+ */
+export const WAKE_REASON = Object.freeze({
+  /** A day (or the run) begins: the harness asks her what she will do. Never caused by a settlement. */
+  dayStart: "day_start",
+  /** The day's objective is open, the body has nothing to continue, and the world has been quiet for the bound. */
+  continuation: "continuation",
+  /** The Host published `execution_stalled`: the body is NOT continuing, so she is the only thing left that can decide. */
+  stallWake: "stall_wake",
+  /** A turn the player asked for, carrying player text. */
+  playerInput: "player_input",
+  /**
+   * The day's work is done and the day is nearly over: offered once, and it ASKS - it never dispatches `sleep`.
+   *
+   * It exists because the day's objective can be met hours before the night, and the loop never dispatches a night: a
+   * companion whose work is finished still has to decide to end her own day. Suppressing every wake once the objective
+   * is met would leave the engine's 02:00 pass-out to take the night, which is a different companion and a different
+   * measurement. Naming the offer `continuation` would be a reason that lies about its own precondition.
+   */
+  dayEndOffer: "day_end_offer",
+});
+
+export const WAKE_REASONS = Object.freeze(Object.values(WAKE_REASON));
+
+/**
+ * Why a settlement did NOT produce a prompt. Closed for the same reason the wake reasons are, and reported by name so
+ * "the harness waited" is never read as "the harness was never asked".
+ */
+export const WAKE_SUPPRESSION = Object.freeze({
+  /** The day's task purpose is achieved and the day is not near its end. */
+  objectiveMet: "objective_met",
+  /** A programme is running, or an admission has no terminal yet: the Mod's pass will re-enter on its own. */
+  bodyStillWorking: "body_still_working",
+  /** Nothing has moved, but not for long enough to say nothing will. */
+  quietPeriod: "quiet_period",
+  /** The day-end offer was already made and is unanswered: an offer repeated until answered is the ping this removes. */
+  alreadyOffered: "already_offered",
+});
+
+export const WAKE_SUPPRESSION_REASONS = Object.freeze(Object.values(WAKE_SUPPRESSION));
+
+/**
+ * How long nothing may move before a quiet world counts as stopped.
+ *
+ * The same bound the runner's own `waitForSessionQuiet` already waits out inside a turn, so a wake and the turn that
+ * follows it cannot disagree about what "quiet" means. A Stardew action that is still running publishes a receipt or a
+ * progress fact far more often than this; a body that has finished publishes nothing at all.
+ */
+export const QUIET_BOUND_MS = 20_000;
+
+/**
+ * The facts that decide one wake. Every one is read; none is inferred from another.
+ *
+ * `stalled` is the Host's own `execution_stalled` fact, not this loop's reading of silence: the pump owns the bound and
+ * the re-arm, and a second derivation here would be a second authority for the same claim.
+ */
+export function decideWake({
+  objectiveMet,
+  programRunning = false,
+  admissionPending = false,
+  quietMs = null,
+  quietBoundMs = QUIET_BOUND_MS,
+  lateDay = false,
+  dayEndOffered = false,
+  stalled = false,
+} = {}) {
+  // A stall outranks everything, including a day whose work is done: it is the body saying it will not continue.
+  if (stalled === true) return Object.freeze({ wake: true, reason: WAKE_REASON.stallWake });
+  if (programRunning === true || admissionPending === true)
+    return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.bodyStillWorking });
+  // An unmeasured quiet is not quiet: "we could not tell" must not licence a wake.
+  if (!Number.isFinite(quietMs) || quietMs < quietBoundMs)
+    return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.quietPeriod });
+  if (objectiveMet !== true) return Object.freeze({ wake: true, reason: WAKE_REASON.continuation });
+  if (lateDay !== true) return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.objectiveMet });
+  if (dayEndOffered === true) return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.alreadyOffered });
+  return Object.freeze({ wake: true, reason: WAKE_REASON.dayEndOffer });
+}
+
+/**
+ * The same decision for one turn of a day, with the day's opening stated where the day knows it is opening.
+ *
+ * The first prompt of a day is the one wake that is not caused by anything the world did: the harness is asking her to
+ * begin. Keeping it out of `decideWake` is what lets that function answer only the settlement question.
+ */
+export function decideDayWake({ turnIndex, ...facts } = {}) {
+  if (turnIndex === 0) return Object.freeze({ wake: true, reason: WAKE_REASON.dayStart });
+  return decideWake(facts);
+}
