@@ -16,9 +16,12 @@ const VERDICT = join(REPO, "tools", "live-run", "round-verdict.mjs");
 const START = Date.parse("2026-11-10T09:00:00.000Z");
 const iso = (ms) => new Date(ms).toISOString();
 const RECORD = "session-1.jsonl";
+// One player task, repeated: the objectives count dedupes by TEXT, so a fixture that delivers the same words in every
+// batch asks for one task however many turns it takes.
+const TASK_TEXT = "门前横着开一条长地，三格宽、二十格长，清出来种上。";
 const SESSION_RELATIVE = ["runtime-root", "contexts", "ctx-1", "surface-sessions", "game-1", "sessions", RECORD];
 
-const assistantTurn = (atMs, calls) => ({
+const assistantTurn = (atMs, calls, text = "ok") => ({
   type: "message",
   // A turn whose timestamp cannot be read is a real shape (a killed run), and it is the one case where the bucket
   // seconds cannot add up to the measured wall - so the fixture has to be able to write one.
@@ -27,7 +30,7 @@ const assistantTurn = (atMs, calls) => ({
     role: "assistant",
     durationMs: 1000,
     content: [
-      { type: "text", text: "ok" },
+      { type: "text", text },
       ...calls.map((call) => ({ type: "toolCall", id: call.id, name: call.name, arguments: call.arguments ?? {} })),
     ],
   },
@@ -95,7 +98,11 @@ const playerTask = (atMs, text) => ({
 });
 
 /**
- * Lay the turns out one per `stepMs`, writing each call's answer just before the next turn starts.
+ * Lay the prompt turns out one per `stepMs`, writing each call's answer just before the next turn starts.
+ *
+ * A step OPENS a prompt turn by delivering a fact batch, unless it says `prompt: false` - which is how a fixture writes
+ * the second and third assistant message of ONE turn. `text` sets that message's own text, because the speech-only
+ * reading prices the text as well as the turn.
  *
  * `answered` decides which calls get an answer - a run killed inside a call is a real shape (its session ends on the
  * question), and it is the one case where the two status counts must disagree rather than be reconciled.
@@ -103,9 +110,9 @@ const playerTask = (atMs, text) => ({
 function sessionFile({ steps, stepMs = 2000, answered = () => true }) {
   const entries = [{ type: "session", timestamp: iso(START) }];
   const at = (index) => START + (index + 1) * stepMs;
-  entries.push(playerTask(START + 500, "门前横着开一条长地，三格宽、二十格长，清出来种上。"));
   steps.forEach((step, index) => {
-    entries.push(assistantTurn(step.timestamp ?? at(index), step.calls));
+    if (step.prompt !== false) entries.push(playerTask(at(index) - 500, TASK_TEXT));
+    entries.push(assistantTurn(step.timestamp ?? at(index), step.calls, step.text));
     for (const call of step.calls) {
       if (call.answer === undefined || !answered(index, call)) continue;
       const text = typeof call.answer === "string" ? call.answer : JSON.stringify(call.answer);
@@ -217,7 +224,10 @@ test("the status-call count is read twice and the two readings are asserted to a
         /^ {4}other\b/mu,
         "there is no residual bucket: every turn lands in one that names what it did",
       );
-      assert.match(block, /accounting\s+6 bucket turns = 6 measured/u);
+      assert.match(block, /accounting\s+6 bucket turns = 6 prompt turns/u);
+      assert.equal(bucketTurns(block, "speech_only"), 0, "every turn here called something");
+      assert.match(block, /assistant_messages\s+6 \(1\.0 per prompt turn\)/u);
+      assert.match(block, /model_seconds_per_completed_action\s+6\.0s \/ 4 actions = 1\.5s per action/u);
       assert.match(block, /actions_done\s+4 nodes reached `succeeded` of 4 with a known state/u);
       assert.match(block, /objectives_done\s+2 = 1 declared player task\(s\)[^+]*\+ 1 target families \(till_soil\)/u);
       assert.match(block, /floor_turns\s+3 = ceil\(4\/4\) \+ 2/u);
@@ -446,14 +456,63 @@ test("a tool-less turn is speech_only, a plan turn is a dispatch, and no residua
       assert.equal(bucketTurns(block, "speech_only"), 20);
       assert.equal(bucketTurns(block, "dispatches"), 20);
       assert.doesNotMatch(block, /^ {4}other\b/mu, "the 45 % bucket that described nothing is gone");
-      assert.match(block, /accounting\s+40 bucket turns = 40 measured/u);
-      assert.match(block, /bucket seconds = \S+ wall, nothing unaccounted/u);
-      assert.match(block, /speech_only_share\s+[\d.]+% of the wall in 20 turn\(s\) that made no tool call/u);
-      assert.match(block, /median turn \d+\.\d+s/u);
-      assert.match(block, /the largest recoverable cost is not polling/u);
+      assert.match(block, /accounting\s+40 bucket turns = 40 prompt turns/u);
+      assert.match(block, /of the \S+ wall, nothing unaccounted/u);
+      assert.match(block, /speech_only\s+20 of 40 prompt turns made no tool call: \S+ \(\d+\.\d% of the wall\)/u);
+      assert.match(block, /median turn \d+\.\ds, median text 2 chars/u);
+      assert.match(block, /speech_only_messages 20 messages · \S+ - the same turns read by message/u);
+      assert.match(block, /against 0\.0s in 0 poll turn\(s\)/u);
     },
   );
 });
+
+// THE UNIT. A bucket is a prompt turn, so a turn that spoke, dispatched and then spoke again is ONE dispatch turn - and
+// the messages it took are counted on the message line, not as three turns.
+test("three assistant messages in one prompt turn are ONE dispatch turn, and the message line counts three", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: sessionFile({
+        steps: [
+          { calls: [], text: "先看一眼。" },
+          { calls: [planCall("c1", 2, "cut_weeds")], prompt: false },
+          { calls: [], prompt: false, text: "排好了，两格都交给你。" },
+        ],
+      }),
+    }),
+    (runDir) => {
+      const block = efficiencyBlock(runVerdict(runDir));
+      assert.equal(bucketTurns(block, "dispatches"), 1, "two text messages do not make a second turn");
+      assert.equal(bucketTurns(block, "speech_only"), 0);
+      assert.match(block, /prompt_turns\s+1 - one turn per delivered user message/u);
+      assert.match(block, /assistant_messages\s+3 \(3\.0 per prompt turn\)/u);
+      assert.match(block, /^ {4}dispatches +1 +3\.0s/mu, "the turn's seconds are its three messages' seconds");
+      assert.match(block, /accounting\s+1 bucket turns = 1 prompt turns/u);
+      assert.match(block, /accounting_messages\s+3\.0s of assistant time over 3 messages/u);
+    },
+  ));
+
+test("two text-only messages in one prompt turn are ONE speech_only turn, and the message line counts two", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: sessionFile({
+        steps: [
+          { calls: [], text: "嗯。" },
+          { calls: [], prompt: false, text: "想想。" },
+        ],
+      }),
+    }),
+    (runDir) => {
+      const block = efficiencyBlock(runVerdict(runDir));
+      assert.equal(bucketTurns(block, "speech_only"), 1);
+      assert.match(block, /^ {4}speech_only +1 +2\.0s/mu);
+      assert.match(block, /speech_only\s+1 of 1 prompt turns made no tool call/u);
+      // 5 characters across two messages: the reading prices the turn's own text, so a short turn is visible as short.
+      assert.match(block, /median text 5 chars, largest 5 chars/u);
+      assert.match(block, /speech_only_messages 2 messages · 2\.0s/u);
+    },
+  ));
 
 test("seconds that reach no bucket fail the verdict loudly, naming how many", () => {
   const steps = [

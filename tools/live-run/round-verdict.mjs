@@ -300,13 +300,16 @@ const PLAN_ANSWER_TOOLS = new Set(["stardew_plan_work", "stardew_submit_action_p
 const PROGRAM_STATUS_TOOL = "stardew_action_program_status";
 // A question is anything the companion asked the WORLD - observe, tiles, shape, look_up, scene, search, catalog.
 //
-// TWO BUCKETS, AND WHY `other` IS GONE. Measured 2026-11-10 (round44): `other` was 117 turns and 919.6 s - 45 % of the
-// wall clock - and it described nothing: 107 of those turns made NO tool call at all (865.4 s, 42.6 %) and 10 were
-// `ctx_reduce` (54.2 s). A bucket that is 45 % of a run is not a residual, it is the answer with its name left out. A
-// turn with no tool call is the model speaking only (and is where the recoverable cost of a fact batch that starts a
-// turn for one line actually lives); a turn that called a bookkeeping tool priced the run's management, not its work.
-// Everything else falls into `questions` (a real conversation with the player), an accepted or refused dispatch, or a
-// poll - so a tool added tomorrow still lands in a named bucket instead of landing nowhere.
+// TWO BUCKETS, AND WHY `other` IS GONE. Measured 2026-11-10 (round44): `other` was 117 assistant messages and 919.6 s -
+// 45 % of the wall clock - and it described nothing: 107 of those messages made NO tool call at all and 10 were
+// `ctx_reduce`. A bucket that is 45 % of a run is not a residual, it is the answer with its name left out. A TURN with no
+// tool call is the model speaking only (and is where the recoverable cost of a fact batch that starts a turn for one line
+// actually lives); a turn that called a bookkeeping tool priced the run's management, not its work. Everything else falls
+// into `questions` (a real conversation with the player), an accepted or refused dispatch, or a poll - so a tool added
+// tomorrow still lands in a named bucket instead of landing nowhere.
+//
+// The same run is why the buckets count prompt turns: those 107 messages were 31 turns (241.8 s, 11.9 % of the wall), and
+// the other 76 sat inside turns that had dispatched or polled.
 const HOUSEKEEPING_TOOLS = new Set([
   PROGRAM_STATUS_TOOL,
   "stardew_stop_action",
@@ -362,7 +365,19 @@ function stripSystemReminder(text) {
 }
 
 /**
- * One turn per assistant message, with the answer each of its calls received.
+ * One PROMPT TURN per delivered user message, with every assistant message that answered it.
+ *
+ * A turn is the span from one delivered user message to the next: a fact batch was handed over, and everything the
+ * companion did about it belongs to that one turn. It is not an assistant message. Measured on `round44`
+ * (2026-11-10): 109 delivered batches produced 257 assistant messages, so pricing each message as a turn reported
+ * `speech_only` as 107 turns and 42.6 % of the wall, where the turns that spoke and did nothing were 31 and 11.9 % - the
+ * other 76 were messages inside turns that had dispatched or polled, and a turn that dispatched is a dispatch turn.
+ *
+ * `startMs` is one first-message duration BEFORE that message's own timestamp, because the session writes a message when
+ * the provider returns it: `timestamp` is the END and `durationMs` the provider's time. Without the shift the first
+ * message's provider time sits before the wall clock opens, which reads as message durations overlapping each other
+ * instead of as a span that contains them. Measured over 1528 turns in the 55 sessions of that run directory: with the
+ * shift, no turn's span is shorter than the model time inside it.
  *
  * An answer is matched by ITS OWN `toolCallId`, never by position: a turn that asks three `plan_shape` questions gets
  * three result entries, and the one that answers the third is not the one beside it. A call with no answer stays null -
@@ -380,24 +395,59 @@ function sessionTurns(entries) {
     });
   }
   const turns = [];
+  const messages = [];
+  let open = null;
+  let deliveries = 0;
   let lastEventAtMs = null;
   for (const entry of entries) {
     const atMs = Date.parse(entry.timestamp);
     if (Number.isFinite(atMs)) lastEventAtMs = atMs;
     const message = entry?.message;
+    // A delivered batch OPENS a turn; the assistant messages that follow it are that turn's messages until the next one.
+    if (message?.role === "user") {
+      open = null;
+      deliveries += 1;
+      continue;
+    }
     if (message?.role !== "assistant") continue;
-    turns.push({
-      atMs,
-      durationMs: typeof message.durationMs === "number" ? message.durationMs : null,
-      calls: (message.content ?? [])
-        .filter((part) => part?.type === "toolCall")
-        .map((part) => ({
-          name: typeof part.name === "string" ? part.name : "",
-          answer: answers.get(part.id) ?? null,
-        })),
-    });
+    if (open === null) {
+      open = {
+        startMs: null,
+        endMs: null,
+        durationMs: 0,
+        priced: true,
+        answeredDelivery: deliveries > 0,
+        messages: [],
+        calls: [],
+        chars: 0,
+      };
+      turns.push(open);
+    }
+    const durationMs = typeof message.durationMs === "number" ? message.durationMs : null;
+    const content = Array.isArray(message.content) ? message.content : [];
+    const calls = content
+      .filter((part) => part?.type === "toolCall")
+      .map((part) => ({
+        name: typeof part.name === "string" ? part.name : "",
+        atMs,
+        answer: answers.get(part.id) ?? null,
+      }));
+    const chars = content.reduce(
+      (total, part) => total + (part?.type === "text" && typeof part.text === "string" ? part.text.length : 0),
+      0,
+    );
+    const record = { atMs, durationMs, hasTool: calls.length > 0, chars };
+    open.messages.push(record);
+    messages.push(record);
+    open.calls.push(...calls);
+    open.chars += chars;
+    if (open.startMs === null && Number.isFinite(atMs)) open.startMs = atMs - (durationMs ?? 0);
+    if (durationMs === null) open.priced = false;
+    else open.durationMs += durationMs;
   }
-  return { turns, lastEventAtMs };
+  for (const [index, turn] of turns.entries())
+    turn.endMs = index + 1 < turns.length ? turns[index + 1].startMs : lastEventAtMs;
+  return { turns, messages, deliveries, lastEventAtMs };
 }
 
 function median(values) {
@@ -439,7 +489,9 @@ function statusSnapshots(turns) {
   for (const turn of turns)
     for (const call of turn.calls) {
       if (call.name !== PROGRAM_STATUS_TOOL || call.answer === null) continue;
-      waitMs += Math.max(0, call.answer.atMs - turn.atMs);
+      // From the message that ISSUED the call, not from the turn's first message: a turn can hold several messages, and
+      // measuring the wait from the turn's opening would count the work before the call as part of the wait.
+      waitMs += Math.max(0, call.answer.atMs - call.atMs);
       const snapshot = call.answer.payload?.snapshot ?? null;
       if (typeof snapshot?.programId === "string") byProgram.set(snapshot.programId, snapshot);
     }
@@ -629,44 +681,47 @@ const seconds = (ms) => (Number.isFinite(ms) ? `${(ms / 1000).toFixed(1)}s` : "n
 const ratio = (actual, floor) =>
   Number.isFinite(actual) && Number.isFinite(floor) && floor > 0 ? `${(actual / floor).toFixed(1)}x` : "not_measured";
 
-/** Whether a long gap was the game owning the actor rather than nothing happening: the status call that opened it. */
-function isWaitingOnTheGame(turn, gapMs) {
+/**
+ * Whether a long turn was the game owning the actor rather than nothing happening: the status call inside it.
+ *
+ * The wait is measured from the message that issued the call to the answer's own timestamp, so a turn that spoke first
+ * and then polled attributes the wait to the poll rather than to the speaking.
+ */
+function isWaitingOnTheGame(turn, restMs) {
   const waited = turn.calls
     .filter((call) => call.name === PROGRAM_STATUS_TOOL && call.answer !== null)
-    .map((call) => call.answer.atMs - turn.atMs);
+    .map((call) => call.answer.atMs - call.atMs);
   if (waited.length === 0) return false;
-  return Math.max(...waited) * 2 >= gapMs;
+  return Math.max(...waited) * 2 >= restMs;
 }
 /**
- * The measured efficiency of one session.
+ * The measured efficiency of one session, priced on PROMPT TURNS.
  *
- * BUCKETS SUM TO THE TURN COUNT BY CONSTRUCTION: each assistant turn is attributed once, by its first call (a turn that
- * dispatches and then polls is a dispatch turn - the poll is part of that dispatch's cost). Seconds are attributed one
- * turn per gap from it to the NEXT turn, so `sum(buckets) + silence = measured wall` holds exactly: a gap longer than
- * 3 x T_turn keeps T_turn for the turn itself and gives the remainder to `silence`, which is the stall class. The only
- * time that can reach no bucket is a stretch bounded by a turn whose timestamp cannot be read, and that is printed as
- * MISSING rather than absorbed.
+ * BUCKETS SUM TO THE TURN COUNT BY CONSTRUCTION: each prompt turn is attributed once, by its first call (a turn that
+ * dispatches and then polls is a dispatch turn - the poll is part of that dispatch's cost).
+ *
+ * Seconds are the MODEL time of the turn - the provider latency of the assistant messages it holds. Each turn owns the
+ * wall from its own start to the next turn's start, so `sum(turn seconds) + outside_messages = measured wall` holds
+ * exactly: what the model spent outside a message in that span is the tool execution and the wait for the next batch.
+ * The time that can reach no bucket is a turn whose timestamp cannot be read or whose messages carry no duration, and
+ * that is printed as MISSING rather than absorbed.
  */
 function measureEfficiency({ sessionFile, result, repoRoot }) {
   if (sessionFile === null) return { missing: "no_session" };
   const entries = sessionEntries(sessionFile);
-  const { turns, lastEventAtMs } = sessionTurns(entries);
+  const { turns, messages, deliveries, lastEventAtMs } = sessionTurns(entries);
   if (turns.length === 0) return { missing: "no_turns", sessionFile };
 
-  const gaps = turns.map((turn, index) => {
-    const nextAtMs = index + 1 < turns.length ? turns[index + 1].atMs : lastEventAtMs;
-    // A turn whose own timestamp cannot be read has no measurable gap on either side of it; `null` says so, and the
-    // accounting line names the seconds that therefore reach no bucket instead of silently folding them into one.
-    return Number.isFinite(nextAtMs) && Number.isFinite(turn.atMs) ? Math.max(0, nextAtMs - turn.atMs) : null;
-  });
-  const tTurnMs = median(gaps.slice(0, -1)) ?? median(turns.map((turn) => turn.durationMs));
-  const firstAtMs = turns[0].atMs;
+  const spans = turns.map((turn) => turnSpanMs(turn));
+  const tTurnMs = median(spans.slice(0, -1)) ?? median(messages.map((message) => message.durationMs));
   const wallMs =
-    Number.isFinite(lastEventAtMs) && Number.isFinite(firstAtMs) ? Math.max(0, lastEventAtMs - firstAtMs) : null;
+    Number.isFinite(lastEventAtMs) && Number.isFinite(turns[0].startMs)
+      ? Math.max(0, lastEventAtMs - turns[0].startMs)
+      : null;
 
   const work = measureWork(result, turns);
   const succeeded = work.states.get("succeeded") ?? 0;
-  const buckets = attributeTurns(turns, gaps, tTurnMs);
+  const buckets = attributeTurns(turns, tTurnMs);
   const families = new Set([...work.families].filter((actionId) => !NAVIGATION_ACTION_IDS.has(actionId)));
   const playerTasks = declaredPlayerTasks(entries);
   const objectives = playerTasks.texts.size + families.size;
@@ -683,12 +738,17 @@ function measureEfficiency({ sessionFile, result, repoRoot }) {
   );
   const statusCallsByParse = countToolCallsByParse(sessionFile, PROGRAM_STATUS_TOOL);
   const statusAnswers = countToolAnswers(sessionFile, PROGRAM_STATUS_TOOL);
+  const answeredDeliveries = turns.filter((turn) => turn.answeredDelivery).length;
 
   return {
     sessionFile,
     turns: turns.length,
+    deliveries,
+    undeliveredTurns: turns.length - answeredDeliveries,
+    unansweredDeliveries: Math.max(0, deliveries - answeredDeliveries),
+    messageAxis: messageAxisOf(messages),
     tTurnMs,
-    providerMs: median(turns.map((turn) => turn.durationMs)),
+    providerMs: median(messages.map((message) => message.durationMs)),
     wallMs,
     work,
     succeeded,
@@ -707,8 +767,14 @@ function measureEfficiency({ sessionFile, result, repoRoot }) {
   };
 }
 
-/** Each turn once, by its first call; each gap once, split between its turn and the stall class. */
-function attributeTurns(turns, gaps, tTurnMs) {
+/**
+ * Each prompt turn once, by its first call; each turn's span split into model time and the rest.
+ *
+ * `outsideMs` is the wall time inside the turns that the model spent outside a message: tool execution and the wait for
+ * the next batch. `overlapMs` is the other direction - a turn whose messages claim more time than its own span holds -
+ * and it is named rather than netted off, because it means two recorded fields disagree about the same seconds.
+ */
+function attributeTurns(turns, tTurnMs) {
   const buckets = new Map([
     ["polls", { turns: 0, ms: 0 }],
     ["questions", { turns: 0, ms: 0 }],
@@ -720,39 +786,94 @@ function attributeTurns(turns, gaps, tTurnMs) {
   const counts = {
     pollsBeforeDispatch: 0,
     unansweredTurns: 0,
-    silenceMs: 0,
-    silenceGaps: 0,
-    silenceWaitingMs: 0,
-    unmeasuredGaps: 0,
+    outsideMs: 0,
+    overlapMs: 0,
+    overlapTurns: 0,
+    unmeasuredTurns: 0,
+    unpricedTurns: 0,
+    longTurns: 0,
+    longOutsideMs: 0,
+    longWaitingMs: 0,
   };
-  // The speech-only turns' own durations, kept so the bucket can print the MEDIAN turn rather than only its total: a
-  // share says where the wall went, a median says what one such turn costs the next run that wants to avoid it.
+  // The speech-only turns' own durations and text sizes, kept so the bucket can print the MEDIAN turn and the MEDIAN text
+  // rather than only its total: a share says where the wall went, a median says what one such turn costs - and seven
+  // seconds spent on forty characters is a different finding from seven seconds spent on a paragraph.
   const speechDurations = [];
+  const speechChars = [];
   let dispatchedSoFar = 0;
-  for (let index = 0; index < turns.length; index += 1) {
-    const turn = turns[index];
-    const first = turn.calls[0] ?? null;
-    const bucket = bucketOfTurn(first, () => dispatchedSoFar, counts);
+  for (const turn of turns) {
+    const bucket = bucketOfTurn(turn.calls[0] ?? null, () => dispatchedSoFar, counts);
     if (bucket === "dispatches") dispatchedSoFar += 1;
-    if (bucket === "speech_only" && Number.isFinite(turn.durationMs)) speechDurations.push(turn.durationMs);
-
-    const gapMs = gaps[index];
-    if (gapMs === null) counts.unmeasuredGaps += 1;
-    const ownMs = gapMs === null ? 0 : Math.min(gapMs, gapMs > 3 * tTurnMs ? tTurnMs : gapMs);
-    const overMs = gapMs === null ? 0 : Math.max(0, gapMs - ownMs);
-    if (overMs > 0) {
-      counts.silenceGaps += 1;
-      counts.silenceMs += overMs;
-      if (isWaitingOnTheGame(turn, gapMs)) counts.silenceWaitingMs += overMs;
+    if (bucket === "speech_only") {
+      speechChars.push(turn.chars);
+      if (turn.priced) speechDurations.push(turn.durationMs);
     }
     buckets.get(bucket).turns += 1;
-    buckets.get(bucket).ms += ownMs;
+    if (!turn.priced) {
+      counts.unpricedTurns += 1;
+      continue;
+    }
+    buckets.get(bucket).ms += turn.durationMs;
+    const spanMs = turnSpanMs(turn);
+    if (spanMs === null) {
+      counts.unmeasuredTurns += 1;
+      continue;
+    }
+    const restMs = spanMs - turn.durationMs;
+    if (restMs < 0) {
+      counts.overlapTurns += 1;
+      counts.overlapMs -= restMs;
+      continue;
+    }
+    counts.outsideMs += restMs;
+    if (spanMs > 3 * tTurnMs) {
+      counts.longTurns += 1;
+      counts.longOutsideMs += restMs;
+      if (isWaitingOnTheGame(turn, restMs)) counts.longWaitingMs += restMs;
+    }
   }
   return {
     buckets: [...buckets.entries()].map(([name, bucket]) => ({ name, ...bucket })),
     speechOnlyTurnMs: median(speechDurations),
+    speechOnlyChars: median(speechChars),
+    speechOnlyCharsLargest: speechChars.length === 0 ? null : Math.max(...speechChars),
     ...counts,
   };
+}
+
+/** A turn's own share of the wall: from its start to the next turn's start, or to the last recorded event. */
+function turnSpanMs(turn) {
+  return Number.isFinite(turn.startMs) && Number.isFinite(turn.endMs) ? turn.endMs - turn.startMs : null;
+}
+
+/**
+ * The same assistant messages, grouped the other way: what the message axis says about the same seconds.
+ *
+ * Both axes sum the SAME field - one provider latency per assistant message - so their totals are comparable and only the
+ * grouping differs; a message inside a dispatching turn is not a second turn.
+ */
+function messageAxisOf(messages) {
+  const axis = {
+    count: messages.length,
+    total: 0,
+    withTool: 0,
+    withToolCount: 0,
+    withoutTool: 0,
+    withoutToolCount: 0,
+    withoutDuration: 0,
+  };
+  for (const message of messages) {
+    if (message.hasTool) axis.withToolCount += 1;
+    else axis.withoutToolCount += 1;
+    if (message.durationMs === null) {
+      axis.withoutDuration += 1;
+      continue;
+    }
+    axis.total += message.durationMs;
+    if (message.hasTool) axis.withTool += message.durationMs;
+    else axis.withoutTool += message.durationMs;
+  }
+  return axis;
 }
 
 /**
@@ -788,12 +909,41 @@ const notMeasured = (field) => `not_measured (${field})`;
 /** The wall clock that reached no bucket at all: positive when seconds are missing, negative on the impossible side. */
 function accountingMissingMs(report) {
   if (report.wallMs === null) return 0;
-  const measured = report.buckets.reduce((total, bucket) => total + bucket.ms, 0) + report.silenceMs;
+  const measured = report.buckets.reduce((total, bucket) => total + bucket.ms, 0) + report.outsideMs - report.overlapMs;
   return report.wallMs - measured;
 }
 
 /** Below this the two sides of the accounting are the same number read twice; above it, one of them is wrong. */
 const ACCOUNTING_TOLERANCE_MS = 1000;
+
+/**
+ * Why the turn axis does not add up, or null when it does.
+ *
+ * The turns' own spans partition the wall exactly, so the accounting has two shapes to fail on and neither is an
+ * identity: seconds that reached no bucket at all (a turn whose timestamp or message duration cannot be read), and a
+ * turn whose declared message durations claim more time than its own span holds (two recorded fields disagreeing about
+ * the same seconds). A run where either happens prints no shares, because a share of a wall that did not add up prices
+ * nothing.
+ */
+function accountingFailure(report) {
+  if (report.wallMs === null) return null;
+  const missingMs = accountingMissingMs(report);
+  if (Math.abs(missingMs) >= ACCOUNTING_TOLERANCE_MS)
+    return {
+      missingMs,
+      text: `${seconds(Math.abs(missingMs))} of the ${seconds(report.wallMs)} wall reaches no bucket (${String(
+        report.unmeasuredTurns,
+      )} turn(s) with no readable timestamp, ${String(report.unpricedTurns)} with no message duration)`,
+    };
+  if (report.overlapMs >= ACCOUNTING_TOLERANCE_MS)
+    return {
+      missingMs,
+      text: `${seconds(report.overlapMs)} of declared message duration in ${String(
+        report.overlapTurns,
+      )} turn(s) claims more time than those turns' spans hold`,
+    };
+  return null;
+}
 
 function efficiencyLines(options) {
   const report = measureEfficiency(options);
@@ -806,12 +956,12 @@ function efficiencyLines(options) {
   if (report.missing === "no_turns")
     return [
       `efficiency          not_measured (session ${report.sessionFile})`,
-      "  field             session assistant messages - the record holds none, so there is no turn to price",
+      "  field             session assistant messages - the record holds none, so there is no prompt turn to price",
     ];
   // A BLOCK WHOSE BUCKETS DO NOT ADD UP MUST FAIL, not print shares that are fractions of different wholes. The
   // verdict's job here is arithmetic, so a wall clock with seconds in no bucket is a defect in this report rather than a
   // reading of the run, and it exits non-zero after printing the seconds it could not place.
-  if (Math.abs(accountingMissingMs(report)) >= ACCOUNTING_TOLERANCE_MS) process.exitCode = 1;
+  if (accountingFailure(report) !== null) process.exitCode = 1;
   return formatEfficiency(report);
 }
 
@@ -823,17 +973,30 @@ function formatEfficiency(report) {
   const crossCheckAgrees =
     report.crossCheck.turnWalk === report.crossCheck.parse && report.crossCheck.parse === report.crossCheck.answers;
   const totalBucketTurns = report.buckets.reduce((total, bucket) => total + bucket.turns, 0);
-  const totalBucketMs = report.buckets.reduce((total, bucket) => total + bucket.ms, 0);
-  const measuredMs = totalBucketMs + report.silenceMs;
-  const largest = [...report.buckets, { name: "silence", turns: 0, ms: report.silenceMs }].sort(
+  const turnMs = report.buckets.reduce((total, bucket) => total + bucket.ms, 0);
+  const measuredMs = turnMs + report.outsideMs - report.overlapMs;
+  const largest = [...report.buckets, { name: "outside_messages", turns: 0, ms: report.outsideMs }].sort(
     (left, right) => right.ms - left.ms,
   )[0];
+  const axis = report.messageAxis;
+  const perTurn = axis.count / report.turns;
+  const failure = accountingFailure(report);
+  const missingMs = accountingMissingMs(report);
+  const bucket = (name) => report.buckets.find((entry) => entry.name === name) ?? { turns: 0, ms: 0 };
+  const speech = bucket("speech_only");
+  const chars = (value) => (value === null ? "not_measured" : `${value} chars`);
 
   const lines = [];
   const push = (line) => lines.push(line);
   push(`efficiency          session ${report.sessionFile}`);
   push(
-    `  ${label("T_turn")} ${seconds(report.tTurnMs)}  median gap between ${report.turns} assistant turns (session message.timestamp; provider latency median ${seconds(report.providerMs)})`,
+    `  ${label("prompt_turns")} ${String(report.turns)} - one turn per delivered user message, running to the next one${deliveryNote(report)}`,
+  );
+  push(
+    `  ${label("assistant_messages")} ${String(axis.count)} (${perTurn.toFixed(1)} per prompt turn) - the unit the buckets below do NOT count: a turn that dispatched keeps every message it took to dispatch`,
+  );
+  push(
+    `  ${label("T_turn")} ${seconds(report.tTurnMs)}  median span from one prompt turn to the next (provider latency median ${seconds(report.providerMs)} over ${String(axis.count)} assistant messages)`,
   );
   push(
     `  ${label("W")} measured ${work.largest === null ? notMeasured("no accepted plan carried a node count") : `${work.largest} nodes`} (largest plan this run accepted) | declared cap ${
@@ -873,37 +1036,64 @@ function formatEfficiency(report) {
         : `${report.floorTurns} turns x ${seconds(report.tTurnMs)}`
     } + ${seconds(report.native)}`,
   );
-  push(`  ${label("actual")} ${report.turns} turns, ${seconds(report.wallMs)} (first turn -> last recorded event)`);
+  push(
+    `  model_seconds_per_completed_action  ${
+      succeeded === 0
+        ? notMeasured("no node reached `succeeded`, so there is no action to divide by")
+        : `${seconds(turnMs)} / ${succeeded} actions = ${(turnMs / succeeded / 1000).toFixed(1)}s per action (assistant time / actions_done)`
+    }`,
+  );
+  push(
+    `  ${label("actual")} ${report.turns} prompt turns (${axis.count} assistant messages), ${seconds(report.wallMs)} (first turn -> last recorded event)`,
+  );
   push(
     `  ${label("ratio")} turns ${ratio(report.turns, report.floorTurns)} | wall ${ratio(report.wallMs, report.floorWallMs)}`,
   );
-  push(`  ${label("buckets")} turns   seconds   share`);
-  for (const bucket of report.buckets)
+  push(`  ${label("buckets")} turns   seconds   share   (a turn = one prompt turn)`);
+  for (const bucketRow of report.buckets)
     push(
-      `${statusLabel(bucket.name)} ${String(bucket.turns).padStart(4)}  ${seconds(bucket.ms).padStart(8)}  ${shares(bucket.ms)}`,
+      `${statusLabel(bucketRow.name)} ${String(bucketRow.turns).padStart(4)}  ${seconds(bucketRow.ms).padStart(8)}  ${shares(bucketRow.ms)}`,
     );
   push(
-    `${statusLabel("silence")} ${String(0).padStart(4)}  ${seconds(report.silenceMs).padStart(8)}  ${shares(report.silenceMs)}${silenceNote(report)}`,
+    `${statusLabel("outside_messages")} ${String(0).padStart(4)}  ${seconds(report.outsideMs).padStart(8)}  ${shares(report.outsideMs)}${outsideNote(report)}`,
   );
-  const missingMs = accountingMissingMs(report);
+  const tail =
+    report.wallMs === null
+      ? " wall not_measured (no readable span from the first prompt turn to the last event)"
+      : failure === null
+        ? ` of the ${seconds(report.wallMs)} wall, nothing unaccounted`
+        : Math.abs(missingMs) >= ACCOUNTING_TOLERANCE_MS
+          ? ` against the ${seconds(report.wallMs)} wall, ${missingMs > 0 ? "MISSING" : "SURPLUS"} ${seconds(Math.abs(missingMs))} in no bucket`
+          : ` against the ${seconds(report.wallMs)} wall, ${seconds(report.overlapMs)} of message duration beyond the spans those turns hold`;
   push(
-    `  ${label("accounting")} ${totalBucketTurns} bucket turns ${totalBucketTurns === report.turns ? "=" : "!="} ${report.turns} measured | ${seconds(
-      measuredMs,
-    )} bucket seconds ${Math.abs(missingMs) < ACCOUNTING_TOLERANCE_MS ? "=" : "!="} ${seconds(report.wallMs)} wall,${
-      Math.abs(missingMs) < ACCOUNTING_TOLERANCE_MS
-        ? " nothing unaccounted"
-        : ` ${missingMs > 0 ? "MISSING" : "SURPLUS"} ${seconds(Math.abs(missingMs))} in no bucket`
+    `  ${label("accounting")} ${totalBucketTurns} bucket turns ${totalBucketTurns === report.turns ? "=" : "!="} ${report.turns} prompt turns | ${seconds(
+      turnMs,
+    )} turn seconds + ${seconds(report.outsideMs)} outside_messages${
+      report.overlapMs > 0 ? ` - ${seconds(report.overlapMs)} overlapping message duration` : ""
+    } = ${seconds(measuredMs)}${tail}`,
+  );
+  if (failure !== null)
+    push(`  ${label("ACCOUNTING FAILURE")} ${failure.text}: the buckets do not add up, so no share here can be read`);
+  push(
+    `  ${label("accounting_messages")} ${seconds(axis.total)} of assistant time over ${String(axis.count)} messages = ${seconds(
+      axis.withoutTool,
+    )} in ${String(axis.withoutToolCount)} with no tool call + ${seconds(axis.withTool)} in ${String(
+      axis.withToolCount,
+    )} with one - the same field the turn axis sums, grouped the other way${
+      axis.withoutDuration === 0
+        ? ""
+        : `; ${String(axis.withoutDuration)} message(s) carry no duration, so their seconds are in neither sum`
     }`,
   );
-  if (Math.abs(missingMs) >= ACCOUNTING_TOLERANCE_MS)
-    push(
-      `  ${label("ACCOUNTING FAILURE")} ${seconds(Math.abs(missingMs))} of the ${seconds(report.wallMs)} wall reaches no bucket (${String(
-        report.unmeasuredGaps,
-      )} turn(s) with no readable timestamp): the buckets do not add up, so no share here can be read`,
-    );
-  const speech = report.buckets.find((bucket) => bucket.name === "speech_only") ?? { turns: 0, ms: 0 };
   push(
-    `  ${label("speech_only_share")} ${shareToATenth(speech.ms, report.wallMs)} of the wall in ${String(speech.turns)} turn(s) that made no tool call, median turn ${seconds(report.speechOnlyTurnMs)} - the largest recoverable cost is not polling, it is how often a fact batch starts a turn that produces only words`,
+    `  ${label("speech_only")} ${String(speech.turns)} of ${report.turns} prompt turns made no tool call: ${seconds(
+      speech.ms,
+    )} (${shareToATenth(speech.ms, report.wallMs)} of the wall), median turn ${seconds(
+      report.speechOnlyTurnMs,
+    )}, median text ${chars(report.speechOnlyChars)}, largest ${chars(report.speechOnlyCharsLargest)}`,
+  );
+  push(
+    `  ${label("speech_only_messages")} ${String(axis.withoutToolCount)} messages · ${seconds(axis.withoutTool)} - the same turns read by message, where a turn's extra messages are not extra turns`,
   );
   if (report.unansweredTurns > 0 || report.crossCheck.parse !== report.crossCheck.answers)
     push(
@@ -916,6 +1106,16 @@ function formatEfficiency(report) {
   push(`  ${label("cross-check")} ${crossCheckText(report.crossCheck, crossCheckAgrees)}`);
   push(`  ${label("reading")} ${readingText(report, largest)}`);
   return lines;
+}
+
+/** The deliveries that produced nothing, said out loud rather than folded into a turn that did work. */
+function deliveryNote(report) {
+  const parts = [];
+  if (report.undeliveredTurns > 0)
+    parts.push(`${String(report.undeliveredTurns)} turn(s) ran before the first delivered message`);
+  if (report.unansweredDeliveries > 0)
+    parts.push(`${String(report.unansweredDeliveries)} delivered message(s) produced no assistant message`);
+  return parts.length === 0 ? "" : ` (${parts.join("; ")})`;
 }
 
 function nativeSourceText(report) {
@@ -935,13 +1135,22 @@ function nativeSourceText(report) {
   return "not_measured: neither result.json programOutcomes[].executions[].atMs/settledAtMs nor a status-call wait exists in this session";
 }
 
-function silenceNote(report) {
-  if (report.silenceGaps === 0) return "";
-  const waiting =
-    report.silenceWaitingMs === 0
+/**
+ * What the wall spent inside the turns without the model inside a message, and the long turns that held it.
+ *
+ * A long turn is one whose span exceeds 3 x T_turn: that is the stall class - a batch handed over and then nothing
+ * happening - and splitting it out keeps a single stuck turn from being read as turns that did work.
+ */
+function outsideNote(report) {
+  const held =
+    report.longTurns === 0
       ? ""
-      : `, ${seconds(report.silenceWaitingMs)} of it inside a status call waiting on the game`;
-  return `  (${report.silenceGaps} gap(s) > 3 x T_turn${waiting})`;
+      : `; ${String(report.longTurns)} long turn(s) held ${seconds(report.longOutsideMs)} of it${
+          report.longWaitingMs === 0
+            ? ""
+            : `, ${seconds(report.longWaitingMs)} inside a status call waiting on the game`
+        }`;
+  return `  (time the wall spent inside those turns with the model not inside a message: tool execution and the wait for the next batch${held})`;
 }
 
 function crossCheckText({ turnWalk, parse, answers }, agrees) {
@@ -958,13 +1167,15 @@ function readingText(report, largest) {
     report.floorWallMs === null
       ? " (wall not_measured: no native time reached this run)"
       : ` (${seconds(report.floorWallMs)})`;
-  const speech = report.buckets.find((bucket) => bucket.name === "speech_only") ?? { turns: 0, ms: 0 };
-  // THE SECOND LARGEST RECOVERABLE COST, SAID OUT LOUD. Polling was the leading suspect and it is 1 % of this run;
-  // speech-only turns are the number to beat, so the reading names them rather than leaving the reader to subtract.
+  const bucket = (name) => report.buckets.find((entry) => entry.name === name) ?? { turns: 0, ms: 0 };
+  const speech = bucket("speech_only");
+  const polls = bucket("polls");
+  // SPEECH-ONLY AGAINST POLLING, as a comparison rather than a fixed story: which of the two is the larger recoverable
+  // cost is a fact about the run, and stating it as a number keeps the reading honest on a run where polling wins.
   const recoverable =
     speech.turns === 0
       ? ""
-      : `; speech_only is ${shareToATenth(speech.ms, report.wallMs)} of the wall, so the largest recoverable cost is not polling but how often a fact batch starts a turn that produces only words`;
+      : `; speech_only is ${shareToATenth(speech.ms, report.wallMs)} of the wall in ${String(speech.turns)} prompt turn(s) that made no tool call (${seconds(speech.ms)}), against ${seconds(polls.ms)} in ${String(polls.turns)} poll turn(s)`;
   return `with the same work at ${width} nodes per plan and zero polls, this run would have cost ${turns}${wall}, ${ratio(
     report.wallMs,
     report.floorWallMs,
