@@ -5,6 +5,7 @@ using System.Linq;
 using Microsoft.Xna.Framework;
 using StardewValley;
 using StardewValley.Buildings;
+using StardewValley.Extensions;
 using StardewValley.GameData.Buildings;
 
 namespace GameBuddy.Stardew;
@@ -63,6 +64,25 @@ namespace GameBuddy.Stardew;
 // is. The building's cost and materials are read from its own `Data/Buildings` entry, never
 // from a list in this file.
 //
+// TWO WORLD PRECONDITIONS, BOTH ASKED OF THE ENGINE. The counter has two gates this action does not
+// inherit by inheriting the seam, and neither is a rule of ours to invent:
+//
+//   * DAYLIGHT. `Game1.isStartingToGetDarkOut(location)` (Game1.cs:4496) - `timeOfDay >=
+//     getStartingToGetDarkTime(location)` (:4501-4513), the season's own dusk (1700 fall / 1500
+//     winter / 1800 otherwise). Refused as `not_daylight:<timeOfDay>:daylight_ends_<boundary>`, a code
+//     rather than prose so the window travels with the refusal.
+//   * TILE. `FindFarmBuildingSiteBlockage` walks `buildStructure`'s OWN placement loop (:16826-16881) -
+//     the `Size` rectangle, every `AdditionalPlacementTiles` area, then the human door - and names the
+//     first tile that fails. Refused as `build_site_blocked:<x>,<y>:<why>`, in the refusal's evidence
+//     rather than its code: `,` is outside the reason-code alphabet (`FarmhandExecutionJournal`
+//     `IsValidReasonCode`), so the tile is spelled the way `RefusalLayer.FormatPoint` spells it and the
+//     code stays `build_farm_building_site_blocked`, which the native-local gate already matches on.
+//
+// BOTH REFUSE BEFORE ANYTHING IS SPENT, and both receipts carry the account they did not touch
+// (`money_before`/`money_after`/`money_delta=0`, `materials_before`/`materials_after`/
+// `materials_delta=0`). The spend is this handler's own, so a `rejected` receipt that did not show the
+// delta would be indistinguishable from a purchase that went wrong.
+//
 // ARGUMENTS are exactly `{ buildingType, x, y, expectedTargetId }`, all required (the wire
 // has no optional arguments). `buildingType` is the `Data/Buildings` id the commission is
 // for (the same value `Blueprint.Id` carries); `x`,`y` are the top-left footprint tile the
@@ -117,6 +137,17 @@ internal sealed partial class ExecutionManager
         if (!resolution.Accepted)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolution.ReasonCode, resolution.Evidence);
 
+        // NO COMMISSION IS TAKEN TONIGHT, and the answer is the engine's own: the same working hours
+        // Robin keeps are the hours a player would have to reach her counter in. Asked here, before the
+        // walk, because a request the clock refuses should not walk the body to the site first.
+        if (DescribeBuildFarmBuildingDaylightRefusal(location) is string night)
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                night,
+                $"{BuildFarmBuildingIdentity(expectedTargetId, location, targetX, targetY, buildingType)};{DescribeBuildFarmBuildingUnspent(resolution.Data!)}");
+
         // 5.2: out of the interaction reach, walk in rather than refuse. The reach is this
         // family's Chebyshev-1 of the named footprint tile; every position-independent check
         // above is re-run in the shared execution body after the walk.
@@ -137,6 +168,15 @@ internal sealed partial class ExecutionManager
         BuildFarmBuildingSiteResolution resolution = ResolveBuildFarmBuildingSite(location, buildingType, x, y, targetId);
         if (!resolution.Accepted)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, resolution.ReasonCode, resolution.Evidence);
+        // Re-asked on the game thread: the walk takes ticks and the clock does not wait for it, so a
+        // commission that was in daylight when it was requested can arrive after dusk.
+        if (DescribeBuildFarmBuildingDaylightRefusal(location) is string night)
+            return this.RememberTerminal(
+                requestId,
+                executionId,
+                ExecutionState.Rejected,
+                night,
+                $"{BuildFarmBuildingIdentity(targetId, location, x, y, buildingType)};{DescribeBuildFarmBuildingUnspent(resolution.Data!)}");
         if (!IsTileWithinChebyshevRadius(Game1.player, x, y, 1))
             return this.RememberTerminal(
                 requestId,
@@ -225,6 +265,13 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
+    /// The one tile of a commission's footprint that the engine refuses, and the rule that refuses it:
+    /// `off_map`, `not_buildable`, `actor_in_footprint`, `additional_placement_tile`,
+    /// `human_door_off_map` or `human_door_blocked`.
+    /// </summary>
+    internal sealed record BuildFarmBuildingSiteBlockage(int X, int Y, string Why);
+
+    /// <summary>
     /// Re-derives the named commission on the game thread. Every mismatch is a NAMED refusal,
     /// never a silent re-target.
     ///
@@ -255,10 +302,10 @@ internal sealed partial class ExecutionManager
         string liveId = BuildFarmBuildingSiteTargetId(location, buildingType, x, y);
         string identity = $"target={liveId};location={location.NameOrUniqueName};tile={x},{y};building_type={buildingType}";
 
-        if (!IsFarmBuildingFootprintFree(location, data, x, y))
+        if (FindFarmBuildingSiteBlockage(location, data, x, y) is { } blockage)
             return BuildFarmBuildingSiteResolution.Reject(
                 "build_farm_building_site_blocked",
-                $"{identity};footprint={data.Size.X}x{data.Size.Y};published={expectedTargetId};tile_building={(location.getBuildingAt(new Vector2(x, y))?.buildingType.Value ?? "none")}");
+                $"build_site_blocked:{blockage.X},{blockage.Y}:{blockage.Why};{identity};footprint={data.Size.X}x{data.Size.Y};published={expectedTargetId};{DescribeBuildFarmBuildingUnspent(data)}");
 
         if (!string.Equals(liveId, expectedTargetId, StringComparison.Ordinal))
             return BuildFarmBuildingSiteResolution.Reject(
@@ -342,6 +389,49 @@ internal sealed partial class ExecutionManager
         string.IsNullOrEmpty(buildingType) ? "none" : buildingType;
 
     /// <summary>
+    /// The daylight window this action builds in, or null while it is still daylight. The window is the
+    /// ENGINE'S, not a number declared here: `Game1.isStartingToGetDarkOut(location)`
+    /// (Game1.cs:4496) is `timeOfDay &gt;= getStartingToGetDarkTime(location)`, and
+    /// `getStartingToGetDarkTime` (:4501-4513) is the season's own dusk - 1700 in fall, 1500 in winter,
+    /// 1800 otherwise, 1800 on the island. A constant in this file would be a second authority for a
+    /// boundary the game already computes, and it would be wrong for two seasons out of four.
+    ///
+    /// <para>
+    /// The refusal names both halves: the time it refused at and the boundary that had passed, e.g.
+    /// `not_daylight:1840:daylight_ends_1800`. A reason code, not evidence prose, because a caller can
+    /// then ask "not daylight" without parsing a sentence - and because the boundary it prints is read
+    /// from the engine on the same call.
+    /// </para>
+    /// </summary>
+    internal static string? DescribeBuildFarmBuildingDaylightRefusal(GameLocation location)
+    {
+        if (!Game1.isStartingToGetDarkOut(location)) return null;
+        int endsAt = Game1.getStartingToGetDarkTime(location);
+        return $"not_daylight:{Game1.timeOfDay}:daylight_ends_{endsAt.ToString(CultureInfo.InvariantCulture)}";
+    }
+
+    /// <summary>
+    /// The account a refusal leaves untouched, in the receipt's own field names: the money the wallet
+    /// holds and the materials this commission would have consumed, each read once and reported as
+    /// unchanged, with the delta that claims it.
+    ///
+    /// <para>
+    /// It exists because the spend is the action's OWN (the engine's seam charges nothing, so the handler
+    /// performs the two native statements `CarpenterMenu.ConsumeResources` does). A `rejected` receipt is
+    /// therefore only evidence of a refusal if it also shows that nothing was charged - a caller reading
+    /// `rejected` beside a wallet that fell has no way to tell a refused build from a purchased one.
+    /// </para>
+    /// </summary>
+    private static string DescribeBuildFarmBuildingUnspent(BuildingData data)
+    {
+        IReadOnlyList<(string QualifiedItemId, int Amount)> materials = BuildFarmBuildingMaterials(data);
+        int money = Game1.player.Money;
+        int held = CountBuildFarmBuildingMaterials(materials);
+        return $"money_before={money};money_after={money};money_delta=0"
+            + $";materials_before={held};materials_after={held};materials_delta=0";
+    }
+
+    /// <summary>
     /// `GameLocation.isBuildable` read against THIS location. The game's own version reads `Game1.currentLocation`
     /// internally (GameLocation.cs:17120/17122/17126), so a caller passing a location the actor is not standing in
     /// gets answers about the wrong map - measured live as `scanned=5200:buildable=0` for the farm while the actor
@@ -377,36 +467,81 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// True when the whole footprint (and the human-door tile the game's own placement check
-    /// requires) is buildable and free right now. This is the LIVE half of the target
-    /// re-resolution: the opaque id can only prove the request names the site it was handed,
-    /// while this read proves the site still exists as a place a building can go.
+    /// The first tile of the commission's footprint that the ENGINE would refuse, with the rule that
+    /// refuses it, or null when every tile of the whole footprint (and the human-door tile) is
+    /// placeable right now. This is the LIVE half of the target re-resolution: the opaque id can only
+    /// prove the request names the site it was handed, while this read proves the site still exists as
+    /// a place a building can go.
+    ///
+    /// <para>
+    /// THE RULE IS `GameLocation.buildStructure`'S OWN (GameLocation.cs:16826-16881), tile for tile: the
+    /// `Size` rectangle through `isBuildable`, then every `AdditionalPlacementTiles` area through
+    /// `isBuildable(tile, onlyNeedsToBePassable)`, then the human-door tile through
+    /// `isBuildable(door, true) || isPath(door)`. What it does NOT do is keep its own overlap test: a
+    /// building already standing on the tile is refused by `getBuildingAt` INSIDE `isBuildable`
+    /// (:17111), which is the same answer read from the one place that decides it, and a second
+    /// `buildings.Any(b =&gt; b.occupiesTile(...))` here could only disagree with it. `GameLocation.isBuildable`
+    /// itself reads `Game1.currentLocation` for the tile properties (:17120-17126), so the same-map
+    /// caller goes through `IsBuildableAtLocation` above; every site this predicate is asked about is
+    /// resolved on the map the actor stands on.
+    /// </para>
+    ///
+    /// <para>
+    /// WHY IT RETURNS THE TILE AND THE RULE, not a bool: `build_site_blocked:12,7:not_buildable` is what
+    /// a caller can act on - the tile to look at and the reason the game gives - while a bare `false`
+    /// says only that the site it was handed is no longer usable.
+    /// </para>
     /// </summary>
-    internal static bool IsFarmBuildingFootprintFree(GameLocation location, BuildingData data, int x, int y)
+    internal static BuildFarmBuildingSiteBlockage? FindFarmBuildingSiteBlockage(GameLocation location, BuildingData data, int x, int y)
     {
         for (int offsetX = 0; offsetX < data.Size.X; offsetX++)
         {
             for (int offsetY = 0; offsetY < data.Size.Y; offsetY++)
             {
                 Vector2 tile = new(x + offsetX, y + offsetY);
-                if (!location.isTileOnMap(tile) || !IsBuildableAtLocation(location, (int)tile.X, (int)tile.Y))
-                    return false;
-                if (location.buildings.Any(building => building is not null && building.occupiesTile((int)tile.X, (int)tile.Y)))
-                    return false;
+                if (!location.isTileOnMap(tile))
+                    return new BuildFarmBuildingSiteBlockage((int)tile.X, (int)tile.Y, "off_map");
+                if (!IsBuildableAtLocation(location, (int)tile.X, (int)tile.Y))
+                    return new BuildFarmBuildingSiteBlockage((int)tile.X, (int)tile.Y, "not_buildable");
                 if (Game1.player.GetBoundingBox().Intersects(new Rectangle((x + offsetX) * 64, (y + offsetY) * 64, 64, 64)))
-                    return false;
+                    return new BuildFarmBuildingSiteBlockage((int)tile.X, (int)tile.Y, "actor_in_footprint");
+            }
+        }
+
+        foreach (BuildingPlacementTile extra in data.AdditionalPlacementTiles ?? new List<BuildingPlacementTile>(0))
+        {
+            foreach (Point point in extra.TileArea.GetPoints())
+            {
+                Vector2 tile = new(x + point.X, y + point.Y);
+                if (!location.isTileOnMap(tile))
+                    return new BuildFarmBuildingSiteBlockage((int)tile.X, (int)tile.Y, "off_map");
+                bool placeable = extra.OnlyNeedsToBePassable
+                    ? IsPassableBuildableAtLocation(location, tile)
+                    : IsBuildableAtLocation(location, (int)tile.X, (int)tile.Y);
+                if (!placeable)
+                    return new BuildFarmBuildingSiteBlockage((int)tile.X, (int)tile.Y, "additional_placement_tile");
             }
         }
 
         if (data.HumanDoor != new Point(-1, -1))
         {
             Vector2 door = new(x + data.HumanDoor.X, y + data.HumanDoor.Y + 1);
-            if (!location.isTileOnMap(door) || (!IsPassableBuildableAtLocation(location, door) && !location.isPath(door)))
-                return false;
+            if (!location.isTileOnMap(door))
+                return new BuildFarmBuildingSiteBlockage((int)door.X, (int)door.Y, "human_door_off_map");
+            if (!IsPassableBuildableAtLocation(location, door) && !location.isPath(door))
+                return new BuildFarmBuildingSiteBlockage((int)door.X, (int)door.Y, "human_door_blocked");
         }
 
-        return true;
+        return null;
     }
+
+    /// <summary>
+    /// True when the whole footprint is placeable right now. The boolean discovery, the fixture's Given
+    /// and the refusal all read the ONE predicate above, so what is advertised, what the fixture asserts
+    /// and what a request is refused for cannot drift apart.
+    /// </summary>
+    internal static bool IsFarmBuildingFootprintFree(GameLocation location, BuildingData data, int x, int y) =>
+        FindFarmBuildingSiteBlockage(location, data, x, y) is null;
 
     private static string BuildFarmBuildingIdentity(string targetId, GameLocation location, int x, int y, string buildingType) =>
         $"target={targetId};location={location.NameOrUniqueName};tile={x},{y};building_type={buildingType}";

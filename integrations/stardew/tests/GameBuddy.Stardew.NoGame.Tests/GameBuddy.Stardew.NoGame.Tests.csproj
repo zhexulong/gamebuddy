@@ -60,6 +60,7 @@
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\AssemblyInfo.cs" Link="AssemblyInfo.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BodySettledOwnershipSourceShapeTests.cs" Link="BodySettledOwnershipSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BuildFarmBuildingActionSourceShapeTests.cs" Link="BuildFarmBuildingActionSourceShapeTests.cs" />
+    <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BuildFarmBuildingPreconditionOrderTests.cs" Link="BuildFarmBuildingPreconditionOrderTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\BuildingContactWiringTests.cs" Link="BuildingContactWiringTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ChestRetrieveRollbackActionSourceShapeTests.cs" Link="ChestRetrieveRollbackActionSourceShapeTests.cs" />
     <Compile Include="..\GameBuddy.Stardew.Integration.Tests\ChestSeamProbe.cs" Link="ChestSeamProbe.cs" />

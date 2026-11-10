@@ -157,7 +157,9 @@ public sealed class BuildFarmBuildingActionSourceShapeTests
         resolve.Should().Contain("build_farm_building_insufficient_funds");
         resolve.Should().Contain("build_farm_building_insufficient_materials");
         resolve.Should().Contain("IsBuildableLocation()");
-        resolve.Should().Contain("IsFarmBuildingFootprintFree(");
+        // The footprint is asked through the ONE predicate discovery, the fixture's Given and this refusal share - now
+        // the blockage form of it, because a site refusal has to name the tile and the reason the engine refuses it.
+        resolve.Should().Contain("FindFarmBuildingSiteBlockage(");
         resolve.Should().Contain("string.Equals(liveId, expectedTargetId, StringComparison.Ordinal)");
     }
 
