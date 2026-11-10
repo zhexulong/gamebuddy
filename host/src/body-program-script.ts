@@ -5,6 +5,7 @@ import {
   forEachRules,
   MAX_FOR_EACH_LOOP_DOCUMENT_CHARS,
   MAX_FOR_EACH_ROWS,
+  MAX_FOR_EACH_RULES,
   PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL,
   PLAN_FOR_EACH_SOURCES,
   type PlanForEachLoop,
@@ -2167,8 +2168,8 @@ function emitForEachNode(value: unknown, actions: readonly PublishedPlanAction[]
     if (previousLoop !== undefined && sameForEachSource(previousLoop, loop)) {
       // ONE PASS PER SOURCE. Two `for_each` calls over the same rectangle are two RULES of one intent and not two intents:
       // separate passes would each report the tile the other one owns as `no_rule_matched`, and a tile both claim would
-      // be worked twice. The first rule stays where the caller wrote it; the rest join it in order.
-      const merged: PlanForEachLoop = withForEachRule(previousLoop, forEachRules(loop)[0]!);
+      // be worked twice. The first rule stays where the caller wrote it; every rule of the rest joins it in order.
+      const merged: PlanForEachLoop = mergeForEachRules(previousLoop, loop, state);
       // The LENGTH is measured on the document that would result, not on the call that was just read: composing rules
       // grows the document, and a check that only saw the new rule would let the merge cross the wire's bound.
       RefuseOversizedDocument(merged, state);
@@ -2201,6 +2202,48 @@ function emitForEachNode(value: unknown, actions: readonly PublishedPlanAction[]
   );
   state.acceptedSteps.push(state.builderCalls);
   state.callOfNode.set(state.nodes[state.nodes.length - 1]!.nodeId, state.builderCalls);
+}
+
+/**
+ * Two `for_each` calls over one source as ONE pass carrying every rule both of them wrote - or a refusal that says how
+ * much of the second one could not be carried.
+ *
+ * <p>
+ * MEASURED at `516e2559`: the merge appended exactly `forEachRules(loop)[0]`, so a loop whose own intent was TWO ordered
+ * rules - a predicate and an ordered follow-up under `then` - compiled `ok: true` with the follow-up gone. She wrote it,
+ * the compiler dropped it, and the answer said the plan was accepted.
+ * </p>
+ *
+ * <p>
+ * SO A MERGE IS ALLOWED ONLY WHEN EVERY RULE SURVIVES IT. `MAX_FOR_EACH_RULES` is the pass's own representable size and
+ * the Mod's reader enforces it, so a union past it has rules with nowhere to go; trimming would hand the Mod a pass the
+ * caller did not write. The refusal's counts are the INCOMING loop's: `<kept>:<dropped>` of the rules it wrote, so the
+ * caller reads which of its rules the pass has no room for rather than a document length.
+ * </p>
+ */
+function mergeForEachRules(
+  previous: PlanForEachLoop,
+  incoming: PlanForEachLoop,
+  state: PlanScriptState,
+): PlanForEachLoop {
+  const previousRules = forEachRules(previous);
+  const incomingRules = forEachRules(incoming);
+  const refuse = (kept: number): never =>
+    rejectPlanCall(
+      `plan_script_for_each_merge_would_drop_rules:${String(kept)}:${String(incomingRules.length - kept)}`,
+      state,
+    );
+  const room = Math.max(MAX_FOR_EACH_RULES - previousRules.length, 0);
+  if (incomingRules.length > room) refuse(room);
+  const merged = incomingRules.reduce(withForEachRule, previous);
+  // AND THE RESULT IS CHECKED AGAINST THE UNION rather than trusted to the fold: the rules the pass reports ARE the union,
+  // in the order the caller wrote them, or this refuses instead of shipping a pass that disagrees with her script.
+  const carried = forEachRules(merged);
+  const kept = incomingRules.filter(
+    (rule, index) => JSON.stringify(carried[previousRules.length + index]) === JSON.stringify(rule),
+  ).length;
+  if (kept !== incomingRules.length || carried.length !== previousRules.length + incomingRules.length) refuse(kept);
+  return merged;
 }
 
 /**

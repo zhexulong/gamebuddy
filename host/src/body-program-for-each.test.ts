@@ -12,7 +12,9 @@ import {
   type PlanForEachLoop,
   type PlanForEachRule,
   PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL,
+  PLAN_FOR_EACH_SOURCES,
   planFormExecutionUnavailableReason,
+  readForEachLoop,
 } from "./body-program-for-each.js";
 import {
   type CompiledPlan,
@@ -189,6 +191,97 @@ test("loops over different sources stay separate passes, so the inverse of compo
   );
   assert.equal(nodes.length, 2);
   for (const node of nodes) assert.equal(forEachRules(loopOf(node)).length, 1);
+});
+
+/**
+ * PROPERTY 2, SECOND HALF. A merge carries EVERY rule of both loops, or it refuses and names what it would drop.
+ *
+ * Measured at `516e2559`: the merge appended exactly `forEachRules(loop)[0]` - one rule per incoming loop - so a loop
+ * whose own intent was TWO ordered rules (its predicate, then an ordered follow-up under `then`) compiled `ok: true` with
+ * the follow-up silently gone. She wrote it, the compiler dropped it, and the answer said the plan was accepted.
+ *
+ * The population is the loop model's own `PLAN_FOR_EACH_SOURCES`, and each case renders its script from the SAME document
+ * the model reader is asked to read, so this cannot pass by agreeing with a second hand-written copy of the loop. A
+ * source kind with no document here is a blocked reading, named, rather than a silent skip.
+ */
+test("merge_rule_union: a merged pass carries every rule both loops wrote, or refuses naming what it would drop", () => {
+  // One source document per kind the model declares, checked against the declaration in BOTH directions below.
+  const sourceDocuments: Readonly<Record<string, unknown>> = Object.freeze({
+    area: { area: { x: 60, y: 18, w: 20, h: 3 } },
+    family: { family: "cropTargets" },
+    query: { query: { subject: "crop", only: "ready" } },
+  });
+  const undocumented = PLAN_FOR_EACH_SOURCES.filter((kind) => !(kind in sourceDocuments));
+  assert.deepEqual(
+    undocumented,
+    [],
+    `these loop source kinds have no document here, so the merge is unproven for them: ${undocumented.join(", ")}`,
+  );
+  const sources = PLAN_FOR_EACH_SOURCES.filter((kind) => kind in sourceDocuments);
+  assert.ok(sources.length > 0, "blocked: the loop model declares no source kind, so this gate examined nothing");
+
+  /** One loop over `source` with a rule of its own AND an ordered follow-up, both distinct per `offset`. */
+  const loopDocument = (source: unknown, offset: number): Record<string, unknown> => ({
+    source,
+    where: [{ col: { every: 2, offset } }],
+    do: offset === 0 ? { action: "cut_weeds" } : null,
+    then: [{ where: [{ row: { every: 2, offset } }], do: { action: "cut_weeds" } }],
+  });
+
+  for (const kind of sources) {
+    const first = loopDocument(sourceDocuments[kind], 0);
+    const second = loopDocument(sourceDocuments[kind], 1);
+    // The expected pass is the model's OWN reading of the two documents, concatenated in the order they were written.
+    const expected = [first, second].flatMap((document) => {
+      const reading = readForEachLoop(document, null);
+      assert.ok(reading.ok, `${kind}: the loop model must read its own document (${reading.ok ? "" : reading.code})`);
+      return forEachRules(reading.loop);
+    });
+    assert.equal(expected.length, 4, `${kind}: each loop writes two rules, so the union has four`);
+    const nodes = nodesOf(
+      compile(`builder.for_each(${JSON.stringify(first)});\nbuilder.for_each(${JSON.stringify(second)});`),
+    );
+    assert.equal(nodes.length, 1, `${kind}: two loops over one source are one pass, not two`);
+    const carried = forEachRules(loopOf(nodes[0]!));
+    expected.forEach((rule, index) =>
+      assert.deepEqual(
+        carried[index],
+        rule,
+        `${kind}: rule ${String(index)} did not survive the merge - ${JSON.stringify(rule)} is missing from ${JSON.stringify(carried)}`,
+      ),
+    );
+    assert.equal(
+      carried.length,
+      expected.length,
+      `${kind}: the pass carries ${String(carried.length)} rules of the ${String(expected.length)} the caller wrote`,
+    );
+  }
+
+  // THE REFUSAL ARM. `MAX_FOR_EACH_RULES` is what one pass can carry (the Mod's own reader enforces it), so a merge whose
+  // union crosses it has rules with nowhere to go. Trimming would hand the Mod a pass she did not write, so the answer
+  // names how many of THIS loop's rules could be kept and how many would be dropped, and the plan is refused whole.
+  const full = {
+    source: sourceDocuments.area,
+    do: { action: "cut_weeds" },
+    then: Array.from({ length: MAX_FOR_EACH_RULES - 1 }, () => ({ do: null })),
+  };
+  const extra = {
+    source: sourceDocuments.area,
+    where: [{ col: { every: 3, offset: 0 } }],
+    do: { action: "cut_weeds" },
+  };
+  const refused = compile(`builder.for_each(${JSON.stringify(full)});\nbuilder.for_each(${JSON.stringify(extra)});`);
+  assert.equal(refused.ok, false, "a merge that cannot carry every rule must refuse the plan, not compile it short");
+  assert.equal(
+    refused.ok ? "" : refused.reasonCode,
+    "plan_script_for_each_merge_would_drop_rules:0:1",
+    "the refusal names the incoming loop's rules: none kept of one written, and the pass is already full",
+  );
+  assert.deepEqual(
+    refused.ok ? [] : refused.dropped,
+    ["n02:plan_script_for_each_merge_would_drop_rules:0:1"],
+    "the call that could not be folded is named by its own position",
+  );
 });
 
 /**
