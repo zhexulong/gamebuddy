@@ -4,6 +4,7 @@ import { bridgePipeNameFor } from "./lib/stardew-bridge-pipe.mjs";
 import { dirname, join, resolve } from "node:path";
 import { launchStardewLiveRun, normalizeLiveRunWindowMode } from "./lib/stardew-live-run.mjs";
 import { listStardewProcessIds } from "./lib/windows-process-tree.mjs";
+import { judgeRunnerExit } from "./live-run/game/ladder-runner-exit.mjs";
 
 // One-shot orchestrator for the ladder live run.
 //
@@ -94,16 +95,17 @@ try {
   });
   runner.stderr.on("data", (c) => runnerLog.write(c));
 
-  const exitCode = await new Promise((resolvePromise) => runner.once("close", resolvePromise));
-  console.error("RUNNER_EXIT", exitCode);
+  const runnerExit = await new Promise((resolvePromise) => runner.once("close", resolvePromise));
+  console.error("RUNNER_EXIT", runnerExit);
   // Also reported at the end, because the eager line above only fires while this process is still alive to print it.
   console.error("SMAPI_EXIT_AT_END", JSON.stringify(game?.exit ?? null));
-  const resultLine = runnerStdout
-    .trim()
-    .split("\n")
-    .filter((line) => line.trim().startsWith("{"))
-    .at(-1);
-  console.log(resultLine ?? runnerStdout.slice(-2000));
+  const verdict = judgeRunnerExit({ exitCode: runnerExit, stdout: runnerStdout });
+  // THE CHILD'S EXIT CODE IS THIS PROCESS'S. It was printed above and then dropped, so the orchestrator ended 0 whatever
+  // the runner had said and every failure read as a pass. And a run that printed no verdict is never 0 either: 0 is the
+  // answer that hides it.
+  process.exitCode = verdict.exitCode;
+  if (verdict.reading !== null) console.error(verdict.reading, JSON.stringify({ runnerExitCode: runnerExit }));
+  console.log(verdict.verdictLine ?? runnerStdout.slice(-2000));
   console.error("RUNNER_LOG", logPath);
   console.error("SMAPI_LOG", laneLogPath);
 } finally {

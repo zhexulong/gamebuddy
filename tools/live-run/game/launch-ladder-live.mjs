@@ -42,6 +42,7 @@ import {
   writeKilledRunRecord,
 } from "../../lib/live-run-teardown.mjs";
 import { EVIDENCE_BUNDLE_FILES } from "../../lib/evidence-bundle.mjs";
+import { judgeResultFreshness, supersedePreviousResult } from "../core/result-freshness.mjs";
 import { announceStardewFixtureRoots, resolveStardewFixtureRoots } from "../../lib/stardew-fixture-roots.mjs";
 import { STARDEW_MOD_FOLDER } from "../../lib/stardew-mod-folder.mjs";
 import { normalizeLiveRunWindowMode } from "../../lib/stardew-live-run.mjs";
@@ -129,6 +130,14 @@ const templateName = option("template", saveName);
 const suffix = label.length > 0 ? `-${label}` : "";
 const resultPath = path.join(repo, "tools", `_${scenario}${suffix}.result.json`);
 const logPath = path.join(repo, "tools", `_${scenario}${suffix}-live-runner.log`);
+
+// A `result.json` this launch did not write is not this attempt's answer, and the tail below reads it as one: a run that
+// died before writing its own bundle left the previous run's file exactly where the report looks, so a crash printed a
+// pass. The previous bundle is MOVED ASIDE, never deleted - it is the only record of a run that may have cost 34
+// minutes - and `judgeResultFreshness` below is the second half of the same rule, for a bundle that appears during the
+// launch. One implementation, shared with `tools/live-run/multiday-iterate.mjs`.
+const supersededResult = supersedePreviousResult({ resultPath });
+if (supersededResult !== null) console.log("previous result moved aside:", path.basename(supersededResult));
 // Where the orchestrator writes what only IT measured: the game process it launched, how it ended, and the survivors it
 // could not reap. A file, because its stderr is a real console (SMAPI needs one) and nothing can be parsed out of it.
 const processReclamationPath = path.join(repo, "tools", `_${scenario}${suffix}-process-reclamation.json`);
@@ -420,6 +429,7 @@ takeoverWatch = setInterval(() => {
     killProcessTree(pid);
   }
 }, 5_000);
+const launchedAtMs = Date.now();
 childSettled = new Promise((resolve) => {
   const child = spawn(node, ["tools/_ladder-live-orchestrator.mjs"], {
     cwd: repo,
@@ -477,6 +487,12 @@ childSettled = new Promise((resolve) => {
 // settle window, and then exits the process - so this await is simply where an ORDINARY run continues.
 await childSettled;
 console.log("live runner exit:", exitCode, takenOver ? "(INVALID: fixture taken over)" : "");
+// The child's own exit code IS this process's exit code. It was captured above and used only for a console line, so a
+// launcher whose runner ended in failure still exited 0 - and whoever invoked the ladder read that as a pass.
+process.exitCode = exitCode ?? 1;
+// The second half of the stale-bundle rule: a bundle written before this launch is not this attempt's answer, whatever
+// it says, and it must not receive this attempt's teardown account either.
+const freshness = judgeResultFreshness({ resultPath, launchedAtMs });
 if (takenOver) {
   console.log("result file (if any) is marked invalid next to it; not restoring someone else's transaction");
   process.exitCode = 1;
@@ -560,10 +576,22 @@ try {
   fixtureRestore.ok = false;
   fixtureRestore.error = String(error?.message ?? error).slice(0, 300);
 }
-stampReclamationAccount(fixtureRestore);
+// A stale bundle is not this attempt's artifact: stamping it would write this launch's teardown account into another
+// run's record, so the account is refused by name instead.
+if (freshness.state === "stale") {
+  console.error(
+    "RECLAMATION_INCOMPLETE",
+    JSON.stringify({ reasonCode: "run_reclamation_not_stamped:stale_result_precedes_launch" }),
+  );
+} else {
+  stampReclamationAccount(fixtureRestore);
+}
 if (!fixtureRestore.ok) throw new Error(fixtureRestore.error);
 
-if (fs.existsSync(resultPath)) {
+if (freshness.state === "stale") {
+  console.log(freshness.reading);
+  process.exitCode = 1;
+} else if (freshness.state === "fresh") {
   const result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
   console.log(
     "RESULT",

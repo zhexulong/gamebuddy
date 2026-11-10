@@ -175,6 +175,27 @@ test("the population is the declared gate scripts plus the gate files no script 
   }
 });
 
+test("the census counts the gates that cannot see a zero population, and the ones that print no report at all", () => {
+  const report = (fields) =>
+    `#!/usr/bin/env node\nprocess.stdout.write('{"gate":"stub/v1","status":"passed","checks":[],${fields}}\\n');\n`;
+  const root = makeTree({
+    "tools/check-a.mjs": gateSource("// no proof here"),
+    // A report that names no field the shared judge reads: a zero in it is invisible.
+    "tools/check-invisible.mjs": report("'\"examined\":0'"),
+    // A report that does name one: the judge can see it, so it is not part of the count.
+    "tools/check-visible.mjs": report("'\"population\":3'"),
+    // A gate that prints no report is not judged on a population at all, and is not counted as reporting.
+    "tools/check-silent.mjs": gateSource("// a human sentence on stdout, no report"),
+  });
+  try {
+    const census = auditGateRedProofs({ root }).zeroPopulationPass;
+    assert.deepEqual(census.reporting.sort(), ["tools/check-invisible.mjs", "tools/check-visible.mjs"]);
+    assert.deepEqual(census.invisible, ["tools/check-invisible.mjs"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("the real tree: every gate file reaches a record, and this audit shows its own red proof", () => {
   const reading = auditGateRedProofs({ root: REPOSITORY_ROOT });
   const claimed = new Set(reading.records.flatMap((record) => record.entryFiles));
@@ -191,5 +212,15 @@ test("the real tree: every gate file reaches a record, and this audit shows its 
   assert.ok(
     JSON.parse(readFileSync(join(REPOSITORY_ROOT, "package.json"), "utf8")).scripts["audit:gate-red-proofs"],
     "audit:gate-red-proofs must be a declared script",
+  );
+  // The census the summary line prints, read from the same run: a population of zero would agree with itself, so the
+  // real tree must produce a non-empty reporting set and a count that is a subset of it.
+  assert.ok(
+    reading.zeroPopulationPass.reporting.length > 0,
+    "no gate file prints a report, so the census measured nothing",
+  );
+  assert.deepEqual(
+    reading.zeroPopulationPass.invisible.filter((file) => !reading.zeroPopulationPass.reporting.includes(file)),
+    [],
   );
 });

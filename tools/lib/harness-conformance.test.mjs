@@ -264,3 +264,43 @@ test("gate check reads the report a gate prints, not the words in its source", (
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// `0 findings` means nothing without `examined N`, and this suite used to accept any non-empty `checks` list: a gate
+// that printed `{"status":"passed","population":0}` beside its rules was read as a gate that passed. The rule is the
+// one `tools/lib/assert-non-vacuous.mjs` owns, so the three answers it can give are the three asserted here.
+//
+// red-proof: inject  a stub gate printing `population: 0` beside a passing `checks` list -> `gate_measured_nothing`
+//                    names the stub; the same stub with `population: 3`, and with a stated `allowEmpty` reason, pass
+test("a gate's report that examined nothing is blocked, and one that says why is not", () => {
+  const root = mkdtempSync(join(tmpdir(), "harness-vacuous-"));
+  try {
+    const stubTools = join(root, "tools");
+    mkdirSync(stubTools, { recursive: true });
+    const stub = "check-stub-vacuous.mjs";
+    const printing = (fields) =>
+      `const checks = [{ id: "one_rule", status: "passed" }];\n` +
+      `process.stdout.write(\`\${JSON.stringify({ gate: "stub/vacuous", status: "passed", checks, ${fields} })}\\n\`);\n`;
+
+    writeFileSync(join(stubTools, stub), printing("population: 0"));
+    const findings = checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], toolsDir: stubTools });
+    assert.deepEqual(
+      findings.map((entry) => entry.code),
+      ["gate_measured_nothing"],
+    );
+    assert.match(findings[0].detail, /^check-stub-vacuous\.mjs: gate_measured_nothing:stub\/vacuous:population/u);
+
+    // The control: the same report with objects in it is a measurement, so the finding above is about the population.
+    writeFileSync(join(stubTools, stub), printing("population: 3"));
+    assert.deepEqual(checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], toolsDir: stubTools }), []);
+
+    // A zero whose reason the gate states is `not_measured`, never `passed` and never a finding of this kind: the gate
+    // already handles its own empty population, and the suite does not overrule the reason.
+    writeFileSync(
+      join(stubTools, stub),
+      printing('population: 0, allowEmpty: "this gate judges a diff, and the diff is empty"'),
+    );
+    assert.deepEqual(checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], toolsDir: stubTools }), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

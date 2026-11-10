@@ -16,7 +16,8 @@
  *   3. `checkRunnerResolution`      - every action's resolved runner exists and imports without starting a session.
  *   4. `checkExperimentalRunners`   - every `STARDEW_EXPERIMENTAL_ACTION_RUNNERS` runner exists on disk.
  *   5. `checkGateFalsifiers`        - every `tools/check-*.mjs` gate either prints a self-verification report in its
- *                                     own default run or is declared in `GATES_WITHOUT_FALSIFIER` with a reason.
+ *                                     own default run or is declared in `GATES_WITHOUT_FALSIFIER` with a reason, and a
+ *                                     report that examined nothing is blocked rather than read as a pass.
  *
  * Checks 3 and 5 ask questions about what code DOES, so they run it and read the result: check 3 imports the runner,
  * check 5 runs the gate and reads the report it prints. Reading the source text for the words `import.meta.main` or
@@ -41,6 +42,7 @@ import {
   STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
   STARDEW_PUBLISHED_ACTION_GATES,
 } from "../stardew-action-gate-descriptors.mjs";
+import { assertNonVacuous } from "./assert-non-vacuous.mjs";
 import { importsWithoutStarting, preflightLiveRun } from "./live-run-preflight.mjs";
 import { fixtureActions, fixtureScenario } from "./stardew-native-local-player-fixture.mjs";
 import { STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
@@ -401,6 +403,12 @@ function runGateDefault(path, { spawn = spawnSync, timeoutMs = GATE_RUN_TIMEOUT_
  * A report is a JSON object carrying the gate's own id and status plus the outcomes of the rules it enumerates:
  * a non-empty `checks` list, or an explicit offline `mode` for a gate whose one judgement is the whole run. A
  * gate that prints a human sentence, or nothing, has no report - whatever its source happens to mention.
+ *
+ * `population` is the report judged by `tools/lib/assert-non-vacuous.mjs`, the ONE rule for a gate that measured
+ * nothing: a gate whose report states how many objects it examined has that number read here, so `passed` beside a
+ * zero is not accepted as a measurement. The judge is shared with `tools/check-ci-coverage.mjs` rather than restated,
+ * and a gate that already handles its empty population keeps its own answer - a stated `allowEmpty` reason stays
+ * `not_measured`, and a report that names no population at all stays unjudged.
  */
 function selfVerificationReport(stdout) {
   // `not_measured` is a gate saying it printed a report and could not measure part of it - the honest third answer
@@ -416,13 +424,14 @@ function selfVerificationReport(stdout) {
       continue;
     }
     if (typeof parsed?.gate !== "string" || !OUTCOME.has(parsed.status)) continue;
+    const population = assertNonVacuous(parsed);
     if (Array.isArray(parsed.checks)) {
       const outcomes = parsed.checks.filter((entry) => typeof entry?.id === "string" && OUTCOME.has(entry.status));
-      if (outcomes.length > 0) return { gate: parsed.gate, status: parsed.status, rules: outcomes.length };
+      if (outcomes.length > 0) return { gate: parsed.gate, status: parsed.status, rules: outcomes.length, population };
       continue;
     }
     if (typeof parsed.mode === "string" && parsed.mode.length > 0)
-      return { gate: parsed.gate, status: parsed.status, rules: 0 };
+      return { gate: parsed.gate, status: parsed.status, rules: 0, population };
   }
   return null;
 }
@@ -776,6 +785,11 @@ export function harnessGateNames(toolsDir) {
  * Require every enumerated gate to be either a `GATES_WITH_FALSIFIER` gate (whose own default run prints a
  * self-verification report) or a declared `GATES_WITHOUT_FALSIFIER` exception. A gate in neither - a new gate that
  * forgot both - is the finding.
+ *
+ * A report that a gate printed AND that examined nothing is the second finding: `0 findings` means nothing without
+ * `examined N`, so a report whose population the shared judge reads as zero-with-no-reason is `blocked`, naming the
+ * gate. This is where that class was silent - the suite used to accept any non-empty `checks` list, so a gate that
+ * measured nothing printed a pass and the suite agreed with it.
  */
 export function checkGateFalsifiers({
   gateNames,
@@ -798,14 +812,18 @@ export function checkGateFalsifiers({
     }
     if (selfReports) {
       const result = run(join(toolsDir, name));
-      if (selfVerificationReport(result.stdout) === null) {
+      const report = selfVerificationReport(result.stdout);
+      if (report === null) {
         findings.push(
           finding(
             "falsifier_signature_missing",
             `${name}: the default run printed no self-verification report (${describeRun(result)})`,
           ),
         );
+        continue;
       }
+      if (report.population?.status === "blocked")
+        findings.push(finding("gate_measured_nothing", `${name}: ${report.population.detail}`));
       continue;
     }
     if (!declaredExcept) findings.push(finding("gate_without_falsifier", name));

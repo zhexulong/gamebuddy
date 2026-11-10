@@ -100,6 +100,16 @@ const COMMENT_LINE = /^\s*(?:\/\/|\*|\/\*|#|--)/u;
 const MARKER_WINDOW = 3;
 /** A script whose command names another gate script is an aggregate: it inherits, it has no rule of its own. */
 const MEMBER_SCRIPT = /(?:^|[\s"'&|]+)((?:audit|check|test):[\w:-]+)/gu;
+/**
+ * A gate that prints a self-verification report: a JSON object carrying the gate's own id.
+ *
+ * The next two patterns are a STATIC reading of the gate's source, which is the only reading this audit can make of
+ * 300 gates without running them. They answer one question - could a zero population in this gate be seen? - and say
+ * so in the census line, so the number is never mistaken for an execution.
+ */
+const REPORT_LITERAL = /JSON\.stringify\(\{[^}]*\bgate\b|\bgate["']?\s*:\s*["'`]/u;
+/** The population fields `tools/lib/assert-non-vacuous.mjs` reads: name none of them and a zero is invisible. */
+const POPULATION_FIELD = /(?:^|[\s{,"'`])(?:population|fields|cases)["']?\s*[:,}]/u;
 
 const stripDecoration = (line) => line.replace(/^\s*(?:\/\*\*?|\*|\/\/|#|--)\s?/u, "").trim();
 
@@ -233,7 +243,28 @@ function classify({ root, gate, scriptNames, runnerText }) {
 }
 
 /**
- * The reading: for every declared gate, whether a red proof exists and where, or that it does not.
+ * The second census: gates that would pass on a zero population.
+ *
+ * A gate that prints a report and names no population the shared judge reads cannot be told apart from one that
+ * measured nothing - there is no number for `assertNonVacuous` to read, so `0 findings` stands beside no `examined N`.
+ * The audit prints the count and the members rather than leaving a reader to count them by hand. What this is NOT: an
+ * execution. It reads the gate's source; a population computed under another name (`examined`, `runsJudged`) reads as
+ * absent here even when the gate does defend it, which is why the members are printed - each one is a gate to inspect,
+ * not a proven defect.
+ */
+export function zeroPopulationPass({ root, files }) {
+  const reporting = [];
+  const invisible = [];
+  for (const file of files.map((entry) => entry.entryFiles[0])) {
+    const text = read(join(root, file));
+    if (text === null || !REPORT_LITERAL.test(text)) continue;
+    reporting.push(file);
+    if (!POPULATION_FIELD.test(text)) invisible.push(file);
+  }
+  return { reporting, invisible };
+}
+
+/** The reading: for every declared gate, whether a red proof exists and where, or that it does not.
  *
  * `status` is one of `proven`, `unproven`, `unproven_via_members` (an aggregate with an unproven member),
  * `pointer_missing` (a proof naming a file that is gone), `malformed` (a marker that cannot be read) or
@@ -265,6 +296,7 @@ export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
     },
     records: records.map((record) => ({ ...record, status: status.get(record.id) })),
     proven: records.filter((record) => status.get(record.id) === "proven"),
+    zeroPopulationPass: zeroPopulationPass({ root, files }),
     gaps,
     // A claim that cannot be read is reported whatever the baseline says. Recording it would be
     // recording the disease: the baseline exists for gates with no proof, not for proofs nobody can check.
@@ -385,6 +417,19 @@ function report({ reading, held, gaps }) {
     const proof = record.proofs[0];
     process.stdout.write(`  proven:${record.id} kind=${proof.kind} at=${proof.file}:${proof.line}\n`);
   }
+  // The census a reader would otherwise take a day to count: how many gates there are, how many carry a red proof, and
+  // how many cannot see a zero population at all. The three numbers belong on ONE line, because they are the answer to
+  // "how much of this is measured" and reading one without the others is how "0 violations" gets quoted.
+  const zero = reading.zeroPopulationPass;
+  process.stdout.write(
+    `  gates examined ${population.total} · with a red proof ${reading.proven.length} · ` +
+      `zero-population-pass ${zero.invisible.length}\n`,
+  );
+  process.stdout.write(
+    `  zero-population-pass reads ${zero.reporting.length} gate file(s) that print a report; these ` +
+      `${zero.invisible.length} name no \`population\`/\`fields\`/\`cases\` the shared judge reads, so a zero in them ` +
+      `is invisible: ${zero.invisible.map((file) => file.replace(/^tools\//u, "")).join(", ")}\n`,
+  );
   if (gaps) for (const gap of reading.gaps) process.stdout.write(`  gap:${gap.gate} status=${gap.status}\n`);
   for (const entry of reading.unexecutedProofs)
     process.stdout.write(`  proven_but_nothing_runs:${entry.gate}:${entry.pointer}\n`);

@@ -15,12 +15,8 @@
  */
 import { spawnSync } from "node:child_process";
 import { cleanOutputLines } from "../lib/subprocess-output.mjs";
-import {
-  assessResultFreshness,
-  assertResultLabel,
-  planResultFile,
-  supersededResultName,
-} from "../lib/live-run-bundle.mjs";
+import { assertResultLabel, planResultFile } from "../lib/live-run-bundle.mjs";
+import { judgeResultFreshness, supersedePreviousResult } from "./core/result-freshness.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -230,20 +226,15 @@ const env = { ...process.env, GAMEBUDDY_LADDER_WINDOW_MODE: "foreground" };
 // verbatim, which means `--label ../../x` could have written - or, if a future cleanup deleted it, erased - a file
 // outside `tools/`. The pattern is what `launch-ladder-live.mjs` itself accepts, so validating here rejects nothing
 // that would have worked.
-const resultName = `_${SCENARIO}-${label}.result.json`;
 const resultPath = planResultFile({ repo, scenario: SCENARIO, label });
 
 // A previous attempt's bundle is MOVED ASIDE, never deleted: this file is the only record of a run that may have cost
 // 34 minutes, and a review found the launcher reading an old one as if it were this attempt's (round40 attempt 1
 // answered `crossings 0 of 2` after attempt 2 had crossed both nights). Renaming keeps the evidence and removes the
 // hazard; deletion would have removed both.
-if (!dryRun && fs.existsSync(resultPath)) {
-  const stat = fs.lstatSync(resultPath);
-  if (!stat.isFile() || stat.isSymbolicLink())
-    throw new Error(`refusing to move a non-regular result aside: ${resultPath}`);
-  const aside = supersededResultName(resultPath, Date.now());
-  fs.renameSync(resultPath, aside);
-  console.log(`\nprevious bundle moved aside: ${path.basename(aside)}`);
+if (!dryRun) {
+  const aside = supersedePreviousResult({ resultPath });
+  if (aside !== null) console.log(`\nprevious bundle moved aside: ${path.basename(aside)}`);
 }
 
 const launchedAtMs = Date.now();
@@ -276,12 +267,10 @@ if (!fs.existsSync(result)) {
   process.exit(0);
 }
 // Freshness is the second half of the same defect: a bundle this launch did not write is not this run's answer,
-// whatever it says. Both decisions live in `tools/lib/live-run-bundle.mjs` so they can be asserted.
-const freshness = assessResultFreshness({ mtimeMs: fs.statSync(result).mtimeMs, launchedAtMs });
-if (!dryRun && !freshness.fresh) {
-  console.log(
-    `\nstale_result_precedes_launch: ${path.basename(result)} was written ${String(Math.round(freshness.behindMs / 1000))}s before this attempt started`,
-  );
+// whatever it says. Both decisions live in `tools/live-run/core/result-freshness.mjs` so they can be asserted.
+const freshness = judgeResultFreshness({ resultPath: result, launchedAtMs });
+if (!dryRun && freshness.state === "stale") {
+  console.log(`\n${freshness.reading}`);
   process.exit(2);
 }
 const parsed = JSON.parse(fs.readFileSync(result, "utf8"));
