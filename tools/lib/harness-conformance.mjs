@@ -366,6 +366,16 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // names both, an inline literal that disagrees with the cited authority is invented, a re-valued debt entry expires,
   // and a source set with no request path blocks rather than passes.
   "check-stardew-invented-gates.mjs",
+  // Prints `multiday_task_families examined N task-family pair(s) · rotation … · declared … · advertised … · status …`
+  // plus a `checks[]` verdict enumerating its nine checks (a rotation task's family is one the world publishes, every
+  // task action has a family, every rotation task names one, a declared family is one the catalog carries, an
+  // advertisement is whole, three population rules, and the guard that some rule claims every finding code it printed),
+  // so its default run is the report read here. Its falsifier
+  // is tools/lib/multiday-task-families.test.mjs: the shipped 2026-11-09 state - the coop Given declared but its call
+  // gone - is `task_requires_absent_family:tend_the_animals:animals_pets`, a commented-out call is not an invocation,
+  // `nameof(...)` in the declaration is not either, a half-written advertisement names the half that is missing, and an
+  // empty rotation or an empty advertisement is blocked rather than green.
+  "check-stardew-multiday-task-families.mjs",
   "check-stardew-native-notice-coverage.mjs",
   "check-stardew-postcondition-delta.mjs",
   // Prints a per-reading verdict, each naming the state it read - `applies-to-working-tree` (state=worktree),

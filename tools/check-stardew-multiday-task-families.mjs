@@ -21,6 +21,13 @@
  * .test.mjs`); this runs them against the real tree.
  * </p>
  *
+ * <p>
+ * The default run IS this gate's self-verification report: one summary line stating what was examined, then a JSON
+ * object carrying `population` and a `checks[]` entry for each rule below, its status DERIVED from the findings that
+ * came back. `every_finding_code_is_a_declared_rule` is what keeps that list honest - a finding no rule claims is red
+ * on the rule nobody wrote. `tools/check-harness-conformance.mjs` reads the report rather than this prose.
+ * </p>
+ *
  * <pre>
  *   node tools/check-stardew-multiday-task-families.mjs
  * </pre>
@@ -50,6 +57,56 @@ import { readStardewActionFamilies } from "./lib/stardew-published-action-regist
 const REPO = fileURLToPath(new URL("..", import.meta.url));
 const FIXTURES_DIR = join(REPO, "integrations", "stardew");
 
+/** The finding code a verdict entry carries, without the ids it names: `task_requires_absent_family:tend_the_animals` -> `task_requires_absent_family`. */
+const codeOf = (entry) => String(entry.code).split(":")[0];
+
+/** The one spelling of the code this file both writes (an unpaired advertisement) and claims as a rule. */
+const HALF_WRITTEN = "world_family_declaration_half_written";
+
+/**
+ * The rules this gate can report red, each owning the finding codes that break it.
+ *
+ * <p>
+ * `checks[]` is derived from this table and from the findings that came back - never asserted beside them, which is how
+ * a report ends up agreeing with itself. The three population rules are the zeroes told apart, so a run that examined
+ * nothing is `blocked` rather than `passed`.
+ * </p>
+ */
+const RULES = Object.freeze([
+  Object.freeze({ id: "rotation_task_names_a_published_family", codes: ["task_requires_absent_family"] }),
+  Object.freeze({ id: "every_task_action_has_a_family", codes: ["task_action_has_no_family"] }),
+  Object.freeze({ id: "every_rotation_task_names_a_family", codes: ["task_names_no_family"] }),
+  Object.freeze({ id: "every_declared_family_is_a_catalog_family", codes: ["unknown_declared_family"] }),
+  Object.freeze({ id: "every_advertisement_is_whole", codes: [HALF_WRITTEN] }),
+]);
+
+/** The per-rule outcomes a verdict supports, plus the guard that a finding is claimed by one of them. */
+function reportChecks(verdict) {
+  const drawn = verdict.findings.map(codeOf);
+  const population = (reason) => (verdict.blocked === reason ? "blocked" : "passed");
+  const checks = [
+    { id: "rotation_population_non_empty", status: population("no_rotation_tasks") },
+    { id: "world_advertisement_non_empty", status: population("world_advertises_no_target_family") },
+    { id: "task_family_pairs_examined", status: population("no_task_family_pair_examined") },
+  ];
+  for (const rule of RULES) {
+    const broken = verdict.findings.filter((entry) => rule.codes.includes(codeOf(entry)));
+    checks.push({
+      id: rule.id,
+      status: broken.length === 0 ? "passed" : "failed",
+      ...(broken.length === 0 ? {} : { detail: broken.map((entry) => entry.code).join(", ") }),
+    });
+  }
+  const claimed = new Set(RULES.flatMap((rule) => rule.codes));
+  const unclaimed = drawn.filter((code) => !claimed.has(code));
+  checks.push({
+    id: "every_finding_code_is_a_declared_rule",
+    status: unclaimed.length === 0 ? "passed" : "failed",
+    ...(unclaimed.length === 0 ? {} : { detail: `no rule claims ${[...new Set(unclaimed)].join(", ")}` }),
+  });
+  return checks;
+}
+
 if (import.meta.main) {
   // The fixture partials: every `ModEntry.Fixtures*.cs`, because the Given that provisions the targets and the composed
   // world that invokes it are different files of one partial class.
@@ -73,25 +130,30 @@ if (import.meta.main) {
 
   const verdict = multidayTaskFamilyVerdict({
     tasks: requirement.tasks,
-    violations: [
-      ...requirement.violations,
-      ...unpaired.map((entry) => ({ code: `world_family_declaration_half_written:${entry}` })),
-    ],
+    violations: [...requirement.violations, ...unpaired.map((entry) => ({ code: `${HALF_WRITTEN}:${entry}` }))],
     declarations,
     producedFamilies,
     knownFamilies: new Set(actionFamilies.values()),
   });
 
+  const checks = reportChecks(verdict);
+  process.stdout.write(
+    `multiday_task_families examined ${String(verdict.examined)} task-family pair(s) · rotation ` +
+      `${String(verdict.tasks)} · declared ${String(verdict.declaredFamilies)} · advertised ` +
+      `${verdict.advertised.join(",") || "none"} · status ${verdict.status}` +
+      `${verdict.blocked === null ? "" : ` (${verdict.blocked})`}\n`,
+  );
   process.stdout.write(
     `${JSON.stringify({
       gate: "stardew_multiday_task_families/v1",
       status: verdict.status,
       blocked: verdict.blocked,
       rotation: verdict.tasks,
-      examined: verdict.examined,
+      population: verdict.examined,
       declaredFamilies: verdict.declaredFamilies,
       advertised: verdict.advertised,
       absent: verdict.absent,
+      checks,
       findings: verdict.findings,
     })}\n`,
   );

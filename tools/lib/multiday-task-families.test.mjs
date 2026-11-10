@@ -36,7 +36,7 @@ function verdictFor({ sources, requirement = realRequirement() }) {
     tasks: requirement.tasks,
     violations: [
       ...requirement.violations,
-      ...unpaired.map((entry) => ({ code: `world_family_half_written:${entry}` })),
+      ...unpaired.map((entry) => ({ code: `world_family_declaration_half_written:${entry}` })),
     ],
     declarations,
     producedFamilies,
@@ -132,7 +132,9 @@ test("a half-written advertisement is a finding, not a silent one-sided claim", 
     sources: ['internal const string PlaySessionAnimalGivenFamily = "animals_pets";'],
   });
   assert.ok(
-    verdict.findings.some((entry) => entry.code.startsWith("world_family_half_written:family_without_provider")),
+    verdict.findings.some((entry) =>
+      entry.code.startsWith("world_family_declaration_half_written:family_without_provider"),
+    ),
     verdict.findings.map((entry) => entry.code).join(", "),
   );
 });
