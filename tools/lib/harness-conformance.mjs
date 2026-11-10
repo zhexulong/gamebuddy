@@ -751,6 +751,18 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       " named with its disposition instead of being silent, a filed state that now has a token is red, a stale entry is" +
       " red, and zero population is exit 2",
   },
+  {
+    gate: "check-persona-prose.mjs",
+    reason:
+      "its falsifier is tools/check-persona-prose.test.mjs, which drives the gate's own binary over real `git init` " +
+      "repositories: a commit that rewrites `data.system_prompt` 20 -> 8 characters with no marker is red and names " +
+      "that field, the same commit with `[persona]` and a PERSONA-REVISION.md line is green, marker-alone and " +
+      "record-alone are each red naming only the half that is missing, a sampler-only change prints a measured zero, " +
+      "the working-tree rewrite and the staged rewrite are each caught by their own mode, and a repository with no " +
+      "presets, a document that is not JSON and a range of no commits are blocked (exit 2) rather than green. It " +
+      "prints a population line and findings, not a `checks[]` report, so it is declared here rather than read by " +
+      "checkGateFalsifiers",
+  },
 ]);
 
 /** Every gate file the suite recognises: `tools/check-*.mjs`, minus tests and mutation scripts. */
