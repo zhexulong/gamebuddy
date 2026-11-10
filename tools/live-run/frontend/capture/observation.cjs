@@ -291,7 +291,16 @@ async function observe(page, say, label = "run", options = {}) {
 			say(`INJECTION ${label}: unobserved:${injection.reason}`);
 		} else {
 			for (const turn of injection.turns) {
-				say(`INJECTION ${label} turn=${turn.turnId} source=${injection.source}: ${describeInjection(turn)}`);
+				say(
+					turn.unobserved === null
+						? `INJECTION ${label} turn=${turn.turnId} source=${injection.source}: ${describeInjection(turn)}`
+						: `INJECTION ${label} turn=${turn.turnId} source=${injection.source}: unobserved:${turn.unobserved}`,
+				);
+				if (turn.census.undeclared.length > 0)
+					say(
+						`INJECTION ${label} turn=${turn.turnId}: section_not_in_declaration=${turn.census.undeclared.join(",")}:` +
+							`declaration=${JSON.stringify(injection.sections)}`,
+					);
 			}
 			const held = JSON.stringify(injection.heldKeys);
 			for (const turnId of injection.missing) {
@@ -304,6 +313,10 @@ async function observe(page, say, label = "run", options = {}) {
 				say(`INJECTION ${label}: capture_records_naming_a_turn_and_no_submission_key=${injection.unjoinable}`);
 			if (injection.unlabelled > 0)
 				say(`INJECTION ${label}: capture_records_with_no_turn_identity=${injection.unlabelled}`);
+			if (injection.truncated !== null)
+				say(
+					`INJECTION ${label}: capture_truncated:read_last=${injection.truncated.read}_of=${injection.truncated.total}`,
+				);
 		}
 	}
 
@@ -352,6 +365,17 @@ const REMOTE_CAPTURE_SOURCE = "remote-gateway";
  *                               records and no reading of it describes one wire.
  *   capture_file_empty          zero records is not a capture that saw zero requests.
  */
+/**
+ * How many of a capture's trailing records one reading describes.
+ *
+ * The capture file is appended for the whole life of a run, and a driver shares its page with the other
+ * nineteen, so a reading that described every record could grow without bound. 200 is far past what one
+ * frontend run posts - the run that produced these readings posted 4 - and bounded anyway, and a reading
+ * taken from the window says so (`capture_truncated:read_last=<n>_of=<total>`) instead of quietly
+ * describing part of a file.
+ */
+const MAX_READ_REQUESTS = 200;
+
 function readCapturedRequests(file, read = readFileSync) {
 	if (typeof file !== "string" || file.trim().length === 0)
 		return { ok: false, reason: "no_provider_request_capture:GB_SHOTS_WIRE_REQUESTS_is_unset" };
@@ -363,9 +387,13 @@ function readCapturedRequests(file, read = readFileSync) {
 	}
 	const lines = text.split("\n").filter((line) => line.trim().length > 0);
 	if (lines.length === 0) return { ok: false, reason: `no_provider_request_capture:capture_file_empty:${file}` };
+	const firstRead = Math.max(0, lines.length - MAX_READ_REQUESTS);
+	const window = lines.slice(firstRead);
 	const requests = [];
 	const sources = [];
-	for (const [index, line] of lines.entries()) {
+	for (const [position, line] of window.entries()) {
+		/* The message names the line IN THE FILE, not the line in the window. */
+		const index = firstRead + position;
 		let record;
 		try {
 			record = JSON.parse(line);
@@ -396,7 +424,13 @@ function readCapturedRequests(file, read = readFileSync) {
 				`no_provider_request_capture:capture_source_conflict:` +
 				`${source}_vs_${sources[conflicting]}:line_${conflicting + 1}`,
 		};
-	return { ok: true, source, requests };
+	return {
+		ok: true,
+		source,
+		requests,
+		total: lines.length,
+		truncated: firstRead > 0 ? { read: window.length, total: lines.length } : null,
+	};
 }
 
 /**
@@ -436,6 +470,12 @@ function readCapturedRequests(file, read = readFileSync) {
  * reader (`chat/wire-contract.mjs::wireMessageText`) rather than a second copy of the content-shape rule:
  * a message's `content` is a string on some turns and `{type,text}` parts on others, and the product puts
  * the authored catalogue in a user message (M0), not in the system prompt.
+ *
+ * `census` is the part that answers "did the memory, the world book, the identity block reach the model":
+ * it names every section `readInjectionDeclaration()` declares that this request carried, with the bytes
+ * each cost, and every declared section it did not carry. A request carrying no marker at all comes back
+ * `unobserved` rather than as a census of zeros, because this reader saw no injection rather than an
+ * injection that was empty.
  */
 async function injectionFacts(captured, turnIds) {
 	if (captured === null || captured === undefined || captured.ok !== true)
@@ -455,6 +495,9 @@ async function injectionFacts(captured, turnIds) {
 	 * capture has nothing to look it up by. Not a capture failure, so it carries no capture prefix.
 	 */
 	if (wanted !== null && wanted.length === 0) return { ok: false, reason: "observed_turn_has_no_turnId" };
+	const { readInjectionDeclaration } = await import("./injection-declaration.mjs");
+	const declaration = readInjectionDeclaration();
+	if (declaration.ok !== true) return { ok: false, reason: declaration.reason };
 	const bodies = (Array.isArray(captured.requests) ? captured.requests : []).filter(
 		(entry) =>
 			entry !== null &&
@@ -489,7 +532,7 @@ async function injectionFacts(captured, turnIds) {
 			missing.push(turnId);
 			continue;
 		}
-		turns.push({ turnId, ...blocksIn(requestTextOf(byKey.get(turnId), wireMessageText)) });
+		turns.push({ turnId, ...blocksIn(requestTextOf(byKey.get(turnId), wireMessageText), declaration) });
 	}
 	const heldKeys = [...byKey.keys()];
 	/*
@@ -497,7 +540,20 @@ async function injectionFacts(captured, turnIds) {
 	 * gate (`core/recording-provider-proxy.test.mjs`) reads `foreign` as their count.
 	 */
 	const unmarked = wanted === null ? [] : heldKeys.filter((key) => !wanted.includes(key));
-	return { ok: true, source, turns, missing, heldKeys, unmarked, foreign: unmarked.length, unlabelled, unjoinable };
+	return {
+		ok: true,
+		source,
+		turns,
+		missing,
+		heldKeys,
+		unmarked,
+		foreign: unmarked.length,
+		unlabelled,
+		unjoinable,
+		/* The declared population, so a drift line can name the list the wire disagreed with. */
+		sections: declaration.sections,
+		truncated: captured.truncated ?? null,
+	};
 }
 
 const byteLength = (text) => Buffer.byteLength(text, "utf8");
@@ -518,8 +574,98 @@ function requestTextOf(body, messageText) {
 	return messages.map((message) => messageText(message)).join("\n");
 }
 
-/** The authored-context and volatile blocks a request carries, with their sizes. */
-function blocksIn(requestText) {
+/**
+ * The section census of one request: which declared sections it carried, what each cost, and which ones
+ * it did not carry at all.
+ *
+ * A byte count per block answers "how big" and nothing else - nobody can read "1173 bytes" and say whether
+ * the companion's memory, the world book, its identity or the card's closing direction reached the model.
+ * Presence answers those questions, and the sections this request did NOT carry are printed by the name the
+ * declaration gives them, because a section that vanished behind a defect looks exactly like a section that
+ * was carried empty otherwise.
+ *
+ * The population is `readInjectionDeclaration()`'s and never a list kept here: a kind, a block or a marker
+ * the emitters stop declaring leaves this census without touching its code, and one they start declaring
+ * arrives as a section this reader names rather than an unremarked size.
+ *
+ * The size of a section is the bytes it contributes to the request, with one deliberate exception: the
+ * memory directory reports its content, so a directory that was carried but held nothing reads `0B` rather
+ * than the width of its own empty wrapper.
+ */
+function censusOf(text, declaration) {
+	/*
+	 * Every pattern below ends a tag name at whitespace or `>`, never at `\b`: a hyphen is a word boundary, so
+	 * `<session-history\b` also matches `<session-history-since>` - the delta envelope this product wraps the
+	 * volatile block in - and a request carrying only the envelope would then read as a carried memory
+	 * directory sized by somebody else's block. The same trap waits on `<gamebuddy-authored-context` against a
+	 * future `<gamebuddy-authored-context-...>`, so the boundary is spelled once, here.
+	 */
+	const openTag = (tag) => new RegExp(`<${tag}(?=[\\s>])[^>]*>`, "u");
+	const carried = [];
+	const openingTag = openTag(declaration.authored.tag).exec(text);
+	if (openingTag !== null) carried.push({ name: declaration.authored.tag, bytes: byteLength(openingTag[0]) });
+
+	const kindBytes = new Map();
+	const kindsOnWire = [];
+	const sourceElements = text.matchAll(
+		new RegExp(`<${declaration.authored.source}(?=[\\s>])([^>]*)>[\\s\\S]*?</${declaration.authored.source}>`, "gu"),
+	);
+	for (const element of sourceElements) {
+		const kind = /\bkind="([^"]*)"/u.exec(element[1]);
+		if (kind === null) continue;
+		kindsOnWire.push(kind[1]);
+		kindBytes.set(kind[1], (kindBytes.get(kind[1]) ?? 0) + byteLength(element[0]));
+	}
+	for (const kind of declaration.stableKinds) {
+		if (kindBytes.has(kind)) carried.push({ name: kind, bytes: kindBytes.get(kind) });
+	}
+
+	const worldBook = new RegExp(
+		`<${declaration.volatile.tag}(?=[\\s>])[^>]*>[\\s\\S]*?</${declaration.volatile.tag}>`,
+		"u",
+	).exec(text);
+	if (worldBook !== null) carried.push({ name: declaration.volatile.kind, bytes: byteLength(worldBook[0]) });
+
+	for (const block of declaration.memoryBlocks) {
+		const memory = new RegExp(`<${block}(?=[\\s>])[^>]*>([\\s\\S]*?)</${block}>`, "u").exec(text);
+		if (memory !== null) carried.push({ name: block, bytes: byteLength(memory[1]) });
+	}
+
+	const closing = new RegExp(
+		`<${declaration.closing}(?=[\\s>])[^>]*>[\\s\\S]*?</${declaration.closing}>`,
+		"u",
+	).exec(text);
+	if (closing !== null) carried.push({ name: declaration.closing, bytes: byteLength(closing[0]) });
+
+	/* Declaration order, so two readings of the same request are the same string. */
+	const sections = declaration.sections
+		.map((name) => carried.find((section) => section.name === name))
+		.filter((section) => section !== undefined);
+	const absent = declaration.sections.filter((name) => !sections.some((section) => section.name === name));
+
+	/*
+	 * Names the wire carries that the declaration does not: a kind or a `<gamebuddy-...>` block nobody counted.
+	 * It is reported by name because the alternative - a section the census silently skips - is the very
+	 * confusion between "empty" and "vanished" this section exists to end.
+	 */
+	const wireTags = [...new Set([...text.matchAll(/<(gamebuddy-[a-z0-9-]+)/gu)].map((match) => match[1]))];
+	const undeclared = [
+		...new Set([
+			...wireTags.filter((tag) => !declaration.tags.includes(tag)),
+			...kindsOnWire.filter((kind) => !declaration.stableKinds.includes(kind)),
+		]),
+	];
+	return {
+		sections,
+		absent,
+		undeclared,
+		/* No marker at all is not a request that carried nothing: it is a request this reader cannot read. */
+		unobserved: sections.length === 0 ? "request_carries_no_injection_marker" : null,
+	};
+}
+
+/** The authored-context and volatile blocks a request carries, with their sizes, and the section census. */
+function blocksIn(requestText, declaration) {
 	const text = typeof requestText === "string" ? requestText : "";
 	const authored = /<gamebuddy-authored-context[\s\S]*?<\/gamebuddy-authored-context>/u.exec(text);
 	const stable = /<gamebuddy-stable-context[\s\S]*?<\/gamebuddy-stable-context>/u.exec(text);
@@ -536,6 +682,7 @@ function blocksIn(requestText) {
 			: attributeCount === volatileSources.length
 				? "attribute"
 				: "mixed";
+	const census = censusOf(text, declaration);
 	return {
 		authoredContext:
 			stableBlock === null
@@ -561,10 +708,12 @@ function blocksIn(requestText) {
 						),
 						namesFrom,
 					},
+		census,
+		unobserved: census.unobserved,
 	};
 }
 
-/** One turn's injection as one facts-file line: presence, size, and what the block named. */
+/** One turn's injection as one facts-file line: presence, size, what the block named, and the census. */
 function describeInjection(turn) {
 	const authored = turn.authoredContext.present
 		? `present block=${turn.authoredContext.block} bytes=${turn.authoredContext.bytes} sources=${turn.authoredContext.sources} kinds=${JSON.stringify(turn.authoredContext.kinds)}`
@@ -572,7 +721,10 @@ function describeInjection(turn) {
 	const volatile = turn.volatileContext.present
 		? `present bytes=${turn.volatileContext.bytes} sources=${turn.volatileContext.sources} names=${JSON.stringify(turn.volatileContext.names)} namesFrom=${turn.volatileContext.namesFrom}`
 		: "absent";
-	return `authoredContext=${authored} volatileContext=${volatile}`;
+	const carried = turn.census.sections.map((section) => `${section.name}:${section.bytes}B`).join(",");
+	const absent = turn.census.absent.length === 0 ? "none" : turn.census.absent.join(",");
+	const undeclared = turn.census.undeclared.length === 0 ? "" : ` undeclared=${turn.census.undeclared.join(",")}`;
+	return `authoredContext=${authored} volatileContext=${volatile} sections=${carried} absent=${absent}${undeclared}`;
 }
 
 module.exports = {

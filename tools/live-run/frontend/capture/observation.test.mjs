@@ -24,6 +24,13 @@
  *                       reddens "a stage marked for a turn with no key is named".
  *   prefixes            renaming the product's switch prefix reddens "the kit reads the marks the
  *                       product emits".
+ *   the section census  removing the memory measurement from `censusOf` reddens "the census names the
+ *                       identity block, the memory directory and the world book" with `session-history
+ *                       reached this request, so the census must list it among the sections it carried`,
+ *                       and reddens "a request missing the memory section names memory as absent" with
+ *                       `the memory directory was carried (empty): the census must list it as carried,
+ *                       not as absent`. That break is the defect this section was built for: under it a
+ *                       request carrying a 61-byte directory and one carrying nothing read identically.
  *
  * The paint cases are the original red-proof and are unchanged: see the file's own history for why LCP
  * is a field this reader must not claim.
@@ -33,9 +40,9 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-
-import { injectionFacts, observe, readCapturedRequests, readPaintFacts, switchDurations } from "./observation.cjs";
 import { RECORDING_PROXY_CAPTURE_SOURCE } from "../../core/recording-provider-proxy.mjs";
+import { readInjectionDeclaration } from "./injection-declaration.mjs";
+import { injectionFacts, observe, readCapturedRequests, readPaintFacts, switchDurations } from "./observation.cjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, "..", "..", "..", "..");
@@ -327,6 +334,301 @@ test("an absent block is absence, not a zero-byte block", async () => {
   assert.deepEqual(injection.turns[0].authoredContext, { present: false });
   assert.deepEqual(injection.turns[0].volatileContext, { present: false });
   assert.equal("bytes" in injection.turns[0].authoredContext, false, "a block that is not there has no size");
+});
+
+/* ---------- the section census ---------- */
+
+/*
+ * The head a real game turn posts, section by section: the authored block with the scope it declares, one
+ * authored kind, the memory directory, and - in the message after it - the world book with the card's
+ * closing direction at the tail. Every expected size below is derived from the text that carries it, so no
+ * byte count in these tests is a second hand-written copy of the fixture.
+ */
+const SCOPE = 'continuity-id="cont-1" session-id="sess-1" thread-id="thread-1"';
+const AUTHORED_TAG = `<gamebuddy-authored-context version="v2" ${SCOPE}>`;
+const PERSONA_ELEMENT = [
+  '<gamebuddy-authored-source kind="persona">',
+  "她叫艾米丽",
+  "</gamebuddy-authored-source>",
+].join("\n");
+const AUTHORED_BLOCK = `${AUTHORED_TAG}\n${PERSONA_ELEMENT}\n</gamebuddy-authored-context>`;
+const MEMORY_INNER = "## 1-2 · 2026-11-04 · 开荒\n两人把荒地翻了一遍。";
+const WORLD_BOOK = [
+  "<gamebuddy-volatile-context>",
+  "<gamebuddy-volatile-source>",
+  "银行家的戒指在抽屉里。",
+  "</gamebuddy-volatile-source>",
+  "</gamebuddy-volatile-context>",
+].join("\n");
+const CLOSING = ["<character-closing-direction>", "一句家常话收住；说清就停。", "</character-closing-direction>"].join(
+  "\n",
+);
+
+/** One captured body shaped like this product's: head in m0, world book in m1, closing direction at the tail. */
+const censusRequest = (head, volatile = WORLD_BOOK) => ({
+  messages: [
+    { role: "system", content: "You are 琥珀, accompanying the player." },
+    { role: "user", content: [{ type: "text", text: head }] },
+    { role: "user", content: [{ type: "text", text: volatile }] },
+    { role: "assistant", content: "起来啦？" },
+    { role: "user", content: CLOSING },
+  ],
+});
+
+const HEAD = `${AUTHORED_BLOCK}\n<session-history>${MEMORY_INNER}</session-history>`;
+
+/** The trailing census segment of an INJECTION line, built from the fixture's own text. */
+const censusReading = (sections, absent) =>
+  `sections=${sections.map(([name, bytes]) => `${name}:${bytes}B`).join(",")} absent=${absent.join(",")}`;
+
+test("the census names the identity block, the memory directory and the world book, each with its bytes", async () => {
+  const captured = capture([request("key-1", censusRequest(HEAD))]);
+  const injection = await injectionFacts(captured, ["key-1"]);
+  assert.equal(injection.ok, true, injection.reason);
+  const [turn] = injection.turns;
+  /* Presence first: a section the census stopped looking for must fail by NAME, not as an undefined size. */
+  const bytesOf = (name) => {
+    const section = turn.census.sections.find((entry) => entry.name === name);
+    assert.ok(
+      section !== undefined,
+      `${name} reached this request, so the census must list it among the sections it carried`,
+    );
+    return section.bytes;
+  };
+  assert.equal(
+    bytesOf("gamebuddy-authored-context"),
+    Buffer.byteLength(AUTHORED_TAG),
+    "the identity the block declares - the scope attributes on its own opening tag - is its own section",
+  );
+  assert.equal(bytesOf("persona"), Buffer.byteLength(PERSONA_ELEMENT), "an authored kind is sized as its own element");
+  assert.equal(
+    bytesOf("lorebook_entry"),
+    Buffer.byteLength(WORLD_BOOK),
+    "the world book is sized as the block it renders",
+  );
+  assert.equal(
+    bytesOf("session-history"),
+    Buffer.byteLength(MEMORY_INNER),
+    "the memory directory reports its content, so a directory carried empty reads 0 rather than a wrapper's width",
+  );
+  assert.equal(bytesOf("character-closing-direction"), Buffer.byteLength(CLOSING));
+
+  const lines = [];
+  await observe(fakePage(turnMarks("key-1")), (line) => lines.push(line), "f", {
+    sinceMs: 0,
+    capturedRequests: captured,
+  });
+  const wanted = censusReading(
+    [
+      ["gamebuddy-authored-context", Buffer.byteLength(AUTHORED_TAG)],
+      ["persona", Buffer.byteLength(PERSONA_ELEMENT)],
+      ["lorebook_entry", Buffer.byteLength(WORLD_BOOK)],
+      ["session-history", Buffer.byteLength(MEMORY_INNER)],
+      ["character-closing-direction", Buffer.byteLength(CLOSING)],
+    ],
+    ["scenario", "dialogue_examples", "lorebook_constant", "project-memory"],
+  );
+  assert.ok(
+    injectionLines(lines)[0].endsWith(wanted),
+    `the INJECTION line must end with the sections this request carried and the declared ones it did not:\n  want …${wanted}\n  got  ${injectionLines(lines)[0]}`,
+  );
+});
+
+test("a request missing the memory section names memory as absent, while an empty one reads as carried and empty", async () => {
+  /*
+   * The two readings below are the whole point of the census: a section that never reached the request and a
+   * section that reached it empty used to be the same silence, which is how a dropped memory section stayed
+   * invisible for as long as the reading was a byte count.
+   */
+  const dropped = await injectionFacts(capture([request("key-1", censusRequest(AUTHORED_BLOCK))]), ["key-1"]);
+  const [missing] = dropped.turns;
+  assert.equal(
+    missing.census.absent.includes("session-history"),
+    true,
+    "the memory directory did not reach this request, and the reading says so by name",
+  );
+  assert.equal(
+    missing.census.sections.some((section) => section.name === "persona"),
+    true,
+    "the reading still reports the sections that DID arrive: absence is named per section, not per request",
+  );
+
+  const emptyHead = [AUTHORED_BLOCK, "<session-history></session-history>"].join("\n");
+  const empty = await injectionFacts(capture([request("key-1", censusRequest(emptyHead))]), ["key-1"]);
+  const [emptyTurn] = empty.turns;
+  const carriedEmpty = emptyTurn.census.sections.find((section) => section.name === "session-history");
+  assert.ok(
+    carriedEmpty !== undefined,
+    "the memory directory was carried (empty): the census must list it as carried, not as absent",
+  );
+  assert.equal(carriedEmpty.bytes, 0, "a directory that was carried and held nothing costs zero content bytes");
+  assert.equal(
+    emptyTurn.census.absent.includes("session-history"),
+    false,
+    "carried-but-empty is not absent: confusing the two is the defect this section exists to end",
+  );
+});
+
+test("a delta envelope is not a memory directory: <session-history-since> does not read as <session-history>", async () => {
+  /*
+   * The envelope and the directory share a prefix, and a boundary written as `\b` matches both (a hyphen is
+   * a word boundary). This request carries the delta envelope - wrapped around the world book, as the real
+   * wire does - and no directory at all; a reader that confused them would report memory present and size it
+   * by somebody else's block.
+   */
+  const envelope = ["<session-history-since>", WORLD_BOOK, "</session-history-since>"].join("\n");
+  const injection = await injectionFacts(capture([request("key-1", censusRequest(AUTHORED_BLOCK, envelope))]), [
+    "key-1",
+  ]);
+  const [turn] = injection.turns;
+  assert.deepEqual(
+    turn.census.sections.map((section) => section.name),
+    ["gamebuddy-authored-context", "persona", "lorebook_entry", "character-closing-direction"],
+    "the envelope is transport: only the world book inside it is a section, and no memory directory appears",
+  );
+  assert.equal(
+    turn.census.absent.includes("session-history"),
+    true,
+    "the memory directory did not reach this request, and the delta envelope does not stand in for it",
+  );
+});
+
+test("a request carrying no marker at all is unobserved, not a census of zeros", async () => {
+  const captured = capture([request("key-a", systemPrompt(["你好"]))]);
+  const injection = await injectionFacts(captured, ["key-a"]);
+  assert.deepEqual(
+    injection.turns[0].census.sections,
+    [],
+    "an empty list of carried sections would claim the reader looked and found the model told nothing",
+  );
+  assert.equal(injection.turns[0].unobserved, "request_carries_no_injection_marker");
+
+  const lines = [];
+  await observe(fakePage(turnMarks("key-a")), (line) => lines.push(line), "f", {
+    sinceMs: 0,
+    capturedRequests: captured,
+  });
+  assert.deepEqual(
+    injectionLines(lines),
+    ["INJECTION f turn=key-a source=local-stub-provider: unobserved:request_carries_no_injection_marker"],
+    "a request with no marker is a request this reader cannot read, and it says which kind of nothing that is",
+  );
+});
+
+test("a section name the declaration does not have is a failure that names the section", async () => {
+  /*
+   * Both directions of drift, in one request: a kind the union does not declare, and a whole block family the
+   * authored-context module does not render. Either one is a section nobody counted, which is what the census
+   * must refuse to pass in silence.
+   */
+  const drifted = [
+    AUTHORED_TAG,
+    '<gamebuddy-authored-source kind="persona_v2">',
+    "她叫艾米丽",
+    "</gamebuddy-authored-source>",
+    "</gamebuddy-authored-context>",
+    "<gamebuddy-future-context>",
+    "新的块",
+    "</gamebuddy-future-context>",
+  ].join("\n");
+  const captured = capture([request("key-a", censusRequest(drifted))]);
+  const injection = await injectionFacts(captured, ["key-a"]);
+  assert.deepEqual(
+    injection.turns[0].census.undeclared,
+    ["gamebuddy-future-context", "persona_v2"],
+    "the names the wire carries and the declaration does not are returned by name, never as a count",
+  );
+
+  const lines = [];
+  await observe(fakePage(turnMarks("key-a")), (line) => lines.push(line), "f", {
+    sinceMs: 0,
+    capturedRequests: captured,
+  });
+  assert.ok(
+    lines.includes(
+      `INJECTION f turn=key-a: section_not_in_declaration=gamebuddy-future-context,persona_v2:declaration=${JSON.stringify(injection.sections)}`,
+    ),
+    `a drifting section is a named failure, and the failure names the declaration it disagreed with:\n  ${lines.join("\n  ")}`,
+  );
+});
+
+test("the population reader refuses a declaration it cannot read, and names the anchor", () => {
+  const missing = readInjectionDeclaration(() => {
+    throw new Error("ENOENT: no such file or directory");
+  });
+  assert.equal(missing.ok, false, "a population that cannot be read is not an empty population");
+  assert.match(
+    missing.reason,
+    /injection_declaration_unreadable:vendor\/magic-context\/packages\/pi-plugin\/src\/gamebuddy-stable-context-source\.ts:absent/u,
+    "the file this reader could not open is named",
+  );
+
+  /* A file that still exists but no longer holds the declaration is a different fact: the anchor is named. */
+  const drifted = readInjectionDeclaration((file) =>
+    file.endsWith("gamebuddy-stable-context-source.ts")
+      ? "export type NothingHere = 1;"
+      : readFileSync(join(REPO, file), "utf8"),
+  );
+  assert.equal(drifted.ok, false);
+  assert.match(
+    drifted.reason,
+    /injection_declaration_unreadable:.*:authored_block_tag/u,
+    "the anchor that could not be found is named, so the fix is locatable without reading this reader",
+  );
+});
+
+test("a capture longer than the reading's window says so, and reads the newest records", async () => {
+  const many = Array.from({ length: 201 }, (_, index) => request(`key-${index}`, systemPrompt(AUTHORED)));
+  const read = readCapturedRequests("capture.jsonl", () => asLines(many));
+  assert.deepEqual(
+    read.truncated,
+    { read: 200, total: 201 },
+    "a bounded reading says how much of the file it describes",
+  );
+  assert.equal(
+    read.requests[read.requests.length - 1].idempotencyKey,
+    "key-200",
+    "the window is the tail: a run's own marks are near its newest requests",
+  );
+  assert.equal(
+    read.requests.some((record) => record.idempotencyKey === "key-0"),
+    false,
+  );
+
+  const lines = [];
+  await observe(fakePage(turnMarks("key-200")), (line) => lines.push(line), "f", {
+    sinceMs: 0,
+    capturedRequests: read,
+  });
+  assert.ok(
+    lines.includes("INJECTION f: capture_truncated:read_last=200_of=201"),
+    `truncation is stated in the reading rather than left for the reader to infer:\n  ${lines.join("\n  ")}`,
+  );
+});
+
+test("every block the authored-context module renders arrives as a census section", () => {
+  /*
+   * The census derives its population from these modules; this is the assertion that the derivation still
+   * covers them. A block family the module gains without the census learning about it would otherwise surface
+   * as a size nobody attributes, or not surface at all.
+   */
+  const declaration = readInjectionDeclaration();
+  assert.equal(declaration.ok, true, declaration.reason);
+  const source = readFileSync(
+    join(REPO, "vendor", "magic-context", "packages", "pi-plugin", "src", "gamebuddy-stable-context-source.ts"),
+    "utf8",
+  );
+  const rendered = [...new Set([...source.matchAll(/<(gamebuddy-[a-z0-9-]+)/gu)].map((match) => match[1]))].sort();
+  assert.deepEqual(
+    [...declaration.tags].sort(),
+    rendered,
+    "a block family this module renders must arrive as a census section, not as an unremarked size",
+  );
+  assert.deepEqual(
+    [...declaration.stableKinds].sort(),
+    ["dialogue_examples", "lorebook_constant", "persona", "scenario"],
+    "the kinds are the union's own, so a kind added there is a section here without touching this file",
+  );
 });
 
 test("a turn with no body still counts as a turn, and says what it carried", async () => {
