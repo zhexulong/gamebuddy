@@ -306,6 +306,12 @@ public static class FarmhandForEachExpansion
     /// the router replays by request id, so retrying under the same one would answer with the refusal it is retrying past.
     /// The identity is still derived from the row, so re-entering the pass replays the clear and the retry in the same order.
     /// </para>
+    /// <para>
+    /// A CLEAR THAT WOULD DESTROY SOMETHING SHE PUT ON THE TILE IS NOT TAKEN. When every published clearer of the occupant
+    /// is destructive (`scythe_crop` on her own crop, `cut_grass` on grass a starter planted) the row reports the
+    /// clearance's own refusal - `no_safe_clear:<occupant>:<action>` - as a REFUSED row with no swing made: the pass may
+    /// not spend a destructive effect on a tile neither she nor the player asked it to clear.
+    /// </para>
     /// </summary>
     private static FarmhandForEachTargetResult Heal(
         FarmhandForEachRow row,
@@ -319,7 +325,7 @@ public static class FarmhandForEachExpansion
     {
         FarmhandForEachClearance clearance = FarmhandForEachHealing.ClearanceFor(row.Fields, target.ActionId, isActionEnabled);
         if (clearance.Outcome == FarmhandForEachClearanceOutcome.KeepRefusal) return refused;
-        if (clearance.Outcome == FarmhandForEachClearanceOutcome.NoPublishedActionClears)
+        if (clearance.Outcome is FarmhandForEachClearanceOutcome.NoPublishedActionClears or FarmhandForEachClearanceOutcome.NoSafeClear)
             return Result(
                 row,
                 target,

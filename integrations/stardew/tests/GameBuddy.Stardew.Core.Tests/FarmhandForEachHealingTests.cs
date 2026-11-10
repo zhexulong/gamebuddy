@@ -71,6 +71,47 @@ public sealed class FarmhandForEachHealingTests
     }
 
     /// <summary>
+    /// THE REGRESSION, in the shape it shipped: a six-tile strip whose third tile carries HER OWN crop, requested
+    /// `till_soil`.
+    ///
+    /// <para>
+    /// `scythe_crop` declares that it removes the occupant `crop`, so inverting the declarations answered "a crop is on
+    /// this tile" with a scythe: the reading was `dispatched: till_soil, scythe_crop` and the crop gone - a destructive
+    /// effect the player could not foresee, produced by a step neither she nor the player wrote. The tile is HERS and the
+    /// action that resolves it is the harvest (`harvest_crop`), so the pass must refuse the tile by name and leave the
+    /// crop standing.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void HerOwnCropIsNeverScythedToOpenATillableTile()
+    {
+        FarmhandForEachSource strip = Strip(60, 18, 6);
+        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect("till_soil"));
+        var world = new TileWorld();
+        world.Occupy(62, 18, "crop", "scythe_crop");
+
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_crop", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+
+        world.Carries(62, 18).Should().BeTrue("her crop is still standing after the pass");
+        world.Dispatched.Where(target => target.X == 62).Select(target => target.ActionId).Should().Equal(
+            new[] { "till_soil" },
+            "the hoe was refused and nothing else was swung at her crop - least of all a scythe");
+
+        pass.Decided.Should().Be(6);
+        pass.Succeeded.Should().Be(5, "the five bare tiles are tilled as asked");
+        pass.Refused.Should().Be(1, "the crop tile is refused, not healed and not failed");
+        pass.Failed.Should().Be(0);
+        pass.Healed.Should().Be(0, "a pass that destroyed nothing has opened nothing");
+
+        FarmhandForEachTargetResult crop = pass.Targets.Single(target => target.X == 62);
+        crop.Outcome.Should().Be(FarmhandForEachTargetOutcome.Refused);
+        crop.ReasonCode.Should().Be(
+            "no_safe_clear:crop:scythe_crop",
+            "the tile is her crop, and the refusal names the swing it weighed and refused so the next step is readable");
+        crop.Healed.Should().BeNull("nothing was healed: the crop is still hers to harvest");
+    }
+
+    /// <summary>
     /// THE BOUND IS ONE CLEAR AND ONE RETRY. A tile that still refuses after a swing at the thing on it is reported as the
     /// refusal it is: clearing is not a search, and a pass that kept swinging would spend the actor's stamina on a guess.
     /// </summary>
@@ -195,9 +236,10 @@ public sealed class FarmhandForEachHealingTests
     ///
     /// <para>
     /// The population is derived from <see cref="FarmhandActionCatalog.Registrations"/>, so a new `Clears` declaration is
-    /// covered the moment it is written and a renamed one fails by name. The two exemptions are catalogue facts, not
-    /// convenience: the pair's own clearing action is not "healed" (it is the row's own attempt), and an action that is
-    /// ITSELF a clearer of the occupant keeps its own refusal.
+    /// covered the moment it is written and a renamed one fails by name. The three exemptions are catalogue facts, not
+    /// convenience: the pair's own clearing action is not "healed" (it is the row's own attempt), an action that is
+    /// ITSELF a clearer of the occupant keeps its own refusal, and a DESTRUCTIVE declaration is the other gate's
+    /// population - <see cref="NoPassDispatchesADestructiveClearingAction"/> asserts the opposite about exactly those.
     /// </para>
     /// </summary>
     [Fact]
@@ -205,27 +247,30 @@ public sealed class FarmhandForEachHealingTests
     {
         var failures = new List<string>();
         int examined = 0;
-        foreach ((string occupant, string clearingAction) in DeclaredClearers())
-        foreach (string requestedAction in TargetFamilyActionIds())
+        foreach ((string occupant, string clearingAction, bool destructive) in DeclaredClearers())
         {
-            if (string.Equals(requestedAction, clearingAction, StringComparison.Ordinal)) continue;
-            if (FarmhandForEachHealing.DeclaredClearersOf(occupant)
-                .Any(offer => string.Equals(offer.ActionId, requestedAction, StringComparison.Ordinal))) continue;
-            examined += 1;
+            if (destructive) continue;
+            foreach (string requestedAction in TargetFamilyActionIds())
+            {
+                if (string.Equals(requestedAction, clearingAction, StringComparison.Ordinal)) continue;
+                if (FarmhandForEachHealing.DeclaredClearersOf(occupant)
+                    .Any(offer => string.Equals(offer.ActionId, requestedAction, StringComparison.Ordinal))) continue;
+                examined += 1;
 
-            FarmhandForEachSource strip = Strip(60, 18, 1);
-            var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(requestedAction));
-            var world = new TileWorld();
-            world.Occupy(60, 18, occupant, clearingAction);
-            world.IsEnabled = actionId => string.Equals(actionId, clearingAction, StringComparison.Ordinal);
+                FarmhandForEachSource strip = Strip(60, 18, 1);
+                var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(requestedAction));
+                var world = new TileWorld();
+                world.Occupy(60, 18, occupant, clearingAction);
+                world.IsEnabled = actionId => string.Equals(actionId, clearingAction, StringComparison.Ordinal);
 
-            FarmhandForEachTargetResult row = FarmhandForEachExpansion
-                .Expand(loop, "pass_gate", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled)
-                .Targets.Single();
-            if (row.Outcome == FarmhandForEachTargetOutcome.Succeeded && row.Healed == Healed(occupant, clearingAction)) continue;
-            failures.Add(
-                $"clears_declared_but_never_used:{occupant}:{clearingAction} (requested {requestedAction} answered "
-                + $"{row.Outcome}/{row.ReasonCode ?? "no_reason"}/{row.Healed ?? "not_healed"})");
+                FarmhandForEachTargetResult row = FarmhandForEachExpansion
+                    .Expand(loop, "pass_gate", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled)
+                    .Targets.Single();
+                if (row.Outcome == FarmhandForEachTargetOutcome.Succeeded && row.Healed == Healed(occupant, clearingAction)) continue;
+                failures.Add(
+                    $"clears_declared_but_never_used:{occupant}:{clearingAction} (requested {requestedAction} answered "
+                    + $"{row.Outcome}/{row.ReasonCode ?? "no_reason"}/{row.Healed ?? "not_healed"})");
+            }
         }
 
         examined.Should().BeGreaterThan(0, "the catalogue declares clearing actions, so the population is never empty");
@@ -233,12 +278,68 @@ public sealed class FarmhandForEachHealingTests
             $"every declared clearing action must be reachable from a pass; examined {examined} occupant/action pairs");
     }
 
-    /// <summary>Every occupant/action pair the catalogue declares, derived from the registrations and not from a list.</summary>
-    private static IEnumerable<(string Occupant, string ClearingAction)> DeclaredClearers() =>
+    /// <summary>
+    /// THE GATE OVER THE DESTRUCTIVE DECLARATIONS. Population: every occupant/action pair the catalogue marks
+    /// `Destructive`, derived from the registrations. Property: NO PASS MAY DISPATCH A DESTRUCTIVE CLEARING ACTION - a
+    /// tile carrying that occupant and requested for any other action answers `no_safe_clear:&lt;occupant&gt;:&lt;action&gt;`,
+    /// and the occupant is still standing afterwards.
+    ///
+    /// <para>
+    /// This is the half that was missing when `scythe_crop` reached her own crop: the heal read "what clears this" and
+    /// never asked "and what does that cost her". The population is the declarations' own flag, so the next destructive
+    /// row - or a row corrected to `destructive: true` - is covered without touching this test, and a pass that dispatches
+    /// one fails BY NAME.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void NoPassDispatchesADestructiveClearingAction()
+    {
+        var failures = new List<string>();
+        int examined = 0;
+        foreach ((string occupant, string clearingAction, bool destructive) in DeclaredClearers())
+        {
+            if (!destructive) continue;
+            foreach (string requestedAction in TargetFamilyActionIds())
+            {
+                if (string.Equals(requestedAction, clearingAction, StringComparison.Ordinal)) continue;
+                if (FarmhandForEachHealing.DeclaredClearersOf(occupant)
+                    .Any(offer => string.Equals(offer.ActionId, requestedAction, StringComparison.Ordinal))) continue;
+                examined += 1;
+
+                FarmhandForEachSource strip = Strip(60, 18, 1);
+                var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(requestedAction));
+                var world = new TileWorld();
+                world.Occupy(60, 18, occupant, clearingAction);
+
+                FarmhandForEachTargetResult row = FarmhandForEachExpansion
+                    .Expand(loop, "pass_destructive", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled)
+                    .Targets.Single();
+                bool dispatched = world.Dispatched.Any(target => string.Equals(target.ActionId, clearingAction, StringComparison.Ordinal));
+                bool standing = world.Carries(60, 18);
+                string expected = FarmhandForEachHealing.NoSafeClearReason(occupant, clearingAction);
+                if (!dispatched && row.Outcome == FarmhandForEachTargetOutcome.Refused
+                    && string.Equals(row.ReasonCode, expected, StringComparison.Ordinal) && row.Healed is null && standing) continue;
+                failures.Add(
+                    $"destructive_clear_dispatched:{occupant}:{clearingAction} (requested {requestedAction} answered "
+                    + $"{row.Outcome}/{row.ReasonCode ?? "no_reason"}/{row.Healed ?? "not_healed"}; "
+                    + $"dispatched={dispatched}; stillStanding={standing})");
+            }
+        }
+
+        examined.Should().BeGreaterThan(0, "the catalogue declares destructive clearing actions, so the population is never empty");
+        failures.Should().BeEmpty(
+            $"no pass may dispatch a destructive clearing action; examined {examined} occupant/action pairs");
+    }
+
+    /// <summary>
+    /// Every occupant/action pair the catalogue declares, derived from the registrations and not from a list, with the
+    /// declaration's own answer about whether the swing destroys what the player put there.
+    /// </summary>
+    private static IEnumerable<(string Occupant, string ClearingAction, bool Destructive)> DeclaredClearers() =>
         FarmhandActionCatalog.Registrations
             .Where(registration => registration.Descriptor?.Clears is { Occupants.Count: > 0 })
             .SelectMany(registration => registration.Descriptor!.Clears!.Occupants
-                .Select(occupant => (Occupant: occupant, ClearingAction: registration.ActionId)));
+                .Select(occupant => (Occupant: occupant, ClearingAction: registration.ActionId, Destructive: registration.Descriptor!.Clears!.Destructive)));
 
     /// <summary>Every action that declares a `TargetFamily`: the actions a per-tile loop can be written for.</summary>
     private static IEnumerable<string> TargetFamilyActionIds() =>
@@ -277,6 +378,9 @@ public sealed class FarmhandForEachHealingTests
             this.occupants[(x, y)] = occupant;
             this.clearerOf[occupant] = clearer;
         }
+
+        /// <summary>Whether the tile still carries what was placed on it: a swing that never ran leaves it standing.</summary>
+        internal bool Carries(int x, int y) => this.occupants.ContainsKey((x, y)) && !this.cleared.Contains((x, y));
 
         internal IEnumerable<FarmhandForEachRow> Rows(FarmhandForEachSource source) =>
             FarmhandForEachRules.AreaRows(source).Select(row => new FarmhandForEachRow(

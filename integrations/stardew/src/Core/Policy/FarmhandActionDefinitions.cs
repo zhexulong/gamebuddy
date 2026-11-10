@@ -146,7 +146,49 @@ public sealed record FarmhandClearingCost(string Tool, int Turns)
 /// saying what dispatching it costs.
 /// </para>
 /// </summary>
-public sealed record FarmhandClearingDeclaration(IReadOnlyList<string> Occupants, FarmhandClearingCost Cost);
+/// <param name="Occupants">The engine's own names for what one swing removes.</param>
+/// <param name="Cost">What that one swing costs: the tool family it selects, and one turn.</param>
+/// <param name="Destructive">
+/// Whether the swing DESTROYS SOMETHING THE PLAYER PUT THERE, as opposed to taking something out of the way.
+///
+/// <para>
+/// WHY THE FLAG IS ON THE DECLARATION. The declaration is what a consumer reads to answer "what removes this" - and the
+/// `for_each` heal asks exactly that question about a tile the row was refused on, then dispatches the answer without
+/// being asked to. A `Clears` entry that merely OPENED the tile and one that LEVELS what she planted were the same word,
+/// so a pass over a strip that happened to run through her crop scythed it: a destructive effect the player could not
+/// foresee, produced by a step neither she nor the player wrote. Half the declaration - the half that says whether
+/// dispatching it is a wipe - was simply missing.
+/// </para>
+/// <para>
+/// THE FLAG IS ANSWERED AT EVERY ROW, and that is why the helper takes it as a required argument rather than defaulting
+/// to `false`: a new clearing declaration that never had to think about it would be the same silence this field was
+/// added to end, and `NoPassDispatchesADestructiveClearingAction` would keep passing because the new row answered
+/// nothing. A destructive declaration is still a REAL declaration - an agent that is asked to harvest a crop may
+/// dispatch `scythe_crop` - it is only never dispatched ON THE PLAYER'S BEHALF.
+/// </para>
+/// <para>
+/// WHY EACH ENTRY ANSWERS WHAT IT DOES, one line each:
+/// </para>
+/// <list type="bullet">
+/// <item>`scythe_crop` (crop) - DESTRUCTIVE: the crop on the tile is the player's own planting, and the scythe's two
+/// terminals (`HoeDirt.performToolAction`, HoeDirt.cs:713-735) are "take a ready scythe-method crop" and "clear a dead
+/// one". Neither opens a way through the tile, and the first loses a crop she was about to harvest; `harvest_crop` is
+/// what resolves a crop.</item>
+/// <item>`cut_grass` (grass) - DESTRUCTIVE, and it is the arguable one: a grass tuft is what a grass starter plants for
+/// animals, so a swing at one can take feed she deliberately put there. Cutting it drops hay, which is a real reason to
+/// want it - but that decision is hers, not a pass's.</item>
+/// <item>`cut_weeds` (weed) - not: a weed is not planted and nothing of hers is behind it; cutting it is how the tile is
+/// opened.</item>
+/// <item>`chop_tree` (tree) - not: a wild tree is not planted stock, and chopping it drops the wood it was holding - the
+/// swing produces her a resource rather than taking one.</item>
+/// <item>`chop_stump` (tree_stump) - not: a stump is what a felled tree leaves behind, and chopping it drops its wood.
+/// </item>
+/// <item>`break_rock` (stone) - not: a stone is terrain, and breaking it drops the stone or ore inside it.</item>
+/// <item>`clear_debris` / `break_resource_clump` (the clump occupants) - not: a stump, hollow log, meteorite or boulder
+/// is natural debris, and the clump's own `performToolAction` drops its resources.</item>
+/// </list>
+/// </param>
+public sealed record FarmhandClearingDeclaration(IReadOnlyList<string> Occupants, FarmhandClearingCost Cost, bool Destructive);
 
 /// <summary>Versioned descriptor contract owned exclusively by Mod registration.</summary>
 /// <remarks><see cref="WatchdogMs"/> is the descriptor-owned static execution
@@ -192,6 +234,12 @@ public sealed record FarmhandClearingDeclaration(IReadOnlyList<string> Occupants
 /// `clear_hoedirt` takes soil that was never a wall, and `harvest_bush` HARVES a bush that is squarely in the way -
 /// which is why a bush answers `no_published_action_clears:bush` instead of advertising a harvest as a way through. An
 /// occupant left undeclared is reported as `no_published_action_clears:&lt;kind&gt;` rather than guessed at.
+/// </para>
+/// <para>
+/// A declaration also says whether its swing DESTROYS what the player put there
+/// (<see cref="FarmhandClearingDeclaration.Destructive"/>), because the `for_each` heal dispatches what it reads here on
+/// a tile nobody asked it to work. A route that has to go THROUGH a crop is not a route: the crop is the goal, not the
+/// obstruction.
 /// </para>
 /// </param>
 public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null, FarmhandExecutionAcceptanceFacts? Acceptance = null, FarmhandActionApproachRequirement? Approach = null, long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs, string? TargetFamily = null, FarmhandClearingDeclaration? Clears = null);
@@ -483,15 +531,15 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // Declares the axe its handler requires, like break_rock declares its pickaxe. Without the claim there was
         // nothing for the handler to select from, so it demanded the caller pre-equip - the one asymmetry between
         // chopping and the three actions that had already moved to declared tool selection.
-        E("chop_tree", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(SelfWalked(SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "axe", "tree"), FarmhandActionLifecycle.Published, "treeChopSourceTargets"),
-        E("break_rock", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(SelfWalked(SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "pickaxe", "stone"), FarmhandActionLifecycle.Published, "rockSourceTargets"), E("clear_hoedirt", "farming_crops", FarmhandActionHandlerGroup.Farming, SelfWalked(SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), FarmhandActionLifecycle.Published, "clearHoeDirtTargets"), E("dig_artifact_spot", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(SlotTargetWith("hoe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), FarmhandActionLifecycle.Published, "artifactSpotTargets"), E("refill_watering_can", "farming_crops", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(SlotTargetWith("watering_can", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), FarmhandActionLifecycle.Published, "refillWateringCanTargets"),
+        E("chop_tree", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(SelfWalked(SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "axe", destructive: false, "tree"), FarmhandActionLifecycle.Published, "treeChopSourceTargets"),
+        E("break_rock", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(SelfWalked(SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "pickaxe", destructive: false, "stone"), FarmhandActionLifecycle.Published, "rockSourceTargets"), E("clear_hoedirt", "farming_crops", FarmhandActionHandlerGroup.Farming, SelfWalked(SlotTargetWith("pickaxe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), FarmhandActionLifecycle.Published, "clearHoeDirtTargets"), E("dig_artifact_spot", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(SlotTargetWith("hoe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), FarmhandActionLifecycle.Published, "artifactSpotTargets"), E("refill_watering_can", "farming_crops", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(SlotTargetWith("watering_can", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), FarmhandActionLifecycle.Published, "refillWateringCanTargets"),
         R("inspect_world_map", "world_navigation"), R("find_destination", "world_navigation"), R("observe_scene", "world_perception"),
         E("navigate_to_destination", "world_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(
             new[] { new FarmhandActionArgument("destination", "destination_selector") },
             new Dictionary<string, string> { ["arrival"] = "destination_arrival" },
             EmbodiedActorResource, "write", "arrived_at_destination",
             WatchdogMs: NavigationWatchdogMs)),
-        E("clear_debris", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(SelfWalked(SlotTarget(CarriedToolSlotMeaning)), FarmhandClearingCost.TargetDecidesTool, ClumpOccupants), FarmhandActionLifecycle.LiveVerified, "debrisTargets"),
+        E("clear_debris", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(SelfWalked(SlotTarget(CarriedToolSlotMeaning)), FarmhandClearingCost.TargetDecidesTool, destructive: false, ClumpOccupants), FarmhandActionLifecycle.LiveVerified, "debrisTargets"),
         // The same ResourceClumps, addressed the way every other tool action is now addressed: no `slot`, and the
         // handler resolves, selects and restores the tool itself. `clear_debris` above still obeys the caller's slot
         // and still needs the named slot to hold a usable tool, which is the contract that killed whole plan chains
@@ -506,7 +554,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // `Experimental`, not `Published`: a gate descriptor is a promise that this action has its own live-run gate
         // (check-stardew-action-promotion.mjs:150-156), and no live gate has been run for it. Promotion to
         // LiveVerified is the parent's step and lands with that gate, the way move_placed_furniture's did.
-        E("break_resource_clump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(Target(), FarmhandClearingCost.TargetDecidesTool, ClumpOccupants), FarmhandActionLifecycle.Experimental, "debrisTargets"),
+        E("break_resource_clump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(Target(), FarmhandClearingCost.TargetDecidesTool, destructive: false, ClumpOccupants), FarmhandActionLifecycle.Experimental, "debrisTargets"),
         // Fishing. `waterTargets` is the engine's own castable-tile answer (`GameLocation.canFishHere` + `isTileFishable`),
         // and the postcondition is `fish_caught` because that is the fact the receipt measures a before/after of
         // (`fish_caught_before`/`fish_caught_after` around `Farmer.fishCaught`).
@@ -538,12 +586,12 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         E("face_direction", "movement_navigation", FarmhandActionHandlerGroup.Movement, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("direction", "string", DirectionEnum) }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "actor_facing_matches", "Farmer.faceDirection"), FarmhandActionLifecycle.LiveVerified),
         E("chest_store", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(ContainerItemTarget(ChestStoreItemMeaning)), FarmhandActionLifecycle.LiveVerified, "chests"),
         E("chest_retrieve", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(ContainerItemTarget(ChestRetrieveItemMeaning)), FarmhandActionLifecycle.LiveVerified, "chests"),
-        E("chop_stump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(SelfWalked(SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "axe", "tree_stump"), FarmhandActionLifecycle.LiveVerified, "treeStumpTargets"),
+        E("chop_stump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(SelfWalked(SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "axe", destructive: false, "tree_stump"), FarmhandActionLifecycle.LiveVerified, "treeStumpTargets"),
         E("plant_sapling", "farming_crops", FarmhandActionHandlerGroup.Farming, SelfWalked(SlotItemTarget()), FarmhandActionLifecycle.LiveVerified, "treeSaplingTargets"),
         // Scythe actions: the handler selects the actor's own scythe before swinging, from the `tool:scythe` claim
         // below. A scythe has no upgrade ladder, so "any" is exact.
-        E("cut_weeds", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(SelfWalked(SlotTargetWith("scythe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "scythe", "weed"), FarmhandActionLifecycle.LiveVerified, "weedTargets"),
-        E("cut_grass", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(SelfWalked(SlotTargetWith("scythe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "scythe", "grass"), FarmhandActionLifecycle.LiveVerified, "grassTargets"),
+        E("cut_weeds", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(SelfWalked(SlotTargetWith("scythe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "scythe", destructive: false, "weed"), FarmhandActionLifecycle.LiveVerified, "weedTargets"),
+        E("cut_grass", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Clears(SelfWalked(SlotTargetWith("scythe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "scythe", destructive: true, "grass"), FarmhandActionLifecycle.LiveVerified, "grassTargets"),
         E("clear_cask", "facility_storage_lighting", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, AutoSelectedToolSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), ToolResource("heavy_hitter_not_melee_weapon", FarmhandResourceTemplateValue.AnyUpgrade), "write", "cask_cleared", "Cask.performToolAction")), FarmhandActionLifecycle.LiveVerified, "caskTargets"),
         E("dress_mannequin", "facility_storage_lighting", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, HeldItemSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "mannequin_dressed", "Mannequin.performObjectDropInAction")), FarmhandActionLifecycle.LiveVerified, "mannequinTargets"),
         E("set_sign_display", "facility_storage_lighting", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer"), new FarmhandActionArgument("y", "integer"), new FarmhandActionArgument("slot", "integer", null, HeldItemSlotMeaning), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "sign_display_set", "Sign.checkForAction")), FarmhandActionLifecycle.LiveVerified, "signTargets"),
@@ -571,7 +619,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // to LiveVerified is a separate catalog edit owned by the parent.
         E("load_building_chest", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(BuildingChestLoad()), FarmhandActionLifecycle.LiveVerified, "buildingChestTargets"),
         E("collect_building_chest_output", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(BuildingChestCollect()), FarmhandActionLifecycle.LiveVerified, "buildingChestTargets"),
-        E("scythe_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, Clears(SelfWalked(SlotTargetWith("scythe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "scythe", "crop"), FarmhandActionLifecycle.LiveVerified, "scytheCropTargets"),
+        E("scythe_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, Clears(SelfWalked(SlotTargetWith("scythe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "scythe", destructive: true, "crop"), FarmhandActionLifecycle.LiveVerified, "scytheCropTargets"),
         E("harvest_bush", "resource_gathering", FarmhandActionHandlerGroup.Farming, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "bushTargets"),
         E("harvest_fruit_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "fruitTreeTargets"),
         E("shake_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "shakeTreeTargets"),
@@ -836,9 +884,15 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// its target family and a nested `with` at each of the eight rows would obscure which of the two facts each row is
     /// declaring. `turns` is one on every row: a clearing action is one dispatched action.
     /// </para>
+    /// <para>
+    /// <paramref name="destructive"/> is REQUIRED, and the rows justify their own answer in
+    /// <see cref="FarmhandClearingDeclaration.Destructive"/>. It is required because the flag's absence is the defect it
+    /// exists to remove: a default would let the next clearing row declare a wipe as a way through without ever noticing
+    /// that the two are different.
+    /// </para>
     /// </summary>
-    private static FarmhandActionDescriptor Clears(FarmhandActionDescriptor descriptor, string tool, params string[] occupants) =>
-        descriptor with { Clears = new FarmhandClearingDeclaration(Array.AsReadOnly(occupants), new FarmhandClearingCost(tool, 1)) };
+    private static FarmhandActionDescriptor Clears(FarmhandActionDescriptor descriptor, string tool, bool destructive, params string[] occupants) =>
+        descriptor with { Clears = new FarmhandClearingDeclaration(Array.AsReadOnly(occupants), new FarmhandClearingCost(tool, 1), destructive) };
 
     private static FarmhandActionRegistration R(string id, string family) => new(id, family, 1, FarmhandActionLifecycle.Published, FarmhandOperationKind.ReadOnly, null, A(null, Array.Empty<FarmhandActionResourceTemplateClaim>(), "observation_complete"));
     private static FarmhandActionDescriptor A(IReadOnlyDictionary<string,string>? facts = null, IReadOnlyList<FarmhandActionResourceTemplateClaim>? resources = null, string postcondition = "native_action_postcondition", params (string,string)[] args) => new(args.Select(x => new FarmhandActionArgument(x.Item1,x.Item2)).ToArray(), facts ?? new Dictionary<string,string>(), resources ?? EmbodiedActorResource, resources is { Count: 0 } ? "read" : "write", postcondition);

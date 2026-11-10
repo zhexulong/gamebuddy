@@ -6,7 +6,20 @@ using GameBuddy.Stardew.Core.Policy;
 namespace GameBuddy.Stardew.Core;
 
 /// <summary>One published action that removes an occupant, with the price its own declaration states.</summary>
-public sealed record FarmhandClearingOffer(string ActionId, FarmhandClearingCost Cost);
+/// <param name="ActionId">The action that would do the removing.</param>
+/// <param name="Cost">What its own declaration says one swing costs.</param>
+/// <param name="Destructive">
+/// Whether that swing destroys what the PLAYER put there rather than taking something out of the way, copied from the
+/// declaration itself.
+///
+/// <para>
+/// It travels with the offer because the offer is read by callers that dispatch it without having been asked to (the
+/// `for_each` heal) as well as by callers that only describe it (the clearing search). "This removes the weed" and
+/// "this levels her crop" were the same sentence until this field, and the first caller to act on that sentence scythed
+/// a crop she had planted.
+/// </para>
+/// </param>
+public sealed record FarmhandClearingOffer(string ActionId, FarmhandClearingCost Cost, bool Destructive);
 
 /// <summary>
 /// Which of the Mod's own actions can remove the thing standing in a route, read from the published action surface.
@@ -40,7 +53,7 @@ public static class ClearingActionSurface
         return surface
             .Where(registration => registration.Descriptor?.Clears is { } clears
                 && clears.Occupants.Contains(occupant, StringComparer.Ordinal))
-            .Select(registration => new FarmhandClearingOffer(registration.ActionId, registration.Descriptor!.Clears!.Cost))
+            .Select(registration => new FarmhandClearingOffer(registration.ActionId, registration.Descriptor!.Clears!.Cost, registration.Descriptor.Clears.Destructive))
             .ToArray();
     }
 }
