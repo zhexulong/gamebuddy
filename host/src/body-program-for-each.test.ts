@@ -6,9 +6,11 @@ import { fileURLToPath } from "node:url";
 
 import {
   forEachRules,
+  isForEachLoopDocument,
   MAX_FOR_EACH_LOOP_DOCUMENT_CHARS,
   MAX_FOR_EACH_ROWS,
   MAX_FOR_EACH_RULES,
+  MAX_FOR_EACH_STEPS,
   type PlanForEachLoop,
   type PlanForEachRule,
   PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL,
@@ -24,7 +26,7 @@ import {
   planActionsFromRegistrations,
   planWorkDescription,
 } from "./body-program-script.js";
-import { type ActionRegistration, type Snapshot } from "./protocol.js";
+import { type ActionRegistration, type Snapshot, validateBodyProgramCandidateRequest } from "./protocol.js";
 
 /**
  * The `for_each` form's own guards, beside the ten cases the form was specified with.
@@ -172,7 +174,7 @@ test("loops over one source compose into one pass whose rules keep the order the
   assert.equal(rules.length, 3);
   assert.deepEqual(
     rules.map((rule) => rule.do),
-    [{ action: "plant_seed", seed: "hops" }, { action: "plant_seed", seed: "coffee" }, null],
+    [[{ action: "plant_seed", seed: "hops" }], [{ action: "plant_seed", seed: "coffee" }], null],
     "first match wins, so the order the caller wrote is the order the pass decides in",
   );
   assert.deepEqual(
@@ -407,6 +409,47 @@ test("a loop document past the wire bound is refused with its own length", () =>
 });
 
 /**
+ * THE NESTING WALK READS THE WHOLE DECLARATION, AND IT ENDS ON EVERY ONE.
+ *
+ * It used to stop after six levels, so a `for_each` buried under a key no rule declares was answered as that unknown key
+ * and the nesting it really was went unsaid. The only declaration that walk cannot finish is one that reaches itself -
+ * built in the script rather than written as a literal - so the guard has to be "every object once", not a depth.
+ */
+test("a nested loop is refused wherever it sits, and a declaration that reaches itself still ends", () => {
+  const buried = {
+    source: { area: { x: 0, y: 0, w: 1, h: 1 } },
+    do: null,
+    then: [
+      {
+        do: null,
+        where: [
+          {
+            field: "kind",
+            eq: 1,
+            extra: { a: { b: { for_each: { source: { area: { x: 0, y: 0, w: 1, h: 1 } }, do: null } } } },
+          },
+        ],
+      },
+    ],
+  };
+  const nested = readForEachLoop(buried, null);
+  assert.equal(
+    nested.ok ? "" : nested.code,
+    "nested_loop_unsupported",
+    "the form named itself again, so that is what the answer says - not the unknown key it happens to sit under",
+  );
+  const reachingItself: Record<string, unknown> = { source: { area: { x: 0, y: 0, w: 1, h: 1 } }, do: null };
+  reachingItself.then = [reachingItself];
+  const cyclic = readForEachLoop(reachingItself, null);
+  assert.equal(
+    cyclic.ok ? "" : cyclic.code,
+    "loop_then_invalid",
+    "a declaration that reaches itself is read, not walked until the stack ends",
+  );
+  assert.equal(cyclic.ok ? "" : cyclic.detail, "rule[0]:unknown:source", "and the rule it broke is still named");
+});
+
+/**
  * THE LINK THAT WAS MISSING. The Host refuses a whole plan before submitting when a node's action id is a form the
  * attached Mod does not publish, and that answer is derived from the Mod's own hello registrations - not from a Host list.
  * This is the registration the Mod publishes (`FarmhandPlanFormCatalog`: published, execution, one `loop` argument of type
@@ -443,7 +486,7 @@ test("the plan vocabulary keeps the plan form the Mod publishes, so a loop is su
 /** The composed pass reads its rules through ONE function, so a writer and a reader cannot enumerate them differently. */
 test("the rules of a pass are enumerated in the order they are decided, whatever the loop says", () => {
   const loop: PlanForEachLoop = { source: { family: "cropTargets" }, do: null };
-  const second: PlanForEachRule = { where: [{ field: "readyForHarvest", eq: true }], do: { action: "harvest_crop" } };
+  const second: PlanForEachRule = { where: [{ field: "readyForHarvest", eq: true }], do: [{ action: "harvest_crop" }] };
   const composed: PlanForEachLoop = { ...loop, then: [second] };
   assert.deepEqual(forEachRules(loop), [{ do: null }], "an absent predicate list means every row, not no rows");
   assert.deepEqual(forEachRules(composed), [{ do: null }, second]);
@@ -487,4 +530,150 @@ test("a row identity the caller wrote is refused by name, and the name is the Mo
   );
   assert.deepEqual(result.dropped, [`n02:plan_script_${PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL}:harvest_crop`]);
   assert.deepEqual(result.acceptedSteps, ["n01"], "the tile she wrote first compiled, and is named beside the refusal");
+});
+
+/**
+ * PROPERTY 5. A ROW'S `do` IS A CHAIN, and the single object is the chain of length one.
+ *
+ * Farm work is a chain per tile - clear, till, water, sow - and a form that could name only one action per row needed one
+ * pass per action: four passes of waking, ordering and receipts over the same sixty tiles, each pass reporting the tiles the
+ * previous one had just prepared. ONE pass now does the whole tile, in the order the caller wrote, and the SHAPE of a step is
+ * exactly the object a lone `do` has always been - so there is no second argument spelling beside it.
+ */
+test("a do array is one ordered chain of steps on one tile, and the bound is the Mod's own number", () => {
+  const declaredSteps = /MaximumSteps\s*=\s*(\d+)/u.exec(readFileSync(MOD_RULES_PATH, "utf8"));
+  assert.ok(
+    declaredSteps !== null,
+    "the Mod's chain model must still declare MaximumSteps; this gate reads it from there",
+  );
+  assert.equal(
+    MAX_FOR_EACH_STEPS,
+    Number(declaredSteps[1]),
+    "the Host and the Mod must bound one row's chain at the same step count",
+  );
+
+  const chained = compile(
+    `builder.for_each({ source: { area: ${PATCH} }, do: [
+       { action: "till_soil" },
+       { action: "water_crop" },
+       { action: "plant_seed", seed: "hops" }
+     ] });`,
+  );
+  const steps = loopOf(nodesOf(chained)[0]!).do;
+  assert.deepEqual(
+    steps,
+    [{ action: "till_soil" }, { action: "water_crop" }, { action: "plant_seed", seed: "hops" }],
+    "the steps arrive in the order the caller wrote them, each with its own arguments",
+  );
+
+  // THE SINGLE FORM IS THE SAME VALUE, so a reader downstream has one shape to run and the Mod has one shape to report.
+  const single = loopOf(
+    nodesOf(compile(`builder.for_each({ source: { area: ${PATCH} }, do: { action: "till_soil" } });`))[0]!,
+  );
+  assert.deepEqual(single.do, [{ action: "till_soil" }]);
+});
+
+/**
+ * THE CHAIN IS BOUNDED AT BOTH ENDS, AND EACH END NAMES WHAT TO FIX.
+ *
+ * An empty array is not "leave this row alone" - `do: null` is the spelling for that - and a chain past the bound answers its
+ * own length beside the bound rather than being trimmed: a row that silently lost its fourth step would report the tile as
+ * worked, which is the defect class this whole form exists to remove.
+ */
+test("a chain past its bound and a chain with no steps are refused by name, with the numbers", () => {
+  const tooMany = Array.from({ length: MAX_FOR_EACH_STEPS + 1 }, () => ({ action: "till_soil" }));
+  const overlong = readForEachLoop({ source: { area: { x: 0, y: 0, w: 1, h: 1 } }, do: tooMany }, null);
+  assert.equal(overlong.ok, false);
+  assert.equal(
+    overlong.ok ? "" : overlong.code,
+    "loop_do_too_many_steps",
+    "the refusal is its own word, not a generic invalid",
+  );
+  assert.equal(
+    overlong.ok ? "" : overlong.detail,
+    `${String(MAX_FOR_EACH_STEPS + 1)}:${String(MAX_FOR_EACH_STEPS)}`,
+    "the detail carries the count the caller wrote beside the bound it must stay under",
+  );
+
+  const empty = readForEachLoop({ source: { area: { x: 0, y: 0, w: 1, h: 1 } }, do: [] }, null);
+  assert.equal(empty.ok, false);
+  assert.equal(empty.ok ? "" : empty.code, "loop_do_empty");
+});
+
+/**
+ * A STEP THAT IS NOT A STEP IS NAMED BY ITS POSITION AND SAYS WHAT A STEP LOOKS LIKE.
+ *
+ * The word this used to answer (`loop_do_invalid:not_an_object`) named nothing a caller could act on. In a chain the caller
+ * has to know WHICH step to fix, and what a step is: `{ action, <argument>: <scalar> }`.
+ */
+test("a step that is not a step is named by its position, and what to write instead", () => {
+  const notAStep = readForEachLoop(
+    { source: { area: { x: 0, y: 0, w: 1, h: 1 } }, do: [{ action: "till_soil" }, "water_crop"] },
+    null,
+  );
+  assert.equal(notAStep.ok, false);
+  assert.equal(notAStep.ok ? "" : notAStep.code, "loop_do_step_unrecognised");
+  assert.equal(notAStep.ok ? "" : notAStep.detail, "step[1]:expected:{action,<argument>:scalar}");
+
+  const argumentNotAScalar = readForEachLoop(
+    {
+      source: { area: { x: 0, y: 0, w: 1, h: 1 } },
+      do: [{ action: "till_soil" }, { action: "plant_seed", seed: ["hops"] }],
+    },
+    null,
+  );
+  assert.equal(argumentNotAScalar.ok, false);
+  assert.equal(argumentNotAScalar.ok ? "" : argumentNotAScalar.detail, "step[1].plant_seed.seed");
+});
+
+/**
+ * THE WIRE READS THE ARRAY FORM BACK WITH THE SAME READER THE COMPILER WRITES IT WITH - one reader, two gates.
+ *
+ * `isForEachLoopDocument` is what `protocol.ts` calls on a `{ type: "loop" }` runtime value before a program may be
+ * submitted. THE ASSERTION GOES THROUGH THAT GATE - `validateBodyProgramCandidateRequest`, the function the materializer
+ * calls - and not through `isForEachLoopDocument` directly: a test of the reader by itself stays green if the wire stops
+ * consulting it, which is the drift this case exists to catch. Before the chain existed the wire answered
+ * `invalid_body_program_request` for a document the compiler had just built, which is a form the Mod can run that never
+ * crosses.
+ */
+test("the wire accepts the chain the compiler writes, and refuses past the same bound", () => {
+  const submission = (doSteps: readonly unknown[]) =>
+    validateBodyProgramCandidateRequest({
+      programId: "program_chain",
+      nodes: [
+        {
+          nodeId: "loop",
+          actionId: "for_each",
+          arguments: { loop: { type: "loop", source: { area: { x: 0, y: 0, w: 6, h: 1 } }, do: doSteps } },
+          dependsOn: [],
+          bindings: {},
+        },
+      ],
+    });
+
+  assert.equal(
+    submission([{ action: "till_soil" }, { action: "plant_seed", seed: "hops" }]),
+    null,
+    "a chain the compiler can write is a loop the wire can carry",
+  );
+  assert.equal(
+    submission(Array.from({ length: MAX_FOR_EACH_STEPS + 1 }, () => ({ action: "till_soil" }))),
+    "invalid_body_program_request",
+    "the wire holds the same bound, because it runs the same reader",
+  );
+  // The reader itself is asked the question the wire has no vocabulary for: a chain with no steps is not a loop.
+  assert.equal(isForEachLoopDocument({ type: "loop", source: { area: { x: 0, y: 0, w: 6, h: 1 } }, do: [] }), false);
+});
+
+/** A row identity is the Mod's in EVERY step of a chain, not only in the first one. */
+test("a row identity inside a later step is refused by name", () => {
+  const result = readForEachLoop(
+    {
+      source: { area: { x: 0, y: 0, w: 1, h: 1 } },
+      do: [{ action: "till_soil" }, { action: "water_crop", expectedTargetId: "crop_0123456789abcdef" }],
+    },
+    null,
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.ok ? "" : result.code, PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL);
 });

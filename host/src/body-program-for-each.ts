@@ -58,12 +58,29 @@ export type PlanForEachSource =
   | Readonly<{ query: Readonly<{ subject: string; only?: string }> }>;
 
 /**
- * What a matching row gets: a published action with its arguments, or `null` for "leave this row alone".
+ * One step of a row's chain: a published action with its own arguments.
  *
- * `null` is a STATEMENT - "this column is a path" - and the Mod's pass counts it apart from a row no predicate claimed,
- * because a deliberate path and a forgotten tile are different mistakes.
+ * The SHAPE is exactly the object a lone `do` has always been - `{ action, <argument>: <scalar> }` - so a chain is that
+ * object written several times and never a second argument spelling beside it.
  */
-export type PlanForEachEffect = Readonly<{ action: string }> & Readonly<Record<string, PlanForEachScalar>>;
+export type PlanForEachStep = Readonly<{ action: string }> & Readonly<Record<string, PlanForEachScalar>>;
+
+/**
+ * What a matching row gets: an ORDERED CHAIN of steps worked on one tile in one pass, or `null` for "leave this row alone".
+ *
+ * <p>
+ * WHY A CHAIN. Farm work is a chain per tile - clear, till, water, sow - and a form that could name only ONE action per row
+ * needed one pass per action: four passes of waking, ordering and receipts over the same sixty tiles, each pass reporting
+ * the tiles the previous one had just prepared by the action the next one wanted. One row is one tile's work, in the order
+ * the caller wrote it, at most `MAX_FOR_EACH_STEPS` steps of it.
+ * </p>
+ * <p>
+ * THE SINGLE FORM IS THE CHAIN OF LENGTH ONE, as it is in `FarmhandForEachEffect`: `do: { action }` and
+ * `do: [{ action }]` read as the same value, so the reader that validates has one shape to answer and the Mod's expansion
+ * has one shape to run.
+ * </p>
+ */
+export type PlanForEachEffect = readonly PlanForEachStep[];
 
 /**
  * One more rule of the same pass: an optional predicate list and what a matching row gets.
@@ -139,18 +156,21 @@ export const MAX_FOR_EACH_RULES = 8;
 /**
  * How many characters one loop DOCUMENT may occupy once it is a canonical string on the wire.
  *
- * THIS IS THE WIRE'S BOUND, NOT A POLICY OF THE FORM. A canonical argument is a scalar or a destination selector, so the
- * loop travels as the string its argument declares, and both sides cap a canonical string at 512 characters - the Host in
- * `host/src/protocol.ts` (`isBodyCanonicalValue`) and the Mod in
- * `integrations/stardew/src/Core/BodyPrograms/BodyProgramModels.cs` (`BodyProgramValidation.TryDecodeRuntimeValue`), mirrored
- * by `FarmhandForEachArguments.MaximumDocumentChars`. A document over it can never cross, so the COMPILER refuses it with
- * its own length instead of letting the pipe answer `invalid_body_node_admission`, which names nothing a caller can fix.
+ * THE NUMBER IS THE MOD'S, NOT THIS FILE'S. A `type: "loop"` argument is turned into the string its argument declares at
+ * the one boundary that knows the tag (`integrations/stardew/src/Core/Protocol/BridgeProtocol.cs`
+ * `TryReadRuntimeArguments` -> `FarmhandForEachArguments.TryCanonicalize`), which refuses a document longer than
+ * `FarmhandForEachArguments.MaximumDocumentChars` and so fails the whole candidate read. A document over it can never
+ * cross, and the pipe's answer (`invalid_body_program_candidate`) names nothing a caller can fix, so the COMPILER refuses
+ * it first with its own length. `body-program-for-each.test.ts` reads that Mod constant and asserts the two are equal, so
+ * this is a mirror of a published bound rather than a second opinion; the scalar-argument cap is the same number on both
+ * sides (`host/src/protocol.ts` `isBodyCanonicalValue`, `BodyProgramValidation.TryDecodeRuntimeValue`).
  *
- * WHAT FITS, MEASURED. The example the description shows is 162 characters, and the three intercropped rules of a 3x20
- * patch (`plant_seed` on columns 0,3,6..., `plant_seed` on 1,4,7..., `do: null` on 2,5,8...) are 340. A pass of eight
- * rules whose predicates each carry a 64-character field name does NOT fit, and no bound chosen here would make it: the
- * wire's 512 is the smaller authority, so the length check IS the document's limit and the description prints it. The
- * rule/predicate/value bounds above remain validation bounds, not length arithmetic.
+ * WHAT FITS, MEASURED through `forEachDocumentLength` on the loop this reader produces: a 20x3 strip with one `then` rule
+ * (`till_soil` on columns 0,3,6..., `plant_seed` on 1,4,7...) is 198 characters, and a 3x20 three-rule pass (`till_soil`,
+ * `plant_seed`, `do: null` on the path column) is 251 - both comfortably inside. Eight rules of long field names do NOT
+ * fit, and no bound chosen here would make them: the Mod's 512 is the smaller authority, so the length check IS the
+ * document's limit and the description prints it. The rule/predicate/value bounds above remain validation bounds, not
+ * length arithmetic.
  */
 export const MAX_FOR_EACH_LOOP_DOCUMENT_CHARS = 512;
 
@@ -165,8 +185,11 @@ export const MAX_FOR_EACH_VALUES = 8;
 /** How many arguments one `do` effect may name. */
 export const MAX_FOR_EACH_EFFECT_ARGUMENTS = 16;
 
-/** How deep the nesting scan walks before it stops looking: a loop is refused, never walked to exhaustion. */
-const MAX_FOR_EACH_SCAN_DEPTH = 6;
+/**
+ * How many steps one row may chain: long enough to be the clear-till-water-sow chain a farm tile really needs, short enough
+ * that a row is still one tile's work and not a plan. Mirrors `FarmhandForEachEffect.MaximumSteps`.
+ */
+export const MAX_FOR_EACH_STEPS = 4;
 
 /**
  * Why a declaration is not a loop this product could run, or the loop itself.
@@ -192,7 +215,7 @@ export function readForEachLoop(value: unknown, actionIds: readonly string[] | n
   if (!isRecord(value)) return rejected("loop_invalid", "not_an_object");
   // ONE LEVEL IS WHAT THIS BUYS, and nesting is refused BY NAME rather than flattened: a loop inside a loop would either
   // multiply the row bound silently or expand against the outer row's tile, and both are a plan nobody wrote.
-  if (namesNestedLoop(value, 0)) return rejected("nested_loop_unsupported");
+  if (namesNestedLoop(value, new Set<object>())) return rejected("nested_loop_unsupported");
   const unknownKey = Object.keys(value).find((key) => !["source", "where", "do", "then"].includes(key));
   if (unknownKey !== undefined) return rejected("loop_invalid", `unknown:${unknownKey}`);
   const source = readSource(value.source);
@@ -240,12 +263,20 @@ function readAlternates(value: unknown, actionIds: readonly string[] | null): Al
   return Object.freeze({ ok: true as const, rules: Object.freeze(rules) });
 }
 
-/** Whether the declaration names the same form again anywhere inside it. */
-function namesNestedLoop(value: unknown, depth: number): boolean {
-  if (depth > MAX_FOR_EACH_SCAN_DEPTH) return false;
-  if (Array.isArray(value)) return value.some((entry) => namesNestedLoop(entry, depth + 1));
+/**
+ * Whether the declaration names the same form again anywhere inside it.
+ *
+ * EVERY OBJECT IS VISITED ONCE, which is the whole guard: a declaration that reaches itself - `then: [itself]`, built in
+ * the script rather than written as a literal - terminates instead of recursing, and no depth anywhere is cut short, so
+ * a `for_each` buried in a declaration this shape has no rule for is still named as what it is.
+ */
+function namesNestedLoop(value: unknown, visited: Set<object>): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  if (visited.has(value)) return false;
+  visited.add(value);
+  if (Array.isArray(value)) return value.some((entry) => namesNestedLoop(entry, visited));
   if (!isRecord(value)) return false;
-  return Object.entries(value).some(([key, entry]) => key === "for_each" || namesNestedLoop(entry, depth + 1));
+  return Object.entries(value).some(([key, entry]) => key === "for_each" || namesNestedLoop(entry, visited));
 }
 
 type SourceReading = Readonly<{ ok: true; source: PlanForEachSource }> | PlanForEachRejection;
@@ -417,11 +448,56 @@ function readScalar(value: unknown, at: string): ScalarReading {
 
 type EffectReading = Readonly<{ ok: true; effect: PlanForEachEffect | null }> | PlanForEachRejection;
 
+/**
+ * One row's chain, or `null` for a deliberate path.
+ *
+ * ONE SHAPE INTERNALLY: a single object is the chain of length one, so the step reader below has one caller shape and a
+ * chain of four is the same grammar written four times rather than a second form beside it.
+ */
 function readEffect(value: unknown, actionIds: readonly string[] | null): EffectReading {
+  // An absent `do` is not a decision (the Mod requires it), but a caller's own `undefined` reads as `null` here exactly as
+  // it always has: this reader decides whether a declaration is a loop, not whether the caller wrote the word `do`.
   if (value === undefined || value === null) return Object.freeze({ ok: true as const, effect: null });
-  if (!isRecord(value)) return rejected("loop_do_invalid", "not_an_object");
+  if (Array.isArray(value)) return readStepChain(value, actionIds);
+  const only = readStep(value, 0, actionIds);
+  return only.ok ? Object.freeze({ ok: true as const, effect: Object.freeze([only.step]) as PlanForEachEffect }) : only;
+}
+
+/**
+ * A chain, read in the order the caller wrote it, bounded by the model's own step count.
+ *
+ * AN EMPTY CHAIN AND AN OVERLONG ONE ARE TWO FACTS, and each names what to fix: `do: []` claims nothing about a row it
+ * matched (`do: null` is the spelling for "leave this row alone"), and a chain past the bound answers its own length beside
+ * the bound rather than being silently trimmed - a row that lost its fourth step would report the tile as worked.
+ */
+function readStepChain(value: readonly unknown[], actionIds: readonly string[] | null): EffectReading {
+  if (value.length === 0) return rejected("loop_do_empty", "expected_at_least_one_step");
+  if (value.length > MAX_FOR_EACH_STEPS)
+    return rejected("loop_do_too_many_steps", `${String(value.length)}:${String(MAX_FOR_EACH_STEPS)}`);
+  const steps: PlanForEachStep[] = [];
+  for (const [index, entry] of value.entries()) {
+    const step = readStep(entry, index, actionIds);
+    if (!step.ok) return step;
+    steps.push(step.step);
+  }
+  return Object.freeze({ ok: true as const, effect: Object.freeze(steps) });
+}
+
+type StepReading = Readonly<{ ok: true; step: PlanForEachStep }> | PlanForEachRejection;
+
+/**
+ * One step: `{ action, <argument>: <scalar> }`.
+ *
+ * EVERY REFUSAL NAMES THE STEP IT IS ABOUT, because a chain is read by position and "a step is wrong" is not actionable.
+ * The detail says WHICH step and, when it is the step's shape that is wrong, what a step looks like - the word this used to
+ * answer (`loop_do_invalid:not_an_object`) named nothing a caller could act on.
+ */
+function readStep(value: unknown, index: number, actionIds: readonly string[] | null): StepReading {
+  const at = `step[${String(index)}]`;
+  if (!isRecord(value)) return rejected("loop_do_step_unrecognised", `${at}:expected:{action,<argument>:scalar}`);
   const action = value.action;
-  if (typeof action !== "string" || action.length === 0) return rejected("loop_do_invalid", "missing_action");
+  if (typeof action !== "string" || action.length === 0)
+    return rejected("loop_do_step_unrecognised", `${at}:missing_action`);
   if (action !== PLAN_FOR_EACH_BY_KIND_ACTION && actionIds !== null && !actionIds.includes(action))
     return rejected("unknown_action", action);
   const arguments_: Record<string, PlanForEachScalar> = { action };
@@ -433,13 +509,14 @@ function readEffect(value: unknown, actionIds: readonly string[] | null): Effect
     // lie `expectedTargetId` exists to catch. Refused by name rather than silently overridden.
     if (name === PLAN_FOR_EACH_ROW_IDENTITY_ARGUMENT) return rejected(PLAN_FOR_EACH_ROW_IDENTITY_REFUSAL, action);
     named += 1;
-    if (named > MAX_FOR_EACH_EFFECT_ARGUMENTS) return rejected("loop_do_invalid", `${action}:too_many_arguments`);
-    if (!isOpaqueId(name)) return rejected("loop_do_invalid", `${action}.${name}`);
-    const scalar = readScalar(entry, `${action}.${name}`);
+    if (named > MAX_FOR_EACH_EFFECT_ARGUMENTS)
+      return rejected("loop_do_too_many_arguments", `${at}:${action}:${String(MAX_FOR_EACH_EFFECT_ARGUMENTS)}`);
+    if (!isOpaqueId(name)) return rejected("loop_do_step_unrecognised", `${at}:${action}.${name}`);
+    const scalar = readScalar(entry, `${at}.${action}.${name}`);
     if (!scalar.ok) return scalar;
     arguments_[name] = scalar.value;
   }
-  return Object.freeze({ ok: true as const, effect: Object.freeze(arguments_) as PlanForEachEffect });
+  return Object.freeze({ ok: true as const, step: Object.freeze(arguments_) as PlanForEachStep });
 }
 
 /**

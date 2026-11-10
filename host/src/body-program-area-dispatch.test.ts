@@ -142,7 +142,11 @@ test("intercropped planting is three loops over one patch, each decided by colum
   );
   assert.deepEqual(loop.source, { area: { x: 60, y: 18, w: 20, h: 3 } });
   assert.deepEqual(loop.where, [{ col: { every: 3, offset: 0 } }]);
-  assert.deepEqual(loop.do, { action: "plant_seed", seed: "hops" });
+  assert.deepEqual(
+    loop.do,
+    [{ action: "plant_seed", seed: "hops" }],
+    "the single form reads back as the chain of length one",
+  );
 });
 
 /**
