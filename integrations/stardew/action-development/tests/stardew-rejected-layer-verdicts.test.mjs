@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// red-proof: inject  renaming the shipped `Grass.performToolAction@365` verdict key to `@366` ->
+//   `AssertionError: cut_grass must have a verdict` at
+//   integrations/stardew/action-development/tests/stardew-rejected-layer-verdicts.test.mjs:153
 /**
  * Tests for the rejected layer of `stardew-action-inventory-reconciliation.mjs`.
  *

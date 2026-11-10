@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// red-proof: inject  pointing enter_mine's entry hop at GameLocation.cs:199999 -> `anchor_not_in_decompile:
+//   enter_mine (GameLocation.Mine) GameLocation.cs:199999 line 199999 beyond GameLocation.cs (17914 lines)`,
+//   exit 1 (integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs)
 /**
  * Loop-closure feasibility gate for the Stardew action surface.
  *

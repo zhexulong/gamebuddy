@@ -1,3 +1,6 @@
+// red-proof: inject  disabling the kind/code pairing in `validateChatRunAudit` -> `AssertionError: kind=lifecycle
+//   must not be able to carry isolation.breach` true !== false at tools/lib/chat-run-audit.test.mjs:154
+//   (tools/lib/chat-run-audit.mjs)
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";

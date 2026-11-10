@@ -1,3 +1,6 @@
+// red-proof: inject  silencing the `assembler_names_credential_file` push in Arm B -> 3 cases red, the first
+//   `AssertionError: Expected values to be strictly deep-equal: + [] - [['assembler_names_credential_file',
+//   'diagnostic-bundle.mjs', 'auth.json']]` at tools/check-credential-export-isolation.test.mjs:190
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";

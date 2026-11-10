@@ -1,3 +1,6 @@
+// red-proof: inject  the same renamed schema property -> `AssertionError ... expected []` at
+//   tools/audit-stardew-discovery-channels.test.mjs:45, with the water_crop row whose `inSchema: false` and
+//   `gap: 'missing_envelope_schema_field'` as `actual`
 import assert from "node:assert/strict";
 import test from "node:test";
 import { auditDiscoveryChannels, loadModSources } from "./audit-stardew-discovery-channels.mjs";

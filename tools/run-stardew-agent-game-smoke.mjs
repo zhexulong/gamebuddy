@@ -1,3 +1,6 @@
+// red-proof: inject  breaking the parenthesis in `option("--client-config")` -> `SyntaxError: missing ) after
+//   argument list` at tools/run-stardew-agent-game-smoke.mjs:24, exit 1
+//   (tools/run-stardew-agent-game-smoke.mjs)
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";

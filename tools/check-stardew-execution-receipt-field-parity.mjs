@@ -1,3 +1,6 @@
+// red-proof: inject  declaring `string RedProofProbe = null!` on BridgeReceipt (a wire field no layer names)
+//   -> verdict `blocked`, exit 1, violations naming every layer, e.g. `{"layer":
+//   "BridgeProtocolModels.cs/LocalExecutionReceipt", "field": "redProofProbe", "issue": "missing"}`
 // Gate: stardew_execution_receipt_field_parity/v1
 //
 // Single-authority mechanical check for the execution receipt field contract.

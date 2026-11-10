@@ -1,3 +1,6 @@
+// red-proof: inject  the same extra BridgeReceipt field -> `AssertionError: the mutation must leave the
+//   authority record intact` 11 !== 10 at tools/check-stardew-execution-receipt-field-parity.test.mjs:216,
+//   with the ten-layer violation list as `actual`
 // Tests for the execution receipt field-parity gate.
 //
 // The four mutations required by the Task acceptance are executed against the real

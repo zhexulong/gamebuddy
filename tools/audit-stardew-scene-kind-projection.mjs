@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// red-proof: inject  renaming `SceneAffordanceKind.Chest`'s wire value to `chestr` in
+//   integrations/stardew/navigation/scenecontracts.cs -> exit 1, `projection: 10 finding(s)` including
+//   `[host protocol union] chestr: kind missing from this layer` and `chest: layer admits a kind ...`
 // Scene-affordance-kind projection audit for `observe_scene`.
 //
 // A scene kind is not usable just because the Mod enum has it. One kind has to

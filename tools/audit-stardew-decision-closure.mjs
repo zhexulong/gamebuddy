@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// red-proof: inject  declaring `red_proof_probe_fact:string` as a RuntimeFact in FarmhandActionDefinitions.cs ->
+//   exit 1, `2 finding(s)`: `runtime_fact_not_readable` and `declared_fact_not_registered_on_surface` for
+//   `red_proof_probe_fact` under `[runtime-fact-on-observation-surface]`
 // Decision-closure gate for the Stardew Farmhand action surface (rev D, W5 §5.1).
 //
 // The question this gate answers is narrow and mechanical: can the Agent DECIDE

@@ -1,3 +1,6 @@
+// red-proof: inject  dropping the `other_player_owns_the_barrier` witness in night-verdict.mjs ->
+//   `AssertionError: she declared locally ready: got companion_sleep_refused:requires_other_player` at
+//   tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs:2715
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";

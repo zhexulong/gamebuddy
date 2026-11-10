@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// red-proof: inject  removing `presentation.committed` from a copy of the clean-success trace and running the
+//   CLI over it with `--audit` -> exit 1, `Verdict: INTEGRITY FAILED`, `hollow_success
+//   [presentation_admission, high] x2: 2 turn(s) reached terminal `completed` with zero presentation.committed
 /**
  * Audit one Chat live run (`chat_run_audit/v1`) and print the `auditing-runs`
  * Phase 7 synthesis report.

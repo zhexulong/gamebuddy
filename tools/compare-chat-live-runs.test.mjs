@@ -1,3 +1,6 @@
+// red-proof: inject  grading a `down` counter that rose as an improvement in compare-chat-live-runs.mjs ->
+//   `AssertionError ... actual 'improvement' expected 'regression'` at tools/compare-chat-live-runs.test.mjs:505
+//   (a provider-boundary integrity case)
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";

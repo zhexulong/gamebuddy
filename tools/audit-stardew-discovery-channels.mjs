@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// red-proof: inject  renaming the schema's `cropTargets` property in protocol/bridge-v1.schema.json -> exit 1,
+//   `[missing_envelope_schema_field] 1: water_crop`, `1 gap(s)`
+//   (protocol/bridge-v1.schema.json)
 // Discovery-channel audit for the Stardew action surface.
 //
 // An action is not usable just because it is registered: the Agent must also be

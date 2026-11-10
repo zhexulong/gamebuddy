@@ -1,3 +1,5 @@
+// red-proof: inject  treating a seed whose readback lacks the fact as durable -> `AssertionError` true !== false
+//   at tools/live-run/memory/run-memory-live-loop.test.mjs:248, the case that must stop before the next seed
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";

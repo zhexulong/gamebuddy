@@ -1,3 +1,5 @@
+// red-proof: inject  the same renamed wire value -> `AssertionError ... actual ['chest', 'chestr',
+//   'water_source'] expected ['water_source']` at tools/audit-stardew-scene-kind-projection.test.mjs:107
 // Regression gate for the scene-affordance-kind projection audit.
 //
 // The audit exists because `water_source` was invisible to a whole layer for a

@@ -1,3 +1,6 @@
+// red-proof: inject  the same unreadable RuntimeFact -> `AssertionError ...` at
+//   tools/audit-stardew-decision-closure.test.mjs:47 naming `red_proof_probe_fact` in the fact-surface
+//   findings, from a case that passes on the clean tree
 // Regression gate for the Stardew decision-closure audit (rev D, W5 §5.1).
 //
 // A checker that can only ever report "ok" is a vacuous gate, so every case below

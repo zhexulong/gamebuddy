@@ -1,3 +1,6 @@
+// red-proof: inject  ignoring `artifact_content_mismatch` in `findTestArtifactInputDrift` -> `AssertionError`
+//   false !== true at tools/check-live-run-artifact-freshness.test.mjs:254, in the copied-artifact case
+//   (tools/lib/live-run-artifact-freshness.mjs)
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

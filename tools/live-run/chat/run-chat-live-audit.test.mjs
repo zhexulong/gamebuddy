@@ -1,3 +1,6 @@
+// red-proof: inject  accepting a zero durable delta in `probeTurnCommittedGate` -> `AssertionError ... actual
+//   { ok: true } expected { ok: false, reason: 'probe_turn_no_committed_presentation' }` at
+//   tools/live-run/chat/run-chat-live-audit.test.mjs:409
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
