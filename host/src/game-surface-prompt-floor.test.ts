@@ -3,11 +3,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-
-import { GAME_SURFACE_PROMPT_FLOOR as READING } from "./game-surface-prompt-floor.test-support.js";
-import { planActionsFromRegistrations, PLAN_ACTION_LIFECYCLES, planWorkDescription } from "./body-program-script.js";
+import { PLAN_ACTION_LIFECYCLES, planActionsFromRegistrations, planWorkDescription } from "./body-program-script.js";
+import {
+  ADVERTISED,
+  BUILDER_METHODS,
+  GAME_SURFACE_PROMPT_FLOOR as READING,
+  SURFACE,
+} from "./game-surface-prompt-floor.test-support.js";
 import { buildChatCompanionSystemPrompt, buildGameCompanionSystemPrompt } from "./identity-profile.js";
-import type { ActionRegistration } from "./protocol.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
 /**
@@ -164,99 +167,6 @@ test("the reading's premise about the plan builder still holds: the flat per-act
     runtimeSource,
     /planActionSurface\s*\n?\s*\?[\s\S]{0,200}?actionIdForToolName\(tool\.name\) === null/u,
     "runtime-core no longer filters adapter action tools out of a plan-builder surface, so the flat per-action tools are back in the request",
-  );
-});
-
-/**
- * The Mod's emitted action surface: the artifact the attested-pipe fixture loads, read from the same path.
- *
- * It is the authority for BOTH counts the reading claims - which actions exist, and which of them the plan builder
- * can expose - so neither claim is a hand-maintained copy of this file's contents.
- */
-const SURFACE_ARTIFACT = join(
-  ROOT,
-  "integrations",
-  "stardew",
-  "action-development",
-  "contracts",
-  "generated",
-  "action-surface.v1.json",
-);
-
-type SurfaceAction = Readonly<{
-  actionId: string;
-  lifecycle: ActionRegistration["lifecycle"];
-  kind: ActionRegistration["kind"];
-  argumentSchema?: Readonly<Record<string, Readonly<{ type: string; enum?: readonly string[] }>>>;
-  outputFacts?: Readonly<Record<string, string>>;
-  resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }>;
-}>;
-
-const SURFACE = (JSON.parse(readFileSync(SURFACE_ARTIFACT, "utf8")) as Readonly<{ actions: readonly SurfaceAction[] }>)
-  .actions;
-
-/**
- * The surface rebuilt into the registrations a live `hello_ack` advertises, which is the shape the Host's own plan
- * admission takes from the wire. `familyId` is the one field the artifact does not publish; the plan builder groups by
- * it and this gate counts ids, so a single placeholder family carries every action.
- */
-const ADVERTISED: readonly ActionRegistration[] = SURFACE.map((action) =>
-  Object.freeze({
-    actionId: action.actionId,
-    familyId: "fixture_family",
-    identityVersion: 1,
-    lifecycle: action.lifecycle,
-    kind: action.kind,
-    ...(action.argumentSchema === undefined
-      ? {}
-      : {
-          descriptor: {
-            argumentSchema: action.argumentSchema,
-            outputFacts: action.outputFacts ?? {},
-            ...(action.resourceTemplate === undefined ? {} : { resourceTemplate: action.resourceTemplate }),
-          },
-        }),
-  }),
-);
-
-/** Every action the adapter can build a per-action tool for: the population a plan surface drops. */
-const FLAT_TOOLS = SURFACE.filter((action) => action.kind === "execution").map((action) => action.actionId);
-/** The builder methods the product derives from the surface, through its own admission test. */
-const BUILDER_METHODS = planActionsFromRegistrations(ADVERTISED).map((action) => action.actionId);
-
-/**
- * The reading claims two sizes of the plan-builder surface, and both are gated here against the surface itself.
- *
- * <p>
- * This is the defect the gate exists for: the reading carried `95` and `92` as literals and nothing compared either to
- * the catalog, so by 2026-11-10 both were wrong about the surface they described - 101 executable actions, of which the
- * builder derives 95 methods - and every run stayed green. A number typed beside the thing it describes is a second
- * spelling, so the failure names the drift and its source instead of printing `expected 95, got 101`.
- * </p>
- */
-test("the reading's two plan-builder counts are the emitted surface's own counts", () => {
-  const claims = [
-    {
-      name: "flatPerActionTools",
-      claimed: READING.planBuilder.claims.flatPerActionTools,
-      derived: FLAT_TOOLS.length,
-      population: `the executable actions on ${SURFACE_ARTIFACT}, one per per-action tool the plan surface drops`,
-    },
-    {
-      name: "plannableBuilderMethods",
-      claimed: READING.planBuilder.claims.plannableBuilderMethods,
-      derived: BUILDER_METHODS.length,
-      population: `the actions body-program-script.ts planActionsFromRegistrations admits from ${FLAT_TOOLS.length} executable ones`,
-    },
-  ];
-  const drifting = claims
-    .filter((claim) => claim.claimed !== claim.derived)
-    .map((claim) => `${claim.name}: ${claim.population} is ${claim.derived}, the reading claims ${claim.claimed}`);
-  assert.deepEqual(
-    drifting,
-    [],
-    `the reading's plan-builder claims no longer match the surface they describe: ${drifting.join(" | ")}. Re-derive the ` +
-      "reading from the artifact in its own commit; do not edit a claim to match the tree.",
   );
 });
 

@@ -11,8 +11,10 @@ import {
   measureGameSurfaceAuthoredContextBudget,
   shippedAuthoredContextGeometry,
 } from "./authored-context-budget.test-support.js";
+import { buildGameCompanionSystemPrompt, identityProfileMacros } from "./identity-profile.js";
 import { buildGameSurfaceAuthoredCatalog } from "./tavern/catalog-service.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
+import { renderMacros } from "./tavern/macro-engine.js";
 import { validateWorldBook } from "./worldbook.js";
 
 /**
@@ -62,6 +64,9 @@ function repositoryRoot(start: string): string {
 }
 
 const ROOT = repositoryRoot(HERE);
+
+/** The locale the shipped Game session runs under; `game-surface-prompt-floor.test.ts` measures at the same one. */
+const GAME_LOCALE = "zh-CN";
 
 const SCOPE = Object.freeze({
   continuityId: "continuity-authored-gate",
@@ -302,4 +307,76 @@ test("the committed world book is the same book the gate measured", () => {
     "the shipped preset's stable sources are no longer the committed world book's",
   );
   assert.equal(shipped.holds, fromAsset.holds);
+});
+
+/**
+ * THE PERSONA THE SHIPPED PRESET DECLARES IS RENDERED BY THE FLOOR, EXACTLY ONCE, AND BY NOTHING ELSE.
+ *
+ * <p>
+ * The whole authored reading rests on one premise: `identity-profile.ts` renders the card's persona
+ * into the system prompt (L214-220), so the persona's cost is inside `floorTokens` and must never be
+ * counted again as an authored source. `authored-context-budget.test.ts` states that for the shipped
+ * fields; this is the gate for the class. The population is every field the preset's own `persona`
+ * declares, discovered from the object rather than listed here, so a field a later `IdentityProfile`
+ * adds reaches this assertion the moment the preset writes one.
+ * </p>
+ *
+ * <p>
+ * Each field must appear exactly ONCE across (system prompt + every authored source). Nowhere means
+ * the prompt stopped rendering what the card declares, and twice means the reading double-counts a
+ * persona the floor already carries; both fail by name as `persona_field_<state>:<field>`. Zero
+ * population is a blocked reading rather than a pass, because a preset with no persona makes every
+ * count here agree with itself.
+ * </p>
+ *
+ * <p>
+ * Compared MACRO-RENDERED through the profile's own table, the one `renderIdentityProfile` uses: since
+ * 350ec7e1 (2026-11-03) the shipped card writes `{{char}}`/`{{user}}` inside `persona.core`, and a
+ * raw-substring comparison would report the field missing while the prompt renders it perfectly.
+ * </p>
+ */
+test("every persona field the preset declares is rendered exactly once, by the floor and never by the authored sum", () => {
+  const profile = DEFAULT_COMPANION_PRESET.profile;
+  const persona = profile.persona;
+  const declared: [string, string][] =
+    persona === undefined
+      ? []
+      : Object.entries(persona).filter((entry): entry is [string, string] => typeof entry[1] === "string");
+  // Zero population is blocked, never green: nothing examined agrees with itself.
+  assert.ok(
+    declared.length > 0,
+    "persona_fields_examined_zero: the shipped preset declares no persona field, so this gate measures nothing",
+  );
+  const prompt = buildGameCompanionSystemPrompt(profile, GAME_LOCALE);
+  const macros = identityProfileMacros(profile, GAME_LOCALE);
+  const catalog = materialize(DEFAULT_COMPANION_PRESET.worldBook);
+  const authored = [...catalog.stableSources, ...catalog.volatileSources].map((source) => source.content);
+  const occurrences = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
+
+  const states = declared.map(([field, text]) => {
+    const rendered = renderMacros(text, macros);
+    const inFloor = occurrences(prompt, rendered);
+    const asAuthored = authored.reduce((total, content) => total + occurrences(content, rendered), 0);
+    return { field, inFloor, asAuthored, total: inFloor + asAuthored };
+  });
+  process.stdout.write(
+    `persona fields examined ${states.length} · rendered in floor ${states.filter((state) => state.inFloor > 0).length} ` +
+      `· counted as authored ${states.filter((state) => state.asAuthored > 0).length} ` +
+      `· missing ${states.filter((state) => state.total === 0).length}\n`,
+  );
+  const violations = states.flatMap((state) => [
+    ...(state.total === 0
+      ? [`persona_field_missing:${state.field} (in neither the system prompt nor any authored source)`]
+      : []),
+    ...(state.total > 1
+      ? [`persona_field_double_counted:${state.field} (floor ${state.inFloor} + authored ${state.asAuthored})`]
+      : []),
+  ]);
+  assert.deepEqual(
+    violations,
+    [],
+    `a persona field is no longer rendered exactly once, by the floor: ${violations.join(" | ")}. Rendered nowhere ` +
+      "means the system prompt stopped carrying what the card declares; counted twice means the authored sum " +
+      "double-counts a persona `floorTokens` already contains.",
+  );
 });

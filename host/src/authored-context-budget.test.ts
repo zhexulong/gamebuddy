@@ -12,9 +12,10 @@ import {
   shippedAuthoredContextGeometry,
 } from "./authored-context-budget.test-support.js";
 import { GAME_SURFACE_PROMPT_FLOOR } from "./game-surface-prompt-floor.test-support.js";
-import { buildGameCompanionSystemPrompt } from "./identity-profile.js";
+import { buildGameCompanionSystemPrompt, identityProfileMacros } from "./identity-profile.js";
 import { buildGameSurfaceAuthoredCatalog } from "./tavern/catalog-service.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
+import { renderMacros } from "./tavern/macro-engine.js";
 import { validateWorldBook } from "./worldbook.js";
 
 /**
@@ -203,26 +204,37 @@ test("the shipped book is measured from the asset that ships, and the committed 
 
 test("the companion's persona is counted ONCE, inside the floor, never as authored context", () => {
   // The defect this asserts against: `identity-profile.ts` renders the persona INTO the system
-  // prompt, and the Game floor reading is a measurement of that assembled prompt — so the persona's
-  // cost is already inside `floorTokens`. Counting it again as an authored source would inflate the
-  // authored total by the whole persona (measured: 1,353 characters, ~339 tokens, more than the
-  // shipped book itself) and make a guard built on this reading refuse cards that fit.
-  const prompt = buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, "zh-CN");
-  const persona = DEFAULT_COMPANION_PRESET.profile.persona;
+  // prompt (L214-220: `Core disposition:` / `Interaction style:` / `Expression style:`), and the
+  // Game floor reading is a measurement of that assembled prompt — so the persona's cost is already
+  // inside `floorTokens`. Counting it again as an authored source would inflate the authored total by
+  // the whole persona (830 + 48 characters, more than the shipped book itself) and make a guard built
+  // on this reading refuse cards that fit.
+  //
+  // Compared MACRO-RENDERED, through the profile's own table: since 350ec7e1 (2026-11-03) the shipped
+  // card writes `{{char}}`/`{{user}}` inside `persona.core`, so the raw field stopped being a
+  // substring of any prompt while the rendered one is what the model reads, exactly once.
+  // `identity-profile.test.ts` owns the rendering contract; `authored-context-budget-gate.test.ts`
+  // owns it for every field the preset declares. This test owns only that the floor carries the
+  // persona and the authored reading does not.
+  const profile = DEFAULT_COMPANION_PRESET.profile;
+  const prompt = buildGameCompanionSystemPrompt(profile, "zh-CN");
+  const persona = profile.persona;
   assert.ok(persona !== undefined, "the shipped profile lost its persona, so this premise is void");
+  const macros = identityProfileMacros(profile, "zh-CN");
   assert.ok(
-    prompt.includes(persona.core ?? "\u0000"),
+    prompt.includes(renderMacros(persona.core ?? "\u0000", macros)),
     "persona.core is no longer rendered into the system prompt; if that changed, the floor no longer " +
       "carries it and the authored sum WOULD have to count it",
   );
   assert.ok(
-    prompt.includes(persona.interactionStyle ?? "\u0000"),
+    prompt.includes(renderMacros(persona.interactionStyle ?? "\u0000", macros)),
     "persona.interactionStyle is no longer rendered into the system prompt",
   );
-  // And the reading itself carries no persona row, because there is no authored persona source.
+  // And the reading itself carries no persona row, because there is no authored persona source:
+  // `kind` is the catalogue's own field, `sourceId` is the artifact's id and would never be "persona".
   const reading = shippedReading();
   assert.equal(
-    reading.stable.rows.some((row) => row.sourceId === "persona"),
+    reading.stable.rows.some((row) => row.kind === "persona"),
     false,
     "the reading added a persona row, which double-counts what floorTokens already contains",
   );
