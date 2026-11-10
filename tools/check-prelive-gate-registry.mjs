@@ -124,18 +124,6 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "on-demand",
   },
   {
-    path: "tools/audit-action-breadth.mjs",
-    reason:
-      "arguments: requires `--result <bundle>/result.json` from one FINISHED live run and, for the concentration, the" +
-      " flat trace in that run's directory, so there is nothing to measure before a run exists; measured 2026-11-07 on" +
-      " round39 it reports `narrow:below_baseline:round38` on the family ratchet, and no `attempted of addressable`" +
-      " number at all - that bundle predates `snapshotCensus`, so the reading is `not_measured:no_snapshot_census`" +
-      " wherever the families do not already decide it. Its verdict is also published in" +
-      " every bundle by the runner's own `action_breadth` clause, which is what keeps a narrow run visible without" +
-      " anyone remembering to run this entry",
-    runsIn: "on-demand",
-  },
-  {
     path: "tools/audit-chat-live-run.mjs",
     reason:
       "arguments: requires `--audit <chat-run-dir>` pointing at an existing Chat live-run directory (same entry as " +
@@ -211,23 +199,6 @@ export const EXEMPTIONS = Object.freeze([
       "already runs. Measured 2026-11-10 at HEAD f383b9bb: `examined 101 frontend route literal(s) and 76 host route(s)`, " +
       "three reads with no producer - `/api/tavern/v1/presets` and `/api/tavern/v1/settings/ui-language` (stub_only: their " +
       "only other mention was a Playwright stub) and `/api/tavern/v1/world-info/export` (named nowhere else at all).",
-  },
-  {
-    path: "tools/audit-airp-scorecard.mjs",
-    reason:
-      "arguments: needs one finished run's result.json and the Pi session files under its own runtime-root, so no rung " +
-      "before a launch can run it; measured 2026-11-07 on round39: `first visible text 861 s`, `plans preceded by a " +
-      "stated intent 8 of 30`, `executions timed 124 of 124` - every metric the artifact cannot support is printed as " +
-      "not_measured with its reason instead of being estimated",
-    runsIn: "on-demand",
-  },
-  {
-    path: "tools/audit-long-session-metrics.mjs",
-    reason:
-      "arguments: needs one finished run's result.json (--result) and reads its session transcript, so no rung before a " +
-      "launch can run it; measured 2026-11-06 on round38: `executions 379, of which timed 0`, i.e. it answers " +
-      "NOT_EXERCISED where the bundle has no receipt timestamps rather than reporting a number it cannot support",
-    runsIn: "on-demand",
   },
   {
     path: "tools/audit-preset-macro-frequency.mjs",
