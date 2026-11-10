@@ -1,3 +1,4 @@
+using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Policy;
 using StardewValley;
 using StardewValley.Menus;
@@ -192,6 +193,38 @@ internal static class WorldModel
     /// would then refuse.
     /// </summary>
     internal static bool HasDialogueBox(in ActorWorldFacts facts) => facts.MenuType is DialogueBoxTypeName;
+
+    /// <summary>
+    /// What is on the actor's screen, in the terms a START decision and a DISMISSAL both need: which KIND of modal it is,
+    /// and the engine's own type name for it.
+    ///
+    /// <para>
+    /// ONE reader, because two gates ask about the same screen and must agree: the Body Program pump asks whether an
+    /// action may START while this is mounted (`BodyProgramDispatchGate.HoldOf`), and `dismiss_modal` asks whether this
+    /// is a modal IT may close. The two answers are not the same question - an audited menu is dismissible and still
+    /// holds every action that needs a free body - which is exactly why the KIND is what both read rather than a bare
+    /// "modal is up".
+    /// </para>
+    /// <para>
+    /// `dialogueUp` with no mounted menu is the page-turn or warp microwindow `Classify` already treats as modal: the
+    /// box holds the actor but there is no menu object to close, so it is reported as an unattributed modal rather than
+    /// as a dismissible dialogue box - naming `dismiss_modal` for it would name an action that answers the no-op.
+    /// </para>
+    /// </summary>
+    internal static BodyProgramModalFact MountedModal(IClickableMenu? menu, bool dialogueUp) => menu switch
+    {
+        DialogueBox dialogue => new BodyProgramModalFact(
+            dialogue.isQuestion ? BodyProgramModalKind.Question : BodyProgramModalKind.PlainDialogue,
+            DialogueBoxTypeName),
+        // A counter belongs to `shop_purchase`, which opens it and closes it itself (see the refusal in
+        // `RequestLocalDismissModal`) - so it is a kind of its own, not an operation menu this channel may close.
+        ShopMenu => new BodyProgramModalFact(BodyProgramModalKind.Shop, menu.GetType().Name),
+        not null => new BodyProgramModalFact(
+            ExecutionManager.IsDismissibleOperationModalType(menu.GetType().Name) ? BodyProgramModalKind.OperationMenu : BodyProgramModalKind.Menu,
+            menu.GetType().Name),
+        null when dialogueUp => new BodyProgramModalFact(BodyProgramModalKind.Menu, null),
+        _ => BodyProgramModalFact.None,
+    };
 
     /// <summary>
     /// The event-acting family member that ANSWERS a question, whose sibling closes an informational box.

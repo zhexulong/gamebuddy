@@ -1207,7 +1207,7 @@ public sealed class BodyProgramControllerPumpTests
         var admission = new ImmediateAdmissionTransport();
         var executor = new MachineNodeExecutor("opaque-machine-7");
         bool dispatchable = false;
-        var controller = new FarmhandBodyProgramController(authority, admission, executor) { CanDispatchNow = _ => dispatchable };
+        var controller = new FarmhandBodyProgramController(authority, admission, executor) { HoldOf = _ => dispatchable ? null : TransientHold };
         authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
 
         // Tick 1: the world is mid-animation (a predecessor's native cooldown - measured one frame after a harvest, and
@@ -1234,7 +1234,7 @@ public sealed class BodyProgramControllerPumpTests
         OpenBodyProgramJournalAuthority authority = Open();
         var admission = new ImmediateAdmissionTransport();
         var executor = new MachineNodeExecutor("opaque-machine-7");
-        var controller = new FarmhandBodyProgramController(authority, admission, executor) { CanDispatchNow = _ => false };
+        var controller = new FarmhandBodyProgramController(authority, admission, executor) { HoldOf = _ => TransientHold };
         authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
 
         // The world never becomes ready. Waiting is bounded (the native cooldown is about a second; an unbounded wait
@@ -1257,10 +1257,10 @@ public sealed class BodyProgramControllerPumpTests
         const string dispatchableAction = "machine_inspect";
         var controller = new FarmhandBodyProgramController(authority, admission, executor)
         {
-            CanDispatchNow = actionId =>
+            HoldOf = actionId =>
             {
                 asked.Add(actionId);
-                return string.Equals(actionId, dispatchableAction, StringComparison.Ordinal);
+                return string.Equals(actionId, dispatchableAction, StringComparison.Ordinal) ? null : TransientHold;
             },
         };
         authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
@@ -1286,7 +1286,7 @@ public sealed class BodyProgramControllerPumpTests
         var executor = new MachineNodeExecutor("opaque-machine-7");
         var controller = new FarmhandBodyProgramController(authority, admission, executor)
         {
-            CanDispatchNow = actionId => !string.Equals(actionId, "machine_inspect", StringComparison.Ordinal),
+            HoldOf = actionId => string.Equals(actionId, "machine_inspect", StringComparison.Ordinal) ? TransientHold : null,
         };
         authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
 
@@ -1295,6 +1295,69 @@ public sealed class BodyProgramControllerPumpTests
         authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").State
             .Should().Be(BodyProgramNodeState.AwaitingHostAdmission);
     }
+
+    /// <summary>
+    /// A modal does not clear while you wait for it, so the successor of a step that left one open must not be
+    /// ADMITTED AT ALL - not admitted, deferred for the cadence window and then dispatched into the refusal.
+    ///
+    /// <para>
+    /// THE DEFECT, REASONED FROM THE TWO EDGES. `orderedAfter` is ordering, not success (`cdacf139`), so a successor
+    /// starts as soon as its predecessor is terminal - and a `talk_to_npc` is terminal while the box it raised is still
+    /// open. The successor was then minted, deferred for `MaxCadenceDeferrals` ticks and dispatched into a world that
+    /// answered `player_not_actionable`: the node as the message, with nothing in it about the box, the keys it offers or
+    /// the action that settles it. The gate below is asked BEFORE the mint, so the node is still `Pending` - unspent
+    /// attempt, no watchdog running - and the pump's own line names the holder and the remedy.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AQuestionDialogueHoldsTheStartInsteadOfAdmittingANodeItCannotRun()
+    {
+        OpenBodyProgramJournalAuthority authority = Open();
+        var admission = new ImmediateAdmissionTransport();
+        var executor = new MachineNodeExecutor("opaque-machine-7");
+        bool dialogueOpen = true;
+        var reported = new List<string>();
+        var controller = new FarmhandBodyProgramController(authority, admission, executor)
+        {
+            Diagnostics = reported.Add,
+            HoldOf = actionId => BodyProgramDispatchGate.HoldOf(
+                actionId,
+                cutsceneUp: false,
+                modal: dialogueOpen
+                    ? new BodyProgramModalFact(BodyProgramModalKind.Question, "DialogueBox")
+                    : BodyProgramModalFact.None,
+                actorCanMove: !dialogueOpen),
+        };
+        authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        for (int pass = 0; pass < 5; pass += 1) controller.Update();
+
+        // Nothing was admitted, so nothing was sent, nothing ran, and the node's one attempt is untouched.
+        authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").State
+            .Should().Be(BodyProgramNodeState.Pending);
+        admission.Sent.Should().BeEmpty();
+        executor.Runs.Should().BeEmpty();
+
+        // The refusal names the holder and the clearing action, once - a hold that stands for a whole day is one line.
+        reported.Should().Contain(line => line.Contains("node_held", StringComparison.Ordinal)
+            && line.Contains("node=inspect", StringComparison.Ordinal)
+            && line.Contains("action=machine_inspect", StringComparison.Ordinal)
+            && line.Contains("held_by=dialogue_box;answer_it=answer_dialogue", StringComparison.Ordinal));
+        reported.Should().ContainSingle(line => line.Contains("node_held", StringComparison.Ordinal));
+
+        // FALSIFIER: the same program and the same tick loop, with the box gone - the node starts, so the wait above is
+        // the gate working rather than a pump that stopped pumping.
+        dialogueOpen = false;
+        controller.Update();
+        authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").State
+            .Should().Be(BodyProgramNodeState.Succeeded);
+        admission.Sent.Should().ContainSingle().Which.NodeId.Should().Be("inspect");
+    }
+
+    /// <summary>A body lock that clears itself: the hold the bounded deferral exists for, and NOT a modal hold.</summary>
+    private static readonly BodyProgramHold TransientHold = new(
+        BodyProgramModalKind.None,
+        "held_by=transient_busy;next_step=wait_for_retry_window");
 
     [Fact]
     public void AnAbandonedProgramReleasesTheScopeWithoutRetryingTheUnknownNode()

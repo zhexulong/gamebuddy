@@ -393,6 +393,17 @@ public enum BodyProgramControllerResultCode { Succeeded, NotFound, InvalidInput,
 public readonly record struct BodyProgramControllerResult<T>(BodyProgramControllerResultCode Code, T? Value) where T : class { public bool IsSuccess => this.Code == BodyProgramControllerResultCode.Succeeded && this.Value is not null; }
 public static class BodyProgramControllerResult { public static BodyProgramControllerResult<T> Success<T>(T value) where T : class => new(BodyProgramControllerResultCode.Succeeded, value); public static BodyProgramControllerResult<T> Failure<T>(BodyProgramControllerResultCode code) where T : class => new(code, null); }
 
+/// <summary>
+/// The node a program would start next: the journal's node id, and the CATALOG action it runs.
+///
+/// <para>
+/// Both halves are needed by the one caller that reads it. The node id says which node a hold is about, and the action
+/// id is the argument the world's start gate takes: a hold is per ACTION (an open modal is the working precondition of
+/// the family that closes it), so an answer keyed by node id would have to invent the rule.
+/// </para>
+/// </summary>
+public sealed record BodyProgramNextNode(string NodeId, string ActionId);
+
 internal static class BodyProgramValidation
 {
     /// <summary>

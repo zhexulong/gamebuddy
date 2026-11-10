@@ -134,25 +134,30 @@ public sealed class FarmhandBodyProgramController
     }
 
     /// <summary>
-    /// Whether the host that owns the world may hand THIS node's action to it on this tick.
+    /// Whether the host that owns the world may hand THIS action to it on this tick, and if not, WHAT HOLDS IT.
     ///
-    /// Why the program path needs it: a successor is dispatched as soon as its predecessor settles, and a
-    /// predecessor often settles on the same frame its native animation starts. Re-entering the actor during that
-    /// animation is refused by the router (`player_not_actionable` - a one-frame cooldown: measured 2026-10-19, the
-    /// refusal arrived one tick after the previous harvest and the actor was movable again a second later). The
-    /// refusal is now an honest node failure rather than a poisoned scope, but a failure stops the successor chain,
-    /// so the pass is SKIPPED while the world is mid-animation instead of forcing a refusal a node cannot retry.
-    ///
+    /// <para>
+    /// WHY A NAMED HOLD AND NOT A BOOLEAN. The pump used to ask "may this action be dispatched?" and the answer was
+    /// applied only AFTER the admission had been minted: a node held by a modal was minted, deferred for the cadence
+    /// window and then dispatched into a world that refused it with `player_not_actionable` - the node became the
+    /// message. The hold carries its own evidence (`held_by=dialogue_box;answer_it=answer_dialogue`), so the two
+    /// decision points that read it can differ where they must: the START gate refuses to admit a node while a MODAL
+    /// holds its action (only an action or the player clears one, so waiting is not a policy, it is a stall), and the
+    /// dispatch gate still defers an already-admitted node through any hold it meets (a transient body lock clears
+    /// itself, and that deferral is bounded).
+    /// </para>
+    /// <para>
     /// Why the ACTION is the argument and not the tick: "the world is busy" is not one fact. A menu holds the body
     /// against every action that needs it, and is the WORKING PRECONDITION of the handful that exist to close it
     /// (`dismiss_modal`, `answer_dialogue`, `respond_level_up` - <see cref="FarmhandActionCatalog.ModalResolvingActionIds"/>).
     /// A world-only gate deferred those nodes for the whole cadence window, so the pump waited out the modal it was
     /// itself able to dismiss; the flat admission (which reads the same catalog family) never had that defect. The
     /// pump therefore asks the host per ACTION and lets the host's own answer name which holds are per-action.
+    /// </para>
     ///
-    /// Null means "always dispatchable", which is what a harness without a world wants.
+    /// <para>Null (or no probe at all) means "always dispatchable", which is what a harness without a world wants.</para>
     /// </summary>
-    public Func<string, bool>? CanDispatchNow { get; init; }
+    public Func<string, BodyProgramHold?>? HoldOf { get; init; }
 
     /// <summary>
     /// How many passes one node ATTEMPT may be deferred for the world's sake.
@@ -267,6 +272,16 @@ public sealed class FarmhandBodyProgramController
     {
         while (true)
         {
+            // THE START GATE RUNS BEFORE THE MINT, and that ordering is the whole fix.
+            //
+            // A node whose action needs a free body must not be admitted while a modal holds the actor. The admission
+            // is durable and the node's watchdog starts with it, so a node minted into that world has only two ways
+            // out: deferred until its derived deadline, or dispatched into the refusal the hold ALREADY named - and a
+            // successor that starts while a question box is still open is exactly how `player_not_actionable` came to
+            // be a node's epitaph. Asking here costs one selection the mint would repeat; the selection itself is
+            // shared (`TryNextNode` and `TryCreateAdmissionChallenge` both run `SelectStartCandidate`), so the node
+            // the gate answers for and the node admitted next cannot disagree.
+            if (this.HoldOf is { } hold && this.TryHoldStart(programId, hold)) return;
             BodyProgramControllerResult<NodeAdmissionChallenge> started = this.authority.TryCreateAdmissionChallenge(programId);
             if (!started.IsSuccess)
             {
@@ -290,6 +305,41 @@ public sealed class FarmhandBodyProgramController
         }
     }
 
+    /// <summary>
+    /// Asks the world about the action of the node this program would start next, and reports a MODAL hold instead of
+    /// admitting it. True means the program's pass is over: nothing was minted, sent or dispatched.
+    ///
+    /// <para>
+    /// Only a modal hold stops a start. A cutscene or a transient body lock keeps the behaviour it had - the node is
+    /// admitted and the bounded deferral in <see cref="AdvanceAwaitingNodes"/> waits the lock out - because those clear
+    /// on their own, while a modal is cleared by an ACTION or by the player and never by this pump.
+    /// </para>
+    /// </summary>
+    private bool TryHoldStart(string programId, Func<string, BodyProgramHold?> hold)
+    {
+        BodyProgramControllerResult<BodyProgramNextNode> next = this.authority.TryNextNode(programId);
+        if (!next.IsSuccess || next.Value is null) return false;
+        if (hold(next.Value.ActionId) is not { IsModal: true } held) return false;
+        this.DiagnoseStartHeld(programId, next.Value.NodeId, next.Value.ActionId, held.Evidence);
+        return true;
+    }
+
+    /// <summary>
+    /// Reports a start hold once per program, until it changes - the same treatment <see cref="DiagnoseWaiting"/> gives
+    /// a waiting code, and for the same reason: a hold that stands for a whole day is one line, not sixty a second.
+    /// </summary>
+    private void DiagnoseStartHeld(string programId, string nodeId, string actionId, string evidence)
+    {
+        if (this.Diagnostics is null) return;
+        string detail = $"node_held;program={programId};node={nodeId};action={actionId};{evidence}";
+        if (this.diagnosticsLastStartHold.TryGetValue(programId, out string? last) && last == detail) return;
+        this.diagnosticsLastStartHold[programId] = detail;
+        this.Diagnostics($"[GameBuddy-body-program] {detail}");
+    }
+
+    /** The last start hold printed for each program, so a repeat says nothing. */
+    private readonly Dictionary<string, string> diagnosticsLastStartHold = new(StringComparer.Ordinal);
+
     private void AdvanceAwaitingNodes(string programId)
     {
         // The journal snapshot is immutable and the authority mutates on every
@@ -305,7 +355,7 @@ public sealed class FarmhandBodyProgramController
             // The world gets its say BEFORE the transport result is taken: taking it and then skipping would consume
             // the admission and strand the node awaiting a result that no longer exists. The deferral is bounded, so a
             // world that never becomes ready delays a node instead of holding it for ever.
-            if (this.CanDispatchNow is { } canDispatch && !canDispatch(ActionIdOf(current, node.NodeId)))
+            if (this.HoldOf is { } hold && hold(ActionIdOf(current, node.NodeId)) is not null)
             {
                 string deferralKey = AttemptKey(programId, node.NodeId, node.NodeAttempt);
                 int deferred = this.cadenceDeferrals.TryGetValue(deferralKey, out int seen) ? seen : 0;

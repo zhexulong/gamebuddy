@@ -349,49 +349,13 @@ public sealed class OpenBodyProgramJournalAuthority
 
     public BodyProgramControllerResult<NodeAdmissionChallenge> TryCreateAdmissionChallenge(string programId)
     {
-        // A program waiting for recovery must not hold back a DIFFERENT program's nodes.
-        //
-        // `IsMutable` is about the JOURNAL; this is about one PROGRAM. Measured 2026-10-27: a submitted plan
-        // came back `Accepted` (`SubmitWhileRecovering` admits it) and then every one of its five nodes stayed
-        // `Pending` because this line answered RecoveryRequired - the companion stood in the farmhouse with an
-        // active program it could not start, while the model re-observed and waited. The submit fix alone was
-        // half a fix.
-        //
-        // The narrowness still holds: only the RECOVERY status is waived, and only for a program that is not
-        // itself in recovery. A corrupt or unwritable journal still refuses here.
-        if (!IsMutable && !IsRecoveryScoped) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.RecoveryRequired);
-        // Three answers, and they must not be collapsed:
-        //   - no such program                     -> NotFound
-        //   - this program is ITSELF in recovery  -> RecoveryRequired (its unknown node must not run)
-        //   - this program is Active              -> proceed, whatever a NEIGHBOUR is doing
-        //
-        // `TryProgram` folds the last two into one `false`, which read as NotFound for a program the caller
-        // can plainly see. A recovery program is not missing; it is waiting.
-        BodyProgramJournalProgram? program = this.state.Programs.SingleOrDefault(item => item.Program.ProgramId == programId);
-        if (program is null) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.NotFound);
-        // A failed, cancelled or succeeded program is not MISSING and not RECOVERING - it is finished. It gets
-        // `ProgramNotActive`, which is the code that exists for exactly this answer; folding it into NotFound made a
-        // caller re-submit a program that had already run, and folding it into RecoveryRequired made a caller
-        // believe an unknown dispatch was outstanding when none was.
-        if (program.State != BodyProgramState.Active)
-            return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(program.State == BodyProgramState.RecoveryRequired
-                ? BodyProgramControllerResultCode.RecoveryRequired
-                : BodyProgramControllerResultCode.ProgramNotActive);
-        BodyProgramPolicyIdentity policy = ObservePolicy();
-        if (!PolicyMatches(policy, this.state.PolicyIdentity)) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.PolicyIdentityStale);
-        // ONE NODE IN FLIGHT, decided here rather than by the pump's loop.
-        //
-        // `StartEligibleNodes` calls this in a `while` until it refuses, so a program with two genuinely independent nodes
-        // (no edge between them, no shared claim) minted a challenge for each in one tick. The two edges this program now
-        // has are about ORDERING; the serialization of one embodied actor's native mutations is a separate invariant, and a
-        // guard that lives in the caller is a guard a second caller does not have.
-        if (program!.Nodes.Any(node => node.State is BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running))
-            return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.NodeNotEligible);
-        IReadOnlyList<BodyProgramGraphNode> graph = BodyProgramGraphRules.FromJournalNodes(program!);
-        IReadOnlyDictionary<string, BodyProgramNodeState> states = BodyProgramGraphRules.StatesOf(program!);
-        BodyProgramJournalNode? node = program!.Nodes.OrderBy(item => item.NodeId, StringComparer.Ordinal).FirstOrDefault(item => item.State == BodyProgramNodeState.Pending && BodyProgramGraphRules.EligibleToStart(graph, states, item.NodeId));
-        if (node is null) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.NodeNotEligible);
-        VerifiedBodyProgramNode descriptor = program.Program.Nodes.Single(item => item.NodeId == node.NodeId);
+        BodyProgramControllerResult<BodyProgramStartCandidate> selected = this.SelectStartCandidate(programId);
+        if (!selected.IsSuccess) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(selected.Code);
+        BodyProgramStartCandidate start = selected.Value!;
+        BodyProgramJournalProgram program = start.Program;
+        BodyProgramJournalNode node = start.Node;
+        VerifiedBodyProgramNode descriptor = start.Descriptor;
+        BodyProgramPolicyIdentity policy = start.Policy;
         // The watchdog budget is descriptor-owned; the Mod derives a fresh
         // absolute deadline at admission time. Agent-authored candidates never
         // carry a clock field, so nothing here trusts a model-supplied value.
@@ -424,6 +388,88 @@ public sealed class OpenBodyProgramJournalAuthority
         if (!TryPersist(AppendEvent(ReplaceProgram(this.state, ReplaceNode(program, changed)), program.Program.ProgramId, "admission_challenge", changed.NodeId, changed.NodeAttempt))) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.PersistenceWriteFailed);
         return BodyProgramControllerResult.Success(Challenge(program, changed, descriptor, changed.AttemptPolicyIdentity!, changed.CanonicalBoundArguments!));
     }
+
+    /// <summary>
+    /// The action of the node this program would start next, or the refusal a mint would answer - without minting.
+    ///
+    /// <para>
+    /// WHY THIS IS APART FROM THE MINT. A caller that has to ask the WORLD before a node starts ("may this action run
+    /// while the actor is held?") needs the ACTION, and the action lives only in the catalog descriptor: the journal
+    /// node is deliberately action-free, so the descriptor set the program was verified into is the only place a node's
+    /// action is readable. Minting first and asking afterwards is too late - the durable admission is what makes a node
+    /// start, so a world that then says no leaves it `AwaitingHostAdmission` with a running watchdog instead of a node
+    /// that simply has not started.
+    /// </para>
+    /// <para>
+    /// The selection is SHARED with <see cref="TryCreateAdmissionChallenge"/> (<see cref="SelectStartCandidate"/>), so
+    /// this answer and the node admitted a moment later cannot disagree about which node is next.
+    /// </para>
+    /// </summary>
+    public BodyProgramControllerResult<BodyProgramNextNode> TryNextNode(string programId)
+    {
+        BodyProgramControllerResult<BodyProgramStartCandidate> selected = this.SelectStartCandidate(programId);
+        return selected.IsSuccess
+            ? BodyProgramControllerResult.Success(new BodyProgramNextNode(selected.Value!.Node.NodeId, selected.Value!.Descriptor.ActionId))
+            : BodyProgramControllerResult.Failure<BodyProgramNextNode>(selected.Code);
+    }
+
+    /// <summary>
+    /// Every guard that has to hold before ONE node of this program may be admitted, and the node itself.
+    ///
+    /// <para>
+    /// It is one method because it has two readers - the mint, and the pump's "which action would start next?" - and a
+    /// second spelling of the guard chain would let the two disagree about the node they are talking about.
+    /// </para>
+    /// </summary>
+    private BodyProgramControllerResult<BodyProgramStartCandidate> SelectStartCandidate(string programId)
+    {
+        // A program waiting for recovery must not hold back a DIFFERENT program's nodes.
+        //
+        // `IsMutable` is about the JOURNAL; this is about one PROGRAM. Measured 2026-10-27: a submitted plan
+        // came back `Accepted` (`SubmitWhileRecovering` admits it) and then every one of its five nodes stayed
+        // `Pending` because this line answered RecoveryRequired - the companion stood in the farmhouse with an
+        // active program it could not start, while the model re-observed and waited. The submit fix alone was
+        // half a fix.
+        //
+        // The narrowness still holds: only the RECOVERY status is waived, and only for a program that is not
+        // itself in recovery. A corrupt or unwritable journal still refuses here.
+        if (!IsMutable && !IsRecoveryScoped) return BodyProgramControllerResult.Failure<BodyProgramStartCandidate>(BodyProgramControllerResultCode.RecoveryRequired);
+        // Three answers, and they must not be collapsed:
+        //   - no such program                     -> NotFound
+        //   - this program is ITSELF in recovery  -> RecoveryRequired (its unknown node must not run)
+        //   - this program is Active              -> proceed, whatever a NEIGHBOUR is doing
+        //
+        // `TryProgram` folds the last two into one `false`, which read as NotFound for a program the caller
+        // can plainly see. A recovery program is not missing; it is waiting.
+        BodyProgramJournalProgram? program = this.state.Programs.SingleOrDefault(item => item.Program.ProgramId == programId);
+        if (program is null) return BodyProgramControllerResult.Failure<BodyProgramStartCandidate>(BodyProgramControllerResultCode.NotFound);
+        // A failed, cancelled or succeeded program is not MISSING and not RECOVERING - it is finished. It gets
+        // `ProgramNotActive`, which is the code that exists for exactly this answer; folding it into NotFound made a
+        // caller re-submit a program that had already run, and folding it into RecoveryRequired made a caller
+        // believe an unknown dispatch was outstanding when none was.
+        if (program.State != BodyProgramState.Active)
+            return BodyProgramControllerResult.Failure<BodyProgramStartCandidate>(program.State == BodyProgramState.RecoveryRequired
+                ? BodyProgramControllerResultCode.RecoveryRequired
+                : BodyProgramControllerResultCode.ProgramNotActive);
+        BodyProgramPolicyIdentity policy = ObservePolicy();
+        if (!PolicyMatches(policy, this.state.PolicyIdentity)) return BodyProgramControllerResult.Failure<BodyProgramStartCandidate>(BodyProgramControllerResultCode.PolicyIdentityStale);
+        // ONE NODE IN FLIGHT, decided here rather than by the pump's loop.
+        //
+        // `StartEligibleNodes` calls this in a `while` until it refuses, so a program with two genuinely independent nodes
+        // (no edge between them, no shared claim) minted a challenge for each in one tick. The two edges this program now
+        // has are about ORDERING; the serialization of one embodied actor's native mutations is a separate invariant, and a
+        // guard that lives in the caller is a guard a second caller does not have.
+        if (program.Nodes.Any(node => node.State is BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running))
+            return BodyProgramControllerResult.Failure<BodyProgramStartCandidate>(BodyProgramControllerResultCode.NodeNotEligible);
+        IReadOnlyList<BodyProgramGraphNode> graph = BodyProgramGraphRules.FromJournalNodes(program);
+        IReadOnlyDictionary<string, BodyProgramNodeState> states = BodyProgramGraphRules.StatesOf(program);
+        BodyProgramJournalNode? node = program.Nodes.OrderBy(item => item.NodeId, StringComparer.Ordinal).FirstOrDefault(item => item.State == BodyProgramNodeState.Pending && BodyProgramGraphRules.EligibleToStart(graph, states, item.NodeId));
+        if (node is null) return BodyProgramControllerResult.Failure<BodyProgramStartCandidate>(BodyProgramControllerResultCode.NodeNotEligible);
+        return BodyProgramControllerResult.Success(new BodyProgramStartCandidate(program, node, program.Program.Nodes.Single(item => item.NodeId == node.NodeId), policy));
+    }
+
+    /// <summary>One program's next node, with the descriptor whose action id the world is asked about.</summary>
+    private sealed record BodyProgramStartCandidate(BodyProgramJournalProgram Program, BodyProgramJournalNode Node, VerifiedBodyProgramNode Descriptor, BodyProgramPolicyIdentity Policy);
 
     /// <summary>
     /// Derives the action's ordinary dispatch budget from its descriptor-owned

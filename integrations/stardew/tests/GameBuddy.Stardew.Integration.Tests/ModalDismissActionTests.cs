@@ -265,11 +265,14 @@ public sealed class ModalDismissActionTests
         {
             ExecutionManager manager = CreateManager(1001);
 
-            InvokeDismiss(manager, "req_dismiss_question")
-                .ReasonCode.Should().Be("modal_not_dismissible",
-                    "a question dialogue needs the answer_dialogue seam (design 7.4.2), never a blind closeDialogue");
+            LocalExecutionReceipt receipt = InvokeDismiss(manager, "req_dismiss_question");
+            receipt.ReasonCode.Should().Be("modal_not_dismissible",
+                "a question dialogue needs the answer_dialogue seam (design 7.4.2), never a blind closeDialogue");
+            receipt.Evidence.Should().Contain("answer_it=answer_dialogue",
+                "the refusal names the action that answers the box - refusing without naming it leaves the caller guessing at keys");
         });
     }
+
 
     /// <summary>
     /// A question refusal hands the caller the KEYS and the PROMPT, in the field that actually reaches it.

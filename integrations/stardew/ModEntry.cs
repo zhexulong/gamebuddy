@@ -1070,16 +1070,16 @@ public sealed partial class ModEntry : Mod
                     state.Executions,
                     forEachWorld: programId => this.CreateFarmhandForEachWorld(state, programId)))
             {
-                // The world decides when a successor may be dispatched, and it answers PER ACTION: a predecessor often
-                // settles on the same frame its native animation starts, and re-entering the actor then is refused with
-                // `player_not_actionable` (one frame after a harvest, measured 2026-10-19); a refused node cannot be
-                // retried, so the pump waits a tick instead of stopping the chain. The action id is the argument because
-                // an open modal is the WORKING PRECONDITION of the family that closes it - a world-only answer deferred
-                // `dismiss_modal` until the modal it exists to dismiss timed out.
-                CanDispatchNow = static actionId => BodyProgramDispatchGate.IsDispatchable(
+                // The world decides when a node may start, and it answers PER ACTION: an open modal is the WORKING
+                // PRECONDITION of the family that closes it, so a world-only answer would defer `dismiss_modal` until
+                // the modal it exists to dismiss had timed out. The answer is the HOLD, named, because two decisions
+                // read it: the start gate refuses to admit a node whose action a modal holds (waiting cannot clear
+                // one), and the dispatch gate defers an admitted node through any hold it meets (a transient body lock
+                // clears itself inside a bounded window).
+                HoldOf = static actionId => BodyProgramDispatchGate.HoldOf(
                     actionId,
                     cutsceneUp: Game1.eventUp,
-                    modalUp: Game1.activeClickableMenu is not null || Game1.dialogueUp,
+                    modal: WorldModel.MountedModal(Game1.activeClickableMenu, Game1.dialogueUp),
                     actorCanMove: Game1.player is { CanMove: true }),
                 // One window, two waiters: the pump defers a node for exactly the number of ticks the flat
                 // admission holds a parked action for, so the two cannot drift apart.

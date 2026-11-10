@@ -217,7 +217,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     executionId,
                     ExecutionState.Rejected,
                     "modal_not_dismissible",
-                    "modal_type=DialogueBox;question=true;require_answer_dialogue=true"
+                    "modal_type=DialogueBox;question=true;answer_it=answer_dialogue"
                         + ";response_keys=" + OfferedResponseKeys(offeredResponses)
                         + (questionText is null or "" ? string.Empty : ";text=" + BoundedModalText(questionText)),
                     hint: OfferedResponseHint(offeredResponses, questionText));
