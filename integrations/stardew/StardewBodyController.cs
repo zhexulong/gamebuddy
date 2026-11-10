@@ -1826,10 +1826,12 @@ internal sealed class StardewBodyController
     /// or null when the tile holds nothing this walk can name.
     ///
     /// <para>
-    /// THE one walk over the engine's occupancy containers, read by three callers that must not drift: the clearing
+    /// THE one walk over the engine's occupancy containers, read by four callers that must not drift: the clearing
     /// plan behind <c>clear_to_reach</c>, the name a refusal gives the thing in the way (<c>blocker_occupant=bush</c>),
-    /// and the frontier read that finds that thing without a clearing plan at all. A second walker here is how the
-    /// tile that is priced and the tile that is named become two different tiles.
+    /// the frontier read that finds that thing without a clearing plan at all, and the rim of an enclosed actor's own
+    /// component (`ExecutionManager.DescribeFrontierClearance`, which needs the occupant, the family that publishes it
+    /// and which declarations clear it). A second walker here is how the tile that is priced and the tile that is named
+    /// become two different tiles.
     /// </para>
     /// <para>
     /// <see cref="Occupancy.ClearCost"/> is null for an occupant that can be NAMED but not cleared - a bush is the one
@@ -1838,7 +1840,7 @@ internal sealed class StardewBodyController
     /// pricing it would be a lie, so the two readings are separate fields of one answer.
     /// </para>
     /// </summary>
-    private static Occupancy? OccupantAt(
+    internal static Occupancy? OccupantAt(
         StardewValley.GameLocation location,
         Farmer localPlayer,
         Vector2 tile)
@@ -1931,7 +1933,7 @@ internal sealed class StardewBodyController
     /// null for an occupant nothing published removes.
     /// </para>
     /// </summary>
-    private sealed record Occupancy(string Kind, int? ClearCost, string Occupant, string TargetFamily, int? StaminaCharge);
+    internal sealed record Occupancy(string Kind, int? ClearCost, string Occupant, string TargetFamily, int? StaminaCharge);
 
     /// <summary>
     /// The ENGINE's own name for one resource clump, from the constants its own type declares

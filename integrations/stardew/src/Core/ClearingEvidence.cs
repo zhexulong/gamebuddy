@@ -217,11 +217,13 @@ public static class ClearingEvidence
 
     /// <summary>
     /// The evidence fields a route refusal puts in the hint, in the order a reader needs them: the size of the route
-    /// and its verdict, what stands on the frontier and where, what opens it, where to stand, and the other branch.
+    /// and its verdict, what stands on the frontier and where, what opens it and the id the frame published for it,
+    /// where to stand, the other branch, and - when nothing on the rim can be opened - the word for what the rim is.
     /// </summary>
     private static readonly string[] RouteHintFields =
     {
-        "component_tiles", "target_enclosed", "blocker_occupant", "clears_with", "stand_at", "detour_steps", "remaining_clears",
+        "component_tiles", "target_enclosed", "blocker_occupant", "clears_with", "blocker_target", "stand_at",
+        "detour_steps", "remaining_clears", "no_cuttable_blocker",
     };
 
     private static string DescribeCost(FarmhandClearingCost cost, int? staminaCharge) =>

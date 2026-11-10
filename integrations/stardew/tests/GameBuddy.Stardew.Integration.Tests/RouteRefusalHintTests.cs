@@ -25,6 +25,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </para>
 /// </summary>
 // MIXED SHAPE AND BEHAVIOUR: the two route cases drive the real refusal path in a headless world, while the arrival case projects one evidence string through `ClearingEvidence.DescribeRouteHint` and the terminal case reads `farmhandexecutioncontroller.cs`, because WHERE a hint is minted cannot be observed from a receipt a headless runner cannot produce.
+[Collection(HeadlessGameWorld.Collection)]
 public sealed class RouteRefusalHintTests
 {
     /// <summary>

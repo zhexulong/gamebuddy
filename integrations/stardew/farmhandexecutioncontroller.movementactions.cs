@@ -362,13 +362,23 @@ internal sealed partial class ExecutionManager
     /// stands in the way (walk around or clear it) or the tile has no free neighbour (choose another
     /// target). Bounded, and derived from the same predicate as the evidence, so the two cannot name
     /// different worlds.
+    ///
+    /// <para>
+    /// <paramref name="location"/> and <paramref name="player"/> are the world the refusal is ABOUT, supplied by the
+    /// caller that already holds it (`TryBeginToolApproach`) rather than read here from `Game1`: the rim that opens a
+    /// pocket is a fact about one body in one location, and a lookup this function performed itself could describe a
+    /// body nobody asked about. Absent - a caller with no world, as the arithmetic tests have none - the refusal keeps
+    /// the words it always had.
+    /// </para>
     /// </summary>
     internal static (string Code, string Evidence, string Hint) DescribeNoReachableApproach(
         (int X, int Y) target,
         (int X, int Y) actor,
         Func<(int X, int Y), bool> isStandable,
         System.Collections.Generic.IReadOnlyList<(int X, int Y)>? footprint = null,
-        string? reasonCodePrefix = null)
+        string? reasonCodePrefix = null,
+        GameLocation? location = null,
+        Farmer? player = null)
     {
         // The standable-neighbour fact is asked of the WHOLE footprint when there is one: a free tile on the south
         // face of a 2x2 clump is a standable neighbour the anchor's own ring never contains, and answering `none`
@@ -386,7 +396,357 @@ internal sealed partial class ExecutionManager
         string code = reasonCodePrefix is null
             ? $"{NoReachableApproachReasonCode}:{target.X}:{target.Y}"
             : $"{reasonCodePrefix}:{neighbour}";
-        return (code, evidence, $"no_approach;standable_neighbour={neighbour}");
+        string hint = $"no_approach;standable_neighbour={neighbour}";
+        // THE RIM of her own walkable component. A pocket is the one refusal distance cannot explain: her component is a
+        // few tiles, the target is outside it, and the fact that ends the loop is WHICH rim tile to cut. Asked of the
+        // world the caller named, and only when that body IS the tile this refusal names - a refusal about a tile nobody
+        // stands on gets no rim claim rather than another body's pocket.
+        if (location is not null
+            && player is not null
+            && ((int)player.Tile.X, (int)player.Tile.Y) == actor
+            && StardewBodyController.BuildWalkableComponent(location, player) is { } component
+            && !component(new Vector2(target.X, target.Y))
+            && DescribeFrontierClearance(location, player, actor, target, component) is { } clearance)
+        {
+            evidence += clearance.Evidence;
+            // The caller's own prefix names ITS question (`no_standing_tile`), so it keeps it; the plain placement code
+            // is replaced, because "nothing here can be cut, and the rim is water" is the answer a settled node needs.
+            if (reasonCodePrefix is null && clearance.Code is { } frontierCode)
+                code = frontierCode;
+            // One projection of the one evidence string, bounded by the journal's ceiling: the evidence is withheld for a
+            // settled failure (ADR-006), so the rim has to reach the channel that survives.
+            hint = ClearingEvidence.DescribeRouteHint(evidence, hint) ?? hint;
+        }
+
+        return (code, evidence, hint);
+    }
+
+    /// <summary>
+    /// The refusal an ENCLOSED actor reports when nothing on the rim of her own component can be cleared:
+    /// <c>no_cuttable_blocker:&lt;reason&gt;</c>, where the reason is the rim's own word for what stands there.
+    ///
+    /// <para>
+    /// The other half of one answer. A measured `round43` run spent 14 minutes and 59 refusals on one `cut_grass`, each
+    /// reading `no_reachable_approach:59:24` with `standable_tiles=6` and `blocked_by=range:reach:6`: a distance, about a
+    /// pocket six tiles wide, where the cause was a wall nothing published removes. Distance is not a cause, and an
+    /// answer that dresses one up as an explanation is the dead end this constant replaces.
+    /// </para>
+    /// </summary>
+    internal const string NoCuttableBlockerReasonCode = "no_cuttable_blocker";
+
+    /// <summary>What <c>no_cuttable_blocker</c> says when the rim is the edge of the map rather than a thing on it.</summary>
+    private const string OutOfMapReason = "out_of_map";
+
+    /// <summary>
+    /// How many tiles one opened-route flood may visit before it makes no claim. A farm's walkable component is as
+    /// large as the map (~80x65), so the budget has to cover a whole location or the answer would be undecided in the
+    /// open field it exists for; past it the flood answers null, which the ranking reads as "no step count" rather
+    /// than as a route.
+    /// </summary>
+    private const int FrontierFloodLimit = 8000;
+
+    /// <summary>One occupant-bearing tile on the rim of the actor's own walkable component that a published action removes.</summary>
+    /// <param name="Tile">The wall to swing at.</param>
+    /// <param name="StandAt">The component tile a swing reaches it from - inside the pocket, by construction.</param>
+    /// <param name="Occupant">The engine's own name for what stands there (`weed`, `quarry_boulder`, `bush`).</param>
+    /// <param name="TargetFamily">The snapshot family that publishes that occupant, which is where its id comes from.</param>
+    /// <param name="Clearers">
+    /// Every published action whose own `Clears` declaration accepts the occupant, with its stated price - the SAME
+    /// declarations the `clear_step_blocked` path reads, so no kind-to-action table exists here to drift from them.
+    /// </param>
+    /// <param name="StaminaCharge">The engine's charge for one swing at it, or null when the live tool cannot pay one.</param>
+    internal readonly record struct FrontierBlocker(
+        (int X, int Y) Tile,
+        (int X, int Y) StandAt,
+        string Occupant,
+        string TargetFamily,
+        System.Collections.Generic.IReadOnlyList<FarmhandClearingOffer> Clearers,
+        int? StaminaCharge);
+
+    /// <summary>
+    /// One rim blocker, ranked by what clearing it buys: <see cref="StepsToAct"/> is how many steps it takes, after the
+    /// clear, to reach a tile the target can be acted on from - or null when that one clear does not open the way.
+    /// </summary>
+    internal readonly record struct FrontierPick((int X, int Y) Tile, int? StepsToAct);
+
+    /// <summary>
+    /// The order a caller should take the rim's clearable tiles in: the ones that open the way with ONE clear first,
+    /// fewest steps of the walk they open, then the tile nearest the target, then north-most and west-most so one world
+    /// always yields one answer; and after all of those the clearable tiles whose removal does not open it on its own,
+    /// nearest the target first.
+    ///
+    /// <para>
+    /// Arithmetic over two predicates - which tiles a body may walk, and which rim tiles to weigh - so the choice is
+    /// testable without a world, exactly as the approach selector is. <paramref name="clearable"/> is the caller's
+    /// population, taken from the catalog's `Clears` declarations: this decides ORDER and nothing else, which is why it
+    /// cannot grow a list of kinds.
+    /// </para>
+    /// <para>
+    /// "Fewest clears" is the first key because it is the whole promise: one swing, then the route is re-planned
+    /// against a changed world (`ClearStepPlanner` resolves exactly one step for the same reason). A tile that would
+    /// need a second clear before it opens anything is still named - it is still the thing in the way - but it is
+    /// ranked after every tile that opens the way alone.
+    /// </para>
+    /// </summary>
+    internal static System.Collections.Generic.IReadOnlyList<FrontierPick> OrderFrontierBlockers(
+        (int X, int Y) actor,
+        (int X, int Y) target,
+        System.Collections.Generic.IReadOnlyList<(int X, int Y)> clearable,
+        Func<(int X, int Y), bool> isWalkable)
+    {
+        var picks = new System.Collections.Generic.List<FrontierPick>(clearable.Count);
+        foreach ((int X, int Y) tile in clearable)
+            picks.Add(new FrontierPick(tile, StepsToActAfterClear(actor, target, tile, isWalkable)));
+        picks.Sort((left, right) => CompareFrontierPicks(left, right, target));
+        return picks;
+    }
+
+    /// <summary>The planner's own four-way step set, so this order cannot disagree with the route it prices.</summary>
+    private static readonly (int Dx, int Dy)[] FrontierSteps = { (0, -1), (1, 0), (0, 1), (-1, 0) };
+
+    /// <summary>
+    /// Ranking: opened routes before unopened ones, then fewest steps, then nearest the target, then north-most and
+    /// west-most. <c>StepsToAct</c> carries the first two keys in one field - an unopened rim tile has none, and
+    /// <see cref="int.MaxValue"/> is the same "last" the sort would give it by hand.
+    /// </summary>
+    private static int CompareFrontierPicks(FrontierPick left, FrontierPick right, (int X, int Y) target)
+    {
+        int bySteps = (left.StepsToAct ?? int.MaxValue).CompareTo(right.StepsToAct ?? int.MaxValue);
+        if (bySteps != 0)
+            return bySteps;
+        int byDistance = FrontierDistance(left.Tile, target).CompareTo(FrontierDistance(right.Tile, target));
+        if (byDistance != 0)
+            return byDistance;
+        return left.Tile.Y != right.Tile.Y ? left.Tile.Y.CompareTo(right.Tile.Y) : left.Tile.X.CompareTo(right.Tile.X);
+    }
+
+    private static int FrontierDistance((int X, int Y) left, (int X, int Y) right) =>
+        Math.Abs(left.X - right.X) + Math.Abs(left.Y - right.Y);
+
+    /// <summary>
+    /// How many steps it takes to reach a tile the target can be acted on from once <paramref name="cleared"/> is gone,
+    /// or null when removing that one tile opens nothing.
+    ///
+    /// <para>
+    /// The flood walks the planner's OWN walkable set with the cleared tile added, because "one clear, then she can
+    /// walk" is the promise being priced. It stops at the first tile inside the native interaction radius rather than at
+    /// the target tile: an action needs the radius (<see cref="IsWithinRangeOfRequest"/>), and the target tile usually
+    /// holds the very thing she wants to work, so it is not a tile she may stand on.
+    /// </para>
+    /// <para>
+    /// Null is honest for both "the route is still shut" and "the flood ran past its budget": neither is a step count,
+    /// and zero or a guess would put an unmeasured number in a receipt.
+    /// </para>
+    /// </summary>
+    internal static int? StepsToActAfterClear(
+        (int X, int Y) actor,
+        (int X, int Y) target,
+        (int X, int Y) cleared,
+        Func<(int X, int Y), bool> isWalkable)
+    {
+        var seen = new System.Collections.Generic.HashSet<(int X, int Y)> { actor };
+        var pending = new System.Collections.Generic.Queue<((int X, int Y) Tile, int Steps)>();
+        pending.Enqueue((actor, 0));
+        while (pending.Count > 0)
+        {
+            ((int X, int Y) tile, int steps) = pending.Dequeue();
+            if (Math.Abs(tile.X - target.X) <= NativeInteractionRadius && Math.Abs(tile.Y - target.Y) <= NativeInteractionRadius)
+                return steps;
+            if (seen.Count > FrontierFloodLimit)
+                return null;
+            foreach ((int dx, int dy) in FrontierSteps)
+            {
+                (int X, int Y) next = (tile.X + dx, tile.Y + dy);
+                if (!seen.Add(next))
+                    continue;
+                if (next != cleared && !isWalkable(next))
+                    continue;
+                pending.Enqueue((next, steps + 1));
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The rim of her own walkable component, as the refusal publishes it: the `;`-prefixed facts that open it, or the
+    /// reason code that replaces the placement's when nothing on it can be opened.
+    /// </summary>
+    private readonly record struct FrontierClearance(string Evidence, string? Code);
+
+    /// <summary>
+    /// What opens her pocket, in the words the clearing path already uses - or the word for why nothing can.
+    ///
+    /// <para>
+    /// The population is the RIM: tiles outside <paramref name="component"/> that a component tile steps onto. Each one
+    /// is either something a published `Clears` declaration removes (a candidate) or the wall the answer names. Null
+    /// means there is no rim to describe at all, and the refusal keeps the words it always had.
+    /// </para>
+    /// </summary>
+    private static FrontierClearance? DescribeFrontierClearance(
+        GameLocation location,
+        Farmer player,
+        (int X, int Y) actor,
+        (int X, int Y) target,
+        Func<Vector2, bool> component)
+    {
+        var candidates = new System.Collections.Generic.List<FrontierBlocker>();
+        var walls = new System.Collections.Generic.List<((int X, int Y) Tile, string Reason)>();
+        var onRim = new System.Collections.Generic.HashSet<(int X, int Y)>();
+        var layer = location.map.Layers[0];
+        for (int x = 0; x < layer.LayerWidth; x += 1)
+        {
+            for (int y = 0; y < layer.LayerHeight; y += 1)
+            {
+                if (!component(new Vector2(x, y)))
+                    continue;
+                foreach ((int dx, int dy) in FrontierSteps)
+                {
+                    (int X, int Y) rim = (x + dx, y + dy);
+                    if (component(new Vector2(rim.X, rim.Y)) || !onRim.Add(rim))
+                        continue;
+                    if (rim.X < 0 || rim.Y < 0 || rim.X >= layer.LayerWidth || rim.Y >= layer.LayerHeight)
+                    {
+                        walls.Add((rim, OutOfMapReason));
+                        continue;
+                    }
+
+                    // A rim tile is on the component's own step ring, so the tile to swing from always exists; a rim
+                    // tile with no component tile in ITS ring would not be on this rim at all, and skipping it keeps the
+                    // enumeration a statement about places she can actually stand.
+                    if (StandingTileFor(rim, component, actor) is not { } standAt)
+                        continue;
+                    if (StardewBodyController.OccupantAt(location, player, new Vector2(rim.X, rim.Y)) is not { } occupancy)
+                    {
+                        walls.Add((rim, FrontierWallReason(location, player, rim)));
+                        continue;
+                    }
+
+                    System.Collections.Generic.IReadOnlyList<FarmhandClearingOffer> clearers =
+                        ClearingActionSurface.ClearersOf(occupancy.Occupant, FarmhandActionCatalog.Registrations);
+                    if (clearers.Count == 0)
+                    {
+                        // Named but not clearable is still a cause: `no_cuttable_blocker=bush` says what to wait for or
+                        // walk around, where a layer word would say the wall is a wall.
+                        walls.Add((rim, occupancy.Occupant));
+                        continue;
+                    }
+
+                    candidates.Add(new FrontierBlocker(rim, standAt, occupancy.Occupant, occupancy.TargetFamily, clearers, occupancy.StaminaCharge));
+                }
+            }
+        }
+
+        if (candidates.Count > 0)
+        {
+            System.Collections.Generic.IReadOnlyList<FrontierPick> ordered = OrderFrontierBlockers(
+                actor,
+                target,
+                candidates.ConvertAll(candidate => candidate.Tile),
+                tile => StardewBodyController.IsWalkableTile(location, player, new Vector2(tile.X, tile.Y)));
+            (int X, int Y) head = ordered[0].Tile;
+            return new FrontierClearance(DescribeFrontierBlocker(candidates.Find(candidate => candidate.Tile == head), player), Code: null);
+        }
+
+        if (walls.Count == 0)
+            return null;
+        string reason = NearestWallReason(walls, target);
+        return new FrontierClearance($";{NoCuttableBlockerReasonCode}={reason}", $"{NoCuttableBlockerReasonCode}:{reason}");
+    }
+
+    /// <summary>
+    /// The tile a swing at <paramref name="blocker"/> reaches from: the component tile in its ring that is nearest to
+    /// her, north-most then west-most on a tie - the same rule `ClearStepPlanner` resolves a `stand_at` by, without a
+    /// second flood, because the rim tile is adjacent to her component by construction.
+    /// </summary>
+    private static (int X, int Y)? StandingTileFor((int X, int Y) blocker, Func<Vector2, bool> component, (int X, int Y) actor)
+    {
+        (int X, int Y)? best = null;
+        int bestDistance = int.MaxValue;
+        for (int dx = -1; dx <= 1; dx += 1)
+        {
+            for (int dy = -1; dy <= 1; dy += 1)
+            {
+                if (dx == 0 && dy == 0)
+                    continue;
+                (int X, int Y) candidate = (blocker.X + dx, blocker.Y + dy);
+                if (!component(new Vector2(candidate.X, candidate.Y)))
+                    continue;
+                int distance = FrontierDistance(candidate, actor);
+                bool better = best is not { } incumbent
+                    || distance < bestDistance
+                    || (distance == bestDistance && (candidate.Y < incumbent.Y || (candidate.Y == incumbent.Y && candidate.X < incumbent.X)));
+                if (!better)
+                    continue;
+                best = candidate;
+                bestDistance = distance;
+            }
+        }
+
+        return best;
+    }
+
+    /// <summary>
+    /// What <paramref name="tile"/> is made of, in the one word a reason code can carry: the map's own water first
+    /// (`isWaterTile`), then the layer the engine's own reading blames - a building, a map tile, a clump, or the location
+    /// constraint that has no entity behind it.
+    /// </summary>
+    private static string FrontierWallReason(GameLocation location, Farmer player, (int X, int Y) tile)
+    {
+        if (location.isWaterTile(tile.X, tile.Y))
+            return "water";
+        RefusalLayerToken wall = StardewBodyController.DescribeTargetOccupant(location, new Vector2(tile.X, tile.Y), player);
+        return wall.Refused ? wall.Layer.ToWireValue() : "blocked";
+    }
+
+    /// <summary>The rim wall nearest the target, then north-most and west-most, so one world answers one word.</summary>
+    private static string NearestWallReason(
+        System.Collections.Generic.IReadOnlyList<((int X, int Y) Tile, string Reason)> walls,
+        (int X, int Y) target)
+    {
+        ((int X, int Y) Tile, string Reason) best = walls[0];
+        foreach (((int X, int Y) Tile, string Reason) wall in walls)
+        {
+            int distance = FrontierDistance(wall.Tile, target);
+            int bestDistance = FrontierDistance(best.Tile, target);
+            if (distance > bestDistance)
+                continue;
+            if (distance == bestDistance && (wall.Tile.Y > best.Tile.Y || (wall.Tile.Y == best.Tile.Y && wall.Tile.X > best.Tile.X)))
+                continue;
+            best = wall;
+        }
+
+        return best.Reason;
+    }
+
+    /// <summary>
+    /// One rim blocker as the refusal words it: the step `clear_step_blocked` prints (where to stand, how many clears the
+    /// idea is), then that path's blocker facts - the engine's name for it, every declaration that clears it with its
+    /// price, and the id the frame published for it.
+    ///
+    /// <para>
+    /// Composed from <see cref="ClearingEvidence"/>'s two formatters rather than rendered here, so the pocket refusal and
+    /// the arrival refusal cannot describe one weed in two different ways. The id is the FAMILY's own
+    /// (<see cref="PublishedBlockerTargetId"/>), which is what makes the named blocker addressable: an id this refusal
+    /// minted itself would be a request no published row could match.
+    /// </para>
+    /// </summary>
+    private static string DescribeFrontierBlocker(FrontierBlocker blocker, Farmer player)
+    {
+        string? targetId = PublishedBlockerTargetId(player, blocker.TargetFamily, blocker.Tile.X, blocker.Tile.Y);
+        // One clear, then re-plan: the rim answer asks for one swing at one tile, and a count larger than that would
+        // promise a chain this refusal has not resolved.
+        string step = ClearingEvidence.DescribeFirstStep(
+            new FirstClearStep(true, blocker.Tile, blocker.StandAt, RemainingClears: 1, "frontier"),
+            _ => blocker.Occupant) ?? string.Empty;
+        string described = ClearingEvidence.DescribeBlocker(
+            blocker.Occupant,
+            blocker.Tile,
+            targetId,
+            blocker.Clearers,
+            blocker.StaminaCharge,
+            detourFacts: null);
+        return $";{step};{described}";
     }
 
     /// <summary>

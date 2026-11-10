@@ -25,6 +25,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </para>
 /// </summary>
 // MIXED SHAPE AND BEHAVIOUR: the derivation pins read the published surface and the cost vocabulary, while the refusal pins drive the real arrival path in a headless world; keeping both in one file keeps each pin beside the behaviour it protects.
+[Collection(HeadlessGameWorld.Collection)]
 public sealed class ClearStepBlockerNamingTests
 {
     /// <summary>

@@ -26,6 +26,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// for: the first rock is refused before any native movement.
 /// </summary>
 // MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the rest of the class constructs and calls product code for real; keeping both in one file keeps each pin beside the behaviour it protects.
+[Collection(HeadlessGameWorld.Collection)]
 public sealed class ClearStepMoveTests
 {
     private static readonly Vector2 Requested = new(9f, 3f);
@@ -275,6 +276,13 @@ public sealed class ClearStepMoveTests
     /// <summary>
     /// A real headless farm corner with one corridor: a 16x16 map, a real <see cref="GameLocation"/>, a real
     /// <see cref="Farmer"/> with a real bounding box, and the <c>Game1</c> statics the engine's reads dereference.
+    ///
+    /// <para>
+    /// <see cref="HeadlessGameWorld.Collection"/> because this corner IS those statics: two test classes building worlds
+    /// in parallel overwrite each other's <c>Game1.game1</c>, <c>_player</c> and <c>netWorldState</c>, and a teardown that
+    /// lands mid-call reads as a NullReferenceException from inside the engine rather than as a failure of the code
+    /// under test.
+    /// </para>
     /// </summary>
     internal sealed class CorridorHarness : IDisposable
     {

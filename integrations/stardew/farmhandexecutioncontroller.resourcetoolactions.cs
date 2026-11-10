@@ -1552,7 +1552,9 @@ internal sealed partial class ExecutionManager
                     executionId,
                     ExecutionState.Rejected,
                     "hollow_ring_no_step_out",
-                    DescribeNoReachableApproach(anchor, actor, isStandable, footprint).Evidence
+                    // The world this refusal is about: the same location and actor whose standability produced it, so the
+                    // rim of her own component is read from the body the caller asked about.
+                    DescribeNoReachableApproach(anchor, actor, isStandable, footprint, location: location, player: Game1.player).Evidence
                         + ";hollow_ring=true;step_out=none"
                         + DescribeApproachRange(footprint[0].X, footprint[0].Y));
             }
@@ -1562,7 +1564,7 @@ internal sealed partial class ExecutionManager
             // node keeps that line and not the evidence, so a refusal without one is a verdict the model can only answer
             // by aiming again.
             (string refusalCode, string refusalEvidence, string refusalHint) = DescribeNoReachableApproach(
-                anchor, actor, isStandable, footprint, noStandingTileCodePrefix);
+                anchor, actor, isStandable, footprint, noStandingTileCodePrefix, location, Game1.player);
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusalCode, refusalEvidence + DescribeApproachRange(targetX: anchor.X, targetY: anchor.Y, standingTileAsked: noStandingTileCodePrefix is not null), hint: refusalHint);
         }
         (int X, int Y) goal = standingTile.Value;
