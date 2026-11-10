@@ -9,13 +9,28 @@
 //
 // THE THREE CLAIMS, and what each one's two directions are:
 //
-//   memory     the player's own durable Memory row, written and archived through the product's own
-//              management route (`PUT /api/tavern/v1/memory`: `create`, then `archive`).
-//              INJECTION PATH, NOT FOLD. A compartment is MODEL OUTPUT and nothing here folds one: this
-//              claim is about `<project-memory>`, the block that carries durable memory rows, and the
-//              row is written by the product because the player wrote it. `<session-history>` - the
-//              decayed-compartment directory - is a different section fed by a different producer, and
-//              this driver says nothing about it (see WHAT THIS RUN CANNOT SAY below).
+//   memory     the player's own durable Memory row, written and archived through the product's own management
+//              route (`PUT /api/tavern/v1/memory`: `create`, then `archive`) and read in the block that carries
+//              the durable rows, `<project-memory>`.
+//              INJECTION PATH, NOT FOLD. A compartment is MODEL OUTPUT and nothing here folds one: this claim is
+//              about the block the product renders from durable rows the player's own route wrote.
+//              `<session-history>` - the decayed-compartment directory - is a different section fed by a
+//              different reader, and this driver says nothing about it (see WHAT THIS RUN CANNOT SAY below).
+//
+//              WHERE A ROW ATTACHES, measured on the real assembly before this pair was written
+//              (`.tmp/memory-attach-probe.ts` drives the real CRUD facade and the real per-turn assembly):
+//              `<project-memory>` is rendered when a session's m[0] baseline MATERIALIZES
+//              (`inject-compartments-pi.ts:1412` reads the rows; `materializeM0Pi` caches the bytes) and is
+//              replayed from that cache on every later turn. A row written after the baseline exists does not
+//              reach `<project-memory>` and does not even re-materialize it - `maxMemoryId` is deliberately
+//              not a materialization trigger (`inject-compartments-pi.ts:1351-1355`) - it arrives in that
+//              turn's m[1] delta as `<new-memories>` (`:2270`). Measured both ways: a fresh session's first
+//              turn carried the row in `<project-memory>`; a turn taken after a mid-chat write carried it in
+//              `<new-memories>` and in `<project-memory>` not at all.
+//              So the pair is taken ACROSS MOUNTS from ONE row: created, then a Chat created after the write
+//              (whose fresh baseline contains it), then archived, then a second Chat created after the archive
+//              (whose baseline has no memory block at all). The row is the variable and the mount is the
+//              condition - the same shape as the world book's pair one claim over.
 //   worldBook  one fixture book, ONE field flipped. Two entries are added to her own world book through
 //              the product's own route: a control entry that is enabled, and a probe entry that is
 //              `enabled: false`. A turn carrying both trigger words must bring the control's text and
@@ -46,18 +61,23 @@
 //                                   one into the vendor SQLite: the memory loop's own maintenance
 //                                   contract refuses a second connection to that database while the
 //                                   product holds it, and a fixture row would stand in for the fold.
+//   the m[1] memory delta         a row written inside an ALREADY MOUNTED Chat reaches the next turn as
+//                                   `<new-memories>`, not as `<project-memory>` (measured above). This
+//                                   claim's pair is the baseline block because that is the block it names,
+//                                   so a run with no mid-chat write has no delta reading to take - and this
+//                                   driver takes none: it is named here instead of being counted as absent.
 //   preset sampling                 nothing binds a preset to a chat's runtime: `applyPresetSamplingTo
 //                                   ProviderEntry` (`host/src/tavern/preset-sampling.ts`) is exported,
 //                                   tested in isolation, and called by nothing. So the claim's carried
 //                                   direction has no state to produce in this product, and the run says
 //                                   so by name.
 //
-// WHAT IT WRITES, AND THAT IT PUTS IT BACK: two entries added to her world book, two Chats created to
-// mount them, and one Memory row. The book is restored to the entries it had (by the same route, CASing
-// on the revision it reads at the end) and the Memory row is archived, so the conversation the player
-// was reading is untouched. The two created Chats stay: they are the mounts, they hold nothing but the
-// two synthetic lines, and deleting them would be a second write this driver has no reading for. Every
-// restore is reported with its outcome; a failed restore is printed, never swallowed.
+// WHAT IT WRITES, AND THAT IT PUTS IT BACK: two entries added to her world book, four Chats created to
+// mount them, and one Memory row (created, then archived). The book is restored to the entries it had (by
+// the same route, CASing on the revision it reads at the end) and the Memory row is archived, so the
+// conversation the player was reading is untouched. The created Chats stay: they are the mounts, they hold
+// nothing but the synthetic lines, and deleting them would be a second write this driver has no reading
+// for. Every restore is reported with its outcome; a failed restore is printed, never swallowed.
 //
 // NO CONTENT IS PRINTED. The fact strings, the entry texts and the player's line stay in this process:
 // what travels is a reading, a section name, a byte count and whether the probe string was found.
@@ -94,10 +114,14 @@ const API = 1;
 		}, path);
 
 	/*
-	 * The page's own session facts: the CSRF token a write must carry, and what the Host says it will accept.
-	 * Both come from the product's own state read rather than from a request the page happened to have made
-	 * before this driver attached a listener - a token learnt from another driver's traffic is a token this
-	 * run does not own. Nothing is printed: the token is a session capability.
+	 * The page's own session facts: the CSRF token a write must carry, and the projection this shell publishes
+	 * about memory. Both come from the product's own state read rather than from a request the page happened to
+	 * have made before this driver attached a listener - a token learnt from another driver's traffic is a token
+	 * this run does not own. Nothing is printed: the token is a session capability.
+	 *
+	 * The memory fields on this line are recorded as what the shell SAYS, not as a measurement: in this shell the
+	 * state handler projects `readAvailable/mutationAvailable = false` as a constant, so they cannot answer whether
+	 * a memory row can be written. `memoryHalf` reads the route itself (see there).
 	 */
 	const state = await get("/api/tavern/v1/state");
 	const csrfToken = typeof state.body?.csrfToken === "string" ? state.body.csrfToken : null;
@@ -204,21 +228,22 @@ const API = 1;
 	const steps = [];
 
 	/**
-	 * A Chat created now, so it mounts the book as it stands now.
+	 * A Chat created now, so it mounts the book (or the memory baseline) as it stands now.
 	 *
-	 * The authored catalogue is published at mount (see this driver's header), so a direction can only be
-	 * measured in a Chat that was created after the write it is about. A create that does not land is
-	 * reported by name and that direction is not taken: a turn read from the previous mount would answer
-	 * a different question and read exactly like a product defect.
+	 * The authored catalogue is published at mount (see this driver's header), and a Memory baseline is
+	 * materialized by a session's first turn, so a direction can only be measured in a Chat that was created
+	 * after the write it is about. A create that does not land is reported by name and that direction is not
+	 * taken: a turn read from the previous mount would answer a different question and read exactly like a
+	 * product defect.
 	 */
-	const mountFor = async (direction) => {
+	const mountFor = async (half, direction) => {
 		// The New Chat control lives on the Chats surface; creating lands in the Chat it made.
 		await activateSurface(page, "会话");
 		const created = await createChat(page);
 		say(
-			`worldBook: ${direction} mount created=${created.started} committed=${JSON.stringify(created.committed)} landed=${created.landed}`,
+			`${half}: ${direction} mount created=${created.started} committed=${JSON.stringify(created.committed)} landed=${created.landed}`,
 		);
-		if (created.landed !== true) steps.push({ half: "worldBook", reason: `${direction}_mount_not_created` });
+		if (created.landed !== true) steps.push({ half, reason: `${direction}_mount_not_created` });
 		if (created.landed !== true) return false;
 		// A mount that has not drawn its composer yet is a turn this driver cannot send: wait for the
 		// field the turn needs, and let `sendTurn` say so by name if it never arrives.
@@ -276,7 +301,7 @@ const API = 1;
 		}
 
 		const offTurn =
-			(await mountFor("off")) === true
+			(await mountFor("worldBook", "off")) === true
 				? await sendTurn("worldbook-off", `${KEY_ENABLED} and ${KEY_DISABLED} are both in this line`)
 				: null;
 		const second = await writeBook(companion.handle, first.body.revision, [
@@ -291,7 +316,7 @@ const API = 1;
 			steps.push({ half: "worldBook", reason: `book_flip_refused:${second.status}:${second.body?.code ?? "none"}` });
 		}
 		const onTurn =
-			second.status === 200 && (await mountFor("on")) === true
+			second.status === 200 && (await mountFor("worldBook", "on")) === true
 				? await sendTurn("worldbook-on", `${KEY_ENABLED} and ${KEY_DISABLED} are both in this line`)
 				: null;
 
@@ -309,49 +334,121 @@ const API = 1;
 	};
 
 	const memoryHalf = async () => {
-		if (memorySnapshot?.mutationAvailable === false) {
-			say("memory: unobserved:memory_mutation_not_mounted:the_host_reports_mutationAvailable=false");
-			steps.push({ half: "memory", reason: "memory_mutation_not_mounted" });
+		/*
+		 * The memory ROUTE decides, not the state snapshot's projection of it.
+		 *
+		 * `/api/tavern/v1/state` is served by the reference Chat handler in this shell, and its memory projection
+		 * is the literal `{ readAvailable: false, mutationAvailable: false, projectionRevision: null }`
+		 * (`host/src/tavern/composed-reference-game-static-shell-composition.ts:441-445`) - a constant, not a
+		 * reading of the management routes the same shell mounts beside it. The 2026-11-10 run gated on that
+		 * constant, reported `memory_mutation_not_mounted`, wrote no row, and so had no turn pair to read: the
+		 * claim came back `probe_names_no_turn_pair`, which is a blocked reading, not a negative one.
+		 */
+		const readMemory = async () => {
+			const read = await get("/api/tavern/v1/memory");
+			const body = read.body ?? {};
+			return {
+				status: read.status,
+				code: typeof body.code === "string" ? body.code : null,
+				revision: typeof body.projectionRevision === "string" ? body.projectionRevision : null,
+				rows: Array.isArray(body.memories) ? body.memories : [],
+			};
+		};
+		const rowNamedTheFact = (rows) =>
+			rows.find((row) => typeof row.content === "string" && row.content.includes(MEMORY_FACT)) ?? null;
+
+		const before = await readMemory();
+		say(
+			`memory: route read status=${before.status} code=${before.code ?? "none"} rows=${before.rows.length} revision=${before.revision === null ? "none" : "present"}`,
+		);
+		if (before.status !== 200 || before.revision === null) {
+			say(`memory: unobserved:memory_route_unreadable:status=${before.status}:code=${before.code ?? "none"}`);
+			steps.push({ half: "memory", reason: `memory_route_unreadable:${before.status}:${before.code ?? "none"}` });
 			return;
 		}
-		const read = await get("/api/tavern/v1/memory");
-		const revision = read.body?.projectionRevision ?? null;
-		if (read.status !== 200 || typeof revision !== "string") {
-			say(`memory: unobserved:memory_route_unreadable:status=${read.status}`);
-			steps.push({ half: "memory", reason: `memory_route_unreadable:${read.status}` });
-			return;
-		}
-		say(`memory: rows=${Array.isArray(read.body?.memories) ? read.body.memories.length : "none"} route=read`);
+		/*
+		 * A disagreement between the projection and the route is worth one line: it is the difference between
+		 * "this Host cannot take a memory row" and "this shell does not project one", and only the second is true.
+		 */
+		if (memorySnapshot?.readAvailable === false)
+			say(
+				"memory: disagreement:the_state_projection_says_readAvailable=false:the_memory_route_answered_200:the_projection_is_the_reference_shell_constant",
+			);
+
 		const created = await put("/api/tavern/v1/memory", {
 			apiVersion: API,
 			operation: "create",
-			expectedProjectionRevision: revision,
+			expectedProjectionRevision: before.revision,
 			content: MEMORY_FACT,
 		});
-		const handle = Array.isArray(created.body?.memories)
-			? (created.body.memories.find((row) => typeof row.content === "string" && row.content.includes(MEMORY_FACT))?.handle ?? null)
-			: null;
-		// Causal ordering: the row must be durable and read back BEFORE the turn whose request is meant to
-		// carry it. A turn taken first would leave a miss with two possible causes.
+		const createdRow = rowNamedTheFact(created.status === 200 ? (created.body?.memories ?? []) : []);
+		// Causal ordering: the row must be durable and read back BEFORE the mount whose baseline is meant to
+		// carry it. A mount taken first would leave a miss with two possible causes.
 		say(
-			`memory: create status=${created.status} code=${created.body?.code ?? "none"} readback=${handle === null ? "no_row_named_the_fact" : "row_named_the_fact"}`,
+			`memory: create status=${created.status} code=${created.body?.code ?? "none"} readback=${createdRow === null ? "no_row_named_the_fact" : "row_named_the_fact"}`,
 		);
-		if (created.status !== 200 || handle === null) {
+		if (created.status !== 200 || createdRow === null) {
 			steps.push({ half: "memory", reason: `memory_create_refused:${created.status}:${created.body?.code ?? "none"}` });
 			return;
 		}
-		const bound = await sendTurn("memory-bound", `${KEY_ENABLED} and ${KEY_DISABLED} are both in this line`);
-		const archived = await put("/api/tavern/v1/memory", {
-			apiVersion: API,
-			operation: "archive",
-			expectedProjectionRevision: created.body.projectionRevision,
-			handle,
-		});
-		say(`memory: archive status=${archived.status} code=${archived.body?.code ?? "none"}`);
-		const unbound = await sendTurn("memory-unbound", `${KEY_ENABLED} and ${KEY_DISABLED} are both in this line`);
-		claims.memory = { fact: MEMORY_FACT, turns: { carried: bound.turnKey, absent: unbound.turnKey } };
-		if (archived.status !== 200) steps.push({ half: "memory", reason: `memory_archive_refused:${archived.status}` });
-		if (bound.turnKey === null || unbound.turnKey === null)
+
+		// Direction 1: a Chat mounted while the row is durable. Its first turn materializes a baseline that
+		// reads the row, which is the only moment `<project-memory>` is written from durable rows.
+		const bound =
+			(await mountFor("memory", "bound")) === true
+				? await sendTurn("memory-bound", `${KEY_ENABLED} and ${KEY_DISABLED} are both in this line`)
+				: null;
+
+		/*
+		 * The archive is read fresh, not carried over from the create: mounting a Chat swaps the lane, and the
+		 * management Memory service mints its handles and its projection revision from a per-mount secret
+		 * (`host/src/tavern/memory-management/memory-management.ts:76-78,188-190`), so the handle and revision the
+		 * create returned address the lane that has just been replaced.
+		 */
+		const mountedRead = await readMemory();
+		const mountedRow = mountedRead.revision === null ? null : rowNamedTheFact(mountedRead.rows);
+		const archived =
+			mountedRow === null
+				? { status: 0, body: { code: "row_not_found_after_mount" } }
+				: await put("/api/tavern/v1/memory", {
+						apiVersion: API,
+						operation: "archive",
+						expectedProjectionRevision: mountedRead.revision,
+						handle: mountedRow.handle,
+					});
+		say(
+			`memory: archive status=${archived.status} code=${archived.body?.code ?? "none"} rowReadback=${mountedRow === null ? "none" : "present"}`,
+		);
+		if (archived.status !== 200) {
+			steps.push({ half: "memory", reason: `memory_archive_refused:${archived.status}:${archived.body?.code ?? "none"}` });
+			claims.memory = {
+				fact: MEMORY_FACT,
+				sections: ["project-memory"],
+				turns: { carried: bound?.turnKey ?? null, absent: null },
+			};
+			if (bound !== null && bound.turnKey === null)
+				steps.push({ half: "memory", reason: "a_turn_marked_no_submission_key" });
+			return;
+		}
+
+		// Direction 2: a Chat mounted after the archive, whose baseline has no memory block at all.
+		const unbound =
+			(await mountFor("memory", "absent")) === true
+				? await sendTurn("memory-unbound", `${KEY_ENABLED} and ${KEY_DISABLED} are both in this line`)
+				: null;
+		/*
+		 * `sections` is the claim's own block list, not the declaration's whole memory population: this pair is
+		 * about `<project-memory>`, and a fact that turned up in `<session-history>` or in the m[1] delta would be
+		 * a different carrier answering a different question.
+		 */
+		claims.memory = {
+			fact: MEMORY_FACT,
+			sections: ["project-memory"],
+			turns: { carried: bound?.turnKey ?? null, absent: unbound?.turnKey ?? null },
+		};
+		if (unbound !== null && unbound.turnKey === null)
+			steps.push({ half: "memory", reason: "a_turn_marked_no_submission_key" });
+		if (bound !== null && bound.turnKey === null)
 			steps.push({ half: "memory", reason: "a_turn_marked_no_submission_key" });
 	};
 

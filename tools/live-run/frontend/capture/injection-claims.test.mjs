@@ -9,11 +9,17 @@
  *   `temperature` dropped from the carried turn's body
  *   -> `carried_direction_failed temperature=not-carried`.
  *
+ * The memory reading's own red proof, run when it was changed to name the block that carries the fact: the
+ * reader was made to count a present section as carrying the fact (`factInSection: factSection !== null ||
+ * blocks.length > 0`), and "a present-but-empty memory directory is not a reading that carried the fact" went
+ * red reporting `carried` (verdict `proven`) for a fact in NEITHER block - the false pass this file exists to
+ * catch. Restored, it reads `section_without_the_fact` / `carried_direction_failed`.
+ *
  * WHAT THE MACHINE CANNOT SAY, stated here so a green file is not read as a live measurement: every
  * body below is a FIXTURE shaped like the product's wire (an m[0] user message carrying the authored
- * catalogue and the memory directory, an m[1] carrying the volatile entries, sampling values as
- * top-level fields). What that proves is that the INSTRUMENT distinguishes the two directions - that a
- * capture which lost a fact reads as failed instead of as absent, and one that carries it reads as
+ * catalogue and the memory directory, an m[1] carrying the volatile entries and the memory delta, sampling
+ * values as top-level fields). What that proves is that the INSTRUMENT distinguishes the two directions -
+ * that a capture which lost a fact reads as failed instead of as absent, and one that carries it reads as
  * carried. It does not prove the product puts anything there; only a live run's capture can, and the
  * run's own `INJECTION claim=` lines are that reading.
  *
@@ -44,9 +50,9 @@ const AUTHORED = (constant) =>
  * message after it - a reading that only asked the system message would report the authored context
  * absent on a turn that carried it, which is the defect `observation.cjs` already paid for once.
  */
-function bodyOf({ memory = null, entry = null, temperature = null }) {
+function bodyOf({ memory = null, entry = null, temperature = null, history = "", delta = null }) {
   const head = [
-    "<session-history></session-history>",
+    history.length === 0 ? "<session-history></session-history>" : `<session-history>\n${history}\n</session-history>`,
     memory === null ? "" : `<project-memory>\n${memory}\n</project-memory>`,
     AUTHORED("the valley premise"),
   ]
@@ -56,12 +62,15 @@ function bodyOf({ memory = null, entry = null, temperature = null }) {
     entry === null
       ? ""
       : `<gamebuddy-volatile-context>\n<gamebuddy-volatile-source>\n${entry}\n</gamebuddy-volatile-source>\n</gamebuddy-volatile-context>`;
+  /* The m[1] delta the product writes for a memory created after the baseline (`<new-memories>`), on the
+   * message the product puts it on. */
+  const newMemories = delta === null ? "" : `<new-memories>\n${delta}\n</new-memories>`;
   return {
     model: "fixture-model",
     messages: [
       { role: "system", content: "the Host floor" },
       { role: "user", content: head },
-      { role: "user", content: volatile.length === 0 ? SAID : `${volatile}\n${SAID}` },
+      { role: "user", content: [volatile, newMemories, SAID].filter((part) => part.length > 0).join("\n") },
     ],
     ...(temperature === null ? {} : { temperature }),
   };
@@ -242,6 +251,109 @@ test("the printed lines name the readings and never carry the probe content", as
   assert.ok(
     lines.some((line) => line.includes("claim=memory reading=carried:") && line.includes("factInBody=true")),
     `the carried reading needs its own detail line:\n${printed}`,
+  );
+});
+
+test("injection path, not fold: a folded history does not stand in for the baseline memory block", async () => {
+  /*
+   * A run whose history has been folded carries a non-empty `<session-history>` on every turn, so the two
+   * memory blocks are present at once and only one of them can be answering for the fact. The block that
+   * carries it has to be NAMED: a reader that stopped at the first block with bytes would report
+   * `section_without_the_fact` on exactly the turns where `<project-memory>` carried the fact.
+   */
+  const folded = "the first day, decayed: they planted the beans behind the shed";
+  const reading = await readClaimsFromCaptureFile({
+    captureFile: boundRun({
+      carried: bodyOf({ history: folded, memory: MEMORY_FACT, entry: WORLDBOOK_ENTRY, temperature: 0.9 }),
+      absent: bodyOf({ history: folded, entry: WORLDBOOK_ENTRY, temperature: 0.9 }),
+    }),
+    probe: probeFor("key-bound", "key-unbound"),
+  });
+  const memory = claimOf(reading, "memory");
+  assert.equal(
+    memory.verdict,
+    "proven",
+    `both memory blocks were carried, and one of them held the fact:\n${JSON.stringify(memory, null, 1)}`,
+  );
+  assert.equal(memory.readings.carried.detail.factSection, "project-memory");
+  assert.equal(
+    memory.readings.carried.detail.section,
+    "project-memory",
+    "the reading names the block that carried the fact, not the first block that happened to have bytes",
+  );
+  assert.equal(
+    memory.readings.absent.detail.section,
+    "session-history",
+    "with no memory block at all, the folded history is still the block the reading reports",
+  );
+});
+
+test("injection path, not fold: a present-but-empty memory directory is not a reading that carried the fact", async () => {
+  /*
+   * `<session-history></session-history>` is on the wire with zero content on every run without a fold, and
+   * `<project-memory>` carries a DIFFERENT memory. Neither block holds the probe fact, so the reading must not
+   * be `carried`: counting a section as present when its bytes are zero is how this check would report a pass it
+   * never measured.
+   */
+  const reading = await readClaimsFromCaptureFile({
+    captureFile: boundRun({
+      carried: bodyOf({ memory: "a memory that is not the probe fact", entry: WORLDBOOK_ENTRY, temperature: 0.9 }),
+    }),
+    probe: probeFor("key-bound", "key-unbound"),
+  });
+  const memory = claimOf(reading, "memory");
+  assert.equal(memory.verdict, "carried_direction_failed");
+  assert.equal(memory.readings.carried.state, "section_without_the_fact");
+  assert.equal(memory.readings.carried.detail.factInSection, false);
+  assert.equal(memory.readings.carried.detail.factSection, null);
+});
+
+test("a memory claim reads only the blocks it names: the m[1] delta cannot answer for the baseline block", async () => {
+  /*
+   * A row written after a session's baseline exists reaches the next turn as `<new-memories>`, and the driver
+   * names `<project-memory>` for this pair. The two are different carriers with different timings: letting the
+   * delta answer would report the baseline path proven by a block it never wrote.
+   */
+  const reading = await readClaimsFromCaptureFile({
+    captureFile: boundRun({
+      carried: bodyOf({
+        memory: "a memory that is not the probe fact",
+        delta: MEMORY_FACT,
+        entry: WORLDBOOK_ENTRY,
+        temperature: 0.9,
+      }),
+    }),
+    probe: {
+      memory: {
+        fact: MEMORY_FACT,
+        sections: ["project-memory"],
+        turns: { carried: "key-bound", absent: "key-unbound" },
+      },
+    },
+  });
+  const memory = claimOf(reading, "memory");
+  assert.equal(memory.verdict, "carried_direction_failed");
+  assert.equal(memory.readings.carried.state, "fact_outside_the_section");
+  assert.equal(
+    memory.readings.carried.detail.factInBody,
+    true,
+    "the fact is in the request, in the delta block: not carried by the block this claim names, and not absent either",
+  );
+});
+
+test("a direction that produced no turn is a missing key, not an unrecorded request", async () => {
+  const reading = await readClaimsFromCaptureFile({
+    captureFile: boundRun(),
+    probe: {
+      memory: { fact: MEMORY_FACT, sections: ["project-memory"], turns: { carried: "key-bound", absent: null } },
+    },
+  });
+  const memory = claimOf(reading, "memory");
+  assert.equal(memory.verdict, "unobserved", "a side with no turn is not a pass");
+  assert.equal(
+    memory.reason,
+    "unobserved:no_turn_key_for:absent",
+    "a turn that was never sent is a different silence from a request that was never recorded",
   );
 });
 

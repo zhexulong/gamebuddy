@@ -98,27 +98,40 @@ function sectionText(text, name) {
 /**
  * The memory claim's readings.
  *
- * `sections` is a list of section names because the product has two memory blocks and they are fed by
- * different producers: `<session-history>` is the decayed compartment directory (the fold's output) and
- * `<project-memory>` is the player's own durable memory rows. Proving a fact arrives in the second one
- * says nothing about the first, and this reading refuses to let one stand in for the other.
+ * `sections` is a list of section names because the product emits its memory in more than one block, and the
+ * blocks are produced at different moments by different readers:
+ *
+ *   `<session-history>`   the decayed compartment directory the fold writes. Empty until a fold has run, and
+ *                         empty in every run without a model, which is why the declaration renders it empty
+ *                         rather than omitting it.
+ *   `<project-memory>`    the durable memory rows, read when a session's m[0] baseline MATERIALIZES
+ *                         (`inject-compartments-pi.ts:1412`, `getMemoriesByProject(db, memPath, [active,
+ *                         permanent])`) and then served from that cache. A row written after the baseline
+ *                         exists does not appear here; it arrives in that turn's m[1] delta instead
+ *                         (`:2270`, `<new-memories>`), which is a different block and a different reading.
+ *
+ * So a reading names the block that CARRIES the fact, not the first block that happens to have bytes: a
+ * run whose history has been folded carries a non-empty `<session-history>` on every turn, and a reader that
+ * stopped at the first block with bytes would report `<project-memory>` as "a section without the fact" on
+ * exactly the turns where it carried the fact.
  */
 function memoryReading(turn, text, sections, fact) {
-  let carried = null;
+  const blocks = [];
   for (const name of sections) {
     const bytes = sectionBytes(turn, name);
-    if (typeof bytes === "number" && bytes > 0) {
-      carried = { name, bytes };
-      break;
-    }
+    if (typeof bytes === "number") blocks.push({ name, bytes });
   }
+  const factSection = blocks.find((candidate) => sectionText(text, candidate.name).includes(fact)) ?? null;
+  const carried = factSection ?? blocks.find((candidate) => candidate.bytes > 0) ?? null;
   return {
     section: carried === null ? null : carried.name,
     sectionBytes: carried === null ? 0 : carried.bytes,
+    blocks: blocks.map((candidate) => `${candidate.name}:${candidate.bytes}`).join(","),
     factInBody: text.includes(fact),
     /* Two memory blocks travel beside each other, so a fact in the wrong one is a real defect that
      * "the fact arrived" would hide. */
-    factInSection: carried === null ? false : sectionText(text, carried.name).includes(fact),
+    factInSection: factSection !== null,
+    factSection: factSection === null ? null : factSection.name,
   };
 }
 
@@ -219,10 +232,12 @@ function declarationSections() {
  *   worldBook  { text, turns: { carried, absent } }
  *   sampling   { key, value, turns: { carried, absent } }
  *
- * A claim omitted from `probe` is `unobserved` with the reason `probe_names_no_turn_pair`. A claim whose
- * turn has no record in the capture is `unobserved` with `no_capture_for_turn:<key>` - the capture stops
- * at the requests this run recorded, and a turn that never posted (a refused submission, a driver that
- * died) leaves nothing to read rather than an absence on the wire.
+ * A claim omitted from `probe` is `unobserved` with the reason `probe_names_no_turn_pair`. A side whose key is
+ * absent (`null`, or a turn the driver never sent) is `no_turn_key_for:<side>` - a turn that was never sent and
+ * a turn whose request was never recorded are two different silences. A claim whose turn HAS a key but no
+ * record in the capture is `no_capture_for_turn:<key>` - the capture stops at the requests this run recorded,
+ * and a turn that never posted (a refused submission, a driver that died) leaves nothing to read rather than an
+ * absence on the wire.
  */
 export async function readInjectionClaims({ captured, probe }) {
   if (captured === null || captured === undefined || captured.ok !== true)
@@ -256,6 +271,7 @@ export async function readInjectionClaims({ captured, probe }) {
     }
     claims.push(
       claimOf(name, entry, (key, wanted) => {
+        if (typeof key !== "string" || key.length === 0) return unobserved(`no_turn_key_for:${wanted}`);
         const body = bodies.get(key);
         if (body === undefined) return unobserved(censusReason === null ? `no_capture_for_turn:${key}` : censusReason);
         const text = requestTextOf(body);
@@ -395,7 +411,7 @@ function describeReading(reading) {
 function describeDetail(claim, detail) {
   const turn = `turn=${detail.turn}`;
   if (claim === "memory")
-    return `${turn} section=${detail.section ?? "none"} bytes=${detail.sectionBytes} factInBody=${detail.factInBody} factInSection=${detail.factInSection} factBytes=${detail.factLength}`;
+    return `${turn} section=${detail.section ?? "none"} bytes=${detail.sectionBytes} blocks=${detail.blocks === "" ? "none" : detail.blocks} factInBody=${detail.factInBody} factInSection=${detail.factInSection} factSection=${detail.factSection ?? "none"} factBytes=${detail.factLength}`;
   if (claim === "worldBook")
     return `${turn} bytes=${detail.sectionBytes ?? "none"} inBody=${detail.inBody} inWorldBookBlock=${detail.inWorldBookBlock} probeBytes=${detail.textLength}`;
   return `${turn} ${detail.key}=${detail.carried ? JSON.stringify(detail.value) : "not-carried"} matches=${detail.matches}`;

@@ -48,10 +48,12 @@ export const DRIVERS = Object.freeze([
   // product will not evaluate, the depth injection and the sampling in force - read out of the DOM the
   // product painted and held against the preset document the checkout carries (see the driver's header).
   { key: "u-preset-assembly", file: "u-preset-assembly.cjs", out: "u-preset-assembly.txt" },
-  // The three authored-context claims, read in both directions from this run's own wire: her memory
-  // (written and archived through the management route - INJECTION PATH, NOT FOLD), her world book (one
-  // fixture book, one `enabled` flag flipped), and the preset's sampling values (which this product does
-  // not bind to a runtime - see the driver's header). Last, because it edits and then restores durable
-  // state: a driver that ran after it would read the book it temporarily changed.
+  // The three authored-context claims, read in both directions from this run's own wire: her memory (one
+  // durable row, created and archived through the management route - INJECTION PATH, NOT FOLD - and read
+  // in the `<project-memory>` block of a Chat mounted after the write), her world book (one fixture book,
+  // one `enabled` flag flipped), and the preset's sampling values (which this product does not bind to a
+  // runtime - see the driver's header). Both measured claims take their directions across mounts, so this
+  // driver leaves four Chats behind; it runs last because it edits and then restores durable state, and a
+  // driver that ran after it would read the book it temporarily changed.
   { key: "v-injection-claims", file: "v-injection-claims.cjs", out: "v-injection-claims.txt" },
 ]);
