@@ -37,6 +37,14 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </para>
 ///
 /// <para>
+/// The same family has a second member, measured 2026-11-14 (`round42`, day 6): she stood on `(3,11)`, the
+/// farmhouse door was at `(3,12)` - published by the snapshot as `doorTargets` - and she named her own tile. The
+/// refusal answered `source=3,11;warps=1`: it knew where the door was and did not say, and it refused a request
+/// one orthogonal step from the way out. Resolving from both tables is what makes that tile DISCERNIBLE; naming it
+/// in the refusal and taking the one step is what makes it usable.
+/// </para>
+///
+/// <para>
 /// The assertions below are read off the production source with comments stripped, so they fail by name when the
 /// two-table resolution is removed - the same shape as <c>DoorRangeIsTileSpaceTests</c> and
 /// <c>EnterExitDoorGateTests</c>. A behavioural test would need a live location with a real edge warp, which is what
@@ -106,16 +114,46 @@ public sealed class TransitionTileIsResolvableSourceShapeTests
     }
 
     /// <summary>
-    /// The refusal names what it consulted, so a future reader can tell "wrong tile" from "empty table".
+    /// The refusal names what it consulted, so a future reader can tell "wrong tile" from "empty table" - and, since
+    /// `round42`, from "the exit is one step away": the line carries the actor's own tile, the nearest exit and its
+    /// distance, and the exits this location publishes.
     /// </summary>
     [Fact]
-    public void TheRefusalNamesTheWarpTableSize()
+    public void TheRefusalNamesTheExitsTheLocationPublishes()
     {
         string transition = EnclosingMethodBody(Read(MovementActions), "private LocalExecutionReceipt RequestLocalDoorTransition");
 
-        transition.Should().Contain("warps={location.warps.Count}",
-            "a refusal that names neither table cannot distinguish 'the caller named a tile that is not a transition' "
-            + "from 'this location publishes no warps at all'");
+        transition.Should().Contain("DiscoverExitTiles(Game1.player)",
+            "the refusal line is built from the same discovery the `doorTargets`/`warps` families publish from, not from "
+            + "a second walk of the map");
+        transition.Should().Contain("DescribeExitRefusal((sourceX, sourceY), location.warps.Count, actorTile, exits)",
+            "the count of the raw warp list is still named, beside the exits it counts");
+
+        string refusal = EnclosingMethodBody(Read(MovementActions), "internal static string DescribeExitRefusal(");
+        refusal.Should().Contain("warps={warpCount}");
+        refusal.Should().Contain("you={actor.X},{actor.Y}",
+            "the actor's own tile is the fact that makes the line actionable: round42 read `source=3,11;warps=1` for "
+            + "an actor standing beside the door at 3,12");
+        refusal.Should().Contain("nearest=", "and the nearest exit is named with the distance to it");
+        refusal.Should().Contain("doors=", "then the exits themselves, bounded by ExitNamingLimit");
+    }
+
+    /// <summary>
+    /// A request one orthogonal step off a published exit is the transition, and the receipt says which door was
+    /// used - the `round42` family member, after `round19` taught the same path to resolve from either table.
+    /// </summary>
+    [Fact]
+    public void ARequestOneStepOffAnExitIsTheTransitionAndSaysSo()
+    {
+        string transition = EnclosingMethodBody(Read(MovementActions), "private LocalExecutionReceipt RequestLocalDoorTransition");
+
+        transition.Should().Contain("AdjacentExitStep(exits, (sourceX, sourceY), actorTile)",
+            "the one step that stood in the way must be taken instead of refused");
+        transition.Should().Contain("approach=adjacent_door;door=",
+            "a substituted door is named in the receipt, exactly as every other approach leg in this Mod is");
+        transition.Should().Contain("DispatchNativeDoor(location, doorPoint",
+            "the native entry must run at the DOOR tile - dispatching at the caller's tile would run whatever Action sits "
+            + "there and bypass every native door gate");
     }
 
     private static string Read(string file) =>

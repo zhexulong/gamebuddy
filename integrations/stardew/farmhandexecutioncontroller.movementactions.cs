@@ -9,6 +9,7 @@ using StardewValley.Characters;
 using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Abstractions;
 using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Navigation;
 
 namespace GameBuddy.Stardew;
@@ -24,6 +25,9 @@ internal sealed partial class ExecutionManager
 
     /// <summary>The refusal a substituted approach reports when the body cannot act on the tile it was asked for.</summary>
     internal const string ApproachOutOfReachReasonCode = "approach_out_of_reach";
+
+    /// <summary>How many exit tiles one transition refusal names.</summary>
+    internal const int ExitNamingLimit = 3;
 
     /// <summary>
     /// Whether a body on <paramref name="actor"/>'s tile can still ACT on <paramref name="requested"/>.
@@ -574,7 +578,8 @@ internal sealed partial class ExecutionManager
             return admissionRefusal;
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
-        Microsoft.Xna.Framework.Point sourcePoint = new(sourceX, sourceY);
+        Microsoft.Xna.Framework.Point doorPoint = new(sourceX, sourceY);
+        (int X, int Y) actorTile = ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y);
         // `enter_exit` and `travel` both mean "leave this location from the tile I named". WHICH internal table holds that
         // tile - the door table `updateDoors` builds, or the location's own `warps` list - is an artefact of how the map was
         // authored, and the snapshot publishes both in one shape. Refusing a tile the snapshot published because it lives in
@@ -583,18 +588,43 @@ internal sealed partial class ExecutionManager
         // Measured 2026-11-01 (`round19`): the companion named Farm(41,65), which the snapshot published as
         // `41,65->Forest`, and `enter_exit` refused it as `door_not_available` seven times over three minutes while it stood
         // on the adjacent tile. It was doing the right thing with the right coordinate.
-        StardewValley.Warp? doorWarp = isDoor ? ResolveDoorWarp(location, sourcePoint) : null;
+        StardewValley.Warp? doorWarp = isDoor ? ResolveDoorWarp(location, doorPoint) : null;
         StardewValley.Warp? warp = doorWarp ?? ResolveLocationWarp(location, sourceX, sourceY);
         // The native door entry may only run for a tile the DOOR TABLE owns: an edge warp has no click entry, and asking the
         // Buildings layer about a tile it never described would run whatever Action happened to sit there.
         bool doorOwned = doorWarp is not null;
+        string adjacentApproach = string.Empty;
         if (warp is null || warp.TargetName is null or "")
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                isDoor ? "door_not_available" : "warp_not_available",
-                $"source={sourceX},{sourceY};warps={location.warps.Count}");
+        {
+            // The refusal used to answer "1 warp in this location" and stop, which told a caller that asked for the tile
+            // ONE STEP from the exit neither where the exit was nor that it existed. The exits this location publishes are
+            // asked of the same discovery the snapshot's `doorTargets` and `warps` families publish from - never a second
+            // walk of the map - so a door named here is a door the caller can act on.
+            IReadOnlyList<BridgeDoor> exits = DiscoverExitTiles(Game1.player);
+            // Measured 2026-11-14 (`round42`, day 6): she stood on `(3,11)`, the farmhouse door was at `(3,12)`, and she
+            // named her own tile. One orthogonal step was all that stood between her and the way out, so that request is
+            // the transition rather than a refusal. The step is not taken by MOVING the body onto the warp tile: the
+            // engine fires a warp from `Farmer.MovePositionImpl` (Farmer.cs:8586) and from nothing else, so a position
+            // write would leave the body parked on a buffer tile design §3.1.1 forbids and fire no trigger; the door is
+            // entered from where she stands, exactly as the native click entry does at its own radius-1 gate.
+            if (AdjacentExitStep(exits, (sourceX, sourceY), actorTile) is { } step)
+            {
+                doorPoint = new Microsoft.Xna.Framework.Point(step.X, step.Y);
+                doorWarp = isDoor ? ResolveDoorWarp(location, doorPoint) : null;
+                warp = doorWarp ?? ResolveLocationWarp(location, step.X, step.Y);
+                doorOwned = doorWarp is not null;
+                if (warp is not null && warp.TargetName is not null and not "")
+                    adjacentApproach = $";approach=adjacent_door;door={step.X},{step.Y}";
+            }
+
+            if (warp is null || warp.TargetName is null or "")
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    isDoor ? "door_not_available" : "warp_not_available",
+                    DescribeExitRefusal((sourceX, sourceY), location.warps.Count, actorTile, exits));
+        }
         if (!Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, Game1.player))
         {
             // The refusal used to name only the two tiles it compared, and they were both the caller's OWN values - so a
@@ -647,7 +677,7 @@ internal sealed partial class ExecutionManager
         string entry = "none";
         if (doorOwned)
         {
-            NativeDoorOutcome outcome = DispatchNativeDoor(location, sourcePoint, out string refusal, out entry);
+            NativeDoorOutcome outcome = DispatchNativeDoor(location, doorPoint, out string refusal, out entry);
             switch (outcome)
             {
                 case NativeDoorOutcome.Refused:
@@ -656,7 +686,7 @@ internal sealed partial class ExecutionManager
                         executionId,
                         ExecutionState.Rejected,
                         "door_gate_refused",
-                        $"source={sourceX},{sourceY};gate=refused;entry={entry};dialogue={refusal}");
+                        $"source={sourceX},{sourceY};gate=refused;entry={entry};dialogue={refusal}{adjacentApproach}");
 
                 case NativeDoorOutcome.NoEffect:
                     return this.RememberTerminal(
@@ -664,7 +694,7 @@ internal sealed partial class ExecutionManager
                         executionId,
                         ExecutionState.Rejected,
                         "door_transition_not_started",
-                        $"source={sourceX},{sourceY};gate=passed;entry={entry};transition=not_started");
+                        $"source={sourceX},{sourceY};gate=passed;entry={entry};transition=not_started{adjacentApproach}");
 
                 case NativeDoorOutcome.TransitionStarted:
                     break;
@@ -680,7 +710,7 @@ internal sealed partial class ExecutionManager
                         ExecutionState.Accepted,
                         "accepted",
                         this.revision,
-                        $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};entry={entry}");
+                        $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};entry={entry}{adjacentApproach}");
                     this.Remember(plainDoorAccepted);
                     this.AddTrace(plainDoorAccepted);
                     Game1.player.warpFarmer(warp);
@@ -696,8 +726,8 @@ internal sealed partial class ExecutionManager
             "accepted",
             this.revision,
             isDoor
-                ? $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};entry={entry}"
-                : $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY}");
+                ? $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};entry={entry}{adjacentApproach}"
+                : $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY}{adjacentApproach}");
         this.Remember(accepted);
         this.AddTrace(accepted);
         // A native door entry already ran Game1.warpFarmer; only a plain record
@@ -705,6 +735,121 @@ internal sealed partial class ExecutionManager
         if (!doorOwned)
             Game1.player.warpFarmer(warp);
         return accepted;
+    }
+
+    /// <summary>
+    /// Every tile this location actually offers as a way out, in the one shape both published families use.
+    ///
+    /// <para>
+    /// The two families are asked rather than re-walked: <see cref="DiscoverDoorTargets"/> is the request-path owner of
+    /// the <c>doorTargets</c> family (the door table <c>updateDoors</c> builds, building human doors, and the
+    /// farmhouse/cabin exit), and <c>location.warps</c> is what the <c>warps</c> family publishes under
+    /// <see cref="FarmhandWarpCoordinateRange"/>. Which table holds a transition tile is an artefact of map authoring,
+    /// so a caller reading this list is reading "the tiles I could leave from", not "the table the map used".
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<BridgeDoor> DiscoverExitTiles(Farmer player)
+    {
+        StardewValley.GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<BridgeDoor>();
+
+        List<BridgeDoor> exits = new();
+        HashSet<(int X, int Y)> named = new();
+        foreach (BridgeDoor door in DiscoverDoorTargets(player))
+        {
+            if (named.Add((door.SourceX, door.SourceY)))
+                exits.Add(door);
+        }
+
+        foreach (StardewValley.Warp warp in location.warps)
+        {
+            // The `warps` family's own predicate: a transition that moves a PLAYER, with a publishable source and
+            // destination. An npc-only warp moves no farmer, and a row outside these ranges is not published at all,
+            // so naming one would point the caller at a tile the snapshot never described.
+            if (warp is null || warp.npcOnly.Value || string.IsNullOrWhiteSpace(warp.TargetName))
+                continue;
+            if (!FarmhandWarpCoordinateRange.IsPublishableSource(warp.X, warp.Y)
+                || !FarmhandWarpCoordinateRange.IsPublishableDestination(warp.TargetX, warp.TargetY))
+                continue;
+            if (named.Add((warp.X, warp.Y)))
+                exits.Add(new BridgeDoor(warp.X, warp.Y, warp.TargetName, warp.TargetX, warp.TargetY));
+        }
+
+        return exits;
+    }
+
+    /// <summary>
+    /// How far a refusal measures: Chebyshev, the radius <see cref="NativeInteractionRadius"/> and
+    /// <c>Utility.tileWithinRadiusOfPlayer</c> are measured in, so "distance=1" means the same thing to a reader as it
+    /// does to the gate that admits the transition.
+    /// </summary>
+    internal static int ExitDistance((int X, int Y) exit, (int X, int Y) actor) =>
+        Math.Max(Math.Abs(exit.X - actor.X), Math.Abs(exit.Y - actor.Y));
+
+    /// <summary>
+    /// The exits in the order a refusal names them: nearest to the actor first, ties broken by lowest row then lowest
+    /// column so one world state always yields one line.
+    /// </summary>
+    internal static IReadOnlyList<BridgeDoor> ExitsNearestFirst(IReadOnlyList<BridgeDoor> exits, (int X, int Y) actor) =>
+        exits
+            .OrderBy(exit => ExitDistance((exit.SourceX, exit.SourceY), actor))
+            .ThenBy(exit => exit.SourceY)
+            .ThenBy(exit => exit.SourceX)
+            .ToArray();
+
+    /// <summary>
+    /// The exit tile a refused request may still leave from, or null when this request is not that case.
+    ///
+    /// <para>
+    /// All three conditions are load-bearing. The tile must be an exit this location publishes, it must be ONE
+    /// ORTHOGONAL STEP from the actor (the single step that stood in the way), and the caller must have aimed at it -
+    /// within the native interaction radius. Without the third, any request for an unrelated tile would teleport a
+    /// companion who merely happened to be standing beside a door out of the location she was working in, which is the
+    /// one thing a refusal must never do.
+    /// </para>
+    /// </summary>
+    internal static (int X, int Y, int Distance)? AdjacentExitStep(
+        IReadOnlyList<BridgeDoor> exits,
+        (int X, int Y) requested,
+        (int X, int Y) actor)
+    {
+        IReadOnlyList<BridgeDoor> ordered = ExitsNearestFirst(exits, actor);
+        if (ordered.Count == 0) return null;
+
+        BridgeDoor nearest = ordered[0];
+        int distance = ExitDistance((nearest.SourceX, nearest.SourceY), actor);
+        if (Math.Abs(nearest.SourceX - actor.X) + Math.Abs(nearest.SourceY - actor.Y) != 1)
+            return null;
+        if (ExitDistance((nearest.SourceX, nearest.SourceY), requested) > NativeInteractionRadius)
+            return null;
+        return (nearest.SourceX, nearest.SourceY, distance);
+    }
+
+    /// <summary>
+    /// The whole answer to "how do I get out", in one line: the tile the caller named, the count of the raw warp list
+    /// (which distinguishes an empty table from a mismatched tile), the actor's OWN tile, the nearest exit and how far
+    /// it is, then up to <see cref="ExitNamingLimit"/> exits nearest-first as <c>x,y-&gt;target</c>.
+    ///
+    /// <para>
+    /// The actor's tile is the fact that makes the line actionable: `round42` read `source=3,11;warps=1` for an actor
+    /// standing on the tile she named with the door one row below her, and nothing in that receipt said so.
+    /// </para>
+    /// </summary>
+    internal static string DescribeExitRefusal(
+        (int X, int Y) source,
+        int warpCount,
+        (int X, int Y) actor,
+        IReadOnlyList<BridgeDoor> exits)
+    {
+        IReadOnlyList<BridgeDoor> ordered = ExitsNearestFirst(exits, actor);
+        string nearest = ordered.Count == 0
+            ? "nearest=none;distance=none"
+            : $"nearest={ordered[0].SourceX},{ordered[0].SourceY};distance={ExitDistance((ordered[0].SourceX, ordered[0].SourceY), actor).ToString(CultureInfo.InvariantCulture)}";
+        string doors = ordered.Count == 0
+            ? "none"
+            : string.Join("|", ordered.Take(ExitNamingLimit)
+                .Select(exit => $"{exit.SourceX},{exit.SourceY}->{exit.TargetLocation}"));
+        return $"source={source.X},{source.Y};warps={warpCount};you={actor.X},{actor.Y};{nearest};doors={doors}";
     }
 
     /// <summary>What the game's own door entry did for one door tile.</summary>
