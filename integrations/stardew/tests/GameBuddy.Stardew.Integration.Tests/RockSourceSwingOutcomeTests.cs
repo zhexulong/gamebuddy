@@ -33,6 +33,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </para>
 /// </summary>
 // MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the one predicate the radar, both revalidations and the handler's terminal must share cannot be driven apart by a single live swing, while the rest of the class builds real `Object`s in a headless farm and calls the shipped discovery for real; keeping each pin beside the behaviour it protects.
+[Collection(HeadlessGameWorld.Collection)]
 public sealed class RockSourceSwingOutcomeTests
 {
     /// <summary>
@@ -244,8 +245,10 @@ public sealed class RockSourceSwingOutcomeTests
         {
             var world = new RockWorld();
 
-            if (Game1.game1 is null)
-                Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
+            // A world fixture owns the `Game1` singleton while it runs: reusing a leftover instance would write this
+            // world's location book on somebody else's singleton, and `getLocationFromName` answers from that book for
+            // every later class that reuses the name.
+            Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
             var root = (NetRoot<NetWorldState>)FormatterServices.GetUninitializedObject(typeof(NetRoot<NetWorldState>));
             root.Value = new NetWorldState();
             typeof(Game1).GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!.SetValue(null, root);

@@ -328,7 +328,7 @@ public sealed class MovePlacedFurnitureActionTests
                 .GetProperty("IsWorldReady", BindingFlags.Public | BindingFlags.Static)!
                 .GetGetMethod()!.GetMethodBody()!.GetILAsByteArray()!, 1))!;
 
-        private readonly Game1? gameBefore;
+        private readonly Dictionary<string, object?> staticsBefore;
         private readonly Farmer? playerBefore;
         private readonly object? worldStateBefore;
         private readonly bool fullPack;
@@ -338,14 +338,16 @@ public sealed class MovePlacedFurnitureActionTests
         private FurnitureWorld(bool fullPack)
         {
             this.fullPack = fullPack;
-            this.gameBefore = Game1.game1;
+            this.staticsBefore = HeadlessGameWorld.CaptureStatics();
             this.playerBefore = Game1.player;
             this.worldStateBefore = typeof(Game1)
                 .GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
                 .GetValue(null);
 
-            if (Game1.game1 is null)
-                Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
+            // A world fixture owns the `Game1` singleton while it runs: reusing a leftover instance would write this
+            // world's location book on somebody else's singleton, and `getLocationFromName` answers from that book for
+            // every later class that reuses the name.
+            Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
             var root = (NetRoot<NetWorldState>)FormatterServices.GetUninitializedObject(typeof(NetRoot<NetWorldState>));
             root.Value = new NetWorldState();
             typeof(Game1).GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!.SetValue(null, root);
@@ -541,7 +543,7 @@ public sealed class MovePlacedFurnitureActionTests
                 .SetValue(null, this.playerBefore);
             typeof(Game1).GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
                 .SetValue(null, this.worldStateBefore);
-            Game1.game1 = this.gameBefore!;
+            HeadlessGameWorld.RestoreStatics(this.staticsBefore);
         }
 
         /// <summary>One stack of a DIFFERENT item, so a full pack holds something that cannot receive the piece.</summary>

@@ -44,6 +44,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// planner on its own.
 /// </para>
 /// </summary>
+[Collection(HeadlessGameWorld.Collection)]
 public sealed class ApproachRingAgreementTests
 {
     private static NavigationTransitionLeg LegFor(Vector2 goal) =>
@@ -266,6 +267,7 @@ public sealed class ApproachRingAgreementTests
 
             harness.Location = location;
             harness.Actor = actor;
+            HeadlessGameWorld.RequireBound(actor, location);
             harness.Manager = new ExecutionManager(new DummyMonitor(), () => publication);
             return harness;
         }

@@ -354,9 +354,7 @@ public sealed class TargetFamilyCompletenessTests
         private const long ActorId = 1001;
         private const int PackCapacity = 36;
 
-        private readonly Game1? gameBefore;
-        private readonly Farmer? playerBefore;
-        private readonly object? worldStateBefore;
+        private readonly Dictionary<string, object?> staticsBefore;
 
         /// <summary>
         /// SMAPI's readiness flag, reached the way `ApproachClassificationTests.HeadlessWorld` reaches it:
@@ -371,9 +369,7 @@ public sealed class TargetFamilyCompletenessTests
 
         private TargetFamilyWorld()
         {
-            this.gameBefore = Game1.game1;
-            this.playerBefore = Game1.player;
-            this.worldStateBefore = typeof(Game1).GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!.GetValue(null);
+            this.staticsBefore = HeadlessGameWorld.CaptureStatics();
         }
 
         internal GameLocation Farm { get; private set; } = null!;
@@ -384,8 +380,10 @@ public sealed class TargetFamilyCompletenessTests
         {
             var world = new TargetFamilyWorld();
 
-            if (Game1.game1 is null)
-                Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
+            // A world fixture owns the `Game1` singleton while it runs: reusing a leftover instance would write this
+            // world's location book on somebody else's singleton, and `getLocationFromName` answers from that book for
+            // every later class that reuses the name.
+            Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
             var root = (NetRoot<NetWorldState>)FormatterServices.GetUninitializedObject(typeof(NetRoot<NetWorldState>));
             root.Value = new NetWorldState();
             typeof(Game1).GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!.SetValue(null, root);
@@ -1508,9 +1506,7 @@ public sealed class TargetFamilyCompletenessTests
         {
             WorldReadyPerScreen.GetValue(null)!.GetType().GetMethod("ResetAllScreens")!
                 .Invoke(WorldReadyPerScreen.GetValue(null), null);
-            typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, this.playerBefore);
-            typeof(Game1).GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!.SetValue(null, this.worldStateBefore);
-            Game1.game1 = this.gameBefore!;
+            HeadlessGameWorld.RestoreStatics(this.staticsBefore);
         }
     }
 }

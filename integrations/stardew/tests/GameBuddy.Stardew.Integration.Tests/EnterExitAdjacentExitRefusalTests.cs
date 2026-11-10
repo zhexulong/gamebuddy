@@ -47,6 +47,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// request), so the frame that lands the body and raises `Warped` belongs to the live run.
 /// </para>
 /// </summary>
+[Collection(HeadlessGameWorld.Collection)]
 public sealed class EnterExitAdjacentExitRefusalTests
 {
     /// <summary>
@@ -261,8 +262,10 @@ public sealed class EnterExitAdjacentExitRefusalTests
         {
             var world = new HeadlessWorld();
 
-            if (Game1.game1 is null)
-                Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
+            // A world fixture owns the `Game1` singleton while it runs: reusing a leftover instance would write this
+            // world's location book on somebody else's singleton, and `getLocationFromName` answers from that book for
+            // every later class that reuses the name.
+            Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
             var root = (NetRoot<NetWorldState>)FormatterServices.GetUninitializedObject(typeof(NetRoot<NetWorldState>));
             root.Value = new NetWorldState();
             typeof(Game1)
@@ -318,6 +321,7 @@ public sealed class EnterExitAdjacentExitRefusalTests
             actor.position.Set(new Vector2(9 * 64 + 8, 9 * 64));
             actor.currentLocation = location;
             typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, actor);
+            HeadlessGameWorld.RequireBound(actor, location);
 
             WorldReadyPerScreen.GetValue(null)!.GetType()
                 .GetMethod("SetValueForScreen", new[] { typeof(int), typeof(bool) })!

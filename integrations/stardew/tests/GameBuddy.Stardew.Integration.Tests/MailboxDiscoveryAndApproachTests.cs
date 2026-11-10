@@ -230,8 +230,10 @@ public sealed class MailboxDiscoveryAndApproachTests
             Field(typeof(Game1), "netWorldState").SetValue(null, root);
             Field(typeof(Game1), "otherFarmers").SetValue(null, new NetRootDictionary<long, Farmer>());
             Field(typeof(Game1), "_locationLookup").SetValue(null, new Dictionary<string, GameLocation>(StringComparer.OrdinalIgnoreCase));
-            if (Game1.game1 is null)
-                Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
+            // A world fixture owns the `Game1` singleton while it runs: reusing a leftover instance would write this
+            // world's location book on somebody else's singleton, and `getLocationFromName` answers from that book for
+            // every later class that reuses the name.
+            Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
 
             var farm = new Farm();
             var map = new xTile.Map();

@@ -239,17 +239,11 @@ public sealed class FixedInteractionPointSnapshotTests
         private const int PlayerX = 2;
         private const int PlayerY = 2;
 
-        private readonly Game1? gameBefore;
-        private readonly Farmer? playerBefore;
-        private readonly object? worldStateBefore;
+        private readonly Dictionary<string, object?> staticsBefore;
 
         private FixedPointHarness()
         {
-            this.gameBefore = Game1.game1;
-            this.playerBefore = Game1.player;
-            this.worldStateBefore = typeof(Game1)
-                .GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
-                .GetValue(null);
+            this.staticsBefore = HeadlessGameWorld.CaptureStatics();
             this.Location = null!;
             this.Actor = null!;
             this.back = null!;
@@ -273,8 +267,10 @@ public sealed class FixedInteractionPointSnapshotTests
             typeof(Game1)
                 .GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
                 .SetValue(null, root);
-            if (Game1.game1 is null)
-                Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
+            // A world fixture owns the `Game1` singleton while it runs: reusing a leftover instance would write this
+            // world's location book on somebody else's singleton, and `getLocationFromName` answers from that book for
+            // every later class that reuses the name.
+            Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
 
             GameLocation location = new();
             var map = new xTile.Map();
@@ -353,11 +349,7 @@ public sealed class FixedInteractionPointSnapshotTests
 
         public void Dispose()
         {
-            typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, this.playerBefore);
-            typeof(Game1)
-                .GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
-                .SetValue(null, this.worldStateBefore);
-            if (this.gameBefore is null) Game1.game1 = null!;
+            HeadlessGameWorld.RestoreStatics(this.staticsBefore);
         }
 
         private static void SetField(object target, string name, object value) =>

@@ -286,13 +286,13 @@ public sealed class ClearStepMoveTests
     /// </summary>
     internal sealed class CorridorHarness : IDisposable
     {
-        private readonly Game1? gameBefore;
+        private readonly Dictionary<string, object?> staticsBefore;
         private readonly Farmer? playerBefore;
         private readonly object? worldStateBefore;
 
         private CorridorHarness()
         {
-            this.gameBefore = Game1.game1;
+            this.staticsBefore = HeadlessGameWorld.CaptureStatics();
             this.playerBefore = Game1.player;
             this.worldStateBefore = typeof(Game1)
                 .GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
@@ -591,7 +591,7 @@ public sealed class ClearStepMoveTests
             Game1Static("floorPathData").SetValue(null, this.floorPathDataBefore);
             FloorPathItemLookupField().SetValue(null, this.floorPathItemLookupBefore);
             Game1.game1?._locations?.Remove(this.Location);
-            Game1.game1 = this.gameBefore!;
+            HeadlessGameWorld.RestoreStatics(this.staticsBefore);
         }
 
         private static FieldInfo Game1Static(string name) => typeof(Game1).GetField(name, BindingFlags.Public | BindingFlags.Static)!;

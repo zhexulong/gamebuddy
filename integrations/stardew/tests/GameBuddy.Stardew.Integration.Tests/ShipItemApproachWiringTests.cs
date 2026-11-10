@@ -313,7 +313,7 @@ public sealed class ShipItemApproachWiringTests
         private const BindingFlags Any =
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static;
 
-        private readonly Game1? gameBefore;
+        private readonly Dictionary<string, object?> staticsBefore;
         private readonly Farmer? playerBefore;
         private readonly object? worldStateBefore;
         private readonly object? otherFarmersBefore;
@@ -326,7 +326,7 @@ public sealed class ShipItemApproachWiringTests
 
         private ShipItemHarness(int binTileX, int binTileY, int binWidth, int binHeight)
         {
-            this.gameBefore = Game1.game1;
+            this.staticsBefore = HeadlessGameWorld.CaptureStatics();
             this.playerBefore = Game1.player;
             this.worldStateBefore = Field(typeof(Game1), "netWorldState").GetValue(null);
             this.otherFarmersBefore = Field(typeof(Game1), "otherFarmers").GetValue(null);
@@ -351,8 +351,10 @@ public sealed class ShipItemApproachWiringTests
             Field(typeof(Game1), "otherFarmers").SetValue(null, new NetRootDictionary<long, Farmer>());
             var lookup = new Dictionary<string, GameLocation>(StringComparer.OrdinalIgnoreCase);
             Field(typeof(Game1), "_locationLookup").SetValue(null, lookup);
-            if (Game1.game1 is null)
-                Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
+            // A world fixture owns the `Game1` singleton while it runs: reusing a leftover instance would write this
+            // world's location book on somebody else's singleton, and `getLocationFromName` answers from that book for
+            // every later class that reuses the name.
+            Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
 
             var farm = new Farm();
             var map = new xTile.Map();
@@ -508,7 +510,7 @@ public sealed class ShipItemApproachWiringTests
             Field(typeof(Game1), "objectData").SetValue(null, this.objectDataBefore);
             Field(typeof(Game1), "buildingData").SetValue(null, this.buildingDataBefore);
             Field(typeof(Game1), "_player").SetValue(null, this.playerBefore);
-            Game1.game1 = this.gameBefore;
+            HeadlessGameWorld.RestoreStatics(this.staticsBefore);
         }
 
         private static FieldInfo Field(Type type, string name) =>

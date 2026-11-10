@@ -79,25 +79,29 @@ public sealed class FeedTroughTargetCompositionTests
         private readonly Game1? gameBefore;
         private readonly object? worldStateBefore;
 
-        private TroughWorld(AnimalHouse house, Farmer actor, ExecutionManager executions)
+        /// <summary>
+        /// Captures the process-wide statics BEFORE the world is built. The capture cannot live in a constructor that
+        /// takes the finished world: <see cref="Create"/> installs the <c>Game1</c> singleton and the world-state root
+        /// on its way to those arguments, so a snapshot taken afterwards would record this fixture's own writes as the
+        /// values to restore - and leave them installed for every later class (measured 2026-11-10: a later fixture
+        /// resolved its farmer's <c>currentLocation</c> by name into the stale location this one left behind).
+        /// </summary>
+        private TroughWorld()
         {
-            this.House = house;
-            this.Actor = actor;
-            this.Executions = executions;
             this.playerBefore = Game1.player;
             this.gameBefore = Game1.game1;
             this.worldStateBefore = typeof(Game1)
                 .GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
                 .GetValue(null);
-            typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, actor);
         }
 
-        internal AnimalHouse House { get; }
-        internal Farmer Actor { get; }
-        internal ExecutionManager Executions { get; }
+        internal AnimalHouse House { get; private set; } = null!;
+        internal Farmer Actor { get; private set; } = null!;
+        internal ExecutionManager Executions { get; private set; } = null!;
 
         internal static TroughWorld Create()
         {
+            var world = new TroughWorld();
             // `Character.currentLocation`'s setter runs `NetLocationRef.Set`, which asks `Game1.currentLocation` whether
             // the location is the one being viewed. An uninitialized `Game1` is the shape the rest of this suite's
             // headless worlds use for exactly that read.
@@ -134,7 +138,11 @@ public sealed class FeedTroughTargetCompositionTests
             actor.currentLocation = house;
 
             var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "feed_animal" });
-            return new TroughWorld(house, actor, new ExecutionManager(new DummyMonitor(), () => publication));
+            world.House = house;
+            world.Actor = actor;
+            world.Executions = new ExecutionManager(new DummyMonitor(), () => publication);
+            typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, actor);
+            return world;
         }
 
         internal IReadOnlyList<BridgeFeedTroughTarget> Troughs()

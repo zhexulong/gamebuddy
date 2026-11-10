@@ -493,18 +493,15 @@ public sealed class MagnetPickupItemTests
         private const int PackCapacity = 36;
 
         /// <summary>
-        /// Every `Game1` static this fixture writes, captured before and restored on dispose. It is a LIST rather than
-        /// four ad-hoc saves because a fixture that leaves the location book, the context data or the random source in
-        /// its own shape makes LATER test classes fail in ways that have nothing to do with them.
+        /// Every `Game1` static this fixture writes, captured before and restored on dispose. The list is
+        /// <see cref="HeadlessGameWorld.GameStatics"/> rather than a local copy because a fixture that leaves the
+        /// location book, the context data or the random source in its own shape makes LATER test classes fail in ways
+        /// that have nothing to do with them - and one declaration is what the statics gate compares against.
         /// </summary>
-        private static readonly string[] GameStatics =
-        {
-            "netWorldState", "_locationLookup", "_player", "random", "otherFarmers", "hudMessages",
-            "locationContextData",
-        };
+        private static readonly string[] GameStatics = HeadlessGameWorld.GameStatics;
 
         /// <summary>`Game1`'s own per-instance book, which a later test class reads through the same statics.</summary>
-        private static readonly string[] GameInstanceFields = { "instanceGameLocation", "_locations", "instanceOptions" };
+        private static readonly string[] GameInstanceFields = HeadlessGameWorld.GameInstanceFields;
 
         private readonly Game1? gameBefore;
         private readonly Dictionary<string, object?> instanceFieldsBefore = new();
@@ -758,8 +755,6 @@ public sealed class MagnetPickupItemTests
                 foreach (KeyValuePair<string, object?> entry in this.instanceFieldsBefore)
                     Field(typeof(Game1), entry.Key).SetValue(this.gameBefore, entry.Value);
             }
-
-            Game1.game1 = this.gameBefore;
         }
 
         /// <summary>

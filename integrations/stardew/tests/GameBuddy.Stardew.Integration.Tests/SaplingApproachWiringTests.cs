@@ -326,8 +326,10 @@ public sealed class SaplingApproachWiringTests
             StaticField(typeof(Game1), "netWorldState").SetValue(null, root);
             StaticField(typeof(Game1), "otherFarmers").SetValue(null, new NetRootDictionary<long, Farmer>());
             StaticField(typeof(Game1), "_locationLookup").SetValue(null, new Dictionary<string, GameLocation>(StringComparer.OrdinalIgnoreCase));
-            if (Game1.game1 is null)
-                Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
+            // A world fixture owns the `Game1` singleton while it runs: reusing a leftover instance would write this
+            // world's location book on somebody else's singleton, and `getLocationFromName` answers from that book for
+            // every later class that reuses the name.
+            Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
 
             // `Object.isWildTreeSeed` reads this cache, and the loader behind it needs a content manager a
             // headless process does not have. The one entry the fixture plants is supplied directly, which is
