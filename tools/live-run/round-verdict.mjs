@@ -16,9 +16,19 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
+
+import { census, format, formatCensus, reading } from "../lib/reading.mjs";
 
 const LADDER = ".live-runs/game-ladder";
+
+/**
+ * Every count below is taken over the run's own files, read whole: one window, said once.
+ *
+ * A criterion that read a file from its first line to its last is a whole-run reading, and the seam makes that
+ * declaration mandatory so a point-in-time reading cannot be printed as if it covered the run.
+ */
+const RUN_FILES_WINDOW = Object.freeze({ wholeRun: true });
 
 function newestRun() {
   const root = resolve(LADDER);
@@ -169,17 +179,33 @@ function renderCoverage(environmentFacts) {
   return parts.join(", ");
 }
 
-function unusedPromptEvidenceReadable(sessionText, contextSummary) {
-  if (sessionText.length === 0) return { readable: false, why: "no session found" };
-  const batches = sessionText.split("gamebuddy_fact_batch").length - 1;
-  if (batches === 0) return { readable: false, why: "no fact batch survives in the session" };
-  const dropped = contextSummary?.droppedTokens ?? 0;
-  if (dropped > 0)
-    return {
-      readable: false,
-      why: `${batches} batch(es) survive but ${dropped} tokens were folded away, so earlier turns' facts are gone`,
-    };
-  return { readable: true, why: `${batches} batch(es), nothing folded` };
+/**
+ * The lines of one text that mention one token, with the population they were counted out of.
+ *
+ * This replaces `text.split(token).length - 1`, which counted OCCURRENCES in a blob and printed the total as if it were
+ * a count of events: a line that named the token twice counted twice, a file that was never read counted zero, and the
+ * number never said how many lines it came out of. A missing file is `not measured` naming the file, because a zero
+ * here decided a criterion ("nothing foraged") from an absence that only meant "wrong path".
+ */
+function mentionedLines({ text, token, source }) {
+  const method = `line scan for ${JSON.stringify(token)}`;
+  const lines = text === "" ? [] : text.split("\n");
+  if (lines.length === 0)
+    return reading({
+      value: null,
+      population: { unit: "lines", total: 0 },
+      source,
+      method,
+      window: RUN_FILES_WINDOW,
+      notMeasured: { reason: "the file was never readable, so no line was scanned", missingField: source },
+    });
+  return reading({
+    value: lines.filter((line) => line.includes(token)).length,
+    population: { unit: "lines", total: lines.length },
+    source,
+    method,
+    window: RUN_FILES_WINDOW,
+  });
 }
 
 // 7. EFFICIENCY: the floor this run could have cost, and where the wall clock actually went.
@@ -831,18 +857,43 @@ const modLog = existsSync(modLogPath)
   : existsSync(smapiPath)
     ? readFileSync(smapiPath, "utf8")
     : "";
-const hostDisconnections = JSON.stringify(result.bridgeDisconnections ?? []);
-const contractErrors = ["invalid_snapshot", "invalid_args", "invalid_observe_scene_result"].map((code) => ({
-  code,
-  mod: modLog.split(code).length - 1,
-  host: hostDisconnections.split(code).length - 1,
-}));
-const contractTotal = contractErrors.reduce((total, entry) => total + entry.mod + entry.host, 0);
+const disconnections = Array.isArray(result.bridgeDisconnections) ? result.bridgeDisconnections : [];
+const contractCodes = ["invalid_snapshot", "invalid_args", "invalid_observe_scene_result"];
+const modLogLines = modLog === "" ? null : modLog.split("\n");
+// The Mod side is a CENSUS: examined = every line of the log, counted = the lines naming one of the three codes, and the
+// per-code split falls out of its keys. An unreadable log is `not measured` naming the file, never `0`.
+const modContractCensus =
+  modLogLines === null
+    ? null
+    : census(modLogLines, (line) => contractCodes.find((code) => line.includes(code)) ?? null, {
+        unit: "mod-log lines",
+        source: basename(modLogPath),
+        method: `line scan for ${contractCodes.join("/")}`,
+        window: RUN_FILES_WINDOW,
+      });
+// The Host side counts RECORDS, not the JSON text of them: a substring count over `JSON.stringify(...)` counted a code
+// twice when one record named it twice. `0 of 0` is a real reading here (the run closed no bridge), which is why this is
+// a reading and not a census - a census refuses an empty collection, and "no disconnections" is measured, not unknown.
+const hostContractReading = reading({
+  value: disconnections.filter((record) => contractCodes.some((code) => JSON.stringify(record).includes(code))).length,
+  population: { unit: "bridgeDisconnection records", total: disconnections.length },
+  source: "result.json bridgeDisconnections",
+  method: `record scan for ${contractCodes.join("/")}`,
+  window: RUN_FILES_WINDOW,
+});
+const contractTotal = (modContractCensus?.counted ?? 0) + hostContractReading.value;
 record(
   "1 contract errors",
-  contractTotal === 0 ? "PASS" : "FAIL",
-  contractErrors.map((entry) => `${entry.code}=mod:${entry.mod},host:${entry.host}`).join(" "),
-  `${modLogPath} (mod side) + result.json bridgeDisconnections (host side)`,
+  // A clean Host side beside an unreadable Mod log is not a pass: the half nobody read is `not measured`, and a PASS
+  // over it is the false zero this row exists to prevent (`round20` printed `invalid_snapshot=0 PASS` over a bridge
+  // closed by exactly that code).
+  contractTotal > 0 ? "FAIL" : modContractCensus === null ? "NOT EXERCISED" : "PASS",
+  `mod ${
+    modContractCensus === null
+      ? `not measured: neither ${modLogPath} nor ${smapiPath} was readable`
+      : formatCensus(modContractCensus)
+  } | host ${format(hostContractReading)}`,
+  `${modLogPath} (mod side) + result.json bridgeDisconnections (host side), whole run`,
 );
 
 // Everything the MODEL saw about the environment lives in the run's own record, not in the bound session: the block
@@ -877,33 +928,38 @@ record(
 );
 
 // 3. Tool choice: plan_work vs submit_action_program, from the session's own tool calls.
-let planWork = 0;
-let submitProgram = 0;
-if (boundSession !== null)
-  for (const line of readFileSync(boundSession, "utf8").split("\n")) {
-    if (!line.trim()) continue;
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    for (const part of entry.message?.content ?? []) {
-      if (part.type !== "toolCall") continue;
-      if (part.name === "stardew_plan_work") planWork += 1;
-      if (part.name === "stardew_submit_action_program") submitProgram += 1;
-    }
-  }
+//
+// The count is a CENSUS of the assistant's toolCall parts, not occurrences of the names in the file: `grep`-style
+// counting of the token said 97 calls on a run that dispatched 26, because the tool schema that lists the name is in the
+// session text too. The population is every toolCall part the turn walk found, so the two plan tools are printed as what
+// they are - some of the calls this run made - and a mention of the name cannot be mistaken for a call.
+const sessionToolCalls =
+  boundSession === null ? [] : sessionTurns(sessionEntries(boundSession)).turns.flatMap((turn) => turn.calls);
+const planToolCensus =
+  sessionToolCalls.length === 0
+    ? null
+    : census(sessionToolCalls, (call) => (PLAN_ANSWER_TOOLS.has(call.name) ? call.name : null), {
+        unit: "assistant toolCall parts",
+        source: basename(boundSession),
+        method: "turn walk of message.content",
+        window: RUN_FILES_WINDOW,
+      });
+const planCalls = planToolCensus?.counts.find(({ key }) => key === "stardew_plan_work")?.total ?? 0;
+const submitCalls = planToolCensus?.counts.find(({ key }) => key === "stardew_submit_action_program")?.total ?? 0;
 record(
   "3 submit_action_program share",
-  boundSession === null
+  planToolCensus === null
     ? "NOT EXERCISED"
-    : submitProgram === 0
+    : submitCalls === 0
       ? "PASS"
-      : submitProgram / (planWork + submitProgram) < 0.16
+      : submitCalls / (planCalls + submitCalls) < 0.16
         ? "PASS (reduced)"
         : "FAIL",
-  `plan_work=${planWork} submit=${submitProgram}`,
+  planToolCensus === null
+    ? `no assistant toolCall part in the session${
+        boundSession === null ? " (no session bound to this run)" : ` (${basename(boundSession)})`
+      }`
+    : formatCensus(planToolCensus),
   boundSession ?? "no session",
 );
 
@@ -952,12 +1008,16 @@ record(
 );
 
 // 6. pickup_forage, which needs the scene binding to be constructible.
-const forageCalls = modLog.split("pickup_forage").length - 1;
-const forageSucceeded = modLog.split("forage_picked_up").length - 1;
+const forageAttempts = mentionedLines({ text: modLog, token: "pickup_forage", source: basename(modLogPath) });
+const foragePickups = mentionedLines({ text: modLog, token: "forage_picked_up", source: basename(modLogPath) });
 record(
   "6 pickup_forage",
-  forageCalls === 0 ? "NOT EXERCISED" : forageSucceeded > 0 ? "PASS" : "FAIL",
-  `attempts≈${forageCalls} succeeded=${forageSucceeded}`,
+  forageAttempts.value === null || forageAttempts.value === 0
+    ? "NOT EXERCISED"
+    : foragePickups.value > 0
+      ? "PASS"
+      : "FAIL",
+  `attempts ${format(forageAttempts)} · picked up ${format(foragePickups)}`,
   modLogPath,
 );
 
