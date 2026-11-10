@@ -4124,7 +4124,8 @@
             "relation": "self_walked"
           },
           "targetFamily": "farmBuildingTargets",
-          "nativeBinding": "GameLocation.buildStructure"
+          "nativeBinding": "GameLocation.buildStructure",
+          "synthetic": true
         },
         "handlerGroup": null
       },
