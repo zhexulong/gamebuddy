@@ -16,17 +16,22 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { checkVendorPatchesApply, parseVendorPatchHeader } from "./check-vendor-patches-apply.mjs";
+import {
+  MERGED_SEAMS,
+  MERGED_SEAM_REASON,
+  checkVendorPatchesApply,
+  parseVendorPatchHeader,
+} from "./check-vendor-patches-apply.mjs";
 import { NOT_MEASURED_MARKER } from "./prelive.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const GATE = join(REPOSITORY_ROOT, "tools", "check-vendor-patches-apply.mjs");
-const SHIPPED_PATCH = join(REPOSITORY_ROOT, "patches", "vendor-magic-context", "0001-preset-assembly-seam.patch");
+const PATCH_DIRECTORY = join(REPOSITORY_ROOT, "patches", "vendor-magic-context");
 const SEAM_FILE = "packages/pi-plugin/src/context-handler.ts";
 /** The context line the shipped patch's second hunk anchors on: one edit here is one drifted line, nothing more. */
 const SEAM_ANCHOR = '\tcacheTtlConfig?: import("@magic-context/core/shared/model-cache-ttl").CacheTtlConfig;';
@@ -133,61 +138,71 @@ function patch({
   ];
   return lines.join("\n");
 }
-
+/**
+ * A patch built on the REAL pin content: one optional member added beside the context line the seam's own history
+ * anchored on, so drift injected at that line is drift in a file a patch would have to match. The shipped patch
+ * file is gone - its seam is in the pin - but this keeps the patch-mode readings anchored on real content.
+ */
+function seamPatch(points = ["seamAnchor"]) {
+  const pinned = readFileSync(join(REPOSITORY_ROOT, "vendor", "magic-context", SEAM_FILE), "utf8");
+  return patch({
+    file: SEAM_FILE,
+    before: pinned,
+    after: pinned.replace(SEAM_ANCHOR, `${SEAM_ANCHOR}\n\tseamAnchor?: 1;`),
+    points,
+  });
+}
 const named = (result) => result.violations.map((violation) => violation.code.split(":")[0]);
 const checkStatus = (result, id) => result.checks.find((check) => check.id === id)?.status;
 
-test("the shipped patch is green on this checkout, and every reading names the state it read", () => {
-  // The population is the directory, and the expected extension points are the patch's own declaration:
-  // a second patch joining the directory must not turn this case red for the wrong reason.
-  const patchNames = readdirSync(join(REPOSITORY_ROOT, "patches", "vendor-magic-context")).filter((name) =>
-    name.endsWith(".patch"),
-  );
-  const declaredPoints = patchNames.reduce(
-    (total, name) =>
-      total +
-      parseVendorPatchHeader(readFileSync(join(REPOSITORY_ROOT, "patches", "vendor-magic-context", name), "utf8"))
-        .extensionPoints.length,
-    0,
-  );
-  // The expected pin comes from the parent repository's own record, not from a copy written into this test.
+test("this checkout is sealed: the patch directory is empty and the report declares why, beside the pin it read", () => {
+  // The population is the directory and the expectation is this repository's own record: no patch is left once the
+  // seam lives in the pin, and the pin comes from the parent repository's gitlink rather than a copy written here.
+  const patchNames = existsSync(PATCH_DIRECTORY)
+    ? readdirSync(PATCH_DIRECTORY).filter((name) => name.endsWith(".patch"))
+    : [];
   const recordedPin = /^160000 commit ([0-9a-f]{40})\t/u.exec(
     git(REPOSITORY_ROOT, "ls-tree", "HEAD", "--", "vendor/magic-context"),
   )?.[1];
   assert.match(String(recordedPin), /^[0-9a-f]{40}$/u, "this checkout records a submodule pin");
+  const declaredPoints = MERGED_SEAMS.reduce((total, seam) => total + seam.points.length, 0);
 
   const result = checkVendorPatchesApply({ root: REPOSITORY_ROOT });
-  assert.equal(result.status, "passed", JSON.stringify(result.violations));
-  assert.equal(result.examined, patchNames.length, "every patch in the directory was examined");
-  assert.equal(result.extensionPoints, declaredPoints, "every declared extension point was looked for");
-  assert.ok(result.examined > 0 && result.extensionPoints > 0, "the real tree has patches to examine");
-  assert.equal(checkStatus(result, "patch_applies_to_working_tree"), "passed");
-  assert.equal(checkStatus(result, "patch_applies_to_pinned_commit"), "passed");
-  assert.equal(checkStatus(result, "extension_point_present_after_apply"), "passed");
-  assert.equal(checkStatus(result, "extension_point_absent_without_patch"), "passed");
-  assert.equal(checkStatus(result, "patched_file_parses"), "passed");
-  assert.deepEqual(result.violations, []);
+  assert.deepEqual(patchNames, [], "the seam ships by pin, so the directory holds no patch to apply or to excuse");
+  assert.equal(result.examined, 0);
+  assert.equal(result.allowEmpty, MERGED_SEAM_REASON, "the empty population is declared, never silent");
+  assert.equal(result.pin, recordedPin, "the pin reported is the parent repository's own record");
+  assert.equal(result.extensionPoints, declaredPoints, "every declared extension point was looked for at that pin");
+  assert.deepEqual(result.readings, [], "sealed mode has no patch, so it makes no apply reading");
   assert.deepEqual(
-    result.readings.map((reading) => [reading.reading, reading.state, reading.status]),
-    patchNames.flatMap(() => [
-      ["applies-to-working-tree", "worktree", "passed"],
-      ["applies-to-pinned-commit", `pin:${recordedPin}`, "passed"],
-      ["extension-point", "worktree", "passed"],
-    ]),
-    "each patch reports three readings, each naming the state it read",
+    result.checks.map((check) => check.state),
+    [`pin:${recordedPin}`],
+    "the only state sealed mode read is the pin, and the report says which",
   );
+  assert.equal(
+    checkStatus(result, "merged_seam_present_at_pin"),
+    result.status,
+    "one rule decides the run: the pin carries the seam, or the run is red",
+  );
+  for (const violation of result.violations) {
+    assert.match(
+      violation.code,
+      /^vendor_seam_absent_at_pin:/u,
+      "a pin without the seam is the only red possible here",
+    );
+  }
 });
 
 test("a context line the submodule no longer has turns both apply readings red, and nothing else is claimed", () => {
-  const real = readFileSync(SHIPPED_PATCH, "utf8");
-  // The pre-image anchor the shipped patch's second hunk matches on: replace it with a line no longer present.
+  const real = seamPatch();
+  // The pre-image anchor the patch matches on as a context line: replace it with a line no longer present.
   const drifted = real.replace(
     SEAM_ANCHOR,
     '\tcacheTtlConfig?: import("@magic-context/core/shared/model-cache-ttl").RenamedTtlConfig;',
   );
-  assert.notEqual(drifted, real, "the injection point must exist in the shipped patch");
+  assert.notEqual(drifted, real, "the injection point must exist in the patch");
   const { root } = sealedTree({
-    patches: { "0001-preset-assembly-seam.patch": drifted },
+    patches: { "0001.patch": drifted },
     pinned: { [SEAM_FILE]: readFileSync(join(REPOSITORY_ROOT, "vendor", "magic-context", SEAM_FILE), "utf8") },
   });
   try {
@@ -206,13 +221,56 @@ test("a context line the submodule no longer has turns both apply readings red, 
   }
 });
 
-test("no patch at all is blocked with no_vendor_patches_found, never passed", () => {
-  const root = tree({ submodule: { [SEAM_FILE]: "export const seam = 1;\n" } });
+test("a pin carrying the seam is passed, and the report prints the reason and the pin it verified", () => {
+  const seam = readFileSync(join(REPOSITORY_ROOT, "vendor", "magic-context", SEAM_FILE), "utf8");
+  const { root, sha } = sealedTree({ pinned: { [SEAM_FILE]: seam } });
   try {
-    const result = checkVendorPatchesApply({ root });
-    assert.equal(result.status, "blocked");
-    assert.equal(result.examined, 0);
-    assert.deepEqual(named(result), ["no_vendor_patches_found"]);
+    const run = spawnSync(process.execPath, [GATE, "--root", root], { encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+    const points = MERGED_SEAMS.reduce((total, entry) => total + entry.points.length, 0);
+    const expectedLine =
+      `vendor_patches_allow_empty: ${MERGED_SEAM_REASON} ` +
+      `(pin=${sha}, ${MERGED_SEAMS.length} merged seam file(s), ${points}/${points} extension point(s) present)`;
+    assert.ok(run.stdout.split("\n").includes(expectedLine), run.stdout);
+    const reported = JSON.parse(run.stdout.split("\n").find((line) => line.startsWith("{")));
+    assert.equal(reported.status, "passed");
+    assert.equal(reported.allowEmpty, MERGED_SEAM_REASON, "the reason travels in the JSON, not only in the print");
+    assert.equal(reported.pin, sha, "and so does the pin it was verified against");
+    assert.equal(reported.examined, 0);
+    assert.deepEqual(reported.violations, []);
+    assert.deepEqual(reported.checks, [
+      { id: "merged_seam_present_at_pin", status: "passed", measured: points, failed: 0, state: `pin:${sha}` },
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a pin that lost the seam is red and names the member, even though the patch set is empty", () => {
+  // The defect class sealed mode exists for: the patch that would have said so is deleted (it would have changed
+  // nothing), so the pin is the only place the seam can be lost - and one renamed field is that loss.
+  const seam = readFileSync(join(REPOSITORY_ROOT, "vendor", "magic-context", SEAM_FILE), "utf8");
+  const renamed = seam.replaceAll("assemblePresetSegments", "assembleSegmentsForPreset");
+  assert.notEqual(renamed, seam, "the injection point must exist in the seam file");
+  const { root, sha } = sealedTree({ pinned: { [SEAM_FILE]: renamed } });
+  try {
+    const run = spawnSync(process.execPath, [GATE, "--root", root], { encoding: "utf8" });
+    assert.equal(run.status, 1);
+    assert.match(run.stderr, new RegExp(`vendor_seam_absent_at_pin:${SEAM_FILE}:assemblePresetSegments`, "u"));
+    assert.match(
+      run.stdout,
+      new RegExp(`^vendor_patches_allow_empty: ${MERGED_SEAM_REASON} \\(pin=${sha}`, "mu"),
+      "the exemption is still declared when it is red",
+    );
+    const reported = JSON.parse(run.stdout.split("\n").find((line) => line.startsWith("{")));
+    assert.equal(reported.status, "failed");
+    assert.deepEqual(
+      reported.violations.map((violation) => violation.code),
+      [`vendor_seam_absent_at_pin:${SEAM_FILE}:assemblePresetSegments`],
+    );
+    assert.deepEqual(reported.checks, [
+      { id: "merged_seam_present_at_pin", status: "failed", measured: 2, failed: 1, state: `pin:${sha}` },
+    ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -273,7 +331,7 @@ test("an uncommitted edit inside the submodule turns the working-tree reading re
   );
   assert.notEqual(dirty, pinned, "the injection point must exist in the seam file");
   const { root, sha } = sealedTree({
-    patches: { "0001-preset-assembly-seam.patch": readFileSync(SHIPPED_PATCH, "utf8") },
+    patches: { "0001.patch": seamPatch() },
     pinned: { [SEAM_FILE]: pinned },
     workingTree: { [SEAM_FILE]: dirty },
   });
@@ -305,7 +363,7 @@ test("a pin that drifted away from the working tree turns the pinned reading red
   );
   assert.notEqual(drifted, clean);
   const { root, sha } = sealedTree({
-    patches: { "0001-preset-assembly-seam.patch": readFileSync(SHIPPED_PATCH, "utf8") },
+    patches: { "0001.patch": seamPatch() },
     pinned: { [SEAM_FILE]: drifted },
     workingTree: { [SEAM_FILE]: clean },
   });
@@ -584,31 +642,23 @@ test("a header line inside the diff cannot rewrite the declaration", () => {
   assert.deepEqual(declared.extensionPoints, ["seam"]);
 });
 
-test("the shipped seam is additive in the ways a reader would check it by hand", () => {
+test("the seam the vendored package carries is additive in the ways a reader would check it by hand", () => {
   // Structural, and stated as such: executing this call site needs the vendor's own build and a live Pi
   // session, which a patch gate must not require. What IS asserted here is the property the additive claim
   // rests on - both fields optional, the call guarded by both, the unguarded path handing back the very
-  // array the handler already had, and the seam sitting before the card's closing direction.
-  const work = mkdtempSync(join(tmpdir(), "vendor-patch-apply-"));
-  try {
-    mkdirSync(dirname(join(work, SEAM_FILE)), { recursive: true });
-    copyFileSync(join(REPOSITORY_ROOT, "vendor", "magic-context", SEAM_FILE), join(work, SEAM_FILE));
-    git(work, "init", "-q");
-    git(work, "apply", SHIPPED_PATCH);
-    const applied = readFileSync(join(work, SEAM_FILE), "utf8");
-    assert.match(applied, /presetSegments\?: PiPresetSegments;/u);
-    assert.match(applied, /assemblePresetSegments\?: \(\n\t\tinput:/u);
-    assert.match(applied, /options\.presetSegments && options\.assemblePresetSegments/u);
-    assert.match(applied, /if \(presetAssembly\)\n\t\t\t\toutputMessages = presetAssembly\.messages/u);
-    assert.ok(
-      applied.indexOf("const presetAssembly =") < applied.indexOf("appendPostHistoryInstructions("),
-      "the preset seam runs before the card's closing direction, which stays the last text",
-    );
-    assert.ok(
-      applied.indexOf("const presetAssembly =") > applied.indexOf("captureServedEvidence(sessionId, outputMessages"),
-      "the preset seam runs after the served-array capture, so its bytes never enter the LKG snapshot",
-    );
-  } finally {
-    rmSync(work, { recursive: true, force: true });
-  }
+  // array the handler already had, and the seam sitting before the card's closing direction. Read from the
+  // vendored file itself: no patch stands between the seam and what the Host compiles any more.
+  const seam = readFileSync(join(REPOSITORY_ROOT, "vendor", "magic-context", SEAM_FILE), "utf8");
+  assert.match(seam, /presetSegments\?: PiPresetSegments;/u);
+  assert.match(seam, /assemblePresetSegments\?: \(\n\t\tinput:/u);
+  assert.match(seam, /options\.presetSegments && options\.assemblePresetSegments/u);
+  assert.match(seam, /if \(presetAssembly\)\n\t\t\t\toutputMessages = presetAssembly\.messages/u);
+  assert.ok(
+    seam.indexOf("const presetAssembly =") < seam.indexOf("appendPostHistoryInstructions("),
+    "the preset seam runs before the card's closing direction, which stays the last text",
+  );
+  assert.ok(
+    seam.indexOf("const presetAssembly =") > seam.indexOf("captureServedEvidence(sessionId, outputMessages"),
+    "the preset seam runs after the served-array capture, so its bytes never enter the LKG snapshot",
+  );
 });

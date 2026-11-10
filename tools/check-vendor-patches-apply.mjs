@@ -1,31 +1,47 @@
 #!/usr/bin/env node
 /**
- * Vendor patch gate: every patch under `patches/vendor-magic-context/` must still fit the submodule it
- * patches - in BOTH states a checkout can be in - must actually introduce the extension point it declares,
- * and must be the only reason that extension point exists.
+ * Vendor patch gate, in two modes. Every patch under `patches/vendor-magic-context/` must still fit the
+ * submodule it patches - in BOTH states a checkout can be in - must actually introduce the extension point it
+ * declares, and must be the only reason that extension point exists. With no patch left in that directory the
+ * gate is SEALED instead: it declares why the population is empty and proves those seams are present in the
+ * pinned content, so an empty directory is a recorded fact rather than a silent pass.
  *
- * WHY (the two accidents this prevents)
+ * WHY
  *
- * `vendor/magic-context` is a git submodule we do not own, and GameBuddy has to change it: the single
- * authority for assembling the outgoing message array lives inside it, so SillyTavern preset segments
- * cannot be honoured anywhere else (design/architecture/tavern-preset-compatibility.md §2.3). The
- * upgrade path is therefore a patch file, not a fork - and a patch file rots silently. Upstream moves a
- * line, `git apply` stops matching, and nothing notices until someone upgrades the pin and the feature
- * is simply gone. The gate is the thing that notices.
+ * `vendor/magic-context` is a pin we do not own, and GameBuddy has to change it: the single authority for
+ * assembling the outgoing message array lives inside it, so SillyTavern preset segments cannot be honoured
+ * anywhere else (design/architecture/tavern-preset-compatibility.md §2.3). The preset seam therefore used to live
+ * here as a patch file, because patching an installed copy needs a build step nobody wanted. It now lives IN THE
+ * PIN: commit 34b0de60e on `feat/preset-assembly-seam` of GameBuddy's fork (magic-context-airp) carries the seam,
+ * the parent repository records that commit as the gitlink, and the patch file is gone. One copy, no build step,
+ * nothing to re-apply - and the gate records the merged state instead of asserting an unpatched pin.
+ *
+ * A patch file rots silently: upstream moves a line, `git apply` stops matching, and nothing notices until someone
+ * upgrades the pin and the feature is simply gone. The gate is the thing that notices - while patches remain. When
+ * the population becomes empty, "nothing to apply" must not read as "nothing to check": the merged seams are
+ * declared below (`MERGED_SEAMS`), the pin comes from the parent repository's own gitlink, and every declared
+ * extension point must be present in that pin's OWN content. A pin that lost the seam is red and names the member,
+ * which is the same signal a rotted patch gave.
  *
  * The second accident is quieter. The working tree is not what a clean checkout gets: an uncommitted edit
  * inside the submodule, or a checkout left on another commit, makes a patch fit HERE and stop fitting in
  * CI. A gate that reads only the working tree reports green until somebody else's build goes red, and the
  * answer it gives - "the patch applies" - is a fact about this machine, not about the pin.
  *
- * The third assertion is the one that expires the exemption: with NO patch applied, the extension point
- * must NOT exist. The day upstream ships an assembly seam of its own, that assertion turns red and names
- * the point - which is the signal to delete the patch, not to widen the gate.
+ * The third assertion is the one that expires an exemption: with NO patch applied, the extension point must NOT
+ * exist. The day upstream ships the seam itself, that assertion turns red and names the point - the signal to
+ * delete the patch rather than widen the gate. That is what happened to the preset seam (it was merged into the
+ * pin, so the patch would have changed nothing), and it is why every patch rule below is about a patch while
+ * every sealed rule below is about the pin.
  *
  * WHAT IS READ: THE POPULATION IS THE DIRECTORY, NOT A LIST
  *
- *   1. `patches/vendor-magic-context/*.patch` - every file, alphabetical. Zero files is `blocked`
- *      (`no_vendor_patches_found`), never `passed`: a gate whose population is empty agrees with itself.
+ *   1. `patches/vendor-magic-context/*.patch` - every file, alphabetical. Zero files is SEALED mode, and it
+ *      carries its own testimony rather than passing quietly: `allowEmpty` holds the reason
+ *      (`all seams merged upstream into magic-context-airp`), `pin` holds the commit the parent repository
+ *      records, and every `MERGED_SEAMS` entry is read out of that pin's content - the file must exist in the pin
+ *      and must contain each declared extension point. Only then is the run `passed`, and the report prints the
+ *      reason, the pin and `present/declared` on every run.
  *   2. each patch's own header declares `kind:`, `added-lines:`, `modified-lines:` and one
  *      `extension-point:` per name it introduces; `kind: invasive` additionally requires
  *      `why-not-insertion:` (design §3.2).
@@ -40,14 +56,15 @@
  *
  *   - `applies-to-working-tree` seeds the copy from `vendor/magic-context` as this checkout has it ON DISK.
  *     This reading explains a red here and now.
- *   - `applies-to-pinned-commit` seeds it from the same files as `git show <pin>:<path>`, where `<pin>` is what
- *     the PARENT repository records for the submodule (`git ls-tree HEAD vendor/magic-context`). This reading
+ *   - `applies-to-pinned-commit` seeds it from the same files as `git show <pin>:<path>`, where `<pin>` is what the
+ *     PARENT repository records for the submodule (`git ls-tree HEAD vendor/magic-context`). This reading
  *     is the one whose verdict travels to a clean checkout.
  *   - `extension-point` reads the applied copy for every declared hook, and the pre-image for their absence.
  *
  * Neither apply reading substitutes for the other, so neither is reported as the other: every reading prints
  * the state it read (`state=worktree`, `state=pin:e52ae3f8...`), and `<patch> <reading>: <verdict>` lines say
- * which verdict came from which state.
+ * which verdict came from which state. Sealed mode has no patch to read, so it reports one check whose
+ * `state=pin:<sha>` is the whole state it read.
  *
  * NOT MEASURED IS ITS OWN VERDICT. A submodule with no git directory of its own (a source export), a parent
  * directory that is not a git repository, a HEAD that records no gitlink, or a pin naming an object the
@@ -56,35 +73,40 @@
  * `pin_commit_unreadable`). It is not a pass, and it is not a failure of the whole gate: the working-tree
  * reading still runs and still turns red on its own. The run then reports `status: not_measured` and prints
  * `vendor_patches_skipped: <reading> <reason>` on stdout, which `tools/prelive.mjs` counts as UNAVAILABLE
- * rather than passed.
+ * rather than passed. Sealed mode reuses all four reasons: without a readable pin the merged seam is unverified,
+ * which is `not_measured` and never green.
  *
- * THE THREE ASSERTIONS
+ * THE THREE ASSERTIONS (patch mode) AND THE ONE (sealed mode)
  *
  *   (a) `git apply --check` succeeds against BOTH states - the working tree and the pinned commit;
  *   (b) after applying, every declared `extension-point:` exists in the copy, and every touched
  *       TypeScript file still parses (TypeScript's own parser, diagnostics only - not a typecheck);
  *   (c) with no patch applied, every declared extension point is ABSENT (the patch is load-bearing).
+ *   (d) sealed: every `MERGED_SEAMS` entry exists at the pin and carries every declared extension point, which
+ *       is what replaces (a)-(c) once the seam lives in the pin.
  *
  * Output: one JSON verdict
  * `{"gate":"vendor-patches-apply","examined":N,"files":N,"extensionPoints":N,"violations":[],"readings":[],
- * "checks":[],"status":...}` - `readings` is one entry per patch per reading (`{patch, reading, state, status,
- * reason}`), so the report cannot say `passed` without saying which state it read - and the line
- * `vendor_patches: examined N patch(es), ... N reading(s) ...`. `status` is `blocked` when there is nothing to
- * measure (no patches, no submodule, no TypeScript parser), `not_measured` when the pin could not be read, and
- * `failed` when a patch is wrong. Exit 0 for `passed` and `not_measured`, 1 otherwise.
+ * "checks":[],"status":...,"allowEmpty"?:"<reason>","pin"?:"<sha>"}` - `readings` is one entry per patch per
+ * reading (`{patch, reading, state, status, reason}`), so the report cannot say `passed` without saying which
+ * state it read - and the line `vendor_patches: examined N patch(es), ... N reading(s) ...`. Sealed mode adds
+ * `allowEmpty`, `pin` and the line `vendor_patches_allow_empty: <reason> (pin=<sha>, N merged seam file(s),
+ * present/declared extension point(s) present)`. `status` is `blocked` when nothing was measured (no patches and
+ * no merged-seam evidence, no submodule, no TypeScript parser), `not_measured` when the pin could not be read,
+ * and `failed` when a patch or a merged seam is wrong. Exit 0 for `passed` and `not_measured`, 1 otherwise.
  *
  * Usage:
  *   node tools/check-vendor-patches-apply.mjs                    # this repository
  *   node tools/check-vendor-patches-apply.mjs --root <dir>       # a fixture tree
  *
- * red-proof: inject  edit one line of the WORKING-TREE copy of the seam file - the `cacheTtlConfig` context
- *            line the shipped patch's second hunk anchors on - in a fixture whose pinned commit still holds
- *            it. Observed, with the real patch and the real seam file (`.tmp/red-proof-pinned.mjs`):
+ * red-proof: PATCH MODE  inject  edit one context line of the WORKING-TREE copy of the file a patch anchors on
+ *            while the pinned commit still holds it, using the test's `seamPatch()` - a patch built from the real
+ *            seam file, anchored on `cacheTtlConfig`, so the injection is one real line:
  *
  *              exit 1
- *              vendor_patch_does_not_apply:0001-preset-assembly-seam.patch:packages/pi-plugin/src/context-handler.ts
- *              0001-preset-assembly-seam.patch applies-to-working-tree: failed (state=worktree)
- *              0001-preset-assembly-seam.patch applies-to-pinned-commit: passed (state=pin:7abcd8e3...)
+ *              vendor_patch_does_not_apply:<patch>:packages/pi-plugin/src/context-handler.ts
+ *              <patch> applies-to-working-tree: failed (state=worktree)
+ *              <patch> applies-to-pinned-commit: passed (state=pin:<sha>)
  *              vendor_patches: examined 1 patch(es), ... 3 reading(s), 1 violation(s) [failed]
  *
  *            Restoring that one line: both readings `passed`, `0 violation(s)`, exit 0.
@@ -94,6 +116,18 @@
  *            direction - a pin that drifted away from a locally repaired working tree - where the pinned
  *            reading is the only red one. Both live in tools/check-vendor-patches-apply.test.mjs, beside
  *            the four not_measured reasons and the skip marker prelive reads.
+ *
+ *            SEALED MODE  a fixture whose pin is the real seam file with one field name shortened:
+ *
+ *              exit 1
+ *              vendor_seam_absent_at_pin:packages/pi-plugin/src/context-handler.ts:assemblePresetSegments
+ *              merged_seam_present_at_pin: failed (measured 2, failed 1) state=pin:<sha>
+ *              vendor_patches: examined 0 patch(es), ... allow_empty=all seams merged upstream into
+ *              magic-context-airp (pin=<sha>) ... [failed]
+ *
+ *            THAT IS THE POINT OF NOT LETTING THE POPULATION BE EMPTY AND SILENT: the seam's own history ends
+ *            with its patch deleted, so the only thing left that can notice a pin without the seam is this
+ *            assertion. The same fixture with the real pin content is `passed` and prints the reason and the pin.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -113,6 +147,21 @@ const READING = Object.freeze({
   pinned: "applies-to-pinned-commit",
   extensionPoint: "extension-point",
 });
+
+/**
+ * The seams this repository ships by PIN rather than by patch: the file the seam lives in, and the names the Host
+ * compiles against. Declared here because the patch file that used to declare them is gone - and read against the
+ * pin the parent repository records, never against a sha copied into this file, so the two can never disagree.
+ */
+export const MERGED_SEAMS = Object.freeze([
+  Object.freeze({
+    file: "packages/pi-plugin/src/context-handler.ts",
+    points: Object.freeze(["PiPresetSegments", "presetSegments", "assemblePresetSegments"]),
+  }),
+]);
+
+/** Why an empty patch directory is a measured fact here. Printed on every sealed run, beside the pin it verified. */
+export const MERGED_SEAM_REASON = "all seams merged upstream into magic-context-airp";
 
 /** A patch's own declarations, read only from the mail body - never from the diff it carries. */
 export function parseVendorPatchHeader(text) {
@@ -340,17 +389,27 @@ export function checkVendorPatchesApply({ root = REPOSITORY_ROOT } = {}) {
   const patchDirectory = join(root, ...PATCH_DIRECTORY);
   const submoduleDirectory = join(root, ...SUBMODULE_DIRECTORY);
   const violations = [];
-  // The rules this gate enumerates. Each reports its own outcome (with the population it measured), so
-  // the default run's JSON is a self-verification report and not a summary sentence.
+  // The population is the directory: every `.patch` in it, alphabetical. Zero of them is sealed mode, whose one
+  // rule is about the pin instead of about a patch.
+  const patches = existsSync(patchDirectory)
+    ? readdirSync(patchDirectory)
+        .filter((entry) => entry.endsWith(".patch"))
+        .sort()
+    : [];
+  // The rules the mode enumerates. Each reports its own outcome (with the population it measured), so the
+  // default run's JSON is a self-verification report and not a summary sentence.
   const rules = new Map(
-    [
-      ["header", { id: "patch_header_declares_kind_and_size", state: null }],
-      ["worktree", { id: "patch_applies_to_working_tree", state: "worktree" }],
-      ["pinned", { id: "patch_applies_to_pinned_commit", state: "pin:unknown" }],
-      ["present", { id: "extension_point_present_after_apply", state: "worktree" }],
-      ["parses", { id: "patched_file_parses", state: "worktree" }],
-      ["absent", { id: "extension_point_absent_without_patch", state: "worktree" }],
-    ].map(([rule, spec]) => [rule, { ...spec, measured: 0, failed: 0, reasons: [] }]),
+    (patches.length === 0
+      ? [["sealed", { id: "merged_seam_present_at_pin", state: "pin:unknown" }]]
+      : [
+          ["header", { id: "patch_header_declares_kind_and_size", state: null }],
+          ["worktree", { id: "patch_applies_to_working_tree", state: "worktree" }],
+          ["pinned", { id: "patch_applies_to_pinned_commit", state: "pin:unknown" }],
+          ["present", { id: "extension_point_present_after_apply", state: "worktree" }],
+          ["parses", { id: "patched_file_parses", state: "worktree" }],
+          ["absent", { id: "extension_point_absent_without_patch", state: "worktree" }],
+        ]
+    ).map(([rule, spec]) => [rule, { ...spec, measured: 0, failed: 0, reasons: [] }]),
   );
   // Every reading prints the state it read, so a green verdict cannot be mistaken for a verdict about the pin.
   const readings = [];
@@ -364,11 +423,6 @@ export function checkVendorPatchesApply({ root = REPOSITORY_ROOT } = {}) {
   const measure = (rule) => {
     rules.get(rule).measured += 1;
   };
-  const patches = existsSync(patchDirectory)
-    ? readdirSync(patchDirectory)
-        .filter((entry) => entry.endsWith(".patch"))
-        .sort()
-    : [];
   const result = {
     gate: "vendor-patches-apply",
     examined: 0,
@@ -378,6 +432,8 @@ export function checkVendorPatchesApply({ root = REPOSITORY_ROOT } = {}) {
     readings,
     checks: [],
     status: "blocked",
+    allowEmpty: null,
+    pin: null,
   };
   const finish = () => {
     result.checks = [...rules.values()].map((rule) => ({
@@ -390,20 +446,62 @@ export function checkVendorPatchesApply({ root = REPOSITORY_ROOT } = {}) {
     }));
     const failed = violations.length > 0 || result.checks.some((check) => check.status === "failed");
     const unmeasured = result.checks.some((check) => check.status === "not_measured");
-    if (result.examined === 0) result.status = "blocked";
+    const green = result.checks.length > 0 && result.checks.every((check) => check.status === "passed");
+    // A patch set that reached no measurement measured nothing, whatever violation explains it; sealed mode is the
+    // opposite case - no patch to examine, and an empty population the run declared and then read the pin for.
+    if (result.examined === 0 && result.allowEmpty === null) result.status = "blocked";
     else if (failed) result.status = "failed";
     else if (unmeasured) result.status = "not_measured";
-    else if (result.checks.every((check) => check.status === "passed")) result.status = "passed";
+    else if (green) result.status = "passed";
     else result.status = "blocked";
     return result;
   };
 
+  // ZERO PATCHES IS THE SEALED STATE: declared, then verified against the pin and only then green. An empty
+  // directory with nothing read is a gate agreeing with itself, so the declaration below is what keeps it honest -
+  // and every declared extension point has to be in the pinned content itself, not merely in a file on disk.
   if (patches.length === 0) {
-    violations.push({
-      code: "no_vendor_patches_found",
-      expected: `${patchDirectory}/*.patch`,
-      detail: "a patch gate with no patch has measured nothing; it has not passed",
-    });
+    if (!existsSync(submoduleDirectory)) {
+      violations.push({
+        code: "vendor_submodule_missing",
+        expected: submoduleDirectory,
+        detail: "run `git submodule update --init vendor/magic-context`; without it the merged seam cannot be read",
+      });
+      return finish();
+    }
+    result.allowEmpty = MERGED_SEAM_REASON;
+    const pin = readSubmodulePin(root, submoduleDirectory);
+    rules.get("sealed").state = pin.sha === null ? "pin:unavailable" : `pin:${pin.sha}`;
+    result.pin = pin.sha;
+    if (pin.sha === null || pin.reason !== null) {
+      rules.get("sealed").reasons.push(`${pin.reason}: ${pin.detail}`);
+      return finish();
+    }
+    for (const seam of MERGED_SEAMS) {
+      result.files += 1;
+      const pinned = gitProbe(submoduleDirectory, ["show", `${pin.sha}:${seam.file}`]);
+      if (!pinned.ok) {
+        fail("sealed", {
+          code: `vendor_seam_file_missing_from_pin:${seam.file}`,
+          expected: `${pin.sha}:${seam.file}`,
+          detail: pinned.error,
+        });
+        continue;
+      }
+      for (const point of seam.points) {
+        result.extensionPoints += 1;
+        if (pinned.text.includes(point)) {
+          measure("sealed");
+          continue;
+        }
+        fail("sealed", {
+          code: `vendor_seam_absent_at_pin:${seam.file}:${point}`,
+          expected: `${point} in ${seam.file} at ${pin.sha}`,
+          detail:
+            "the seam ships by pin, so its absence here is the seam being lost; the patch file that would have said so is gone, and this is the assertion that replaced it",
+        });
+      }
+    }
     return finish();
   }
   if (!existsSync(submoduleDirectory)) {
@@ -726,6 +824,17 @@ function report(result, out = process.stdout, err = process.stderr) {
         `${check.reason === undefined ? "" : ` reason=${check.reason}`}\n`,
     );
   }
+  // The sealed run states what it allowed and what it verified in the same breath: a reason with no pin would be an
+  // exemption that expires in silence, and a pin with no reason would be a pass the reader has to take on trust.
+  if (result.allowEmpty !== null) {
+    const sealed = result.checks.find((check) => check.id === "merged_seam_present_at_pin");
+    const declared = sealed === undefined ? 0 : sealed.measured + sealed.failed;
+    out.write(
+      `vendor_patches_allow_empty: ${result.allowEmpty} (pin=${result.pin ?? "unreadable"}, ` +
+        `${MERGED_SEAMS.length} merged seam file(s), ` +
+        `${sealed === undefined ? 0 : sealed.measured}/${declared} extension point(s) present)\n`,
+    );
+  }
   if (result.status === "not_measured") {
     const reasons = result.checks
       .filter((check) => check.status === "not_measured")
@@ -735,7 +844,9 @@ function report(result, out = process.stdout, err = process.stderr) {
   err.write(
     `vendor_patches: examined ${result.examined} patch(es), ${result.files} file(s), ` +
       `${result.extensionPoints} extension point(s), ${result.readings.length} reading(s), ` +
-      `${result.violations.length} violation(s) [${result.status}]\n`,
+      `${result.violations.length} violation(s)` +
+      `${result.allowEmpty === null ? "" : `, allow_empty=${result.allowEmpty} (pin=${result.pin ?? "unreadable"})`}` +
+      ` [${result.status}]\n`,
   );
   out.write(`${JSON.stringify(result)}\n`);
   return result.status === "passed" || result.status === "not_measured" ? 0 : 1;
