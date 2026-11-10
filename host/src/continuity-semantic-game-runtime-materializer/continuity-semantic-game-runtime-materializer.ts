@@ -59,7 +59,7 @@ import type {
 } from "../game-integration-adapter.js";
 import type { GameConnection } from "../game-connection.js";
 import type { RuntimeSession } from "../runtime.js";
-import { formatGameEnvironmentFacts } from "../runtime-core.internal.js";
+import { formatGameEnvironmentFacts } from "../game-world-vocabulary.js";
 import { identityProfileMetadata } from "../identity-profile.js";
 import { resolveRuntimePaths } from "../runtime-identity.js";
 import { buildGameSurfaceAuthoredCatalog } from "../tavern/catalog-service.js";
@@ -1784,11 +1784,16 @@ async function createMaterializedGameRuntime(
     runtimeRoot,
     ...(identityProfile === undefined ? {} : { identityProfile }),
     ...(worldBook === undefined ? {} : { worldBook }),
+    ...(companionLocale === undefined ? {} : { locale: companionLocale }),
   });
   const assembledProfile = context.profile;
   const assembledWorldBook = context.worldBook;
   const assembledScenario = context.scenario;
   const assembledWorldInfo = context.worldInfo;
+  // The generation preset's tail entry, when this runtime cwd was provisioned with a preset that places one at the
+  // tail. It is published as the catalog's `postHistoryInstructions`; the card's own closing direction is not, and
+  // that pair is the R-2 decision `buildGameSurfaceAuthoredCatalog` records.
+  const assembledPresetPostHistory = context.preset?.postHistory;
   const turnTracker = new GameTurnLineageTracker();
   const presentationLocale = companionLocale;
   const hostBindingFactory = (handle: Readonly<{ interruption: CompanionInterruption }>) => {
@@ -1861,7 +1866,10 @@ async function createMaterializedGameRuntime(
   // them reach this surface at all. Without the retained capability the published
   // volatile candidates would sit in the registry with no one to select them.
   const authoredContext =
-    assembledWorldBook === undefined && assembledScenario === undefined && assembledWorldInfo === undefined
+    assembledWorldBook === undefined &&
+    assembledScenario === undefined &&
+    assembledWorldInfo === undefined &&
+    assembledPresetPostHistory === undefined
       ? undefined
       : await (async (): Promise<
           import("@cortexkit/pi-magic-context/tavern").TavernAuthoredContextRuntimeCapability
@@ -1886,6 +1894,7 @@ async function createMaterializedGameRuntime(
             },
             assembledScenario,
             assembledWorldInfo,
+            assembledPresetPostHistory,
           );
           const { publishGameBuddyAuthoredStableCatalog } = await import("@cortexkit/pi-magic-context/tavern");
           try {

@@ -39,7 +39,7 @@ import type { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import type { WorldFact } from "./event-pump.js";
 import { chatTranscriptPlayerText } from "./native-companion-content.js";
-import { formatGameClock, formatGameDate, formatGameWeather } from "./runtime-core.internal.js";
+import { formatGameClock, formatGameDate, formatGameWeather } from "./game-world-vocabulary.js";
 
 /** The fact's own identity. Stable per Game session, because it is said at most once. */
 export const COMPANION_ARRIVAL_EVENT_ID = "companion_arrival";

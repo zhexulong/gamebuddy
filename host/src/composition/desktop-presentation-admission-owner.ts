@@ -63,6 +63,7 @@ import { createTavernLibraryService, isTavernArtifactUnreadable } from "../taver
 import { provisionDirectNewCompanion, provisionNewCompanion } from "../tavern/new-companion-service.js";
 import { createPersonaManagementService } from "../tavern/persona-management/persona-management.js";
 import { createPresetAssemblyRead } from "../tavern/preset-assembly-read.js";
+import { createPresetBindingStore } from "../tavern/preset-binding.js";
 import { createPresetStore } from "../tavern/preset-store.js";
 import {
   createScenarioManagementService,
@@ -524,24 +525,33 @@ function createTavernManagementDomains(
   });
   /**
    * The preset readout (`presets.read`): every preset the durable store holds, assembled by the one
-   * producer. The store is rooted exactly where it defines its own layout
+   * producer, plus which of them is in force.
+   *
+   * The store is rooted exactly where it defines its own layout
    * (`<playerRoot>/presets/<presetId>/preset.json`), so this read enumerates the same population an
-   * importer writes - and its empty state is the store's answer, not this assembly's.
+   * importer writes - and its empty state is the store's answer, not this assembly's. The binding is the
+   * same player root's own record (`preset-binding.ts`), so the fact the panel shows and the fact the
+   * Chat pipeline reads are one file, not two opinions.
    *
-   * The three producer inputs this mount cannot supply yet are stated rather than guessed:
+   * The two producer inputs this mount cannot supply yet are stated rather than guessed:
    *
-   *  - `sampling` is null. No preset is bound to the Chat runtime, so there is no composed model to read
-   *    the effective values from, and the surface reports `no_composed_model` rather than values nothing
+   *  - `sampling` is null. The composed model this mount would have to read is the Chat runtime's, and this
+   *    assembly holds no Chat session; the surface reports `no_composed_model` rather than values nothing
    *    sends (design §5);
    *  - `macros` and `markers` are empty. Both are the Chat pipeline's to fill when it assembles a
    *    preset (the companion card's fields and the bound world book); until it does, every marker reads
    *    as a slot with no source, which is the assembly's own answer about the content it was given.
    *
-   * None of the four other facts depends on them: the entry partition, the macro findings and the depth
-   * injection are read from the stored document alone.
+   * None of the other facts depends on them: the entry partition, the macro findings, the depth injection and
+   * the active binding are read from the stored document and the binding record alone.
    */
+  const presetStore = createPresetStore({ runtimeRoot: manifest.runtimeRoot, playerRoot: tavernPaths.playerRoot });
   const presetAssemblyRead = createPresetAssemblyRead({
-    store: createPresetStore({ runtimeRoot: manifest.runtimeRoot, playerRoot: tavernPaths.playerRoot }),
+    store: presetStore,
+    binding: createPresetBindingStore(
+      { runtimeRoot: manifest.runtimeRoot, playerRoot: tavernPaths.playerRoot },
+      presetStore,
+    ),
     macros: Object.freeze({
       char: "",
       user: "",

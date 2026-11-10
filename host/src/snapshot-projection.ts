@@ -1,5 +1,6 @@
 import type { Snapshot } from "./protocol.js";
-import { formatGameClock, seasonName } from "./snapshot-hud.js";
+import { seasonName } from "./game-world-vocabulary.js";
+import { formatGameClock } from "./snapshot-hud.js";
 
 const GAME_SNAPSHOT_PROJECTION_SCHEMA = "gamebuddy-game-snapshot-projection/v1" as const;
 /** The projection is smaller than the bridge frame and remains safe to attach to a turn batch. */

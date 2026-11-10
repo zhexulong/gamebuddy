@@ -257,13 +257,19 @@ const composedRoot = {
 const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 
 /** Every route this mount reads, with the preset readout being the producer's own output. */
-async function stubPresetSurface(page: Page, presets: readonly unknown[]): Promise<void> {
+async function stubPresetSurface(
+  page: Page,
+  presets: readonly unknown[],
+  activePreset?: unknown,
+): Promise<void> {
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(composedRoot)));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(composedRoot)));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
   );
-  await page.route("**/api/tavern/v1/presets", (route) => route.fulfill(jsonOk({ apiVersion: 1, presets })));
+  await page.route("**/api/tavern/v1/presets", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, presets, ...(activePreset === undefined ? {} : { activePreset }) })),
+  );
 }
 
 /** What the surface renders for one reading, read as the browser laid it out. */
@@ -605,6 +611,49 @@ test("the same five facts are named at 1440x900", async ({ page }) => {
       `the ${rect.readout} is outside the 1440x900 window: it reads top ${rect.top}, bottom ${rect.bottom}, ` +
         `window ${rendered.windowHeight} px`,
     ).toBe(true);
+});
+
+/**
+ * Which preset is in force is the FIRST fact, because it decides whether any row below describes the request the
+ * player is about to send - and all three states ask something different of them. `none` is a choice nobody made,
+ * `bound` names the assembling preset, `missing` is a binding whose preset is gone (the one state where doing nothing
+ * leaves a player with an assembly they did not choose).
+ *
+ * The absent case is the contract's own: the fact is `Type.Optional` on the body, so a Host that predates it still
+ * reads, and this surface then claims NOTHING rather than claiming "no preset is in force".
+ */
+test("which preset is in force is named in all three states, and absent makes no claim", async ({ page }) => {
+  const catalogue = messages("en");
+  const cases: readonly Readonly<{ what: string; activePreset: unknown; expected: string | null }>[] = [
+    { what: "nothing bound", activePreset: { state: "none" }, expected: catalogue.presetActiveNone },
+    {
+      what: "a bound preset",
+      activePreset: { state: "bound", presetId: SURFACE.presetId },
+      expected: catalogue.presetActiveBound.replace("{{preset}}", SURFACE.presetId),
+    },
+    {
+      what: "a bound preset the store no longer holds",
+      activePreset: { state: "missing", presetId: "deleted-elsewhere" },
+      expected: catalogue.presetActiveMissing.replace("{{preset}}", "deleted-elsewhere"),
+    },
+    { what: "a body with no binding fact at all", activePreset: undefined, expected: null },
+  ];
+  await stubPresetSurface(page, [SURFACE]);
+  await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=presets`);
+  const surface = page.getByTestId("presets-surface");
+  await expect(surface).toBeVisible();
+  for (const { what, activePreset, expected } of cases) {
+    await page.unroute("**/api/tavern/v1/presets");
+    await stubPresetSurface(page, [SURFACE], activePreset);
+    await page.reload();
+    const line = surface.locator("[data-preset-active]");
+    if (expected === null) {
+      await expect(line, `${what}: no line is rendered`).toHaveCount(0);
+      continue;
+    }
+    await expect(line, `${what}: the state is named`).toHaveText(expected);
+    await expect(line).toHaveAttribute("data-preset-active", String((activePreset as { state: string }).state));
+  }
 });
 
 /**

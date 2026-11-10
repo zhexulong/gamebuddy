@@ -1,3 +1,4 @@
+import { seasonName } from "./game-world-vocabulary.js";
 import type { Snapshot } from "./protocol.js";
 
 /**
@@ -429,11 +430,6 @@ export function formatGameClock(timeOfDay: number): string {
   const hours = Math.floor(timeOfDay / 100);
   const minutes = timeOfDay % 100;
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-}
-
-/** The season's own name, spelled once for every renderer that prints a calendar. */
-export function seasonName(seasonIndex: number): string {
-  return ["Spring", "Summer", "Fall", "Winter"][seasonIndex] ?? "Unknown";
 }
 
 function utf8Bytes(value: string): number {

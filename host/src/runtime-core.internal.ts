@@ -54,8 +54,12 @@ import { protectedToolsForRun } from "./magic-context-protected-tools.js";
 import { anchorPiSessionGreeting } from "./pi-session-greeting-anchor.internal.js";
 import { alignSessionToTranscriptRows } from "./pi-session-variant-branch.internal.js";
 import type { PresentationRuntime } from "./presentation.js";
-import type { ExecutionReceipt, Snapshot } from "./protocol.js";
 import {
+  MAX_GAME_ENVIRONMENT_FACTS_BYTES,
+  renderGameEnvironmentFactsObservation,
+  type GameEnvironmentFactsRender,
+} from "./game-world-vocabulary.js";
+import type { ExecutionReceipt } from "./protocol.js";import {
   createProviderTurnHeaderScope,
   PROVIDER_TURN_HEADER_EXTENSION_NAME,
   type ProviderTurnHeaderScope,
@@ -83,6 +87,16 @@ import {
 } from "./stardew-execution-recovery-supervisor.js";
 import type { TavernAuthoredContextCatalog } from "./tavern/catalog-service.js";
 import { mergeModelProviderEntry, modelProviderEntry } from "./tavern/pi-provider-store.js";
+import {
+  companionPresetPublication,
+  formatCompanionPresetLine,
+  formatPresetOverlap,
+  type GameSessionPreset,
+  presetOverlaps,
+  readGameSessionPreset,
+  renderPresetMainSegment,
+} from "./tavern/preset-game-session.js";
+import { effectivePresetSampling, type PresetSamplingValues, withPresetSampling } from "./tavern/preset-sampling.js";
 import { TAVERN_ENVIRONMENT_PROVIDER_ID } from "./tavern/provider-catalog.js";
 import {
   applyToolDescriptionOverrides,
@@ -209,571 +223,6 @@ export const MAGIC_CONTEXT_MEMORY_ENABLED = true;
 // the notebook's copy names the route that exists - the player asking her to keep
 // something - and claims no automatic accumulation.
 export const MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED = false;
-
-const SEASON_NAMES_ZH = ["春季", "夏季", "秋季", "冬季"] as const;
-const SEASON_NAMES_EN = ["Spring", "Summer", "Fall", "Winter"] as const;
-
-/**
- * The map names a player would say out loud, against the engine's internal asset names.
- *
- * <p>
- * MEASURED 2026-10-31: the fact line published `位置: Town` and the same prompt told her to speak in the player's
- * language, never the game's internal one - so a companion who read `位置: Town` said "我们带着 (T)Hoe 去 Town". The
- * conduct had already been taught to name tools in words; the location was the one fact still arriving as an asset id.
- * </p>
- * <p>
- * Only the maps a companion can reach and would name are listed. An unlisted map keeps its engine name rather than being
- * dropped: an unnamed place is worse than an untranslated one, and `Town` in a sentence is at least true while a missing
- * `位置` would hide where she is standing.
- * </p>
- */
-const LOCATION_NAMES_ZH: Record<string, string> = {
-  Farm: "农场",
-  FarmHouse: "农舍",
-  Town: "镇上",
-  Beach: "海滩",
-  Forest: "森林",
-  Mountain: "山区",
-  Backwoods: "山间小路",
-  BusStop: "巴士站",
-  Mine: "矿井",
-  UndergroundMine: "矿井",
-  SeedShop: "杂货铺",
-  JoshHouse: "木匠铺",
-  Hospital: "诊所",
-  Saloon: "酒馆",
-  ArchaeologyHouse: "博物馆",
-  Blacksmith: "铁匠铺",
-  AnimalShop: "牧场",
-  FishShop: "渔具店",
-  ManorHouse: "庄园",
-  CommunityCenter: "社区中心",
-  JojaMart: "乔家超市",
-  Railroad: "铁路",
-  Desert: "沙漠",
-  Greenhouse: "温室",
-  Cellar: "地窖",
-  Barn: "畜棚",
-  BigBarn: "大畜棚",
-  DeluxeBarn: "高级畜棚",
-  Coop: "鸡舍",
-  BigCoop: "大鸡舍",
-  DeluxeCoop: "高级鸡舍",
-  Shed: "小屋",
-  Cabins: "木屋",
-  IslandWest: "西岛",
-  IslandEast: "东岛",
-  IslandSouth: "南岛",
-  IslandNorth: "北岛",
-  IslandFarmHouse: "海岛小屋",
-};
-
-/** The spoken name of a map, falling back to the engine's own for a place this table has not met yet. */
-export function formatGameLocation(location: string | undefined, zh: boolean): string {
-  if (location === undefined || location.length === 0) return "";
-  const name = zh ? (LOCATION_NAMES_ZH[location] ?? location) : location;
-  return zh ? `位置: ${name}` : `location: ${name}`;
-}
-const WEATHER_NAMES_ZH: Record<string, string> = {
-  sunny: "晴天",
-  rain: "雨天",
-  // The 1.6 green-rain day: it IS raining (GameLocation.cs:1445-1452), and it is the day the farm fills with
-  // weeds and debris. Naming it "雨天" hides the one fact that explains what the player will find outside.
-  green_rain: "绿雨",
-  snow: "下雪",
-  lightning: "雷雨",
-  // `isDebrisWeather` is drifting petals in spring and leaves in autumn - NOT airborne sand. "风沙" told the player
-  // the wrong season: a spring afternoon was described as a dust storm.
-  debris: "飘花",
-  unknown: "未知天气",
-};
-const WEATHER_NAMES_EN: Record<string, string> = {
-  sunny: "sunny",
-  rain: "rainy",
-  green_rain: "green rain",
-  snow: "snowy",
-  lightning: "thunderstorm",
-  // Not "windy": the native flag is about drifting petals and leaves, and the weather itself is calm.
-  debris: "petals drifting",
-  unknown: "unknown weather",
-};
-
-/**
- * The tools, named the way a person says them. The wire publishes a tool twice: `currentTool` /
- * `toolSlots[].label` are the native item identity (`(T)Hoe`, `(W)47` for a scythe), which is the handle a
- * plan compares against, and `toolSlots[].category` is the Mod's own tool word (`FarmhandActionCatalog.ToolEnum`),
- * which is the word the `tool:<category>` claims and `equip_tool` use. A spoken turn needs the second: measured on
- * a live session, the companion said "我们带着 (T)Hoe 去 Town" because the turn's fact line handed it the identity.
- * English keeps the category word, snake_case turned back into words; Chinese names the tool. A category the
- * tables do not have (an older Mod's `unknown`) keeps the identity, because dropping the fact would hide what she
- * is holding. See `formatHeldTool`.
- */
-const TOOL_NAMES_ZH: Record<string, string> = {
-  axe: "斧头",
-  pickaxe: "十字镐",
-  hoe: "锄头",
-  watering_can: "洒水壶",
-  fishing_rod: "钓竿",
-  weapon: "武器",
-  scythe: "镰刀",
-  shears: "剪刀",
-  milk_pail: "挤奶桶",
-  pan: "淘金盘",
-};
-const TOOL_NAMES_EN: Record<string, string> = {
-  axe: "axe",
-  pickaxe: "pickaxe",
-  hoe: "hoe",
-  watering_can: "watering can",
-  fishing_rod: "fishing rod",
-  weapon: "weapon",
-  scythe: "scythe",
-  shears: "shears",
-  milk_pail: "milk pail",
-  pan: "pan",
-};
-
-/**
- * The native clock, localized like its sibling facts. English keeps the game's
- * own 12h reading (`6:00 PM`); Chinese carries the 24h reading plus the game
- * day's time-of-day band. The band is required, not decorative: the companion's
- * `晚霞收工与作息节律` book entry is gated on `傍晚`/`深夜`, and a 12h `6:00 PM`
- * clock fact contains neither, so without it the clock could never fire that
- * entry. 2600 (2 AM) is the last legal clock.
- */
-export function formatGameClock(timeOfDay: number, zh: boolean): string {
-  if (!Number.isSafeInteger(timeOfDay) || timeOfDay < 0) return "";
-  const h24 = Math.floor(timeOfDay / 100);
-  const minute = timeOfDay % 100;
-  if (h24 > 26 || minute > 59) return "";
-  // 24:00/25:00/26:00 are the late-night wrap hours (2 AM); both the displayed
-  // hour and the period are decided on the RAW 24h hour, not the 12h remainder.
-  const raw = h24 % 24;
-  const padded = (value: number): string => String(value).padStart(2, "0");
-  if (zh) return `${padded(raw)}:${padded(minute)}（${chineseTimeOfDayBand(raw)}）`;
-  const period = raw < 12 ? "AM" : "PM";
-  const h12 = raw % 12 === 0 ? 12 : raw % 12;
-  return `${h12}:${padded(minute)} ${period}`;
-}
-
-/**
- * The game day's time-of-day bands, keyed on the native hour (0-23 after the
- * wrap). Stardew's day opens at 06:00 and its last legal clock is 02:00 (native
- * 2600), so the bands follow that day rather than a calendar day: the deep-night
- * band wraps across midnight (20:00-04:59), because 24:00-26:00 are the same
- * hours of the same night as 20:00-23:59 and not a new morning.
- */
-function chineseTimeOfDayBand(rawHour: number): string {
-  if (rawHour >= 5 && rawHour <= 7) return "清晨";
-  if (rawHour >= 8 && rawHour <= 11) return "上午";
-  if (rawHour >= 12 && rawHour <= 13) return "中午";
-  if (rawHour >= 14 && rawHour <= 16) return "下午";
-  if (rawHour >= 17 && rawHour <= 19) return "傍晚";
-  return "深夜";
-}
-
-export function formatGameDate(day: number, seasonIndex: number, year: number, zh: boolean): string {
-  const season = (zh ? SEASON_NAMES_ZH[seasonIndex] : SEASON_NAMES_EN[seasonIndex]) ?? seasonIndex;
-  if (zh) return `${year}年第${day}天 ${season}`;
-  return `Year ${year}, Day ${day} of ${season}`;
-}
-
-export function formatGameWeather(token: string, zh: boolean): string {
-  const map = zh ? WEATHER_NAMES_ZH : WEATHER_NAMES_EN;
-  const name = map[token] ?? token;
-  return zh ? `天气：${name}` : `weather: ${name}`;
-}
-
-/**
- * The actor's OWN stamina: the exact current value the native game publishes,
- * never a derived percentage, an invented maximum, or a "you are fine" default.
- * While the native persistent-fatigue flag is set the same fact carries that
- * flag, because the next morning's restore is halved by it. Absent a finite
- * reading the WHOLE fact is omitted - a silent "fine" is worse than silence.
- */
-export function formatGameStamina(stamina: number | undefined, exhausted: boolean | undefined, zh: boolean): string {
-  if (stamina === undefined || !Number.isFinite(stamina)) return "";
-  const value = zh ? `体力: ${stamina}` : `stamina: ${stamina}`;
-  if (exhausted !== true) return value;
-  return zh ? `${value}（已疲惫）` : `${value} (exhausted)`;
-}
-
-/**
- * The world context the companion sees each turn, as the one fact line Magic
- * Context injects: the native clock, date, weather and location, where she
- * stands and what she is holding, the villagers around her, the unwatered crops
- * in reach, and her own stamina. Same rule as every sibling fact - a plain
- * native read, no interpretation - and every fact whose source is absent is
- * dropped rather than defaulted.
- *
- * Two bounds keep this a line and not a second snapshot, because it is rendered
- * on every turn: the nearby names are capped and their remainder is a count, and
- * the joined line is capped in bytes. `stamina` and `tile` are required on
- * today's wire, so their optional spelling only documents the omit path a frame
- * without a readable reading takes.
- */
-export type GameEnvironmentFactsSource = Pick<
-  Snapshot,
-  | "timeOfDay"
-  | "dayOfMonth"
-  | "seasonIndex"
-  | "year"
-  | "weather"
-  | "location"
-  | "tile"
-  | "currentTool"
-  | "currentToolSlot"
-  | "toolSlots"
-  | "villagerWhereabouts"
-  | "wateringWhereabouts"
-  | "chestsSummary"
-  | "cropTargets"
-  | "cookingStationTargets"
-> &
-  Readonly<{ stamina?: number; exhausted?: boolean }>;
-
-/**
- * The most this line may cost a turn. Four player names arrive bounded at 128
- * characters each on the wire, which three of them would spend on nothing else.
- */
-export const MAX_GAME_ENVIRONMENT_FACTS_BYTES = 512;
-/** A town square reaches further than three, and the rest is a count anyway. */
-const MAX_NEARBY_VILLAGER_NAMES = 3;
-/**
- * "Nearby" is the Mod's own discovery envelope (6 tiles, Chebyshev). A villager
- * across the farm is not next to her, however few others are in the map.
- */
-const MAX_NEARBY_VILLAGER_TILES = 6;
-/**
- * The villager fact's own share of the line, so it can never crowd another fact out of it.
- *
- * This is NOT what protects her own body: `boundGameEnvironmentFacts` drops world facts before body facts, and
- * a byte share cannot order anything. What this bounds is the fact ITSELF - a crowd of walkable destinations is
- * one fact, and it must not grow until every sibling is gone. Measured: the other world facts cost 155-176 B at
- * their heaviest (deep night, green rain, a farmhouse, and the whole-map watering answer), so this share leaves
- * them room.
- */
-const MAX_VILLAGER_FACT_BYTES = MAX_GAME_ENVIRONMENT_FACTS_BYTES / 2;
-/** One published name's share of the line; the wire allows 128 characters. */
-const MAX_ENVIRONMENT_NAME_CHARS = 16;
-
-function boundedName(value: string): string {
-  const characters = Array.from(value);
-  return characters.length <= MAX_ENVIRONMENT_NAME_CHARS
-    ? value
-    : `${characters.slice(0, MAX_ENVIRONMENT_NAME_CHARS - 1).join("")}…`;
-}
-
-/** The tile under her feet, in the map's own coordinates. */
-function formatGameTile(tile: { readonly x: number; readonly y: number }, zh: boolean): string {
-  if (!(Number.isFinite(tile.x) && Number.isFinite(tile.y))) return "";
-  return `${zh ? "脚下" : "tile"}: (${tile.x}, ${tile.y})`;
-}
-
-/**
- * The tool in her hand, named the way the wire's own sibling names it.
- *
- * `currentTool` is the native item identity (`(T)Hoe`), which is the handle a plan compares against and which a
- * spoken turn must never repeat; the same slot's `category` is the Mod's tool word, so the fact reads "hoe" /
- * "锄头". The identity is kept only when no slot publishes a word for it, because an absent name is still better
- * than an absent fact. The upgrade level is only on the wire beside the slot that holds the tool, so it is read
- * from there and only when the two agree - an unmatched slot costs the level and never the name. A basic tool
- * renders no marker: the handlers require the basic one, so a marker is what an upgrade is.
- */
-function formatHeldTool(source: GameEnvironmentFactsSource, zh: boolean): string {
-  const tool = source.currentTool;
-  if (typeof tool !== "string" || tool.length === 0) return "";
-  const slot = source.currentToolSlot;
-  const occupant =
-    typeof slot === "number" && Number.isSafeInteger(slot)
-      ? (source.toolSlots ?? []).find((candidate) => candidate.slot === slot)
-      : undefined;
-  const upgradeLevel = occupant?.label === tool ? occupant.upgradeLevel : undefined;
-  const upgrade = Number.isSafeInteger(upgradeLevel) ? (upgradeLevel as number) : 0;
-  const level = upgrade > 0 ? (zh ? `（+${upgrade}）` : ` (+${upgrade})`) : "";
-  const category = occupant?.category;
-  const name = (category === undefined ? undefined : (zh ? TOOL_NAMES_ZH : TOOL_NAMES_EN)[category]) ?? tool;
-  return `${zh ? "手持" : "holding"}: ${name}${level}`;
-}
-
-/**
- * The villagers standing with her, and the ones she could walk to.
- *
- * `villagerWhereabouts` describes every loaded location, so this reads only the map she is on and splits it at
- * the Mod's own discovery envelope. Inside it, `npcRelationshipTargets` already publishes an address for every
- * villager, so a name is the whole fact. Beyond it that family is empty BY CONSTRUCTION (`TargetDiscoveryRadius`,
- * 6), and a name alone would be a rumour about someone she cannot see.
- *
- * A villager standing on her map past the envelope is a DESTINATION, not a statistic: she can walk there, and
- * the radius-6 family lights up when she arrives. So the far ones are published as `name(x,y)`, nearest first,
- * and the count that remains is what the cap hid rather than what the map holds. Measured 2026-10-31
- * (`round17`): a Town observation carried `npcRelationshipTargets: []` while `villagerWhereabouts` listed
- * Shane in Town, this line said "本图另有 12 人" and named nobody, and the companion spent two trips to Town
- * and called `talk_to_npc` zero times.
- *
- * Both halves are bounded, because this is rendered on every turn: the near names are capped at three, the
- * destinations by the fact's own byte share, and the remainder is always a count - "is anyone here" must stay
- * answerable in both directions.
- */
-function formatNearbyVillagers(source: GameEnvironmentFactsSource, zh: boolean): string {
-  const tile = source.tile;
-  if (!(Number.isFinite(tile.x) && Number.isFinite(tile.y))) return "";
-  const here = (source.villagerWhereabouts ?? []).filter((villager) => villager.inCurrentLocation === true);
-  if (here.length === 0) return "";
-  const distance = (villager: { readonly x: number; readonly y: number }): number =>
-    Math.max(Math.abs(villager.x - tile.x), Math.abs(villager.y - tile.y));
-  const ordered = here.sort((left, right) => distance(left) - distance(right));
-  const name = (villager: { readonly npcName: string; readonly displayName: string }): string =>
-    boundedName(zh ? villager.displayName : villager.npcName);
-  const named = ordered
-    .filter((villager) => distance(villager) <= MAX_NEARBY_VILLAGER_TILES)
-    .slice(0, MAX_NEARBY_VILLAGER_NAMES)
-    .map(name);
-  // An unreadable tile cannot be a destination: `NaN` in a coordinate is not an address, so such a row stays
-  // inside the count rather than being published as somewhere to walk.
-  const reachable = ordered.filter(
-    (villager) =>
-      distance(villager) > MAX_NEARBY_VILLAGER_TILES && Number.isFinite(villager.x) && Number.isFinite(villager.y),
-  );
-  const destinations: string[] = [];
-  const compose = (): string => {
-    const segments: string[] = [];
-    if (named.length > 0) segments.push(`${zh ? "附近" : "nearby"}: ${named.join(zh ? "、" : ", ")}`);
-    if (destinations.length > 0)
-      segments.push(`${zh ? "本图可去" : "on this map"}: ${destinations.join(zh ? "、" : ", ")}`);
-    const hidden = here.length - named.length - destinations.length;
-    if (hidden > 0) segments.push(zh ? `另有 ${hidden} 人` : `${hidden} more`);
-    return segments.join(zh ? "；" : "; ");
-  };
-  for (const villager of reachable) {
-    destinations.push(`${name(villager)}(${villager.x},${villager.y})`);
-    // The remainder is part of the same fact, so the share has to hold the fact WITH its count.
-    if (Buffer.byteLength(compose(), "utf8") > MAX_VILLAGER_FACT_BYTES) {
-      destinations.pop();
-      break;
-    }
-  }
-  return compose();
-}
-
-/**
- * The chests in the location she is standing in: how many, what they hold, how many are full.
- *
- * THE LOCATION'S ANSWER, not the radius-bounded one. `chests` is the entity family and `DiscoverChestStates` bounds it to
- * the Mod's six-tile discovery radius, so counting that list would print `箱子: 0` while standing next to a chest and
- * `chestsSummary` counts a container across the farm - the same false-zero shape `待浇水作物: 0` was (measured
- * 2026-10-31), and the reason this summary exists at all.
- *
- * The line says WHICH LOCATION it counted. A location-wide number is still not a world total, and the `本图`/`this
- * location` qualifier is what keeps a reader from hearing "the farm has 3 chests" from a count taken in the farmhouse.
- *
- * An ABSENT summary means the Mod did not measure it (the container actions were not advertised) and stays silent; a
- * measured zero is the answer to "do I have any chests here" and is printed, so "none here" and "the field never
- * arrived" stay distinguishable.
- */
-function formatChestsSummary(source: GameEnvironmentFactsSource, zh: boolean): string {
-  const summary = source.chestsSummary;
-  if (summary === undefined) return "";
-  // The full count is only worth the bytes when it is non-zero: "0 full" spends the line saying nothing the item count
-  // did not already say.
-  const full = summary.fullCount > 0 ? summary.fullCount : undefined;
-  if (zh)
-    return full === undefined
-      ? `本图箱子: ${summary.chestCount}（物品 ${summary.itemCount}）`
-      : `本图箱子: ${summary.chestCount}（物品 ${summary.itemCount}；已满 ${full}）`;
-  return full === undefined
-    ? `chests here: ${summary.chestCount} (items ${summary.itemCount})`
-    : `chests here: ${summary.chestCount} (items ${summary.itemCount}; full ${full})`;
-}
-
-/**
- * The unwatered crops in reach: `cropTargets` is already the Mod's own bounded
- * list of them, so the count is a plain read. An ABSENT list means the family
- * was not measured and is silent, while a measured zero answers "is anything
- * here thirsty".
- */
-/**
- * How many crops need water, and where the nearest one is.
- *
- * THE WHOLE-MAP ANSWER, not the radius-bounded one. This used to count `cropTargets`, which `DiscoverCropTargets` bounds
- * to `TargetDiscoveryRadius` (6) so an out-of-reach target is not offered as an action - correct for a target list and
- * wrong for a count. A farm with 24 dry tiles beyond that radius rendered `待浇水作物: 0`: the prompt stated a total it had
- * never measured. Measured 2026-10-31.
- *
- * `wateringWhereabouts` is published for exactly this reason, beside `harvestWhereabouts` which solved the same problem
- * for harvest. The nearest tile is named so the answer is actionable rather than only true.
- */
-function formatUnwateredCrops(source: GameEnvironmentFactsSource, zh: boolean): string {
-  const whereabouts = source.wateringWhereabouts;
-  if (whereabouts !== undefined) {
-    const here = whereabouts.find((entry) => entry.location === source.location);
-    if (here !== undefined && here.needsWaterCount > 0)
-      return here.nearestX === undefined || here.nearestY === undefined
-        ? zh
-          ? `待浇水作物: ${here.needsWaterCount}`
-          : `unwatered crops: ${here.needsWaterCount}`
-        : zh
-          ? `待浇水作物: ${here.needsWaterCount}（最近: ${here.nearestX},${here.nearestY}）`
-          : `unwatered crops: ${here.needsWaterCount} (nearest: ${here.nearestX},${here.nearestY})`;
-    if (whereabouts.length > 0) {
-      const elsewhere = whereabouts.map((entry) => `${entry.location}:${entry.needsWaterCount}`).join(", ");
-      return zh ? `本图待浇水作物: 0（其他地图: ${elsewhere}）` : `unwatered crops here: 0 (elsewhere: ${elsewhere})`;
-    }
-    return zh ? "待浇水作物: 0" : "unwatered crops: 0";
-  }
-  // No whole-map answer: say what was actually observed rather than presenting a bounded count as a total.
-  const crops = source.cropTargets;
-  if (crops === undefined) return "";
-  return zh
-    ? `附近待浇水作物: ${crops.length}（仅 6 格内）`
-    : `nearby unwatered crops: ${crops.length} (within 6 tiles only)`;
-}
-
-/**
- * Whether the map she is standing on has a kitchen.
- *
- * `cookingStationTargets` is the Mod's own scan of the CURRENT map for the vanilla kitchen action tile
- * (`DiscoverCookingStationTargets`), so it is the world's answer to "is there a stove here". It is also the only
- * published answer to the farmhouse's own form: the house gains its kitchen WITH its upgrade, so a fact rendered
- * from this list follows the house instead of stating a fixed fact that becomes a lie the day it is upgraded.
- * Measured 2026-11-05 (day 2, 18:00, starter farmhouse): "六点了，锅里没东西可下，我烧壶水泡点茶对付一口算了" -
- * nothing in the line contradicted the pot, so the pot was invented.
- *
- * ABSENT means the Mod did not measure it, because the family is published only while `cook_recipe` is
- * advertised, and it stays silent; a measured empty list is the answer this fact exists for, exactly as a
- * measured `chestsSummary` zero is. A placed cookout kit is not this fact: the kit is not the house's kitchen.
- */
-function formatKitchen(source: GameEnvironmentFactsSource, zh: boolean): string {
-  const stations = source.cookingStationTargets;
-  if (stations === undefined) return "";
-  const hasKitchen = stations.some((station) => station.stationKind === "kitchen");
-  if (zh) return hasKitchen ? "厨房: 有" : "厨房: 无";
-  return hasKitchen ? "kitchen: yes" : "kitchen: none";
-}
-
-/** Which half of the line one fact speaks about: the world she stands in, or her own body. */
-type GameEnvironmentFactSubject = "world" | "body";
-
-/**
- * One rendered fact and the half of the line it speaks about.
- *
- * The subject is declared BESIDE the fact it describes, because it is the one thing `boundGameEnvironmentFacts`
- * reads to decide what the byte cap spends first. A fact added to `composeGameEnvironmentFacts` therefore has to
- * state its subject, which is what keeps the drop order a decision instead of the composition order by accident.
- */
-export type GameEnvironmentFact = Readonly<{ text: string; subject: GameEnvironmentFactSubject }>;
-
-/** A fact about the world she stands in: the clock, the map, who is near, what is ready. */
-function worldFact(text: string): GameEnvironmentFact {
-  return { text, subject: "world" };
-}
-
-/** A fact about her own body - what she is holding, her stamina - which the line must lose last. */
-function bodyFact(text: string): GameEnvironmentFact {
-  return { text, subject: "body" };
-}
-
-/**
- * Drops whole facts while the line is over its byte cap. Every fact is dropped rather than
- * truncated: half a name reads as a shorter name.
- *
- * THE DROP ORDER IS DECLARED, NOT THE ORDER THE FACTS HAPPEN TO BE COMPOSED IN: world facts go first, from the
- * end of the line backwards, and the facts about her own BODY are dropped only once no world fact is left. The
- * accidental order spent stamina first, because it is composed last - so the one fact about her body was what a
- * long world line cost her. An arithmetic argument that the rest "fits" cannot hold the line: a snapshot can
- * always hand it one more world fact than it has room for (the interactable-tiles block is the next one), while
- * the subject declared beside each fact is a rule a new fact cannot be added without answering.
- *
- * It also reports WHAT it dropped, in the order the facts appear in the line. The rendered line cannot say what
- * was cut out of it (`joinBoundedFacts` only ever returns the survivors), so "did the block ever exceed the cap,
- * and what was lost" is answerable only from here - which is why the observer below is built on this rather than
- * on the joined string.
- */
-function boundGameEnvironmentFacts(
-  facts: readonly GameEnvironmentFact[],
-): Readonly<{ kept: string[]; dropped: string[] }> {
-  const bytesOf = (kept: readonly GameEnvironmentFact[]): number =>
-    Buffer.byteLength(kept.map((fact) => fact.text).join("；"), "utf8");
-  const kept = [...facts];
-  // Both lists are copies, so reversing them cannot touch the caller's own composition order.
-  const dropOrder = [
-    ...facts.filter((fact) => fact.subject === "world").reverse(),
-    ...facts.filter((fact) => fact.subject === "body").reverse(),
-  ];
-  const dropped: GameEnvironmentFact[] = [];
-  for (const fact of dropOrder) {
-    if (kept.length <= 1 || bytesOf(kept) <= MAX_GAME_ENVIRONMENT_FACTS_BYTES) break;
-    kept.splice(kept.lastIndexOf(fact), 1);
-    dropped.push(fact);
-  }
-  return {
-    kept: kept.map((fact) => fact.text),
-    dropped: dropped.sort((left, right) => facts.indexOf(left) - facts.indexOf(right)).map((fact) => fact.text),
-  };
-}
-
-function joinBoundedFacts(facts: readonly GameEnvironmentFact[]): string {
-  return boundGameEnvironmentFacts(facts).kept.join("；");
-}
-
-/**
- * Every fact this snapshot could render, in the order the line prints them, each with the half of the line it
- * speaks about.
- *
- * Two of them are about her own BODY - what she is holding and her stamina - and they keep the positions they
- * have always had, because the line's reading order is a product decision. Its LOSS order is the invariant: see
- * `boundGameEnvironmentFacts`.
- */
-export function composeGameEnvironmentFacts(
-  source: GameEnvironmentFactsSource,
-  zh: boolean,
-): readonly GameEnvironmentFact[] {
-  return [
-    worldFact(formatGameClock(source.timeOfDay, zh)),
-    worldFact(formatGameDate(source.dayOfMonth, source.seasonIndex, source.year, zh)),
-    worldFact(formatGameWeather(source.weather, zh)),
-    worldFact(`${formatGameLocation(source.location, zh)}`),
-    worldFact(formatGameTile(source.tile, zh)),
-    worldFact(formatKitchen(source, zh)),
-    bodyFact(formatHeldTool(source, zh)),
-    worldFact(formatNearbyVillagers(source, zh)),
-    worldFact(formatUnwateredCrops(source, zh)),
-    worldFact(formatChestsSummary(source, zh)),
-    bodyFact(formatGameStamina(source.stamina, source.exhausted, zh)),
-  ].filter((fact) => fact.text !== "");
-}
-
-export function formatGameEnvironmentFacts(source: GameEnvironmentFactsSource, zh: boolean): string {
-  const facts = composeGameEnvironmentFacts(source, zh);
-  return facts.length === 0 ? "" : joinBoundedFacts(facts);
-}
-
-/** One rendered block plus what the byte cap cost it, as the record's reader needs it. */
-export type GameEnvironmentFactsRender = Readonly<{
-  /** The exact line the provider returns; `""` when the snapshot carries no facts at all. */
-  text: string;
-  bytes: number;
-  /** Facts the cap dropped, in the order the line prints them. World facts are spent before body facts. */
-  dropped: readonly string[];
-}>;
-
-/**
- * The same line `formatGameEnvironmentFacts` prints, with the parts of it a READER cannot recover:
- * its exact byte cost and the facts the cap removed to reach it.
- *
- * Deliberately shares every formatter with `formatGameEnvironmentFacts` rather than re-deriving the
- * facts: two implementations of the same line would let the record disagree with the prompt it claims
- * to describe, which is the one thing that would make this record worthless.
- */
-export function renderGameEnvironmentFactsObservation(
-  source: GameEnvironmentFactsSource,
-  zh: boolean,
-): GameEnvironmentFactsRender {
-  const bounded = boundGameEnvironmentFacts(composeGameEnvironmentFacts(source, zh));
-  const text = bounded.kept.join("；");
-  return Object.freeze({ text, bytes: Buffer.byteLength(text, "utf8"), dropped: Object.freeze(bounded.dropped) });
-}
-
 /**
  * What the provider RENDERED, recorded once per assembled request.
  *
@@ -1483,6 +932,48 @@ function assertMagicContextSurfaceSignature(surface: "chat" | "game", systemProm
 }
 
 /**
+ * The Game system prompt with the generation preset's `main` entry appended, and the overlap report the pair earns.
+ *
+ * Two properties this function exists to keep:
+ *
+ *  - a runtime cwd with no preset (every player root, and Chat) gets the prompt BYTE FOR BYTE. The preset is mounted by
+ *    provisioning; a root that has none is not a degraded root and must not be assembled differently.
+ *  - an overlap with the floor is REPORTED and both texts are kept. Dropping either would be this function deciding
+ *    which sentence wins, and the ruling is "apply the preset", not "apply it where convenient".
+ */
+function withPresetMain(floor: string, preset: GameSessionPreset | null): string {
+  if (preset === null) return floor;
+  for (const overlap of presetOverlaps({ preset, floor }))
+    process.stderr.write(`${formatPresetOverlap(overlap)}\n`);
+  const segment = renderPresetMainSegment(preset.main);
+  return segment.length === 0 ? floor : `${floor}\n${segment}`;
+}
+
+/**
+ * The sampler values this runtime will really send, or `null` when there is no composed model to read them from.
+ *
+ * `effectivePresetSampling` is the ONE reading of the adapter's precedence and it fails closed when a value this
+ * module wrote is not what the composed model carries, so `null` here can only mean "no composed model" - never "some
+ * keys were quietly dropped".
+ */
+function effectivePresetSamplingValues(
+  preset: GameSessionPreset | null,
+  model: ReturnType<ModelRuntime["getModel"]> | undefined,
+  session: RuntimeSessionResource,
+): Readonly<Record<string, number>> | null {
+  if (preset === null || model === undefined) return null;
+  const level = session.agent.state.thinkingLevel;
+  const readings = effectivePresetSampling({
+    model,
+    thinkingLevel: typeof level === "string" ? level : "off",
+    preset: preset.sampling,
+  });
+  const values: Record<string, number> = {};
+  for (const reading of readings) if (typeof reading.value === "number") values[reading.key] = reading.value;
+  return Object.freeze(values);
+}
+
+/**
  * Create a Pi SDK session without coding-agent discovery. Only the installed,
  * pinned Magic Context extension can load; built-ins, project/user extensions,
  * skills, templates, context files, and coding prompts are excluded.
@@ -1854,13 +1345,26 @@ export async function createRuntimeWithFixedToolsCore(
   // Chat never reads it: the addition is the Game surface's own, and a Chat mount that consulted
   // it would be reaching for a setting its own settings group does not show.
   const gamePromptAddition = runtimeSurface === "game" ? await resolveGamePromptAddition(paths.root) : undefined;
+  // The generation preset this runtime cwd was provisioned with (`tavern/preset-game-session.ts`). Chat reads none:
+  // the ruling is about the Game surface, and a Chat mount that started honouring a preset file would change how
+  // every stored conversation is assembled without anyone asking it to.
+  const gameSessionPreset =
+    runtimeSurface === "game"
+      ? await readGameSessionPreset(paths.runtimeCwd, {
+          profile,
+          ...(presentation?.profile.locale === undefined ? {} : { locale: presentation.profile.locale }),
+        })
+      : null;
   // One string, built here rather than inline below, because it is also what the two guards read: the shared
   // Magic Context config skips its guidance block by a SUBSTRING of the Chat prompt, so the substring has to be
   // shown to cross no surface boundary in either direction. See `assertMagicContextSurfaceSignature`.
   const companionSystemPrompt =
     runtimeSurface === "chat"
       ? buildChatCompanionSystemPrompt(profile, presentation?.profile.locale)
-      : buildGameCompanionSystemPrompt(profile, presentation?.profile.locale, gamePromptAddition);
+      : withPresetMain(
+          buildGameCompanionSystemPrompt(profile, presentation?.profile.locale, gamePromptAddition),
+          gameSessionPreset,
+        );
   assertMagicContextSurfaceSignature(runtimeSurface, companionSystemPrompt);
   // The turn a provider request belongs to is stated on the request itself, because nothing else on the
   // wire carries it and a captured body could otherwise only be attributed by its arrival position. The
@@ -1918,7 +1422,7 @@ export async function createRuntimeWithFixedToolsCore(
   }
 
   const sessionManager = SessionManager.continueRecent(paths.runtimeCwd, paths.sessionDir);
-  const modelRuntime = await createCompanionModelRuntime(paths.agentDir, modelConfig);
+  const modelRuntime = await createCompanionModelRuntime(paths.agentDir, modelConfig, gameSessionPreset?.sampling);
   const model =
     modelConfig === undefined ? undefined : modelRuntime.getModel(modelConfig.provider, modelConfig.modelId);
   if (modelConfig !== undefined && model === undefined) throw new Error("companion_model_not_available");
@@ -2078,6 +1582,22 @@ export async function createRuntimeWithFixedToolsCore(
   // After session construction, and only for a runtime that mounted Magic Context: the embedded
   // historian spawns per trigger with this registry, and without it every attempt fails closed.
   if (loadMagicContextExtension) await bindEmbeddedHistorianModelRegistry(modelRuntime);
+
+  // The preset facts ONE bounded line per Game runtime, printed here because they cannot be stated earlier: the
+  // thinking level is Pi's clamped answer (not the level the player typed) and the composed model is what the adapter
+  // will actually send. The live-run bundle publishes this line rather than re-deriving the same facts from a second
+  // copy of the preset, so "did the run load the preset?" is answerable from the run's own record.
+  if (runtimeSurface === "game")
+    process.stderr.write(
+      `${formatCompanionPresetLine(
+        companionPresetPublication({
+          preset: gameSessionPreset,
+          runtimeCwd: paths.runtimeCwd,
+          sampling: effectivePresetSamplingValues(gameSessionPreset, model, session),
+          contextWindow: model?.contextWindow,
+        }),
+      )}\n`,
+    );
 
   // Once Pi has returned a session, every subsequent initialization step owns
   // one deterministic reverse path. In particular, publication is cleared
@@ -2392,6 +1912,11 @@ async function listSessionFiles(sessionDir: string): Promise<string[]> {
 async function createCompanionModelRuntime(
   agentDir: string,
   config: CompanionModelConfig | undefined,
+  /**
+   * The generation preset's sampler values, for the surfaces that apply a preset. Omitted everywhere else, which
+   * leaves the provider entry byte-identical to what it was before this parameter existed.
+   */
+  presetSampling?: PresetSamplingValues,
 ): Promise<ModelRuntime> {
   const modelsPath = join(agentDir, "models.json");
   // The selection decides the provider entry. An operator/environment model
@@ -2400,8 +1925,15 @@ async function createCompanionModelRuntime(
   // endpoint the player supplied.
   const selection = config === undefined ? null : await modelProviderEntry(agentDir, config);
   if (config !== undefined && selection === null) throw new Error("companion_model_endpoint_unavailable");
-  if (selection !== null)
-    await mergeModelProviderEntry(join(agentDir, "models.json"), selection.providerId, selection.entry);
+  if (selection !== null && config !== undefined) {
+    // `samplingParams` is the ONE layer the adapter merges into the request body last (design §5), so the preset's
+    // values ride `modelOverrides[<modelId>]` through the same `mergeModelProviderEntry` every other writer uses.
+    const entry =
+      presetSampling === undefined
+        ? selection.entry
+        : withPresetSampling(selection.entry, config.modelId, presetSampling);
+    await mergeModelProviderEntry(join(agentDir, "models.json"), selection.providerId, entry);
+  }
   // Offline by default. Selecting the explicitly configured Agent model is the
   // operator's opt-in to provider networking; no request occurs merely while
   // creating or resuming the session.

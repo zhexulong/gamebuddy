@@ -1914,6 +1914,22 @@ export const PresetAssemblySurfaceV1Schema = strictObject({
   sampling: Type.Union([Type.Array(PresetSamplingRowV1Schema, { maxItems: 8 }), PresetSamplingUnavailableV1Schema]),
 });
 /**
+ * Which preset is IN FORCE for this installation: one fact, three named states.
+ *
+ * `none` is the ordinary state of a player who has bound nothing; `bound` names a preset the store
+ * holds and will assemble this installation's requests; `missing` names a preset that was bound and
+ * has since been deleted - kept rather than folded into `none`, because a binding that silently
+ * becomes "nothing bound" makes a player's own choice invisible and unactionable.
+ *
+ * Optional on the read body because it is an addition to a shipped v1 read: the browser mirror's
+ * strictness is then the CONTRACT's, and an older panel keeps reading the body it already knows.
+ */
+export const PresetActiveBindingV1Schema = Type.Union([
+  strictObject({ state: Type.Literal("none") }),
+  strictObject({ state: Type.Literal("bound"), presetId: Type.String({ minLength: 1, maxLength: 128 }) }),
+  strictObject({ state: Type.Literal("missing"), presetId: Type.String({ minLength: 1, maxLength: 128 }) }),
+]);
+/**
  * `GET /api/tavern/v1/presets`: every preset the durable store holds, one assembly row each.
  *
  * The cap is the browser mirror's own (`MAX_PRESETS` in
@@ -1923,6 +1939,7 @@ export const PresetAssemblySurfaceV1Schema = strictObject({
 export const PresetAssemblyReadV1Schema = strictObject({
   apiVersion: ApiVersion,
   presets: Type.Array(PresetAssemblySurfaceV1Schema, { maxItems: 100 }),
+  activePreset: Type.Optional(PresetActiveBindingV1Schema),
 });
 
 export const TavernStateEventStreamV1Schema = strictObject({ epoch: OpaqueHandle, cursor: OpaqueHandle });
@@ -3889,6 +3906,7 @@ export const TavernBrowserContractV1 = Object.freeze({
     PresetAssemblyDepthBlockV1Schema,
     PresetAssemblySurfaceV1Schema,
     PresetAssemblyReadV1Schema,
+    PresetActiveBindingV1Schema,
     CompanionListEntryV1Schema,
     CompanionListV1Schema,
     CompanionDetailV1Schema,
@@ -4063,9 +4081,14 @@ export type PresetAssemblySurfaceV1 = Readonly<{
   depth: Readonly<{ count: number; depths: readonly number[]; blocks: readonly PresetAssemblyDepthBlockV1[] }>;
   sampling: readonly PresetSamplingRowV1[] | PresetSamplingUnavailableV1;
 }>;
+export type PresetActiveBindingV1 =
+  | Readonly<{ state: "none" }>
+  | Readonly<{ state: "bound"; presetId: string }>
+  | Readonly<{ state: "missing"; presetId: string }>;
 export type PresetAssemblyReadV1 = Readonly<{
   apiVersion: typeof TAVERN_BROWSER_API_VERSION;
   presets: readonly PresetAssemblySurfaceV1[];
+  activePreset?: PresetActiveBindingV1;
 }>;
 export type ChatExportCommandV1 = Static<typeof ChatExportQueryV1Schema>;
 export type ChatExportDispositionV1 = Static<typeof ChatExportDispositionV1Schema>;

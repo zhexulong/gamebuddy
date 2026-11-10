@@ -27,6 +27,7 @@ import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import { type PresetAssemblySurfaceV1, presetAssemblySurface } from "./preset-assembly-surface.js";
 import { composeTavernProfile } from "./tavern/browser-contract/index.js";
 import { createPresetAssemblyRead } from "./tavern/preset-assembly-read.js";
+import { createPresetBindingStore } from "./tavern/preset-binding.js";
 import type { MacroContext } from "./tavern/preset-macros.js";
 import { createPresetStore, type PresetStore } from "./tavern/preset-store.js";
 import {
@@ -163,9 +164,16 @@ async function storeAt(root: string): Promise<PresetStore> {
   return createPresetStore({ runtimeRoot: root, playerRoot: join(root, "tavern", "v1", "players", "player") });
 }
 
-/** The read exactly as the composition builds it, over the supplied store. */
-function readOver(store: PresetStore) {
-  return createPresetAssemblyRead({ store, macros: MACROS, markers: MARKERS, sampling: null });
+/** The read exactly as the composition builds it: over the supplied store AND that player root's own binding record. */
+function readOver(store: PresetStore, root: string) {
+  const playerRoot = join(root, "tavern", "v1", "players", "player");
+  return createPresetAssemblyRead({
+    store,
+    binding: createPresetBindingStore({ runtimeRoot: root, playerRoot }, store),
+    macros: MACROS,
+    markers: MARKERS,
+    sampling: null,
+  });
 }
 
 /** The producer's own reading of one stored preset: the single authority every assertion compares against. */
@@ -308,7 +316,7 @@ test("the route answers the producer's own reading of every stored preset", asyn
     const store = await storeAt(root);
     await store.import({ presetId: PRESET_ID, document: structuredClone(PRESET_DOCUMENT) });
     const server = await startTavernManagementDialogueWebServer(
-      managementOptions({ store, activeProfile: profile, read: readOver(store) }),
+      managementOptions({ store, activeProfile: profile, read: readOver(store, root) }),
     );
     try {
       const session = await bootstrap(server.origin);
@@ -326,9 +334,11 @@ test("the route answers the producer's own reading of every stored preset", asyn
         "the readout must list exactly the presets the store lists, by the store's own ids",
       );
 
-      // The whole body, against the producer - not a hand-written expectation.
+      // The whole body, against the producer - not a hand-written expectation. Nothing is bound in this fixture, so
+      // the binding fact is the named `none` rather than an absent key: an absent key would leave the panel unable to
+      // tell "nothing is bound" from "nobody looked".
       const expected = await producerReading(store, PRESET_ID);
-      assert.deepEqual(payload, { apiVersion: 1, presets: [expected] });
+      assert.deepEqual(payload, { apiVersion: 1, presets: [expected], activePreset: { state: "none" } });
 
       // The two facts the panel counts, named on their own so a failure says which one drifted.
       assert.ok(expected.entries.total > 0, "the fixture must carry entries, or the count assertion measures nothing");
@@ -367,13 +377,56 @@ test("the route answers the producer's own reading of every stored preset", asyn
   }
 });
 
+test("the route carries which preset is in force, and names a binding whose preset is gone", async () => {
+  const root = await canonicalTestRoot("tavern-presets-route-binding-");
+  try {
+    const store = await storeAt(root);
+    const binding = createPresetBindingStore(
+      { runtimeRoot: root, playerRoot: join(root, "tavern", "v1", "players", "player") },
+      store,
+    );
+    await store.import({ presetId: PRESET_ID, document: structuredClone(PRESET_DOCUMENT) });
+    const server = await startTavernManagementDialogueWebServer(
+      managementOptions({ store, activeProfile: profile, read: readOver(store, root) }),
+    );
+    try {
+      const session = await bootstrap(server.origin);
+      await binding.bind(PRESET_ID);
+      const bound = (await (await readPresets(server.origin, session)).json()) as {
+        activePreset?: unknown;
+        presets: readonly { presetId: string }[];
+      };
+      assert.deepEqual(bound.activePreset, { state: "bound", presetId: PRESET_ID });
+      assert.deepEqual(
+        bound.presets.map((preset) => preset.presetId),
+        [PRESET_ID],
+        "the binding must name a preset the same body shows",
+      );
+
+      // Deleting the stored preset is not the same fact as unbinding it: the binding survives, and the body says so by
+      // name instead of falling back to `none` - a player who deleted the preset in use must be told which one went.
+      await store.delete(PRESET_ID);
+      const dangling = (await (await readPresets(server.origin, session)).json()) as {
+        activePreset?: unknown;
+        presets: readonly unknown[];
+      };
+      assert.deepEqual(dangling.activePreset, { state: "missing", presetId: PRESET_ID });
+      assert.deepEqual(dangling.presets, [], "the store holds no preset now, so no row is shown for the bound id");
+    } finally {
+      await server.close();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
 test("an empty store answers an empty readout, and that is the store's answer rather than a constant", async () => {
   const root = await canonicalTestRoot("tavern-presets-route-empty-");
   try {
     const store = await storeAt(root);
     assert.deepEqual(await store.list(), [], "the fixture root must hold no preset before the route is asked");
     const server = await startTavernManagementDialogueWebServer(
-      managementOptions({ store, activeProfile: profile, read: readOver(store) }),
+      managementOptions({ store, activeProfile: profile, read: readOver(store, root) }),
     );
     try {
       const session = await bootstrap(server.origin);
@@ -395,7 +448,7 @@ test("a profile that does not declare presets.read answers 404 rather than servi
     const store = await storeAt(root);
     await store.import({ presetId: PRESET_ID, document: structuredClone(PRESET_DOCUMENT) });
     const server = await startTavernManagementDialogueWebServer(
-      managementOptions({ store, activeProfile: coreOnlyProfile, read: readOver(store) }),
+      managementOptions({ store, activeProfile: coreOnlyProfile, read: readOver(store, root) }),
     );
     try {
       const session = await bootstrap(server.origin);

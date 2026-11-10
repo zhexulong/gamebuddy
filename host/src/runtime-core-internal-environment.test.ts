@@ -7,19 +7,21 @@ import { renderRuntimeEnvironmentBlock, setRuntimeEnvironmentFacts } from "@cort
 import type { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import {
   composeGameEnvironmentFacts,
-  createRenderedEnvironmentFactsProvider,
-  environmentFactsRecordPath,
-  type EnvironmentFactsRenderRecord,
   formatGameClock,
   formatGameDate,
   formatGameEnvironmentFacts,
   formatGameStamina,
   formatGameWeather,
   type GameEnvironmentFactsSource,
-  MAX_ENVIRONMENT_FACTS_RECORD_LINES,
   MAX_GAME_ENVIRONMENT_FACTS_BYTES,
-  reloadMagicContextInRuntimeRoot,
   renderGameEnvironmentFactsObservation,
+} from "./game-world-vocabulary.js";
+import {
+  createRenderedEnvironmentFactsProvider,
+  environmentFactsRecordPath,
+  type EnvironmentFactsRenderRecord,
+  MAX_ENVIRONMENT_FACTS_RECORD_LINES,
+  reloadMagicContextInRuntimeRoot,
   resolveRuntimePaths,
 } from "./runtime-core.internal.js";
 import type { GameConnection } from "./game-connection.js";

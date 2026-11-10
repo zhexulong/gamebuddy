@@ -25,6 +25,7 @@ import { ScrollText } from "lucide-react";
 import { type ReactElement, useEffect, useState } from "react";
 import type { Messages } from "../i18n";
 import {
+  type PresetActiveBindingV1,
   type PresetAssemblySurfaceV1,
   type PresetAssemblyReadV1,
   readPresetAssemblySurface,
@@ -71,11 +72,33 @@ function PresetAssemblyPanel({ labels }: Readonly<{ labels: Messages }>): ReactE
           {labels.presetReadFailed}
         </p>
       )}
+      {view.kind === "ready" && view.read.activePreset !== undefined && (
+        <p
+          className="management-settings-hint"
+          data-preset-active={view.read.activePreset.state}
+          data-preset-active-preset={"presetId" in view.read.activePreset ? view.read.activePreset.presetId : undefined}
+        >
+          {activePresetLine(view.read.activePreset, labels)}
+        </p>
+      )}
       {view.kind === "ready" && view.read.presets.length === 0 && <p data-preset-none>{labels.presetEmpty}</p>}
       {view.kind === "ready" &&
         view.read.presets.map((preset) => <PresetAssemblyRow key={preset.presetId} preset={preset} labels={labels} />)}
     </div>
   );
+}
+
+/**
+ * Which preset is in force, in the surface's own words.
+ *
+ * All three states are rendered, because each one asks the player something different: `none` is a choice nobody made
+ * yet, `bound` says which preset assembles the requests, and `missing` is a binding whose preset is gone - the one case
+ * where doing nothing leaves the player with an assembly they did not choose.
+ */
+function activePresetLine(binding: PresetActiveBindingV1, labels: Messages): string {
+  if (binding.state === "bound") return labels.presetActiveBound.replace("{{preset}}", binding.presetId);
+  if (binding.state === "missing") return labels.presetActiveMissing.replace("{{preset}}", binding.presetId);
+  return labels.presetActiveNone;
 }
 
 /** One imported preset, as the four facts plus the counts that frame them. */

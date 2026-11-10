@@ -25,6 +25,11 @@
  * `{ unavailable: "no_composed_model" }`. It is validated as strictly as the rows - never beside them, never with a
  * reason this surface cannot name - because "not measured" and "nothing is sent" are different facts and a panel
  * that rendered one as the other would be telling the player about a request nobody sends.
+ *
+ * `activePreset` is the fact this surface shows FIRST, because it is the one that decides whether any of the rest is
+ * in force: three named states (`none` / `bound` / `missing`), never an absent key standing for "nothing bound". It
+ * is OPTIONAL on the body exactly as the Host's contract marks it, so a Host without the addition still reads; a
+ * body that omits it makes this surface claim nothing rather than claiming "no preset is in force".
  */
 
 export type PresetAssemblyMacroV1 = Readonly<{
@@ -80,7 +85,17 @@ export type PresetAssemblySurfaceV1 = Readonly<{
   sampling: readonly PresetSamplingRowV1[] | PresetSamplingUnavailableV1;
 }>;
 
-export type PresetAssemblyReadV1 = Readonly<{ apiVersion: 1; presets: readonly PresetAssemblySurfaceV1[] }>;
+export type PresetActiveBindingV1 =
+  | Readonly<{ state: "none" }>
+  | Readonly<{ state: "bound"; presetId: string }>
+  | Readonly<{ state: "missing"; presetId: string }>;
+
+export type PresetAssemblyReadV1 = Readonly<{
+  apiVersion: 1;
+  presets: readonly PresetAssemblySurfaceV1[];
+  /** Absent only for a Host that predates the fact; the panel then says nothing about what is in force. */
+  activePreset?: PresetActiveBindingV1;
+}>;
 
 /** The route the readout is served on. One path, named once, so the surface and its journey cannot drift apart. */
 export const PRESET_ASSEMBLY_ROUTE = "/api/tavern/v1/presets";
@@ -118,14 +133,37 @@ export async function readPresetAssemblySurface(transport: typeof fetch = fetch)
  */
 export function validatePresetAssemblyRead(value: unknown): PresetAssemblyReadV1 {
   expectRecord(value, "the body");
-  expectExactKeys(value, "the body", ["apiVersion", "presets"]);
+  expectKeys(value, "the body", ["apiVersion", "presets"], ["activePreset"]);
   if (value.apiVersion !== 1) refuse("apiVersion", `is ${String(value.apiVersion)}, not 1`);
   if (!Array.isArray(value.presets)) refuse("presets", "is not a list");
   if (value.presets.length > MAX_PRESETS) refuse("presets", `holds ${value.presets.length} entries`);
+  const activePreset = value.activePreset === undefined ? undefined : activeBindingOf(value.activePreset);
   return Object.freeze({
     apiVersion: 1 as const,
     presets: Object.freeze(value.presets.map((preset, index) => presetOf(preset, `presets[${index}]`))),
+    ...(activePreset === undefined ? {} : { activePreset }),
   });
+}
+
+/**
+ * Which preset is in force, as one of the three states the Host's contract declares.
+ *
+ * An unknown state is refused by name rather than drawn as "no preset": the two readings lead a player in opposite
+ * directions (import a preset versus do nothing), so guessing is the one thing this validator may not do.
+ */
+function activeBindingOf(value: unknown): PresetActiveBindingV1 {
+  expectRecord(value, "activePreset");
+  if (value.state === "none") {
+    expectExactKeys(value, "activePreset", ["state"]);
+    return Object.freeze({ state: "none" as const });
+  }
+  if (value.state === "bound" || value.state === "missing") {
+    expectExactKeys(value, "activePreset", ["state", "presetId"]);
+    if (typeof value.presetId !== "string" || value.presetId.length === 0)
+      refuse("activePreset.presetId", `is ${String(value.presetId)}, not a preset id`);
+    return Object.freeze({ state: value.state, presetId: value.presetId });
+  }
+  return refuse("activePreset.state", `is ${String(value.state)}, which this surface cannot name`);
 }
 
 function presetOf(value: unknown, path: string): PresetAssemblySurfaceV1 {
@@ -310,6 +348,26 @@ function expectCount(value: unknown, path: string): number {
 
 function expectRecord(value: unknown, path: string): asserts value is Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) refuse(path, "is not an object");
+}
+
+/**
+ * The exact member set, split into what the body MUST carry and what the contract declares optional.
+ *
+ * The split is the Host contract's (`PresetAssemblyReadV1Schema` marks `activePreset` `Type.Optional`), not a list
+ * invented here: a member added on the Host side is a refusal until this surface can show it, and a member the
+ * contract makes optional stays readable when it is absent.
+ */
+function expectKeys(
+  value: Record<string, unknown>,
+  path: string,
+  required: readonly string[],
+  optional: readonly string[],
+): void {
+  const present = Object.keys(value);
+  const extra = present.filter((key) => !required.includes(key) && !optional.includes(key));
+  const missing = required.filter((key) => !present.includes(key));
+  if (missing.length > 0) refuse(path, `does not carry ${missing.join(", ")}`);
+  if (extra.length > 0) refuse(path, `carries ${extra.join(", ")}, which this surface cannot show`);
 }
 
 /**
