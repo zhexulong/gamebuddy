@@ -70,6 +70,55 @@ export const PROGRAM_SETTLEMENT_WATCH_MAX_MS = 15 * 60_000;
 /** One node of a settled plan, in the shape `planBatchAnswer` answers with. */
 export type SettledDigestNode = ReturnType<typeof planBatchAnswer>["nodes"][number];
 
+/**
+ * What ONE stopped program produced, as data: the aggregate, and the rows it is counted over.
+ *
+ * THE SAME OBJECT ANSWERS BOTH QUESTIONS. The settlement fact carries it (`programSettledDigest`), and a status poll on a
+ * program that has stopped answers with the rendering the fact was minted from
+ * (`createProgramSettlementReporter().settled`) - so the two cannot disagree about what happened, and a poll adds no
+ * fact the unprompted delivery did not already carry. Measured `round43`: 29 of 96 assistant turns were status polls,
+ * which is what an answer that needs a second question produces.
+ *
+ * `counts` is over the WHOLE plan even when `nodes` is bounded (`MAX_SETTLED_DIGEST_NODES`), so `omitted` never turns
+ * the aggregate into a partial one. Every state is the Mod's own token (`BodyProgramNodeState`), never a Host
+ * translation: `succeeded`, `rejected`, `failed`, `cancelled`, `recovery_required`, `abandoned`,
+ * `skipped_dependency`, and the Host's own `unknown` for a node the journal did not list.
+ *
+ * Deliberately absent: `settledAtMs` and any clock. When the journal closed, and how long this Host watched a node in
+ * its state, are facts about the READING; the fact carries the first beside this rendering, and nothing about the
+ * outcome can come apart from the fact by measuring it twice.
+ */
+export interface SettledProgramAnswer {
+  /** The population every count is over: the nodes this Host submitted, not the rows the journal happened to list. */
+  readonly total: number;
+  readonly counts: Readonly<Record<string, number>>;
+  /** The one line a reader can take without parsing twenty rows: `.settledSummary`. */
+  readonly summary: string;
+  /** The rows, bounded; each carries its terminal state and, where the Mod said one, its own code. */
+  readonly nodes: readonly SettledDigestNode[];
+  /** How many rows did not fit. `0` for a plan inside the bound, and the counts above still cover them. */
+  readonly omitted: number;
+}
+
+/**
+ * The settled answer as data, from the answer both consumers already read (`planBatchAnswer`).
+ *
+ * Not a second projection: the rows are the batch answer's rows, unchanged, so `reasonCode`, `hint`, `tile`,
+ * `reasonDetail` and `skippedBecause` arrive here exactly as `stardew_action_program_status` reports them.
+ */
+export function settledProgramAnswer(answer: ReturnType<typeof planBatchAnswer>): SettledProgramAnswer {
+  const counts: Record<string, number> = {};
+  for (const node of answer.nodes) counts[node.state] = (counts[node.state] ?? 0) + 1;
+  const nodes = answer.nodes.slice(0, MAX_SETTLED_DIGEST_NODES);
+  return Object.freeze({
+    total: answer.nodes.length,
+    counts: Object.freeze(counts),
+    summary: settledSummary(counts, answer.nodes.length),
+    nodes: Object.freeze(nodes),
+    omitted: answer.nodes.length - nodes.length,
+  });
+}
+
 export interface SettledDigestInput {
   readonly programId: string;
   /** The Mod's `atMs` on the last journal event it appended for this program, or `null` when it could not be read. */
@@ -91,15 +140,25 @@ export interface SettledDigestInput {
  * twenty-five.
  */
 export function programSettledDigest(input: SettledDigestInput): WorldFact | undefined {
+  return settledProgramFact(input)?.fact;
+}
+
+/**
+ * The fact AND the rendering it was built from, so the reporter can keep the one the poll answers with.
+ *
+ * One derivation, two consumers: the fact is what the pump delivers, the rendering is what a later status poll answers,
+ * and neither can be a second reading of the journal.
+ */
+export function settledProgramFact(
+  input: SettledDigestInput,
+): Readonly<{ fact: WorldFact; answer: SettledProgramAnswer }> | undefined {
   if (typeof input.programId !== "string" || input.programId.length === 0) return undefined;
   if (input.compiled.length === 0) return undefined;
   if (!isTerminalProgramStatus(input.status)) return undefined;
   const snapshot = foundSnapshot(input.status);
   if (snapshot === null) return undefined;
-  const answer = planBatchAnswer(input.compiled, snapshot);
-  const shown = answer.nodes.slice(0, MAX_SETTLED_DIGEST_NODES);
-  const omitted = answer.nodes.length - shown.length;
-  return Object.freeze({
+  const answer = settledProgramAnswer(planBatchAnswer(input.compiled, snapshot));
+  const fact = Object.freeze({
     source: PROGRAM_SETTLED_DIGEST_SOURCE,
     kind: "world_fact" as const,
     eventId: `program_settled_${input.programId}`,
@@ -112,16 +171,24 @@ export function programSettledDigest(input: SettledDigestInput): WorldFact | und
       kind: PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND,
       programId: input.programId,
       settledAtMs: input.settledAtMs,
-      summary: settledSummary(answer.nodes),
-      nodes: Object.freeze(shown),
-      ...(omitted > 0 ? { omitted } : {}),
+      ...answer,
     }),
   });
+  return Object.freeze({ fact, answer });
 }
 
 export interface ProgramSettlementReporter {
   /** Compose, and hand the digest to the pump, at most once per program id. */
   report(input: SettledDigestInput): WorldFact | undefined;
+  /**
+   * The rendering this reporter announced for a program, or `null` when it has not settled one by that id.
+   *
+   * This is what `stardew_action_program_status` answers a STOPPED program with: the ledger the fact was minted from,
+   * not a second read and not a second projection, so a poll after the settlement cannot add a fact the settlement did
+   * not carry. `null` is the honest answer for a program this runtime never settled - a rejected candidate, an id from
+   * another session, or one whose watch expired - and the poll then reports the journal as it reads it.
+   */
+  settled(programId: string): SettledProgramAnswer | null;
 }
 
 /**
@@ -130,17 +197,25 @@ export interface ProgramSettlementReporter {
  * The claim is taken only when a digest is actually produced, so a watch that reads the journal before the program
  * stopped leaves the program unclaimed. Held per runtime (this is constructed where the tools are), never globally:
  * two Game sessions must not share a ledger of what one of them did.
+ *
+ * The map IS the claim: one entry per settled program id, holding the rendering the fact was built from. It grows with
+ * the number of programs ONE runtime settled - a measured run submitted 26 programs in 24 minutes - and is released with
+ * the runtime, so there is no drain to miss. An id is minted from the snapshot revision and the node list
+ * (`planProgramId`), so a later plan does not inherit an earlier plan's entry.
  */
 export function createProgramSettlementReporter(announce: (fact: WorldFact) => void): ProgramSettlementReporter {
-  const settled = new Set<string>();
+  const settled = new Map<string, SettledProgramAnswer>();
   return Object.freeze({
     report(input: SettledDigestInput): WorldFact | undefined {
       if (settled.has(input.programId)) return undefined;
-      const fact = programSettledDigest(input);
-      if (fact === undefined) return undefined;
-      settled.add(input.programId);
-      announce(fact);
-      return fact;
+      const composed = settledProgramFact(input);
+      if (composed === undefined) return undefined;
+      settled.set(input.programId, composed.answer);
+      announce(composed.fact);
+      return composed.fact;
+    },
+    settled(programId: string): SettledProgramAnswer | null {
+      return settled.get(programId) ?? null;
     },
   });
 }
@@ -196,20 +271,14 @@ export async function watchProgramSettlement(
 /**
  * One line the model can read without parsing twenty rows: `12 of 14 done, 2 rejected`.
  *
- * `done` counts `succeeded` only - a `failed` node is not done. Every OTHER settled state is named with its own count
- * in a fixed order, so a run that cancelled two nodes and abandoned one cannot be summarised as "12 of 14 done" and
- * read as two silent losses.
+ * `done` counts `succeeded` only - a `failed` node is not done. Every OTHER state is named with its own count in a fixed
+ * order, so a run that cancelled two nodes and abandoned one cannot be summarised as "12 of 14 done" and read as two
+ * silent losses. Built from the same `counts` the fact publishes, so the sentence and the numbers cannot disagree.
  */
-export function settledSummary(nodes: readonly { readonly state: string }[]): string {
-  const counts = new Map<string, number>();
-  let succeeded = 0;
-  for (const node of nodes) {
-    if (node.state === "succeeded") succeeded += 1;
-    else counts.set(node.state, (counts.get(node.state) ?? 0) + 1);
-  }
-  const parts = [`${succeeded} of ${nodes.length} done`];
+export function settledSummary(counts: Readonly<Record<string, number>>, total: number): string {
+  const parts = [`${counts.succeeded ?? 0} of ${total} done`];
   for (const state of SETTLED_DIGEST_SUMMARY_STATES)
-    if ((counts.get(state) ?? 0) > 0) parts.push(`${counts.get(state)} ${state}`);
+    if ((counts[state] ?? 0) > 0) parts.push(`${counts[state]} ${state}`);
   return parts.join(", ");
 }
 

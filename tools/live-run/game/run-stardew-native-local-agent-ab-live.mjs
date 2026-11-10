@@ -79,6 +79,7 @@ import {
   summarizeDeliveryAccount,
 } from "../../lib/presentation-delivery-account.mjs";
 import { readActivityPoints, summarizeActivity } from "../../lib/companion-activity.mjs";
+import { describeRunCost, summarizeRunCost } from "../../lib/run-cost-account.mjs";
 import { assertLiveRunArtifactFresh } from "../../lib/live-run-artifact-freshness.mjs";
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
 import { redactLiveRunText } from "../core/capture-text.mjs";
@@ -1124,6 +1125,14 @@ const PLAN_COMPILE_TOOL_NAMES = Object.freeze(["stardew_plan_work"]);
 const PROGRAM_SUBMIT_TOOL_NAMES = Object.freeze(["stardew_submit_action_program"]);
 const PROGRAM_STATUS_TOOL_NAMES = Object.freeze(["stardew_action_program_status", "stardew_action_program_events"]);
 const ACTION_TOOL_NAMES = new Set(Object.values(STARDEW_ACTION_TOOL_NAMES));
+// The plan tools whose call counts the run's cost account reads, by name: `program_status` alone is the poll, and the
+// category above deliberately folds it together with the event log because both are bridge reads of one journal.
+const PLAN_TOOL_NAMES = new Set([
+  ...PLAN_SHAPE_TOOL_NAMES,
+  ...PLAN_COMPILE_TOOL_NAMES,
+  ...PROGRAM_SUBMIT_TOOL_NAMES,
+  ...PROGRAM_STATUS_TOOL_NAMES,
+]);
 
 function toolTimingCategory(toolName) {
   if (typeof toolName !== "string") return undefined;
@@ -1187,6 +1196,19 @@ function toolTimingInvariant({ calls, frames }) {
   });
 }
 
+/**
+ * How many status reads the session record published, or `null` when that read published none.
+ *
+ * `null` is not `0`: an unbound session record is a population nobody measured, and a run that genuinely never polled is
+ * the good outcome this account exists to reward. `planCalls` present but without the key IS `0` - a measured session
+ * that made none of those calls.
+ */
+function planPollCount(toolTiming) {
+  const calls = toolTiming?.planCalls;
+  if (calls === null || calls === undefined) return null;
+  return calls.stardew_action_program_status ?? 0;
+}
+
 function readToolTiming(
   sessionJsonlPath,
   { executionTraceFlat, unboundReason = "no_session_record" } = {},
@@ -1196,7 +1218,16 @@ function readToolTiming(
   // ONE shape for "no timing published": `byCategory` and `longest` are null, not empty categories, because an empty
   // category reads as a measured zero and a zero is a number a reader quotes. `reason` is the only thing to read.
   const noTiming = (reason, record, invariant = toolTimingInvariant({ calls: null, frames })) =>
-    Object.freeze({ observed: false, reason, record, byCategory: null, longest: null, invariant });
+    Object.freeze({
+      observed: false,
+      reason,
+      record,
+      byCategory: null,
+      longest: null,
+      modelTurns: null,
+      planCalls: null,
+      invariant,
+    });
   if (typeof sessionJsonlPath !== "string" || sessionJsonlPath.length === 0) return noTiming(unboundReason, null);
   // WHICH record the counts came from, by file name: the lie was a record from another run, and no count can show
   // that on its own. A reader comparing the run's launch with this stamp can see the record is not this run's.
@@ -1209,6 +1240,10 @@ function readToolTiming(
   }
   const pending = new Map();
   const durationsByCategory = new Map();
+  // The run's model round trips and the plan tools it spent them on: the cost account's numerator. Counted here because
+  // this loop already reads every message in the record, and a second reader of the same file is a second spelling.
+  let modelTurns = 0;
+  const planCalls = {};
   for (const line of raw.split("\n")) {
     if (line.trim().length === 0) continue;
     let entry;
@@ -1222,8 +1257,10 @@ function readToolTiming(
     if (!Number.isFinite(atMs)) continue;
     const message = entry.message;
     if (message?.role === "assistant") {
+      modelTurns += 1;
       for (const part of Array.isArray(message.content) ? message.content : []) {
         if (part?.type !== "toolCall") continue;
+        if (PLAN_TOOL_NAMES.has(part.name)) planCalls[part.name] = (planCalls[part.name] ?? 0) + 1;
         pending.set(part.id, { category: toolTimingCategory(part.name), startedAtMs: atMs });
         ledger?.record("tool.start", { tool: part.name ?? null, category: toolTimingCategory(part.name) });
       }
@@ -1264,6 +1301,10 @@ function readToolTiming(
     record,
     byCategory: Object.freeze(byCategory),
     longest: Object.freeze(longest.slice(0, TOOL_TIMING_LONGEST_LIMIT)),
+    // The model turns this record holds, and the plan tools it called by name: the two populations the run cost account
+    // divides. `null` when the record could not be bound - never `0`, which is a measured run that made no call.
+    modelTurns,
+    planCalls: Object.freeze(planCalls),
     invariant,
   });
 }
@@ -5630,15 +5671,31 @@ async function buildRunResult({
   if (!executionTrace.ok) console.error("EXECUTION_TRACE_INVARIANT_VIOLATED", JSON.stringify(executionTrace));
   // The same discipline for the other side of the same executions: the tool-call counts and the frames the runner sent
   // must not disagree about how many flat dispatches this run made. Read here, not inside the result literal, so the
-  // violation is logged by name before anything is published. The record is the one bound to THIS run's surface
-  // session; when it could not be bound, its reason is published instead of another run's numbers, and when the
-  // invariant fails the reader withholds the timings rather than qualifying them.
+  // violation is logged by name before anything is published - and read before the run cost account below, which divides
+  // these counts and prints beside the delivery account. The record is the one bound to THIS run's surface session; when
+  // it could not be bound, its reason is published instead of another run's numbers, and when the invariant fails the
+  // reader withholds the timings rather than qualifying them.
   const toolTiming = readToolTiming(runSessionRecord.path, {
     executionTraceFlat: executionTrace.flat,
     unboundReason: runSessionRecord.reason ?? "no_session_record",
   });
   if (toolTiming.invariant.ok === false)
     console.error(TOOL_TIMING_INVARIANT_VIOLATED, JSON.stringify(toolTiming.invariant));
+  // WHAT THE RUN SPENT ITS MODEL TURNS ON, printed beside the delivery account and published on the result and the
+  // bundle. The population is this run's own: the session record's model turns and plan-tool calls, the programmes the
+  // Mod accepted, and the executions that reached a terminal state. `round43` spent 29 of 96 turns polling with nothing
+  // anywhere in the artifact that said so - this is that number, every run.
+  const runCost = summarizeRunCost({
+    planPolls: planPollCount(toolTiming),
+    programmes: programSubmissions.filter((submission) => submission.accepted === true).length,
+    modelTurns: toolTiming.modelTurns ?? null,
+    // An execution record that could not be read is an unmeasured denominator, never a smaller one.
+    completedActions:
+      executionTrace.ok === true
+        ? actionTrace.length + programRows.filter((row) => Number.isFinite(row.settledAtMs)).length
+        : null,
+  });
+  console.error("RUN_COST_ACCOUNT", describeRunCost(runCost), JSON.stringify(runCost));
   // The run's memory, projected ONCE: the result and the bundle both publish this object, so a reader holding either one
   // sees the same series and the same extremes. A run with no turn sample says so by name (`not_measured:...`) rather
   // than by an absent field, which is the reading the old artifact forced an auditor to guess.
@@ -5718,6 +5775,10 @@ async function buildRunResult({
     // What the presentation layer did: every committed companion_text piece in arrival order with its elapsed time,
     // so `firstPieceTtfbMs` (the headline TTFB target) survives however the run ended.
     presentation: presentationEvidence,
+    // WHAT THE RUN SPENT, in the unit the cost is paid in: model round trips. Printed beside the delivery account (see
+    // `RUN_COST_ACCOUNT` below), carried here so a reader of the artifact - not only of the log - can ask whether a third
+    // of this run's turns went to asking a question whose answer was already on its way.
+    runCost,
     // The run's own memory, as the bundle publishes it and as the auditor reads it. The sampler has measured this all
     // along; until now it reached a terminal log and nothing else, so a memory question had to be answered from a log
     // that is not the artifact (measured 2026-11-09, `round40`: 46 samples, no field).
@@ -5920,6 +5981,9 @@ async function writeRunBundle({
     // that produced it.
     actionBreadth: result.actionBreadth,
     snapshotCensus: result.snapshotCensus,
+    // The run's own cost, in the same place the contract's face of the run carries every other reading: the delivery
+    // account is inside `presentation`, and this is its numerator - model turns, plan polls, and what they were spent on.
+    runCost: result.runCost,
     // Two files, one record: a reader merges them (execution-trace.mjs) instead of reading the flat file alone and
     // concluding the run dispatched nothing.
     runTrace: runTraceRecordAtAssembly(),

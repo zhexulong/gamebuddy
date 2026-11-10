@@ -22,7 +22,12 @@ import {
   type OpaqueS4cMaterializationAdmission,
 } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.internal.js";
 import { loadHostDeploymentManifest } from "./deployment-manifest.js";
-import { PLAN_TOOL_SLOT_MEANING, planActionsFromRegistrations, planProgramId } from "./body-program-script.js";
+import {
+  PLAN_TOOL_SLOT_MEANING,
+  planActionsFromRegistrations,
+  planProgramId,
+  planSettlementNote,
+} from "./body-program-script.js";
 import { createHostGameRuntimeMaterializer } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import { observeMaterializedProductionRuntimeForTest } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.test-support.js";
 import { assertReceiptBackedLaunch } from "./integration-launcher.js";
@@ -740,6 +745,10 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
           submitted: "accepted",
           settled: false,
           remaining: 1,
+          // WHAT ARRIVES NEXT, on the answer the model re-reads while deciding whether to wait: the population it is
+          // waiting on, that the settlement is its own message, and that one more status read before then is the same
+          // picture. Measured `round43`: 29 of 96 turns were status polls over this exact decision.
+          settlementNote: planSettlementNote(1),
         });
         assert.deepEqual(
           plannedNodes.map(({ elapsedMs: _clock, ...rest }) => rest),

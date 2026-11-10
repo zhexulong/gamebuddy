@@ -8,6 +8,7 @@ import {
   PLAN_TOOL_SLOT_MEANING,
   planActionsFromRegistrations,
   planProgramId,
+  planSettlementNote,
   planShape,
   planWorkDescription,
   type CompiledPlan,
@@ -94,7 +95,11 @@ import {
   type PlanBatchAnswer,
   type ProgramStatusProgress,
 } from "../program-status-wait.js";
-import { createProgramSettlementReporter, watchProgramSettlement } from "../program-settlement-digest.js";
+import {
+  createProgramSettlementReporter,
+  type SettledProgramAnswer,
+  watchProgramSettlement,
+} from "../program-settlement-digest.js";
 import { createProgramEventDeliveryLedger, type ProgramSnapshotStaleness } from "../program-event-delivery.js";
 import type { WorldFact } from "../event-pump.js";
 import { createGameRuntimeAttachment } from "./game-runtime-attachment.js";
@@ -448,6 +453,10 @@ function createBodyProgramTools(
                 settled: answer.settled,
                 remaining: answer.remaining,
                 nodes: answer.nodes,
+                // WHAT ARRIVES NEXT, IN THE ONE ANSWER SHE RE-READS WHILE DECIDING WHETHER TO WAIT. Measured `round43`:
+                // 29 of 96 turns were `stardew_action_program_status` calls. The settlement is already pushed, so what
+                // was missing was not a signal but the answer saying so - with the population it is waiting on.
+                settlementNote: planSettlementNote(nodes.length),
                 // What the plan assumed that the snapshot it was compiled against could not answer. Beside the plan rather
                 // than in front of it: the warning is a fact the companion learns from, and a plan that blocked on it would
                 // leave her no way to say "water them anyway".
@@ -611,12 +620,25 @@ function createBodyProgramTools(
           // Omitted or zero keeps the old behaviour exactly: one read, return. Only a caller that asked to wait
           // pays for the loop, so no existing path gets slower or starts blocking.
           if (waitMs === undefined || waitMs === 0 || isTerminalProgramStatus(tracked.result))
-            return toolResult(tracked.result, null, programStatusProgress.observe(tracked.result), staleness);
+            return toolResult(
+              tracked.result,
+              null,
+              planAnswerReading(
+                tracked.result,
+                programStatusProgress.observe(tracked.result),
+                settlement.settled(params.programId),
+              ),
+              staleness,
+            );
           const waited = await waitForTerminalProgramStatus(read, tracked.result, waitMs);
           return toolResult(
             waited.result,
             waited.waited,
-            programStatusProgress.observe(waited.result),
+            planAnswerReading(
+              waited.result,
+              programStatusProgress.observe(waited.result),
+              settlement.settled(params.programId),
+            ),
             Object.freeze({ current: eventDelivery.observeStatus(waited.result), replaced: null }),
           );
         },
@@ -1206,12 +1228,38 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
 }
 
 /**
+ * What a status read answers BESIDE the journal snapshot: the final ledger of a stopped plan, or the live progress of one
+ * that still owes a publication.
+ *
+ * <p>
+ * EXACTLY ONE, never both. They spell the same nodes: `progress.nodes` carries each node's state and the clock this Host
+ * has watched it there, and the settled ledger carries each node's state with the Mod's own terminal code. On a stopped
+ * plan the clocks are meaningless (`remaining` is `0` by definition) and the codes are the whole of what a reader needs,
+ * so publishing both would state every node twice and leave a reader joining two lists. Measured `round43`: 29 of 96
+ * turns were status polls - an answer that needs a second question produces exactly that.
+ * </p>
+ * <p>
+ * WHEN THERE IS NO LEDGER: a program this runtime never settled - a rejected candidate, an id from another session, a
+ * watch that expired - answers with the live progress, which is what this tool always did. The poll never RE-DERIVES a
+ * settlement (an events walk, a second read) to fill the gap: the fact will arrive on the pump, and answering with a
+ * rendering the settlement did not produce is what would make the two disagree.
+ * </p>
+ */
+const planAnswerReading = (
+  result: unknown,
+  progress: ProgramStatusProgress | null,
+  ledger: SettledProgramAnswer | null,
+): Readonly<{ progress: ProgramStatusProgress | null } | { settled: SettledProgramAnswer }> =>
+  ledger !== null && isTerminalProgramStatus(result) ? Object.freeze({ settled: ledger }) : Object.freeze({ progress });
+
+/**
  * One tool result, with the wait's own outcome BESIDE the payload, not inside it.
  *
  * `waited` is `null` for a plain read, so a caller can tell "I did not wait" from "I waited and it was still
- * running" - the distinction the poll loop existed to express and a fixed `running` reply hides. `progress` rides
- * beside them both, because a read that did not wait still has to say how much work is left for the next decision to be
- * an informed one; it is absent only for the tools that have no plan to report on.
+ * running" - the distinction the poll loop existed to express and a fixed `running` reply hides. `reading` rides
+ * beside them both, because a read that did not wait still has to say how much work is left for the next decision to
+ * be an informed one; it is absent only for the tools that have no plan to report on. It is `progress` OR `settled`,
+ * never both (`planAnswerReading`).
  *
  * `staleSnapshot` and `staleSnapshotReplaced` are the same kind of fact, published for the same reason: a snapshot
  * older than what this connection already delivered is not a statement about the plan, and it must not be read as one
@@ -1222,13 +1270,14 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
 function toolResult<TDetails>(
   details: TDetails,
   waited: Readonly<{ reachedTerminal: boolean; snapshotChanged: boolean }> | null,
-  progress?: ProgramStatusProgress | null,
+  reading?: Readonly<{ progress?: ProgramStatusProgress | null; settled?: SettledProgramAnswer | null }> | null,
   staleness?: Readonly<{ current: ProgramSnapshotStaleness | null; replaced: ProgramSnapshotStaleness | null }>,
 ) {
   const published = {
     ...(details as Record<string, unknown>),
     ...(waited === null ? {} : { waited }),
-    ...(progress === undefined ? {} : { progress }),
+    ...(reading?.progress === undefined ? {} : { progress: reading.progress }),
+    ...(reading?.settled === undefined || reading.settled === null ? {} : { settled: reading.settled }),
     ...(staleness?.current === undefined || staleness.current === null
       ? {}
       : { staleSnapshot: staleness.current.code }),

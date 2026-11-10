@@ -23,6 +23,7 @@ import { watchRollover } from "../../lib/multiday-loop.mjs";
 import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mjs";
 import { killedReasonCode, reclamationRecord } from "../../lib/live-run-teardown.mjs";
 import { appendTurnMemory, summarizeHostMemory, turnMemoryPoint } from "../../lib/live-run-memory.mjs";
+import { describeRunCost, summarizeRunCost } from "../../lib/run-cost-account.mjs";
 import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
 import { deliveryAccountClause, summarizeDeliveryAccount } from "../../lib/presentation-delivery-account.mjs";
 import {
@@ -1604,10 +1605,65 @@ test("a run that cannot bind its own session record publishes no timings, naming
   assert.equal(timing.longest, null);
 });
 
+/**
+ * THE RUN'S COST, ON ITS OWN ROUND TRIPS, PRINTED AND PUBLISHED.
+ *
+ * Measured `round43`: 96 assistant turns, 29 of them `stardew_action_program_status`, and nothing in that run's artifact
+ * said so. The two ratios are derived from populations the run already reads - the bound session record's model turns and
+ * plan-tool calls, the programmes the Mod accepted, and the executions that reached a terminal state - so this asserts
+ * the REAL reader and the REAL builder together rather than a fixture of the arithmetic.
+ *
+ * The second half is the zero that must be printed: a run that never polled is the outcome this account exists to
+ * reward, and an absent field would read as "nobody looked".
+ */
+test("every run prints what its model turns were spent on, and a run that never polled prints zero", async () => {
+  const { readToolTiming: realToolTiming } = loadToolTiming(RUNNER_SOURCE);
+  // Three model turns, no status read: the run that did the thing the account exists to reward.
+  const quiet = writeSessionRecord(["stardew_observe", "stardew_observe", "stardew_observe"]);
+  const [, buildRunResult] = extractRunnerFunction(
+    RUNNER_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
+    builderGlobals({
+      readToolTiming: realToolTiming,
+      runSessionRecord: Object.freeze({ path: quiet, reason: null }),
+      actionTrace: [
+        { action: "move_to_tile", state: "succeeded" },
+        { action: "water_crop", state: "succeeded" },
+        { action: "plant_seed", state: "rejected" },
+      ],
+      programSubmissions: [
+        { programId: "p1", accepted: true, nodes: [] },
+        { programId: "p2", accepted: true, nodes: [] },
+        { programId: "p3", accepted: false, nodes: [] },
+      ],
+    }),
+  );
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => logged.push(args);
+  let quietRun;
+  try {
+    quietRun = await buildRunResult({ rungClauses: [], settlement: null });
+  } finally {
+    console.error = original;
+  }
+  const line = logged.find(([code]) => code === "RUN_COST_ACCOUNT");
+  assert.ok(line !== undefined, `no run cost account was printed; stderr held ${JSON.stringify(logged)}`);
+  const printed = JSON.parse(line[2]);
+  assert.equal(printed.plan_polls_per_programme, 0, "three observes and no status read is a measured zero");
+  assert.equal(printed.plan_polls, 0);
+  assert.equal(printed.programmes, 2, "only the accepted submissions are programmes");
+  assert.equal(printed.model_turns, 3);
+  assert.equal(printed.completed_actions, 3, "every flat dispatch reached a terminal state");
+  assert.equal(printed.turns_per_completed_action, 1);
+  assert.equal(quietRun.runCost.plan_polls_per_programme, 0, "and the result publishes the same object it printed");
+  assert.equal(quietRun.runCost.turns_per_completed_action, 1);
+});
+
 test("the assembly logs a tool-timing disagreement by name", async () => {
   const [, buildRunResult] = extractRunnerFunction(
     RUNNER_SOURCE,
-    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
     {
       ...instrumentGlobals,
       executedActionIds,
@@ -1648,6 +1704,8 @@ test("the assembly logs a tool-timing disagreement by name", async () => {
         longest: null,
         invariant: { checked: true, ok: false, calls: 45, frames: 0 },
       }),
+      summarizeRunCost,
+      describeRunCost,
       buildFailureSnapshot: (input) => input,
       writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
       closeCapture: async () => ({ state: "closed" }),
@@ -2867,7 +2925,7 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
   // answer with what the trace holds - on the crashed path, which is the one that published nothing.
   const [, buildRunResult] = extractRunnerFunction(
     RUNNER_SOURCE,
-    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
     {
       ...instrumentGlobals,
       executedActionIds,
@@ -2903,6 +2961,8 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
       summarizeActionCadence: () => ({ spans: [] }),
       summarizePresentationEvidence: () => NOTHING_PRESENTED,
       readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
+      summarizeRunCost,
+      describeRunCost,
       buildFailureSnapshot: (input) => input,
       writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
       closeCapture: async () => ({ state: "closed" }),
@@ -2975,7 +3035,7 @@ test("a run whose work all went through programs publishes a non-empty attempted
   ];
   const [, buildRunResult] = extractRunnerFunction(
     RUNNER_SOURCE,
-    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
     {
       ...instrumentGlobals,
       executedActionIds,
@@ -3021,6 +3081,8 @@ test("a run whose work all went through programs publishes a non-empty attempted
       summarizeActionCadence: () => ({ spans: [] }),
       summarizePresentationEvidence: () => NOTHING_PRESENTED,
       readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
+      summarizeRunCost,
+      describeRunCost,
       buildFailureSnapshot: (input) => input,
       writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
       closeCapture: async () => ({ state: "closed" }),
@@ -3079,6 +3141,7 @@ test("an error that escapes the run still publishes the work it had already reco
       "writeRunDump",
       "writeKilledDump",
       "deriveRungVerdict",
+      "planPollCount",
     ],
     {
       ...instrumentGlobals,
@@ -3104,6 +3167,8 @@ test("an error that escapes the run still publishes the work it had already reco
       programExecutionRows,
       executionTraceInvariant,
       readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
+      summarizeRunCost,
+      describeRunCost,
       TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
       multidayOutcome: null,
       historianRubricOutcome: null,
@@ -3289,6 +3354,7 @@ test("a run interrupted from outside publishes its own verdict, with the evidenc
         "bundleCrossingRecord",
         "writeRunBundle",
         "deriveRungVerdict",
+        "planPollCount",
       ],
       {
         // The run's accumulated evidence: this is what a killed run must not lose.
@@ -3316,6 +3382,8 @@ test("a run interrupted from outside publishes its own verdict, with the evidenc
         programExecutionRows,
         executionTraceInvariant,
         readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
+        summarizeRunCost,
+        describeRunCost,
         TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
         multidayOutcome: { crossings: 1, assessment: { state: "passed", ok: true, violations: [] }, dayRecords },
         // The bundle's account literal is built by the module the runner uses, so this eval binds the same builder.
@@ -3802,6 +3870,8 @@ function builderGlobals(overrides = {}) {
     summarizeActionCadence: () => ({ spans: [] }),
     summarizePresentationEvidence: () => NOTHING_PRESENTED,
     readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
+    summarizeRunCost,
+    describeRunCost,
     buildFailureSnapshot: (input) => input,
     writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
     closeCapture: async () => ({ state: "closed" }),
@@ -3866,7 +3936,7 @@ test("a blocked run names the clause that failed, never the scenario it ran in",
 
   const [, buildRunResult] = extractRunnerFunction(
     RUNNER_SOURCE,
-    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
     builderGlobals(),
   );
   const result = await buildRunResult({ rungClauses: ROUND38_CLAUSES, settlement: null });
@@ -3988,7 +4058,7 @@ test("an unproven task is not a pass: the arm names the criterion it could not d
   // existed in no verdict field at all; a second failing clause is now published beside the first.
   const [, buildRunResult] = extractRunnerFunction(
     RUNNER_SOURCE,
-    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
     builderGlobals(),
   );
   const taskCode = taskPurposeVerdict(ROUND39_TASK_PURPOSES);
@@ -4047,7 +4117,7 @@ test("a run that used a handful of the addressable actions fails its own `action
   ]);
   const [, buildRunResult] = extractRunnerFunction(
     RUNNER_SOURCE,
-    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
     builderGlobals({
       programSubmissions: [
         {
@@ -4122,7 +4192,7 @@ test("a run whose execution record could not be read to the end cannot be `passe
   // than competing with them.
   const [, buildRunResult] = extractRunnerFunction(
     RUNNER_SOURCE,
-    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict"],
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
     builderGlobals(),
   );
   const unread = [{ programId: "p_unobserved", observed: false, dispatched: null, executions: [] }];

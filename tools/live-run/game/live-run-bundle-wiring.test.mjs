@@ -362,7 +362,7 @@ test("a tool call's duration names its owner: nested agent, planning, program, o
   );
   assert.match(
     SOURCE,
-    /Object\.freeze\(\{ observed: false, reason, record, byCategory: null, longest: null, invariant \}\)/,
+    /Object\.freeze\(\{\n\s+observed: false,\n\s+reason,\n\s+record,\n\s+byCategory: null,\n\s+longest: null,\n\s+modelTurns: null,\n\s+planCalls: null,\n\s+invariant,\n\s+\}\)/,
   );
   // 5. Bounded. The long list is the head of a sorted list, never the whole thing.
   assert.match(SOURCE, /const TOOL_TIMING_LONGEST_LIMIT = 10;/);

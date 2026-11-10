@@ -14,6 +14,7 @@ import {
   planActionsFromRegistrations,
   planProgramId,
   planResourceConflictCodes,
+  planSettlementNote,
   planShape,
   planWorkDescription,
 } from "./body-program-script.js";
@@ -2345,6 +2346,47 @@ test("neither program tool description tells the model to poll", () => {
       .filter((sentence) => prescription.test(sentence) && progressNoun.test(sentence) && !prohibition.test(sentence));
     assert.deepEqual(offending, [], `${tool} tells the model to poll for progress: ${offending.join(" | ")}`);
   }
+});
+
+/**
+ * THE ACCEPTED PLAN'S OWN SENTENCE ABOUT ITS SETTLEMENT.
+ *
+ * Measured `round43` (20 minutes, 1,201 s): 96 assistant turns of which 29 were `stardew_action_program_status` calls -
+ * 30% of the run's model round trips spent asking whether the plan was done, at ~9.4 s each. Settlement is already
+ * pushed (`program_settled` is a fact and it opens a turn of its own), so the polls were not compensating for a missing
+ * signal: they were compensating for an answer that did not say what would arrive and when. The description says it; the
+ * answer the model re-reads did not.
+ *
+ * The sentence therefore has to carry the three facts a decision to wait needs - the population it is waiting on, that
+ * the settlement is its own message, and that asking again before then returns the same picture - plus what the status
+ * tool's `waitMs` is for, because that tool documents it and a bound nobody explained is a habit.
+ *
+ * AND IT IS NOT AN INSTRUCTION. The register of every other field in that answer is a statement of fact; a sentence that
+ * told the model what to do would be a second, unenforced contract beside the description that owns it.
+ */
+test("an accepted plan's answer states its node count, what arrives when it settles, and what a wait is for", () => {
+  const note = planSettlementNote(3);
+  assert.match(note, /3 nodes/u, "the population it is waiting on is named");
+  assert.match(
+    note,
+    /settlement arrives as its own message/u,
+    "and that the settlement is a message, not a poll result",
+  );
+  assert.match(note, /terminal state/u, "with the moment it arrives: the last node reaching a terminal state");
+  assert.match(note, /the same answer comes back until then/u, "and that asking before then is the same picture");
+  assert.match(note, /waitMs/u, "the one exception is named, because the status tool documents it");
+  assert.match(note, /only holds a turn until that moment/u, "and what it is FOR, so a 30 s bound is a choice");
+  // One sentence, in the declarative register the rest of the answer uses. `read`/`ask` are deliberately absent from the
+  // sentence for this reason, and the assertion is on the words a model would act on rather than on punctuation alone.
+  assert.equal(note.endsWith("."), true, "it is a sentence, and it ends");
+  assert.equal(
+    /\b(?:must|should|please|never|always|do|don't|use|read|call|ask|pass|choose|keep|poll|end|stop)\b/iu.test(note),
+    false,
+    `the note must state a fact, not instruct: ${note}`,
+  );
+  assert.equal(note.match(/\.\s/u), null, "and it is ONE sentence, not a paragraph");
+  // A one-node plan is not "1 nodes": the count is read by a model that notices.
+  assert.match(planSettlementNote(1), /1 node,/u);
 });
 
 /**

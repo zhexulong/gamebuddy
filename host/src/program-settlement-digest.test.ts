@@ -9,7 +9,9 @@ import {
   createProgramSettlementReporter,
   MAX_SETTLED_DIGEST_NODES,
   programSettledDigest,
+  settledProgramAnswer,
   watchProgramSettlement,
+  type SettledProgramAnswer,
 } from "./program-settlement-digest.js";
 import type { PlanAnswerNode } from "./program-status-wait.js";
 import { planBatchAnswer } from "./program-status-wait.js";
@@ -181,7 +183,7 @@ test("a plan that settled with one rejection names that node, its code, and the 
     omitted?: number;
   }>;
   assert.equal(payload.summary, "2 of 3 done, 1 rejected");
-  assert.equal(payload.omitted, undefined, "a plan inside the bound says nothing about omission");
+  assert.equal(payload.omitted, 0, "a plan inside the bound omits nothing, and says so as a measured zero");
   assert.deepEqual(
     payload.nodes.map((row) => [row.index, row.actionId, row.state, row.reasonCode]),
     [
@@ -344,6 +346,19 @@ test("the digest is wired to the pump on the one path every program takes", asyn
     /if \(code === "accepted" \|\| code === "idempotent"\) \{\n\s+revealReaders\(\);\n\s+startSettlementWatch\(request\.programId, request\.nodes\);/u,
   );
   assert.match(materializer, /announceHostFact = \(fact\) => host\.acceptHostMintedFact\(fact\);/u);
+  // AND SO IS THE POLL. A status read of a STOPPED program answers with the ledger the fact was minted from, never
+  // with a second derivation: this is the wiring that makes "one poll is enough" true rather than aspirational.
+  assert.match(
+    materializer,
+    /planAnswerReading\(\n\s+tracked\.result,\n\s+programStatusProgress\.observe\(tracked\.result\),\n\s+settlement\.settled\(params\.programId\),\n\s+\),/u,
+    "the plain status read answers a stopped plan from the settlement ledger",
+  );
+  const digestSource = await readFile(join(root, "program-settlement-digest.ts"), "utf8");
+  assert.match(
+    digestSource,
+    /settled\(programId: string\): SettledProgramAnswer \| null;/u,
+    "and the ledger is the reporter's own, not a third reading of the journal",
+  );
   const hostService = await readFile(join(root, "host-service.ts"), "utf8");
   assert.match(
     hostService,
@@ -459,4 +474,135 @@ test("the digest row and the status row for one node are the same answer", () =>
   assert.equal(digestRows.length, statusRows.length);
   for (const [index, statusRow] of statusRows.entries())
     assert.deepEqual(digestRows[index], statusRow, `row ${index} must be one answer, not two`);
+});
+
+/**
+ * THE SETTLEMENT CARRIES THE FULL AGGREGATE, so one poll after it cannot add a count that was missing.
+ *
+ * Measured `round43`: 29 of 96 assistant turns were `stardew_action_program_status` calls. A settlement fact that carried
+ * only a sentence (`"2 of 3 done, 1 rejected"`) left the per-state population unreadable - "how many were rejected and
+ * were they the same nodes I asked about" - so a reader that wanted the breakdown went back to the tool. `counts` is that
+ * breakdown in the Mod's own state tokens, over the WHOLE plan rather than the rows the bound could carry, and `total`
+ * is the population it is counted against.
+ */
+test("a settled program states its aggregate counts over the whole plan, beside each node's terminal code", () => {
+  const compiled = [planNode("n01", "till_soil"), planNode("n02", "water_crop"), planNode("n03", "harvest_crop")];
+  const fact = programSettledDigest({
+    programId: "plan_agg",
+    settledAtMs: 12,
+    compiled,
+    status: status("plan_agg", "succeeded", [
+      { nodeId: "n01", state: "succeeded" },
+      { nodeId: "n02", state: "rejected", rejectionCode: "resource_unavailable" },
+      { nodeId: "n03", state: "skipped_dependency" },
+    ]),
+  });
+  assert.ok(fact !== undefined);
+  const payload = fact.payload as Readonly<{
+    total: number;
+    counts: Readonly<Record<string, number>>;
+    summary: string;
+    nodes: readonly Readonly<Record<string, unknown>>[];
+  }>;
+  assert.equal(payload.total, 3, "the population the counts are over");
+  assert.deepEqual(payload.counts, { succeeded: 1, rejected: 1, skipped_dependency: 1 });
+  assert.equal(payload.summary, "1 of 3 done, 1 rejected, 1 skipped_dependency");
+  // The same fact in the unit a reader acts on: which node, which action, and what the Mod said about it.
+  assert.deepEqual(
+    payload.nodes.map((row) => [row.actionId, row.state, row.reasonCode]),
+    [
+      ["till_soil", "succeeded", undefined],
+      ["water_crop", "rejected", "resource_unavailable"],
+      ["harvest_crop", "skipped_dependency", undefined],
+    ],
+  );
+  // The counts are over the whole plan even when the rows are bounded: a plan larger than the window still adds up.
+  const wide = Array.from({ length: 26 }, (_, index) => planNode(`n${String(index + 1).padStart(2, "0")}`));
+  const wideFact = programSettledDigest({
+    programId: "plan_wide",
+    settledAtMs: 1,
+    compiled: wide,
+    status: status(
+      "plan_wide",
+      "succeeded",
+      wide.map((node, index) => ({ nodeId: node.nodeId, state: index < 25 ? "succeeded" : "failed" })),
+    ),
+  });
+  assert.ok(wideFact !== undefined);
+  const widePayload = wideFact.payload as Readonly<{
+    counts: Readonly<Record<string, number>>;
+    nodes: readonly unknown[];
+    omitted: number;
+  }>;
+  assert.equal(widePayload.nodes.length, MAX_SETTLED_DIGEST_NODES, "the rows are still bounded");
+  assert.equal(widePayload.omitted, 6, "and the remainder is counted");
+  assert.deepEqual(widePayload.counts, { succeeded: 25, failed: 1 }, "the aggregate covers the rows the bound cut");
+});
+
+/**
+ * A STATUS POLL AFTER THE SETTLEMENT ADDS NO INFORMATION ABOUT WHAT HAPPENED.
+ *
+ * <p>
+ * The two answers are one rendering or they are two authorities. The settlement is the one fact the Host pushes
+ * unprompted, so a poll that could say a count, a state or a code the fact did not is a reading the run never delivered -
+ * and the tool the model is meant to stop calling becomes the better answer. `createProgramSettlementReporter.settled`
+ * hands the poll the SAME rendering the fact was minted from, which is why this comparison can be an equality rather
+ * than a pair of assertions that happen to agree today.
+ * </p>
+ * <p>
+ * THE FINDING THIS NAMES: a poll does carry facts the fact does not - `settledAtMs` (when the Mod closed the journal,
+ * which the fact reads with an extra events walk) and the live `progress` clocks (how long this Host has watched a node
+ * in its state). Those are about the READING, never about the outcome, and the rendering below deliberately omits both
+ * so the two can never disagree about what the plan did. Anything else that a poll says and the fact cannot is a defect
+ * in the fact.
+ * </p>
+ */
+test("a poll after the settlement answers with the settlement's own ledger, and nothing about the outcome differs", () => {
+  const compiled = [planNode("n01", "till_soil"), planNode("n02", "water_crop")];
+  const reporters = createProgramSettlementReporter(() => undefined);
+  const settled = status("plan_poll", "succeeded", [
+    { nodeId: "n01", state: "succeeded" },
+    { nodeId: "n02", state: "failed", failureCode: "weather_blocked" },
+  ]);
+  const fact = reporters.report({ programId: "plan_poll", settledAtMs: 4_242, compiled, status: settled });
+  assert.ok(fact !== undefined);
+  const poll: SettledProgramAnswer | null = reporters.settled("plan_poll");
+  assert.ok(poll !== null, "a program that settled is answerable from the ledger the fact was minted from");
+  const payload = fact.payload as Readonly<{ settledAtMs: number | null } & SettledProgramAnswer>;
+  // Field for field, on the fields that are about the outcome.
+  assert.equal(poll.total, payload.total);
+  assert.deepEqual(poll.counts, payload.counts);
+  assert.equal(poll.summary, payload.summary);
+  assert.deepEqual(poll.nodes, payload.nodes);
+  assert.equal(poll.omitted, payload.omitted);
+  // The rendering is about WHAT happened: the when lives beside it on the fact, never inside it.
+  assert.equal(Object.hasOwn(poll, "settledAtMs"), false, "the fact's own timing is not part of the outcome rendering");
+  // Exactly once, and the exactly-once claim does not take the answer away: a later poll still reads the same ledger.
+  assert.equal(reporters.report({ programId: "plan_poll", settledAtMs: 4_242, compiled, status: settled }), undefined);
+  assert.deepEqual(reporters.settled("plan_poll"), poll, "the second poll answers the same ledger, not a fresh guess");
+  // A program this runtime never settled has no ledger to hand out, and says so rather than answering something else.
+  assert.equal(reporters.settled("plan_never"), null);
+});
+
+/**
+ * The rendering itself is one function over the answer both sides already read.
+ *
+ * `settledProgramAnswer` is not a formatter over a string: it is the whole settled answer as data, so a field added to
+ * one consumer is added to both. This asserts the shape a reader (the model, a bundle, a report) can rely on, and that an
+ * EMPTY plan is refused rather than answering `0 of 0 done`.
+ */
+test("the settled rendering carries counts, summary, bounded rows and the remainder - and nothing for an empty plan", () => {
+  const answer = planBatchAnswer([planNode("n01"), planNode("n02")], {
+    nodes: [
+      { nodeId: "n01", state: "succeeded" },
+      { nodeId: "n02", state: "recovery_required", recoveryDiagnostic: "execution_uncertain" },
+    ],
+  });
+  const rendered = settledProgramAnswer(answer);
+  assert.equal(rendered.total, 2);
+  assert.deepEqual(rendered.counts, { succeeded: 1, recovery_required: 1 });
+  assert.equal(rendered.summary, "1 of 2 done, 1 recovery_required");
+  assert.equal(rendered.nodes.length, 2);
+  assert.equal(rendered.omitted, 0);
+  assert.equal(rendered.nodes[1]?.reasonDetail, "execution_uncertain", "the Mod's own diagnostic still rides the row");
 });

@@ -808,6 +808,32 @@ export function planShape(actions: readonly PublishedPlanAction[], request: Plan
 }
 
 /**
+ * What an ACCEPTED plan answer says about its own settlement, in one declarative sentence.
+ *
+ * Measured `round43` (20.0 min, 1,201 s): 96 assistant turns, 97 tool calls, and **29 of those turns were
+ * `stardew_action_program_status` calls** - 30% of the run's model time spent asking whether the plan was done, at
+ * ~9.4 s per turn. The settlement is already pushed (`program_settled` is an ordinary fact and it opens a turn of its
+ * own), so the polls were not compensating for a missing signal. They were compensating for an ANSWER that did not say
+ * what would arrive, when, or what one more question could possibly change.
+ *
+ * The description says much of this (`planWorkDescription`: "do NOT poll it - each step's receipt arrives later as a new
+ * message"), and the answer is the thing the model re-reads while deciding whether to wait. So the answer carries it,
+ * conditional on acceptance and with the population it is waiting on - which is the one fact the description cannot
+ * state.
+ *
+ * `waitMs` is named because `stardew_action_program_status` documents it, and a bound nobody said the purpose of is a
+ * habit rather than a choice: measured `round29`, 48 calls at `waitMs` median 30,000 - the cap - for 248 s blocked.
+ */
+export function planSettlementNote(nodeCount: number): string {
+  const nodes = `${nodeCount} ${nodeCount === 1 ? "node" : "nodes"}`;
+  return (
+    `${nodes}, and the settlement arrives as its own message - a fact - once the last node reaches a terminal state, ` +
+    "the same answer comes back until then, and `stardew_action_program_status` `waitMs` only holds a turn until that " +
+    "moment."
+  );
+}
+
+/**
  * The `stardew_plan_work` description: what the tool does, and the builder methods it exposes, named.
  *
  * The names belong HERE, in the description the companion already holds, rather than one tool call away behind
