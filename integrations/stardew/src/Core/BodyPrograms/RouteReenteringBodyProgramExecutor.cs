@@ -113,9 +113,14 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// What the caller can act on when the reason alone is not enough - a failed `for_each` pass states its counts here,
     /// because ADR-006 gives a failed node no evidence to carry them.
     /// </param>
-    private static BodyProgramTerminalResult Failed(NodeExecutionBinding execution, string reasonCode, string? hint = null) =>
+    /// <param name="detail">
+    /// The same counts in the field a reader reads as the reason detail. `Hint` is the short form; a pass with more
+    /// reasons than the hint's budget holds states them all here, and the two are produced by ONE enumeration
+    /// (<see cref="ReasonsByCount"/>) so they cannot disagree about which reason is dominant.
+    /// </param>
+    private static BodyProgramTerminalResult Failed(NodeExecutionBinding execution, string reasonCode, string? hint = null, string? detail = null) =>
         new(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null,
-            BodyProgramValidation.IsReasonCode(reasonCode) ? reasonCode : null, hint);
+            BodyProgramValidation.IsReasonCode(reasonCode) ? reasonCode : null, hint, detail);
 
     /// <summary>
     /// Projects the validated canonical arguments onto the wire argument shape
@@ -441,6 +446,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
 
         FarmhandForEachDispatch dispatch = (FarmhandForEachTarget target, string requestId, string executionId, out LocalExecutionReceipt receipt, out string reasonCode) =>
             this.DispatchRow(world, target, requestId, executionId, grant.DeadlineMs, out receipt, out reasonCode);
+
         FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, execution.RequestId, rows, dispatch, () => world.StopRequested);
 
         var table = new List<(int LocalRow, int LocalColumn, string Json)>(outsideFarm);
@@ -452,12 +458,14 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         // answers the settled rows with the receipts it already recorded and the pass continues from the busy one.
         if (pass.Deferred > 0 && pass.Failed == 0 && pass.Refused == 0 && !pass.Stopped) return null;
         if (pass.Stopped)
-            return new BodyProgramTerminalResult(execution, BodyProgramNodeOutcome.Cancelled, Array.Empty<RuntimeFact>(), null, null, null, ForEachStoppedReason);
-        if (pass.Failed > 0 || pass.Refused > 0) return Failed(execution, DominantReason(pass), FailureHint(pass));
-        if (pass.Decided == 0) return Failed(execution, "for_each_no_rows", FailureHint(pass));
+            return new BodyProgramTerminalResult(
+                execution, BodyProgramNodeOutcome.Cancelled, Array.Empty<RuntimeFact>(), null, null, null, ForEachStoppedReason,
+                FailureHint(pass), FailureDetail(pass));
+        if (pass.Failed > 0 || pass.Refused > 0) return Failed(execution, DominantReason(pass), FailureHint(pass), FailureDetail(pass));
+        if (pass.Decided == 0) return Failed(execution, "for_each_no_rows", FailureHint(pass), FailureDetail(pass));
         // A pass that matched no rule did nothing, and "0 rows" is not a success: the caller asked for a patch and the
         // rows it addressed were all somebody else's. The dominant row code names what the rows actually said.
-        if (pass.Succeeded == 0 && pass.LeftAlone == 0) return Failed(execution, DominantReason(pass), FailureHint(pass));
+        if (pass.Succeeded == 0 && pass.LeftAlone == 0) return Failed(execution, DominantReason(pass), FailureHint(pass), FailureDetail(pass));
 
         int rowsOmitted = 0;
         string aggregate = Aggregate(pass, table, ref rowsOmitted);
@@ -484,7 +492,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         FarmhandForEachTarget target,
         string requestId,
         string executionId,
-        long deadlineMs,
+        long formDeadlineMs,
         out LocalExecutionReceipt receipt,
         out string reasonCode)
     {
@@ -508,11 +516,39 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
             reasonCode = $"{BodyProgramValidation.RowActionNotEnabledPrefix}{actionId}";
             return false;
         }
-        if (!TryBuildRowArguments(world, target, actionId, out IReadOnlyDictionary<string, BodyProgramCanonicalValue>? canonical, out reasonCode))
+        if (!TryBuildRowArguments(world, target, actionId, out FarmhandActionDescriptor? descriptor, out IReadOnlyDictionary<string, BodyProgramCanonicalValue>? canonical, out reasonCode))
             return false;
-        if (!this.TryBuildExecutionRequest(canonical!, actionId, requestId, requestId, deadlineMs, out BridgeExecutionRequest? request, out reasonCode))
+        // THE ROW'S OWN WINDOW, capped by what the pass has left. See `RowDeadlineMs`.
+        long rowDeadlineMs = RowDeadlineMs(descriptor, formDeadlineMs, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        if (!this.TryBuildExecutionRequest(canonical!, actionId, requestId, requestId, rowDeadlineMs, out BridgeExecutionRequest? request, out reasonCode))
             return false;
         return this.router.TryRoute(request!, this.ledger, executionId, out receipt, out reasonCode);
+    }
+
+    /// <summary>
+    /// THE DEADLINE ONE ROW IS DISPATCHED IN: its own action's published window, and never later than the pass's own.
+    ///
+    /// <para>
+    /// Measured 2026-11-10 (`round42`, day 6): a nine-row `water_crop` loop answered `failed=1`, and that one row's failure
+    /// was `invalid_deadline`. The row had inherited the FORM's grant deadline, which is
+    /// <see cref="FarmhandPlanFormCatalog.WatchdogMs"/> - ten minutes, the budget of a pass over a whole patch - while
+    /// <c>AdmitExecution</c> admits a deadline at most <see cref="FarmhandActionCatalog.OrdinaryActionCeilingMs"/> ahead
+    /// for an ordinary action. A row that got past identity minting was therefore refused for a deadline its own action
+    /// never set, and no stage of the pass could act on it.
+    /// </para>
+    /// <para>
+    /// A ROW IS ONE ORDINARY ACTION, so its deadline is that action's own watchdog - the same number the Host reads to
+    /// size a flat request and the same one the controller's ceiling is built from - and the caller's declared pass
+    /// deadline still wins when it is shorter. Both halves of the live defect are answered: the declared deadline is
+    /// honoured, the phantom one is gone.
+    /// </para>
+    /// </summary>
+    internal static long RowDeadlineMs(FarmhandActionDescriptor? rowAction, long formDeadlineMs, long nowMs)
+    {
+        long windowMs = rowAction?.WatchdogMs is > 0 and long watchdogMs
+            ? watchdogMs
+            : FarmhandActionCatalog.OrdinaryActionCeilingMs;
+        return Math.Min(formDeadlineMs, nowMs + windowMs);
     }
 
     /// <summary>
@@ -530,21 +566,25 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// always names the thing the caller can fix.
     /// </para>
     /// <para>
-    /// A ROW THE WORLD CANNOT NAME IS REFUSED HERE, NOT DISPATCHED. The handler's own answer for a null identity
-    /// (`target_changed`, `crop_target_unavailable`) is a statement about a tile nobody changed, and it names nothing the
-    /// caller can act on; `row_target_identity_unavailable:&lt;actionId&gt;:&lt;family|none&gt;` names both halves.
+    /// A ROW WHOSE IDENTITY CANNOT BE MINTED IS REFUSED HERE, NOT DISPATCHED, and the two ways that happens are TWO
+    /// words. A family this seam has no arm for answers `row_target_identity_unavailable:&lt;actionId&gt;:&lt;family&gt;` - the
+    /// caller's action addresses something this pass cannot name. A family it CAN derive, over a tile that carries
+    /// nothing for it, answers `row_target_absent:&lt;actionId&gt;:&lt;family&gt;` - the tile is bare and the action is fine.
+    /// They answered the same code until 2026-11-10, and the live run's eight bare `water_crop` rows read as "`cropTargets`
+    /// can never match" instead of "these tiles have no crop".
     /// </para>
     /// </summary>
     private static bool TryBuildRowArguments(
         IFarmhandForEachWorld world,
         FarmhandForEachTarget target,
         string actionId,
+        out FarmhandActionDescriptor? descriptor,
         out IReadOnlyDictionary<string, BodyProgramCanonicalValue>? canonical,
         out string reasonCode)
     {
         canonical = null;
         reasonCode = $"row_action_unavailable:{actionId}";
-        FarmhandActionDescriptor? descriptor = FarmhandActionCatalog.Registrations
+        descriptor = FarmhandActionCatalog.Registrations
             .FirstOrDefault(registration => string.Equals(registration.ActionId, actionId, StringComparison.Ordinal))?.Descriptor;
         if (descriptor is null) return false;
 
@@ -596,7 +636,12 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 : world.TargetIdFor(family, rowX, rowY, target.Arguments);
             if (targetId is not { Length: > 0 })
             {
-                reasonCode = $"row_target_identity_unavailable:{actionId}:{family ?? NoTargetFamily}";
+                // TWO FACTS, TWO WORDS. The family the descriptor names is the one the snapshot publishes, verbatim
+                // (`FarmhandForEachFamilyDriftTests` is the gate on that spelling), so this refusal cannot be read as a
+                // case mismatch - and a row over a tile that carries nothing says so instead of blaming the family.
+                reasonCode = family is not null && world.CanNameFamily(family)
+                    ? $"row_target_absent:{actionId}:{family}"
+                    : $"row_target_identity_unavailable:{actionId}:{family ?? NoTargetFamily}";
                 return false;
             }
             values[ExpectedTargetIdArgument] = new BodyProgramCanonicalValue(BodyProgramArgumentKind.String, targetId);
@@ -703,13 +748,13 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     }
 
     /// <summary>
-    /// The counts a FAILED pass answers with, per reason.
+    /// The counts a FAILED pass answers with, per reason, in the hint.
     ///
     /// <para>
     /// A failed node carries no evidence - `Evidence` is what licenses `succeeded` (ADR-006) - so the row table this pass
-    /// built would be dropped on exactly the answer a reader most needs it for. The hint is the field a failed node does
-    /// carry, and it is a COUNT, not a claim: "the pass refused every row for one reason" and "one row of sixty refused"
-    /// must not arrive as the same bare code.
+    /// built would be dropped on exactly the answer a reader most needs it for. The hint is the short field a failed node
+    /// does carry, and it is a COUNT, not a claim: "the pass refused every row for one reason" and "one row of sixty
+    /// refused" must not arrive as the same bare code.
     /// </para>
     /// <para>
     /// The reasons come from <see cref="ReasonsByCount"/>, the same enumeration <see cref="DominantReason"/> reads, so the
@@ -718,18 +763,38 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// there would answer `InvalidInput` instead of the reason it was given.
     /// </para>
     /// </summary>
-    private static string FailureHint(FarmhandForEachPassResult pass)
+    private static string FailureHint(FarmhandForEachPassResult pass) =>
+        PassCounts(pass, BodyProgramValidation.MaximumNodeHintLength);
+
+    /// <summary>
+    /// The same counts, in the field a reader reads as `reasonDetail`.
+    ///
+    /// Measured 2026-11-10 (`round42`, day 6): the loop's hint carried `decided=9;succeeded=0;failed=1;refused=8;...` and the
+    /// detail said `unknown_reason:failed`, because a failed node's evidence is dropped (ADR-006) and this aggregate never
+    /// filled the one free-text field a failure MAY carry. The detail is a wider budget than the hint and the same text, so
+    /// a reader sees the counts where it looks for the reason and the two fields cannot disagree.
+    /// </summary>
+    private static string FailureDetail(FarmhandForEachPassResult pass) =>
+        PassCounts(pass, BodyProgramValidation.MaximumNodeRefusalDetailLength);
+
+    /// <summary>
+    /// The pass's counts, and then one `;code=count` per reason, as far as <paramref name="budget"/> allows.
+    ///
+    /// ONE producer for the two fields that carry them (`hint` and `reasonDetail`): two builders over the same numbers would
+    /// eventually disagree about which reason is dominant, and a reader could not tell which one the pass decided with.
+    /// </summary>
+    private static string PassCounts(FarmhandForEachPassResult pass, int budget)
     {
-        var hint = new StringBuilder(128);
-        hint.Append(CultureInfo.InvariantCulture,
+        var counts = new StringBuilder(128);
+        counts.Append(CultureInfo.InvariantCulture,
             $"decided={pass.Decided};succeeded={pass.Succeeded};failed={pass.Failed};refused={pass.Refused};not_matched={pass.NotMatched};left_alone={pass.LeftAlone};deferred={pass.Deferred};stopped={pass.StopObserved};omitted={pass.Omitted}");
         foreach ((string code, int count) in ReasonsByCount(pass))
         {
             string entry = string.Create(CultureInfo.InvariantCulture, $";{code}={count}");
-            if (hint.Length + entry.Length > BodyProgramValidation.MaximumNodeHintLength) break;
-            hint.Append(entry);
+            if (counts.Length + entry.Length > budget) break;
+            counts.Append(entry);
         }
-        return hint.ToString();
+        return counts.ToString();
     }
 
     /// <summary>

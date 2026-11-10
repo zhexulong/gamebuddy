@@ -50,6 +50,12 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
     internal const string SeedTargetsFamily = "seedTargets";
 
     /// <summary>
+    /// The three families this pass can name a tile for, listed ONCE so <see cref="CanNameFamily"/> and
+    /// <see cref="TargetIdFor"/> cannot disagree about the set.
+    /// </summary>
+    private static readonly string[] NameableFamilies = { CropTargetsFamily, HarvestTargetsFamily, SeedTargetsFamily };
+
+    /// <summary>
     /// The seed family's own two row fields, read from the row's `do`: a seed target is (slot, tile, item), and the first
     /// and third of those are the caller's declaration rather than anything the tile decides.
     /// </summary>
@@ -105,9 +111,14 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
                         ? ExecutionManager.BuildSeedTargetId(this.farm, slot, x, y, qualifiedItemId)
                         : null;
             default:
+                // A family listed in `NameableFamilies` with no arm above: the drift `FarmhandForEachFamilyDriftTests`
+                // exists to catch. It answers null rather than guessing, and `CanNameFamily` is what makes the row say the
+                // family is known and the tile is bare.
                 return null;
         }
     }
+
+    public bool CanNameFamily(string family) => Array.IndexOf(NameableFamilies, family) >= 0;
 
     private bool IsOnMap(int x, int y) =>
         x >= 0 && y >= 0 && x < this.farm.map.Layers[0].LayerWidth && y < this.farm.map.Layers[0].LayerHeight;

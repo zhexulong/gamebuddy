@@ -175,12 +175,51 @@ public sealed class ForEachNodeExecutionTests
     }
 
     /// <summary>
-    /// A row whose family cannot name that tile is REFUSED BY NAME and never dispatched: a null identity would reach the
-    /// handler as "the target changed", which is a lie about a tile nobody changed, and the caller could not tell it from
-    /// a real race.
+    /// A CROP TILE IS NAMED BY ITS FAMILY, WHICH IS WHY THE LOOP THAT FAILED LIVE WAS NOT A BROKEN LOOKUP.
+    ///
+    /// <para>
+    /// Measured 2026-11-10 (`round42`, day 6): a `water_crop` loop refused eight rows as
+    /// `row_target_identity_unavailable:water_crop:croptargets` and the lowercase spelling read as a family id that could
+    /// never match the snapshot's `cropTargets`. It could not: the projection onto the reason grammar is
+    /// <see cref="RouteReenteringBodyProgramExecutor"/>'s own (a node's reason code is lowercase-only), and the family the
+    /// seam is ASKED for is the descriptor's, verbatim. This case is the disproof - a `water_crop` row over a tile that
+    /// really carries a crop gets an identity, and it is the one the family publishes.
+    /// </para>
     /// </summary>
     [Fact]
-    public void ARowWhoseFamilyHasNoIdentityForThatTileIsRefusedByNameAndNotDispatched()
+    public void AWaterCropRowOverACropTileCarriesTheIdentityItsFamilyPublishes()
+    {
+        using var harness = ForEachHarness.Create();
+        harness.PlaceCrop(10, 10, seedIndex: "472");
+        harness.PlaceCrop(11, 10, seedIndex: "473");
+
+        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":2,\"h\":1}},\"do\":{\"action\":\"water_crop\"}}");
+
+        BodyProgramStatusSnapshot status = harness.Status();
+        status.State.Should().Be(BodyProgramState.Succeeded, harness.Diagnostic);
+        harness.Handler.Requests.Should().HaveCount(2, "two crop tiles, two rows, from ONE node");
+        string[] published =
+        {
+            ExecutionManager.BuildCropTargetId(harness.Farm, 10, 10, seedId: "472", harvestId: "24"),
+            ExecutionManager.BuildCropTargetId(harness.Farm, 11, 10, seedId: "473", harvestId: "24"),
+        };
+        harness.Handler.Requests.Select(request => request.Args.ExpectedTargetId).Should().BeEquivalentTo(
+            published,
+            "each row carries the identity `cropTargets` publishes for its own tile, which is what `water_crop` recomputes");
+    }
+
+    /// <summary>
+    /// A row whose family CAN name a tile, over a tile that carries nothing for it, says exactly that.
+    ///
+    /// <para>
+    /// It used to answer `row_target_identity_unavailable:water_crop:cropTargets` - the same code a family the seam has no
+    /// arm for answers - so the live run's eight bare tiles were indistinguishable from a family id that never matches, and
+    /// the only conclusion a reader could draw was that `cropTargets` was broken. Two facts, two words: the family is fine
+    /// and THIS tile has no crop on it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ACropRowOverABareTileSaysTheFamilyHasNoTargetThere()
     {
         using var harness = ForEachHarness.Create();
         // A tillable tile with NO crop on it: `water_crop` declares `cropTargets`, and that family has no identity for a
@@ -192,22 +231,113 @@ public sealed class ForEachNodeExecutionTests
         BodyProgramStatusSnapshot status = harness.Status();
         status.State.Should().Be(BodyProgramState.Failed, "no row ran, so the pass did nothing");
         status.Nodes.Single().FailureCode.Should().Be(
-            "row_target_identity_unavailable:water_crop:croptargets",
-            "the refusal names the action AND the family, projected onto the reason grammar (lowercase)");
+            "row_target_absent:water_crop:croptargets",
+            "the family names the tile and the tile carries no crop, which is a different fact from a family the seam cannot derive");
         harness.Handler.Requests.Should().BeEmpty("nothing was dispatched with a null identity");
-        // A failed node carries no evidence (ADR-006), so the count per reason rides the hint rather than being lost. The
-        // code is the same projection `FailureCode` carries, so the two answers cannot disagree about the reason.
+        // A failed node carries no evidence (ADR-006), so the count per reason rides the hint and the detail rather than
+        // being lost. Both are the same projection `FailureCode` carries, so the three answers cannot disagree.
         status.Nodes.Single().Hint.Should().Contain(
             "refused=2",
             "two rows refused, and the answer says how many");
         status.Nodes.Single().Hint.Should().Contain(
-            "row_target_identity_unavailable:water_crop:croptargets=2",
+            "row_target_absent:water_crop:croptargets=2",
             "the count is PER REASON, named with the same code the failure carries");
+        status.Nodes.Single().RefusalDetail.Should().Contain(
+            "row_target_absent:water_crop:croptargets=2",
+            "a reader of `reasonDetail` sees the counts too, not the `unknown_reason:failed` placeholder");
+    }
+
+    /// <summary>
+    /// A FAILED PASS CARRIES ITS COUNTS IN `reasonDetail`, not only in the hint.
+    ///
+    /// <para>
+    /// Measured 2026-11-10 (`round42`, day 6): the loop's hint held `decided=9;succeeded=0;failed=1;refused=8;...` and the
+    /// detail a reader actually reads said `unknown_reason:failed`, because a failed node's evidence is dropped (ADR-006)
+    /// and the aggregate never filled the one free-text field a failure may carry. The counts ARE the answer to "what did
+    /// the pass do", so they travel verbatim, in the same spelling `FailureCode` and the hint use.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AFailedPassCarriesItsCountsInTheReasonDetail()
+    {
+        using var harness = ForEachHarness.Create();
+        // One crop tile and two bare ones under one rectangle: a mixed pass, which is the shape a reader most needs counted.
+        harness.PlaceCrop(10, 10, seedIndex: "472");
+
+        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":3,\"h\":1}},\"do\":{\"action\":\"water_crop\"}}");
+
+        BodyProgramStatusSnapshot status = harness.Status();
+        status.State.Should().Be(BodyProgramState.Failed, "two of three rows were refused, so the pass did not finish");
+        status.Nodes.Single().FailureCode.Should().Be("row_target_absent:water_crop:croptargets");
+        status.Nodes.Single().RefusalDetail.Should().NotBeNull("a failed pass owes a reader its counts");
+        string detail = status.Nodes.Single().RefusalDetail!;
+        detail.Should().Contain("decided=3").And.Contain("succeeded=1").And.Contain("refused=2");
+        detail.Should().Contain("row_target_absent:water_crop:croptargets=2");
+        harness.Handler.Requests.Should().ContainSingle("the one crop tile ran; the two bare ones were refused by name");
+    }
+
+    /// <summary>
+    /// A loop whose rectangle addresses no live tile has its OWN code and its own counts - never a bare failure.
+    ///
+    /// The rectangle is past the map's edge, so every tile in it is off the farm: there is nothing to decide, and the pass
+    /// says `for_each_no_rows` with `decided=0` in the detail rather than leaving a reader to guess between "no rows" and
+    /// "the loop failed".
+    /// </summary>
+    [Fact]
+    public void ALoopWhoseRectangleAddressesNoLiveTileNamesItsOwnCodeAndCounts()
+    {
+        using var harness = ForEachHarness.Create();
+
+        harness.Run($"{{\"source\":{{\"area\":{{\"x\":{MapWidth + 4},\"y\":0,\"w\":2,\"h\":1}}}},\"do\":{{\"action\":\"till_soil\"}}}}");
+
+        BodyProgramStatusSnapshot status = harness.Status();
+        status.State.Should().Be(BodyProgramState.Failed);
+        status.Nodes.Single().FailureCode.Should().Be("for_each_no_rows", "a pass over no rows is named as such");
+        status.Nodes.Single().RefusalDetail.Should().Contain("decided=0");
+        harness.Handler.Requests.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// A ROW IS DISPATCHED IN ITS OWN ACTION'S WINDOW, NOT IN THE FORM'S TEN MINUTES.
+    ///
+    /// <para>
+    /// Measured 2026-11-10 (`round42`, day 6): `failed=1` of nine rows was `invalid_deadline`. The row inherited the FORM's
+    /// grant deadline (<see cref="FarmhandPlanFormCatalog.WatchdogMs"/>, ten minutes of a pass over a whole patch) and the
+    /// controller admits a deadline at most <see cref="FarmhandActionCatalog.OrdinaryActionCeilingMs"/> ahead - so a row
+    /// that got past identity minting was refused for a deadline its own action never set. The row's window is its
+    /// action's, capped by the pass's remaining time.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ARowsDeadlineIsTheRowsOwnWindowAndNotTheFormsTenMinutes()
+    {
+        using var harness = ForEachHarness.Create();
+        harness.PlaceCrop(10, 10, seedIndex: "472");
+        long startedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        harness.Run("{\"source\":{\"area\":{\"x\":10,\"y\":10,\"w\":1,\"h\":1}},\"do\":{\"action\":\"water_crop\"}}");
+
+        BridgeExecutionRequest request = harness.Handler.Requests.Should().ContainSingle().Subject;
+        long settledAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        long formDeadlineMs = harness.FormDeadlineMs();
+        formDeadlineMs.Should().BeGreaterThan(
+            startedAt + FarmhandActionCatalog.OrdinaryActionCeilingMs,
+            "the harness must reproduce the live shape: the FORM's window is longer than the window one ordinary action is admitted in");
+        request.DeadlineMs.Should().BeLessThanOrEqualTo(
+            settledAt + FarmhandActionCatalog.OrdinaryActionCeilingMs,
+            "the row's deadline is its own action's window, so the controller admits it instead of answering invalid_deadline");
+        request.DeadlineMs.Should().BeGreaterThan(startedAt, "and it is still a live window when the row is dispatched");
+        request.DeadlineMs.Should().BeLessThan(
+            formDeadlineMs,
+            "the pass's ten-minute budget is not the window of any one row of it");
     }
 
     /// <summary>
     /// The same refusal for a family this pass cannot name a tile for AT ALL: `cut_weeds` declares `weedTargets`, and the
     /// row identity seam has no arm for it, so every row is refused with the family the action itself declares.
+    ///
+    /// Beside <see cref="ACropRowOverABareTileSaysTheFamilyHasNoTargetThere"/> this is the pair that makes the two answers
+    /// different: THIS one names a family the seam cannot derive, that one names a tile that carries nothing.
     /// </summary>
     [Fact]
     public void ARowWhoseActionFamilyTheSeamCannotDeriveIsRefusedWithThatFamilyName()
@@ -271,6 +401,13 @@ public sealed class ForEachNodeExecutionTests
                 FarmhandForEachFarmWorld.SeedTargetsFamily,
             },
             "a crop tile is one identity published by two families, a seed target is one per stack, and every other family is refused by name");
+
+        // AND THE TWO ANSWERS ARE ONE SET. `CanNameFamily` is what lets a row say "this tile is bare" instead of "this
+        // family is unknown", so it must agree with the method that actually mints the identity - a family listed there
+        // and missing here (or the reverse) would put the wrong one of the two refusals in front of a caller.
+        declared.Where(harness.World.CanNameFamily).Should().BeEquivalentTo(
+            answered,
+            "the families a row can be told are BARE are exactly the families this seam can mint an identity for");
     }
 
     /// <summary>
@@ -362,7 +499,10 @@ public sealed class ForEachNodeExecutionTests
                 FarmhandBodyProgramCatalogProjection.Create().Catalog!,
                 new BridgeScope("stardew", "save", "world", "player", "companion"),
                 () => new BodyProgramPolicyIdentity("policy-a", 1),
-                () => 10);
+                // THE REAL CLOCK. A frozen one cannot express the live `invalid_deadline`: the form's deadline is derived
+                // from its own ten-minute watchdog, and the difference between that and an ordinary action's window is the
+                // defect `ARowsDeadlineIsTheRowsOwnWindowAndNotTheFormsTenMinutes` measures.
+                () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             this.Admission = new ImmediateAdmissionTransport();
             this.Controller = new FarmhandBodyProgramController(this.Authority, this.Admission, this.Executor);
         }
@@ -454,6 +594,10 @@ public sealed class ForEachNodeExecutionTests
                 enabled);
 
         internal BodyProgramStatusSnapshot Status() => this.Authority.Status("program").Snapshot!;
+
+        /// <summary>The deadline the journal derived for the loop node: the window the caller declared for the PASS.</summary>
+        internal long FormDeadlineMs() => this.Authority.Snapshot.Programs.Single().Nodes.Single().DerivedDeadlineMs
+            ?? throw new InvalidOperationException("the admitted loop node carries no derived deadline");
 
         /// <summary>The aggregate a successful node carries as its evidence; a failed node carries none (ADR-006).</summary>
         internal string NodeEvidence() =>

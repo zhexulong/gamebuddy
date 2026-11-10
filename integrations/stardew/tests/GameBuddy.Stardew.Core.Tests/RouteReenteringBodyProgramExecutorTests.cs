@@ -288,6 +288,46 @@ public sealed class RouteReenteringBodyProgramExecutorTests
         terminal.FailureCode.Should().Be("action_not_available", "the router already computed the cause; dropping it is what leaves the companion guessing");
     }
 
+    /// <summary>
+    /// A ROW'S DEADLINE IS ITS OWN ACTION'S WINDOW, AND THE PASS'S DECLARED DEADLINE STILL WINS WHEN IT IS SOONER.
+    ///
+    /// <para>
+    /// Measured 2026-11-10 (`round42`, day 6): one row of a nine-row `water_crop` loop answered `invalid_deadline`. The row
+    /// had inherited the FORM's grant, whose window is <see cref="FarmhandPlanFormCatalog.WatchdogMs"/> - ten minutes, the
+    /// budget of a pass over a whole patch - while an ordinary action is admitted only within
+    /// <see cref="FarmhandActionCatalog.OrdinaryActionCeilingMs"/> of now. The branch is pinned here; the integration case
+    /// `ARowsDeadlineIsTheRowsOwnWindowAndNotTheFormsTenMinutes` drives the same number through the real router.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ARowDeadlineIsItsOwnActionsWindowCappedByThePassesDeadline()
+    {
+        FarmhandActionRegistration waterCrop = FarmhandActionCatalog.Registrations.Single(
+            registration => string.Equals(registration.ActionId, "water_crop", StringComparison.Ordinal));
+        long nowMs = 1_000_000;
+        long passDeadlineMs = nowMs + FarmhandPlanFormCatalog.WatchdogMs;
+
+        long rowDeadlineMs = RouteReenteringBodyProgramExecutor.RowDeadlineMs(waterCrop.Descriptor, passDeadlineMs, nowMs);
+
+        rowDeadlineMs.Should().Be(
+            nowMs + waterCrop.Descriptor!.WatchdogMs,
+            "a row is one ordinary action, so its window is that action's own published watchdog - the same number the Host reads to size a flat request");
+        (rowDeadlineMs - nowMs).Should().BeLessThanOrEqualTo(
+            FarmhandActionCatalog.OrdinaryActionCeilingMs,
+            "the controller admits a deadline at most its ceiling ahead, and a row outside that bound is the `invalid_deadline` the live run measured");
+        rowDeadlineMs.Should().BeLessThan(
+            passDeadlineMs,
+            "the form's ten minutes are the PASS's budget, and applying them to one row is the phantom the live run met");
+
+        RouteReenteringBodyProgramExecutor.RowDeadlineMs(waterCrop.Descriptor, nowMs + 5_000, nowMs).Should().Be(
+            nowMs + 5_000,
+            "the deadline the caller declared for the pass is honoured whenever it is the sooner of the two");
+
+        RouteReenteringBodyProgramExecutor.RowDeadlineMs(null, passDeadlineMs, nowMs).Should().Be(
+            nowMs + FarmhandActionCatalog.OrdinaryActionCeilingMs,
+            "a row action with no published watchdog is still bounded by the ordinary ceiling rather than by the form's window");
+    }
+
     private sealed class RefusingHandler : IFarmhandActionHandler
     {
         private readonly ExecutionState state;

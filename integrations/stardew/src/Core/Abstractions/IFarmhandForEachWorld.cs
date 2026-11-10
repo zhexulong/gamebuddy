@@ -56,6 +56,23 @@ public interface IFarmhandForEachWorld
     /// <param name="declaredArguments">The row's `do` arguments, or null when it declared none.</param>
     string? TargetIdFor(string family, int x, int y, IReadOnlyDictionary<string, string>? declaredArguments);
 
+    /// <summary>
+    /// Whether this pass can name a tile AT ALL under <paramref name="family"/>.
+    ///
+    /// <para>
+    /// THE OTHER HALF OF <see cref="TargetIdFor"/>, and it exists because one refusal answered two different facts. A family
+    /// this seam has no arm for (every published family but three) and a family it CAN derive over a tile that carries
+    /// nothing for it (a `cropTargets` row over bare ground) both used to answer null, so the row said the same thing for
+    /// both - and the companion reading the live run concluded that `cropTargets` could never match rather than that the
+    /// tiles carried no crop.
+    /// </para>
+    /// <para>
+    /// A CALLER THAT GETS FALSE IS REFUSED BY FAMILY NAME; a caller that gets true and an invalid tile is told the tile has
+    /// nothing there. Neither is a silent skip.
+    /// </para>
+    /// </summary>
+    bool CanNameFamily(string family);
+
     /// <summary>Whether the live action policy enables this action right now.</summary>
     bool IsActionEnabled(string actionId);
 

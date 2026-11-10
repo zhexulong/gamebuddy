@@ -162,6 +162,10 @@ public sealed class BodyProgramPlanFormPolicyTests
 
         public string? TargetIdFor(string family, int x, int y, IReadOnlyDictionary<string, string>? declaredArguments) => null;
 
+        // No family at all: this stub names no tile, so every row that needs an identity is refused for the same reason
+        // whether the family is derivable or not, and no test in this file depends on which.
+        public bool CanNameFamily(string family) => false;
+
         public bool IsActionEnabled(string actionId) => string.Equals(actionId, this.enabled, StringComparison.Ordinal);
 
         public bool StopRequested => false;
