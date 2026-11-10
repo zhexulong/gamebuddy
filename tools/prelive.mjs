@@ -91,6 +91,15 @@ export const L0_GATES = Object.freeze([
   "tools/check-game-context-pressure.mjs",
   "tools/check-live-run-verdict-guards.mjs",
   "tools/check-failure-reason-codes.mjs",
+  // The receipt's own provenance: every field whose name claims a physical transition (before/after/*_removed/delta)
+  // must be computed from a value read in that execution, never a literal. Measured 2026-11-10: `till_soil` wrote
+  // `before = "none"` without reading the tile, and `pickup_item` reported a chunk removal it had disproved.
+  "tools/audit-stardew-receipt-transition-fields.mjs",
+  // The type-level sibling of the totality question: a `switch` over a union must hand its impossible case to
+  // `assertNever`, or a new member compiles and quietly answers with the fallback. Population is derived from
+  // `dialogue-web/tsconfig.json`'s own `include`, so a new source file joins without an edit here. Authored
+  // outside this lane and left untracked; wired here because a gate that runs in no rung cannot fail.
+  "tools/check-switch-exhaustiveness.mjs",
   // The promotion pair. `check-stardew-action-promotion` already ran on every push in CI; the ladder runs it too
   // because it is the gate a lane reads as "may this action be visible to the Agent", and reading it 100 ms before a
   // live run is cheaper than discovering its verdict after one. Its sibling asks the other half of the question the
