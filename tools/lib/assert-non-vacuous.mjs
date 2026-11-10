@@ -25,8 +25,24 @@
 /**
  * The fields a report may carry its population under. Every member is "objects this gate examined"; a new
  * member has to mean the same thing, or the rule it feeds says nothing.
+ *
+ * `examined` is the fourth because the repository already states the rule in those words - "`0 findings` means nothing
+ * without `examined N`" - and five gates printed exactly that number while the judge could not read it, which made
+ * them count as gates whose zero is invisible. The list is exported because the static census in
+ * `tools/audit-gate-red-proofs.mjs` has to look for the SAME names in a gate's source: two spellings of this list
+ * disagree the first time a member is added here and not there.
  */
-const POPULATION_FIELDS = Object.freeze(["population", "fields", "cases"]);
+export const POPULATION_FIELDS = Object.freeze(["population", "fields", "cases", "examined"]);
+
+/**
+ * The field list as a pattern for a gate's SOURCE, for a reader that cannot run the gate.
+ *
+ * A report writes one of the names as a key (`population: 3`, `"cases": 3`); the pattern therefore matches the key
+ * position only, so a gate that mentions `examined` in prose or in a message is not read as declaring a population.
+ */
+export function populationFieldPattern() {
+  return new RegExp(`(?:^|[\\s{,"'\u0060])(?:${POPULATION_FIELDS.join("|")})["']?\\s*[:,}]`, "u");
+}
 
 /**
  * Judge one gate report's population.

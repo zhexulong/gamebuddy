@@ -19,12 +19,15 @@
  * at HEAD - four gate files have neither a printed report nor an entry - and no job runs its test file,
  * so the gap survived. A meta-gate cannot fail where nobody looks.
  *
- * THE POPULATION is a union of two derivations, neither of them a list:
+ * THE POPULATION is the union `tools/lib/gate-population.mjs` derives once for this audit AND for
+ * `tools/lib/harness-conformance.mjs`, so the two tools cannot disagree about how many gates there are:
  *   A. every `package.json` script named like a gate (`audit:` / `check:` / `test:`), with the files its
  *      command runs as that gate's entry points;
  *   B. every `tools/check-*.mjs` file no script names - today 16 of them, which is the half check 5 of
  *      the harness-conformance suite cannot see.
- * The two halves overlap by construction and are merged on the entry file, so a gate has one record.
+ * The two halves overlap by construction and are merged on the entry file, so a gate has one record. The
+ * conformance suite reads the same derivation and judges only the members whose default run it can execute;
+ * it prints the bucket it excluded and why, and the census line is built from these numbers.
  *
  * THE QUESTION, per gate: has this gate been shown to fail on a real injected violation? The answer is a
  * `red-proof:` marker in a comment line of a file the gate owns - its entry file or its falsifier suite -
@@ -73,20 +76,12 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { populationFieldPattern, POPULATION_FIELDS } from "./lib/assert-non-vacuous.mjs";
+import { deriveGatePopulation } from "./lib/gate-population.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE_PATH = "tools/gate-red-proof-baseline.json";
 
-/** Half A of the population: the declared gate scripts. */
-const GATE_SCRIPT = /^(?:audit|check|test):/u;
-/** Half B: gate files a script may not name - the half a directory scan can see and a script list cannot. */
-const GATE_FILE = /^check-.*\.mjs$/u;
-/** A path a command runs: that gate's entry points. Longest extension first, or `main.tsx` resolves to `main.ts`. */
-const COMMAND_PATH = /[\w.-]+(?:\/[\w.-]+)+\.(?:mjs|tsx|ts|cjs|js|ps1|py)/gu;
-/** A command may change directory first; its paths then resolve from there, not from the repository root. */
-const COMMAND_CWD = /^(?:cd|pushd)\s+(\S+)\s*&&/u;
-/** A falsifier that lives beside its gate: the project rule is "the falsifier is part of the gate's own test". */
-const SIBLING_FALSIFIER = /\.(?:test\.mjs|test\.ts|mutation\.mjs)$/u;
 /** `red-proof: <kind> <claim>`; the claim may continue on the following comment lines. */
 const RED_PROOF = /red-proof:\s*([A-Za-z][A-Za-z-]*)\s+([\s\S]{12,})/u;
 /** The kinds, each answering "how was the gate seen red" differently. */
@@ -109,7 +104,7 @@ const MEMBER_SCRIPT = /(?:^|[\s"'&|]+)((?:audit|check|test):[\w:-]+)/gu;
  */
 const REPORT_LITERAL = /JSON\.stringify\(\{[^}]*\bgate\b|\bgate["']?\s*:\s*["'`]/u;
 /** The population fields `tools/lib/assert-non-vacuous.mjs` reads: name none of them and a zero is invisible. */
-const POPULATION_FIELD = /(?:^|[\s{,"'`])(?:population|fields|cases)["']?\s*[:,}]/u;
+const POPULATION_FIELD = populationFieldPattern();
 
 const stripDecoration = (line) => line.replace(/^\s*(?:\/\*\*?|\*|\/\/|#|--)\s?/u, "").trim();
 
@@ -153,36 +148,6 @@ export function readRedProofMarkers({ root, file }) {
     markers.push({ file, line: index + 1, kind: match[1].toLowerCase(), claim: match[2].trim(), valid: true });
   });
   return markers;
-}
-
-/** Half A: every declared gate script, with the paths its command runs. */
-function declaredGateScripts(root) {
-  const parsed = read(join(root, "package.json"));
-  if (parsed === null) throw new Error("gate_red_proofs_package_json_missing");
-  const scripts = JSON.parse(parsed).scripts ?? {};
-  return Object.keys(scripts)
-    .filter((name) => GATE_SCRIPT.test(name))
-    .sort()
-    .map((name) => {
-      const command = scripts[name];
-      // `cd host && bun test src/x.test.ts` names a file that only exists under `host/`; joining the
-      // directory onto the path keeps the record resolvable instead of reporting a gate as unassessable.
-      const prefix = COMMAND_CWD.exec(command)?.[1] ?? "";
-      const entryFiles = [...new Set(command.match(COMMAND_PATH) ?? [])].map((file) =>
-        prefix === "" ? file : `${prefix.replace(/\/$/u, "")}/${file}`,
-      );
-      return { id: name, command, entryFiles };
-    });
-}
-
-/** Half B: every `tools/check-*.mjs` gate file, minus its own falsifiers, which are not gates. */
-function gateFiles(root) {
-  const toolsDir = join(root, "tools");
-  if (!existsSync(toolsDir)) return [];
-  return readdirSync(toolsDir)
-    .filter((name) => GATE_FILE.test(name) && !SIBLING_FALSIFIER.test(name))
-    .sort()
-    .map((name) => ({ id: `tools/${name}`, command: `node tools/${name}`, entryFiles: [`tools/${name}`] }));
 }
 
 /** The falsifier files that sit beside a gate, whether or not the gate declares them. */
@@ -248,9 +213,9 @@ function classify({ root, gate, scriptNames, runnerText }) {
  * A gate that prints a report and names no population the shared judge reads cannot be told apart from one that
  * measured nothing - there is no number for `assertNonVacuous` to read, so `0 findings` stands beside no `examined N`.
  * The audit prints the count and the members rather than leaving a reader to count them by hand. What this is NOT: an
- * execution. It reads the gate's source; a population computed under another name (`examined`, `runsJudged`) reads as
- * absent here even when the gate does defend it, which is why the members are printed - each one is a gate to inspect,
- * not a proven defect.
+ * execution. It reads the gate's source; a population computed under a name the shared field list does not carry
+ * (`runsJudged`, `tokens`) reads as absent here even when the gate does defend it, which is why the members are
+ * printed - each one is a gate to inspect, not a proven defect.
  */
 export function zeroPopulationPass({ root, files }) {
   const reporting = [];
@@ -271,18 +236,13 @@ export function zeroPopulationPass({ root, files }) {
  * `unassessed` (the command runs no file in this repo, so there is nothing to read).
  */
 export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
-  const scripts = declaredGateScripts(root);
-  const files = gateFiles(root);
+  // One derivation, shared with the conformance suite: `tools/lib/gate-population.mjs`. A `tools/check-*.mjs` a
+  // script runs is ONE gate there, and the script is its id - what an operator types and what CI's derived job
+  // names - so the directory half contributes only the gates no script names at all.
+  const { gates, scripts, gateFiles: files, unclaimedByScript } = deriveGatePopulation({ root });
   const scriptNames = new Set(scripts.map((gate) => gate.id));
-  // A `tools/check-*.mjs` a script runs is ONE gate, and the script is its id: that is what an operator
-  // types and what CI's derived job names. The directory half therefore contributes the gates no script
-  // names at all - today 16 of them, which is half the reason this population is a union.
-  const claimed = new Set(scripts.flatMap((gate) => gate.entryFiles));
-  const unclaimed = files.filter((file) => !claimed.has(file.entryFiles[0]));
   const runnerText = declaredRunnerText(root);
-  const records = [...scripts, ...unclaimed]
-    .sort((left, right) => left.id.localeCompare(right.id))
-    .map((gate) => classify({ root, gate, scriptNames, runnerText }));
+  const records = gates.map((gate) => classify({ root, gate, scriptNames, runnerText }));
   const status = assignStatus(records);
   const gaps = records
     .filter((record) => status.get(record.id) !== "proven")
@@ -292,7 +252,7 @@ export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
       total: records.length,
       scripts: scripts.length,
       gateFiles: files.length,
-      unclaimedByScript: unclaimed.length,
+      unclaimedByScript,
     },
     records: records.map((record) => ({ ...record, status: status.get(record.id) })),
     proven: records.filter((record) => status.get(record.id) === "proven"),
@@ -327,6 +287,22 @@ function assignStatus(records) {
           record.members.every((member) => status.get(member) === "proven") ? "proven" : "unproven_via_members",
         );
   return status;
+}
+
+/**
+ * The census line BOTH tools print, from the same reading: how many gates the population has, how many carry a red proof,
+ * how many owe one with the debt recorded, how many nobody has declared at all, and how many print a report that cannot
+ * show whether it measured anything.
+ *
+ * It lives here rather than in each printer because these five numbers are one reading of one population. Two printers
+ * writing them out separately is how "we have N gates" acquired two answers in the first place; a caller that adds a
+ * bucket (the conformance suite adds `unlisted`) appends to this line rather than restating it.
+ */
+export function describeGateCensus({ examined, withRedProof, recorded, undeclared, zeroPopulationPass }) {
+  return (
+    `gates examined ${examined} · with a red proof ${withRedProof} · declared without ${recorded} · ` +
+    `undeclared ${undeclared} · zero-population-pass ${zeroPopulationPass}`
+  );
 }
 
 /** One sentence naming what is wrong with a gate, for the operator who has to fix it. */
@@ -404,7 +380,7 @@ function runProofSuites(root, proven) {
   return findings;
 }
 
-function report({ reading, held, gaps }) {
+function report({ reading, held, gaps, undeclared = 0 }) {
   const { population } = reading;
   const byStatus = (status) => reading.records.filter((record) => record.status === status).length;
   process.stdout.write(
@@ -417,18 +393,25 @@ function report({ reading, held, gaps }) {
     const proof = record.proofs[0];
     process.stdout.write(`  proven:${record.id} kind=${proof.kind} at=${proof.file}:${proof.line}\n`);
   }
-  // The census a reader would otherwise take a day to count: how many gates there are, how many carry a red proof, and
-  // how many cannot see a zero population at all. The three numbers belong on ONE line, because they are the answer to
-  // "how much of this is measured" and reading one without the others is how "0 violations" gets quoted.
+  // The census a reader would otherwise take a day to count: how many gates there are, how many carry a red proof,
+  // which of the rest are recorded debt and which nobody has declared at all, and how many cannot see a zero
+  // population. These numbers belong on ONE line, because they are the answer to "how much of this is measured" and
+  // reading one without the others is how "0 violations" gets quoted.
   const zero = reading.zeroPopulationPass;
   process.stdout.write(
-    `  gates examined ${population.total} · with a red proof ${reading.proven.length} · ` +
-      `zero-population-pass ${zero.invisible.length}\n`,
+    `  ${describeGateCensus({
+      examined: population.total,
+      withRedProof: reading.proven.length,
+      recorded: held,
+      undeclared,
+      zeroPopulationPass: zero.invisible.length,
+    })}\n`,
   );
   process.stdout.write(
     `  zero-population-pass reads ${zero.reporting.length} gate file(s) that print a report; these ` +
-      `${zero.invisible.length} name no \`population\`/\`fields\`/\`cases\` the shared judge reads, so a zero in them ` +
-      `is invisible: ${zero.invisible.map((file) => file.replace(/^tools\//u, "")).join(", ")}\n`,
+      `${zero.invisible.length} name no ${POPULATION_FIELDS.map((field) => `\`${field}\``).join("/")} field the ` +
+      `shared judge reads, so a zero in them is invisible: ` +
+      `${zero.invisible.map((file) => file.replace(/^tools\//u, "")).join(", ")}\n`,
   );
   if (gaps) for (const gap of reading.gaps) process.stdout.write(`  gap:${gap.gate} status=${gap.status}\n`);
   for (const entry of reading.unexecutedProofs)
@@ -464,6 +447,9 @@ function main(argv) {
   }
   const baseline = readBaseline(root);
   const { findings, held } = evaluate({ reading, baseline });
+  // `undeclared` is the half the baseline does not cover: a gate with no red proof and no record saying it owes one.
+  // It is the number the conformance suite fails on, so it is counted here once and read from the same reading there.
+  const undeclared = findings.filter((finding) => finding.code !== "baseline_entry_stale").length;
   const all = argv.includes("--run") ? [...findings, ...runProofSuites(root, reading.proven)] : findings;
   if (json) {
     process.stdout.write(
@@ -471,7 +457,7 @@ function main(argv) {
     );
     return all.length === 0 ? 0 : 1;
   }
-  report({ reading, held, gaps: argv.includes("--gaps") });
+  report({ reading, held, gaps: argv.includes("--gaps"), undeclared });
   for (const finding of all)
     process.stderr.write(`gate_red_proof_${finding.code}:${finding.gate}: ${finding.detail}\n`);
   if (all.length > 0)

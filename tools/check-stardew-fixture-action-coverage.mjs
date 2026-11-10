@@ -90,6 +90,7 @@ process.stdout.write(
     status: violations.length === 0 && failed.length === 0 ? "passed" : "failed",
     lanes: sets.size,
     publishedActions: publishedIds.size,
+    population: publishedIds.size,
     checks,
     violations,
   })}\n`,

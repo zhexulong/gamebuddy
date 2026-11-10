@@ -18,6 +18,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { auditGateRedProofs, evaluate, readRedProofMarkers } from "./audit-gate-red-proofs.mjs";
+import { POPULATION_FIELDS } from "./lib/assert-non-vacuous.mjs";
 
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const KEYWORD = ["red", "proof"].join("-");
@@ -181,7 +182,7 @@ test("the census counts the gates that cannot see a zero population, and the one
   const root = makeTree({
     "tools/check-a.mjs": gateSource("// no proof here"),
     // A report that names no field the shared judge reads: a zero in it is invisible.
-    "tools/check-invisible.mjs": report("'\"examined\":0'"),
+    "tools/check-invisible.mjs": report("'\"count\":0'"),
     // A report that does name one: the judge can see it, so it is not part of the count.
     "tools/check-visible.mjs": report("'\"population\":3'"),
     // A gate that prints no report is not judged on a population at all, and is not counted as reporting.
@@ -193,6 +194,27 @@ test("the census counts the gates that cannot see a zero population, and the one
     assert.deepEqual(census.invisible, ["tools/check-invisible.mjs"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// One list, two readers: the static census looks for the SAME field names `assertNonVacuous` reads at runtime. Two
+// spellings of that list disagree the first time a member is added to one of them, and the disagreement is silent - the
+// census would report a gate as blind while the judge reads its population perfectly well.
+test("the static census reads exactly the field names the shared judge reads", () => {
+  for (const field of POPULATION_FIELDS) {
+    const root = makeTree({
+      "tools/check-a.mjs": gateSource("// no proof here"),
+      ["tools/check-field.mjs"]: `#!/usr/bin/env node\nprocess.stdout.write('{"gate":"stub/v1","status":"passed","checks":[],"${field}":2}\\n');\n`,
+    });
+    try {
+      assert.deepEqual(
+        auditGateRedProofs({ root }).zeroPopulationPass.invisible,
+        [],
+        `a report carrying \`${field}\` must be readable by the census`,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });
 

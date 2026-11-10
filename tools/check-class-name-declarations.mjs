@@ -39,6 +39,7 @@ if (process.argv.includes("--json")) {
         status: failed ? "failed" : "passed",
         root: repoRoot,
         counts: readout.counts,
+        population: readout.counts.names,
         undeclared: readout.undeclared.map((entry) => ({
           className: entry.className,
           sites: entry.sites.map((site) => `${site.path}:${site.line}`),

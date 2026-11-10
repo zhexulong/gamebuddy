@@ -40,6 +40,7 @@ if (process.argv.includes("--json")) {
         status: failed ? "failed" : "passed",
         root: repoRoot,
         counts: readout.counts,
+        population: readout.counts.sites,
         unreported: readout.unreported,
         problems: readout.problems,
       },

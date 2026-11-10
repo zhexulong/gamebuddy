@@ -15,13 +15,22 @@
  *                                     fixture switch accepts, read from every `ModEntry.Fixtures*.cs`.
  *   3. `checkRunnerResolution`      - every action's resolved runner exists and imports without starting a session.
  *   4. `checkExperimentalRunners`   - every `STARDEW_EXPERIMENTAL_ACTION_RUNNERS` runner exists on disk.
- *   5. `checkGateFalsifiers`        - every `tools/check-*.mjs` gate either prints a self-verification report in its
- *                                     own default run or is declared in `GATES_WITHOUT_FALSIFIER` with a reason, and a
- *                                     report that examined nothing is blocked rather than read as a pass.
+ *   5. `checkGateFalsifiers`        - every gate in the ONE population (`tools/lib/gate-population.mjs`) either prints a
+ *                                     self-verification report in its own default run or is declared in
+ *                                     `GATES_WITHOUT_FALSIFIER` with a reason; a report that examined nothing, a report
+ *                                     that names no population at all, and a gate the red-proof ledger neither proves nor
+ *                                     records are all findings rather than a pass.
  *
  * Checks 3 and 5 ask questions about what code DOES, so they run it and read the result: check 3 imports the runner,
  * check 5 runs the gate and reads the report it prints. Reading the source text for the words `import.meta.main` or
  * `checks` answers a different question - a comment satisfies either one - which is why neither is matched here.
+ *
+ * THE POPULATION IS NOT THIS FILE'S (measured 2026-11-20): this suite used to scan `tools/check-*.mjs` for its own
+ * count of gates (106) while `tools/audit-gate-red-proofs.mjs` derived its own (330), so "how many gates are there, and
+ * how many have been seen red" had two answers and 203 gates without a red case were invisible here. Both tools now
+ * read `tools/lib/gate-population.mjs`, this suite judges the members it can execute, and the census prints the bucket
+ * it excluded, the reason, and the two numbers that make a pass honest: gates nobody declared, and gates whose report
+ * cannot show that it measured anything.
  */
 import { spawnSync } from "node:child_process";
 import {
@@ -37,15 +46,17 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import process from "node:process";
+import { auditGateRedProofs, describeGateCensus, evaluate, readBaseline } from "../audit-gate-red-proofs.mjs";
 import { resolveStardewActionGateRunner } from "../resolve-stardew-action-gate-runner.mjs";
 import {
   STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
   STARDEW_PUBLISHED_ACTION_GATES,
 } from "../stardew-action-gate-descriptors.mjs";
-import { assertNonVacuous } from "./assert-non-vacuous.mjs";
+import { assertNonVacuous, POPULATION_FIELDS } from "./assert-non-vacuous.mjs";
+import { deriveGatePopulation, gateFileNames, gateMemberNames, isGateFile } from "./gate-population.mjs";
 import { importsWithoutStarting, preflightLiveRun } from "./live-run-preflight.mjs";
-import { fixtureActions, fixtureScenario } from "./stardew-native-local-player-fixture.mjs";
 import { STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
+import { fixtureActions, fixtureScenario } from "./stardew-native-local-player-fixture.mjs";
 
 const finding = (code, detail) => ({ code, detail });
 
@@ -784,27 +795,66 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   },
 ]);
 
-/** Every gate file the suite recognises: `tools/check-*.mjs`, minus tests and mutation scripts. */
+/** Every gate file this suite enumerates: the population's `tools/check-*.mjs` members, by file name. */
 export function harnessGateNames(toolsDir) {
-  return readdirSync(toolsDir)
-    .filter((name) => /^check-.*\.mjs$/u.test(name) && !name.endsWith(".test.mjs") && !name.endsWith(".mutation.mjs"))
-    .sort();
+  return gateFileNames(deriveGatePopulation({ root: dirname(toolsDir) }));
 }
 
 /**
- * Require every enumerated gate to be either a `GATES_WITH_FALSIFIER` gate (whose own default run prints a
- * self-verification report) or a declared `GATES_WITHOUT_FALSIFIER` exception. A gate in neither - a new gate that
+ * The red-proof ledger, read ONCE per run: what the other half of this population has declared about itself.
+ *
+ * `tools/audit-gate-red-proofs.mjs` owns that question - has this gate been seen red on a real injected violation - and
+ * answers it with a proof marker or a recorded gap. This suite does not restate the reading: it consumes it, so both
+ * tools publish the same `gates examined N` and `with a red proof M`, and `undeclared` here is exactly the set the audit
+ * reports as a new gap (no proof, and no baseline record saying one is owed).
+ */
+export function gateRedProofLedger({ root }) {
+  const reading = auditGateRedProofs({ root });
+  const { findings, held } = evaluate({ reading, baseline: readBaseline(root) });
+  return {
+    reading,
+    withRedProof: reading.proven.length,
+    recorded: held,
+    undeclared: findings.filter((entry) => entry.code !== "baseline_entry_stale"),
+    stale: findings.filter((entry) => entry.code === "baseline_entry_stale"),
+    // The gates whose default run prints a report that names no population the shared judge can read, so a zero in
+    // them is indistinguishable from a measurement. Static, because this suite cannot execute 330 gates.
+    zeroPopulationPass: reading.zeroPopulationPass.invisible.map((file) => file.replace(/^tools\//u, "")),
+  };
+}
+
+const EMPTY_LEDGER = Object.freeze({
+  withRedProof: 0,
+  recorded: 0,
+  undeclared: [],
+  stale: [],
+  zeroPopulationPass: [],
+});
+
+/**
+ * Require every gate file this suite enumerates to be either a `GATES_WITH_FALSIFIER` gate (whose own default run prints
+ * a self-verification report) or a declared `GATES_WITHOUT_FALSIFIER` exception. A gate in neither - a new gate that
  * forgot both - is the finding.
  *
- * A report that a gate printed AND that examined nothing is the second finding: `0 findings` means nothing without
- * `examined N`, so a report whose population the shared judge reads as zero-with-no-reason is `blocked`, naming the
- * gate. This is where that class was silent - the suite used to accept any non-empty `checks` list, so a gate that
- * measured nothing printed a pass and the suite agreed with it.
+ * Three findings are about the population rather than one gate, and they are what a passing run used to hide:
+ *
+ *   - `gate_undeclared`: a gate in the ONE population that the red-proof ledger neither proves nor records. Named one
+ *     per gate, because "7 undeclared" sends a reader counting and "this one has no proof and no record" does not.
+ *   - `gate_report_without_population`: a gate that prints a report and names no population field, so its `passed`
+ *     next to nothing reads the same as a gate that measured nothing.
+ *   - `gate_declaration_stale`: a recorded gate that is proven now, which means the ledger is holding a debt already
+ *     paid - the ratchet only tightens.
+ *
+ * A report that a gate printed AND that examined nothing is the fourth: `0 findings` means nothing without `examined N`,
+ * so a report whose population the shared judge reads as zero-with-no-reason is `blocked`, naming the gate.
  */
 export function checkGateFalsifiers({
   gateNames,
   withFalsifier = GATES_WITH_FALSIFIER,
   withoutFalsifier = GATES_WITHOUT_FALSIFIER,
+  zeroPopulation = [],
+  undeclared = [],
+  staleDeclarations = [],
   toolsDir,
   run = runGateDefault,
 } = {}) {
@@ -838,39 +888,90 @@ export function checkGateFalsifiers({
     }
     if (!declaredExcept) findings.push(finding("gate_without_falsifier", name));
   }
+  for (const entry of undeclared) findings.push(finding("gate_undeclared", `${entry.gate}: ${entry.detail}`));
+  for (const entry of staleDeclarations)
+    findings.push(finding("gate_declaration_stale", `${entry.gate}: ${entry.detail}`));
+  for (const name of zeroPopulation)
+    findings.push(
+      finding(
+        "gate_report_without_population",
+        `${name}: prints a self-verification report and names no ` +
+          `${POPULATION_FIELDS.join("/")} field, so a run that examined nothing reads exactly like one that did`,
+      ),
+    );
   return findings;
 }
 
 /**
- * Which of the three places each enumerated gate stands in: run for its report, declared without one, or neither.
+ * The numbers the verdict rests on - the SAME population line the red-proof audit prints, plus the bucket this suite
+ * excludes and why.
  *
- * The third bucket is the debt this count exists for. A gate in it has never had its default run executed here, so
- * nothing in this suite can say what it would print - the state is decided by a hand list, and the number is printed
- * beside the verdict instead of being rounded away. A non-zero count is already red (`gate_without_falsifier`); this is
- * what a reader needs in order to see WHICH gate is not being checked.
+ * The population is the union `tools/lib/gate-population.mjs` derives: every `package.json` gate script and every
+ * `tools/check-*.mjs` file no script names. This suite can only judge the gate files (it runs each one's own default
+ * invocation and reads the report), so the script-backed half is EXCLUDED and named as excluded - never silently
+ * dropped, which is how 106 and 330 became two answers to one question. Every excluded member is still declared
+ * somewhere: in the red-proof ledger, or in `undeclared` when no ledger covers it.
+ *
+ * `unlisted` is the debt inside the judged set: a gate file the registry names neither with a report nor without one.
+ * It is always a finding (`gate_without_falsifier`), and it is counted here so a reader can see which gate it is without
+ * reading 106 lines.
  */
 export function gateFalsifierCensus({
-  gateNames,
+  population = [],
   withFalsifier = GATES_WITH_FALSIFIER,
   withoutFalsifier = GATES_WITHOUT_FALSIFIER,
+  ledger = EMPTY_LEDGER,
 } = {}) {
+  const members = population.map((member) => (typeof member === "string" ? { id: member, entryFiles: [] } : member));
+  const namesOf = (member) => (member.entryFiles.length === 0 ? [member.id] : gateMemberNames(member));
   const withSet = new Set(withFalsifier);
   const declared = new Set(withoutFalsifier.map((entry) => entry.gate));
+  const judged = members.filter((member) => isGateFile(member.entryFiles[0] ?? ""));
+  const excluded = members.filter((member) => !judged.includes(member));
+  const undeclaredNames = new Set(ledger.undeclared.map((entry) => entry.gate));
   return {
-    examined: gateNames.length,
-    withReport: gateNames.filter((name) => withSet.has(name)).length,
-    without: gateNames.filter((name) => !withSet.has(name) && declared.has(name)).length,
-    unexamined: gateNames.filter((name) => !withSet.has(name) && !declared.has(name)),
+    examined: members.length,
+    judged: judged.length,
+    withReport: judged.filter((member) => namesOf(member).some((name) => withSet.has(name))).length,
+    without: judged.filter((member) => namesOf(member).some((name) => declared.has(name))).length,
+    unlisted: judged
+      .filter((member) => !namesOf(member).some((name) => withSet.has(name) || declared.has(name)))
+      .map((member) => member.id),
+    excluded: excluded.map((member) => member.id),
+    excludedUndeclared: excluded
+      .filter((member) => namesOf(member).some((name) => undeclaredNames.has(name)))
+      .map((member) => member.id),
+    withRedProof: ledger.withRedProof,
+    recorded: ledger.recorded,
+    undeclared: [...undeclaredNames],
+    zeroPopulationPass: [...ledger.zeroPopulationPass],
   };
 }
 
-/** The census as the one line the CLI prints beside the verdict. */
+/**
+ * The census as the lines the CLI prints beside the verdict.
+ *
+ * Line one is the answer to "how much of this is measured", in the words both tools use: the population, the gates with
+ * a red proof, the gates whose missing proof someone recorded, the gates nobody declared at all, and the gates whose
+ * report cannot show whether it measured anything. Line two names the bucket this suite excluded and the reason.
+ */
 export function describeGateFalsifierCensus(census) {
-  return (
-    `gates examined ${census.examined} · declared with a report ${census.withReport} · ` +
-    `declared without ${census.without} · unlisted-and-unexamined ${census.unexamined.length}` +
-    (census.unexamined.length === 0 ? "" : ` (${census.unexamined.join(", ")})`)
-  );
+  return [
+    describeGateCensus({
+      examined: census.examined,
+      withRedProof: census.withRedProof,
+      recorded: census.recorded,
+      undeclared: census.undeclared.length,
+      zeroPopulationPass: census.zeroPopulationPass.length,
+    }) + (census.unlisted.length === 0 ? "" : ` · unlisted ${census.unlisted.length} (${census.unlisted.join(", ")})`),
+    `judged here ${census.judged} (with a self-report ${census.withReport} · declared without a report ${census.without}) · ` +
+      `excluded ${census.excluded.length} (a package.json gate script whose entry is not a tools/check-*.mjs gate file, ` +
+      `so this suite has no default run to read): ` +
+      `${census.excluded.length - census.excludedUndeclared.length} proven or recorded in the red-proof ledger` +
+      (census.excludedUndeclared.length === 0
+        ? ""
+        : `, ${census.excludedUndeclared.length} undeclared and named below`),
+  ];
 }
 
 /**
@@ -916,9 +1017,11 @@ export function readModFixtureSources(repoRoot) {
     .map((name) => ({ file: `integrations/stardew/${name}`, source: readFileSync(join(modDir, name), "utf8") }));
 }
 
-/** Run the five checks against a real checkout and return `{ id, findings }` for each, plus any count a check prints. */
+/** Run the five checks against a real checkout and return `{ id, findings }` for each, plus the numbers it prints. */
 export function runHarnessConformance({ toolsDir, repoRoot }) {
-  const gateNames = harnessGateNames(toolsDir);
+  const population = deriveGatePopulation({ root: repoRoot });
+  const ledger = gateRedProofLedger({ root: repoRoot });
+  const gateNames = gateFileNames(population);
   return [
     { id: "preflight_synthetic_trees", findings: checkLiveRunPreflight({}) },
     {
@@ -930,9 +1033,21 @@ export function runHarnessConformance({ toolsDir, repoRoot }) {
     {
       id: "gate_falsifiers",
       // The population the verdict rests on, printed beside it: `0 findings` means nothing without `examined N`, and
-      // the third bucket is the set whose default run never happens.
-      note: describeGateFalsifierCensus(gateFalsifierCensus({ gateNames })),
-      findings: [...checkGateFalsifiers({ gateNames, toolsDir }), ...checkGateRegistry({ gateNames })],
+      // the excluded half is a DECLARED exclusion (a script-backed gate this suite cannot run), not a scanner gap.
+      notes: describeGateFalsifierCensus(gateFalsifierCensus({ population: population.gates, ledger })),
+      // A run that hides an undeclared gate or a report that cannot show its population is not a pass: it is blocked,
+      // which is the honest third answer beside passed and failed.
+      blocked: ledger.undeclared.length > 0 || ledger.zeroPopulationPass.length > 0,
+      findings: [
+        ...checkGateFalsifiers({
+          gateNames,
+          toolsDir,
+          zeroPopulation: ledger.zeroPopulationPass,
+          undeclared: ledger.undeclared,
+          staleDeclarations: ledger.stale,
+        }),
+        ...checkGateRegistry({ gateNames }),
+      ],
     },
   ];
 }

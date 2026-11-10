@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { auditGateRedProofs } from "../audit-gate-red-proofs.mjs";
+import { deriveGatePopulation } from "./gate-population.mjs";
 import {
   checkExperimentalRunners,
   checkGateFalsifiers,
@@ -15,6 +17,7 @@ import {
   checkScenarioAcceptance,
   describeGateFalsifierCensus,
   gateFalsifierCensus,
+  gateRedProofLedger,
   harnessGateNames,
   readModFixtureSources,
 } from "./harness-conformance.mjs";
@@ -173,6 +176,44 @@ test("gate check reports a gate that neither self-reports nor is declared", () =
   assert.deepEqual(checkGateFalsifiers({ gateNames: harnessGateNames(toolsDir), toolsDir }), []);
 });
 
+// Three findings are about the population rather than one gate's own run, and each NAMES its member: a gate no ledger
+// covers, a report that cannot show whether it measured anything, and a recorded debt that is already paid.
+test("gates no ledger covers, and reports that cannot show what they measured, are named one by one", () => {
+  const declared = {
+    gateNames: ["check-declared.mjs"],
+    withoutFalsifier: [{ gate: "check-declared.mjs", reason: "its falsifier is its own test" }],
+    toolsDir,
+  };
+  assert.deepEqual(
+    checkGateFalsifiers(declared),
+    [],
+    "the control: a declared gate with nothing else reported is clean",
+  );
+  assert.deepEqual(
+    checkGateFalsifiers({
+      ...declared,
+      undeclared: [{ gate: "test:nobody", detail: "no `red-proof:` marker in tools/x.test.mjs" }],
+    }).map((entry) => [entry.code, entry.detail]),
+    [["gate_undeclared", "test:nobody: no `red-proof:` marker in tools/x.test.mjs"]],
+  );
+  const invisible = checkGateFalsifiers({ ...declared, zeroPopulation: ["check-silent.mjs"] });
+  assert.deepEqual(
+    invisible.map((entry) => entry.code),
+    ["gate_report_without_population"],
+  );
+  assert.match(
+    invisible[0].detail,
+    /check-silent\.mjs: prints a self-verification report and names no population\/fields\/cases\/examined field/u,
+  );
+  assert.deepEqual(
+    checkGateFalsifiers({
+      ...declared,
+      staleDeclarations: [{ gate: "test:paid", detail: "this gate is proven now" }],
+    }).map((entry) => entry.code),
+    ["gate_declaration_stale"],
+  );
+});
+
 // A check whose population is empty agrees with itself: no gate enumerated must be a finding, not a silent pass.
 test("gate check blocks on an empty population instead of agreeing with itself", () => {
   const findings = checkGateFalsifiers({ gateNames: [], toolsDir });
@@ -183,32 +224,72 @@ test("gate check blocks on an empty population instead of agreeing with itself",
   assert.match(findings[0].detail, /no tools\/check-\*\.mjs gate was enumerated/u);
 });
 
-// The census is the number the verdict rests on: a gate whose default run never happens is the state a hand list
-// decides by memory, so the count and the members are printed rather than assumed to be zero.
-test("the census counts each gate in exactly one bucket and names the ones never examined", () => {
+// The population is ONE derivation (`tools/lib/gate-population.mjs`), read by this suite and by the red-proof audit. The
+// numbers that used to disagree by 3x - 106 gate files here, 330 gates there - are asserted equal, so a second scan
+// cannot reappear without this failing.
+test("the census counts each gate in exactly one bucket and names the ones nobody declared", () => {
+  const population = [
+    { id: "check:a", entryFiles: ["tools/check-a.mjs"] },
+    { id: "check:b", entryFiles: ["tools/check-b.mjs"] },
+    { id: "tools/check-c.mjs", entryFiles: ["tools/check-c.mjs"] },
+    { id: "check:d", entryFiles: ["tools/check-d.mjs"] },
+    // A script gate whose entry is the gate's own falsifier suite: this suite has no default run to read.
+    { id: "test:a", entryFiles: ["tools/check-a.test.mjs"] },
+    { id: "test:host", entryFiles: ["host/src/x.test.ts"] },
+  ];
+  const ledger = {
+    withRedProof: 2,
+    recorded: 1,
+    undeclared: [{ gate: "test:host", detail: "no marker" }],
+    stale: [],
+    zeroPopulationPass: ["check-c.mjs"],
+  };
   const census = gateFalsifierCensus({
-    gateNames: ["reported.mjs", "declared.mjs", "nobody.mjs", "nobody-either.mjs"],
-    withFalsifier: ["reported.mjs"],
-    withoutFalsifier: [{ gate: "declared.mjs", reason: "no offline rule set" }],
+    population,
+    withFalsifier: ["check-a.mjs"],
+    withoutFalsifier: [{ gate: "check-b.mjs", reason: "its falsifier is its own test" }],
+    ledger,
   });
   assert.deepEqual(census, {
-    examined: 4,
+    examined: 6,
+    judged: 4,
     withReport: 1,
     without: 1,
-    unexamined: ["nobody.mjs", "nobody-either.mjs"],
+    unlisted: ["tools/check-c.mjs", "check:d"],
+    excluded: ["test:a", "test:host"],
+    excludedUndeclared: ["test:host"],
+    withRedProof: 2,
+    recorded: 1,
+    undeclared: ["test:host"],
+    zeroPopulationPass: ["check-c.mjs"],
   });
-  assert.equal(
-    describeGateFalsifierCensus(census),
-    "gates examined 4 · declared with a report 1 · declared without 1 · unlisted-and-unexamined 2 " +
-      "(nobody.mjs, nobody-either.mjs)",
-    "an unexamined gate is named, so a red count points at the gate to fix",
-  );
-  assert.equal(
-    describeGateFalsifierCensus(gateFalsifierCensus({ gateNames: harnessGateNames(toolsDir) })).endsWith(
-      "unlisted-and-unexamined 0",
-    ),
-    true,
-    "the real registry classifies every gate in tools/check-*.mjs today",
+  assert.deepEqual(describeGateFalsifierCensus(census), [
+    "gates examined 6 · with a red proof 2 · declared without 1 · undeclared 1 · zero-population-pass 1 · " +
+      "unlisted 2 (tools/check-c.mjs, check:d)",
+    "judged here 4 (with a self-report 1 · declared without a report 1) · excluded 2 (a package.json gate script " +
+      "whose entry is not a tools/check-*.mjs gate file, so this suite has no default run to read): 1 proven or " +
+      "recorded in the red-proof ledger, 1 undeclared and named below",
+  ]);
+});
+
+// The real tree, read the way both tools read it. What this pins is the SHAPE, not today's debt: every gate is in one
+// bucket, the judged half is exactly the gate files, and the audit's own population is the same number - so the next
+// scan added to either tool fails here instead of shipping a second answer.
+test("the real tree is one population, and the gates no ledger covers are named one by one", () => {
+  const population = deriveGatePopulation({ root: repoRoot });
+  const ledger = gateRedProofLedger({ root: repoRoot });
+  const census = gateFalsifierCensus({ population: population.gates, ledger });
+  assert.equal(census.examined, auditGateRedProofs({ root: repoRoot }).population.total);
+  assert.equal(census.judged + census.excluded.length, census.examined);
+  assert.equal(census.withReport + census.without + census.unlisted.length, census.judged);
+  // Both halves are populated on the real tree, so neither number can be a green zero.
+  assert.ok(census.withReport > 0 && census.without > 0, "a registry half measured nothing");
+  // The registry still classifies every gate file it enumerates; that is the invariant, not today's count.
+  assert.deepEqual(census.unlisted, []);
+  assert.deepEqual(
+    census.undeclared,
+    ledger.undeclared.map((entry) => entry.gate),
+    "the census must name the same undeclared gates the findings name",
   );
 });
 
