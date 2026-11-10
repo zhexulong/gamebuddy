@@ -19,7 +19,12 @@ namespace GameBuddy.Stardew.Core;
 /// a crop she had planted.
 /// </para>
 /// </param>
-public sealed record FarmhandClearingOffer(string ActionId, FarmhandClearingCost Cost, bool Destructive);
+/// <param name="RefusalDetail">
+/// The sentence this declaration's own refusal says, copied from the declaration - the cost of the swing that was withheld
+/// and whose decision it is. It travels with the offer for the same reason <see cref="Destructive"/> does: the caller that
+/// refuses on this offer is the one that has to say it.
+/// </param>
+public sealed record FarmhandClearingOffer(string ActionId, FarmhandClearingCost Cost, bool Destructive, string? RefusalDetail = null);
 
 /// <summary>
 /// Which of the Mod's own actions can remove the thing standing in a route, read from the published action surface.
@@ -53,7 +58,7 @@ public static class ClearingActionSurface
         return surface
             .Where(registration => registration.Descriptor?.Clears is { } clears
                 && clears.Occupants.Contains(occupant, StringComparer.Ordinal))
-            .Select(registration => new FarmhandClearingOffer(registration.ActionId, registration.Descriptor!.Clears!.Cost, registration.Descriptor.Clears.Destructive))
+            .Select(registration => new FarmhandClearingOffer(registration.ActionId, registration.Descriptor!.Clears!.Cost, registration.Descriptor.Clears.Destructive, registration.Descriptor.Clears.RefusalDetail))
             .ToArray();
     }
 }

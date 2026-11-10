@@ -94,6 +94,12 @@ public sealed record FarmhandForEachStepResult(int Step, string ActionId, Farmha
 /// on a CHAIN that stopped before its last step (<c>&lt;step&gt;:&lt;reasonCode&gt;</c>): a one-action row already says
 /// `refused`/`failed`/`stopped`, and repeating that as a position would be a second spelling of the same fact.
 /// </para>
+/// <para>
+/// <see cref="Detail"/> IS THE ONE WORDS FIELD on a row, and it exists because a reason CODE is not an explanation: a tile
+/// refused for her own grass answers <c>no_safe_clear:grass:cut_grass</c>, which names the decision that was withheld and
+/// nothing about what taking it would cost. The sentence comes from the clearing declaration itself
+/// (<see cref="FarmhandClearingDeclaration.RefusalDetail"/>) and the row hands it to the wire unchanged.
+/// </para>
 /// </summary>
 public sealed record FarmhandForEachTargetResult(
     int? X,
@@ -108,7 +114,8 @@ public sealed record FarmhandForEachTargetResult(
     string? Evidence,
     string? Healed = null,
     IReadOnlyList<FarmhandForEachStepResult>? Steps = null,
-    string? StoppedAt = null)
+    string? StoppedAt = null,
+    string? Detail = null)
 {
     /// <summary>Where the target is, in the one shape every answer uses - or null when the row carries no tile.</summary>
     public string? Tile => this.X is null || this.Y is null
@@ -418,7 +425,9 @@ public static class FarmhandForEachExpansion
     /// A CLEAR THAT WOULD DESTROY SOMETHING SHE PUT ON THE TILE IS NOT TAKEN. When every published clearer of the occupant
     /// is destructive (`scythe_crop` on her own crop, `cut_grass` on grass a starter planted) the row reports the
     /// clearance's own refusal - `no_safe_clear:<occupant>:<action>` - as a REFUSED row with no swing made: the pass may
-    /// not spend a destructive effect on a tile neither she nor the player asked it to clear.
+    /// not spend a destructive effect on a tile neither she nor the player asked it to clear. The row carries the
+    /// declaration's own sentence beside that code, because "a swing was withheld" is not the same answer as "here is what
+    /// the swing would have cost you, and it is yours to make".
     /// </para>
     /// </summary>
     private static FarmhandForEachTargetResult Heal(
@@ -442,7 +451,8 @@ public static class FarmhandForEachExpansion
                 refused.ExecutionId,
                 refused.State,
                 clearance.RefusalReasonCode,
-                refused.Evidence);
+                refused.Evidence,
+                clearance.RefusalDetail);
 
         FarmhandClearingOffer clearer = clearance.Clearer!;
         if (stopRequested())
@@ -478,8 +488,9 @@ public static class FarmhandForEachExpansion
         string? executionId,
         ExecutionState? state,
         string? reasonCode,
-        string? evidence) =>
-        new(row.X, row.Y, row.LocalColumn, row.LocalRow, outcome, target, executionId, state, reasonCode, evidence);
+        string? evidence,
+        string? detail = null) =>
+        new(row.X, row.Y, row.LocalColumn, row.LocalRow, outcome, target, executionId, state, reasonCode, evidence, Detail: detail);
 
     private static FarmhandForEachTargetResult Skipped(FarmhandForEachRow row, FarmhandForEachTargetOutcome outcome, string? reasonCode) =>
         new(row.X, row.Y, row.LocalColumn, row.LocalRow, outcome, null, null, null, reasonCode, null);

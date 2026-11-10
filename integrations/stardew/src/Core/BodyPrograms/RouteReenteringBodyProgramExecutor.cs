@@ -451,7 +451,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
 
         var table = new List<(int LocalRow, int LocalColumn, string Json)>(outsideFarm);
         foreach (FarmhandForEachTargetResult result in pass.Targets)
-            table.Add((result.LocalRow, result.LocalColumn, RowJson(result.X, result.Y, result.Target?.ActionId, StateOf(result.Outcome), result.ReasonCode, result.Healed, result.Steps, result.StoppedAt)));
+            table.Add((result.LocalRow, result.LocalColumn, RowJson(result)));
 
         // A PASS THAT HAS NOT FINISHED IS NOT AN ANSWER. The native body still owns the embodied actor, so the node stays
         // bound-Running and a later tick re-enters this same pass: the row identities are deterministic, so the router
@@ -759,9 +759,26 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         string? reasonCode,
         string? healed,
         IReadOnlyList<FarmhandForEachStepResult>? steps = null,
-        string? stoppedAt = null) =>
+        string? stoppedAt = null,
+        string? detail = null) =>
         string.Create(CultureInfo.InvariantCulture,
-            $"{{\"x\":{x?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"y\":{y?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"action\":{JsonText(action)},\"state\":\"{state}\",\"reasonCode\":{JsonText(reasonCode)},\"healed\":{JsonText(healed)}{StepsJson(steps, stoppedAt)}{StoppedAtJson(stoppedAt)}}}");
+            $"{{\"x\":{x?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"y\":{y?.ToString(CultureInfo.InvariantCulture) ?? "null"},\"action\":{JsonText(action)},\"state\":\"{state}\",\"reasonCode\":{JsonText(reasonCode)},\"healed\":{JsonText(healed)}{StepsJson(steps, stoppedAt)}{StoppedAtJson(stoppedAt)}{DetailJson(detail)}}}");
+
+    /// <summary>
+    /// One pass row, projected by the only mapping there is. The row carries more than the wire needs (its local position,
+    /// its receipt identity, its state), and the words it carries travel in <c>detail</c>.
+    ///
+    /// <para>
+    /// ONE CALL SITE, ONE SPELLING. The gate that proves a refused row says what it costs reads the MODEL-VISIBLE answer, so
+    /// it drives this projection rather than re-listing the row's fields: a field the wire stops carrying must make that gate
+    /// fail, not quietly pass because the record still holds it.
+    /// </para>
+    /// </summary>
+    internal static string RowJson(FarmhandForEachTargetResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        return RowJson(result.X, result.Y, result.Target?.ActionId, StateOf(result.Outcome), result.ReasonCode, result.Healed, result.Steps, result.StoppedAt, result.Detail);
+    }
 
     /// <summary>
     /// The steps a row took, when it took more than one - or when it is a chain that stopped on its first step.
@@ -786,6 +803,16 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
 
     /// <summary>Where a row's chain stopped, on the row it happened to: `&lt;step&gt;:&lt;reasonCode&gt;`.</summary>
     private static string StoppedAtJson(string? stoppedAt) => stoppedAt is null ? string.Empty : $",\"stopped_at\":{JsonText(stoppedAt)}";
+
+    /// <summary>
+    /// What a row says beyond its reason code, on the row it was refused on.
+    ///
+    /// <para>
+    /// ADDITIVE ONLY: a row with nothing to say keeps the exact bytes it answered before this field existed, which is why the
+    /// tail is empty rather than `"detail":null`.
+    /// </para>
+    /// </summary>
+    private static string DetailJson(string? detail) => detail is null ? string.Empty : $",\"detail\":{JsonText(detail)}";
 
     private static string JsonText(string? value) => value is null ? "null" : JsonSerializer.Serialize(value);
 
@@ -873,9 +900,26 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// detail said `unknown_reason:failed`, because a failed node's evidence is dropped (ADR-006) and this aggregate never
     /// filled the one free-text field a failure MAY carry. The detail is a wider budget than the hint and the same text, so
     /// a reader sees the counts where it looks for the reason and the two fields cannot disagree.
+    ///
+    /// <para>
+    /// A PASS THAT FAILED AS A UNIT DROPS ITS ROW TABLE - a failed node carries no evidence - so the sentences its refused
+    /// rows carry would be lost exactly where every row needs one. They are appended here, once per distinct sentence and
+    /// only when such a row exists, inside the field's own budget: the counts say how many rows are behind the answer, and
+    /// the sentence says what the withheld swing costs.
+    /// </para>
     /// </summary>
-    private static string FailureDetail(FarmhandForEachPassResult pass) =>
-        PassCounts(pass, BodyProgramValidation.MaximumNodeRefusalDetailLength);
+    internal static string FailureDetail(FarmhandForEachPassResult pass)
+    {
+        ArgumentNullException.ThrowIfNull(pass);
+        var detail = new StringBuilder(PassCounts(pass, BodyProgramValidation.MaximumNodeRefusalDetailLength));
+        foreach (string sentence in pass.Targets.Select(target => target.Detail).OfType<string>().Distinct(StringComparer.Ordinal))
+        {
+            string entry = string.Create(CultureInfo.InvariantCulture, $";{sentence}");
+            if (detail.Length + entry.Length > BodyProgramValidation.MaximumNodeRefusalDetailLength) continue;
+            detail.Append(entry);
+        }
+        return detail.ToString();
+    }
 
     /// <summary>
     /// The pass's counts, and then one `;code=count` per reason, as far as <paramref name="budget"/> allows.

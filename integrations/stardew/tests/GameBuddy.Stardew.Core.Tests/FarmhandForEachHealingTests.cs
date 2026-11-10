@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using FluentAssertions;
+using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using Xunit;
@@ -330,6 +331,139 @@ public sealed class FarmhandForEachHealingTests
         failures.Should().BeEmpty(
             $"no pass may dispatch a destructive clearing action; examined {examined} occupant/action pairs");
     }
+
+    /// <summary>
+    /// A REFUSAL THAT WITHHOLDS A SWING ALSO SAYS WHAT THE SWING WOULD HAVE COST, and it says it in the field the model
+    /// reads.
+    ///
+    /// <para>
+    /// THE STRIP, in the shape it shipped: six tiles requested `till_soil` with one grass tile on it. `cut_grass` declares
+    /// that it removes `grass`, so the heal weighs it and refuses it - the grass is animal feed the player paid for. What
+    /// the row answered was the code alone (`no_safe_clear:grass:cut_grass`), which tells a reader that a swing was
+    /// withheld and nothing about what taking it would cost or that taking it is a legitimate decision. Measured reading of
+    /// that answer: the model treated the tile as unavailable.
+    /// </para>
+    /// <para>
+    /// The assertion goes through <see cref="RouteReenteringBodyProgramExecutor.RowJson(FarmhandForEachTargetResult)"/>,
+    /// the projection the Mod actually writes into the aggregate, because a sentence on the in-memory row that the wire
+    /// drops is the defect this case exists to catch.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AGrassTileInATillableStripIsRefusedWithWhatCuttingItWouldCost()
+    {
+        FarmhandForEachSource strip = Strip(60, 18, 6);
+        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
+        var world = new TileWorld();
+        world.Occupy(63, 18, "grass", "cut_grass");
+
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_grass", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+
+        world.Carries(63, 18).Should().BeTrue("the fodder is still standing after the pass");
+        world.Dispatched.Where(target => target.X == 63).Select(target => target.ActionId).Should().Equal(
+            new[] { "till_soil" },
+            "the hoe was refused and the scythe was not swung at her grass");
+        pass.Succeeded.Should().Be(5, "the five bare tiles are tilled as asked");
+
+        FarmhandForEachTargetResult grass = pass.Targets.Single(target => target.X == 63);
+        grass.Outcome.Should().Be(FarmhandForEachTargetOutcome.Refused);
+        grass.ReasonCode.Should().Be("no_safe_clear:grass:cut_grass", "the code stays the parseable word it always was");
+
+        string sentence = ClearanceSentence("grass", "cut_grass");
+        string projected = RouteReenteringBodyProgramExecutor.RowJson(grass);
+        projected.Should().Contain(
+            sentence,
+            "the row is what the model reads: the code says a swing was withheld, the sentence says what the swing costs and whose decision it is");
+        projected.Should().Contain("cut_grass", "the sentence names the action the caller may still dispatch herself");
+    }
+
+    /// <summary>
+    /// THE GATE. Population: every `Clears` declaration the catalogue marks `Destructive`, derived from the registrations and
+    /// printed. Property: each declares a non-empty sentence, and a row refused on that occupant CARRIES IT VERBATIM in the
+    /// projected row the model reads.
+    ///
+    /// <para>
+    /// The failure names the drifting member (`destructive_declaration_without_a_sentence:&lt;occupant&gt;:&lt;action&gt;`),
+    /// so a new destructive row - or one corrected to `destructive: true` - fails here by name instead of shipping a refusal
+    /// that is only a code. The projection half is asserted through the Mod's own `RowJson`, so a sentence that stops being
+    /// written into the aggregate fails too.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryDestructiveClearanceSaysWhatItDestroysInTheRefusedRow()
+    {
+        var failures = new List<string>();
+        int examined = 0;
+        foreach ((string occupant, string clearingAction, bool destructive) in DeclaredClearers())
+        {
+            if (!destructive) continue;
+            examined += 1;
+            string? sentence = FarmhandActionCatalog.Registrations
+                .Single(registration => string.Equals(registration.ActionId, clearingAction, StringComparison.Ordinal))
+                .Descriptor!.Clears!.RefusalDetail;
+            if (string.IsNullOrWhiteSpace(sentence) || !BodyProgramValidation.IsValidRefusalDetail(sentence))
+            {
+                failures.Add(
+                    $"destructive_declaration_without_a_sentence:{occupant}:{clearingAction} "
+                    + $"(sentence={sentence ?? "null"}; the refusal would be a code with no cost in it)");
+                continue;
+            }
+
+            FarmhandForEachSource strip = Strip(60, 18, 1);
+            var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
+            var world = new TileWorld();
+            world.Occupy(60, 18, occupant, clearingAction);
+            FarmhandForEachTargetResult row = FarmhandForEachExpansion
+                .Expand(loop, "pass_sentence", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled)
+                .Targets.Single();
+            string projected = RouteReenteringBodyProgramExecutor.RowJson(row);
+            if (row.Outcome == FarmhandForEachTargetOutcome.Refused && projected.Contains(sentence, StringComparison.Ordinal)) continue;
+            failures.Add(
+                $"destructive_sentence_missing_from_the_refused_row:{occupant}:{clearingAction} "
+                + $"(row {row.Outcome}/{row.ReasonCode ?? "no_reason"}; projected {projected})");
+        }
+
+        examined.Should().BeGreaterThan(0, "the catalogue marks clearing declarations destructive, so the population is never empty");
+        failures.Should().BeEmpty(
+            $"every destructive declaration must say what its swing costs, on the row that refuses it; examined {examined} declarations");
+    }
+
+    /// <summary>
+    /// A PASS THAT FAILED AS A UNIT STILL SAYS WHAT THE WITHHELD SWING COSTS.
+    ///
+    /// <para>
+    /// A failed node carries no evidence (ADR-006), so the row table - and the sentence on it - is dropped on exactly the
+    /// answer a caller most needs it for: one grass tile and a one-tile strip is `refused=1`, which the reader can only
+    /// read as "the loop does not work". The detail is the one free-text field a failure may carry, and the sentence fits
+    /// inside its budget beside the counts.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AFailedPassStillSaysWhatTheWithheldSwingWouldCost()
+    {
+        FarmhandForEachSource strip = Strip(60, 18, 1);
+        var loop = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
+        var world = new TileWorld();
+        world.Occupy(60, 18, "grass", "cut_grass");
+
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_failed_grass", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+
+        RouteReenteringBodyProgramExecutor.VerdictFor(pass).Should().Be(ForEachPassVerdict.Failed, "the only row was refused");
+        string detail = RouteReenteringBodyProgramExecutor.FailureDetail(pass);
+        detail.Should().Contain("refused=1");
+        detail.Should().Contain(
+            ClearanceSentence("grass", "cut_grass"),
+            "a failed pass drops its row table, so the reason it was left standing has to travel in the detail");
+        detail.Length.Should().BeLessOrEqualTo(
+            BodyProgramValidation.MaximumNodeRefusalDetailLength,
+            "the journal refuses a longer detail at the producer");
+    }
+
+    /// <summary>The sentence a clearing declaration carries for one occupant, read from the join the heal reads.</summary>
+    private static string ClearanceSentence(string occupant, string clearingAction) =>
+        FarmhandForEachHealing.DeclaredClearersOf(occupant)
+            .Single(offer => string.Equals(offer.ActionId, clearingAction, StringComparison.Ordinal))
+            .RefusalDetail!;
 
     /// <summary>
     /// Every occupant/action pair the catalogue declares, derived from the registrations and not from a list, with the

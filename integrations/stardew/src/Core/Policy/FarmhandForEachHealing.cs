@@ -28,11 +28,16 @@ public enum FarmhandForEachClearanceOutcome
 }
 
 /// <summary>One refused row's answer about the thing standing on its tile.</summary>
+/// <param name="RefusalDetail">
+/// The words the refusal carries beside <paramref name="RefusalReasonCode"/>: for a destructive occupant, the declaration's
+/// own sentence saying what the swing costs and whose decision it is. Null when there is nothing to say beyond the code.
+/// </param>
 public sealed record FarmhandForEachClearance(
     FarmhandForEachClearanceOutcome Outcome,
     string Occupant,
     FarmhandClearingOffer? Clearer,
-    string? RefusalReasonCode);
+    string? RefusalReasonCode,
+    string? RefusalDetail = null);
 
 /// <summary>
 /// Which published action removes what stands on a tile, read from the catalogue's own `Clears` declarations.
@@ -62,7 +67,8 @@ public sealed record FarmhandForEachClearance(
 /// the player could not foresee, produced by a step neither she nor the player wrote. The declarations now say which
 /// swings are destructive (<see cref="FarmhandClearingDeclaration.Destructive"/>) and this join never proposes one:
 /// the row answers <c>no_safe_clear:crop:scythe_crop</c>, which names the occupant, the swing that was weighed and
-/// refused, and the fact that the tile is hers.
+/// refused, and the fact that the tile is hers - and the same row carries the declaration's own sentence saying what that
+/// swing costs, because a code tells a reader which decision was withheld and never tells it what the decision costs.
 /// </para>
 /// </summary>
 public static class FarmhandForEachHealing
@@ -186,7 +192,8 @@ public static class FarmhandForEachHealing
                 FarmhandForEachClearanceOutcome.NoSafeClear,
                 occupant,
                 null,
-                NoSafeClearReason(occupant, destructive.ActionId));
+                NoSafeClearReason(occupant, destructive.ActionId),
+                destructive.RefusalDetail);
         }
 
         // A clearer the live policy disables is still the honest thing to name: its dispatch refuses with the policy's own
