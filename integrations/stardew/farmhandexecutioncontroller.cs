@@ -5577,9 +5577,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             if (state is ExecutionState.Running or ExecutionState.MeaningfulProgress)
             {
                 this.revision++;
-                LocalExecutionReceipt progressReceipt = new(pickup.ExecutionId, pickup.RequestId, state, reasonCode, this.revision, evidence);
-                this.Remember(progressReceipt);
-                this.AddTrace(progressReceipt);
+                this.RememberTerminal(pickup.RequestId, pickup.ExecutionId, state, reasonCode, evidence);
                 return;
             }
 
@@ -5590,19 +5588,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 // pickup ownership through the next native location update,
                 // where Debris.updateChunks may perform magnetic collection.
                 this.revision++;
-                LocalExecutionReceipt approachReceipt = new(pickup.ExecutionId, pickup.RequestId, ExecutionState.Running, "item_pickup_approach_completed", this.revision, evidence);
-                this.Remember(approachReceipt);
-                this.AddTrace(approachReceipt);
+                this.RememberTerminal(pickup.RequestId, pickup.ExecutionId, ExecutionState.Running, "item_pickup_approach_completed", evidence);
                 return;
             }
 
             this.activeItemPickup = null;
             this.revision++;
-            LocalExecutionReceipt pickupReceipt = new(pickup.ExecutionId, pickup.RequestId, state, reasonCode, this.revision,
+            this.RememberTerminal(pickup.RequestId, pickup.ExecutionId, state, reasonCode,
                 $"location={pickup.Location};target={pickup.TargetId};tile={pickup.TargetX},{pickup.TargetY};native_auto_collect_pending=false;body_evidence={evidence ?? "none"}");
-            this.Remember(pickupReceipt);
-            this.AddTrace(pickupReceipt);
-            this.PublishIdleAfterRelease(pickup.ExecutionId, pickup.RequestId);
             return;
         }
 
@@ -5615,9 +5608,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             if (state is ExecutionState.Running or ExecutionState.MeaningfulProgress)
             {
                 this.revision++;
-                LocalExecutionReceipt toolProgress = new(toolApproach.ExecutionId, toolApproach.RequestId, state, reasonCode, this.revision, evidence);
-                this.Remember(toolProgress);
-                this.AddTrace(toolProgress);
+                this.RememberTerminal(toolApproach.RequestId, toolApproach.ExecutionId, state, reasonCode, evidence);
                 return;
             }
 
@@ -5625,9 +5616,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             if (state == ExecutionState.Succeeded)
             {
                 this.revision++;
-                LocalExecutionReceipt approachCompleted = new(toolApproach.ExecutionId, toolApproach.RequestId, ExecutionState.Running, "tool_approach_completed", this.revision, evidence);
-                this.Remember(approachCompleted);
-                this.AddTrace(approachCompleted);
+                this.RememberTerminal(toolApproach.RequestId, toolApproach.ExecutionId, ExecutionState.Running, "tool_approach_completed", evidence);
                 return;
             }
 
@@ -5645,11 +5634,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             string approachOutcome = state == ExecutionState.Invalidated ? "invalidated" : "failed";
             this.activeToolApproach = null;
             this.revision++;
-            LocalExecutionReceipt approachFailed = new(toolApproach.ExecutionId, toolApproach.RequestId, state, reasonCode, this.revision,
+            this.RememberTerminal(toolApproach.RequestId, toolApproach.ExecutionId, state, reasonCode,
                 $"location={toolApproach.Location};target={toolApproach.ExpectedTargetId};tile={toolApproach.TargetX},{toolApproach.TargetY};reach=1;approach={approachOutcome};body_evidence={evidence ?? "none"}");
-            this.Remember(approachFailed);
-            this.AddTrace(approachFailed);
-            this.PublishIdleAfterRelease(toolApproach.ExecutionId, toolApproach.RequestId);
             return;
         }
 
@@ -5665,11 +5651,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         string? refusalHint = state is ExecutionState.Failed or ExecutionState.Cancelled
             ? ClearingEvidence.DescribeRouteHint(evidence)
             : null;
-        LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, state, reasonCode, this.revision, evidence, Hint: refusalHint);
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        if (terminal)
-            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+        this.RememberTerminal(specification.RequestId, specification.ExecutionId, state, reasonCode, evidence, hint: refusalHint);
     }
 
     /// <summary>

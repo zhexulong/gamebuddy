@@ -118,8 +118,8 @@ public sealed class RouteRefusalHintTests
 
         source.Should().Contain("ClearingEvidence.DescribeRouteHint(evidence)",
             "the generic terminal is where a `clear_step_blocked` settles, and its evidence is what the hint projects");
-        source.Should().Contain("Hint: refusalHint",
-            "and the receipt it builds has to carry it, or the sentence stays in the receipt nobody reads");
+        source.Should().Contain("hint: refusalHint",
+            "and the seam's `hint` parameter puts it on the receipt's `Hint`, or the sentence stays in a receipt nobody reads");
     }
 
     private static string RepositorySourcePath(string relative)
