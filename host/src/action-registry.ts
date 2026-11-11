@@ -1122,7 +1122,7 @@ export const MOD_DESCRIPTOR_REQUIREMENTS = Object.freeze({
   open_geode: [
     publishesArguments("slot", "expectedQualifiedItemId"),
     WRITES_EFFECT,
-    mintsPostcondition("native_action_postcondition"),
+    mintsPostcondition("geode_opened"),
   ],
   equip_wearable: [
     publishesArguments("slot", "expectedQualifiedItemId", "expectedTargetId"),

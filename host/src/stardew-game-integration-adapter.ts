@@ -2488,6 +2488,451 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
             hasTileEvidenceValue(e.owner_tile),
         )
       );
+    case "move_placed_furniture":
+      // Evidence literal: farmhandexecutioncontroller.worldobjectactions.cs RequestLocalMovePlacedFurniture —
+      // target;location;tile;item;native_stored;removed_from_furniture;carried;inventory_before;inventory_after;
+      // carried_tile;carried_rotation;carried_flipped;furniture_in_location.
+      //
+      // The pickup is three native steps (`piece.performRemoveAction`, `location.furniture.Remove`,
+      // `addItemToInventoryBool`) and the only answer any of them gives is the LAST one's bool, so the bool is not
+      // the proof: the Mod mints `placed_furniture_picked_up` only when `gone && carried`, and this rule restates
+      // both halves from the reading. Furniture is not an object on a tile — it lives in `location.furniture`
+      // (GameLocation.cs:452) — so the collection is the authority for the row leaving and the pack for it arriving,
+      // and the piece must have left the tile the caller named.
+      return (
+        receipt.reasonCode === "placed_furniture_picked_up" &&
+        declaredCompletionEvidence(
+          detail,
+          [
+            "target",
+            "location",
+            "tile",
+            "item",
+            "native_stored",
+            "removed_from_furniture",
+            "carried",
+            "inventory_before",
+            "inventory_after",
+            "carried_tile",
+            "carried_rotation",
+            "carried_flipped",
+            "furniture_in_location",
+          ],
+          (e) => {
+            const rotation = integerEvidenceValue(e.carried_rotation);
+            const stillInLocation = integerEvidenceValue(e.furniture_in_location);
+            return (
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasBoundedNonemptyEvidenceValue(e.location) &&
+              hasTileEvidenceValue(e.tile) &&
+              hasOpaqueEvidenceValue(e.item) &&
+              e.native_stored === "true" &&
+              e.removed_from_furniture === "true" &&
+              e.carried === "true" &&
+              incremented(e.inventory_before, e.inventory_after) &&
+              e.carried_tile === e.tile &&
+              rotation !== null &&
+              rotation >= 0 &&
+              rotation <= 3 &&
+              booleanEvidenceValue(e.carried_flipped) &&
+              stillInLocation !== null &&
+              stillInLocation >= 0
+            );
+          },
+        )
+      );
+    case "rotate_furniture":
+      // Evidence literal: farmhandexecutioncontroller.furnituredecorationactions.cs RequestLocalRotateFurniture —
+      // target;tile;location;item;rotation_before;rotation_after;rotation_expected;rotations;flipped_before;
+      // flipped_after;footprint_before;footprint_after;placeable;turned;standing;furniture_in_location.
+      //
+      // `Furniture.rotate()` returns void, and below two `rotations` it does nothing at all (Furniture.cs:1155), so
+      // there is no native answer to read: the Mod's success is `turned && standing && holdsTheTurn`, all three read
+      // AFTER the write and after the occupancy probe. The rule restates them: the piece's own `currentRotation`
+      // moved, it still carries the value the native call produced (the probe re-reads `tileLocation` and cannot have
+      // turned it back), and the piece is still in `location.furniture` on the tile it was named on.
+      return (
+        receipt.reasonCode === "furniture_rotated" &&
+        declaredCompletionEvidence(
+          detail,
+          [
+            "target",
+            "tile",
+            "location",
+            "item",
+            "rotation_before",
+            "rotation_after",
+            "rotation_expected",
+            "rotations",
+            "flipped_before",
+            "flipped_after",
+            "footprint_before",
+            "footprint_after",
+            "placeable",
+            "turned",
+            "standing",
+            "furniture_in_location",
+          ],
+          (e) => {
+            const before = integerEvidenceValue(e.rotation_before);
+            const after = integerEvidenceValue(e.rotation_after);
+            const produced = integerEvidenceValue(e.rotation_expected);
+            const rotations = integerEvidenceValue(e.rotations);
+            const inLocation = integerEvidenceValue(e.furniture_in_location);
+            return (
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasTileEvidenceValue(e.tile) &&
+              hasBoundedNonemptyEvidenceValue(e.location) &&
+              hasOpaqueEvidenceValue(e.item) &&
+              before !== null &&
+              after !== null &&
+              produced !== null &&
+              before >= 0 &&
+              before <= 3 &&
+              after >= 0 &&
+              after <= 3 &&
+              produced >= 0 &&
+              produced <= 3 &&
+              after !== before &&
+              after === produced &&
+              rotations !== null &&
+              rotations >= 2 &&
+              rotations <= 4 &&
+              booleanEvidenceValue(e.flipped_before) &&
+              booleanEvidenceValue(e.flipped_after) &&
+              hasFootprintEvidenceValue(e.footprint_before) &&
+              hasFootprintEvidenceValue(e.footprint_after) &&
+              e.placeable === "true" &&
+              e.turned === "true" &&
+              e.standing === "true" &&
+              inLocation !== null &&
+              inLocation >= 1
+            );
+          },
+        )
+      );
+    case "remove_fence":
+      // Evidence literal: farmhandexecutioncontroller.furnituredecorationactions.cs ExecuteRemoveFence —
+      // target;location;tile;item;is_gate;tool;slot;swings;held_object_before;health_before;max_health;removed;
+      // tile_object_after;drops;drop_count;stamina_before;stamina_after.
+      //
+      // `Fence.performToolAction` returns FALSE on every branch, including the one that destroyed the fence
+      // (Fence.cs:473), so a return value here proves nothing at all. Success is the fence GONE from the object
+      // collection it stood in, with the drops the swings produced named beside it. A gate is its own native branch
+      // (:447-454) that only an Axe or a Pickaxe reaches, so a receipt claiming a gate removed by another tool is
+      // not a fence this engine took down.
+      //
+      // `drops` is `none` when nothing dropped: an EMPTY value splits into a field `parseSemicolonEvidence` must
+      // refuse, which would make the first real zero-drop removal unreadable — the same producer bug `shop_purchase`
+      // carried with an empty `owner=`.
+      return (
+        receipt.reasonCode === "fence_removed" &&
+        declaredCompletionEvidence(
+          detail,
+          [
+            "target",
+            "location",
+            "tile",
+            "item",
+            "is_gate",
+            "tool",
+            "slot",
+            "swings",
+            "held_object_before",
+            "health_before",
+            "max_health",
+            "removed",
+            "tile_object_after",
+            "drops",
+            "drop_count",
+            "stamina_before",
+            "stamina_after",
+          ],
+          (e) => {
+            const swings = integerEvidenceValue(e.swings);
+            const health = finiteEvidenceValue(e.health_before);
+            const maxHealth = finiteEvidenceValue(e.max_health);
+            const dropped = integerEvidenceValue(e.drop_count);
+            const named = e.drops === "none" ? 0 : (e.drops ?? "").split("|").length;
+            return (
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasBoundedNonemptyEvidenceValue(e.location) &&
+              hasTileEvidenceValue(e.tile) &&
+              hasOpaqueEvidenceValue(e.item) &&
+              booleanEvidenceValue(e.is_gate) &&
+              hasBoundedNonemptyEvidenceValue(e.tool) &&
+              validSlot(e.slot) &&
+              swings !== null &&
+              swings >= 1 &&
+              swings <= 2 &&
+              booleanEvidenceValue(e.held_object_before) &&
+              health !== null &&
+              maxHealth !== null &&
+              maxHealth > 0 &&
+              health >= 0 &&
+              health <= maxHealth &&
+              e.removed === "true" &&
+              e.tile_object_after === "none" &&
+              dropped !== null &&
+              dropped === named &&
+              finiteEvidenceValue(e.stamina_before) !== null &&
+              finiteEvidenceValue(e.stamina_after) !== null &&
+              (e.is_gate === "true" ? e.tool === "axe" || e.tool === "pickaxe" : true)
+            );
+          },
+        )
+      );
+    case "put_item_in_fish_tank":
+      // Evidence literal: farmhandexecutioncontroller.furnituredecorationactions.cs RequestLocalPutItemInFishTank —
+      // target;tile;location;item;slot;native_answered;held_items_before;held_items_after;last_held;carried_before;
+      // carried_after;mutex_locked_after.
+      //
+      // The tank's own `checkForAction` answers TRUE without depositing in two branches (a held mutex, :231-234, and
+      // a full category, :237-241), so its bool is not completion. The Mod's success is read after the engine's own
+      // `NetMutex.Update` settled the hand-off: the tank's `heldItems` grew by exactly one and the item at the end is
+      // this one, and the pack lost exactly one. A deposit the engine took the item for without completing it is put
+      // back and reported as `fish_tank_postcondition_not_observed`, never as this terminal.
+      return (
+        receipt.reasonCode === "fish_tank_item_deposited" &&
+        declaredCompletionEvidence(
+          detail,
+          [
+            "target",
+            "tile",
+            "location",
+            "item",
+            "slot",
+            "native_answered",
+            "held_items_before",
+            "held_items_after",
+            "last_held",
+            "carried_before",
+            "carried_after",
+            "mutex_locked_after",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            hasTileEvidenceValue(e.tile) &&
+            hasBoundedNonemptyEvidenceValue(e.location) &&
+            hasOpaqueEvidenceValue(e.item) &&
+            validSlot(e.slot) &&
+            e.native_answered === "true" &&
+            incremented(e.held_items_before, e.held_items_after) &&
+            e.last_held === e.item &&
+            decremented(e.carried_before, e.carried_after) &&
+            booleanEvidenceValue(e.mutex_locked_after),
+        )
+      );
+    case "place_item_on_pedestal":
+      // Evidence literal: farmhandexecutioncontroller.furnituredecorationactions.cs ExecutePlaceItemOnPedestal —
+      // target;tile;location;item;slot;native_answered;held;match;locked;lock_on_success;carried_before;
+      // carried_after.
+      //
+      // `performObjectDropInAction` answers a bool whose occupied branch KNOCKS the existing item off and then says
+      // false (ItemPedestal.cs:97-101), so the bool alone cannot be completion. The Mod's success needs the read
+      // after the engine's own `NetMutex.Update` settled the drop: the pedestal's `heldObject` IS the item the
+      // request named, and the pack lost exactly one. `match`/`locked` are the pedestal's own flags, written by
+      // `UpdateItemMatch` when the item it wanted lands, and they are reported rather than required — a shrine
+      // satisfied is a fact about the pedestal, not a condition of placing the item.
+      return (
+        receipt.reasonCode === "pedestal_item_placed" &&
+        declaredCompletionEvidence(
+          detail,
+          [
+            "target",
+            "tile",
+            "location",
+            "item",
+            "slot",
+            "native_answered",
+            "held",
+            "match",
+            "locked",
+            "lock_on_success",
+            "carried_before",
+            "carried_after",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            hasTileEvidenceValue(e.tile) &&
+            hasBoundedNonemptyEvidenceValue(e.location) &&
+            hasOpaqueEvidenceValue(e.item) &&
+            validSlot(e.slot) &&
+            e.native_answered === "true" &&
+            e.held === e.item &&
+            booleanEvidenceValue(e.match) &&
+            booleanEvidenceValue(e.locked) &&
+            booleanEvidenceValue(e.lock_on_success) &&
+            decremented(e.carried_before, e.carried_after),
+        )
+      );
+    case "fish_here":
+      // Evidence literal: farmhandexecutioncontroller.fishingactions.cs UpdateFishingCast / SettleFishingCast —
+      // location;target;tile;caught_qualified_item_id;display_name;fish_size;quality;pull_outcome;
+      // pull_unobserved_field;bite_observed;cast_to_credit_ms;rod_durability_left;bait_before;bait_left;
+      // bait_consumed;stamina_before;stamina_after;stamina_delta;inventory_before;inventory_after;
+      // fish_caught_before;fish_caught_after;fish_caught_delta;credit.
+      //
+      // THE CATCH IS THE CREDIT, and the rod cannot answer it: `FishingRod.fishCaught` is set by the win path
+      // (:1092) and cleared by the very next settle (:2352). The engine's own saved record is `Farmer.fishCaught`,
+      // which `caughtFish` writes inside the win path (:1104) and never clears, so the rule requires that count to
+      // have RISEN for the qualified id the receipt names - the pair the Mod reads before the win path runs and
+      // after the engine's settle. `credit` restates the pair, so a receipt whose two readings and its own summary
+      // disagree is refused. The bar was not played, and the receipt says so (`pull_outcome=not_verified` with the
+      // field it could not observe named) - that openness is the Mod's honesty, not a gap this rule may fill.
+      return (
+        receipt.reasonCode === "fish_caught" &&
+        declaredCompletionEvidence(
+          detail,
+          [
+            "location",
+            "target",
+            "tile",
+            "caught_qualified_item_id",
+            "display_name",
+            "fish_size",
+            "quality",
+            "pull_outcome",
+            "pull_unobserved_field",
+            "bite_observed",
+            "cast_to_credit_ms",
+            "rod_durability_left",
+            "bait_before",
+            "bait_left",
+            "bait_consumed",
+            "stamina_before",
+            "stamina_after",
+            "stamina_delta",
+            "inventory_before",
+            "inventory_after",
+            "fish_caught_before",
+            "fish_caught_after",
+            "fish_caught_delta",
+            "credit",
+          ],
+          (e) => {
+            const caughtBefore = integerEvidenceValue(e.fish_caught_before);
+            const caughtAfter = integerEvidenceValue(e.fish_caught_after);
+            const caughtDelta = integerEvidenceValue(e.fish_caught_delta);
+            const baitBefore = integerEvidenceValue(e.bait_before);
+            const baitLeft = integerEvidenceValue(e.bait_left);
+            const staminaBefore = finiteEvidenceValue(e.stamina_before);
+            const staminaAfter = finiteEvidenceValue(e.stamina_after);
+            const staminaDelta = finiteEvidenceValue(e.stamina_delta);
+            const quality = integerEvidenceValue(e.quality);
+            return (
+              hasBoundedNonemptyEvidenceValue(e.location) &&
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasTileEvidenceValue(e.tile) &&
+              hasOpaqueEvidenceValue(e.caught_qualified_item_id) &&
+              hasBoundedNonemptyEvidenceValue(e.display_name) &&
+              integerEvidenceValue(e.fish_size) !== null &&
+              quality !== null &&
+              quality >= 0 &&
+              quality <= 4 &&
+              e.pull_outcome === "not_verified" &&
+              e.pull_unobserved_field === "BobberBar.distanceFromCatching" &&
+              booleanEvidenceValue(e.bite_observed) &&
+              integerEvidenceValue(e.cast_to_credit_ms) !== null &&
+              signedIntegerEvidenceValue(e.rod_durability_left) !== null &&
+              baitBefore !== null &&
+              baitLeft !== null &&
+              integerEvidenceValue(e.bait_consumed) === baitBefore - baitLeft &&
+              staminaBefore !== null &&
+              staminaAfter !== null &&
+              staminaDelta !== null &&
+              Math.abs(staminaAfter - staminaBefore - staminaDelta) <= 0.001 &&
+              integerEvidenceValue(e.inventory_before) !== null &&
+              integerEvidenceValue(e.inventory_after) !== null &&
+              caughtBefore !== null &&
+              caughtAfter !== null &&
+              caughtDelta !== null &&
+              caughtDelta >= 1 &&
+              caughtAfter === caughtBefore + caughtDelta &&
+              e.credit === `fishCaught:${caughtBefore}->${caughtAfter}`
+            );
+          },
+        )
+      );
+    case "open_geode":
+      // Evidence literal: farmhandexecutioncontroller.geodeactions.cs CrackGeode — slot;inventory_slots;location;
+      // item;geode_stack;geode_owned_before;geode_owned_after;geode_consumed;money_before;money_after;fee;
+      // fee_taken;pumped_ms;crack_settled;treasure;treasure_stack;treasure_before;treasure_after;delivered;
+      // menu_closed.
+      //
+      // Four engine facts, none of them a return value: `GeodeMenu.receiveLeftClick` takes a COPY onto the spot and
+      // the treasure does not exist until the menu's own `update` mints it (GeodeMenu.cs:373-385) and delivers it
+      // (:222-236). So the rule restates the Mod's own success condition: the geode left the pack by exactly one, the
+      // fee the menu actually charged is the fee it reports and the purse moved by it, a treasure was minted and the
+      // pack gained the whole stack, and the menu this execution opened is closed. `fee` is compared against the FEE
+      // TAKEN rather than pinned to a number here, so a change to the game's price is one fact in one place.
+      return (
+        receipt.reasonCode === "geode_opened" &&
+        declaredCompletionEvidence(
+          detail,
+          [
+            "slot",
+            "inventory_slots",
+            "location",
+            "item",
+            "geode_stack",
+            "geode_owned_before",
+            "geode_owned_after",
+            "geode_consumed",
+            "money_before",
+            "money_after",
+            "fee",
+            "fee_taken",
+            "pumped_ms",
+            "crack_settled",
+            "treasure",
+            "treasure_stack",
+            "treasure_before",
+            "treasure_after",
+            "delivered",
+            "menu_closed",
+          ],
+          (e) => {
+            const moneyBefore = integerEvidenceValue(e.money_before);
+            const moneyAfter = integerEvidenceValue(e.money_after);
+            const fee = integerEvidenceValue(e.fee);
+            const feeTaken = integerEvidenceValue(e.fee_taken);
+            const geodeBefore = integerEvidenceValue(e.geode_owned_before);
+            const geodeAfter = integerEvidenceValue(e.geode_owned_after);
+            const treasureBefore = integerEvidenceValue(e.treasure_before);
+            const treasureAfter = integerEvidenceValue(e.treasure_after);
+            const delivered = integerEvidenceValue(e.delivered);
+            const treasureStack = positiveIntegerEvidence(e.treasure_stack);
+            return (
+              validSlot(e.slot) &&
+              integerEvidenceValue(e.inventory_slots) !== null &&
+              hasBoundedNonemptyEvidenceValue(e.location) &&
+              hasOpaqueEvidenceValue(e.item) &&
+              positiveIntegerEvidence(e.geode_stack) !== null &&
+              geodeBefore !== null &&
+              geodeAfter !== null &&
+              integerEvidenceValue(e.geode_consumed) === 1 &&
+              geodeBefore - geodeAfter === 1 &&
+              moneyBefore !== null &&
+              moneyAfter !== null &&
+              fee !== null &&
+              feeTaken !== null &&
+              feeTaken === fee &&
+              moneyBefore - moneyAfter === feeTaken &&
+              integerEvidenceValue(e.pumped_ms) !== null &&
+              e.crack_settled === "true" &&
+              hasOpaqueEvidenceValue(e.treasure) &&
+              treasureStack !== null &&
+              treasureBefore !== null &&
+              treasureAfter !== null &&
+              delivered !== null &&
+              delivered === treasureAfter - treasureBefore &&
+              delivered >= treasureStack &&
+              e.menu_closed === "true"
+            );
+          },
+        )
+      );
     default:
       return false;
   }
@@ -4117,6 +4562,14 @@ function hasTileEvidenceValue(value: string | undefined): boolean {
   if (value === undefined) return false;
   const match = /^(0|[1-9][0-9]*),(0|[1-9][0-9]*)$/.exec(value);
   return match !== null && Number(match[1]) <= 1000 && Number(match[2]) <= 1000;
+}
+
+/**
+ * A furniture footprint as the rotation handler spells it (`FormatFootprint`): `x,y:WxH`, one tile rectangle derived
+ * from the piece's own `boundingBox`. Only the SHAPE is checked here; whether the box moved is the rule's business.
+ */
+function hasFootprintEvidenceValue(value: string | undefined): boolean {
+  return value !== undefined && /^(?:0|[1-9][0-9]*),(?:0|[1-9][0-9]*):[1-9][0-9]*x[1-9][0-9]*$/.test(value);
 }
 
 function hasOpaqueEvidenceValue(value: string | undefined): value is string {

@@ -3402,7 +3402,7 @@
         },
         "effect": "write",
         "postcondition": {
-          "name": "native_action_postcondition"
+          "name": "geode_opened"
         },
         "nativeBinding": "GeodeMenu.receiveLeftClick"
       }

@@ -119,9 +119,24 @@ export function handlerBodies({ files, request }) {
   const entry = locate(request);
   if (entry === null) return null;
   const bodies = [{ ...entry, name: request, text: entry.body }];
-  for (const name of new Set([...entry.body.matchAll(/\b(Execute\w+)\s*\(/gu)].map((match) => match[1]))) {
-    const inner = locate(name);
-    if (inner !== null) bodies.push({ ...inner, name, text: inner.body });
+  // TRANSITIVE delegation, not one hop: a two-step is ordinary. `ExecuteOpenGeode` opens the menu and hands the smash to
+  // the body that reads the pack, so a one-hop walk never saw `geode_owned_after` and reported `open_geode`'s
+  // `geode_owned_before` as half a delta while its handler measured the whole pair.
+  const visited = new Set([request]);
+  let pending = [entry.body];
+  while (pending.length > 0) {
+    const next = [];
+    for (const text of pending) {
+      for (const name of new Set([...text.matchAll(/\b(Execute\w+)\s*\(/gu)].map((match) => match[1]))) {
+        if (visited.has(name)) continue;
+        visited.add(name);
+        const inner = locate(name);
+        if (inner === null) continue;
+        bodies.push({ ...inner, name, text: inner.body });
+        next.push(inner.body);
+      }
+    }
+    pending = next;
   }
   return bodies;
 }

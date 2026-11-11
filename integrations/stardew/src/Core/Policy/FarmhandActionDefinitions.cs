@@ -853,7 +853,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // (GameLocation.cs:12345-12346, `Game1.activeClickableMenu = new GeodeMenu()`), not a world tile.
         // Experimental: no live gate yet, and promotion to LiveVerified is a separate catalog edit owned
         // by the parent. See farmhandexecutioncontroller.geodeactions.cs.
-        E("open_geode", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer", null, "The backpack slot holding the geode, taken from the observation inventory row."), new FarmhandActionArgument("expectedQualifiedItemId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "native_action_postcondition", "GeodeMenu.receiveLeftClick"), FarmhandActionLifecycle.Experimental),
+        E("open_geode", "body_tools", FarmhandActionHandlerGroup.ResourceTools, new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("slot", "integer", null, "The backpack slot holding the geode, taken from the observation inventory row."), new FarmhandActionArgument("expectedQualifiedItemId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "geode_opened", "GeodeMenu.receiveLeftClick"), FarmhandActionLifecycle.Experimental),
     });
 
     /// <summary>

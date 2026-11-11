@@ -51,9 +51,10 @@ public sealed class OpenGeodeWireContractTests
         descriptor.TargetFamily.Should().BeNull("open_geode publishes no snapshot target family");
         descriptor.NativeBinding.Should().Be("GeodeMenu.receiveLeftClick", "the descriptor must name the native face actually driven");
         descriptor.Postcondition.Should().Be(
-            "native_action_postcondition",
-            "a dedicated postcondition name is what makes an experimental action a Host staged candidate; "
-                + "this one has no live gate behind that claim yet");
+            "geode_opened",
+            "the receipt this handler mints when the geode left the pack, the fee moved and the treasure landed is "
+                + "`geode_opened`; the generic `native_action_postcondition` named no member, which kept this action "
+                + "outside the postcondition-delta gate's population while its handler was already measuring one");
 
         descriptor.Arguments.Select(argument => (argument.Name, argument.Type)).Should().Equal(
             ("slot", "integer"),

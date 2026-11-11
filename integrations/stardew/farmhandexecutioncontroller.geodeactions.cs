@@ -227,7 +227,7 @@ internal sealed partial class ExecutionManager
                         $"{slotIdentity};held={(menu.heldItem?.QualifiedItemId ?? "none")};pickup=refused;{GeodeRefusal(RefusalLayerKind.Item, $"slot{slot}:pickup_refused")}");
                 }
 
-                return this.CrackGeode(menu, player, executionId, requestId, slotIdentity, geodeItemId, geodeStack, geodeOwnedBefore, moneyBefore);
+                return this.ExecuteCrackGeode(menu, player, executionId, requestId, slotIdentity, geodeItemId, geodeStack, geodeOwnedBefore, moneyBefore);
             }
             finally
             {
@@ -264,8 +264,15 @@ internal sealed partial class ExecutionManager
     /// The smash and its result, driven through the menu's own handler and update. The fee, the drop
     /// table, the animation and the delivery are all the engine's; this body only supplies the click
     /// and the elapsed time, then reads the outcome back from the pack.
+    ///
+    /// <para>
+    /// Named <c>Execute*</c> because that is the unit <c>tools/check-stardew-postcondition-delta.mjs</c> reads: it takes
+    /// the dispatch entry plus every <c>Execute*</c> body it delegates to, and the <c>geode_owned_before</c>/
+    /// <c>geode_owned_after</c> pair that witnesses <c>geode_opened</c> lives HERE, not in the opening body. A plain
+    /// <c>CrackGeode</c> name left the delta invisible and the action's declared postcondition unmeasured.
+    /// </para>
     /// </summary>
-    private LocalExecutionReceipt CrackGeode(
+    private LocalExecutionReceipt ExecuteCrackGeode(
         GeodeMenu menu,
         Farmer player,
         string executionId,

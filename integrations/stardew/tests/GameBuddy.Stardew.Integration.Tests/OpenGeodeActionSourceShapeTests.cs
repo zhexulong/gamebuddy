@@ -28,7 +28,7 @@ public sealed class OpenGeodeActionSourceShapeTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.geodeactions.cs";
     private const string ExecuteDeclaration = "private LocalExecutionReceipt ExecuteOpenGeode(";
-    private const string CrackDeclaration = "private LocalExecutionReceipt CrackGeode(";
+    private const string CrackDeclaration = "private LocalExecutionReceipt ExecuteCrackGeode(";
     private const string PumpLoopDeclaration = "while (menu.geodeAnimationTimer > 0";
 
     /// <summary>The admitted <c>open_geode</c> arguments, as the wire carries them.</summary>

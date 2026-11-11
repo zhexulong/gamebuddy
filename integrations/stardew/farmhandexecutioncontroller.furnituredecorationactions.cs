@@ -430,12 +430,16 @@ internal sealed partial class ExecutionManager
         // that destroyed the fence (Fence.cs:473). The postcondition is therefore the world: the fence is GONE from the
         // collection the engine keeps it in, and the drops it produced are named.
         bool removed = !location.objects.TryGetValue(tile, out StardewValley.Object? after) || after is null;
+        // `drops=none` rather than an EMPTY value: `;`-separated evidence with a `key=` and nothing after it splits into a
+        // field the Host's parser must refuse, so a fence that dropped nothing would be a removal the Host cannot read -
+        // the same producer bug `shop_purchase` carried when a tile-opened shop wrote an empty `owner=`.
+        string dropsEvidence = drops.Count == 0 ? "none" : string.Join("|", drops);
         string evidence =
             $"target={expectedTargetId};location={location.NameOrUniqueName};tile={targetX},{targetY};item={itemId};is_gate={isGate.ToString().ToLowerInvariant()};"
             + $"tool={DescribeTool(tool) ?? "none"};slot={slot};swings={swingCount};held_object_before={heldObjectBefore.ToString().ToLowerInvariant()};"
             + $"health_before={healthBefore.ToString("0.####", CultureInfo.InvariantCulture)};max_health={maxHealth.ToString("0.####", CultureInfo.InvariantCulture)};"
             + $"removed={removed.ToString().ToLowerInvariant()};tile_object_after={(removed ? "none" : after!.QualifiedItemId)};"
-            + $"drops={string.Join("|", drops)};drop_count={drops.Count};"
+            + $"drops={dropsEvidence};drop_count={drops.Count};"
             + $"stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)}";
         return removed
             ? this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "fence_removed", evidence)
