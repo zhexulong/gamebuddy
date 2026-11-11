@@ -504,7 +504,9 @@ public static class FarmhandForEachRules
     }
 
     private static string ValueText(FarmhandForEachValue value) =>
-        value.Text ?? (value.Number is { } number ? number.ToString(CultureInfo.InvariantCulture) : value.Flag!.Value ? "true" : "false");
+        value.Text
+        ?? value.Number?.ToString(CultureInfo.InvariantCulture)
+        ?? (value.Flag is true ? "true" : "false");
 
     private static string IntegerText(int value) => value.ToString(CultureInfo.InvariantCulture);
 
