@@ -45,10 +45,16 @@ public sealed class NativeLocalPlayerFixtureHeldItemTests
     /// The closed scenario set is the population of the orthogonality gate below, so it is read from the config
     /// rather than written again here. A rename fails loudly instead of quietly emptying the check.
     /// </summary>
-    private static string[] KnownFixtureScenarios()
+    /// <summary>
+    /// The scenarios an ARMED native-local fixture accepts. Read from the config's own declaration rather than a list
+    /// here, so a scenario added to the config is examined by the gates below without anyone remembering to add it. The
+    /// two scenarios the host-automation dispatcher owns are not in it: the armed native-local fixture refuses a
+    /// configuration whose Given it cannot build, and the declared hand is a question about scenarios it CAN build.
+    /// </summary>
+    private static string[] ArmedFixtureScenarios()
     {
         FieldInfo? field = typeof(NativeLocalPlayerFixtureConfig)
-            .GetField("KnownFixtureScenarios", BindingFlags.NonPublic | BindingFlags.Static);
+            .GetField("NativeLocalFixtureScenarios", BindingFlags.NonPublic | BindingFlags.Static);
         field.Should().NotBeNull("the config owns the closed scenario set this gate must examine every member of");
         return (string[])field!.GetValue(null)!;
     }
@@ -124,7 +130,7 @@ public sealed class NativeLocalPlayerFixtureHeldItemTests
     {
         // Every scenario in the set failed the same way before this field existed: the hand could not be declared,
         // so the property is stated for the whole population instead of the one scenario that needed it first.
-        string[] scenarios = KnownFixtureScenarios();
+        string[] scenarios = ArmedFixtureScenarios();
         scenarios.Should().NotBeEmpty("an empty population would let this gate pass without examining anything");
 
         foreach (string scenario in scenarios)

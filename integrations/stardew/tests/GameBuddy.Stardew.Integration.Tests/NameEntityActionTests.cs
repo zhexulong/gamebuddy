@@ -197,8 +197,10 @@ public sealed class NameEntityActionTests
             .Should().Contain("\"name_entity\" => this.executions.RequestLocalNameEntity(", "the router must reach the body");
         ReadRepositoryFile("integrations/stardew/ModConfig.cs")
             .Should().Contain("\"native_name_entity_v1\"", "the config gate must admit the fixture scenario");
-        ReadRepositoryFile("integrations/stardew/ModEntry.Fixtures.cs")
-            .Should().Contain("if (fixture.FixtureScenario == \"native_name_entity_v1\")", "the dispatcher must arm it");
+        ReadFixturePartials()
+            .Should().Contain(
+                "NativeLocalFixtureScenarioRow.ActorPrepared(\"native_name_entity_v1\", static (mod, player, farm, _) => mod.InitializeNativeLocalNameEntityFixture(player, farm))",
+                "the dispatcher must arm it: the scenario is a row naming its own initializer");
     }
 
     /// <summary>Extract one member body by brace balance from its declaration.</summary>
@@ -256,6 +258,36 @@ public sealed class NameEntityActionTests
         ReadRepositoryFile(Path.Combine("integrations", "stardew", HandlerFile));
 
     /// <summary>Tests run from the project or its bin output; walk up to the repository root.</summary>
+/// <summary>
+    /// Every fixture partial concatenated. The scenario initializers moved out of `ModEntry.Fixtures.cs` into
+    /// `ModEntry.Fixtures.ScenarioInitializers.cs` (one method per scenario, dispatched from a table), so a pin that read
+    /// the single file would now fail on a fact that still holds. The set comes from the directory, so the next split
+    /// cannot leave this reading a file that no longer contains the fixture.
+    /// </summary>
+    private static string ReadFixturePartials()
+    {
+        string directory = Path.GetDirectoryName(RepositoryPath(Path.Combine("integrations", "stardew", "ModEntry.Fixtures.cs")))!;
+        string[] partialPaths = Directory.GetFiles(directory, "ModEntry.Fixtures*.cs").OrderBy(path => path, StringComparer.Ordinal).ToArray();
+        partialPaths.Should().NotBeEmpty("the fixture partials are where every scenario initializer lives");
+        return string.Join("\n", partialPaths.Select(File.ReadAllText));
+    }
+
+    private static string RepositoryPath(string relative)
+    {
+        foreach (string start in new[] { AppContext.BaseDirectory, Environment.CurrentDirectory })
+        {
+            DirectoryInfo? directory = new(start);
+            for (int depth = 0; directory is not null && depth < 12; depth++, directory = directory.Parent)
+            {
+                string candidate = Path.Combine(directory.FullName, relative);
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+        }
+
+        throw new FileNotFoundException($"repository path not found: {relative}");
+    }
+
     private static string ReadRepositoryFile(string relative)
     {
         foreach (string start in new[] { AppContext.BaseDirectory, Environment.CurrentDirectory })

@@ -361,9 +361,9 @@ public sealed class UseMineLadderGateRegistrationTests
     [Fact]
     public void TheScenarioIsRegisteredInEveryHandWrittenList()
     {
-        ReadRepositoryFile("integrations/stardew/ModEntry.Fixtures.cs")
+        ReadFixturePartials()
             .Should().Contain($"\"{Scenario}\"", "the scenario must be in the pre-attachment allowlist and dispatched")
-            .And.Contain($"{FixtureMethod}(player);", "the scenario must dispatch to its fixture initializer");
+            .And.Contain($"mod.{FixtureMethod}(player)", "the scenario must dispatch to its fixture initializer");
         ReadRepositoryFile("integrations/stardew/ModConfig.cs")
             .Should().Contain($"\"{Scenario}\"", "the config validator refuses an unknown fixture scenario");
         ReadRepositoryFile("integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/ModEntryFixtureBoundaryTests.cs")
@@ -393,7 +393,21 @@ public sealed class UseMineLadderGateRegistrationTests
         return builder.ToString();
     }
 
-    private static string ReadRepositoryFile(string relativePath)
+    /// <summary>
+    /// Every fixture partial concatenated. The scenario initializers moved out of `ModEntry.Fixtures.cs` into
+    /// `ModEntry.Fixtures.ScenarioInitializers.cs` (one method per scenario, dispatched from a table), so a pin that read
+    /// the single file would now fail on a fact that still holds. The set comes from the directory, so the next split
+    /// cannot leave this reading a file that no longer contains the fixture.
+    /// </summary>
+    private static string ReadFixturePartials()
+    {
+        string directory = Path.GetDirectoryName(RepositoryPath(Path.Combine("integrations", "stardew", "ModEntry.Fixtures.cs")))!;
+        string[] partialPaths = Directory.GetFiles(directory, "ModEntry.Fixtures*.cs").OrderBy(path => path, StringComparer.Ordinal).ToArray();
+        partialPaths.Should().NotBeEmpty("the fixture partials are where every scenario initializer lives");
+        return string.Join("\n", partialPaths.Select(File.ReadAllText));
+    }
+
+    private static string RepositoryPath(string relativePath)
     {
         foreach (string start in new[] { AppContext.BaseDirectory, Environment.CurrentDirectory })
         {
@@ -401,10 +415,16 @@ public sealed class UseMineLadderGateRegistrationTests
             for (int depth = 0; directory is not null && depth < 12; depth++, directory = directory.Parent)
             {
                 string candidate = Path.Combine(directory.FullName, relativePath);
-                if (File.Exists(candidate)) return File.ReadAllText(candidate);
+                if (File.Exists(candidate)) return candidate;
             }
         }
 
         throw new FileNotFoundException($"repository path not found: {relativePath}");
     }
+
+    private static string ReadRepositoryFile(string relativePath)
+    {
+        return File.ReadAllText(RepositoryPath(relativePath));
+    }
+
 }

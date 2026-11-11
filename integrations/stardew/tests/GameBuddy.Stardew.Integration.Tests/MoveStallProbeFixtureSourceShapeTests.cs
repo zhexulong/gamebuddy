@@ -202,10 +202,13 @@ public class MoveStallProbeFixtureSourceShapeTests
         string modConfig = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "ModConfig.cs")));
         foreach (string scenario in new[] { "native_move_stall_probe_pet_v1", "native_move_stall_probe_npc_v1" })
         {
-            modEntry.Should().Contain($"if (fixture.FixtureScenario is \"native_move_stall_probe_pet_v1\" or \"native_move_stall_probe_npc_v1\")",
+            // The dispatch is a table row per scenario now, so the pin is the row that names the probe initializer rather
+            // than the `if (fixture.FixtureScenario is ...)` chain shape it used to have. Both scenarios still share one
+            // initializer and differ only in the blocker they declare.
+            modEntry.Should().Contain($"NativeLocalFixtureScenarioRow.ActorAsLoaded(\"{scenario}\", static (mod, player, farm, _) => mod.InitializeNativeLocalMoveStallProbeFixture(",
                 $"{scenario} must dispatch to the probe fixture initializer");
             modEntry.Should().Contain($"\"{scenario}\"", $"{scenario} must be in ModEntry's pre-attachment allow list");
-            modConfig.Should().Contain($"\"{scenario}\"", $"{scenario} must be in ModConfig's KnownFixtureScenarios");
+            modConfig.Should().Contain($"\"{scenario}\"", $"{scenario} must be in ModConfig's native-local fixture scenarios");
         }
     }
 }

@@ -195,16 +195,17 @@ public sealed record NativeLocalPlayerFixtureConfig
         };
 
     /// <summary>
-    /// The closed set of fixture scenarios this build understands. Kept in one
-    /// place because the same list gates both the armed and the bootstrap
-    /// validation path; a scenario that appears in ModEntry's dispatcher but not
-    /// here is rejected before it can run, which is exactly how a new scenario
-    /// silently failed to arm.
+    /// The closed set of fixture scenarios the NATIVE-LOCAL fixture can build a world for: the population its dispatch
+    /// table in `ModEntry.Fixtures.ScenarioInitializers.cs` must cover with one row each.
+    ///
+    /// This is the armed fixture's universe, not the save-creation one: a scenario in ModEntry's dispatcher but not here
+    /// is rejected before it can run, and `NativeLocalFixtureScenarioPopulationTests` holds this list and the table's
+    /// keys against each other so neither can gain a member alone.
     /// </summary>
-    private static readonly string[] KnownFixtureScenarios = new[]
+    internal static readonly string[] NativeLocalFixtureScenarios = new[]
     {
-        "", "navigation_mutation_v1", "navigation_read_only_v1", "native_till_soil_v1", "native_water_crop_v1", "native_crop_research_v1", "native_plant_seed_v1", "native_fertilize_tile_v1", "native_harvest_crop_v1", "native_pickup_forage_v1", "native_pickup_item_v1", "native_machine_inspect_v1", "native_machine_coffee_load_v1", "native_machine_coffee_collect_v1", "native_machine_navigate_ab_v1", "native_npc_relationship_v1", "native_interact_npc_with_item_v1", "native_pet_animal_v1", "native_pet_farm_animal_v1", "native_water_pet_bowl_v1", "native_water_slime_hutch_trough_v1", "native_use_item_v1", "native_farmhand_chat_v1", "native_place_wood_fence_v1",
- "native_world_object_v1", "native_chop_tree_source_v1", "native_break_rock_source_v1", "native_clear_hoedirt_v1", "native_clear_debris_resource_clump_v1", "native_open_geode_v1", "native_water_crop_empty_can_recovery_v1", "native_harvest_crop_inventory_full_recovery_v1", "native_stamina_recovery_v1", "native_refill_watering_can_v1", "native_feed_animal_v1", "native_collect_animal_product_v1", "native_dig_artifact_spot_v1", "native_place_crab_pot_v1", "native_bait_crab_pot_v1", "native_chest_store_v1", "native_chest_retrieve_v1", "native_fridge_store_v1", "native_fridge_retrieve_v1", "native_ship_item_island_v1", "native_chop_stump_v1", "native_plant_sapling_v1", "native_cut_weeds_v1", "native_cut_grass_v1", "native_scythe_crop_v1", "native_harvest_bush_v1", "native_harvest_fruit_tree_v1", "native_shake_tree_v1", "native_take_pedestal_item_v1", "native_toggle_fence_gate_v1", "native_craft_item_v1", "native_clear_cask_v1", "native_dress_mannequin_v1", "native_set_sign_display_v1", "native_deposit_silo_hay_v1", "native_use_obelisk_v1", "native_withdraw_silo_hay_v1", "native_toggle_animal_door_v1", "native_clear_fish_pond_v1", "native_build_farm_building_v1", "native_accept_daily_quest_v1", "native_color_placed_object_v1", "native_name_entity_v1", "native_accept_special_order_v1", "native_claim_museum_reward_v1", "native_prize_ticket_v1", "native_enter_exit_warp_action_v1", "native_mine_enter_ladder_v1", "native_mine_use_ladder_exit_v1", "native_talk_to_npc_v1", "native_talk_to_npc_multi_page_v1", "native_toggle_tool_light_v1", "native_cook_recipe_v1", "native_craft_item_partial_v1", "native_crab_pot_collect_v1", "native_ship_item_v1", "native_jodi_harvest_deliver_v1", "native_pass_out_v1", "native_ride_minecart_v1", "native_ride_bus_v1", "native_mine_elevator_v1", "native_shop_purchase_v1", "native_use_raft_v1", "native_mount_transport_v1", "native_enter_mine_v1", "native_building_chest_v1", "native_building_chest_multistack_v1", "native_farmhand_talk_to_npc_v1",
+        "", "navigation_mutation_v1", "navigation_read_only_v1", "native_till_soil_v1", "native_water_crop_v1", "native_crop_research_v1", "native_plant_seed_v1", "native_fertilize_tile_v1", "native_harvest_crop_v1", "native_pickup_forage_v1", "native_pickup_item_v1", "native_machine_inspect_v1", "native_machine_coffee_load_v1", "native_machine_coffee_collect_v1", "native_machine_navigate_ab_v1", "native_npc_relationship_v1", "native_interact_npc_with_item_v1", "native_pet_animal_v1", "native_pet_farm_animal_v1", "native_water_pet_bowl_v1", "native_water_slime_hutch_trough_v1", "native_use_item_v1", "native_place_wood_fence_v1",
+ "native_world_object_v1", "native_chop_tree_source_v1", "native_break_rock_source_v1", "native_clear_hoedirt_v1", "native_clear_debris_resource_clump_v1", "native_open_geode_v1", "native_water_crop_empty_can_recovery_v1", "native_harvest_crop_inventory_full_recovery_v1", "native_stamina_recovery_v1", "native_refill_watering_can_v1", "native_feed_animal_v1", "native_collect_animal_product_v1", "native_dig_artifact_spot_v1", "native_place_crab_pot_v1", "native_bait_crab_pot_v1", "native_chest_store_v1", "native_chest_retrieve_v1", "native_fridge_store_v1", "native_fridge_retrieve_v1", "native_ship_item_island_v1", "native_chop_stump_v1", "native_plant_sapling_v1", "native_cut_weeds_v1", "native_cut_grass_v1", "native_scythe_crop_v1", "native_harvest_bush_v1", "native_harvest_fruit_tree_v1", "native_shake_tree_v1", "native_take_pedestal_item_v1", "native_toggle_fence_gate_v1", "native_craft_item_v1", "native_clear_cask_v1", "native_dress_mannequin_v1", "native_set_sign_display_v1", "native_deposit_silo_hay_v1", "native_use_obelisk_v1", "native_withdraw_silo_hay_v1", "native_toggle_animal_door_v1", "native_clear_fish_pond_v1", "native_build_farm_building_v1", "native_accept_daily_quest_v1", "native_color_placed_object_v1", "native_name_entity_v1", "native_accept_special_order_v1", "native_claim_museum_reward_v1", "native_prize_ticket_v1", "native_enter_exit_warp_action_v1", "native_mine_enter_ladder_v1", "native_mine_use_ladder_exit_v1", "native_talk_to_npc_v1", "native_talk_to_npc_multi_page_v1", "native_toggle_tool_light_v1", "native_cook_recipe_v1", "native_craft_item_partial_v1", "native_crab_pot_collect_v1", "native_ship_item_v1", "native_jodi_harvest_deliver_v1", "native_pass_out_v1", "native_ride_minecart_v1", "native_ride_bus_v1", "native_mine_elevator_v1", "native_shop_purchase_v1", "native_use_raft_v1", "native_mount_transport_v1", "native_enter_mine_v1", "native_building_chest_v1", "native_building_chest_multistack_v1",
         // Ladder 5 embodied-memory covenant probe (design
         // chat-long-horizon-memory-probe-design.md §10.5 class 1): the declared
         // Given is one mature Strawberry crop on the Farm plus the naturally-
@@ -266,6 +267,36 @@ public sealed record NativeLocalPlayerFixtureConfig
 
     };
 
+    /// <summary>
+    /// The scenarios whose Given the HOST-AUTOMATION dispatcher owns (`ModEntry.ResolveHostAutomationFixtureRegistration`).
+    /// A native-local fixture creates the disposable save such a scenario runs on and then has nothing of its own to
+    /// build, so these are accepted for save creation and refused for an armed pre-attachment fixture.
+    ///
+    /// They are named here, apart from the native-local population, because accepting a scenario this dispatcher cannot
+    /// initialise is the same defect one layer out: `native_farmhand_chat_v1` armed as a native-local fixture used to
+    /// fall through the scenario chain into its last branch and build the WATER-CROP world - dry unwatered crops on the
+    /// Farm plus a log line claiming a water-crop initialisation.
+    /// </summary>
+    private static readonly string[] HostAutomationFixtureSaveScenarios = new[]
+    {
+        "native_farmhand_chat_v1", "native_farmhand_talk_to_npc_v1",
+    };
+
+    /// <summary>
+    /// Every fixture scenario this build understands. Save creation accepts the union, because the save it creates is
+    /// the world another dispatcher then builds its Given on; the armed native-local fixture accepts only the population
+    /// it can initialise (see <see cref="IsValid"/>).
+    /// </summary>
+    internal static readonly string[] KnownFixtureScenarios =
+        NativeLocalFixtureScenarios.Concat(HostAutomationFixtureSaveScenarios).ToArray();
+
+    /// <summary>
+    /// Whether this scenario's Given belongs to the host-automation dispatcher. The armed native-local fixture refuses
+    /// such a scenario by name (`RejectNativeLocalPlayerFixtureScenario`) rather than building a world nobody declared.
+    /// </summary>
+    internal bool IsHostAutomationOwnedScenario =>
+        HostAutomationFixtureSaveScenarios.Contains(FixtureScenario, StringComparer.Ordinal);
+
 
     internal bool IsValid => Enable
         && LogicalSaveName.Length is >= 1 and <= 96
@@ -275,7 +306,7 @@ public sealed record NativeLocalPlayerFixtureConfig
         && TimeoutSeconds is >= 10 and <= 300
         && NavigationMutationTargetLabel.Length <= 128
         && (FixtureScenario == "navigation_mutation_v1" || NavigationMutationTargetLabel.Length == 0)
-        && KnownFixtureScenarios.Contains(FixtureScenario, StringComparer.Ordinal)
+        && NativeLocalFixtureScenarios.Contains(FixtureScenario, StringComparer.Ordinal)
         && HasValidHeldItemQualifiedId
         && (Bootstrap is null || !Bootstrap.Enable);
 

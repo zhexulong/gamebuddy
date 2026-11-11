@@ -23,11 +23,48 @@ public sealed class MultiDayPlaySessionFixtureTests
     private static string RepositorySourcePath(string relative) =>
         Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, RepositoryRelativeRoot, relative));
 
-    private static string ReadFixtureSource() =>
-        File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "ModEntry.Fixtures.cs")));
+    /// <summary>
+    /// Every fixture partial concatenated. The scenario initializers moved out of `ModEntry.Fixtures.cs` into
+    /// `ModEntry.Fixtures.ScenarioInitializers.cs` (one method per scenario, dispatched from a table), so a pin that read
+    /// the single file would now fail on a fact that still holds. The set is derived from the directory, so the next
+    /// split cannot leave this reading a file that no longer contains the fixture.
+    /// </summary>
+    private static string ReadFixtureSource() => string.Join(
+        "\n",
+        Directory.GetFiles(
+                Path.Combine(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, RepositoryRelativeRoot)), "integrations", "stardew"),
+                "ModEntry.Fixtures*.cs")
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .Select(File.ReadAllText));
 
     private static string ReadModConfigSource() =>
         File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "ModConfig.cs")));
+
+    /// <summary>
+    /// One scenario initializer's body, by brace balance. The dispatch is a table now (each scenario is a row naming its
+    /// own initializer in `ModEntry.Fixtures.ScenarioInitializers.cs`), so a scenario's Given is the body of the method its
+    /// row names rather than a branch of one `if` chain.
+    /// </summary>
+    private static string InitializerBody(string declaration)
+    {
+        string source = ReadFixtureSource();
+        int start = source.IndexOf(declaration, StringComparison.Ordinal);
+        start.Should().BeGreaterThanOrEqualTo(0, $"initializer not found: {declaration}");
+        int open = source.IndexOf('{', start);
+        int depth = 0;
+        for (int i = open; i < source.Length; i++)
+        {
+            if (source[i] == '{')
+                depth++;
+            else if (source[i] == '}')
+            {
+                depth--;
+                if (depth == 0)
+                    return source[start..(i + 1)];
+            }
+        }
+        throw new InvalidOperationException($"unbalanced body: {declaration}");
+    }
 
     private static string ReadMultiDayGivenSource() =>
         File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "ModEntry.Fixtures.MultiDay.cs")));
@@ -42,17 +79,16 @@ public sealed class MultiDayPlaySessionFixtureTests
         // The pre-attachment allow list and the dispatcher are two separate gates: a scenario in one but
         // not the other is rejected before it can run, which is exactly how a new scenario failed silently.
         modEntry.Should().Contain($"\"{Scenario}\"", $"{Scenario} must be in ModEntry's pre-attachment allow list");
-        modEntry.Should().Contain($"if (fixture.FixtureScenario == \"{Scenario}\")", $"{Scenario} must dispatch to an initializer");
+        modEntry.Should().Contain(
+            $"NativeLocalFixtureScenarioRow.ActorPrepared(\"{Scenario}\", static (mod, player, farm, _) => mod.InitializeNativeLocalMultiDayPlaySessionFixture(player, farm))",
+            $"{Scenario} must dispatch to an initializer");
         ReadModConfigSource().Should().Contain($"\"{Scenario}\"", $"{Scenario} must be in ModConfig's KnownFixtureScenarios");
     }
 
     [Fact]
     public void ScenarioComposesBothDeclaredGivens()
     {
-        string source = ReadFixtureSource();
-        int start = source.IndexOf($"if (fixture.FixtureScenario == \"{Scenario}\")", StringComparison.Ordinal);
-        start.Should().BeGreaterThan(0);
-        string body = source[start..source.IndexOf("\n            }\n", start, StringComparison.Ordinal)];
+        string body = InitializerBody("private void InitializeNativeLocalMultiDayPlaySessionFixture(");
         // (a) days can pass, and the first rollover raises the settlement menu exactly once.
         body.Should().Contain("InitializeNativeLocalMultiDayFixture(player, farm);");
         // (b) each new day still has work in it.
@@ -211,9 +247,7 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
         // name ("actor_not_home") if its own placement does not hold. The play-session fixture then moves
         // the actor to the Farm crossroads, which is where a session needs to start. Reversing them would
         // leave the multi-day placement assertion checking a world the other fixture already moved.
-        string source = ReadFixtureSource();
-        int start = source.IndexOf($"if (fixture.FixtureScenario == \"{Scenario}\")", StringComparison.Ordinal);
-        string body = source[start..source.IndexOf("\n            }\n", start, StringComparison.Ordinal)];
+        string body = InitializerBody("private void InitializeNativeLocalMultiDayPlaySessionFixture(");
         body.IndexOf("InitializeNativeLocalMultiDayFixture", StringComparison.Ordinal)
             .Should()
             .BeLessThan(body.IndexOf("InitializeNativeLocalPlaySessionFixture", StringComparison.Ordinal));
