@@ -198,12 +198,3 @@ export function assertionsOf(body) {
   }
   return assertions;
 }
-
-/** The stubbed route pattern of every `page.route(...)`/`context.route(...)` call, in source order. */
-function stubbedRoutes(source) {
-  const routes = [];
-  for (const match of source.matchAll(/\b(?:page|context|browserContext)\.route\s*\(\s*(["'`])([^"'`]+)\1/gu)) {
-    routes.push(match[2]);
-  }
-  return routes;
-}

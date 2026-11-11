@@ -76,7 +76,6 @@
  */
 
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { grammarWasmFor, JAVASCRIPT_GRAMMARS, parseJavaScript } from "./javascript-ast.mjs";
 
 /** Rule ids a caller may disable. `parse_error` is not disableable. */
