@@ -1422,17 +1422,9 @@ internal sealed partial class ExecutionManager
         string mineExitDecisionEvidence = specification.Action == "use_mine_ladder"
             ? $";question={MineExitQuestionKey};response={MineExitResponseKey}"
             : string.Empty;
-        LocalExecutionReceipt receipt = new(
-            specification.ExecutionId,
-            specification.RequestId,
-            state,
-            reasonCode,
-            this.revision,
-            $"expected={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};actual={Game1.player.currentLocation.NameOrUniqueName}:{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}{(specification.Action is "enter_mine" or "select_mine_elevator_floor" && Game1.player.currentLocation is StardewValley.Locations.MineShaft shaft2 ? $";level={shaft2.mineLevel}" : string.Empty)}{(specification.Action == "ride_minecart" ? minecartEvidence : string.Empty)}{mineExitDecisionEvidence}");
         this.activeTravel = null;
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+        this.RememberTerminal(specification.RequestId, specification.ExecutionId, state, reasonCode,
+            $"expected={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};actual={Game1.player.currentLocation.NameOrUniqueName}:{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}{(specification.Action is "enter_mine" or "select_mine_elevator_floor" && Game1.player.currentLocation is StardewValley.Locations.MineShaft shaft2 ? $";level={shaft2.mineLevel}" : string.Empty)}{(specification.Action == "ride_minecart" ? minecartEvidence : string.Empty)}{mineExitDecisionEvidence}");
     }
 
     /// <summary>

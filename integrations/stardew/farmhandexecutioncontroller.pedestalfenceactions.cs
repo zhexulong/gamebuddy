@@ -175,10 +175,7 @@ internal sealed partial class ExecutionManager
         if (this.activePedestalTaking is not LocalPedestalTakingSpec specification) return;
         this.activePedestalTaking = null;
         this.revision++;
-        LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Uncertain, reasonCode, this.revision,
+        this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, reasonCode,
             $"location={specification.Location};target={specification.TargetId};native_mutex_pending=true;never_retry=true;lifecycle_reason={lifecycleReason ?? "none"}");
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
     }
 }

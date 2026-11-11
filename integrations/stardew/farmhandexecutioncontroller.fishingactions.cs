@@ -530,9 +530,6 @@ internal sealed partial class ExecutionManager
         // The catch window the engine opened may still be on screen if the action ended between the bite and the win.
         if (Game1.activeClickableMenu is BobberBar) Game1.exitActiveMenu();
         this.revision++;
-        LocalExecutionReceipt receipt = new(spec.ExecutionId, spec.RequestId, state, reasonCode, this.revision, evidence);
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(spec.ExecutionId, spec.RequestId);
+        this.RememberTerminal(spec.RequestId, spec.ExecutionId, state, reasonCode, evidence);
     }
 }

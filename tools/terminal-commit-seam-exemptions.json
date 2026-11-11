@@ -137,15 +137,6 @@
       "reason": "stores and publishes a non-terminal marker (Accepted/Running); the seam's terminal-only work does not apply to it"
     },
     {
-      "file": "integrations/stardew/farmhandexecutioncontroller.fishingactions.cs",
-      "member": "SettleFishingCast",
-      "line": 534,
-      "sites": 1,
-      "family": "fishingactions",
-      "kind": "faithful_copy",
-      "reason": "faithful copy of the seam (Remember, AddTrace, PublishIdleAfterRelease); converting it to RememberTerminal is behaviour-identical"
-    },
-    {
       "file": "integrations/stardew/farmhandexecutioncontroller.gatheringactions.cs",
       "member": "RequestLocalPickupItem",
       "line": 231,
@@ -255,15 +246,6 @@
     },
     {
       "file": "integrations/stardew/farmhandexecutioncontroller.movementactions.cs",
-      "member": "CompleteTravelAfterWarp",
-      "line": 1433,
-      "sites": 1,
-      "family": "movementactions",
-      "kind": "faithful_copy",
-      "reason": "faithful copy of the seam (Remember, AddTrace, PublishIdleAfterRelease); converting it to RememberTerminal is behaviour-identical"
-    },
-    {
-      "file": "integrations/stardew/farmhandexecutioncontroller.movementactions.cs",
       "member": "RequestLocalDoorTransition",
       "line": 1079,
       "sites": 2,
@@ -315,15 +297,6 @@
       "family": "pedestalfenceactions",
       "kind": "non_terminal_marker",
       "reason": "stores and publishes a non-terminal marker (Accepted/Running); the seam's terminal-only work does not apply to it"
-    },
-    {
-      "file": "integrations/stardew/farmhandexecutioncontroller.pedestalfenceactions.cs",
-      "member": "SettlePedestalTakingUncertain",
-      "line": 180,
-      "sites": 1,
-      "family": "pedestalfenceactions",
-      "kind": "faithful_copy",
-      "reason": "faithful copy of the seam (Remember, AddTrace, PublishIdleAfterRelease); converting it to RememberTerminal is behaviour-identical"
     },
     {
       "file": "integrations/stardew/farmhandexecutioncontroller.petbowlactions.cs",
