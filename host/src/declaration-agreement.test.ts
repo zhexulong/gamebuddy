@@ -45,7 +45,9 @@ import type { HostFamilyRule, HostValidator, SnapshotMember } from "./wire-decla
  *
  * <ul>
  *   <li>a `family` needs an entry in `SNAPSHOT_FAMILY_RULES` whose accepts predicate names a key list, compared both
- *       ways against the record it publishes;</li>
+ *       ways against the record it publishes - or a predicate that is a ONE-HOP pass-through to one that does, which is
+ *       compared the same way with the chain reported (`waterTargets: isWaterTargetFact -> isRefillWateringCanTargetFact`)
+ *       rather than with the delegate's keys filed under the delegateING predicate's name;</li>
  *   <li>an `elementFamily` needs its rule or a named validator, because its entries are primitives;</li>
  *   <li>a `nestedRecord` needs a reader whose keys are the record's keys - a key list written on the member, or a
  *       function called with it that names the fields;</li>
@@ -98,6 +100,8 @@ interface DeclarationReport {
   readonly withoutRule: number;
   /** The members whose KEY SET was compared, so "examined" is a reading rather than a claim. */
   readonly compared: readonly string[];
+  /** The families whose validator is a pass-through, with the chain rendered - so the row's home is named, not flattened. */
+  readonly passThroughs: readonly string[];
   readonly findings: Findings;
 }
 
@@ -121,6 +125,7 @@ function declarationReport(sources: DeclarationSources): DeclarationReport {
       withRule: 0,
       withoutRule: 0,
       compared: [],
+      passThroughs: [],
       findings: NOTHING_FOUND,
     };
   }
@@ -139,6 +144,7 @@ function readDeclarations(sources: DeclarationSources): DeclarationReport {
   const ruleFindings: string[] = [];
   const fields: string[] = [];
   const compared: string[] = [];
+  const passThroughs: string[] = [];
 
   const published = new Set(members.map((member) => member.wireName));
   for (const member of members)
@@ -174,6 +180,7 @@ function readDeclarations(sources: DeclarationSources): DeclarationReport {
   for (const member of members) {
     if (member.kind === "family") {
       compareFamilyKeys(member, rules, validators, records, fields, compared);
+      notePassThrough(member.wireName, rules, validators, passThroughs);
       continue;
     }
     if (member.kind === "nestedRecord") {
@@ -198,8 +205,32 @@ function readDeclarations(sources: DeclarationSources): DeclarationReport {
     withRule: families.filter((member) => rules.has(member.wireName)).length,
     withoutRule: families.filter((member) => !rules.has(member.wireName)).length,
     compared,
+    passThroughs,
     findings: { frame, rules: ruleFindings, fields },
   };
+}
+
+/**
+ * The families whose rule names a ONE-HOP pass-through, with the chain and where the key list really lives.
+ *
+ * This is printed rather than folded into `compared`: `compared` legitimately contains `waterTargets`, and a reader who
+ * followed that alone would look for its key list in `isWaterTargetFact` - where it is not. An UNRESOLVED chain is
+ * listed here too, because a message that says only "names no key list" about a delegate points at the wrong file.
+ */
+function notePassThrough(
+  family: string,
+  rules: ReadonlyMap<string, HostFamilyRule>,
+  validators: ReadonlyMap<string, HostValidator | null>,
+  passThroughs: string[],
+): void {
+  const accepts = rules.get(family)?.accepts;
+  if (accepts === undefined) return;
+  const predicate = validators.get(accepts);
+  if (predicate === undefined || predicate === null || predicate.delegatesTo === null) return;
+  passThroughs.push(
+    `${family}: \`${accepts}\` -> \`${predicate.delegatesTo}\` - the key list is the LAST predicate's, read where ` +
+      "that predicate declares it",
+  );
 }
 
 /** The keys a record publishes, as the wire spells them, for a failure message. */
@@ -314,6 +345,8 @@ test("every member the Mod publishes is a key the Host admits", () => {
     `snapshot declaration: members examined ${report.members} · families examined ${report.families} · ` +
       `with a rule ${report.withRule} · without a rule ${report.withoutRule} · key sets compared ${report.compared.length}`,
   );
+  // Printed, not summarised: a pass-through's keys live in ANOTHER file, so the reader has to be told which one.
+  for (const passThrough of report.passThroughs) console.log(`  pass-through ${passThrough}`);
   assert.ok(report.members > 100, `the Mod's snapshot members must have been read (found ${report.members})`);
   assert.ok(report.families > 70, `BridgeSnapshot must declare its families (found ${report.families})`);
   assert.deepEqual(
@@ -520,4 +553,101 @@ test("the comparison is not vacuous: the families that have cost a run are exami
   const validator = hostValidators().get("isTreeChopSourceTargetFact");
   assert.ok(validator !== undefined && validator !== null, "isTreeChopSourceTargetFact must be parsed");
   assert.ok(validator.keys.includes("health"), `its keys must be read; parsed [${validator.keys.join(", ")}]`);
+});
+
+/**
+ * `waterTargets` is the family this gate could not see: `isWaterTargetFact`'s whole body is
+ * `return isRefillWateringCanTargetFact(value);`, so the key list lives one file section away and a reader that stops at
+ * the outer predicate's body reports "names no key list" - which is the same verdict it gives a predicate that reads
+ * nothing. This test is both halves: on the real tree the family IS compared, and the chain is PRINTED, so the next
+ * reader is sent to the predicate that declares the keys instead of to the one that renames it.
+ */
+test("a family whose validator is a pass-through is compared against the predicate it delegates to, and the chain is named", () => {
+  const report = readReport();
+  assert.ok(
+    report.compared.includes("waterTargets"),
+    `\`waterTargets\` must have its key set compared; compared [${report.compared.join(", ")}]`,
+  );
+  const listed = report.passThroughs.filter((row) => row.startsWith("waterTargets"));
+  assert.equal(
+    listed.length,
+    1,
+    `\`waterTargets\` must be reported as a pass-through exactly once; reported [${report.passThroughs.join(", ")}]`,
+  );
+  assert.match(
+    listed[0] ?? "",
+    /`isWaterTargetFact` -> `isRefillWateringCanTargetFact`/u,
+    `the report must name BOTH predicates, or the key list looks declared where it is not: ${listed[0]}`,
+  );
+  assert.ok(
+    !report.findings.fields.some((finding) => finding.startsWith("waterTargets.")),
+    `the compared key set must agree with BridgeWaterTarget: ${report.findings.fields.join("\n")}`,
+  );
+});
+
+/**
+ * The red half, in the two shapes a "follow one hop" reader must refuse.
+ *
+ * (a) The delegate names no key list at all. The gate must still fail, and the failure must name the CHAIN - a message
+ *     that says `isWaterTargetFact` names no key list sends the next reader to the renamer, where there was never
+ *     anything to find.
+ * (b) The chain needs TWO hops. One hop is the whole grant (`inheritsKeys` above): a chain of renames would make this
+ *     reader an interpreter of aliases, and nothing on the wire declares which branch of a multi-branch predicate a
+ *     family's keys belong to.
+ *
+ * Both are injected into `facts`, the source `hostValidators` reads first, so the synthetic predicates are the ones the
+ * family's rule resolves - and the real family's rule is untouched, which is what makes the finding the gate's own.
+ */
+test("a pass-through whose chain names no key list still fails by name, with the chain - one hop is the whole grant", () => {
+  const rows = (...bodies: readonly string[]): string => bodies.join("\n");
+
+  const noKeys = rows(
+    "function isRefillWateringCanTargetFact(value: unknown): boolean {",
+    "  return isRecord(value);",
+    "}",
+    "function isWaterTargetFact(value: unknown): boolean {",
+    "  return isRefillWateringCanTargetFact(value);",
+    "}",
+    "",
+  );
+  const unresolved = declarationReport({ ...DECLARATIONS, facts: noKeys });
+  assert.equal(unresolved.status, "read", `the injected source must still be read: ${unresolved.reason}`);
+  const named = unresolved.findings.fields.filter((finding) => finding.startsWith("waterTargets"));
+  assert.equal(
+    named.length,
+    1,
+    `the delegate that names nothing must be reported exactly once:\n${unresolved.findings.fields.join("\n")}`,
+  );
+  assert.match(
+    named[0] ?? "",
+    /isWaterTargetFact -> isRefillWateringCanTargetFact/u,
+    `the failure must name the chain it walked, not the outer predicate alone: ${named[0]}`,
+  );
+  assert.match(named[0] ?? "", /ONE hop/u, `the failure must say which rule it failed: ${named[0]}`);
+
+  // (b) two hops, where the LAST predicate does name its keys: the grant is still one hop, so this stays unresolved.
+  const twoHops = rows(
+    "function isRowShapeFact(value: unknown): boolean {",
+    '  return isRecord(value) && hasExactKeys(value, ["targetId", "x", "y"]);',
+    "}",
+    "function isMiddleFact(value: unknown): boolean {",
+    "  return isRowShapeFact(value);",
+    "}",
+    "function isWaterTargetFact(value: unknown): boolean {",
+    "  return isMiddleFact(value);",
+    "}",
+    "",
+  );
+  const chained = declarationReport({ ...DECLARATIONS, facts: twoHops });
+  const chainedFinding = chained.findings.fields.filter((finding) => finding.startsWith("waterTargets"));
+  assert.equal(
+    chainedFinding.length,
+    1,
+    `a two-hop chain must be reported, not followed:\n${chained.findings.fields.join("\n")}`,
+  );
+  assert.match(
+    chainedFinding[0] ?? "",
+    /isWaterTargetFact -> isMiddleFact -> isRowShapeFact/u,
+    `the failure must name every hop it refused to follow: ${chainedFinding[0]}`,
+  );
 });

@@ -10,6 +10,7 @@ import {
   modRecords,
   validatorFor,
 } from "./wire-declaration.test-support.js";
+import { isTailoringTargetFact, isToolSlot } from "./protocol-target-facts.js";
 
 /**
  * EVERY NUMERIC FIELD THE MOD PUBLISHES MUST BE A VALUE THE HOST ACCEPTS.
@@ -56,7 +57,7 @@ import {
  *
  * <h2>The ratchet, and why it counts rather than lists</h2>
  * <p>
- * 166 fields narrow today. Naming all 166 here would be a hand-maintained list that has to be edited on every unrelated
+ * 185 fields narrow today. Naming all 185 here would be a hand-maintained list that has to be edited on every unrelated
  * family change - the shape that stops being read. Instead each signature declares its REASON and its COUNT, and the
  * gate prints every member. A field that appears in a declared signature raises that signature's count and fails; a
  * field in a signature nothing declares fails by name; a declared signature whose count falls means the Host widened
@@ -212,7 +213,7 @@ const DECLARED_NARROWINGS: readonly DeclaredNarrowing[] = [
   {
     declaredType: "int",
     accepts: "[0, 1000]",
-    count: 105,
+    count: 109,
     reason:
       "a tile coordinate. `isTileCoordinate` bounds every one of them, and the Mod's own discovery clamps to the same " +
       "range before publishing - `DiscoverWeedTargets` and `DiscoverGrassTargets` both spell out `>= 0 && <= 1000`. A " +
@@ -220,7 +221,14 @@ const DECLARED_NARROWINGS: readonly DeclaredNarrowing[] = [
       "every family. The three `farmAnimalPetTargets` fields that joined it: `x`/`y` are the animal's tile, and " +
       "`friendship` is `FarmAnimal.friendshipTowardFarmer`, which the engine itself caps with `Math.Min(1000, ...)` on " +
       "every branch of `FarmAnimal.pet` (FarmAnimal.cs:754/758/762/774) - so `[0, 1000]` is the animal's own range, " +
-      "not a Host guess.",
+      "not a Host guess. Two more tile families joined after that reading and were never declared: " +
+      "`fixedInteractionPoints` (`x`/`y` are the map's own row-major tile indices, from " +
+      "`location.map.Layers[0].LayerWidth/Height` in farmhandexecutioncontroller.fixedpoints.cs:58-65) and `waterTargets` " +
+      "(`BridgeWaterTarget` is the refill row's shape exactly, and the Host's `isWaterTargetFact` is a one-line " +
+      "pass-through to `isRefillWateringCanTargetFact` that neither gate could follow until this change - the family was " +
+      "invisible to BOTH, so its two coordinates are counted here for the first time). Neither of those two families " +
+      "applies a discovery clamp: a map wider or taller than 1000 tiles would publish a coordinate the Host refuses, " +
+      "which is the residual risk this entry records rather than hides.",
   },
   {
     declaredType: "int",
@@ -239,12 +247,24 @@ const DECLARED_NARROWINGS: readonly DeclaredNarrowing[] = [
   {
     declaredType: "int?",
     accepts: "[0, 9007199254740991]",
-    count: 2,
+    count: 6,
     reason:
-      "a DAY COUNT the engine's own crop data declares: `CropData.DaysInPhase` is a list of per-phase day counts and " +
-      "`CropData.RegrowDays` is the interval after a pick, so neither can be negative (`Crop.cs` consumes them as day " +
-      "arithmetic against `currentPhase`/`dayOfCurrentPhase`). Absent when the engine resolved no `Data/Crops` row for the " +
-      "crop, which is what `cropFactsUnknown: crop_data_missing` names on the row.",
+      "a count or an id the engine never states negative, absent when the Mod has no answer: the crop row's " +
+      "`daysToHarvest`, four `seedSupplyTargets` shop facts, and the level-up pair's `previousProfession`. " +
+      "`daysToHarvest` is a DAY COUNT from the engine's own crop data (`CropData.DaysInPhase`), absent when the engine " +
+      "resolved no `Data/Crops` row, which is what `cropFactsUnknown: crop_data_missing` names. `CropTargets.regrowDays` " +
+      "is NOT in this group and that is settled history: the Host accepts the engine's own `-1` through `isRegrowDays` " +
+      "(protocol-target-facts.ts:211), so the producer's `int` is a subset and no narrowing remains at all. The four " +
+      "shop facts are `heldCount` (a sum of inventory stacks), `price` (the `Data/Shops` row the menu charges), " +
+      "`declaredPrice` (`DeclaredSeedPrice` publishes `entry.Price < 0f ? null : (int)entry.Price`, so a negative " +
+      "declared price is absent rather than published) and `currency` (a `ShopCurrencyType` index). `price` is the one " +
+      "member of the four whose floor the PRODUCER does not apply itself: `ReadShopStock` copies " +
+      "`ItemStockInformation.Price` with no sign guard, so a modded shop row with a negative price would publish it and " +
+      "the bridge would close. That is a residual risk recorded here rather than fixed - the guard `DeclaredSeedPrice` " +
+      "has would belong beside it, and the Mod is not this unit's to change. `previousProfession` " +
+      "is `skill * 6` or `skill * 6 + 1` from `player.professions` (farmhandexecutioncontroller.cs:2846-2850) - a " +
+      "profession id, and modded profession tables only add ids above the vanilla range. The Host's bound is wider than " +
+      "`int` on the top end, so only the floor is a real bound.",
   },
   {
     declaredType: "int?",
@@ -398,8 +418,11 @@ const DECLARED_NARROWINGS: readonly DeclaredNarrowing[] = [
   {
     declaredType: "int",
     accepts: "[0, 10]",
-    count: 1,
-    reason: "the gifts given today, bounded by the Host at 10 around the game's own two-gift daily limit.",
+    count: 2,
+    reason:
+      "the gifts given today and a skill's level. The gift count is bounded by the Host at 10 around the game's own " +
+      "two-gift daily limit; the level is the `level` half of a pending level-up pair (`player.newLevels` in " +
+      "farmhandexecutioncontroller.cs:2839) and 10 is the engine's own cap on every skill.",
   },
   {
     declaredType: "int",
@@ -424,18 +447,53 @@ const DECLARED_NARROWINGS: readonly DeclaredNarrowing[] = [
   {
     declaredType: "int",
     accepts: "[0, 9007199254740991]",
-    count: 2,
+    count: 6,
     reason:
-      "a container's stack and item totals, read through `isNonNegativeSafeInteger`. The bound is wider than `int`, so " +
-      "it exists only to keep the signature visible rather than to exclude anything.",
+      "an index or a running total the engine never states negative, read through `isNonNegativeSafeInteger`: a " +
+      "container's `stackCount` and `itemCount`, the level-up pair's two profession ids, and the tailoring pair's two " +
+      "slots. The bound is wider than `int` on the top end, so only the floor is a real bound. The profession ids are " +
+      "`LevelUpProfessionPair`'s own answers (`skill * 6`, `skill * 6 + 1`, farmhandexecutioncontroller.cs:2844). The " +
+      "tailoring slots are the one place this census records a LOOSER Host bound than its siblings rather than " +
+      "correcting it: every other backpack index in this file goes through `isToolSlot` (0..36, " +
+      "protocol-target-facts.ts:2129) while `tailoringTargets.leftSlot`/`rightSlot` go through " +
+      "`isNonNegativeSafeInteger` (protocol-target-facts.ts:2116), so the Host accepts a garment in slot 500. That may be " +
+      "correct - a tailoring row may name an equipment slot rather than a backpack slot - but nothing in this tree " +
+      "states which, and tightening an accept rule without the engine fact would refuse payloads nobody has shown to be " +
+      "wrong. Pinned by `the tailoring slots accept a slot the backpack does not have, and that is recorded here` below.",
+  },
+  {
+    declaredType: "int?",
+    accepts: "[0, int.MaxValue+)",
+    count: 1,
+    reason:
+      "a tool's UPGRADE LEVEL, and the nullable declared type is the point: `BridgeToolSlot.UpgradeLevel` is `int?` " +
+      "because the Mod publishes `tool.UpgradeLevel >= 0 ? tool.UpgradeLevel : null` " +
+      "(farmhandexecutioncontroller.cs:4370). The engine gives a non-upgradable tool `-1` (`new MilkPail().UpgradeLevel " +
+      '== -1`), and the Host reads a level as a tier, so absence means "this tool does not upgrade" rather than a ' +
+      "number. The Host's `Number.isInteger(...) && >= 0` has no top end and the producer's `int` fits under it, so the " +
+      "only bound is the floor the Mod already applies - this signature exists because an `int?` field cannot hide in " +
+      "the `int [0, int.MaxValue+)` entry below, whose count fell by exactly this member.",
+  },
+  {
+    declaredType: "int",
+    accepts: "[0, 5]",
+    count: 1,
+    reason:
+      "the SKILL INDEX of a pending level-up pair: `BridgeLevelUpChoice.Skill` is `entry.X` from `player.newLevels` " +
+      "(farmhandexecutioncontroller.cs:2838), and the Mod publishes only the five branchable skills - `skill == 5` " +
+      "(Luck) is filtered out one line later (:2840) because it never branches. The Host's `isNonNegativeSafeInteger` " +
+      "plus `<= 5` is the game's own six `SkillType` values, one wider than what the producer sends. A member added to " +
+      "`BridgeLevelUpChoice` without a domain raises this signature's count and fails the count test in this file.",
   },
   {
     declaredType: "int",
     accepts: "[0, int.MaxValue+)",
-    count: 6,
+    count: 5,
     reason:
-      "an unbounded count floored at 0 by the Host and by no engine fact: `upgradeLevel`, a minecart price, a shop " +
-      "stock count, a fish pond's occupants, a building's cost and its build days.",
+      "an unbounded count floored at 0 by the Host and by no engine fact: a minecart price, a shop stock count, a fish " +
+      "pond's occupants, a building's cost and its build days. `toolSlots.upgradeLevel` used to be the sixth member and " +
+      "left when `BridgeToolSlot.UpgradeLevel` became `int?` - it is declared under its own signature above, because an " +
+      "`int?` field's narrowing is a different reading from an `int` field's.",
   },
   {
     declaredType: "int",
@@ -533,7 +591,9 @@ test("every numeric field the Host narrows is declared, with the engine fact tha
     "a producer publishes a value the consumer's validator rejects, and because the Host refuses the WHOLE snapshot " +
       "one such field closes the bridge on a real farm - that is `c66ad0eb` (tree health `=== 1`) and `def2fb07` " +
       "(rock health `=== 1`), and eight live runs died one field at a time. Either widen the Host bound to the " +
-      "producer's real range, or declare the narrowing here with the engine fact that makes it correct:\n" +
+      "producer's real range, or declare the narrowing here with the engine fact that makes it correct. The population " +
+      "is the Mod RECORD's own members, so adding a member to a record whose type is already declared narrows ONE MORE " +
+      "field and fails here by name - there is no list to keep in step:\n" +
       undeclared.join("\n"),
   );
 });
@@ -563,7 +623,8 @@ test("every declared signature still narrows exactly the number of fields it rec
       problems.push(
         `${signature}: declared ${declared.count} field(s), found ${actual.length} [${actual.join(", ")}] - a field ` +
           "joined or left this signature. A new one needs its engine fact written down; a departure means the Host " +
-          "widened and the count should fall with it.",
+          "widened and the count should fall with it. This test is the one that names a member added to a record whose " +
+          "type is already declared, which is why the count is pinned instead of the field names.",
       );
   }
   assert.deepEqual(problems, [], problems.join("\n"));
@@ -592,6 +653,39 @@ test("the census is printed, so the count is a reading and not a claim", () => {
   );
 });
 
+/**
+ * The one row where this census records a LOOSER Host bound than its siblings, pinned instead of tightened.
+ *
+ * Every other backpack index in `SNAPSHOT_FAMILY_RULES` is read through `isToolSlot` (0..36), which is the pack the
+ * Mod publishes; `tailoringTargets.leftSlot`/`rightSlot` are read through `isNonNegativeSafeInteger`, so the Host accepts
+ * a garment in slot 500 and the narrowing above it (`int [0, 9007199254740991]`) is the floor alone.
+ *
+ * UNDER REVIEW, deliberately. The looser accept may be CORRECT - a tailoring row may name an equipment slot, whose index
+ * is not a backpack index - but nothing in this tree states which, and narrowing an accept rule without the engine fact
+ * would refuse payloads nobody has shown to be wrong. So the behaviour is pinned with both readings from the same run:
+ * the tailoring slot above the pack is accepted, and the pack helper the sibling families use refuses the same number.
+ * Whoever settles the question deletes this test with the change that settles it.
+ */
+test("the tailoring slots accept a slot the backpack does not have, and that is recorded here", () => {
+  const tailoringRow = (leftSlot: number): Record<string, unknown> => ({
+    targetId: "tailor_0123456789abcdef",
+    kind: "recipe",
+    leftSlot,
+    rightSlot: 1,
+    leftQualifiedItemId: "(O)1",
+    rightQualifiedItemId: "(O)2",
+    outputQualifiedItemId: "(O)3",
+  });
+  assert.equal(isToolSlot(500), false, "the backpack helper every sibling family uses refuses slot 500");
+  assert.equal(
+    isTailoringTargetFact(tailoringRow(500)),
+    true,
+    "UNDER REVIEW: `isTailoringTargetFact` accepts slot 500 through `isNonNegativeSafeInteger`, so the accepted set " +
+      "here is wider than the pack - see the `int [0, 9007199254740991]` entry's reason",
+  );
+  assert.equal(isTailoringTargetFact(tailoringRow(-1)), false, "the only bound it does apply is the floor at 0");
+});
+
 /** Read a declared `accepts` interval back into the shape the comparison uses. */
 function parseInterval(text: string): Interval {
   const match = /^([[(])\s*(-?\d+|int\.MaxValue\+|-inf)\s*,\s*(-?\d+|int\.MaxValue\+|-inf)\s*([\])])$/u.exec(text);
@@ -614,7 +708,7 @@ function parseInterval(text: string): Interval {
 }
 
 /**
- * The recorded census at the commit this gate landed.
+ * The recorded census.
  *
  * A ratchet, not a target: the number may fall as bounds are corrected, and every entry that disappears must be
  * deleted from `DECLARED_NARROWINGS` in the same change (the count test above enforces that half).
@@ -623,9 +717,30 @@ function parseInterval(text: string): Interval {
  * `friendship`) are declared above with the engine fact that makes each legitimate.
  *
  * RAISED FROM 169 TO 171 by the crop row's two day counts (`CropTargets.daysToHarvest`/`regrowDays`), declared above.
- * The measurement at that commit also reports 173, i.e. two narrowings this change does not own: `int [0, 1000]` counts
- * 107 against the declared 105 and `int [0, int.MaxValue+]` counts 5 against the declared 6, and both of those readings
- * are identical with this change's `protocol-target-facts.ts` reverted to HEAD - so they belong to work in flight in
- * another file, and absorbing them here would hide exactly what this ratchet exists to show.
+ * That commit also measured 173 and said the extra two "belong to work in flight in another file". They did not: they
+ * are still here after every lane landed, which is the reading this note now corrects.
+ *
+ * RAISED FROM 171 TO 185. The 171 was a ceiling over a DECLARED population that had drifted from the measured one, and
+ * this change declares the drift row by row instead of absorbing it in one bigger number:
+ *
+ * <pre>
+ *   171
+ *   + 2   `int [0, 1000]`            105 -> 107  fixedInteractionPoints' tile pair, from the live map's own dimensions
+ *   + 4   `int? [0, 9007199254740991]`  2 -> 6    the four seedSupplyTargets shop facts
+ *   + 4   `int [0, 9007199254740991]`   2 -> 6    two level-up profession ids and the tailoring slot pair
+ *   + 1   `int [0, 10]`               1 -> 2     the level-up skill's level
+ *   + 1   `int? [0, int.MaxValue+)`   0 -> 1     toolSlots.upgradeLevel, after the record made it `int?`
+ *   + 1   `int [0, 5]`                0 -> 1     the level-up skill index
+ *   - 1   `int [0, int.MaxValue+)`    6 -> 5     upgradeLevel leaving that signature
+ *   = 183 measured
+ *   + 2   the family this change's reader fix REVEALS: waterTargets' tile coordinates, both joining `int [0, 1000]`
+ *         (107 -> 109), because `isWaterTargetFact` is a one-line pass-through to `isRefillWateringCanTargetFact`
+ *         and neither gate could see through it
+ *   = 185, which is the first ceiling that counts that family instead of skipping it
+ * </pre>
+ *
+ * Each row above carries its reason in `DECLARED_NARROWINGS`, and each of those reasons names the code that writes the
+ * field. Declaring 183 would have encoded the hole this change closes: a family invisible to BOTH censuses is not a
+ * family with no narrowings, it is one nobody measured.
  */
-const NARROWING_CEILING = 171;
+const NARROWING_CEILING = 185;

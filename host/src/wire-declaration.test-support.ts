@@ -285,11 +285,40 @@ export function modFamilies(source: string = MODELS): Map<string, string> {
   return families;
 }
 
-/** One Host validator: the keys it names, and the body those keys are checked in. */
+/**
+ * One Host validator: the keys it names, and the body those keys are checked in.
+ *
+ * <p>
+ * `delegatesTo` is the CHAIN of predicates this one hands its value to, when its own body names no key list
+ * (`isWaterTargetFact -> isRefillWateringCanTargetFact`) - not the keys copied over as if they were declared here. A
+ * census that reported a delegate's key list under the delegateING predicate's name would send the next reader to the
+ * wrong file, which is the same class as reporting nothing: the gate has to say where the row was decided.
+ * </p>
+ */
 export interface HostValidator {
   readonly keys: readonly string[];
   readonly body: string;
+  /** The chain its value is handed to, `->`-joined; null when the predicate names its own key list. */
+  readonly delegatesTo: string | null;
 }
+
+/** One predicate as the source declares it, before any hand-over is followed. */
+interface PredicateReading {
+  readonly body: string;
+  /** The keys ITS OWN body lists; empty when it lists none. */
+  readonly ownKeys: readonly string[];
+  /** The predicate its whole body hands `value` to, when the body is nothing but that call. */
+  readonly handsTo: string | null;
+}
+
+/**
+ * A body that is EXACTLY one call: `return other(value);`, and not one character of anything else.
+ *
+ * A conditional hand-over, a second statement, or a hand-over of something other than `value` is not a pass-through -
+ * it is a predicate whose keys this reader cannot see, and it stays reported as such. That strictness is the point: a
+ * loose pattern here would let a two-branch predicate claim the key list of one of its branches.
+ */
+const PASS_THROUGH_BODY = /^\s*return\s+([A-Za-z_]\w*)\(\s*value\s*\)\s*;?\s*$/u;
 
 /**
  * function name -> its body, for every function declared in the Host's two protocol sources.
@@ -306,9 +335,39 @@ export function hostFunctionBodies(source: string = ALL_TS): Map<string, string>
   return bodies;
 }
 
-/** predicate function name -> its key list (null when it names none). */
+/**
+ * predicate function name -> its key list, or null when it names none and is no pass-through.
+ *
+ * A pass-through whose chain does not end in a key list one hop away is an entry with EMPTY `keys` and a named chain,
+ * not `null`: the two states are different defects and the message has to tell them apart.
+ */
 export function hostValidators(source: string = ALL_TS): Map<string, HostValidator | null> {
+  const readings = readPredicates(source);
   const validators = new Map<string, HostValidator | null>();
+  for (const [name, reading] of readings) {
+    if (reading.ownKeys.length > 0) {
+      validators.set(name, { body: reading.body, keys: reading.ownKeys, delegatesTo: null });
+      continue;
+    }
+    if (reading.handsTo === null) {
+      validators.set(name, null);
+      continue;
+    }
+    // The keys are the delegate's, and the NAME says so: a resolved pass-through carries the chain, and one whose chain
+    // this reader does not follow carries it too - with no keys - so the failure message can name where it looked.
+    const inherited = inheritsKeys(reading.handsTo, readings) ? readings.get(reading.handsTo) : undefined;
+    validators.set(name, {
+      body: inherited === undefined ? reading.body : inherited.body,
+      keys: inherited === undefined ? [] : inherited.ownKeys,
+      delegatesTo: passThroughChain(reading.handsTo, readings),
+    });
+  }
+  return validators;
+}
+
+/** Every `is*` predicate in the source, as its own body declares it. */
+function readPredicates(source: string): Map<string, PredicateReading> {
+  const readings = new Map<string, PredicateReading>();
   for (const match of source.matchAll(/function (is\w+)\([^)]*\): boolean \{([\s\S]*?)\n\}/g)) {
     const name = captured(match, 1, "a Host snapshot validator name");
     const body = captured(match, 2, `the \`${name}\` validator body`);
@@ -320,17 +379,38 @@ export function hostValidators(source: string = ALL_TS): Map<string, HostValidat
     const keys = /has(?:Exact|Only)Keys(?:OrOptional)?\(\s*\w+\s*,\s*\[([\s\S]*?)\](?:\s*,\s*\[([\s\S]*?)\])?/u.exec(
       body,
     );
-    if (keys === null) {
-      validators.set(name, null);
-      continue;
-    }
-    const named = `${captured(keys, 1, `the \`${name}\` key list`)} ${keys[2] ?? ""}`;
-    validators.set(name, {
+    const named = keys === null ? "" : `${captured(keys, 1, `the \`${name}\` key list`)} ${keys[2] ?? ""}`;
+    readings.set(name, {
       body,
-      keys: [...named.matchAll(/"([^"]+)"/g)].map((entry) => captured(entry, 1, `a \`${name}\` key`)),
+      ownKeys: [...named.matchAll(/"([^"]+)"/g)].map((entry) => captured(entry, 1, `a \`${name}\` key`)),
+      handsTo: PASS_THROUGH_BODY.exec(body)?.[1] ?? null,
     });
   }
-  return validators;
+  return readings;
+}
+
+/**
+ * Whether ONE hop from `target` reaches a predicate that names its own key list.
+ *
+ * ONE is the whole grant, and this is where it is enforced. A pass-through is a rename, and a rename can be checked by
+ * looking at what it renames; a CHAIN of renames would make this reader an interpreter of aliases, and a predicate with
+ * two branches would have to declare which branch's keys it means - neither of which the wire declares anywhere. So a
+ * chain longer than one hop stays unresolved and is reported with the chain it walks.
+ */
+function inheritsKeys(target: string, readings: Map<string, PredicateReading>): boolean {
+  const reached = readings.get(target);
+  return reached !== undefined && reached.handsTo === null && reached.ownKeys.length > 0;
+}
+
+/** `a -> b -> c` for the hand-over chain starting at `start`, stopping at the first predicate that hands nothing on. */
+function passThroughChain(start: string, readings: Map<string, PredicateReading>): string {
+  const chain: string[] = [];
+  let current: string | null = start;
+  while (current !== null && !chain.includes(current)) {
+    chain.push(current);
+    current = readings.get(current)?.handsTo ?? null;
+  }
+  return chain.join(" -> ");
 }
 
 /**
@@ -457,9 +537,20 @@ export function validatorFor(
     return {
       missing: `the Host's rule for ${family} accepts \`${rule.accepts}\`, which is not defined in protocol-target-facts.ts`,
     };
+  // No key list of its own, and no pass-through either: the predicate reads no field set at all (`isRecord` and a
+  // length, say), which is a different statement from a pass-through this reader refuses to follow.
   if (predicate === null)
     return { missing: `\`${rule.accepts}\` (${family}) names no key list, so its field set is not checkable` };
-  return { name: rule.accepts, validator: predicate };
+  if (predicate.keys.length === 0)
+    return {
+      missing:
+        `\`${rule.accepts} -> ${predicate.delegatesTo ?? ""}\` (${family}) is a pass-through, and this census follows ` +
+        "ONE hop to a predicate that must name its own keys - this chain does not, so its field set is not checkable",
+    };
+  return {
+    name: predicate.delegatesTo === null ? rule.accepts : `${rule.accepts} -> ${predicate.delegatesTo}`,
+    validator: predicate,
+  };
 }
 
 /**
