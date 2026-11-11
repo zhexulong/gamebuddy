@@ -17,8 +17,14 @@
  *   empty population is BLOCKED, never green.
  *
  * The store is the artifact this gate measures: it imports `host/dist-test/tavern/preset-store.js`, the build the Host
- * test suite runs. Absent, the run reports `preset_round_trip_skipped:` and exits 0 without a verdict, because a
- * measurement that could not run is not a measurement that passed.
+ * test suite runs. That build and the Windows stale-lock helper pair its cleanup needs are prerequisites, and a missing
+ * prerequisite is reported: the gate prints `blocked: <what was missing>` beside a `checks[]` entry naming the absent
+ * thing, and exits 1 without a verdict, because a measurement that could not run is not a measurement that passed.
+ *
+ * red-proof: 2026-11-11, a partial `dotnet publish` left `host/native/windows-stale-lock-reclaimer/.dist/win-x64`
+ *            holding an 11.9 MB helper and no manifest; the un-awaited mint below became an unhandled rejection and the
+ *            process died with a stack trace, so conformance read `falsifier_signature_missing` instead of a report
+ *            (tools/check-preset-round-trip.test.mjs, "a missing lock helper is reported, not thrown")
  *
  * red-proof: inject  a store that drops `injection_depth` from every entry on write -> `"status":"failed"`, exit 1,
  *                    and `preset_round_trip_field_missing:prompts[main].injection_depth` for each of the fixture's five
@@ -261,27 +267,46 @@ export function uncoveredDocumentedFields(fields, document) {
   return fields.filter((field) => !present.has(field));
 }
 
-async function loadArtifact() {
+async function loadArtifact({ mintReclaimer = (reclaimer) => reclaimer.createBuildWindowsStaleLockReclaimer() } = {}) {
+  let store;
+  let document;
+  let pathLock;
+  let reclaimer;
   try {
-    const [store, document, pathLock, reclaimer] = await Promise.all([
+    [store, document, pathLock, reclaimer] = await Promise.all([
       import(new URL(`../${STORE_MODULE}`, import.meta.url).href),
       import(new URL(`../${DOCUMENT_MODULE}`, import.meta.url).href),
       import(new URL("../host/dist-test/path-lock.js", import.meta.url).href),
       import(new URL("../host/dist-test/windows-stale-lock-reclaimer/index.js", import.meta.url).href),
     ]);
-    // The store takes a path lock, and on Windows that lock's release needs the reclaimer the Host binds at startup.
-    // A gate that skipped this would fail on its own cleanup rather than on the preset it came to measure.
-    pathLock.bindWindowsStaleLockReclaimer(reclaimer.createBuildWindowsStaleLockReclaimer());
-    return { store, document };
   } catch {
-    return null;
+    return {
+      missing: "host_artifact_present",
+      detail: `${STORE_MODULE} is absent (build it with \`pnpm --dir host build:test\`)`,
+    };
   }
+  // The store takes a path lock, and on Windows that lock's release needs the reclaimer the Host binds at startup.
+  // A gate that skipped this would fail on its own cleanup rather than on the preset it came to measure - and the
+  // mint is asynchronous, so an un-awaited call turns a missing helper pair into an unhandled rejection that kills the
+  // process before this `catch` and before any report. Awaiting it is what makes the refusal a reading.
+  try {
+    pathLock.bindWindowsStaleLockReclaimer(await mintReclaimer(reclaimer));
+  } catch (error) {
+    return {
+      missing: "windows_stale_lock_reclaimer_pair",
+      detail:
+        `${error instanceof Error ? error.message : String(error)} - the built Host's Windows stale-lock helper pair ` +
+        "could not be minted, so the preset store's lock could not be released; rebuild it with " +
+        "`node host/scripts/build-windows-stale-lock-reclaimer.mjs`",
+    };
+  }
+  return { store, document };
 }
 
 /** One import -> export -> re-import -> export cycle through the real store, returning both readings. */
-export async function roundTripPreset({ root, fixture = FIXTURE_PRESET } = {}) {
-  const artifact = await loadArtifact();
-  if (artifact === null) return { measured: false };
+export async function roundTripPreset({ root, fixture = FIXTURE_PRESET, mintReclaimer } = {}) {
+  const artifact = await loadArtifact({ mintReclaimer });
+  if (artifact.store === undefined) return { measured: false, missing: artifact.missing, detail: artifact.detail };
   const workspace = root ?? (await mkdtemp(join(tmpdir(), "gb-preset-round-trip-")));
   try {
     const store = artifact.store.createPresetStore({
@@ -322,20 +347,29 @@ export function presetRoundTripStatus({ entries, findings, uncovered }) {
   return findings === 0 && uncovered === 0 ? "passed" : "failed";
 }
 
+/**
+ * The report a prerequisite-absent run prints, in one place so the falsifier can drive it.
+ *
+ * `allowEmpty` is not decoration: the shared population judge (`tools/lib/assert-non-vacuous.mjs`) reads a zero beside
+ * a stated reason as `not_measured` and a zero beside nothing as `gate_measured_nothing`. This gate examined nothing
+ * because its input was absent, which is the first of those two, and the reason is the whole message.
+ */
+export function presetRoundTripBlockedReport({ missing, detail }) {
+  return {
+    gate: "preset_round_trip",
+    status: "blocked",
+    population: 0,
+    allowEmpty: detail,
+    checks: [{ id: missing, status: "blocked", detail }],
+  };
+}
+
 async function main() {
   const result = await roundTripPreset();
   if (!result.measured) {
-    process.stdout.write(
-      `preset_round_trip_skipped: ${STORE_MODULE} is not built, so the round trip was not measured ` +
-        "(build it with `pnpm --dir host build:test`)\n",
-    );
-    process.stdout.write(
-      `${JSON.stringify({
-        gate: "preset_round_trip",
-        status: "blocked",
-        checks: [{ id: "host_artifact_present", status: "blocked", detail: `${STORE_MODULE} is absent` }],
-      })}\n`,
-    );
+    process.stdout.write(`blocked: ${result.detail}\n`);
+    process.stdout.write(`${JSON.stringify(presetRoundTripBlockedReport(result))}\n`);
+    process.exitCode = 1;
     return;
   }
 

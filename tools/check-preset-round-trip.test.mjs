@@ -8,10 +8,12 @@ import { promisify } from "node:util";
 import {
   comparePresetDocuments,
   FIXTURE_PRESET,
+  presetRoundTripBlockedReport,
   presetRoundTripStatus,
   roundTripPreset,
   uncoveredDocumentedFields,
 } from "./check-preset-round-trip.mjs";
+import { assertNonVacuous } from "./lib/assert-non-vacuous.mjs";
 
 /**
  * The gate's falsifier. `comparePresetDocuments` is the whole rule, and the two directions are measured here: a
@@ -188,4 +190,49 @@ test("the gate's own entry prints a passed report and exits 0", async (t) => {
   assert.equal(parsed.status, "passed");
   assert.equal(parsed.examined, 14);
   assert.ok(parsed.checks.length >= 5, report);
+});
+
+/**
+ * The crash this guards: `createBuildWindowsStaleLockReclaimer()` is asynchronous, and the gate used to call it without
+ * awaiting it. On 2026-11-11 an interrupted `dotnet publish` left the repository's helper pair without its manifest, so
+ * the minted promise rejected - and an unhandled rejection kills the process before the gate's own `catch`, which is how
+ * a missing build artifact became a stack trace that conformance read as `falsifier_signature_missing`.
+ */
+test("a missing lock helper is reported, not thrown", async () => {
+  const result = await roundTripPreset({
+    mintReclaimer: async () => {
+      throw new Error("windows_stale_lock_reclaimer_unavailable");
+    },
+  });
+  assert.equal(result.measured, false);
+  assert.equal(result.missing, "windows_stale_lock_reclaimer_pair");
+  // The reason the owning module raised comes first; the gate adds what it needed it for and what repairs it.
+  assert.match(result.detail, /^windows_stale_lock_reclaimer_unavailable/u);
+  assert.match(result.detail, /node host\/scripts\/build-windows-stale-lock-reclaimer\.mjs/u);
+});
+
+/**
+ * The report a blocked run prints is read by `tools/lib/harness-conformance.mjs`, which asks the shared judge in
+ * `tools/lib/assert-non-vacuous.mjs` whether a zero population was explained. Driving the real judge, rather than
+ * spelling its rules a second time here, is what keeps this test honest if that judge changes.
+ */
+test("a blocked report is a report, and its zero population is explained rather than silent", () => {
+  const report = presetRoundTripBlockedReport({
+    missing: "windows_stale_lock_reclaimer_pair",
+    detail: "windows_stale_lock_reclaimer_unavailable - nothing to mint",
+  });
+  assert.equal(report.gate, "preset_round_trip");
+  assert.equal(report.status, "blocked");
+  assert.deepEqual(
+    report.checks.map((check) => `${check.id}:${check.status}`),
+    ["windows_stale_lock_reclaimer_pair:blocked"],
+  );
+  assert.equal(assertNonVacuous(report).status, "not_measured");
+  // The inverse, so the field is seen doing work: the same report without its stated reason is the judge's own
+  // `gate_measured_nothing`, which is the conformance finding this shape replaced a crash with.
+  assert.equal(assertNonVacuous({ ...report, allowEmpty: undefined }).status, "blocked");
+  assert.equal(
+    assertNonVacuous({ ...report, allowEmpty: undefined }).detail,
+    "gate_measured_nothing:preset_round_trip:population",
+  );
 });
