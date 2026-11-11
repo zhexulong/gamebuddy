@@ -1,4 +1,4 @@
-import { Brain, Gamepad2, MessagesSquare, ScrollText, Settings, SlidersHorizontal, Users } from "lucide-react";
+import { SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readChatSnapshotPair } from "../chat-snapshot-pair";
 import {
@@ -33,11 +33,20 @@ import {
 } from "../reference-pipeline-session";
 import { type WorldInfoBindingSource, worldInfoBindingSource } from "../world-info-binding-source";
 import { createSerialDrain, type SerialDrain } from "../serial-drain";
-import { AppBar, type AppBarProps } from "./AppBar";
+import { AppBar } from "./AppBar";
 import { CharactersSurface } from "./CharactersSurface";
 import { type ChatArmedAction, deriveChatUIState, isTurnInFlight } from "./chat-ui-state";
 import { ChatSurface } from "./ChatSurface";
 import { ChatsSurface } from "./ChatsSurface";
+import {
+  appBarStatus,
+  liveTurn,
+  type OptimisticSend,
+  pendingOptimisticMessage,
+  stopAvailable,
+  submitAvailable,
+  terminalTurnNotice,
+} from "./composed-chat-shell-state";
 import { ContextDrawer } from "./ContextDrawer";
 import { newIdempotencyKey, type ReadyView } from "./composed-reference-game-view";
 import { GameSurface } from "./GameSurface";
@@ -47,18 +56,13 @@ import { ProblemView } from "./ProblemView";
 import { PresetAssemblySurface } from "./PresetAssemblySurface";
 import { SettingsSurface } from "./SettingsSurface";
 import { SkipLink } from "./SkipLink";
+import { LEADING_SURFACE_COUNT, surfaceBarEntries } from "./surface-bar-entries";
 import { SurfaceModelSettings } from "./SurfaceModelSettings";
 import { SurfaceDrafts } from "./surface-drafts";
-import { turnFailureText } from "./turn-failure-text";
 import { markTurn, observeTurnEvent } from "./turn-timings";
 import { useArrivalReread } from "./use-arrival-reread";
 import { useAppearance } from "./use-appearance";
-import {
-  type ComposedPreviewV1,
-  TERMINAL_TURN_STATES,
-  terminalTurn,
-  useComposedBootstrap,
-} from "./use-composed-bootstrap";
+import { type ComposedPreviewV1, terminalTurn, useComposedBootstrap } from "./use-composed-bootstrap";
 
 /** The recovery read's first retry delay, and the ceiling its doubling stops at. */
 const RETRY_FIRST_MS = 1_000;
@@ -171,20 +175,13 @@ export function ComposedReferenceGameApp() {
    */
   const [streamNotice, setStreamNotice] = useState<string | null>(null);
   /**
-   * The optimistic player message: the text the player just sent, keyed by the idempotency key
-   * the send already minted, plus the number of rows the authoritative transcript held when the
-   * send was accepted. It is shown until the Host's transcript carries the row this turn produces
-   * - the first row past `submittedAfterRows`, because that is the only positional fact tying a
-   * committed message to the submission: `BrowserMessageV1` has no idempotency key on it and the
-   * pending record carries no text or handle by contract. It is never replayed on a reconnect or
-   * a re-read (a fresh mount starts with none), so a settled turn leaves no ghost and the pair
-   * collapses to the one authoritative message.
+   * The optimistic player line this shell is holding, with the row count it was accepted at.
+   *
+   * What it means, and the rule for when it stops being visible, belong to
+   * `pendingOptimisticMessage` (`composed-chat-shell-state`): this declaration only holds the value
+   * that derivation reads.
    */
-  const [optimistic, setOptimistic] = useState<Readonly<{
-    idempotencyKey: string;
-    text: string;
-    submittedAfterRows: number;
-  }> | null>(null);
+  const [optimistic, setOptimistic] = useState<OptimisticSend | null>(null);
   // The durable revision the editor was last seeded from, and the chat that seed
   // belongs to: the revision lets a later authoritative read replace the editor
   // without discarding text the player typed past the seed, and the chat identity
@@ -1413,37 +1410,6 @@ export function ComposedReferenceGameApp() {
     }
   };
 
-  const submitAvailable =
-    view.kind === "ready" &&
-    view.session.pending === null &&
-    view.session.snapshot.operations.some((op) => op.operationId === "chat.submit" && op.availability === "available");
-  // The optimistic entry is visible only while the pending record carries its exact key and the
-  // authoritative transcript has not yet grown past the point the send was accepted at. It is NOT
-  // keyed on text: a player who answers "好的" a second time sends a phrase the transcript already
-  // carries, and matching on it suppressed the pending line for the whole turn. A settled/failed
-  // turn clears the pending record, so the pair collapses to one message and no ghost survives a
-  // re-read or a reload.
-  const pendingOptimisticMessage =
-    view.kind === "ready" &&
-    optimistic !== null &&
-    view.session.pending?.idempotencyKey === optimistic.idempotencyKey &&
-    (view.session.snapshot.chat?.transcript.length ?? 0) <= optimistic.submittedAfterRows
-      ? optimistic
-      : null;
-  const stopAvailable =
-    view.kind === "ready" &&
-    view.session.snapshot.chat?.turn?.canCancel === true &&
-    view.session.snapshot.operations.some((op) => op.operationId === "chat.cancel" && op.availability === "available");
-  const terminalTurnNotice =
-    view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "cancelled"
-      ? labels().chatStopped
-      : view.kind === "ready" && view.session.snapshot.chat?.turn?.state === "failed"
-        ? turnFailureText(
-            view.session.snapshot.chat.turn.problemCode,
-            labels(),
-            view.session.snapshot.chat.turn.providerFailure,
-          )
-        : null;
   const managementPanelsAvailable = view.kind === "ready" && view.session.snapshot.chat !== null;
 
   /**
@@ -1462,21 +1428,17 @@ export function ComposedReferenceGameApp() {
   /**
    * The Chat surface's one state, derived from the facts above (`chat-ui-state`).
    *
-   * `turn` is the mounted turn only while it has not reached a terminal state: a settled turn is not
-   * something the player can stop, and `chat.submit` is projected available again the moment the
-   * ledger is terminal, so the phase and the gate move together.
+   * The three facts it takes from the view - whether the Host would take a submission now, whether
+   * the mounted turn is still the player's to stop, and which optimistic line still belongs to a
+   * live submission - are answered by `composed-chat-shell-state`, so the phase and the send gate
+   * move together instead of from three locals that could disagree.
    */
   const chatUIState = deriveChatUIState({
     submissionInFlight: view.kind === "ready" && view.session.pending !== null,
-    turn:
-      view.kind === "ready" &&
-      view.session.snapshot.chat?.turn != null &&
-      !TERMINAL_TURN_STATES.has(view.session.snapshot.chat.turn.state)
-        ? view.session.snapshot.chat.turn
-        : null,
-    pendingLine: pendingOptimisticMessage,
-    stopAvailable,
-    submitAvailable,
+    turn: liveTurn(view),
+    pendingLine: pendingOptimisticMessage(view, optimistic),
+    stopAvailable: stopAvailable(view),
+    submitAvailable: submitAvailable(view),
     messageMutationInFlight: chatMutation !== null,
     modelRoute: arrivalReads.chatModelRoute,
     armed: arm,
@@ -1488,37 +1450,9 @@ export function ComposedReferenceGameApp() {
   // has its own drawer (design/26 §4.1, design/104 §2); it is not announced from here.
   const turnInFlight = isTurnInFlight(chatUIState);
 
-  /**
-   * The app bar's status: one derivation, read twice - the word the badge carries and the tone
-   * of the dot beside it.
-   *
-   * A turn in flight is the one state that was ever honest on its own. Beyond it, the bar used to say
-   * `online` for everything that was not generating - so a conversation with no model behind it, the
-   * fresh install, claimed to be online - and the shell cannot do better by looking at the operation
-   * list: `chat.submit` is projected `available` exactly when no turn exists (`host/src/tavern/
-   * reference-pipeline-state.ts`, `projectOperations`), which is a fact about the turn, not about the
-   * configuration. The one fact about whether a reply can reach a model is `chatModelRoute`, read
-   * from the two settings projections by `chat-model-route.ts`, and it is what these words say.
-   *
-   * `online` therefore means what this shell can know - a saved connection is active, so the next
-   * turn is sent through it - and not "the Host is reachable": there is no health fact here at all,
-   * and a mount that is `ready` got that snapshot from the Host moments ago. `unknown` is the route
-   * read that did not answer, and an answer that did not arrive is not evidence that one would; the
-   * badge cannot be omitted (`AppBar.statusLabel` is required and its accessible name is read from
-   * it), so it says so instead of guessing.
-   *
-   * The dot is the same fact in the other channel, so it is decided here beside the word: a bar at
-   * 400 px hides `.app-bar-status-label` and the dot is all that is left, and an always-success dot
-   * meant a cold start with no connection still glowed green. The two are one object so they cannot
-   * disagree (`AppBar.statusTone`).
-   */
-  const status: Readonly<{ label: string; tone: NonNullable<AppBarProps["statusTone"]> }> = turnInFlight
-    ? { label: labels().generating, tone: "progress" }
-    : arrivalReads.chatModelRoute.kind === "connection"
-      ? { label: labels().online, tone: "idle" }
-      : arrivalReads.chatModelRoute.kind === "none"
-        ? { label: labels().statusNotReady, tone: "cannot-send" }
-        : { label: labels().statusUnknown, tone: "unknown" };
+  // The bar's word and its dot are one derivation of the same fact (`appBarStatus`), so a narrow
+  // bar that hides the label cannot glow a tone the word contradicts.
+  const status = appBarStatus(turnInFlight, arrivalReads.chatModelRoute, labels());
 
   const openGamePanel = openPanelOf(GAME_PANEL, gameEntryRef);
   const openChat = openPanelOf(CHAT_PANEL, chatEntryRef);
@@ -1527,6 +1461,18 @@ export function ComposedReferenceGameApp() {
   const openSettings = openPanelOf(SETTINGS_PANEL, settingsEntryRef);
   const openPresets = openPanelOf(PRESETS_PANEL, presetsEntryRef);
   const openMemory = openPanelOf(MEMORY_PANEL, memoryEntryRef);
+  // Each peer surface's opener, with the button a closed drawer restores focus to. Keyed by the
+  // bar table's own ids, so a surface the bar lists without an opener is a type error
+  // (`surface-bar-entries`).
+  const entryOpeners = {
+    [CHAT_PANEL]: { open: openChat, ref: chatEntryRef },
+    [GAME_PANEL]: { open: openGamePanel, ref: gameEntryRef },
+    [CHATS_PANEL]: { open: openChats, ref: chatsEntryRef },
+    [CHARACTERS_PANEL]: { open: openCharacters, ref: charactersEntryRef },
+    [SETTINGS_PANEL]: { open: openSettings, ref: settingsEntryRef },
+    [MEMORY_PANEL]: { open: openMemory, ref: memoryEntryRef },
+    [PRESETS_PANEL]: { open: openPresets, ref: presetsEntryRef },
+  };
 
   return (
     // One draft store for every surface: the shell is the only thing that outlives them.
@@ -1559,71 +1505,8 @@ export function ComposedReferenceGameApp() {
               companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
               statusLabel={status.label}
               statusTone={status.tone}
-              entries={[
-                // The surfaces are peers: each entry selects the region's content and
-                // the conversation is simply the default one (design/104 §2).
-                {
-                  id: CHAT_PANEL,
-                  label: labels().chatPanel,
-                  icon: MessagesSquare,
-                  active: shownSurface === CHAT_PANEL,
-                  onClick: openChat,
-                  ref: chatEntryRef,
-                },
-                {
-                  id: GAME_PANEL,
-                  label: labels().gamePanel,
-                  icon: Gamepad2,
-                  active: shownSurface === GAME_PANEL,
-                  onClick: openGamePanel,
-                  ref: gameEntryRef,
-                },
-                ...(managementPanelsAvailable
-                  ? [
-                      {
-                        id: CHATS_PANEL,
-                        label: labels().chatsPanel,
-                        icon: MessagesSquare,
-                        active: shownSurface === CHATS_PANEL,
-                        onClick: openChats,
-                        ref: chatsEntryRef,
-                      },
-                      {
-                        id: CHARACTERS_PANEL,
-                        label: labels().charactersPanel,
-                        icon: Users,
-                        active: shownSurface === CHARACTERS_PANEL,
-                        onClick: openCharacters,
-                        ref: charactersEntryRef,
-                      },
-                      {
-                        id: SETTINGS_PANEL,
-                        label: labels().settingsPanel,
-                        icon: Settings,
-                        active: shownSurface === SETTINGS_PANEL,
-                        onClick: openSettings,
-                        ref: settingsEntryRef,
-                      },
-                      {
-                        id: MEMORY_PANEL,
-                        label: labels().memoryPanel,
-                        icon: Brain,
-                        active: shownSurface === MEMORY_PANEL,
-                        onClick: openMemory,
-                        ref: memoryEntryRef,
-                      },
-                      {
-                        id: PRESETS_PANEL,
-                        label: labels().presetsPanel,
-                        icon: ScrollText,
-                        active: shownSurface === PRESETS_PANEL,
-                        onClick: openPresets,
-                        ref: presetsEntryRef,
-                      },
-                    ]
-                  : []),
-              ]}
-              fold={{ from: 2, label: labels().appBarMore }}
+              entries={surfaceBarEntries(labels(), shownSurface, managementPanelsAvailable, entryOpeners)}
+              fold={{ from: LEADING_SURFACE_COUNT, label: labels().appBarMore }}
             />
             <main id="main-content" className="app-main-content">
               {/* Every surface is a peer: it takes this region in full, none of them
@@ -1644,7 +1527,11 @@ export function ComposedReferenceGameApp() {
                   notice={
                     pollFailure
                       ? labels().chatFailed
-                      : (streamNotice ?? sendFailure ?? messageMutationNotice ?? terminalTurnNotice ?? openingNotice)
+                      : (streamNotice ??
+                        sendFailure ??
+                        messageMutationNotice ??
+                        terminalTurnNotice(view, labels()) ??
+                        openingNotice)
                   }
                   arrivalNotice={arrivalReads.chatArrivalNotice}
                   replyTruncated={view.session.snapshot.chat.turn?.truncated === true}
