@@ -19,7 +19,17 @@ test("Tavern semantic references attest the locked source, or name the mount the
     return;
   }
   const failure = await run(process.execPath, ["tools/verify-tavern-semantic-references.mjs"]).catch((error) => error);
-  const line = String(failure.stdout ?? "").trim();
-  assert.equal(failure.code, 2, `expected the not-measured exit, got ${failure.code}: ${line}${failure.stderr ?? ""}`);
-  assert.ok(line.startsWith(`blocked: ${REGISTRY} absent`), `expected the absent registry named, got: ${line}`);
+  const lines = String(failure.stdout ?? "")
+    .trim()
+    .split("\n");
+  assert.equal(failure.code, 2, `expected the not-measured exit, got ${failure.code}: ${lines.join(" ")}`);
+  assert.ok(lines[0].startsWith(`blocked: ${REGISTRY} absent`), `expected the absent registry named, got: ${lines[0]}`);
+  // The report is what `tools/check-harness-conformance.mjs` reads and what `tools/lib/assert-non-vacuous.mjs` judges:
+  // without it the run is `falsifier_signature_missing`, and with a zero and no reason it is `gate_measured_nothing`.
+  const report = JSON.parse(lines[1]);
+  assert.equal(report.status, "blocked");
+  assert.equal(report.examined, 0);
+  assert.equal(report.input, REGISTRY);
+  assert.ok(report.allowEmpty.includes(REGISTRY), "the empty population states which input is missing");
+  assert.deepEqual(report.checks, [{ id: "reference_registry_readable", status: "blocked" }]);
 });

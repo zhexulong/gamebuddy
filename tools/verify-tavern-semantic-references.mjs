@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { reportBlockedInput } from "./lib/blocked-input-report.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const REGISTRY = "design/references/tavern/st-semantic-references-v1.json";
@@ -12,8 +13,12 @@ let registrySource;
 try {
   registrySource = await readFile(resolve(root, REGISTRY), "utf8");
 } catch {
-  console.log(`blocked: ${REGISTRY} absent, so this was not measured`);
-  process.exit(2);
+  reportBlockedInput({
+    gate: "tavern_semantic_references/v1",
+    input: REGISTRY,
+    examined: 0,
+    checks: ["reference_registry_readable"],
+  });
 }
 const registry = JSON.parse(registrySource);
 

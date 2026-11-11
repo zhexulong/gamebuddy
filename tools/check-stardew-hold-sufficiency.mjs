@@ -34,6 +34,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
+import { reportBlockedInput } from "./lib/blocked-input-report.mjs";
 
 export const HELD_FACT = "Farmer.canMove";
 
@@ -48,9 +49,9 @@ export const ACTOR_ADMISSIBILITY_CONTRACT =
   "integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json";
 
 /**
- * The contract's text, or `blocked` and exit 2 - the not-measured answer, naming the path that would restore it.
+ * The contract's text, or null when it is not there - the caller reports the blocked reading its own id names.
  *
- * This replaces `JSON.parse(readFileSync(...))` at the two entry points, whose ENOENT stack trace was non-zero for a
+ * This replaces `JSON.parse(readFileSync(...))` at both entry points, whose ENOENT stack trace was non-zero for a
  * reason no reader could tell from a defect in the gate reading it. An absent input is neither a pass nor a finding,
  * and it is the one verdict a gate with no subject can honestly reach.
  */
@@ -58,8 +59,7 @@ export function readActorAdmissibilityContract(root) {
   try {
     return readFileSync(join(root, ACTOR_ADMISSIBILITY_CONTRACT), "utf8");
   } catch {
-    console.log(`blocked: ${ACTOR_ADMISSIBILITY_CONTRACT} absent, so this was not measured`);
-    process.exit(2);
+    return null;
   }
 }
 
@@ -219,7 +219,15 @@ const invokedDirectly = (() => {
 })();
 if (invokedDirectly) {
   const root = repoRoot();
-  const model = JSON.parse(readActorAdmissibilityContract(root));
+  const modelSource = readActorAdmissibilityContract(root);
+  if (modelSource === null)
+    reportBlockedInput({
+      gate: "stardew_hold_sufficiency/v1",
+      input: ACTOR_ADMISSIBILITY_CONTRACT,
+      examined: 0,
+      checks: ["contract_readable"],
+    });
+  const model = JSON.parse(modelSource);
   const companions = model.environmentReads
     .map((r) => r.member)
     .filter((m) => memberOf(m).toLowerCase() !== memberOf(HELD_FACT).toLowerCase());

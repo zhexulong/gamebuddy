@@ -454,6 +454,14 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // Prints a per-reading verdict (`import_to_export`, `export_to_reimport`, `source_to_reexport`) plus the population
   // it examined, so its default run is the report the conformance suite reads.
   "check-preset-round-trip.mjs",
+  // These two decide the actionability algebra and the orphan-hold search over the decompiled tree, and both read
+  // `integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json` - a contract no
+  // commit has ever carried and nothing in this repository produces. Their default run is therefore `blocked`: it prints
+  // its report, every check reads `blocked`, and `examined: 0` carries the stated reason the shared judge reads as
+  // `not_measured`. That distinction is the whole point - a gate whose input does not exist must read as one that
+  // measured nothing, never as one that found nothing wrong, and the suite now prints that list by name.
+  "check-stardew-actor-admissibility.mjs",
+  "check-stardew-hold-sufficiency.mjs",
   "check-stardew-fixture-action-coverage.mjs",
   // Prints `invented-gates: constants examined N · engine-cited M · debt K · invented D` plus a `checks[]` verdict
   // enumerating its six rules (the decompiled tree is readable, the population comes from the request paths, every bound
@@ -748,13 +756,9 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "counts rather than a self-verification report",
   },
   {
-    gate: "check-stardew-actor-admissibility.mjs",
-    reason:
-      "reads the actor-admissibility contract (integrations/stardew/action-development/contracts/actor-admissibility/" +
-      "actor-admissibility.v1.json), which no commit has ever carried and nothing in this repository produces, so its " +
-      "default run reports `blocked` and exits 2 rather than printing a report over an algebra it has not got",
+    gate: "check-stardew-companion-production-admission.mjs",
+    reason: "requires a production-admission artifact",
   },
-  { gate: "check-stardew-companion-production-admission.mjs", reason: "requires a production-admission artifact" },
   { gate: "check-stardew-dialogue-autonomy.mjs", reason: "requires a ladder-result json" },
   { gate: "check-stardew-dialogue-stream.mjs", reason: "requires a result json" },
   {
@@ -773,13 +777,6 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   },
   { gate: "check-stardew-fixture-scenario-wiring.mjs", reason: "static wiring gate; falsifier in its test" },
   { gate: "check-stardew-gameplay-completeness.mjs", reason: "requires --report input" },
-  {
-    gate: "check-stardew-hold-sufficiency.mjs",
-    reason:
-      "reads the same absent actor-admissibility contract as its sibling, and exists to answer the half of that " +
-      "question written in the decompiled tree - either input missing leaves it with no subject, so its default run " +
-      "reports `blocked` and exits 2",
-  },
   { gate: "check-stardew-loop-closure.mjs", reason: "static source gate; falsifier in its test" },
   { gate: "check-stardew-native-mechanism-review-register.mjs", reason: "requires a mechanism report and register" },
   { gate: "check-stardew-native-multiplayer-sensitivity.mjs", reason: "requires --register/--source-root inputs" },
@@ -955,6 +952,9 @@ export function checkGateFalsifiers({
   staleDeclarations = [],
   toolsDir,
   run = runGateDefault,
+  // The gates whose own report says it could not measure, collected for the census line rather than for a verdict: a
+  // gate whose prerequisite is absent is `not_measured`, which is neither a finding here nor a pass anywhere.
+  notMeasured = [],
 } = {}) {
   const declared = new Set(withoutFalsifier.map((entry) => entry.gate));
   const withSet = new Set(withFalsifier);
@@ -982,6 +982,8 @@ export function checkGateFalsifiers({
       }
       if (report.population?.status === "blocked")
         findings.push(finding("gate_measured_nothing", `${name}: ${report.population.detail}`));
+      else if (report.population?.status === "not_measured")
+        notMeasured.push({ gate: name, detail: report.population.detail });
       continue;
     }
     if (!declaredExcept) findings.push(finding("gate_without_falsifier", name));
@@ -1115,11 +1117,41 @@ export function readModFixtureSources(repoRoot) {
     .map((name) => ({ file: `integrations/stardew/${name}`, source: readFileSync(join(modDir, name), "utf8") }));
 }
 
+/**
+ * The gates that ran and reported they could not measure, named rather than counted.
+ *
+ * `with a self-report N` says a gate printed a report; it cannot say whether that report measured anything. A gate whose
+ * input this repository does not carry prints `blocked` with `examined: 0` and a stated reason, which the shared judge
+ * reads as `not_measured` - never a pass, and not a finding either, because nothing is wrong with the gate. That leaves
+ * the number of such gates invisible in a census built from declarations, so the line names them from the runs instead.
+ */
+function describeNotMeasuredGates(notMeasured) {
+  if (notMeasured.length === 0) return [];
+  return [
+    `reported not measured ${notMeasured.length} (${notMeasured
+      .map((entry) => `${entry.gate}: ${entry.detail}`)
+      .join("; ")}), counted here and never among the gates that measured something`,
+  ];
+}
+
 /** Run the five checks against a real checkout and return `{ id, findings }` for each, plus the numbers it prints. */
 export function runHarnessConformance({ toolsDir, repoRoot }) {
   const population = deriveGatePopulation({ root: repoRoot });
   const ledger = gateRedProofLedger({ root: repoRoot });
   const gateNames = gateFileNames(population);
+  // Run first, then describe: the not-measured set is a result of the runs, not of the declarations the census counts.
+  const notMeasured = [];
+  const gateFalsifierFindings = [
+    ...checkGateFalsifiers({
+      gateNames,
+      toolsDir,
+      zeroPopulation: ledger.zeroPopulationPass,
+      undeclared: ledger.undeclared,
+      staleDeclarations: ledger.stale,
+      notMeasured,
+    }),
+    ...checkGateRegistry({ gateNames }),
+  ];
   return [
     { id: "preflight_synthetic_trees", findings: checkLiveRunPreflight({}) },
     {
@@ -1132,20 +1164,14 @@ export function runHarnessConformance({ toolsDir, repoRoot }) {
       id: "gate_falsifiers",
       // The population the verdict rests on, printed beside it: `0 findings` means nothing without `examined N`, and
       // the excluded half is a DECLARED exclusion (a script-backed gate this suite cannot run), not a scanner gap.
-      notes: describeGateFalsifierCensus(gateFalsifierCensus({ population: population.gates, ledger })),
+      notes: [
+        ...describeGateFalsifierCensus(gateFalsifierCensus({ population: population.gates, ledger })),
+        ...describeNotMeasuredGates(notMeasured),
+      ],
       // A run that hides an undeclared gate or a report that cannot show its population is not a pass: it is blocked,
       // which is the honest third answer beside passed and failed.
       blocked: ledger.undeclared.length > 0 || ledger.zeroPopulationPass.length > 0,
-      findings: [
-        ...checkGateFalsifiers({
-          gateNames,
-          toolsDir,
-          zeroPopulation: ledger.zeroPopulationPass,
-          undeclared: ledger.undeclared,
-          staleDeclarations: ledger.stale,
-        }),
-        ...checkGateRegistry({ gateNames }),
-      ],
+      findings: gateFalsifierFindings,
     },
   ];
 }

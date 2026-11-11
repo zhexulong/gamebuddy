@@ -21,7 +21,12 @@
  * over nothing or dying on an ENOENT that reads like a defect in this file.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { readActorAdmissibilityContract, searchCounterExamples } from "./check-stardew-hold-sufficiency.mjs";
+import {
+  ACTOR_ADMISSIBILITY_CONTRACT,
+  readActorAdmissibilityContract,
+  searchCounterExamples,
+} from "./check-stardew-hold-sufficiency.mjs";
+import { reportBlockedInput } from "./lib/blocked-input-report.mjs";
 import { join, basename, relative } from "node:path";
 
 const ROOT = (() => {
@@ -36,7 +41,15 @@ const ROOT = (() => {
 })();
 
 const GAME_ROOT = join(ROOT, "ref/external/StardewValleyDecompiled");
-const model = JSON.parse(readActorAdmissibilityContract(ROOT));
+const modelSource = readActorAdmissibilityContract(ROOT);
+if (modelSource === null)
+  reportBlockedInput({
+    gate: "stardew_actor_admissibility/v1",
+    input: ACTOR_ADMISSIBILITY_CONTRACT,
+    examined: 0,
+    checks: ["contract_readable"],
+  });
+const model = JSON.parse(modelSource);
 
 const BLOCKED = new Set(model.blockedActions ?? []);
 const results = [];
