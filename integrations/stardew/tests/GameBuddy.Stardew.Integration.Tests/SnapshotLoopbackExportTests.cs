@@ -109,27 +109,146 @@ public sealed class SnapshotLoopbackExportTests
         // which is the whole point: a change in what the Mod publishes must be a reviewed diff to the committed sample,
         // not a silent overwrite during a test run.
         string? regenerate = Environment.GetEnvironmentVariable("GAMEBUDDY_SNAPSHOT_SAMPLE_REGENERATE");
-        if (string.Equals(regenerate, "1", StringComparison.Ordinal))
+        bool writing = string.Equals(regenerate, "1", StringComparison.Ordinal);
+        if (writing)
+        {
             File.WriteAllBytes(target, produced);
+        }
         else
         {
             File.Exists(target).Should().BeTrue(
                 $"the committed sample must exist at {ArtifactRelativePath}; regenerate it with GAMEBUDDY_SNAPSHOT_SAMPLE_REGENERATE=1");
-            File.ReadAllBytes(target).Should().Equal(
+        }
+
+        // ONE read of the artifact, and every assertion below is made against it. The producer used to read the path a
+        // second time for the reparse, so "can this producer read back what it published" could be answered about a
+        // DIFFERENT generation of the file than the one the byte comparison rejected - in a worktree where more than one
+        // lane runs this suite, that is two artifacts and one claim.
+        byte[] committed = File.ReadAllBytes(target);
+        if (!writing)
+        {
+            committed.Should().Equal(
                 produced,
                 "the committed sample must match what the Mod's projection publishes today - a mismatch means the wire "
                     + "shape changed and the Host has not been told. Regenerate with GAMEBUDDY_SNAPSHOT_SAMPLE_REGENERATE=1 "
-                    + "and review the diff rather than accepting it.");
+                    + "and review the diff rather than accepting it. First drift: "
+                    + DescribeFirstDrift(committed, produced));
         }
 
         // Read back through the artifact's own bytes: a producer that cannot read what it just published has published
         // nothing the Host can consume.
-        using JsonDocument reparsed = JsonDocument.Parse(File.ReadAllBytes(target));
+        using JsonDocument reparsed = JsonDocument.Parse(committed);
         reparsed.RootElement.GetProperty("real").EnumerateObject().Select(property => property.Name)
             .Should().BeEquivalentTo(realFamilies.Keys, "the artifact's real families are the constructed ones");
         reparsed.RootElement.GetProperty("absent").EnumerateArray()
             .Select(entry => entry.GetProperty("field").GetString())
             .Should().BeEquivalentTo(missing, "every declared family is either real or explicitly absent");
+    }
+
+    /// <summary>
+    /// Which value drifted, named, for the failure message.
+    ///
+    /// <para>
+    /// The assertion stays a byte-for-byte comparison, because that is what "the committed sample is the reviewed
+    /// artifact" means. But `differs at index 10891` out of twelve thousand bytes names nothing a reader can act on -
+    /// two failures of this gate were spent finding out which family that offset belonged to. The two documents are the
+    /// same bytes the comparison just rejected, so the path below is a READING of that comparison, never a second
+    /// decision: any byte difference still fails.
+    /// </para>
+    /// </summary>
+    private static string DescribeFirstDrift(byte[] committed, byte[] produced)
+    {
+        try
+        {
+            using JsonDocument expected = JsonDocument.Parse(committed);
+            using JsonDocument actual = JsonDocument.Parse(produced);
+            string? drift = FirstDrift(expected.RootElement, actual.RootElement, "$");
+            if (drift is not null) return drift;
+
+            // The same values in different bytes is STILL a failure - the committed sample is these bytes, and the Host
+            // reads the file - but a value-by-value reading cannot name it, so name the two lines. Measured 2026-11-11:
+            // the surviving flake was exactly this shape, and "differs at index 11215" was the whole diagnosis the
+            // gate offered.
+            int offset = FirstByteDifference(committed, produced);
+            return $"the two documents hold the same values and differ only in formatting (byte {offset}): committed "
+                + $"line {DescribeLine(committed, offset)} but the projection's line {DescribeLine(produced, offset)}";
+        }
+        catch (JsonException)
+        {
+            return "the sample is not valid JSON in one or both documents (first differing byte "
+                + FirstByteDifference(committed, produced).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + ")";
+        }
+    }
+
+    /// <summary>The line a byte offset falls on: its 1-based number, then the trimmed line itself.</summary>
+    private static string DescribeLine(byte[] document, int offset)
+    {
+        string[] lines = Encoding.UTF8.GetString(document).Split('\n');
+        int line = lines.Length - 1;
+        for (int index = 0, consumed = 0; index < lines.Length; index++)
+        {
+            consumed += lines[index].Length + 1;
+            if (consumed > offset)
+            {
+                line = index;
+                break;
+            }
+        }
+
+        string text = lines[line].Trim();
+        return $"{line + 1} `{(text.Length > 160 ? text[..160] + "..." : text)}`";
+    }
+
+    /// <summary>The path of the first value two JSON trees disagree on, or null when they hold the same values.</summary>
+    private static string? FirstDrift(JsonElement expected, JsonElement actual, string path)
+    {
+        if (expected.ValueKind != actual.ValueKind)
+            return $"{path} is a {expected.ValueKind} but a {actual.ValueKind}";
+
+        if (expected.ValueKind == JsonValueKind.Object)
+        {
+            foreach (JsonProperty property in expected.EnumerateObject())
+            {
+                if (!actual.TryGetProperty(property.Name, out JsonElement value))
+                    return $"{path}.{property.Name} is missing";
+                string? drift = FirstDrift(property.Value, value, $"{path}.{property.Name}");
+                if (drift is not null) return drift;
+            }
+            foreach (JsonProperty property in actual.EnumerateObject())
+            {
+                if (!expected.TryGetProperty(property.Name, out _))
+                    return $"{path}.{property.Name} is unexpected";
+            }
+            return null;
+        }
+
+        if (expected.ValueKind == JsonValueKind.Array)
+        {
+            int shared = Math.Min(expected.GetArrayLength(), actual.GetArrayLength());
+            for (int index = 0; index < shared; index++)
+            {
+                string? drift = FirstDrift(expected[index], actual[index], $"{path}[{index}]");
+                if (drift is not null) return drift;
+            }
+            return expected.GetArrayLength() == actual.GetArrayLength()
+                ? null
+                : $"{path} holds {expected.GetArrayLength()} entries but {actual.GetArrayLength()}";
+        }
+
+        return string.Equals(expected.GetRawText(), actual.GetRawText(), StringComparison.Ordinal)
+            ? null
+            : $"{path} is {expected.GetRawText()} but {actual.GetRawText()}";
+    }
+
+    private static int FirstByteDifference(byte[] expected, byte[] actual)
+    {
+        int shared = Math.Min(expected.Length, actual.Length);
+        for (int index = 0; index < shared; index++)
+        {
+            if (expected[index] != actual[index]) return index;
+        }
+        return shared;
     }
 
     /// <summary>
