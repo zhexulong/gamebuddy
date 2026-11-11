@@ -1087,9 +1087,11 @@ function validateSubmitCommand(command: SubmitMessageCommandV1, lease: MountedCh
  * the surface; every other failure (store shape, session path, read-back, admission, unknown) collapses to the
  * service's fail-closed code so no raw path, identifier or content can escape. One list for all four
  * operations, because each forwards the durable store's own refusals unchanged - and only codes a store or
- * ingress can really produce belong on it.
+ * ingress can really produce belong on it. `turn_busy` is the store's own refusal of a mutation while a reply
+ * is still being written, which the swipes share with the send path and which the surface already words.
  */
 const CHAT_MESSAGE_MUTATION_REFUSALS: readonly string[] = [
+  "turn_busy",
   "chat_message_not_found",
   "chat_message_revision_conflict",
   "chat_swipe_last_variant",

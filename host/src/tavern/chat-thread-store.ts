@@ -2622,6 +2622,13 @@ export function createChatThreadStore(
       assertId("messageId", messageId);
       return withDb((db) => {
         const current = readStateFromDb(db, chatThreadId);
+        // One live turn owns the model's active path: Pi appends the reply it is streaming as a child of
+        // the leaf that exists when the provider answers, so a position moved mid-generation would file
+        // that reply under a variant it does not answer. The three sibling mutations (rewind, edit, delete)
+        // refuse a live turn in the same transaction and for the same reason; this is the swipes' half of
+        // that rule, and it is here rather than at the ingress because the ingress moves the leaf after
+        // this call, so a refusal here leaves both layers exactly as they were.
+        if (current.turnLedger !== null && !isTerminalLedger(current.turnLedger)) throw new Error("turn_busy");
         const target = current.messages.find((message) => message.messageId === messageId);
         if (!target) throw new Error("message_not_found");
         if (target.role !== "companion") throw new Error("chat_thread_swipe_not_allowed");
@@ -2669,6 +2676,10 @@ export function createChatThreadStore(
       if (!Number.isSafeInteger(targetIndex) || targetIndex < 0) throw new Error("chat_message_revision_conflict");
       return withDb((db) => {
         const current = readStateFromDb(db, chatThreadId);
+        // Removing the variant a live turn is being written into would move the model's leaf out from
+        // under it exactly as a swipe does, so the removal refuses for the same reason and at the same
+        // layer (see `selectSwipe`).
+        if (current.turnLedger !== null && !isTerminalLedger(current.turnLedger)) throw new Error("turn_busy");
         const target = current.messages.find((message) => message.messageId === messageId);
         if (!target) throw new Error("message_not_found");
         if (target.role !== "companion") throw new Error("chat_thread_swipe_not_allowed");

@@ -730,6 +730,19 @@ test("a variant's length-ceiling fact is its own, and is not published once the 
     if (reopened.turnLedger === null) assert.fail("expected a durable turn");
     assert.equal(visibleReplyTruncation(reopened.messages, reopened.turnLedger), true);
 
+    // A swipe mutates a settled position: the store refuses one while the turn that wrote the visible
+    // text is still live, so the turn ends the way the provider path ends it and the fact under test is
+    // read on the row the player can actually swipe.
+    const claimedAtMs = base + 20;
+    await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      { operation: "claim_completion", claimedAtMs },
+    );
+    await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      { operation: "complete", completedAtMs: claimedAtMs + 1 },
+    );
+
     // The row shows the FIRST reply again: the variant's fact describes a text the
     // player is no longer reading, so the projection states nothing about a length
     // ceiling rather than describing the wrong text.
@@ -1340,8 +1353,18 @@ test("commit_variant appends a swipe to the existing reply position and replays 
       /chat_variant_commit_conflict/,
     );
 
-    // The same position is still a normal swipe position: selectSwipe restores
-    // the first text without adding a row.
+    // The same position is still a normal swipe position - once the turn that wrote it has settled,
+    // which is the only time the store admits a swipe: selectSwipe restores the first text without
+    // adding a row.
+    const settledAtMs = base + 20;
+    await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      { operation: "claim_completion", claimedAtMs: settledAtMs },
+    );
+    await transitionMountedPresentation(
+      { ...bindingFor(root), attemptId },
+      { operation: "complete", completedAtMs: settledAtMs + 1 },
+    );
     const restored = await store.selectSwipe!(testTransitionAuthority.authority, "thread_01", "response_01", {
       direction: "prev",
     });

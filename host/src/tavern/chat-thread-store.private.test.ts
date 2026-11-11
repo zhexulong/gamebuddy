@@ -1043,9 +1043,10 @@ test("volatile selector respects secondaryKeys and selectiveLogic across all 4 m
  *
  * The selector tested `corpus.includes(key)`, so an entry about a pet (`cat`) landed in every turn
  * that happened to spell those letters inside another word (`concatenate`). What a card promises is
- * "say this word and the entry belongs in the turn". The boundary the fix adds is ASCII-only, which
- * is also what keeps the product's own Chinese books working: `\b` never forms at all around
- * `绿茶` in `今天喝绿茶`, because a han character is not a `\b` word character.
+ * "say this word and the entry belongs in the turn". The boundary is decided by what the key IS, not by the
+ * script of the text: a single han character must stand as its own word (`茶` not inside `绿茶`), a
+ * multi-character han key is a substring (`绿茶` fires in `今天喝绿茶`, `下雨` in `下雨天`), and any other
+ * key keeps the ASCII word boundary `cat` has always had.
  */
 test("a trigger key fires on the whole word and never on the letters inside a longer one", async () => {
   const { selectAuthoredContextVolatileSourceRefs } = await import("./chat-thread-store.js");
