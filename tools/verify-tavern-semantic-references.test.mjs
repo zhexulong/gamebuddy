@@ -1,3 +1,12 @@
+/**
+ * The falsifier for `test:tavern-references`: the gate must refuse to report a pass over an input this repository does
+ * not carry. Both readings are asserted - with the `design/` mount the attestation must hold, without it the run must
+ * name the path and exit 2 rather than print a success line.
+ *
+ * red-proof: inject  the absent-registry branch printing `verified 0 Tavern semantic references and 0 fixtures` and
+ *                    exiting 0 instead of `blocked` -> `expected the not-measured exit, got undefined`, exit 1
+ *                    (tools/verify-tavern-semantic-references.test.mjs)
+ */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";

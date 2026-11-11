@@ -1,3 +1,11 @@
+/**
+ * The falsifier for `test:stardew-fixture-readiness`: the helper a lifecycle run waits on must refuse every readiness
+ * document that is not this launch's own, and the synthetic files here need no live fixture root to say so.
+ *
+ * red-proof: inject  `await-stardew-fixture-readiness.mjs` accepting a `fixture_blocked` document as ready ->
+ *                    `Expected "actual" to be strictly unequal to: 0`, exit 1
+ *                    (tools/await-stardew-fixture-readiness.test.mjs)
+ */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHmac } from "node:crypto";

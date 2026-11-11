@@ -212,6 +212,17 @@ test("gates no ledger covers, and reports that cannot show what they measured, a
     }).map((entry) => entry.code),
     ["gate_declaration_stale"],
   );
+  // An `external` label is only as good as the runner behind it. A command no script and no workflow invokes names a
+  // rule nothing in this repository checks, so the label fails here instead of counting as a gate that owes nothing.
+  const uninvoked = checkGateFalsifiers({
+    ...declared,
+    externalWithoutRunner: [{ gate: "check:knip", command: "pnpm knip:invented" }],
+  });
+  assert.deepEqual(
+    uninvoked.map((entry) => entry.code),
+    ["external_runner_not_invoked"],
+  );
+  assert.match(uninvoked[0].detail, /check:knip: claims `external pnpm knip:invented`, which no package\.json/u);
 });
 
 // A check whose population is empty agrees with itself: no gate enumerated must be a finding, not a silent pass.
@@ -242,6 +253,14 @@ test("the census counts each gate in exactly one bucket and names the ones nobod
     recorded: 1,
     undeclared: [{ gate: "test:host", detail: "no marker" }],
     stale: [],
+    external: [
+      {
+        gate: "test:a",
+        commands: [{ command: "pnpm --dir pkg run test", howItFails: "a failing case exits 1" }],
+        inheritedFrom: [],
+      },
+    ],
+    externalWithoutRunner: [],
     zeroPopulationPass: ["check-c.mjs"],
   };
   const census = gateFalsifierCensus({
@@ -261,14 +280,22 @@ test("the census counts each gate in exactly one bucket and names the ones nobod
     withRedProof: 2,
     recorded: 1,
     undeclared: ["test:host"],
+    external: [
+      {
+        gate: "test:a",
+        commands: [{ command: "pnpm --dir pkg run test", howItFails: "a failing case exits 1" }],
+        inheritedFrom: [],
+      },
+    ],
     zeroPopulationPass: ["check-c.mjs"],
   });
   assert.deepEqual(describeGateFalsifierCensus(census), [
-    "gates examined 6 · with a red proof 2 · declared without 1 · undeclared 1 · zero-population-pass 1 · " +
+    "gates examined 6 · with a red proof 2 · external 1 · declared without 1 · undeclared 1 · zero-population-pass 1 · " +
       "unlisted 2 (tools/check-c.mjs, check:d)",
     "judged here 4 (with a self-report 1 · declared without a report 1) · excluded 2 (a package.json gate script " +
-      "whose entry is not a tools/check-*.mjs gate file, so this suite has no default run to read): 1 proven or " +
-      "recorded in the red-proof ledger, 1 undeclared and named below",
+      "whose entry is not a tools/check-*.mjs gate file, so this suite has no default run to read): 1 proven, external " +
+      "or recorded in the red-proof ledger, 1 undeclared and named below",
+    "external 1 (rule lives in another program; run the command to watch it fail): test:a = `pnpm --dir pkg run test`",
   ]);
 });
 

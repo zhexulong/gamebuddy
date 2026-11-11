@@ -19,7 +19,9 @@
  *                                     self-verification report in its own default run or is declared in
  *                                     `GATES_WITHOUT_FALSIFIER` with a reason; a report that examined nothing, a report
  *                                     that names no population at all, and a gate the red-proof ledger neither proves nor
- *                                     records are all findings rather than a pass.
+ *                                     records are all findings rather than a pass. A gate whose rule lives in another
+ *                                     program is neither: the ledger marks it `external`, the census counts that as its
+ *                                     own population, and a label whose runner command nothing invokes is a finding.
  *
  * Checks 3 and 5 ask questions about what code DOES, so they run it and read the result: check 3 imports the runner,
  * check 5 runs the gate and reads the report it prints. Reading the source text for the words `import.meta.main` or
@@ -910,8 +912,18 @@ export function gateRedProofLedger({ root }) {
     reading,
     withRedProof: reading.proven.length,
     recorded: held,
-    undeclared: findings.filter((entry) => entry.code !== "baseline_entry_stale"),
+    // A gate the ledger neither proves nor records. Restricted to the two codes that mean exactly that, so an
+    // unreadable claim or an external label with no invoked runner is its own finding instead of an undeclared gate.
+    undeclared: findings.filter((entry) => ["no_red_proof", "gate_unassessed"].includes(entry.code)),
     stale: findings.filter((entry) => entry.code === "baseline_entry_stale"),
+    // The gates whose rule lives in another program - or whose every member's does - with the command a reader
+    // would run to watch it fail. The count is this list's length in both tools, so the two censuses cannot disagree.
+    external: reading.external.map((record) => ({
+      gate: record.id,
+      commands: record.external.map((runner) => ({ command: runner.command, howItFails: runner.howItFails })),
+      inheritedFrom: record.external.length === 0 ? record.members : [],
+    })),
+    externalWithoutRunner: reading.externalWithoutRunner,
     // The gates whose default run prints a report that names no population the shared judge can read, so a zero in
     // them is indistinguishable from a measurement. Static, because this suite cannot execute 330 gates.
     zeroPopulationPass: reading.zeroPopulationPass.invisible.map((file) => file.replace(/^tools\//u, "")),
@@ -923,6 +935,8 @@ const EMPTY_LEDGER = Object.freeze({
   recorded: 0,
   undeclared: [],
   stale: [],
+  external: [],
+  externalWithoutRunner: [],
   zeroPopulationPass: [],
 });
 
@@ -950,6 +964,7 @@ export function checkGateFalsifiers({
   zeroPopulation = [],
   undeclared = [],
   staleDeclarations = [],
+  externalWithoutRunner = [],
   toolsDir,
   run = runGateDefault,
   // The gates whose own report says it could not measure, collected for the census line rather than for a verdict: a
@@ -991,6 +1006,15 @@ export function checkGateFalsifiers({
   for (const entry of undeclared) findings.push(finding("gate_undeclared", `${entry.gate}: ${entry.detail}`));
   for (const entry of staleDeclarations)
     findings.push(finding("gate_declaration_stale", `${entry.gate}: ${entry.detail}`));
+  // An `external` label is only as good as the runner behind it: a command no script and no workflow invokes names a
+  // rule nothing in this repository checks, which is the silencer the label exists to make impossible.
+  for (const entry of externalWithoutRunner)
+    findings.push(
+      finding(
+        "external_runner_not_invoked",
+        `${entry.gate}: claims \`external ${entry.command}\`, which no package.json script and no workflow invokes`,
+      ),
+    );
   for (const name of zeroPopulation)
     findings.push(
       finding(
@@ -1044,6 +1068,7 @@ export function gateFalsifierCensus({
     withRedProof: ledger.withRedProof,
     recorded: ledger.recorded,
     undeclared: [...undeclaredNames],
+    external: [...ledger.external],
     zeroPopulationPass: [...ledger.zeroPopulationPass],
   };
 }
@@ -1060,6 +1085,7 @@ export function describeGateFalsifierCensus(census) {
     describeGateCensus({
       examined: census.examined,
       withRedProof: census.withRedProof,
+      external: census.external.length,
       recorded: census.recorded,
       undeclared: census.undeclared.length,
       zeroPopulationPass: census.zeroPopulationPass.length,
@@ -1067,10 +1093,21 @@ export function describeGateFalsifierCensus(census) {
     `judged here ${census.judged} (with a self-report ${census.withReport} · declared without a report ${census.without}) · ` +
       `excluded ${census.excluded.length} (a package.json gate script whose entry is not a tools/check-*.mjs gate file, ` +
       `so this suite has no default run to read): ` +
-      `${census.excluded.length - census.excludedUndeclared.length} proven or recorded in the red-proof ledger` +
+      `${census.excluded.length - census.excludedUndeclared.length} proven, external or recorded in the red-proof ledger` +
       (census.excludedUndeclared.length === 0
         ? ""
         : `, ${census.excludedUndeclared.length} undeclared and named below`),
+    // The external rows carry their command: a label a reader cannot run is a label that cannot be checked.
+    `external ${census.external.length} (rule lives in another program; run the command to watch it fail): ` +
+      (census.external.length === 0
+        ? "none"
+        : census.external
+            .map((entry) =>
+              entry.inheritedFrom.length > 0
+                ? `${entry.gate} = inherited from ${entry.inheritedFrom.join(", ")}`
+                : `${entry.gate} = ${entry.commands.map((each) => `\`${each.command}\``).join(", ")}`,
+            )
+            .join(" · ")),
   ];
 }
 
@@ -1148,6 +1185,7 @@ export function runHarnessConformance({ toolsDir, repoRoot }) {
       zeroPopulation: ledger.zeroPopulationPass,
       undeclared: ledger.undeclared,
       staleDeclarations: ledger.stale,
+      externalWithoutRunner: ledger.externalWithoutRunner,
       notMeasured,
     }),
     ...checkGateRegistry({ gateNames }),

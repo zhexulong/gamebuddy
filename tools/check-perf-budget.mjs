@@ -50,6 +50,9 @@
  *   node tools/check-perf-budget.mjs --update                # re-record the worst of K processes
  *   node tools/check-perf-budget.mjs --results <file>        # compare a saved suite output
  *   node tools/check-perf-budget.mjs --root <dir>            # the gate's own fixture
+ *
+ * red-proof: fixture  a saved suite reading with `admission.action/large` at 215.72 µs/op against the recorded 107.86
+ *                     -> `perf_budget_failed slow=1 ... +100.0%`, exit 1 (tools/perf/budget.test.mjs)
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";

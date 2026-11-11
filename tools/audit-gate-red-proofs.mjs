@@ -38,8 +38,23 @@
  * with `<kind>` one of `inject`, `history` (a real shipped defect replayed), `fixture` (a known-rejected
  * input) or `self-check` (the gate exercises its own rules on violating samples). A marker is read from
  * COMMENT LINES ONLY, so a gate cannot satisfy itself with the regex it uses to find markers; every
- * repo-relative path a marker names must exist, or the claim points at nothing; a kind outside those
- * four is reported rather than skipped.
+ * repo-relative path a marker names must exist, or the claim points at nothing; a kind outside that set
+ * is reported rather than skipped.
+ *
+ * THE FIFTH KIND, `external`, is for a gate whose rule lives in another program - `dotnet test`,
+ * `pnpm knip`, `depcruise --config ...`, a project runner - and behind a mount this repository does not
+ * carry. Such a gate cannot be turned red by any file here, so the honest record is the runner plus the
+ * failure that runner produces, in one comment line:
+ *
+ *   `red-proof: external <runner command> — <how it fails>`
+ *
+ * Two rules make that label a claim rather than a silencer. The command must be the one the repository
+ * actually invokes - it is matched against every `package.json` script and every workflow, and a command
+ * found nowhere there is `external_runner_not_invoked:<gate>:<command>` and fails the run. The `<how it
+ * fails>` clause must be present, or the marker is unreadable like any other malformed claim. And the
+ * label is only written after the failure was seen once: break the thing the runner checks, run the
+ * runner, watch it exit non-zero. An external gate leaves the population that owes an in-repo proof, so
+ * its baseline entry is stale and must go - the ratchet tightens in this direction too.
  *
  * THE BASELINE, and why this gate is not simply red. Measured at this commit, of 220 declared gates: 11
  * carry a red proof and 209 do not - two of those are aggregates whose members are unproven, and 6 cannot
@@ -76,7 +91,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { populationFieldPattern, POPULATION_FIELDS } from "./lib/assert-non-vacuous.mjs";
+import { POPULATION_FIELDS, populationFieldPattern } from "./lib/assert-non-vacuous.mjs";
 import { deriveGatePopulation } from "./lib/gate-population.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -84,8 +99,14 @@ const BASELINE_PATH = "tools/gate-red-proof-baseline.json";
 
 /** `red-proof: <kind> <claim>`; the claim may continue on the following comment lines. */
 const RED_PROOF = /red-proof:\s*([A-Za-z][A-Za-z-]*)\s+([\s\S]{12,})/u;
-/** The kinds, each answering "how was the gate seen red" differently. */
-const KINDS = new Set(["inject", "history", "fixture", "self-check"]);
+/** The kinds that prove a gate can fail by showing this repository's own falsifier fail. */
+const PROOF_KINDS = new Set(["inject", "history", "fixture", "self-check"]);
+/** The kind for a gate whose rule lives in another program: it is falsified by that program, not by a file here. */
+const EXTERNAL_KIND = "external";
+/** Every kind a marker may carry; one outside this set is reported rather than skipped. */
+const KINDS = new Set([...PROOF_KINDS, EXTERNAL_KIND]);
+/** An `external` claim's two halves: the runner command, and the failure that runner is expected to produce. */
+const EXTERNAL_CLAIM = /^([\s\S]+?)\s+[—–]\s+([\s\S]+)$/u;
 /** A repo-relative path inside a claim that must resolve. Longest extension first, or `x.json` resolves to `x.js`. */
 const POINTER =
   /(?:tools|host|dialogue-web|integrations|scripts|desktop|vendor|\.github|packages)\/[\w./-]+\.(?:json|mjs|cjs|tsx|yml|ps1|cs|js|ts|py)/gu;
@@ -150,6 +171,38 @@ export function readRedProofMarkers({ root, file }) {
   return markers;
 }
 
+/**
+ * The markers a gate declares in `package.json`'s `gateRedProofs` map, keyed by gate id.
+ *
+ * A gate whose command runs a project (`dotnet test ...`, `pnpm knip && pnpm knip:production`, a workspace filter)
+ * names no file in this repository, so it has no file to carry a comment marker and could never be recorded at all.
+ * The declaration lives beside the command that defines it - in the same file, one string per gate - and is parsed by
+ * the same rules as a comment marker:
+ *
+ *   "gateRedProofs": { "check:knip": "external pnpm knip && pnpm knip:production - an unused export fails the run" }
+ */
+export function declaredRedProofMarkers(root) {
+  const parsed = JSON.parse(read(join(root, "package.json")) ?? "{}");
+  return new Map(
+    Object.entries(parsed.gateRedProofs ?? {}).map(([gate, text]) => [gate, { file: "package.json", text }]),
+  );
+}
+
+/** One declaration as a marker: same keyword, same kinds, same claim - read from data instead of a comment line. */
+function declarationMarker(declaration) {
+  if (declaration === undefined) return null;
+  const match = RED_PROOF.exec(`red-proof: ${declaration.text}`);
+  if (match === null)
+    return { file: "package.json (gateRedProofs)", line: 0, kind: null, claim: declaration.text, valid: false };
+  return {
+    file: "package.json (gateRedProofs)",
+    line: 0,
+    kind: match[1].toLowerCase(),
+    claim: match[2].trim(),
+    valid: true,
+  };
+}
+
 /** The falsifier files that sit beside a gate, whether or not the gate declares them. */
 function siblingFalsifiers(root, entryFiles) {
   return entryFiles
@@ -181,30 +234,65 @@ function declaredRunnerText(root) {
 }
 
 /** One gate's record: what it owns, what it claims, and whether those claims can be read. */
-function classify({ root, gate, scriptNames, runnerText }) {
+function classify({ root, gate, scriptNames, runnerText, declarations }) {
   const owned = [...new Set([...gate.entryFiles, ...siblingFalsifiers(root, gate.entryFiles)])]
     .filter((file) => existsSync(join(root, file)))
     .sort();
-  const markers = owned.flatMap((file) => readRedProofMarkers({ root, file }));
+  const declared = declarationMarker(declarations.get(gate.id));
+  const markers = [
+    ...owned.flatMap((file) => readRedProofMarkers({ root, file })),
+    ...(declared === null ? [] : [declared]),
+  ];
   const readable = markers.filter((marker) => marker.valid && KINDS.has(marker.kind));
   const unreadable = markers.filter((marker) => !(marker.valid && KINDS.has(marker.kind)));
-  const pointers = [...new Set(readable.flatMap((marker) => marker.claim.match(POINTER) ?? []))];
+  const proofMarkers = readable.filter((marker) => PROOF_KINDS.has(marker.kind));
+  const runners = externalRunners({ markers: readable.filter((marker) => marker.kind === EXTERNAL_KIND), runnerText });
+  const pointers = [...new Set(proofMarkers.flatMap((marker) => marker.claim.match(POINTER) ?? []))];
   return {
     ...gate,
     owned,
     members: memberScripts(gate.id, gate.command, scriptNames),
-    proofs: readable.map((marker) => ({
+    proofs: proofMarkers.map((marker) => ({
       kind: marker.kind,
       claim: marker.claim,
       file: marker.file,
       line: marker.line,
       pointers: marker.claim.match(POINTER) ?? [],
     })),
-    unreadable,
+    external: runners.external,
+    unreadable: [...unreadable, ...runners.unreadable],
     unresolved: pointers.filter((pointer) => !existsSync(join(root, pointer))),
     // A proof nothing runs is a proof that has stopped holding; reported beside the verdict, not in it.
     unexecuted: pointers.filter((pointer) => !runnerText.includes(pointer)),
   };
+}
+
+/**
+ * The `external` markers of one gate, split into the runner command and the failure that runner produces.
+ *
+ * A marker carrying one half and not the other is UNREADABLE rather than external: `red-proof: external pnpm
+ * knip` says a rule lives elsewhere and nothing about how it fails, which is the promise this ledger exists to
+ * replace. It joins the unreadable list, so the gate reads `malformed` however much else it claims, and a
+ * command no script or workflow invokes is `invoked: false` - `evaluate` turns that into a finding.
+ */
+function externalRunners({ markers, runnerText }) {
+  const external = [];
+  const unreadable = [];
+  for (const marker of markers) {
+    const parsed = EXTERNAL_CLAIM.exec(marker.claim);
+    const command = (parsed?.[1] ?? "").trim();
+    const howItFails = (parsed?.[2] ?? "").trim();
+    if (command.length === 0 || howItFails.length < 12) {
+      unreadable.push({
+        file: marker.file,
+        line: marker.line,
+        claim: `${marker.claim} (an external claim is \`red-proof: external <runner command> - <how it fails>\`)`,
+      });
+      continue;
+    }
+    external.push({ command, howItFails, file: marker.file, line: marker.line, invoked: runnerText.includes(command) });
+  }
+  return { external, unreadable };
 }
 
 /**
@@ -242,10 +330,11 @@ export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
   const { gates, scripts, gateFiles: files, unclaimedByScript } = deriveGatePopulation({ root });
   const scriptNames = new Set(scripts.map((gate) => gate.id));
   const runnerText = declaredRunnerText(root);
-  const records = gates.map((gate) => classify({ root, gate, scriptNames, runnerText }));
+  const declarations = declaredRedProofMarkers(root);
+  const records = gates.map((gate) => classify({ root, gate, scriptNames, runnerText, declarations }));
   const status = assignStatus(records);
   const gaps = records
-    .filter((record) => status.get(record.id) !== "proven")
+    .filter((record) => !["proven", "external"].includes(status.get(record.id)))
     .map((record) => ({ gate: record.id, status: status.get(record.id), detail: describeGap({ record, status }) }));
   return {
     population: {
@@ -256,6 +345,17 @@ export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
     },
     records: records.map((record) => ({ ...record, status: status.get(record.id) })),
     proven: records.filter((record) => status.get(record.id) === "proven"),
+    // The gates whose rule lives in another program: they owe no in-repo falsifier, and they are counted as
+    // their own population so `proven + external + recorded + undeclared = examined` reconciles on one line.
+    external: records.filter((record) => status.get(record.id) === "external"),
+    // An `external` label whose command no script or workflow invokes is the silencer this ledger exists to name.
+    externalWithoutRunner: records.flatMap((record) =>
+      status.get(record.id) === "external"
+        ? record.external
+            .filter((runner) => !runner.invoked)
+            .map((runner) => ({ gate: record.id, command: runner.command }))
+        : [],
+    ),
     zeroPopulationPass: zeroPopulationPass({ root, files }),
     gaps,
     // A claim that cannot be read is reported whatever the baseline says. Recording it would be
@@ -270,6 +370,9 @@ function assignStatus(records) {
   const status = new Map();
   for (const record of records) {
     if (record.unreadable.length > 0) status.set(record.id, "malformed");
+    // `external` sits above the gaps: a gate whose rule lives in another program is not one that owes a proof here,
+    // and an in-repo proof wins over the label when both are present - a demonstrated falsifier needs no excuse.
+    else if (record.proofs.length === 0 && record.external.length > 0) status.set(record.id, "external");
     else if (record.proofs.length === 0 && record.owned.length === 0 && record.members.length === 0)
       status.set(record.id, "unassessed");
     else if (record.proofs.length === 0 && record.members.length > 0) status.set(record.id, "unproven_via_members");
@@ -277,16 +380,22 @@ function assignStatus(records) {
     else if (record.unresolved.length > 0) status.set(record.id, "pointer_missing");
     else status.set(record.id, "proven");
   }
-  // An aggregate inherits: it is proven only when every member it runs is proven. Two passes settle any
-  // nesting an aggregate of aggregates can have, and a cycle stops rather than loops.
+  // An aggregate inherits: it is proven only when every member it runs is proven, or external when the members are
+  // a mix of proven and external - an alias whose one unproven member is measured by another program owes nothing
+  // here either. Two passes settle any nesting an aggregate of aggregates can have, and a cycle stops rather than
+  // loops.
   for (let pass = 0; pass < 2; pass += 1)
     for (const record of records)
       if (status.get(record.id) === "unproven_via_members")
-        status.set(
-          record.id,
-          record.members.every((member) => status.get(member) === "proven") ? "proven" : "unproven_via_members",
-        );
+        status.set(record.id, inheritedStatus(record.members.map((member) => status.get(member))));
   return status;
+}
+
+/** What an aggregate's members make it: proven when all are proven, external when the rest are measured elsewhere. */
+function inheritedStatus(memberStatuses) {
+  if (memberStatuses.every((member) => member === "proven")) return "proven";
+  if (memberStatuses.every((member) => member === "proven" || member === "external")) return "external";
+  return "unproven_via_members";
 }
 
 /**
@@ -298,10 +407,10 @@ function assignStatus(records) {
  * writing them out separately is how "we have N gates" acquired two answers in the first place; a caller that adds a
  * bucket (the conformance suite adds `unlisted`) appends to this line rather than restating it.
  */
-export function describeGateCensus({ examined, withRedProof, recorded, undeclared, zeroPopulationPass }) {
+export function describeGateCensus({ examined, withRedProof, external, recorded, undeclared, zeroPopulationPass }) {
   return (
-    `gates examined ${examined} · with a red proof ${withRedProof} · declared without ${recorded} · ` +
-    `undeclared ${undeclared} · zero-population-pass ${zeroPopulationPass}`
+    `gates examined ${examined} · with a red proof ${withRedProof} · external ${external} · ` +
+    `declared without ${recorded} · undeclared ${undeclared} · zero-population-pass ${zeroPopulationPass}`
   );
 }
 
@@ -351,6 +460,14 @@ export function evaluate({ reading, baseline }) {
       detail: gap.detail,
     });
   }
+  for (const runner of reading.externalWithoutRunner)
+    findings.push({
+      code: "external_runner_not_invoked",
+      gate: runner.gate,
+      detail:
+        `claims \`external ${runner.command}\`, which no package.json script and no workflow invokes, so the ` +
+        "label names a rule nothing the repository runs checks",
+    });
   for (const gate of baseline.gates)
     if (!gaps.has(gate))
       findings.push({
@@ -391,7 +508,23 @@ function report({ reading, held, gaps, undeclared = 0 }) {
   );
   for (const record of reading.proven) {
     const proof = record.proofs[0];
+    if (proof === undefined) {
+      process.stdout.write(`  proven:${record.id} inherited from ${record.members.join(", ")}\n`);
+      continue;
+    }
     process.stdout.write(`  proven:${record.id} kind=${proof.kind} at=${proof.file}:${proof.line}\n`);
+  }
+  // The external rows carry their command, so a reader can run one and watch it fail rather than trust the label.
+  for (const record of reading.external) {
+    if (record.external.length === 0) {
+      process.stdout.write(`  external:${record.id} inherited from ${record.members.join(", ")}\n`);
+      continue;
+    }
+    for (const runner of record.external)
+      process.stdout.write(
+        `  external:${record.id} runner=${runner.command} at=${runner.file}:${runner.line} ` +
+          `invoked=${runner.invoked ? "yes" : "NO"} — ${runner.howItFails}\n`,
+      );
   }
   // The census a reader would otherwise take a day to count: how many gates there are, how many carry a red proof,
   // which of the rest are recorded debt and which nobody has declared at all, and how many cannot see a zero
@@ -402,6 +535,7 @@ function report({ reading, held, gaps, undeclared = 0 }) {
     `  ${describeGateCensus({
       examined: population.total,
       withRedProof: reading.proven.length,
+      external: reading.external.length,
       recorded: held,
       undeclared,
       zeroPopulationPass: zero.invisible.length,
@@ -417,7 +551,9 @@ function report({ reading, held, gaps, undeclared = 0 }) {
   for (const entry of reading.unexecutedProofs)
     process.stdout.write(`  proven_but_nothing_runs:${entry.gate}:${entry.pointer}\n`);
   process.stdout.write(
-    `  ${reading.gaps.length} gate(s) still owe a red proof; ${held} of them are recorded in ${BASELINE_PATH}\n`,
+    `  ${reading.gaps.length} gate(s) still owe a red proof; ${held} of them are recorded in ${BASELINE_PATH}` +
+      `; ${reading.external.length} are external and ${reading.gaps.length + reading.external.length + reading.proven.length} ` +
+      `of ${population.total} are accounted for\n`,
   );
 }
 
@@ -449,7 +585,9 @@ function main(argv) {
   const { findings, held } = evaluate({ reading, baseline });
   // `undeclared` is the half the baseline does not cover: a gate with no red proof and no record saying it owes one.
   // It is the number the conformance suite fails on, so it is counted here once and read from the same reading there.
-  const undeclared = findings.filter((finding) => finding.code !== "baseline_entry_stale").length;
+  // Unreadable claims and external labels with no invoked runner are findings of their own and are NOT counted as
+  // undeclared gates: they would break the arithmetic `proven + external + declared + undeclared = examined`.
+  const undeclared = findings.filter((finding) => ["no_red_proof", "gate_unassessed"].includes(finding.code)).length;
   const all = argv.includes("--run") ? [...findings, ...runProofSuites(root, reading.proven)] : findings;
   if (json) {
     process.stdout.write(
@@ -463,7 +601,9 @@ function main(argv) {
   if (all.length > 0)
     process.stderr.write(
       "  fix: show the gate red on a real injected violation, then write it down in the gate or its falsifier as\n" +
-        `       \`red-proof: <${[...KINDS].join("|")}> <the violation injected -> what the gate then said>\`\n`,
+        "       `red-proof: <inject|history|fixture|self-check> <the violation injected -> what the gate then said>`\n" +
+        "       or, when the rule lives in another program, `red-proof: external <runner command> - <how it fails>`\n" +
+        "       with that command written the way package.json or a workflow invokes it\n",
     );
   return all.length === 0 ? 0 : 1;
 }

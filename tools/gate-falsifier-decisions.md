@@ -1,44 +1,56 @@
 # Gate falsifier decisions
 
-`gates examined 345 · with a red proof 230 · cannot fire 15 · reads the wrong thing 1 · needs history 0 · provable 99`
+`gates examined 344 · with a red proof 234 · external 4 · declared without 106 · undeclared 0 · zero-population-pass 0`
 
-The four class counts are a partition of the 115 gates that owe a red proof, so they reconcile with the
-census line: `230 + 115 = 345` examined, and `15 + 1 + 0 + 99 = 115`. `check-harness-conformance` prints the
-same numbers from the same reading (`tools/lib/harness-conformance.mjs` over `tools/audit-gate-red-proofs.mjs`).
+The populations are a partition of the 344 gates, so they reconcile with the census line:
+`234 + 4 + 106 = 344`. Of the 106 gates still owing a proof, 99 are provable today (the fourth table), one reads
+something other than it checks, four had their rule identified in another program and could not be demonstrated from
+this lane, and two report `not measured` because their contract file is absent from the repository.
 
-This document exists for one decision: **which of the unproven gates should be deleted rather than kept.**
-A gate that cannot fire occupies a covered position while measuring nothing, so the first table is the
-deletion list and the fourth is the work queue. The middle two are the gates whose problem is not the proof
-but the reading.
+`check-harness-conformance` prints the same numbers from the same reading (`tools/lib/harness-conformance.mjs` over
+`tools/audit-gate-red-proofs.mjs`).
 
-How each class was decided: a gate is `cannot fire` when nothing in the repository can make it exit
-non-zero — a report with no failing path, a population no file produces, an environment that decides instead
-of a rule, or a rule that lives in another program's config. It is `reads the wrong thing` when its reader and
-its name disagree. It is `provable` when a violation exists that it would catch, and the table names what to
-inject. Proven gates are not listed: they are the 230, and their markers sit in the gate files themselves.
+This document exists for one decision: **what to do with the gates that cannot fire.** A gate that cannot fire
+occupies a covered position while measuring nothing, so each of them is either demonstrated, deleted, declared
+`external` with a runner a reader can run, or kept with the reason it is still owed. The fourth table is the work
+queue; the second is the one gate whose problem is not the proof but the reading.
 
-## Deletion candidates
+How each class was decided: a gate is `cannot fire` when nothing in the repository can make it exit non-zero — a
+report with no failing path, a population no file produces, an environment that decides instead of a rule, or a rule
+that lives in another program's config. It is `reads the wrong thing` when its reader and its name disagree. It is
+`provable` when a violation exists that it would catch, and the table names what to inject. Proven gates are not
+listed: they are the 234, and their markers sit in the gate files themselves.
 
-Every gate here cannot be turned red by any input. The last column is what the decision costs: a row whose
-`lost` names real coverage is a gate to move onto the external runner or behind a mount, not to delete.
+## The fifteen gates that could not fire: their dispositions
 
-| gate | what it claims | why it cannot fire | what is lost if deleted |
-| --- | --- | --- | --- |
-| `audit:stardew-admission-fork-delta` | an audit of the delta if the forked admission sites converged onto `AdmitExecution` | it sets no exit code: every input prints a report, and only a missing `--source-root` throws | a migration decision aid — the site list and the states a converged gate would newly refuse. Nothing CI can observe, because it never fails |
-| `check:knip` | no unused file or export in the workspace | `pnpm knip` reads a project; no file in this repository holds the rule (the ledger's `unassessed` class) | real workspace dead-code detection — this one is worth keeping on the external runner, not deleting |
-| `check:tools-boundaries` | the layer boundaries of `tools/` | `depcruise --config .dependency-cruiser.tools.cjs tools`; the rule is a config plus a project walk (unassessed) | real boundary enforcement for `tools/` — keep on the external runner |
-| `check:live-run-isolation` | a live run cannot reach another lane's profile or fixture root | it needs `%LOCALAPPDATA%\GameBuddy\stardew-profiles\native-local-stable` and a release bundle; off that machine it exits 1 from an uncaught `live_run_isolation_source_profile_config_missing`, which is red for absence, not for a rule | an operational preflight — it answers `is this machine set up`, which a gate population should not contain |
-| `check:perf-budget` | the performance ratchet over the benchmark suite | it prints `perf_budget_skipped` and passes unless the baseline's recorded CPU identity is this machine's | a per-machine ratchet; its verdict is about a scheduler, so it belongs beside the machine, not in the proof ledger |
-| `check:tavern-references` | every Tavern semantic reference resolves | it reads `design/references/tavern/st-semantic-references-v1.json`; `design/` here is the documents mount and carries no `references/` directory, and the file's own comment says neither tree has ever carried it | nothing today. If the registry ever lands, this and its suite are the only readers — resurrect rather than rewrite |
-| `test:tavern-references` | the same resolution, asserted case by case | same absent reader as `check:tavern-references` | nothing today; the same resurrect-with-the-registry note applies |
-| `test:all` | everything | an aggregate whose one member, `test:dialogue-web`, is itself unassessed | an alias. Its other members are proven or measured in their own records |
-| `test:dialogue-web` | the web surface's suites | `pnpm --filter @gamebuddy/dialogue-web test:static` and friends: a project runner, no single file holds the rule (unassessed) | real frontend coverage — keep on the external runner |
-| `test:stardew:core` | the Mod's core .NET suite | `dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests` (unassessed) | real C# core coverage — keep |
-| `test:stardew:integration` | the Mod's integration .NET suite | `dotnet test integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests` (unassessed) | real C# integration coverage — keep |
-| `test:voice-protocol` | the voice sidecar's protocol conformance | `pnpm --dir vendor/pi-koe run test:protocol`: the rule lives in a vendored package (unassessed) | real protocol coverage — keep |
-| `tools/check-stardew-actor-admissibility.mjs` | admissibility for every registered action, plus the algebra closure | it reads `integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json`, which nothing in this repository produces (the `contracts/` subtree holds only `generated/`, `projection/` and three action JSONs), so it dies on ENOENT; and no script or workflow runs the file at all | nothing today; it is also the second reader/claim divergence below, so deleting it removes an unfollowable claim rather than a check |
-| `tools/check-stardew-hold-sufficiency.mjs` | hold sufficiency for the same registered actions | the same absent `contracts/actor-admissibility/actor-admissibility.v1.json`, and no script or workflow runs it | nothing today |
-| `test:stardew-fixture-readiness` | the live fixture is ready to use | it waits on a live fixture root — a machine's profile directory, not a file in this repository | an operational preflight (`await` in its own filename says what it is), not a gate |
+Nothing here is deleted for being inconvenient. A gate stays when its coverage is real, and a gate leaves the debt
+set only after it was seen to fail. `external` is the fifth falsifier kind (`red-proof: external <runner command> —
+<how it fails>`), and it is not self-declared: the command must be one `package.json` or a workflow actually invokes
+(a command found nowhere is `external_runner_not_invoked`), the failure clause must be present, and the label was only
+written after the failure was produced once. `external` gates carry their command in the census output of both tools,
+so any reader can run one.
+
+| gate | disposition | the evidence |
+| --- | --- | --- |
+| `audit:stardew-admission-fork-delta` | **deleted as a gate** | it sets no exit code, so as a gate it covered nothing. The `audit:` script line is gone, its baseline entry with it, and its prelive registry entry now reads `runsIn: on-demand`. The tool and its suite (`test:stardew-admission-fork-delta`) remain, so the migration decision aid loses no reader — only its false claim to be a gate |
+| `check:knip` | **external** | command `pnpm knip && pnpm knip:production`, demonstrated: `export const gatePopulationProbe = 1;` added to `tools/lib/gate-population.mjs` → `Unused exports (1) gatePopulationProbe tools/lib/gate-population.mjs:121:14`, exit 1 |
+| `check:tools-boundaries` | **external** | command `depcruise --config .dependency-cruiser.tools.cjs tools`, demonstrated: a new `tools/lib/tools-boundary-probe.mjs` importing `host/src/main.ts` → `error tools-must-not-import-host-production-sources: tools/lib/tools-boundary-probe.mjs → host/src/main.ts`, violations 95 → 96, exit 38 → 39. **Named here as a separate defect:** 38 of those errors pre-exist at HEAD because `tools/**` really does import the raw `host/dist-test/...` specifier, and no workflow runs this gate — so it is red and unwatched, which is the state the ledger exists to surface |
+| `check:live-run-isolation` | **kept, proof owed** | it cannot be demonstrated from a checkout: it exits 1 from an absent `%LOCALAPPDATA%\GameBuddy\stardew-profiles\native-local-stable`, and red-for-absence is not red-for-a-rule. The label was deliberately not written; it answers `is this machine set up`, which is a preflight an operator runs, not a gate a census can hold |
+| `check:perf-budget` | **proven (fixture)** | the ledger's `cannot fire` was wrong on this machine: the baseline records win32/x64/32/AMD Ryzen 9 9955HX, which is this box, so the gate compares instead of skipping. A saved suite reading with `admission.action/large` at 215.72 µs/op against the recorded 107.86 → `perf_budget_failed slow=1 unrecorded=0 missing=0 … +100.0%`, exit 1 |
+| `check:tavern-references` | **proven, via its suite** | the injection made the gate print `verified 0 Tavern semantic references and 0 fixtures` and exit 0 instead of `blocked`; `tools/verify-tavern-semantic-references.test.mjs` answered `expected the not-measured exit, got undefined`. One marker closes both halves because the suite is the gate's own falsifier — the audit's ownership rule, as this document already records for three earlier pairs. **What the proof does not say:** the resolution rule itself is still unmeasurable without the `design/` mount; what fired is the fail-closed contract |
+| `test:tavern-references` | **proven** | the same marker and the same run (above): the suite is this gate's entry file |
+| `test:all` | **external, by inheritance** | its only gate-named member is `test:dialogue-web`, which is external now, so the alias owes no proof of its own. **Kept rather than deleted** (the ledger suggested deletion): `pnpm test && pnpm test:dialogue-web` is a command humans type, and deleting it would remove an affordance without removing any coverage. The census's `external:test:all inherited from test:dialogue-web` line says exactly that |
+| `test:dialogue-web` | **external** | command `pnpm --filter @gamebuddy/dialogue-web test:static`, demonstrated: a hard-coded prose `aria-label` in `dialogue-web/src/components/CharactersPanel.tsx` → `✖ raw-text.2: a user-visible attribute literal is not a written-out sentence` (76 files, 3 literals, 1 prose), exit 1 |
+| `test:stardew:core` | **kept, proof owed** | the runner is `dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests`. This lane may not edit `integrations/stardew/**`, so the C# suite could not be broken from here, and a label written without that demonstration would be the silencer this mechanism exists to prevent |
+| `test:stardew:integration` | **kept, proof owed** | the same runner shape over `GameBuddy.Stardew.Integration.Tests`, and the same bound |
+| `test:voice-protocol` | **kept, proof owed** | `pnpm --dir vendor/pi-koe run test:protocol` runs inside a git submodule; breaking it means dirtying another repository, so the label waits for a lane that may |
+| `tools/check-stardew-actor-admissibility.mjs` | **blocked, confirmed** | its default run prints `blocked` with `examined: 0` and an `allowEmpty` naming `integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json`, which no commit carries and nothing produces. `check-harness-conformance` counts it under `reported not measured`, never among the passes |
+| `tools/check-stardew-hold-sufficiency.mjs` | **blocked, confirmed** | the same absent contract and the same `not_measured` reading |
+| `test:stardew-fixture-readiness` | **proven (inject)** | the ledger's `waits on a live fixture root` was wrong: the suite writes signed synthetic readiness documents into a temp directory. `await-stardew-fixture-readiness.mjs` accepting a `fixture_blocked` document as ready → `Expected "actual" to be strictly unequal to: 0`, exit 1 |
+
+What the four `proof owed` rows need: a lane allowed to edit the C# suite, a lane that may dirty the `vendor/pi-koe`
+submodule, and a machine with the live profile mount. Each is a real gate with real coverage, and none of them is
+deleted or labeled.
 
 ## Reads something other than it checks
 
@@ -46,9 +58,9 @@ Every gate here cannot be turned red by any input. The last column is what the d
 | --- | --- | --- | --- |
 | `check:architecture` | `package.json:34` | the architecture: `pnpm check:publint && pnpm report:clones && echo "[110] knip/module-graph/import-boundary gated by live WIP; see design/110 Task 5"` | two of the five things the name covers are measured (publint, clones); the three it most obviously claims — knip, the host module graph, the production import boundary — are a sentence printed by `echo`, which cannot fail. A reader of the gate list sees `check:architecture` and concludes the architecture is checked |
 
-### Not in the 115: a proven gate whose aim and its fired assertion are different rules
+### Not in the 106: a proven gate whose aim and its fired assertion are different rules
 
-`test:multiday-loop` is counted among the 230 proven, so it is not in the four class tables. Its proof is
+`test:multiday-loop` is counted among the 234 proven, so it is not in the class tables. Its proof is
 kept, but the record of *what it proved* is not the same as what the lane that made it aimed at, and that
 difference is left here rather than quietly resolved.
 
@@ -78,7 +90,7 @@ and the next lane should re-derive it from the unaudited-menu rule if it wants t
 
 ### Recorded from earlier batches: reader/claim mismatches on gates that are already proven
 
-These belong to the same column but sit outside the 115 — each is a proven gate whose proof exposed a
+These belong to the same column but sit outside the 106 — each is a proven gate whose proof exposed a
 divergence between what it reads and what its name promises. They are kept here so the pattern is visible
 beside this batch's finding, not to re-open any count.
 
@@ -90,16 +102,16 @@ beside this batch's finding, not to re-open any count.
 | `check:diff` | `git diff --check` | it owns no rule: the red line is git's, the green line (`git_diff_check_passed`) is all it says itself, which is why it is the one gate `zero-population-pass` names |
 | `check:complexity-gate` | `--root`-relative baseline | a fixture root without the baseline file dies on `ENOENT` before measuring, and `expired_file_ceiling_extension` fires for every extension the fixture lacks — the wanted finding only appeared after three fixture repairs |
 | `check:chat-card-voice` | `liveRunPersonaPaths()` | "the reviewed card's own prose" is whatever that resolver returns; a runtime root that provisions the card elsewhere changes the reading without changing a word of the gate |
-| `tools/check-stardew-actor-admissibility.mjs` | its own `notInAlgebra` / `staleInAlgebra` | advertised as "a QUERY, not a report to interpret", and exactly that: both are printed and never counted in `failed` (this gate is also in the deletion list for its absent population) |
+| `tools/check-stardew-actor-admissibility.mjs` | its own `notInAlgebra` / `staleInAlgebra` | advertised as "a QUERY, not a report to interpret", and exactly that: both are printed and never counted in `failed` (its disposition is `blocked` in the first table, for its absent population) |
 | `test:gate-red-proofs` | two guards over the marker reader | removing the comment-line guard left the suite green — its case "a marker on a code line is not a marker" cannot tell which of the two guards held it, so the assertion is true and narrower than its name |
 
 ## Needs history
 
-None. Not one of the 115 gates needs a pre-fix commit, and that is itself an answer to the question this
-document was built for: the unproven half of the ledger is not waiting on archaeology. Every gate in it
-either has an exit path that a live violation turns, or it cannot fire at all (the list above). The two
-places history was genuinely the only honest proof — `check:release-live-evidence` and `test:gate-red-proofs`
-— are already proven and are not in this population.
+None. Not one of the 106 gates still owing a proof needs a pre-fix commit, and that is itself an answer to the
+question this document was built for: the unproven half of the ledger is not waiting on archaeology. Every gate in it
+either has an exit path that a live violation turns, or it cannot fire at all (the first table names each of those and
+what was done with it). The two places history was genuinely the only honest proof — `check:release-live-evidence` and
+`test:gate-red-proofs` — are already proven and are not in this population.
 
 ## Provable, not yet proven
 
@@ -273,3 +285,27 @@ Four suites cannot be given a baseline in this checkout today — `test:csharp-c
 `test:gameplay-capability-catalog`, `test:frontend-turn-gate`, `test:dialogue-web-boundaries` — because
 another lane's in-flight work already makes them red for reasons that are not their own rules. They are in the
 `provable` table with that stated on the row.
+## What the disposition batch registered
+
+Four proofs and four `external` labels closed eight of the fifteen, one gate left the population, and
+`tools/gate-red-proof-baseline.json` lost exactly those nine entries — measured with `--update`, which rewrote the
+file and changed nothing else (`git diff --stat`: `9 ---------`):
+
+| closed | how | marker lives in |
+| --- | --- | --- |
+| `check:perf-budget` | `red-proof: fixture`, a saved suite reading 100% over budget | `tools/check-perf-budget.mjs` |
+| `check:tavern-references`, `test:tavern-references` | `red-proof: inject`, the absent-registry branch made to report a pass | `tools/verify-tavern-semantic-references.test.mjs` |
+| `test:stardew-fixture-readiness` | `red-proof: inject`, a blocked readiness document accepted as ready | `tools/await-stardew-fixture-readiness.test.mjs` |
+| `check:knip` | `red-proof: external` | `package.json` `gateRedProofs` |
+| `check:tools-boundaries` | `red-proof: external` | `package.json` `gateRedProofs` |
+| `test:dialogue-web` | `red-proof: external` | `package.json` `gateRedProofs` |
+| `test:all` | inherited, its only member is `test:dialogue-web` | — |
+
+A gate whose command runs a project can name no file in this repository, so it has no file to carry a comment
+marker. Those labels live in `package.json`'s `gateRedProofs` map, beside the script that defines the gate, and are
+parsed by the same rules as a comment marker; the audit reads one from either place. Both tools print the external
+rows with their commands, so a reader can run one and watch it fail instead of trusting the label.
+
+Three assertions were seen red once before being kept: aggregate inheritance answering `proven` for a mixed set, the
+runner-invocation check answering `yes` for every command, and an external claim with no failure clause being
+accepted.

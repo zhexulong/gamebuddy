@@ -13,7 +13,6 @@
     "audit:chat-live-run": "node tools/audit-chat-live-run.mjs",
     "audit:gate-red-proofs": "node tools/audit-gate-red-proofs.mjs",
     "audit:stardew-action-seam-terminals": "node integrations/stardew/action-development/src/analysis/stardew-action-seam-terminals-audit.mjs",
-    "audit:stardew-admission-fork-delta": "node tools/audit-stardew-admission-fork-delta.mjs",
     "audit:stardew-decision-closure": "node tools/audit-stardew-decision-closure.mjs",
     "audit:stardew-open-ground-claims": "node tools/audit-stardew-open-ground-claims.mjs",
     "audit:stardew-discovery-channels": "node tools/audit-stardew-discovery-channels.mjs",
@@ -406,6 +405,11 @@
     "test:action-deadline-agreement": "node --test tools/check-action-deadline-agreement.test.mjs",
     "test:vendor-patches-apply": "node --test tools/check-vendor-patches-apply.test.mjs",
     "refresh:dependency-advisories": "node tools/refresh-dependency-advisories.mjs"
+  },
+  "gateRedProofs": {
+    "check:knip": "external pnpm knip && pnpm knip:production — an unused export in a workspace file makes knip name it under `Unused exports` and exit 1",
+    "check:tools-boundaries": "external depcruise --config .dependency-cruiser.tools.cjs tools — a new tools/lib/*.mjs importing host/src/main.ts is `error tools-must-not-import-host-production-sources` naming that file, exit 39",
+    "test:dialogue-web": "external pnpm --filter @gamebuddy/dialogue-web test:static — a hard-coded prose aria-label in a component is `✖ raw-text.2`, exit 1"
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",

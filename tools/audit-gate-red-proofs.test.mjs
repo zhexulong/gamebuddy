@@ -28,7 +28,7 @@ const REPOSITORY_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const KEYWORD = ["red", "proof"].join("-");
 const marker = (kind, claim, pointer) => `\n * ${KEYWORD}: ${kind}  ${claim} (${pointer})\n`;
 
-function makeTree(files) {
+function makeTree(files, packageExtra = {}) {
   const root = mkdtempSync(join(tmpdir(), "gamebuddy-red-proofs-"));
   const write = (path, contents) => {
     mkdirSync(join(root, path, ".."), { recursive: true });
@@ -42,6 +42,7 @@ function makeTree(files) {
         "check:aggregate": "pnpm check:a",
         build: "node tools/check-a.mjs",
       },
+      ...packageExtra,
     }),
   );
   write("tools/check-a.test.mjs", "// the falsifier suite\n");
@@ -142,7 +143,7 @@ test("a proof that names a file which is not on disk is a dead claim the baselin
   }
 });
 
-test("a marker whose kind is not one of the four is reported, not skipped and not recorded", () => {
+test("a marker whose kind is not one the ledger reads is reported, not skipped and not recorded", () => {
   const root = makeTree({
     "tools/check-a.mjs": gateSource(`\n * ${KEYWORD}: vibes  it felt red when I ran it by hand\n`),
   });
@@ -219,6 +220,100 @@ test("the static census reads exactly the field names the shared judge reads", (
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  }
+});
+
+test("an external label leaves the debt set, and a command nothing invokes fails the run", () => {
+  // A project runner: `pnpm knip` names no file here, so the declaration lives beside the command that defines it.
+  const declared = (command, howItFails) => ({ "check:knip": `external ${command} — ${howItFails}` });
+  const invoked = makeTree(
+    {},
+    { scripts: { "check:knip": "pnpm knip" }, gateRedProofs: declared("pnpm knip", "an unused export exits 1") },
+  );
+  try {
+    const reading = auditGateRedProofs({ root: invoked });
+    assert.equal(statusOf(reading, "check:knip"), "external");
+    assert.deepEqual(
+      reading.external.map((record) => record.external[0].command),
+      ["pnpm knip"],
+      "the record keeps the command a reader would run",
+    );
+    assert.deepEqual(
+      reading.gaps.map((gap) => gap.gate),
+      [],
+      "an external gate owes no in-repo proof",
+    );
+    // The ratchet tightens here too: the entry recorded while it was unproven is now stale.
+    assert.deepEqual(codesFor(evaluateAgainst(invoked, ["check:knip"]).findings, "check:knip"), [
+      "baseline_entry_stale",
+    ]);
+  } finally {
+    rmSync(invoked, { recursive: true, force: true });
+  }
+
+  // The same label with a command no script and no workflow runs: a silencer, named as one.
+  const uninvoked = makeTree(
+    {},
+    { scripts: { "check:knip": "pnpm knip" }, gateRedProofs: declared("pnpm knip:invented", "a typo exits 1") },
+  );
+  try {
+    const reading = auditGateRedProofs({ root: uninvoked });
+    assert.equal(statusOf(reading, "check:knip"), "external", "the label is read; the runner is what fails");
+    assert.deepEqual(reading.externalWithoutRunner, [{ gate: "check:knip", command: "pnpm knip:invented" }]);
+    assert.deepEqual(codesFor(evaluateAgainst(uninvoked, []).findings, "check:knip"), ["external_runner_not_invoked"]);
+  } finally {
+    rmSync(uninvoked, { recursive: true, force: true });
+  }
+});
+
+test("an external label with no failure clause is unreadable, not a pass", () => {
+  const root = makeTree(
+    {},
+    { scripts: { "check:knip": "pnpm knip" }, gateRedProofs: { "check:knip": "external pnpm knip --all" } },
+  );
+  try {
+    const reading = auditGateRedProofs({ root });
+    assert.equal(statusOf(reading, "check:knip"), "malformed");
+    assert.deepEqual(codesFor(evaluateAgainst(root, []).findings, "check:knip"), ["red_proof_kind_unknown"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an aggregate whose members are proven or external is external, and one with an unproven member is not", () => {
+  const external = { "check:knip": "external pnpm knip — an unused export exits 1" };
+  const root = makeTree(
+    {
+      "tools/check-a.mjs": gateSource(
+        marker("inject", "a lane set that omits a required action", "tools/check-a.test.mjs"),
+      ),
+    },
+    {
+      scripts: {
+        "check:a": "node tools/check-a.mjs",
+        "check:aggregate": "pnpm check:a && pnpm check:knip",
+        "check:knip": "pnpm knip",
+      },
+      gateRedProofs: external,
+    },
+  );
+  try {
+    const reading = auditGateRedProofs({ root });
+    assert.equal(statusOf(reading, "check:a"), "proven");
+    assert.equal(statusOf(reading, "check:knip"), "external");
+    assert.equal(statusOf(reading, "check:aggregate"), "external");
+    // The arithmetic the census prints: every gate is proven, external, or still owes a proof.
+    assert.equal(
+      reading.proven.length + reading.external.length + reading.gaps.length,
+      reading.population.total,
+      "proven + external + owing must be the population",
+    );
+
+    // An unproven member takes the aggregate back out of the external set.
+    writeFileSync(join(root, "tools/check-a.mjs"), gateSource("// no proof here"), "utf8");
+    assert.equal(statusOf(auditGateRedProofs({ root }), "check:aggregate"), "unproven_via_members");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 

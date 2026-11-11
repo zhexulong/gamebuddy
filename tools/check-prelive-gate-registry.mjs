@@ -228,8 +228,12 @@ export const EXEMPTIONS = Object.freeze([
   },
   {
     path: "tools/audit-stardew-admission-fork-delta.mjs",
-    reason: "elsewhere: static audit of the forked admission sites, runs on every push in the CI gates job",
-    runsIn: "pnpm audit:stardew-admission-fork-delta",
+    reason:
+      "elsewhere: static audit of the forked admission sites - a migration decision aid that prints the delta and " +
+      "exits 0, so it is not a gate and no script declares it. Measured 2026-11-11: removing its `audit:` script line " +
+      "was the honest fix, because a gate that cannot fail occupies a covered position while measuring nothing; " +
+      "`test:stardew-admission-fork-delta` still runs its suite",
+    runsIn: "on-demand",
   },
   {
     path: "tools/audit-stardew-open-ground-claims.mjs",
