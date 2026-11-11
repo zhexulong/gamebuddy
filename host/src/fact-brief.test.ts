@@ -653,3 +653,93 @@ test("truncated_enumeration_is_silent: each field prints whole to its producer's
     `examined ${String(bounded.size)} model-visible fields; every one of them is asserted above`,
   );
 });
+
+/**
+ * DESTRUCTIVE REFUSAL SENTENCE REACHES THE MODEL.
+ *
+ * <p>
+ * The sentence exists because `no_safe_clear:crop:scythe_crop` is a dead end to a reader: it says a swing was withheld and
+ * never says that the tile is HER planting, that the scythe levels it, or that `harvest_crop` is how a crop is taken. The
+ * clearing declaration carries it (`FarmhandClearingDeclaration.RefusalDetail`), the Mod writes it into the refused row's
+ * `detail` and, for a pass that failed as a unit, into that node's `reasonDetail`.
+ * </p>
+ *
+ * <p>
+ * MEASURED 2026-11-11 (`round45`): it did not arrive. Three rows were refused for that code, the node settled `failed`, and
+ * `scythe_crop levels it` appears ZERO times in the bundle - not in the Mod's journal, not in the model's text. The strings
+ * below are that run's own: the 251-character hint and the 494-character `reasonDetail` the pass wrote. Two layers hid the
+ * sentence. The pass spent its 512 characters on the enumeration and skipped the sentence silently; this file then cut the
+ * first 160 characters of BOTH fields, and a field whose whole purpose is its tail cannot be read from its head.
+ * </p>
+ *
+ * <p>
+ * So this is the Host's half, on the run's real strings: both fields reach the model whole. The second case is the same
+ * ledger with the declaration's sentence written after it - where the pass now writes it, because the sentence is what
+ * cannot yield - and asserts it arrives. The Mod's half is `EveryDestructiveClearanceSentenceSurvivesAFullEnumeration`.
+ * </p>
+ */
+test("destructive_refusal_sentence_reaches_the_model: a refused destructive row delivers its sentence", () => {
+  const round45Hint =
+    "decided=18;succeeded=0;failed=0;refused=3;not_matched=15;left_alone=0;deferred=0;stopped=0;omitted=0;no_safe_clear:crop:scythe_crop=3;no_rule_matched:ground_58_9=1;no_rule_matched:ground_59_9=1;no_rule_matched:weed_58_10=1;no_rule_matched:rock_59_10=1";
+  const round45Detail =
+    "decided=18;succeeded=0;failed=0;refused=3;not_matched=15;left_alone=0;deferred=0;stopped=0;omitted=0;no_safe_clear:crop:scythe_crop=3;no_rule_matched:ground_58_9=1;no_rule_matched:ground_59_9=1;no_rule_matched:weed_58_10=1;no_rule_matched:rock_59_10=1;no_rule_matched:ground_58_11=1;no_rule_matched:ground_59_11=1;no_rule_matched:ground_60_11=1;no_rule_matched:grass_58_12=1;no_rule_matched:rock_59_12=1;no_rule_matched:ground_60_12=1;no_rule_matched:rock_58_13=1;no_rule_matched:ground_59_13=1";
+  const sentence =
+    "The crop on this tile is one you planted: scythe_crop levels it and loses the harvest, and harvest_crop is the action that resolves a crop.";
+  // The ledger both fields lead with - the run's own prefix, not a re-typing of it.
+  const ledger = round45Detail.slice(0, round45Detail.indexOf(";no_safe_clear"));
+
+  const textFor = (hint: string, reasonDetail: string): string =>
+    composeFactBrief({
+      inputs: [],
+      snapshot: undefined,
+      events: [
+        fact({
+          kind: "world_fact",
+          eventId: "program_settled_round45",
+          semanticKind: "program_settled",
+          payload: {
+            total: 1,
+            counts: { succeeded: 0 },
+            nodes: [
+              {
+                nodeId: "n01",
+                actionId: "for_each",
+                state: "failed",
+                reasonCode: "no_safe_clear:crop:scythe_crop",
+                hint,
+                reasonDetail,
+              },
+            ],
+          },
+        }),
+      ],
+      locale: "zh-CN",
+    });
+
+  // 1. THE RUN'S OWN WORDS, WHOLE. The per-code tail is the part that says WHICH rows failed, and it is the part the
+  //    160-character ceiling took.
+  const real = textFor(round45Hint, round45Detail);
+  assert.ok(
+    real.includes(round45Hint),
+    `the 251-character hint must reach the model whole, tail included; the text says ${JSON.stringify(real)}`,
+  );
+  assert.ok(
+    real.includes(round45Detail),
+    `the 494-character detail must reach the model whole - it is inside the 512 the Mod declares; the text says ` +
+      JSON.stringify(real),
+  );
+  assert.equal(
+    real.includes("over_ceiling"),
+    false,
+    "neither field is over a ceiling, so neither may be marked as cut",
+  );
+
+  // 2. AND THE SENTENCE. A refused destructive row's sentence rides the channel its terminal state uses - the node's
+  //    `reasonDetail`, because a failed node's row table is dropped (ADR-006).
+  const withSentence = textFor(round45Hint, `${ledger};${sentence}`);
+  assert.ok(
+    withSentence.includes(sentence),
+    `the declaration's sentence must reach the model; the text says ${JSON.stringify(withSentence)}`,
+  );
+  assert.ok(withSentence.includes(round45Hint), "and it must not cost the ledger the hint carries");
+});

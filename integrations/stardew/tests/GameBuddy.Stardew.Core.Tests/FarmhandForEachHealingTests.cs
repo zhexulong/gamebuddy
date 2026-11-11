@@ -429,6 +429,93 @@ public sealed class FarmhandForEachHealingTests
     }
 
     /// <summary>
+    /// THE SENTENCE IS NOT THE TAIL OF THE ENUMERATION, in the shape the run actually produced.
+    ///
+    /// <para>
+    /// Measured 2026-11-11 (`round45`): a pass of 18 rows, 3 of them refused `no_safe_clear:crop:scythe_crop`, answered a
+    /// 494-character `reasonDetail` made ENTIRELY of counts and per-reason entries. The sentence the declaration writes for
+    /// exactly that refusal appeared nowhere in the run's model-visible text - `scythe_crop levels it` is in zero of the
+    /// bundle's characters, the Mod's own journal included. The enumeration had spent the field's budget, and the loop that
+    /// appended the sentences skipped each one without saying so.
+    /// </para>
+    ///
+    /// <para>
+    /// POPULATION: every `Clears` declaration the catalogue marks `Destructive`, from the registrations. PROPERTY: in a
+    /// pass shaped like `round45` - that refusal three times beside fifteen rows that each matched no rule - the
+    /// declaration's own sentence is in the detail, whatever else the pass has to report, and the part of the enumeration
+    /// that did not fit is COUNTED rather than dropped. Both fields are asserted, because both are what the model reads.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryDestructiveClearanceSentenceSurvivesAFullEnumeration()
+    {
+        var failures = new List<string>();
+        int examined = 0;
+        foreach ((string occupant, string clearingAction, bool destructive) in DeclaredClearers())
+        {
+            if (!destructive) continue;
+            examined += 1;
+            string sentence = ClearanceSentence(occupant, clearingAction);
+            string refusal = FarmhandForEachHealing.NoSafeClearReason(occupant, clearingAction);
+
+            var rows = new List<FarmhandForEachTargetResult>();
+            for (int index = 0; index < 3; index += 1)
+                rows.Add(EngagedRow(index, FarmhandForEachTargetOutcome.Refused, refusal, sentence));
+            // Fifteen rows no rule claimed, one distinct code each: the enumeration the run answered with.
+            for (int index = 0; index < 15; index += 1)
+                rows.Add(EngagedRow(
+                    3 + index,
+                    FarmhandForEachTargetOutcome.NotMatched,
+                    FarmhandForEachRules.NoRuleMatchedReasonCode("ground", 58 + index, 9),
+                    null));
+
+            var pass = new FarmhandForEachPassResult(rows, 0, false);
+            string detail = RouteReenteringBodyProgramExecutor.FailureDetail(pass);
+            string hint = RouteReenteringBodyProgramExecutor.FailureHint(pass);
+
+            void Require(bool condition, string failure) => failures.Add($"{failure} (detail={detail}; hint={hint})");
+
+            if (!detail.Contains(sentence, StringComparison.Ordinal))
+                Require(false, $"destructive_sentence_lost_behind_the_enumeration:{occupant}:{clearingAction}");
+            if (!detail.Contains(RouteReenteringBodyProgramExecutor.CodesNotListed, StringComparison.Ordinal))
+                Require(false, $"detail_enumeration_cut_without_a_name:{occupant}:{clearingAction}");
+            if (!hint.Contains(RouteReenteringBodyProgramExecutor.CodesNotListed, StringComparison.Ordinal))
+                Require(false, $"hint_enumeration_cut_without_a_name:{occupant}:{clearingAction}");
+            if (detail.Length > BodyProgramValidation.MaximumNodeRefusalDetailLength)
+                Require(
+                    false,
+                    $"detail_over_the_journal_bound:{occupant}:{clearingAction}" +
+                    $" ({detail.Length} > {BodyProgramValidation.MaximumNodeRefusalDetailLength})");
+            if (hint.Length > BodyProgramValidation.MaximumNodeHintLength)
+                Require(
+                    false,
+                    $"hint_over_the_journal_bound:{occupant}:{clearingAction}" +
+                    $" ({hint.Length} > {BodyProgramValidation.MaximumNodeHintLength})");
+        }
+
+        examined.Should().BeGreaterThan(
+            0,
+            "the catalogue marks clearing declarations destructive, so the population is never empty");
+        failures.Should().BeEmpty(
+            $"every destructive refusal must say what its withheld swing costs, whatever else the pass has to report; examined {examined} declarations");
+    }
+
+    /// <summary>
+    /// One row of a synthetic pass, for the two projections that read only its outcome, its reason and its sentence.
+    ///
+    /// The pass container is the only thing built here: the sentence comes from the declaration
+    /// (<see cref="ClearanceSentence"/>) and the code from the rule engine's own spelling
+    /// (<see cref="FarmhandForEachRules.NoRuleMatchedReasonCode"/>), so no word in this fixture is a second copy of a
+    /// production one.
+    /// </summary>
+    private static FarmhandForEachTargetResult EngagedRow(
+        int x,
+        FarmhandForEachTargetOutcome outcome,
+        string reasonCode,
+        string? detail) =>
+        new(x, 18, x, 0, outcome, null, null, null, reasonCode, null, Detail: detail);
+
+    /// <summary>
     /// A PASS THAT FAILED AS A UNIT STILL SAYS WHAT THE WITHHELD SWING COSTS.
     ///
     /// <para>

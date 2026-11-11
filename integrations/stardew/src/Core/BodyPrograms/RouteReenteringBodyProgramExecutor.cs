@@ -899,14 +899,18 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// The reasons come from <see cref="ReasonsByCount"/>, the same enumeration <see cref="DominantReason"/> reads, so the
     /// code in `FailureCode` is always one of the counts here. The budget is enforced AT THE PRODUCER
     /// (<see cref="BodyProgramValidation.MaximumNodeHintLength"/>): the journal refuses a longer hint, and a node refused
-    /// there would answer `InvalidInput` instead of the reason it was given.
+    /// there would answer `InvalidInput` instead of the reason it was given. What the budget cannot hold is COUNTED
+    /// (`codes_not_listed`), because a ledger that stops at four of twelve codes and says nothing reads as a pass that had
+    /// four - which is the reading `round45`'s 251-character hints invited. Measured there: every hint exceeded the Host's
+    /// 160-character ceiling, so the tail that said WHICH rows failed was the part the model never saw.
     /// </para>
     /// </summary>
-    private static string FailureHint(FarmhandForEachPassResult pass) =>
+    internal static string FailureHint(FarmhandForEachPassResult pass) =>
         PassCounts(pass, BodyProgramValidation.MaximumNodeHintLength);
 
     /// <summary>
-    /// The same counts, in the field a reader reads as `reasonDetail`.
+    /// The same counts, in the field a reader reads as `reasonDetail` - led by the SENTENCES of its refused rows, which
+    /// are not the tail.
     ///
     /// Measured 2026-11-10 (`round42`, day 6): the loop's hint carried `decided=9;succeeded=0;failed=1;refused=8;...` and the
     /// detail said `unknown_reason:failed`, because a failed node's evidence is dropped (ADR-006) and this aggregate never
@@ -915,43 +919,102 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     ///
     /// <para>
     /// A PASS THAT FAILED AS A UNIT DROPS ITS ROW TABLE - a failed node carries no evidence - so the sentences its refused
-    /// rows carry would be lost exactly where every row needs one. They are appended here, once per distinct sentence and
+    /// rows carry would be lost exactly where every row needs one. They are written here, once per distinct sentence and
     /// only when such a row exists, inside the field's own budget: the counts say how many rows are behind the answer, and
     /// the sentence says what the withheld swing costs.
+    /// </para>
+    /// <para>
+    /// THE SENTENCE IS NOT QUEUED BEHIND THE ENUMERATION. Measured 2026-11-11 (`round45`): a pass of 18 rows, 3 of them
+    /// refused `no_safe_clear:crop:scythe_crop`, answered a 494-character detail consisting ENTIRELY of counts and
+    /// per-reason entries, and the sentence its declaration writes for exactly that refusal was in none of the run's
+    /// model-visible text - `scythe_crop levels it` appears zero times in the bundle, the Mod's own journal included. The
+    /// loop below used to run after the budget was already spent and `continue`d past every sentence, silently. So the
+    /// counts and the sentences come first and the per-reason enumeration is what yields: it is a second copy of what the
+    /// hint already carries, and it is no answer to a reader who cannot see what the withheld swing would have cost.
     /// </para>
     /// </summary>
     internal static string FailureDetail(FarmhandForEachPassResult pass)
     {
         ArgumentNullException.ThrowIfNull(pass);
-        var detail = new StringBuilder(PassCounts(pass, BodyProgramValidation.MaximumNodeRefusalDetailLength));
-        foreach (string sentence in pass.Targets.Select(target => target.Detail).OfType<string>().Distinct(StringComparer.Ordinal))
-        {
-            string entry = string.Create(CultureInfo.InvariantCulture, $";{sentence}");
-            if (detail.Length + entry.Length > BodyProgramValidation.MaximumNodeRefusalDetailLength) continue;
-            detail.Append(entry);
-        }
+        int budget = BodyProgramValidation.MaximumNodeRefusalDetailLength;
+        IReadOnlyList<string> codes = ReasonEntries(pass);
+        var detail = new StringBuilder(Ledger(pass));
+        // The sentences get everything except the room the enumeration's own cut-count may need.
+        AppendNamingCuts(detail, Sentences(pass), SentencesNotListed, budget, codes.Count == 0 ? 0 : Remainder(CodesNotListed, codes.Count).Length);
+        AppendNamingCuts(detail, codes, CodesNotListed, budget, 0);
         return detail.ToString();
     }
+
+    /// <summary>How a field says it could not carry every refusal sentence it had.</summary>
+    internal const string SentencesNotListed = "sentences_not_listed";
+
+    /// <summary>How a field says it could not carry every per-reason entry it had.</summary>
+    internal const string CodesNotListed = "codes_not_listed";
+
+    /// <summary>The distinct sentences this pass's rows carry, as `;&lt;sentence&gt;` entries.</summary>
+    private static IReadOnlyList<string> Sentences(FarmhandForEachPassResult pass) =>
+        pass.Targets.Select(target => target.Detail)
+            .OfType<string>()
+            .Where(sentence => sentence.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .Select(sentence => string.Create(CultureInfo.InvariantCulture, $";{sentence}"))
+            .ToArray();
+
+    /// <summary>The per-reason counts, as `;&lt;code&gt;=&lt;count&gt;` entries, in the order <see cref="ReasonsByCount"/> decided.</summary>
+    private static IReadOnlyList<string> ReasonEntries(FarmhandForEachPassResult pass) =>
+        ReasonsByCount(pass)
+            .Select(entry => string.Create(CultureInfo.InvariantCulture, $";{entry.Code}={entry.Count}"))
+            .ToArray();
+
+    /// <summary>
+    /// Appends every entry that fits <paramref name="budget"/>, then - when some did not - one `;&lt;counter&gt;=N` naming how
+    /// many were left out, never taking the text past <paramref name="budget"/>.
+    ///
+    /// THE REMAINDER IS RESERVED, not squeezed in afterwards: the room the cut-count needs is held back before the entries
+    /// are tried, and <paramref name="reserveAfter"/> holds back the room a FOLLOWING part will need for its own count. A
+    /// short enumeration that says nothing about what it left out reads as a complete one, and the reader cannot ask for
+    /// the rest of a list it was told was whole.
+    /// </summary>
+    private static void AppendNamingCuts(StringBuilder text, IReadOnlyList<string> entries, string counter, int budget, int reserveAfter)
+    {
+        int available = budget - reserveAfter;
+        // The count names the WHOLE population when nothing has been listed yet, which is also its longest spelling.
+        int held = Remainder(counter, entries.Count).Length;
+        int listed = 0;
+        foreach (string entry in entries)
+        {
+            if (text.Length + entry.Length + held > available) break;
+            text.Append(entry);
+            listed += 1;
+        }
+        if (listed < entries.Count) text.Append(Remainder(counter, entries.Count - listed));
+    }
+
+    private static string Remainder(string counter, int count) =>
+        string.Create(CultureInfo.InvariantCulture, $";{counter}={count}");
 
     /// <summary>
     /// The pass's counts, and then one `;code=count` per reason, as far as <paramref name="budget"/> allows.
     ///
     /// ONE producer for the two fields that carry them (`hint` and `reasonDetail`): two builders over the same numbers would
-    /// eventually disagree about which reason is dominant, and a reader could not tell which one the pass decided with.
+    /// eventually disagree about which reason is dominant, and a reader could not tell which one the pass decided with. The
+    /// two fields differ in what else they carry and in their budget, never in the counts.
     /// </summary>
     private static string PassCounts(FarmhandForEachPassResult pass, int budget)
+    {
+        var counts = new StringBuilder(Ledger(pass));
+        AppendNamingCuts(counts, ReasonEntries(pass), CodesNotListed, budget, 0);
+        return counts.ToString();
+    }
+
+    /// <summary>The pass's counts with no enumeration at all: the line both fields lead with.</summary>
+    private static string Ledger(FarmhandForEachPassResult pass)
     {
         var counts = new StringBuilder(128);
         counts.Append(CultureInfo.InvariantCulture,
             $"decided={pass.Decided};succeeded={pass.Succeeded};failed={pass.Failed};refused={pass.Refused};not_matched={pass.NotMatched};left_alone={pass.LeftAlone};deferred={pass.Deferred};stopped={pass.StopObserved};omitted={pass.Omitted}");
         // A pass of chains says how many native effects it made, so a reader can see that one pass did the work four used to.
         if (pass.Steps > pass.Decided) counts.Append(CultureInfo.InvariantCulture, $";steps={pass.Steps}");
-        foreach ((string code, int count) in ReasonsByCount(pass))
-        {
-            string entry = string.Create(CultureInfo.InvariantCulture, $";{code}={count}");
-            if (counts.Length + entry.Length > budget) break;
-            counts.Append(entry);
-        }
         return counts.ToString();
     }
 
