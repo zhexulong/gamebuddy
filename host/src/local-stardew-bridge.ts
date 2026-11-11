@@ -84,6 +84,14 @@ export function classifyFactListenerFailure(error: unknown): string {
   return token === error.name ? token : `${error.name}:${token}`;
 }
 
+/**
+ * The shape of a bridge message type as the wire spells it (`program_events_result`, `snapshot`, ...).
+ *
+ * A refused frame is named by that type, so the name has to be bounded to the shape the protocol's own enums have: an
+ * identifier, never a payload fragment and never an arbitrary string a peer chose to put in the field.
+ */
+const FRAME_KIND_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u;
+
 export type LocalStardewConnectionFact = Readonly<{ state: "disconnected"; reasonCode: string }>;
 /** Fixed, content-free local diagnostic emitted immediately before a fail-closed inbound rejection. */
 export type LocalStardewBridgeDiagnostic = Readonly<{
@@ -99,6 +107,9 @@ export type LocalStardewBridgeDiagnostic = Readonly<{
     | "native_chat_bridge_inbound_frame_received"
     | "native_chat_bridge_player_control_validated"
     | "native_chat_bridge_inbound_rejected"
+    // Emitted immediately before the close a refused frame causes, naming the frame's own type and the validator code:
+    // `bridge_frame_refused:<kind>:<validatorCode>` (see `publishFrameRefusal`).
+    | "bridge_frame_refused"
     // Emitted just before a fact listener's failure closes the transport, carrying the bounded failure token so
     // the close is attributable (see the catch in `receive`).
     | "native_chat_bridge_fact_listener_failed";
@@ -705,6 +716,29 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
   }
 
   /**
+   * Name the frame the validator refused, before the close that refusal causes.
+   *
+   * Closing on a protocol violation is the policy; being silent about WHICH frame earned it is not. Measured round46: the
+   * Mod sent one frame carrying `partially_succeeded`, `validateBridgeMessage` refused it, the transport closed, and the
+   * only trace of the refusal was that close - so the turn it killed read `turn_ended_by_transport_loss:...` with no
+   * frame attached, and the next reader had to reconstruct the frame from the Mod's log.
+   *
+   * The kind is the frame's own declared type, bounded to identifier shape and `unknown` when the refusal happened before
+   * the type was proven (`invalid_envelope`, `unknown_message_type`) - so the fact never carries a payload, and never a
+   * peer's arbitrary text. One per connection by construction: a refusal closes the transport and `receive` refuses
+   * frames from a closed one, so there is no population here to cap and nothing to omit.
+   */
+  private publishFrameRefusal(message: BridgeMessage, validatorCode: string): void {
+    const type = (message as { type?: unknown }).type;
+    const kind =
+      validatorCode !== "unknown_message_type" && typeof type === "string" && FRAME_KIND_PATTERN.test(type)
+        ? type
+        : "unknown";
+    for (const listener of this.#diagnosticListeners)
+      listener({ stage: "bridge_frame_refused", reasonCode: `bridge_frame_refused:${kind}:${validatorCode}` });
+  }
+
+  /**
    * Confirms only that a validated Mod-originated control fact was synchronously
    * delivered to the Host listener. It is not a model, action, or presentation receipt.
    */
@@ -816,6 +850,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       // Name the frame and the fault: a body-program reply the validator refuses used to close the bridge with the
       // bare code, which cannot be told apart from a wrong-program snapshot or a cursor regression.
       const detail = `frame_validation:pending=${bodyProgramPending.type};got=${String(message.type)};fault=${fault}`;
+      this.publishFrameRefusal(message, fault);
       this.#pending.delete(message.correlationId);
       clearTimeout(bodyProgramPending.timer);
       bodyProgramPending.reject(new Error(`body_program_protocol_invalid:${detail}`));
@@ -852,6 +887,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       const diagnosticReasonCode = reasonCode === "invalid_semantic_event" ? "malformed_player_control" : reasonCode;
       for (const listener of this.#diagnosticListeners)
         listener({ stage: "native_chat_bridge_inbound_rejected", reasonCode: diagnosticReasonCode });
+      this.publishFrameRefusal(message, reasonCode);
       this.transport.close(reasonCode);
       return;
     }

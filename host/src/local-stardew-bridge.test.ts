@@ -1090,6 +1090,10 @@ test("local Stardew bridge reports a fixed diagnostic then closes on rejected pl
       { stage: "pipe_frame_payload_complete", reasonCode: "observed" },
       { stage: "native_chat_bridge_inbound_frame_received", reasonCode: "received" },
       { stage: "native_chat_bridge_inbound_rejected", reasonCode: "malformed_player_control" },
+      // The refused frame is named as itself, not only by the close that follows: the externally visible rejection
+      // taxonomy stays narrow (`malformed_player_control`), while the frame's own stage and type are what a reader needs
+      // to find the sender.
+      { stage: "bridge_frame_refused", reasonCode: "bridge_frame_refused:semantic_event:invalid_semantic_event" },
     ]);
     assert.equal((await disconnected).reasonCode, "invalid_semantic_event");
     assert.equal(facts, 0);
@@ -2082,6 +2086,83 @@ test("body program still closes for a non-empty page whose high-water is below t
         `the close names the invariant that broke: ${closed.reasonCode}`,
       );
       assert.equal(client.state.connected, false);
+    },
+  );
+});
+
+test("a refused frame is a named fact before it is the close that follows", async () => {
+  // Measured round46: the Mod sent one frame carrying `partially_succeeded`, the validator refused it, and the pipe
+  // closed. The refusal left no trace of its own - only the close - so the turn it killed an instant later read
+  // `turn_ended_by_transport_loss:...` with no frame attached and the cause had to be reconstructed by hand from the
+  // Mod's log. Closing on a protocol violation stays the policy; the frame is named before it happens.
+  await withBodyProgramBridge(
+    "refused_frame_named",
+    (socket, request) => {
+      socket.write(
+        frame({
+          ...request,
+          messageId: "body_program_refused_state",
+          type: "program_events_result",
+          payload: {
+            programId: request.payload.programId,
+            code: "found",
+            nextCursor: request.payload.cursor,
+            highWater: request.payload.cursor,
+            events: [],
+            // The shape round46's frame carried: a field the Host's exact-key schema does not declare.
+            refusalDetail: "postcondition_unmet",
+          },
+        }),
+      );
+    },
+    async (client) => {
+      // Both facts are published SYNCHRONOUSLY inside the inbound handler, before the pending request is even rejected -
+      // so after the rejection settles, the order they were seen in is the whole answer.
+      const sequence: { stage: string; reasonCode: string }[] = [];
+      let closedReasonCode: string | null = null;
+      client.onDiagnostic((diagnostic) => sequence.push(diagnostic));
+      client.onConnectionFact((fact) => {
+        closedReasonCode = fact.reasonCode;
+      });
+      await assert.rejects(
+        client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
+        /body_program_protocol_invalid/u,
+      );
+      const refusal = sequence.find((diagnostic) => diagnostic.stage === "bridge_frame_refused");
+      assert.equal(refusal?.reasonCode, "bridge_frame_refused:program_events_result:invalid_body_program_result");
+      assert.equal(sequence.at(-1)?.stage, "bridge_frame_refused", "the refusal is the last fact before the close");
+      // The policy is unchanged: the transport still closes, and the close still names its own invariant.
+      assert.match(String(closedReasonCode), /^body_program_protocol_invalid:/u);
+    },
+  );
+});
+
+test("a refused frame is named by a bounded kind, never by the text the frame carried", async () => {
+  // The kind is the frame's own declared type, and a type the protocol does not declare is `unknown`: the fact must not
+  // echo whatever the peer put in that field, or the run's account grows with a peer's vocabulary instead of the
+  // protocol's.
+  await withBodyProgramBridge(
+    "refused_frame_unknown_kind",
+    (socket, request) => {
+      socket.write(
+        frame({
+          ...request,
+          messageId: "body_program_unknown_kind",
+          type: "a_type_the_protocol_never_declared",
+          payload: {},
+        }),
+      );
+    },
+    async (client) => {
+      const refusals: string[] = [];
+      client.onDiagnostic((diagnostic) => {
+        if (diagnostic.stage === "bridge_frame_refused") refusals.push(diagnostic.reasonCode);
+      });
+      await assert.rejects(
+        client.programEvents({ programId: "program_01", cursor: 0, pageSize: 1 }),
+        /body_program_protocol_invalid/u,
+      );
+      assert.deepEqual(refusals, ["bridge_frame_refused:unknown:unknown_message_type"]);
     },
   );
 });
