@@ -29,11 +29,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-  buildChatCompanionSystemPrompt,
-  buildGameCompanionSystemPrompt,
-  CHAT_SURFACE_SKIP_SIGNATURE,
-} from "./identity-profile.js";
+import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
+import { buildChatCompanionSystemPrompt, CHAT_SURFACE_SKIP_SIGNATURE } from "./identity-profile.js";
 import {
   buildCompanionDeskGuidance,
   COMPANION_DESK_GUIDANCE_FILE_NAME,

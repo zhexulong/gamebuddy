@@ -2,11 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
-import {
-  buildChatCompanionSystemPrompt,
-  buildGameCompanionSystemPrompt,
-  COMPANION_ACTION_SYNTAX,
-} from "./identity-profile.js";
+import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
+import { buildChatCompanionSystemPrompt, COMPANION_ACTION_SYNTAX } from "./identity-profile.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
 /**

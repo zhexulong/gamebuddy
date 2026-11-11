@@ -6,12 +6,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { deflateSync } from "node:zlib";
-import {
-  buildChatCompanionSystemPrompt,
-  buildGameCompanionSystemPrompt,
-  renderIdentityProfile,
-  validateIdentityProfile,
-} from "./identity-profile.js";
+import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
+import { buildChatCompanionSystemPrompt, renderIdentityProfile, validateIdentityProfile } from "./identity-profile.js";
 import {
   candidateToIdentityProfile,
   decodeStCard,

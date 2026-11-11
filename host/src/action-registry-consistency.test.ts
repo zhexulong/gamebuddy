@@ -12,7 +12,8 @@ import {
   isModDescriptorComplete,
 } from "./action-registry.js";
 import { createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
-import { buildGameCompanionSystemPrompt, DEFAULT_IDENTITY_PROFILE } from "./identity-profile.js";
+import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
+import { DEFAULT_IDENTITY_PROFILE } from "./identity-profile.js";
 import type { ActionRegistration, ActionRegistrationDescriptor, Scope } from "./protocol.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 

@@ -48,7 +48,8 @@ function recordGate(gateId, name, passed, details) {
 }
 
 import { previewStCard, candidateToIdentityProfile } from "../host/dist-test/st-card-import.js";
-import { buildChatCompanionSystemPrompt, buildGameCompanionSystemPrompt } from "../host/dist-test/identity-profile.js";
+import { buildGameCompanionSystemPrompt } from "../host/dist-test/game-surface-prompt-floor.js";
+import { buildChatCompanionSystemPrompt } from "../host/dist-test/identity-profile.js";
 
 // --- 1. Load Real Character Card & Process through GameBuddy Host Pipeline ---
 let rawCardData;

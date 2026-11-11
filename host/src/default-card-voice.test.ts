@@ -3,9 +3,9 @@ import test from "node:test";
 
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { dehydrateCompanionSpeech, isEmptyAfterDehydration } from "./companion-speech-dehydration.js";
+import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import {
   buildChatCompanionSystemPrompt,
-  buildGameCompanionSystemPrompt,
   DEFAULT_IDENTITY_PROFILE,
   renderIdentityProfile,
   validateIdentityProfile,

@@ -15,7 +15,8 @@ import {
 } from "./fact-brief.js";
 import { createStardewObservationTools } from "./game-tools.js";
 import { NON_ROW_FAMILIES, nearbyTargetFamilies, TARGET_FAMILY_LABELS } from "./game-world-vocabulary.js";
-import { buildGameCompanionSystemPrompt, DEFAULT_IDENTITY_PROFILE } from "./identity-profile.js";
+import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
+import { DEFAULT_IDENTITY_PROFILE } from "./identity-profile.js";
 import { createProgramProgressObserver } from "./program-status-wait.js";
 import { SNAPSHOT_KEYS, type Snapshot } from "./protocol.js";
 

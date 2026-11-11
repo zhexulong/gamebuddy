@@ -32,10 +32,10 @@ import {
   type IntegrationActionPolicy,
 } from "./game-integration-adapter.js";
 import { GameplayTaskSubagent } from "./gameplay-task-subagent.js";
+import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import {
   assertProfileMatchesBinding,
   buildChatCompanionSystemPrompt,
-  buildGameCompanionSystemPrompt,
   CHAT_SURFACE_SKIP_SIGNATURE,
   createIdentityProfileBinding,
   DEFAULT_IDENTITY_PROFILE,

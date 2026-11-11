@@ -5,11 +5,9 @@ import test from "node:test";
 
 import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
-import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
-import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
+import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import {
   buildChatCompanionSystemPrompt,
-  buildGameCompanionSystemPrompt,
   COMPANION_ACTION_SYNTAX,
   createIdentityProfileBinding,
   DEFAULT_IDENTITY_PROFILE,
@@ -20,6 +18,8 @@ import {
   validateIdentityProfile,
   writeIdentityProfile,
 } from "./identity-profile.js";
+import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
+import { canonicalTestRoot } from "./test-support/canonical-test-root.test-support.js";
 
 test("IdentityProfile canonical hash and system prompt rendering are stable", () => {
   const hash = identityProfileHash(DEFAULT_IDENTITY_PROFILE);

@@ -64,10 +64,10 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { buildGameCompanionSystemPrompt } from "../../host/src/game-surface-prompt-floor.ts";
 import {
   DEFAULT_IDENTITY_PROFILE,
   buildChatCompanionSystemPrompt,
-  buildGameCompanionSystemPrompt,
 } from "../../host/src/identity-profile.ts";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");

@@ -12,7 +12,8 @@ import {
   shippedAuthoredContextGeometry,
 } from "./authored-context-budget.test-support.js";
 import { GAME_SURFACE_PROMPT_FLOOR } from "./game-surface-prompt-floor.test-support.js";
-import { buildGameCompanionSystemPrompt, identityProfileMacros } from "./identity-profile.js";
+import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
+import { identityProfileMacros } from "./identity-profile.js";
 import { buildGameSurfaceAuthoredCatalog } from "./tavern/catalog-service.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 import { renderMacros } from "./tavern/macro-engine.js";

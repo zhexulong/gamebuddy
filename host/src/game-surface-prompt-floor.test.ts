@@ -4,13 +4,14 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { PLAN_ACTION_LIFECYCLES, planActionsFromRegistrations, planWorkDescription } from "./body-program-script.js";
+import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import {
   ADVERTISED,
   BUILDER_METHODS,
   GAME_SURFACE_PROMPT_FLOOR as READING,
   SURFACE,
 } from "./game-surface-prompt-floor.test-support.js";
-import { buildChatCompanionSystemPrompt, buildGameCompanionSystemPrompt } from "./identity-profile.js";
+import { buildChatCompanionSystemPrompt } from "./identity-profile.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
 /**
