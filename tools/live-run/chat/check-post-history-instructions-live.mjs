@@ -378,7 +378,7 @@ export function verifyReadings(run) {
     fail("turns", "three turns through the real stack", `got ${turns.length} turns, expected 3`);
     return Object.freeze({ checks: Object.freeze(checks), ok: false });
   }
-  const [absentTurn, declaredTurn, revisedTurn] = turns;
+  const [, declaredTurn, revisedTurn] = turns;
 
   // [1] The second turn: the edited field is what the next request carries.
   const revisedTail = revisedTurn.messages.at(-1);

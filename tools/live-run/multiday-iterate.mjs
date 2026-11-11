@@ -86,7 +86,6 @@ const SCENARIO = "multiday_routine";
 const ACTION = "play_session_multi_day";
 
 const GAME_PATH = process.env.GAMEBUDDY_STARDEW_GAME_DIR ?? "D:/Steam/steamapps/common/Stardew Valley";
-const GAME_DIR = process.env.GAMEBUDDY_STARDEW_GAME_DIR ?? "D:/Steam/steamapps/common/Stardew Valley";
 const RUNTIME_ROOT = process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "GameBuddy") : null;
 // The lane's own root, declared once. `deployMod` and the save-slot resolver both read it, and it is the same root the ladder
 // launcher derives its private --mods path from.

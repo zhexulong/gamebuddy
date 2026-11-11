@@ -33,7 +33,7 @@ import { execFile, spawn } from "node:child_process";
 import { closeSync, openSync, writeFileSync, writeSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";

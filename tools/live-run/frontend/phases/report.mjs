@@ -10,7 +10,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { KIT_ROOT, loadRunConfig, REPO_ROOT, runPaths } from "../lib/config.mjs";
+import { loadRunConfig, REPO_ROOT, runPaths } from "../lib/config.mjs";
 import { DRIVERS } from "./drivers.mjs";
 
 /**
