@@ -4,15 +4,22 @@ import { existsSync } from "node:fs";
 import test from "node:test";
 import { promisify } from "node:util";
 
-// The referenced fixtures live in the separately mounted private `design/`
-// repository, so a checkout without that mount skips rather than fails.
-const referenceMountSkipReason = existsSync(
-  new URL("../design/references/tavern/st-semantic-references-v1.json", import.meta.url),
-)
-  ? false
-  : "requires the design/ reference mount (design/references/tavern/st-semantic-references-v1.json), which a repository checkout does not create";
+const run = promisify(execFile);
+const REGISTRY = "design/references/tavern/st-semantic-references-v1.json";
 
-test("Tavern semantic references attest locked source", { skip: referenceMountSkipReason }, async () => {
-  const { stdout } = await promisify(execFile)(process.execPath, ["tools/verify-tavern-semantic-references.mjs"]);
-  assert.match(stdout, /verified 9 Tavern semantic references and 2 fixtures/);
+// The registry lives in the separately mounted private `design/` repository, so a checkout need not have it. Both
+// readings are asserted here: with the mount the attestation must hold, and without it the gate must name the path it
+// could not read and exit non-zero rather than reporting a pass over nothing.
+const mounted = existsSync(new URL(`../${REGISTRY}`, import.meta.url));
+
+test("Tavern semantic references attest the locked source, or name the mount they could not read", async () => {
+  if (mounted) {
+    const { stdout } = await run(process.execPath, ["tools/verify-tavern-semantic-references.mjs"]);
+    assert.match(stdout, /verified 9 Tavern semantic references and 2 fixtures/);
+    return;
+  }
+  const failure = await run(process.execPath, ["tools/verify-tavern-semantic-references.mjs"]).catch((error) => error);
+  const line = String(failure.stdout ?? "").trim();
+  assert.equal(failure.code, 2, `expected the not-measured exit, got ${failure.code}: ${line}${failure.stderr ?? ""}`);
+  assert.ok(line.startsWith(`blocked: ${REGISTRY} absent`), `expected the absent registry named, got: ${line}`);
 });

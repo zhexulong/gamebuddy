@@ -37,6 +37,32 @@ import { pathToFileURL } from "node:url";
 
 export const HELD_FACT = "Farmer.canMove";
 
+/**
+ * The algebra both admissibility checks are properties OF: the states, the causes, the remedies, the adjudicated
+ * decision sites and the residual this search has to account for.
+ *
+ * Nothing in this repository produces it and no commit has ever carried it, so a checkout has no subject for either
+ * gate and neither can report on the invariants it exists to decide.
+ */
+export const ACTOR_ADMISSIBILITY_CONTRACT =
+  "integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json";
+
+/**
+ * The contract's text, or `blocked` and exit 2 - the not-measured answer, naming the path that would restore it.
+ *
+ * This replaces `JSON.parse(readFileSync(...))` at the two entry points, whose ENOENT stack trace was non-zero for a
+ * reason no reader could tell from a defect in the gate reading it. An absent input is neither a pass nor a finding,
+ * and it is the one verdict a gate with no subject can honestly reach.
+ */
+export function readActorAdmissibilityContract(root) {
+  try {
+    return readFileSync(join(root, ACTOR_ADMISSIBILITY_CONTRACT), "utf8");
+  } catch {
+    console.log(`blocked: ${ACTOR_ADMISSIBILITY_CONTRACT} absent, so this was not measured`);
+    process.exit(2);
+  }
+}
+
 export function repoRoot(from = process.cwd()) {
   let d = from;
   for (let i = 0; i < 8; i++) {
@@ -193,11 +219,7 @@ const invokedDirectly = (() => {
 })();
 if (invokedDirectly) {
   const root = repoRoot();
-  const modelPath = join(
-    root,
-    "integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json",
-  );
-  const model = JSON.parse(readFileSync(modelPath, "utf8"));
+  const model = JSON.parse(readActorAdmissibilityContract(root));
   const companions = model.environmentReads
     .map((r) => r.member)
     .filter((m) => memberOf(m).toLowerCase() !== memberOf(HELD_FACT).toLowerCase());

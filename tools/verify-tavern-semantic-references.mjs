@@ -3,9 +3,20 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
-const registry = JSON.parse(
-  await readFile(resolve(root, "design/references/tavern/st-semantic-references-v1.json"), "utf8"),
-);
+const REGISTRY = "design/references/tavern/st-semantic-references-v1.json";
+
+// `design/` is a separate private repository mounted here, and this registry has never been carried by either tree:
+// the attestation is authored beside the documents it pins. A checkout without the mount has nothing to verify, so the
+// reading is `blocked` and names the path - never `verified`, and never an ENOENT that reads like a gate defect.
+let registrySource;
+try {
+  registrySource = await readFile(resolve(root, REGISTRY), "utf8");
+} catch {
+  console.log(`blocked: ${REGISTRY} absent, so this was not measured`);
+  process.exit(2);
+}
+const registry = JSON.parse(registrySource);
+
 const expected = "8172dcd0ee672d3cd9a5e5f7af134f91a45cd2b8";
 if (registry.sourceCommit !== expected) throw new Error("tavern_reference_commit_drift");
 for (const entry of registry.references) {

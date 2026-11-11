@@ -747,7 +747,13 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "catalog default - and reads the exact promotion_places_disagree line, so the default run prints population " +
       "counts rather than a self-verification report",
   },
-  { gate: "check-stardew-actor-admissibility.mjs", reason: "requires a live-run artifact" },
+  {
+    gate: "check-stardew-actor-admissibility.mjs",
+    reason:
+      "reads the actor-admissibility contract (integrations/stardew/action-development/contracts/actor-admissibility/" +
+      "actor-admissibility.v1.json), which no commit has ever carried and nothing in this repository produces, so its " +
+      "default run reports `blocked` and exits 2 rather than printing a report over an algebra it has not got",
+  },
   { gate: "check-stardew-companion-production-admission.mjs", reason: "requires a production-admission artifact" },
   { gate: "check-stardew-dialogue-autonomy.mjs", reason: "requires a ladder-result json" },
   { gate: "check-stardew-dialogue-stream.mjs", reason: "requires a result json" },
@@ -767,7 +773,13 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   },
   { gate: "check-stardew-fixture-scenario-wiring.mjs", reason: "static wiring gate; falsifier in its test" },
   { gate: "check-stardew-gameplay-completeness.mjs", reason: "requires --report input" },
-  { gate: "check-stardew-hold-sufficiency.mjs", reason: "requires a live-run artifact" },
+  {
+    gate: "check-stardew-hold-sufficiency.mjs",
+    reason:
+      "reads the same absent actor-admissibility contract as its sibling, and exists to answer the half of that " +
+      "question written in the decompiled tree - either input missing leaves it with no subject, so its default run " +
+      "reports `blocked` and exits 2",
+  },
   { gate: "check-stardew-loop-closure.mjs", reason: "static source gate; falsifier in its test" },
   { gate: "check-stardew-native-mechanism-review-register.mjs", reason: "requires a mechanism report and register" },
   { gate: "check-stardew-native-multiplayer-sensitivity.mjs", reason: "requires --register/--source-root inputs" },

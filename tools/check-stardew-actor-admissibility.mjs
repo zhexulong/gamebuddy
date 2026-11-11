@@ -16,10 +16,12 @@
  *     IFACE-2 every writer of a declared read names its mechanism in the contract
  *
  * Exit 0 only when both halves pass. A report is printed either way, because a failing
- * check has to say WHICH row failed.
+ * check has to say WHICH row failed. With no contract on disk there is no algebra to
+ * decide and the run reports `blocked` (exit 2) naming the path, rather than passing
+ * over nothing or dying on an ENOENT that reads like a defect in this file.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { searchCounterExamples } from "./check-stardew-hold-sufficiency.mjs";
+import { readActorAdmissibilityContract, searchCounterExamples } from "./check-stardew-hold-sufficiency.mjs";
 import { join, basename, relative } from "node:path";
 
 const ROOT = (() => {
@@ -33,9 +35,8 @@ const ROOT = (() => {
   throw new Error("repository root not found (no AGENTS.md above cwd)");
 })();
 
-const CONTRACT = "integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json";
 const GAME_ROOT = join(ROOT, "ref/external/StardewValleyDecompiled");
-const model = JSON.parse(readFileSync(join(ROOT, CONTRACT), "utf8"));
+const model = JSON.parse(readActorAdmissibilityContract(ROOT));
 
 const BLOCKED = new Set(model.blockedActions ?? []);
 const results = [];
