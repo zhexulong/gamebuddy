@@ -8,9 +8,14 @@ import {
   MAX_BUNDLE_STALL_FACTS,
   readStallWatch,
   readTurnDeliveryRecords,
+  readWorldStateStaleFacts,
   summarizeDeliveryAccount,
   TURN_DELIVERY_PREFIX,
+  WORLD_STATE_STALE_PREFIX,
 } from "./presentation-delivery-account.mjs";
+
+/** One `WORLD_STATE_STALE` line, in the shape `host/src/host-service.ts` prints. */
+const stale = (payload) => `${WORLD_STATE_STALE_PREFIX}${JSON.stringify(payload)}`;
 
 /** One `NATIVE_COMPANION_TURN_DELIVERY` line, in the shape `host/src/companion-loop.ts` prints. */
 const line = (account) => `NATIVE_COMPANION_TURN_DELIVERY ${JSON.stringify(account)}`;
@@ -84,6 +89,40 @@ test("a run that published no stall fact says not_measured instead of reporting 
   assert.equal(unreadable.notMeasured, "execution_stall_fact_unreadable");
   assert.equal(unreadable.unreadable, 1);
   assert.equal(unreadable.watched, null);
+});
+
+test("the bundle carries the stale-world facts the Host published, or names why it carries none", () => {
+  const text = [
+    stale({
+      atMs: 1_790_000_000_000,
+      code: "world_state_stale:5;352;61000",
+      turns: 5,
+      revision: 352,
+      ageMs: 61_000,
+      staleFactsSoFar: 1,
+    }),
+    stale({
+      atMs: 1_790_000_600_000,
+      code: "world_state_stale:20;352;540000",
+      turns: 20,
+      revision: 352,
+      ageMs: 540_000,
+      staleFactsSoFar: 2,
+    }),
+  ].join("\n");
+  const read = readWorldStateStaleFacts(text);
+  assert.equal(read.facts.length, 2);
+  assert.equal(read.omitted, 0);
+  assert.equal(read.notMeasured, null);
+  assert.equal(read.facts[1].turns, 20);
+  assert.equal(read.facts[1].revision, 352);
+
+  const silent = readWorldStateStaleFacts(stall(stallFact()));
+  assert.deepEqual(silent.facts, [], "a run that never re-read its world published nothing here");
+  assert.equal(silent.notMeasured, "host_published_no_world_state_stale_fact");
+  const unreadable = readWorldStateStaleFacts("WORLD_STATE_STALE {not json\n");
+  assert.equal(unreadable.notMeasured, "world_state_stale_fact_unreadable");
+  assert.equal(unreadable.unreadable, 1);
 });
 
 test("a run's pieces and its account are the same population, and the reaction sounds are named as such", () => {

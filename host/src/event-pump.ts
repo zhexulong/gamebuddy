@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 
 import { isTerminalExecutionState } from "./execution-correlation-ledger.js";
-import { composeFactBrief, type WorldStateReading } from "./fact-brief.js";
+import {
+  composeFactBrief,
+  worldStateStaleCode,
+  worldStateStaleThreshold,
+  type WorldStateReading,
+} from "./fact-brief.js";
 import type { ExecutionState, Snapshot } from "./protocol.js";
 // The Mod's evidence detail is one format with one reader (`key=value;...`), and the body-owner refusal puts the owner
 // it names inside it. Reusing that reader is what keeps the pump and the Agent's refusal guidance from disagreeing
@@ -63,6 +68,26 @@ export type DeliveryDisposition = "steer" | "follow_up" | "hold";
 export type CompanionTurnOutcome = "completed" | "aborted" | "error" | "refused" | "unobserved";
 
 /**
+ * What a delivered turn DID, which `CompanionTurnOutcome` cannot say.
+ *
+ * `completed` covers both "acted" and "only spoke", so the one distinction the liveness question needs is measured
+ * separately by the layer that sees Pi's event stream and the assistant message itself.
+ */
+export const TURN_PRODUCTION = Object.freeze({
+  /** It ran at least one tool: the turn moved something. */
+  worked: "worked",
+  /** It carried assistant text and ran no tool: narration. */
+  spoke: "spoke",
+  /**
+   * It carried no assistant text at all - a provider that answered with nothing, or a message whose tool call never ran.
+   * Not narration either way, so it ends the run rather than extending it.
+   */
+  saidNothing: "said_nothing",
+});
+
+export type TurnProduction = (typeof TURN_PRODUCTION)[keyof typeof TURN_PRODUCTION];
+
+/**
  * One delivered batch: the model-facing TEXT, and the frame its readers hang on it.
  *
  * <p>
@@ -121,8 +146,48 @@ export const MAX_PENDING_WORLD_FACTS = 32;
  */
 export const EXECUTION_STALL_SEMANTIC_KIND = "execution_stalled";
 
-/** The same Host-minted source label the arrival, notice and settled-plan facts carry. */
-export const EXECUTION_STALL_SOURCE = "host_game_session";
+/** The same Host-minted source label the arrival, notice, settled-plan, world-stale and narration facts carry. */
+export const HOST_MINTED_FACT_SOURCE = "host_game_session";
+
+/**
+ * The semantic kind of the fact the Host mints when the world reading it re-states has outlived its bound.
+ *
+ * <p>
+ * Measured 2026-11-10 (`round45`): the reading froze at `revision 352` for the last 50 turns of the run - 30 minutes -
+ * while the clock walked from `06:00` through two `02:00` pass-outs and two day starts, the location changed (a
+ * pass-out warps her to the farmhouse) and nothing re-observed. The block's own parenthetical said
+ * `（这是 50 轮之前看到的，世界已经不一样了）` on every one of those turns and asked for nothing; she dispatched nothing
+ * for the last 30 minutes.
+ * </p>
+ *
+ * <p>
+ * The freeze itself is not a defect of any one layer: the Mod answers a snapshot only when it is asked
+ * (`BridgeSession.cs:301`), and the Host's one snapshot slot is written only by that admitted answer - so "no new
+ * revision" means "nobody looked" just as often as it means "nothing changed", and the product could not tell the two
+ * apart. A condition the code can compute and cannot prevent needs a fact, which is the same reason
+ * `EXECUTION_STALL_SEMANTIC_KIND` exists.
+ * </p>
+ */
+export const WORLD_STATE_STALE_SEMANTIC_KIND = "world_state_stale";
+
+/**
+ * The semantic kind of the fact the Host mints when an awake companion has spoken without acting for a while.
+ *
+ * <p>
+ * Measured 2026-11-10 (`round45`): after 22:28:02 she dispatched nothing for the rest of the run. The last five turns
+ * were pure narration - 「斧头扛上肩，靴子一踏进湿草」「推开门，晨光一下打到脸上…外头的雾还没散」 - while her body stood still
+ * and the engine passed her out twice at 02:00. The run's own account is 134 assistant messages, 97 prompt turns and 60
+ * `continuation` wakes: the loop kept asking and she kept narrating, and nothing in the loop said so.
+ * </p>
+ *
+ * <p>
+ * The counter that was meant to catch it (`HostService.#idleTurnsWithoutWork`) could not. Its one wake called `flush`,
+ * which returns `undefined` when nothing is pending - which is the whole premise - so no turn was created, no fact was
+ * published and the model was never told. A condition the code can distinguish and cannot prevent needs a fact of its
+ * own, the same reason `EXECUTION_STALL_SEMANTIC_KIND` and `WORLD_STATE_STALE_SEMANTIC_KIND` exist.
+ * </p>
+ */
+export const NARRATION_WITHOUT_WORK_SEMANTIC_KIND = "narration_without_work";
 
 /**
  * How long an in-flight execution may go without a fact before the Host says so.
@@ -140,6 +205,26 @@ export const EXECUTION_STALL_BOUND_MS = 120_000;
  * thirty times.
  */
 export const EXECUTION_STALL_REARM_MULTIPLE = 4;
+
+/**
+ * One delivered turn, at the cadence this product measured.
+ *
+ * `round45` delivered 62 turns across 2,624,081 ms (its own `result.json`), which is 42,324 ms per turn; `round43`
+ * measured ~9.4 s per turn (`body-program-script.ts` `planSettlementNote`). The slower of the two is the one used,
+ * because a bound derived from the fast one would name a provider that is merely thinking.
+ */
+export const MEASURED_TURN_CADENCE_MS = 42_324;
+
+/**
+ * Consecutive narration turns that make `narration_without_work` due.
+ *
+ * DERIVED, NOT CHOSEN. The bound this file already treats as "this is no longer progress" is
+ * `EXECUTION_STALL_BOUND_MS`, and at the measured cadence that is 2.84 turns - so the first whole turn past it is 3. A
+ * companion who speaks once and then works (the ordinary shape, and the reason the retired bound was 2) is never named;
+ * one who speaks three turns running is. Later facts re-arm by `EXECUTION_STALL_REARM_MULTIPLE`, so forty narration
+ * turns are four facts (3, 12, 21, 30) rather than forty.
+ */
+export const NARRATION_WITHOUT_WORK_TURNS = Math.ceil(EXECUTION_STALL_BOUND_MS / MEASURED_TURN_CADENCE_MS);
 
 /**
  * Executions one pump times at once.
@@ -273,6 +358,26 @@ export type StallWatchReading = Readonly<{
 }>;
 
 /**
+ * What the pump can say about a companion who is speaking without acting.
+ *
+ * <p>
+ * Measured from delivered turns, because that is the only layer that sees how a turn ENDED
+ * (`CompanionLoop` publishes `turnProduction`). `due` is the decision; the three fields beside it are the numbers the
+ * fact prints, so a reader never has to re-derive them from the block.
+ * </p>
+ */
+export type NarrationWithoutWorkReading = Readonly<{
+  /** Consecutive delivered turns that spoke and ran no tool, with nothing in flight behind them. */
+  turns: number;
+  /** Milliseconds since the last delivered turn that produced work; the session's own start when none has. */
+  lastWorkTurnAgoMs: number;
+  /** The `turns` value the next fact waits for (`NARRATION_WITHOUT_WORK_TURNS`, re-armed by `published`). */
+  boundTurns: number;
+  /** Whether `takeNarrationWithoutWorkFact` has something to say now. */
+  due: boolean;
+}>;
+
+/**
  * A world transition holding the companion's body, as the Mod named it.
  *
  * <p>
@@ -339,6 +444,38 @@ export class CompanionEventPump {
   #lastSnapshotDeliveredRevision: number | undefined;
   /** `#deliveredBatches` when that revision was composed into a batch; the difference is the age `<world-state>` states. */
   #lastSnapshotDeliveredBatch = 0;
+  /**
+   * When the CURRENT reading's revision was admitted, for the `ageMs` half of `world_state_stale`.
+   *
+   * Advanced only by a revision that moves, because a re-stated copy of one reading arrives as a `snapshot` fact too
+   * (`host-service.ts#restateWorldSnapshot`) and this layer cannot tell it from a re-observation of an unchanged world -
+   * the block's own comment makes the same concession for `#lastSnapshotDeliveredRevision`. The one error it can make is
+   * aging a reading too far, which is the safe direction for a warning.
+   */
+  #lastSnapshotArrivedAtMs = 0;
+  /** Stale facts already published for the current reading; the re-arm, and the fact's own `staleFactsSoFar`. */
+  #worldStateStalePublished = 0;
+  /**
+   * Facts since the current reading that say the WORLD moved: the clock, the day, a pass-out, a warp, or a body that is
+   * standing somewhere else.
+   *
+   * <p>
+   * This is what makes a stale reading a FACT rather than an alarm about silence. A reading that has aged while the world
+   * said nothing new is just an old picture of an unchanged world; a reading that has aged while the Mod published
+   * `time_milestone`, `night_ended_pass_out`, `day_started` or its own `snapshot_changed` is a picture the world has
+   * already contradicted.
+   * </p>
+   * <p>
+   * MEASURED 2026-11-10 (`round45`): she entered the farmhouse at 22:25:25 (`enter_exit_completed` revision 348), the
+   * published reading was taken inside at `(9,9)` and reached the model at 22:25:51 (`revision 352`), and then she walked
+   * back out at 22:26:19 - `enter_exit_completed` revision 364 AND the Mod's own `snapshot_changed:warped` at revision 364.
+   * That fact says the world is now at 364 while the block still said 352, and for the next fifty turns the block said
+   * `农舍 (9,9)` while her body was on the Farm at `(39,15)`. Nothing connected the world's own statement to the block.
+   * </p>
+   */
+  #worldChangesSinceReading = 0;
+  /** The newest of those changes, as a label a fact can print (`snapshot_changed:warped`, `location:Farm`, …). */
+  #lastWorldChange: string | undefined;
   readonly #receipts = new Map<string, WorldFact>();
   readonly #semanticEvents = new Map<string, WorldFact>();
   readonly #lifecycle = new Map<string, WorldFact>();
@@ -375,6 +512,21 @@ export class CompanionEventPump {
    * batch the sink rejected is not counted - the model never read it.
    */
   #deliveredBatches = 0;
+  /**
+   * Consecutive delivered turns that spoke and ran no tool, with nothing in flight behind them.
+   *
+   * <p>
+   * The measurement `NARRATION_WITHOUT_WORK_SEMANTIC_KIND` publishes. It lives here rather than in the Host because a
+   * turn's production is published to the pump by the loop that saw it, and because the pump is the layer that can also
+   * see whether anything is still executing - so "she spoke and did nothing" is one reading, not two counters that can
+   * disagree.
+   * </p>
+   */
+  #turnsWithoutWork = 0;
+  /** When the last delivered turn produced work; the pump's own start when none has, so the age is never undefined. */
+  #lastWorkTurnAtMs = Date.now();
+  /** Narration facts already published for this run: the re-arm, and the fact's own `narrationFactsSoFar`. */
+  #narrationWithoutWorkPublished = 0;
   /** Facts the bounds dropped instead of closing the bridge (see the full-queue branch of `enqueueFact`). */
   #droppedFacts = 0;
   #delivering = false;
@@ -391,10 +543,20 @@ export class CompanionEventPump {
     this.#observeWorldTransition(frozen);
     this.#observeExecutionProgress(frozen);
     if (fact.kind === "snapshot") {
+      const previous = this.#lastSnapshot;
+      const advances = previous === undefined || fact.revision > previous.revision;
       if (this.#snapshot === undefined || fact.revision >= this.#snapshot.revision) this.#snapshot = frozen;
-      if (this.#lastSnapshot === undefined || fact.revision >= this.#lastSnapshot.revision) this.#lastSnapshot = frozen;
+      if (previous === undefined || fact.revision >= previous.revision) this.#lastSnapshot = frozen;
+      if (advances) {
+        this.#lastSnapshotArrivedAtMs = Date.now();
+        this.#worldStateStalePublished = 0;
+        this.#worldChangesSinceReading = 0;
+        this.#lastWorldChange = undefined;
+      }
       return;
     }
+    // The world saying it moved is the other half of "this reading is stale": see `#worldChangesSinceReading`.
+    this.#observeWorldChange(frozen);
     // An execution that has SETTLED can publish no further progress, so its record is dead weight. Dropping
     // it here keeps the record bounded by the in-flight executions instead of by the session's action count.
     if (isTerminalExecutionFact(fact)) this.#forgetSettledProgress(fact);
@@ -512,6 +674,10 @@ export class CompanionEventPump {
     this.#lastSnapshot = undefined;
     this.#lastSnapshotDeliveredRevision = undefined;
     this.#lastSnapshotDeliveredBatch = 0;
+    this.#lastSnapshotArrivedAtMs = 0;
+    this.#worldStateStalePublished = 0;
+    this.#worldChangesSinceReading = 0;
+    this.#lastWorldChange = undefined;
     this.#receipts.clear();
     this.#semanticEvents.clear();
     this.#lifecycle.clear();
@@ -522,6 +688,9 @@ export class CompanionEventPump {
     this.#evictedExecutions = 0;
     this.#worldTransition = null;
     this.#retryBatch = undefined;
+    this.#turnsWithoutWork = 0;
+    this.#lastWorkTurnAtMs = Date.now();
+    this.#narrationWithoutWorkPublished = 0;
   }
 
   public get pendingCount(): number {
@@ -542,16 +711,17 @@ export class CompanionEventPump {
   }
 
   /**
-   * Whether the most recently DELIVERED turn ran any tool, or only spoke.
+   * What the most recently DELIVERED turn did, as the layer that saw Pi's event stream measured it.
    *
    * <p>
-   * Set by `CompanionLoop` after each delivery, because that is the only layer that sees Pi's event stream. `false` for a
-   * turn that produced dialogue and nothing else - the shape that let a 2026-10-30 run stop at in-game 18:20 and freeze
-   * the clock, which then made the pipeline's own 22:00 milestone unreachable (`#idleTurnsWithoutWork` in HostService has
-   * the full account).
+   * Set by `CompanionLoop` after each delivery, because that is the only layer that sees Pi's stream. The three states
+   * are the whole population, and they are separate because the pump acts differently on each: `worked` clears the
+   * narration run, `spoke` extends it, `silent` ends it. A boolean could not say `silent`, and reading a turn that
+   * carried nothing as narration would blame her for a provider that answered with nothing - which
+   * `provider_empty_completion` already names on its own path.
    * </p>
    */
-  public turnProducedWork = false;
+  public turnProduction: TurnProduction = TURN_PRODUCTION.saidNothing;
 
   /**
    * The steer currently queued into a running turn, until Pi settles it.
@@ -760,7 +930,7 @@ export class CompanionEventPump {
     const eventId = `${EXECUTION_STALL_SEMANTIC_KIND}_${due.executionId}_${String(due.published)}`;
     const shown = reading.unmeasured.slice(0, MAX_STALL_UNMEASURED_SHOWN);
     return Object.freeze({
-      source: EXECUTION_STALL_SOURCE,
+      source: HOST_MINTED_FACT_SOURCE,
       kind: "world_fact" as const,
       eventId,
       sourceEventId: eventId,
@@ -877,6 +1047,7 @@ export class CompanionEventPump {
     try {
       const outcome = (await sink.deliver(pending)) ?? undefined;
       this.#deliveredBatches += 1;
+      this.#observeTurnProduction(outcome);
       return outcome;
     } catch (error) {
       // Do not revive a batch cleared while its asynchronous delivery was in
@@ -1143,7 +1314,186 @@ export class CompanionEventPump {
       snapshot: fact.payload as unknown as Snapshot,
       revision: fact.revision,
       ageTurns: broughtObservation ? 0 : Math.max(1, age),
+      ageMs: Math.max(0, Date.now() - this.#lastSnapshotArrivedAtMs),
     });
+  }
+
+  /**
+   * The fact that says the world reading this pump re-states has outlived its bound, or `undefined` when none is due.
+   *
+   * <p>
+   * Minted by the pump for the same reason `takeStallFact` is: the pump owns the measurement (it is the only layer that
+   * sees every snapshot and every delivered batch), and the Host owns publication, so a stale world cannot become a
+   * second way to start a turn. Bounded by `WORLD_STATE_STALE_REARM_MULTIPLE`: `published` moves the next threshold out,
+   * so fifty turns of one frozen reading is three facts rather than fifty.
+   * </p>
+   *
+   * <p>
+   * TWO CONDITIONS, because one of them alone would be a claim the pump cannot make. The reading must be older than
+   * `WORLD_STATE_STALE_TURNS`, AND the world must have said it moved since - a clock milestone, a day start, a pass-out,
+   * the Mod's own `snapshot_changed`, or a body standing somewhere other than the reading says. A reading that aged while
+   * nothing at all happened is an old picture of an unchanged world, and the block's own parenthetical already says so.
+   * </p>
+   *
+   * <p>
+   * `undefined` therefore has three causes, and they are not the same statement: no reading at all (nothing has been
+   * observed, so there is nothing to be stale), a reading still inside its bound, and a reading that outlived its bound
+   * in a world that never contradicted it. The block itself states the age on every turn (`fact-brief.ts`), so the
+   * distinction is visible where it matters.
+   * </p>
+   */
+  public takeWorldStateStaleFact(): WorldFact | undefined {
+    const reading = this.#worldStateReading(false);
+    if (reading === undefined || !this.#worldStateStaleDue(reading)) return undefined;
+    this.#worldStateStalePublished += 1;
+    const code = worldStateStaleCode(reading);
+    const eventId = `${WORLD_STATE_STALE_SEMANTIC_KIND}_${String(reading.revision)}_${String(this.#worldStateStalePublished)}`;
+    return Object.freeze({
+      source: HOST_MINTED_FACT_SOURCE,
+      kind: "world_fact" as const,
+      eventId,
+      sourceEventId: eventId,
+      correlationId: eventId,
+      revision: reading.revision,
+      occurredAtMs: Date.now(),
+      semanticKind: WORLD_STATE_STALE_SEMANTIC_KIND,
+      payload: Object.freeze({
+        kind: WORLD_STATE_STALE_SEMANTIC_KIND,
+        code,
+        turns: reading.ageTurns,
+        revision: reading.revision,
+        ageMs: reading.ageMs,
+        worldChanges: this.#worldChangesSinceReading,
+        ...(this.#lastWorldChange === undefined ? {} : { lastWorldChange: this.#lastWorldChange }),
+        staleFactsSoFar: this.#worldStateStalePublished,
+      }),
+    });
+  }
+
+  /** Whether a stale-world fact is owed right now, without consuming it (see `takeWorldStateStaleFact`). */
+  #worldStateStaleDue(reading: WorldStateReading): boolean {
+    return (
+      reading.ageTurns >= worldStateStaleThreshold(this.#worldStateStalePublished) && this.#worldChangesSinceReading > 0
+    );
+  }
+
+  /**
+   * What the pump can say about a companion who is speaking without acting, right now.
+   *
+   * <p>
+   * The measurement, split from the publication exactly as `stallWatch` is split from `takeStallFact`: reading this
+   * enqueues, mints and delivers nothing. The Host owns the wake (`HostService.wakeReason`), so a narration fact cannot
+   * become a second way to start a turn.
+   * </p>
+   *
+   * <p>
+   * A FROZEN WORLD OUTRANKS HER SILENCE, and the ordering is stated here because this is the layer that owns both
+   * measurements. While a `world_state_stale` fact is still owed, `due` is `false`: her picture of the world has already
+   * been contradicted, so "she spoke and did nothing" is not the statement to make about that turn - the world's own
+   * fact is, and it names the one action that fixes her picture. Once that fact has been published the ordering releases,
+   * because the world has then said what it had to say.
+   * </p>
+   */
+  public get narrationWithoutWork(): NarrationWithoutWorkReading {
+    const reading = this.#worldStateReading(false);
+    const boundTurns = narrationWithoutWorkThreshold(this.#narrationWithoutWorkPublished);
+    return Object.freeze({
+      turns: this.#turnsWithoutWork,
+      lastWorkTurnAgoMs: Math.max(0, Date.now() - this.#lastWorkTurnAtMs),
+      boundTurns,
+      due:
+        this.#turnsWithoutWork >= boundTurns &&
+        !this.hasExecutionInFlight &&
+        (reading === undefined || !this.#worldStateStaleDue(reading)),
+    });
+  }
+
+  /**
+   * The fact that says an awake companion has spoken without acting, or `undefined` when none is due.
+   *
+   * <p>
+   * It carries no prose and no instruction: the payload says what happened (`turns`, `lastToolTurnAgoMs`) and the prompt
+   * floor already states the rules, so this is a fact beside the block rather than a scolding. `narrationFactsSoFar` is
+   * what keeps it bounded - `narrationWithoutWorkThreshold` moves the next one out, so forty narration turns are four
+   * facts.
+   * </p>
+   */
+  public takeNarrationWithoutWorkFact(): WorldFact | undefined {
+    const reading = this.narrationWithoutWork;
+    if (!reading.due) return undefined;
+    this.#narrationWithoutWorkPublished += 1;
+    const code = `${NARRATION_WITHOUT_WORK_SEMANTIC_KIND}:${String(reading.turns)}:${String(reading.lastWorkTurnAgoMs)}`;
+    const eventId = `${NARRATION_WITHOUT_WORK_SEMANTIC_KIND}_${String(reading.turns)}_${String(this.#narrationWithoutWorkPublished)}`;
+    return Object.freeze({
+      source: HOST_MINTED_FACT_SOURCE,
+      kind: "world_fact" as const,
+      eventId,
+      sourceEventId: eventId,
+      correlationId: eventId,
+      revision: this.#lastSnapshot?.revision ?? 0,
+      occurredAtMs: Date.now(),
+      semanticKind: NARRATION_WITHOUT_WORK_SEMANTIC_KIND,
+      payload: Object.freeze({
+        kind: NARRATION_WITHOUT_WORK_SEMANTIC_KIND,
+        code,
+        turns: reading.turns,
+        lastToolTurnAgoMs: reading.lastWorkTurnAgoMs,
+        boundTurns: reading.boundTurns,
+        narrationFactsSoFar: this.#narrationWithoutWorkPublished,
+      }),
+    });
+  }
+
+  /**
+   * Record what the turn that just settled DID, for `narrationWithoutWork`.
+   *
+   * <p>
+   * A turn that produced work clears the run and dates it; a turn that spoke and ran no tool extends it; anything else
+   * ends it. "Anything else" is not a gap in the measurement: an aborted or errored turn is the provider's or the
+   * player's own decision, `said_nothing` is a turn that carried no assistant text (already named on its own path when
+   * it is a provider answering nothing), and `unobserved` is nobody looked - none of the three is narration.
+   * </p>
+   * <p>
+   * `hasExecutionInFlight` is asked at settlement, the only moment this pump can ask it honestly: it reads the receipts
+   * window, and that window is emptied by the batch the turn consumed - so a receipt that arrived DURING the turn for an
+   * execution still running is seen, and a turn with her body mid-action is not narration.
+   * </p>
+   */
+  #observeTurnProduction(outcome: CompanionTurnOutcome | undefined): void {
+    if (outcome !== "completed") {
+      this.#turnsWithoutWork = 0;
+      return;
+    }
+    if (this.turnProduction === TURN_PRODUCTION.worked) {
+      this.#turnsWithoutWork = 0;
+      this.#lastWorkTurnAtMs = Date.now();
+      return;
+    }
+    this.#turnsWithoutWork =
+      this.turnProduction === TURN_PRODUCTION.spoke && !this.hasExecutionInFlight ? this.#turnsWithoutWork + 1 : 0;
+  }
+
+  /**
+   * Record whether this fact is the world saying it moved, and how.
+   *
+   * <p>
+   * The three shapes are the ones the Mod already publishes, so this adds no authority: its own `snapshot_changed` (a
+   * warp, minted at `ModEntry.cs:1787`), the clock and day facts, and a body trace whose `location` differs from the
+   * reading's. The last one is derived rather than published - a snapshot carries `location`, and every body trace
+   * carries the location the body is actually in, so “she is standing somewhere else” needs no new field from the Mod.
+   * </p>
+   */
+  #observeWorldChange(fact: WorldFact): void {
+    const change = describeWorldChange(fact, this.#readingLocation());
+    if (change === undefined) return;
+    this.#worldChangesSinceReading += 1;
+    this.#lastWorldChange = change;
+  }
+
+  /** The location the current reading claims, for comparing against where the body actually is. */
+  #readingLocation(): string | undefined {
+    const location = (this.#lastSnapshot?.payload as { location?: unknown } | undefined)?.location;
+    return typeof location === "string" && location.length > 0 ? location : undefined;
   }
 
   #hasPendingFactTrigger(): boolean {
@@ -1198,6 +1548,10 @@ export const HELD_SEMANTIC_PROGRESS_KINDS: Readonly<Record<string, string>> = Ob
 export const HOST_MINTED_WAKE_KINDS: Readonly<Record<string, string>> = Object.freeze({
   [EXECUTION_STALL_SEMANTIC_KIND]:
     "the Host's stall timer arms from stallWatch.nextStallInMs, and hands this fact to acceptHostMintedFact, which enqueues it and flushes a turn immediately",
+  [WORLD_STATE_STALE_SEMANTIC_KIND]:
+    "the Host asks takeWorldStateStaleFact after every adapter fact it admits, and hands the fact to acceptHostMintedFact",
+  [NARRATION_WITHOUT_WORK_SEMANTIC_KIND]:
+    "the Host reads wakeReason when a flush settles, and when it answers narration_without_work it mints the fact with takeNarrationWithoutWorkFact and hands it to acceptHostMintedFact, which enqueues it and flushes a turn",
 });
 
 /** Receipt progress is latest-only; terminal and invalidating states remain ordinary facts. */
@@ -1322,6 +1676,49 @@ function progressStateIdentity(fact: WorldFact): string {
  */
 function stallThresholdMs(published: number): number {
   return EXECUTION_STALL_BOUND_MS * (1 + published * (EXECUTION_STALL_REARM_MULTIPLE - 1));
+}
+
+/**
+ * The narration run the `published`-th narration fact waits for.
+ *
+ * The first waits `NARRATION_WITHOUT_WORK_TURNS`; each later one waits `EXECUTION_STALL_REARM_MULTIPLE` more of the same
+ * run, for the same reason the stall watch re-arms: saying the same thing every turn spends the run on one reading.
+ */
+function narrationWithoutWorkThreshold(published: number): number {
+  return NARRATION_WITHOUT_WORK_TURNS * (1 + published * (EXECUTION_STALL_REARM_MULTIPLE - 1));
+}
+
+/**
+ * What this fact says about the world having MOVED, as a label - or `undefined` when it says nothing about the world.
+ *
+ * <p>
+ * Only the shapes the Mod already publishes: its own `snapshot_changed` (a warp, `ModEntry.cs:1787`), the clock and day
+ * facts, and a body trace whose location differs from the reading's. A `route_progress` one tile away says the body
+ * moved, which is her own walking, not the world - only a DIFFERENT map counts.
+ * </p>
+ */
+function describeWorldChange(fact: WorldFact, readingLocation: string | undefined): string | undefined {
+  if (fact.kind === "semantic_event" && fact.payload.kind === "snapshot_changed")
+    return `snapshot_changed:${typeof fact.payload.reasonCode === "string" ? fact.payload.reasonCode : "changed"}`;
+  if (
+    fact.kind === "world_fact" &&
+    (fact.semanticKind === "time_milestone" ||
+      fact.semanticKind === "day_started" ||
+      fact.semanticKind === "night_ended_pass_out")
+  )
+    return fact.semanticKind;
+  const location = locationOf(fact.payload);
+  return location !== undefined && readingLocation !== undefined && location !== readingLocation
+    ? `location:${location}`
+    : undefined;
+}
+
+/** The location a fact carries about where the BODY is, in either of the two places the Mod puts it. */
+function locationOf(payload: Readonly<Record<string, unknown>>): string | undefined {
+  const trace = payload.bodyTrace;
+  const traced = trace !== null && typeof trace === "object" ? (trace as { location?: unknown }).location : undefined;
+  const location = typeof traced === "string" ? traced : payload.location;
+  return typeof location === "string" && location.length > 0 ? location : undefined;
 }
 
 /** One stable label for what a fact SAID, which is what a stall answer has to name as its last progress. */

@@ -22,6 +22,19 @@
 export const TURN_DELIVERY_PREFIX = "NATIVE_COMPANION_TURN_DELIVERY ";
 
 /**
+ * The Host's own world-stale line (`host/src/host-service.ts` `#publishWorldStateStaleFact`): the age of the world
+ * reading it was re-stating, once that age outlived its bound.
+ *
+ * <p>
+ * Same channel and same reason as the stall line below: MEASURED 2026-11-10 (`round45`), the reading froze at `revision
+ * 352` for the last fifty turns of the run and NOTHING in the bundle said so. The wake decider could not have woken her
+ * for it, because the fact every layer after the pump would have needed did not exist. The pump mints it
+ * (`takeWorldStateStaleFact`), the Host prints it here, and `newWorldStateStaleFacts` in the runner is the one reader.
+ * </p>
+ */
+export const WORLD_STATE_STALE_PREFIX = "WORLD_STATE_STALE ";
+
+/**
  * The Host's own stall line (`host/src/host-service.ts` `#publishStallFact`): an execution that stopped making
  * progress.
  *
@@ -132,6 +145,53 @@ function boundedStallFact(payload) {
     ownershipAbsentReason: typeof payload.ownershipAbsentReason === "string" ? payload.ownershipAbsentReason : null,
     watched: numberOrNull(payload.watched),
     evicted: numberOrNull(payload.evicted),
+  };
+}
+
+/** The fields one stale-world fact publishes: how old, which reading, and how many warnings it has had. */
+export function readWorldStateStaleFacts(logText) {
+  const facts = [];
+  let published = 0;
+  let unreadable = 0;
+  for (const line of String(logText ?? "").split("\n")) {
+    if (!line.startsWith(WORLD_STATE_STALE_PREFIX)) continue;
+    let payload;
+    try {
+      payload = JSON.parse(line.slice(WORLD_STATE_STALE_PREFIX.length));
+    } catch {
+      unreadable += 1;
+      continue;
+    }
+    if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+      unreadable += 1;
+      continue;
+    }
+    published += 1;
+    if (facts.length < MAX_BUNDLE_STALL_FACTS) facts.push(Object.freeze(boundedWorldStateStaleFact(payload)));
+  }
+  return Object.freeze({
+    facts: Object.freeze(facts),
+    omitted: published - facts.length,
+    // The same three zeroes the stall reading distinguishes, for the same reason: a run that published no stale fact and
+    // a run whose stale facts could not be parsed are different answers about whether the world was ever re-read.
+    notMeasured:
+      published > 0
+        ? null
+        : unreadable > 0
+          ? "world_state_stale_fact_unreadable"
+          : "host_published_no_world_state_stale_fact",
+    ...(unreadable === 0 ? {} : { unreadable }),
+  });
+}
+
+function boundedWorldStateStaleFact(payload) {
+  return {
+    atMs: numberOrNull(payload.atMs),
+    code: typeof payload.code === "string" ? payload.code : null,
+    turns: numberOrNull(payload.turns),
+    revision: numberOrNull(payload.revision),
+    ageMs: numberOrNull(payload.ageMs),
+    staleFactsSoFar: numberOrNull(payload.staleFactsSoFar),
   };
 }
 

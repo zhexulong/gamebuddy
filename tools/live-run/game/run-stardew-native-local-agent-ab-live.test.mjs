@@ -4462,12 +4462,14 @@ const IDLE_DAY = Object.freeze({
   lateDay: false,
   dayEndOffered: false,
   stalled: false,
+  worldStateStale: false,
 });
 
 const WAKE_PRODUCERS = Object.freeze({
   day_start: () => decideDayWake({ ...IDLE_DAY, turnIndex: 0 }).reason,
   continuation: () => decideDayWake(IDLE_DAY).reason,
   stall_wake: () => decideDayWake({ ...IDLE_DAY, stalled: true }).reason,
+  stale_world: () => decideDayWake({ ...IDLE_DAY, worldStateStale: true }).reason,
   day_end_offer: () => decideDayWake({ ...IDLE_DAY, objectiveMet: true, lateDay: true }).reason,
   // A session goal is a PLAYER turn, so its reason is declared at its own call site: this reads that site rather than
   // restating it, which is what makes "reachable" a fact about the runner instead of about this table.

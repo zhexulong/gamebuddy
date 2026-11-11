@@ -85,6 +85,7 @@ import {
   describeDeliveryAccount,
   readStallWatch,
   readTurnDeliveryRecords,
+  readWorldStateStaleFacts,
   summarizeDeliveryAccount,
 } from "../../lib/presentation-delivery-account.mjs";
 import { readActivityPoints, summarizeActivity } from "../../lib/companion-activity.mjs";
@@ -1414,6 +1415,10 @@ function summarizePresentationEvidence() {
   // stuck. The parser owns the cap and the count of what it dropped. NOT read by `round-verdict.mjs` yet - the verdict
   // bucket for this field is another lane's follow-up, so the bundle publishes it and no rung claims it.
   const stallWatch = readStallWatch(hostLog);
+  // The age of the world reading the Host was re-stating, when it outlived its bound (`#publishWorldStateStaleFact`).
+  // Published beside the stall facts for the same reason: "the block said 06:00 for fifty turns" is the answer to "why
+  // did nothing happen", and until this field no bundle carried it.
+  const worldStateStale = readWorldStateStaleFacts(hostLog);
   return Object.freeze({
     // Each piece carries `atMs` on the run clock, and the turn's own start is published beside them, so a reader can
     // place a spoken line against a dispatch instead of only against its own turn. Before this the silence gate had
@@ -1431,6 +1436,7 @@ function summarizePresentationEvidence() {
     deliveryAccount,
     activity,
     stallWatch,
+    worldStateStale,
   });
 }
 /** Exact configuration answer for voice in this run; `enabled:false` carries the reason. */
@@ -1680,6 +1686,25 @@ function newStallFacts() {
   const lines = text.split("\n");
   stallReadCursor.carry = lines.pop() ?? "";
   return readStallWatch(lines.join("\n")).facts;
+}
+
+/**
+ * The Host's world-stale facts that have arrived since the last look.
+ *
+ * Same cursor, same channel, same parser shape as `newStallFacts`, because it is the same defect family: the pump owns
+ * the bound (`WORLD_STATE_STALE_TURNS`), the Host publishes one line per arming, and the loop only reads whether one
+ * arrived. MEASURED 2026-11-10 (`round45`): the world block froze at `revision 352` for fifty turns, every turn was
+ * issued as `continuation`, and nothing in the loop could have known - so she carried on from a day-old picture and
+ * dispatched nothing for the last thirty minutes.
+ */
+const worldStateStaleReadCursor = { chunk: 0, carry: "" };
+function newWorldStateStaleFacts() {
+  if (worldStateStaleReadCursor.chunk >= hostLogChunks.length) return [];
+  const text = worldStateStaleReadCursor.carry + hostLogChunks.slice(worldStateStaleReadCursor.chunk).join("");
+  worldStateStaleReadCursor.chunk = hostLogChunks.length;
+  const lines = text.split("\n");
+  worldStateStaleReadCursor.carry = lines.pop() ?? "";
+  return readWorldStateStaleFacts(lines.join("\n")).facts;
 }
 
 // Actions that MOVE the actor, LOOK at the world, or change only the actor's own gear.
@@ -4356,6 +4381,21 @@ try {
       : `(${executionId} has made no progress for ${silentSeconds}s; its last fact was ${lastFact}${owner === null ? "" : `, and the body is held by ${owner}`}. What happens next is yours to decide.)`;
   };
   /**
+   * What the harness says when the Host says the world she is being handed is older than its bound.
+   *
+   * A FACT and one move, no instruction: the revision it is stuck on, how many turns and seconds old it is, and that
+   * looking is what replaces it. Whether to look now, or to finish what she is doing first, stays hers - the same
+   * division of labour `promptForStall` keeps.
+   */
+  const promptForStaleWorld = (stale) => {
+    const turns = String(stale?.turns ?? "?");
+    const revision = String(stale?.revision ?? "?");
+    const seconds = String(Math.round((stale?.ageMs ?? 0) / 1000));
+    return localeKey === "zh"
+      ? `（你手上的世界还停在 revision ${revision}，已经 ${turns} 轮、${seconds} 秒没有重新看过了 - 这段时间里世界变了不少。先看一眼现在的世界，再决定接下来的事。）`
+      : `(The world you are holding is still revision ${revision}, ${turns} turns and ${seconds}s since it was last observed - the world has moved on. Look at the world as it is now before deciding what comes next.)`;
+  };
+  /**
    * The day's prompt with the world's own shortage fact appended, or the prompt alone - the composition lives in
    * `seed-shortage.mjs` so its once-per-day property is testable rather than asserted here.
    *
@@ -4498,9 +4538,11 @@ try {
                   ? promptForLateDay(day)
                   : wake.reason === WAKE_REASON.stallWake
                     ? promptForStall(stallFacts.at(-1) ?? null)
-                    : clock.unknown === false && clock.minutes !== null && clock.minutes >= LATE_DAY_MINUTES
-                      ? promptForLateDay(day)
-                      : promptForDayContinuation(day);
+                    : wake.reason === WAKE_REASON.staleWorld
+                      ? promptForStaleWorld(staleFacts.at(-1) ?? null)
+                      : clock.unknown === false && clock.minutes !== null && clock.minutes >= LATE_DAY_MINUTES
+                        ? promptForLateDay(day)
+                        : promptForDayContinuation(day);
             const spokenBefore = presentationPieces.length;
             const walked = await runAgentTurn(prompt, tools, { reason: wake.reason });
             if (walked.status !== null) status = walked.status;
@@ -4670,6 +4712,7 @@ try {
         continuationPromptsIssued: wakeByReason[WAKE_REASON.continuation] ?? 0,
         dayEndOffers: wakeByReason[WAKE_REASON.dayEndOffer] ?? 0,
         stallWakes: wakeByReason[WAKE_REASON.stallWake] ?? 0,
+        staleWorldWakes: wakeByReason[WAKE_REASON.staleWorld] ?? 0,
         continuationPromptsSuppressed: wakesSuppressed,
         suppressedByReason: Object.freeze(wakeSuppressedByReason),
         // The bound the decision waited out, published so a reader can tell "nothing moved" from "nothing moved for

@@ -130,6 +130,24 @@ export type StopSettledPayload = Readonly<{
 export const MAX_NATIVE_PRESENTATION_TURN_BYTES = 16_384;
 
 /**
+ * Why another turn is owed, when the pump is not already asking for one.
+ *
+ * The two members are the whole population, and `wakeReason` is the only producer. `pendingDelivery` is the ordinary
+ * case and carries no defect; `narrationWithoutWork` exists because a turn that only spoke leaves the pump with nothing
+ * to deliver, and "nothing to deliver" must not read as "nothing to do".
+ */
+export const HOST_WAKE_REASON = Object.freeze({
+  /** The pump is holding a fact or an input that has not reached a turn yet. */
+  pendingDelivery: "pending_delivery",
+  /** The pump has nothing to deliver and the companion has spoken without acting for the pump's measured bound. */
+  narrationWithoutWork: "narration_without_work",
+});
+
+export const HOST_WAKE_REASONS = Object.freeze(Object.values(HOST_WAKE_REASON));
+
+export type HostWakeReason = (typeof HOST_WAKE_REASONS)[number];
+
+/**
  * How many empty completions one delivered prompt may end with before the run is over.
  *
  * <p>
@@ -359,25 +377,6 @@ export class CompanionHostService {
    * `unobserved` until a turn has been delivered (and whenever a flush had nothing to deliver).
    */
   #lastTurnOutcome: CompanionTurnOutcome = "unobserved";
-  /**
-   * Consecutive delivered turns that ended with the model doing nothing (a spoken line, no action), with no pending
-   * delivery to justify another one.
-   *
-   * <p>
-   * MEASURED 2026-10-30 (`round9`): the companion came home at in-game 18:20, said "进屋了。门槛上的泥磕掉了，手也搓干净
-   * 了，锅我架上了。", and stopped. `stop=stop`, no tool call, world static - so `EventPump.hasPendingDelivery` was false,
-   * the `finally` in `flushSoon` saw nothing pending, and nothing woke another turn. `rx` froze at 415/415 and the clock
-   * stopped, which meant the 22:00 milestone this pipeline DOES publish (`day_5_2200` appeared in the previous run) could
-   * never arrive - a Stardew clock only moves while an action is being taken.
-   * </p>
-   * <p>
-   * The self-lock is the whole point: a static world mints no fact, and the companion is the only thing that moves the
-   * world. So a turn that ended after dialogue alone must not be indistinguishable from a turn that found nothing to do.
-   * TWO is the bound, because a companion is usually right to speak first and act second - it says one line and then
-   * works on the next turn - while a model that will not act should not spend turns indefinitely.
-   * </p>
-   */
-  #idleTurnsWithoutWork = 0;
   /**
    * The provider failure class of the last flush that could not reach a model, or `undefined` once a turn settles.
    *
@@ -1021,6 +1020,7 @@ export class CompanionHostService {
       // companion waiting between plans has nothing outstanding, which is exactly when the clock matters.
       if (fact.kind === "execution_receipt") this.#admitNativeNotices(fact);
       this.loop.pump.enqueueFact(fact);
+      this.#publishWorldStateStaleFact();
       // The one call that re-arms (or clears) the stall watch: this fact is the freshest thing the pump has been told
       // about its execution, so it is also what moves that execution's next stall threshold.
       this.#armStallWatch();
@@ -1273,11 +1273,6 @@ export class CompanionHostService {
         // Retained so a caller that awaits player input can report it instead of guessing from silence.
         const outcome = await this.#flushTurn();
         this.#lastTurnOutcome = outcome ?? "unobserved";
-        // What the turn DID, which `outcome` cannot say: `completed` covers both "acted" and "only spoke". A flush that
-        // delivered nothing leaves the counter alone - it is not evidence either way.
-        if (outcome === "completed")
-          this.#idleTurnsWithoutWork = this.loop.pump.turnProducedWork ? 0 : this.#idleTurnsWithoutWork + 1;
-        else if (outcome !== undefined) this.#idleTurnsWithoutWork = 0;
       }
       this.#retryDelayMs = this.#baseRetryDelayMs;
       // The provider answered, so the last recorded environment failure no longer describes the session.
@@ -1310,29 +1305,26 @@ export class CompanionHostService {
       throw error;
     } finally {
       this.#flushScheduled = false;
-      // Facts may arrive after this invocation has captured its batch but
-      // before its provider turn completes. Their attempted flush correctly
-      // returned while scheduled; wake one follow-up turn without requiring an
-      // unrelated third event.
-      if (
-        !this.#closed &&
-        this.#integrationAdmissionOpen &&
-        this.#retryTimer === undefined &&
-        this.loop.pump.hasPendingDelivery
-      ) {
-        // Only a successful flush should immediately drain work accepted while
-        // it was running. On failure scheduleRetry owns the next attempt.
-        // Otherwise a rejected provider turn would recurse in this finally.
-        //
-        // A provider failure deliberately keeps `#retryDelayMs` untouched, so this branch cannot fire after one: the
-        // pump holds the facts and waits for a real trigger rather than us spinning at the provider.
-        if (this.#retryDelayMs === this.#baseRetryDelayMs && this.#lastProviderFailure === undefined)
-          void this.flushSoon().catch(() => undefined);
-      }
-      // The liveness arm: asked even when the pump has nothing pending, because that is the whole defect. Placed in the
-      // same `finally` so a turn that spoke only re-arms exactly once; `#turnOwesAnother` carries the bound.
-      else if (this.#retryTimer === undefined && this.#turnOwesAnother()) {
-        void this.flushSoon().catch(() => undefined);
+      // ONE named decision, asked after every flush, because a turn that spoke only is the one ending the pump cannot
+      // see. The pending arm is the ordinary case, unchanged.
+      if (this.#retryTimer === undefined) {
+        const reason = this.wakeReason;
+        if (reason === HOST_WAKE_REASON.pendingDelivery) {
+          // Facts may arrive after this invocation has captured its batch but before its provider turn completes. Their
+          // attempted flush correctly returned while scheduled; wake one follow-up turn without requiring an unrelated
+          // third event.
+          //
+          // Only a successful flush should immediately drain work accepted while it was running. On failure
+          // scheduleRetry owns the next attempt, so a rejected provider turn does not recurse in this finally. A provider
+          // failure deliberately keeps `#retryDelayMs` untouched, so this branch cannot fire after one: the pump holds
+          // the facts and waits for a real trigger rather than us spinning at the provider.
+          if (this.#retryDelayMs === this.#baseRetryDelayMs && this.#lastProviderFailure === undefined)
+            void this.flushSoon().catch(() => undefined);
+        } else if (reason === HOST_WAKE_REASON.narrationWithoutWork) {
+          // The FACT is the wake: it travels `acceptHostMintedFact`, which enqueues it and flushes, so the turn is created
+          // for a reason the model can read rather than for silence.
+          this.#publishNarrationWithoutWorkFact();
+        }
       }
     }
   }
@@ -1421,26 +1413,29 @@ export class CompanionHostService {
   }
 
   /**
-   * Whether another turn is owed even though the pump has nothing to deliver.
+   * Whether another turn is owed, and WHY.
    *
    * <p>
-   * This is the ONE place that decides it. Before this existed the answer was `hasPendingDelivery` alone, and that made
-   * "the model chose to speak only" identical to "there is nothing to do" - see `#idleTurnsWithoutWork` for the run that
-   * proved it. The pump still owns delivery; this owns LIVENESS.
+   * This is the ONE place that decides it, and it is named rather than boolean because a run's own account has to be
+   * able to say which reason woke her. Before any of this existed the answer was `hasPendingDelivery` alone, which made
+   * "the model chose to speak only" identical to "there is nothing to do": measured 2026-10-30 (`round9`), the companion
+   * came home at in-game 18:20, said one line, and stopped - `rx` froze at 415/415 and the clock stopped with it, because
+   * a Stardew clock only moves while an action is taken.
    * </p>
    * <p>
-   * `#idleTurnsWithoutWork` cannot be inferred from `#lastTurnOutcome`: `completed` means the turn settled, not that it
-   * produced work, and a turn that spoke AND acted also reports `completed`. The counter is incremented by the flush that
-   * knows what the turn did.
+   * THE ORDER IS THE POINT. `pendingDelivery` comes first, and a `world_state_stale` fact is a pending delivery - so a
+   * frozen world is answered by the world's own statement and never by `narrationWithoutWork`. A companion whose picture
+   * of the world has already been contradicted is not a companion who chose to narrate, and the reason name is what a
+   * reader of the run would otherwise get wrong. `narrationWithoutWork` is reachable only when nothing is pending.
    * </p>
    */
-  #turnOwesAnother(): boolean {
-    if (this.#closed || !this.#integrationAdmissionOpen || this.#runTermination !== undefined) return false;
-    // A pending delivery is the ordinary reason, unchanged.
-    if (this.loop.pump.hasPendingDelivery) return true;
-    // The second reason, and the defect: the last turn settled without producing work, so the world is exactly where it
-    // was and nothing will move it. Bounded, so a model that answers with dialogue forever costs two turns, not the run.
-    return this.#idleTurnsWithoutWork > 0 && this.#idleTurnsWithoutWork < 2 && this.#lastTurnOutcome === "completed";
+  public get wakeReason(): HostWakeReason | undefined {
+    if (this.#closed || !this.#integrationAdmissionOpen || this.#runTermination !== undefined) return undefined;
+    if (this.loop.pump.hasPendingDelivery) return HOST_WAKE_REASON.pendingDelivery;
+    // `?.` for the same reason `stallWatch` is read that way: the Host's own test doubles provide a partial pump, while
+    // the TYPE still requires the getter - so a real pump that loses it fails the build instead of quietly going silent.
+    if (this.loop.pump.narrationWithoutWork?.due === true) return HOST_WAKE_REASON.narrationWithoutWork;
+    return undefined;
   }
 
   /**
@@ -1487,6 +1482,43 @@ export class CompanionHostService {
     // Named where an operator and a bundle reader can both date it: what was watched, what the bound evicted, and what
     // is stuck - including the ownership that would release it, when the Mod said.
     process.stderr.write(`EXECUTION_STALL ${JSON.stringify({ atMs: Date.now(), ...fact.payload })}\n`);
+    this.acceptHostMintedFact(fact);
+  }
+
+  /**
+   * Publish the age of the world reading this session re-states, when it has outlived its bound.
+   *
+   * <p>
+   * Measured 2026-11-10 (`round45`): the reading froze at `revision 352` for the last 50 turns of the run while the
+   * clock walked from `06:00` through two `02:00` pass-outs and two day starts, and the only trace was a parenthetical
+   * inside the block it invalidated. The pump measures the age (`takeWorldStateStaleFact`); this publishes it on the one
+   * path every Host-minted fact uses, and on the channel a run can read it back - the same division of labour
+   * `#publishStallFact` keeps.
+   * </p>
+   */
+  #publishWorldStateStaleFact(): void {
+    const fact = this.loop.pump.takeWorldStateStaleFact?.();
+    if (fact === undefined) return;
+    process.stderr.write(`WORLD_STATE_STALE ${JSON.stringify({ atMs: Date.now(), ...fact.payload })}\n`);
+    this.acceptHostMintedFact(fact);
+  }
+
+  /**
+   * Say that an awake companion has spoken without acting, and let the fact start the turn.
+   *
+   * <p>
+   * The fact is MINTED by the pump (`takeNarrationWithoutWorkFact`) and travels the one path every other Host-minted fact
+   * uses, so a narration cannot become a second way to start a turn - and so the model is handed a reason rather than the
+   * same world block again. It is published only when `wakeReason` has already answered `narrationWithoutWork`, which is
+   * the arm that runs when nothing is pending; the reason is written beside the fact so a run can count which one woke her.
+   * </p>
+   */
+  #publishNarrationWithoutWorkFact(): void {
+    const fact = this.loop.pump.takeNarrationWithoutWorkFact?.();
+    if (fact === undefined) return;
+    process.stderr.write(
+      `NARRATION_WITHOUT_WORK ${JSON.stringify({ atMs: Date.now(), reason: HOST_WAKE_REASON.narrationWithoutWork, ...fact.payload })}\n`,
+    );
     this.acceptHostMintedFact(fact);
   }
 

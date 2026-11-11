@@ -243,6 +243,8 @@ export function createStardewObservationTools(
                 snapshot: bounded.snapshot as unknown as Snapshot,
                 revision,
                 ageTurns: 0,
+                // This answer IS the observation the block describes, so its age is zero on both measures.
+                ageMs: 0,
               });
       if (fresh) observedRevisionShown = revision;
       // A refresh the Mod refused still has a world to state - the last one it published - and the failure is said
