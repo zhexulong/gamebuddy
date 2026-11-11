@@ -6,7 +6,12 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { auditConductClasses, CONDUCT_OWNERS, CONDUCT_SOURCE } from "./check-game-surface-conduct-classes.mjs";
+import {
+  auditConductClasses,
+  CONDUCT_OWNERS,
+  CONDUCT_RULE_CODES,
+  CONDUCT_SOURCE,
+} from "./check-game-surface-conduct-classes.mjs";
 
 // red-proof: inject  restoring the deleted "Speak before you act" rule to the floor's list AND classifying it FORM ->
 //            `floor_governs_form:speak_before_acting:host/src/game-surface-prompt-floor.ts`
@@ -97,6 +102,69 @@ test("a form rule put back in the floor is named with the module that carries it
   );
   assert.equal(reading.status, "failed");
   assert.match(reading.violations[0].detail, /the card owns that: delete the rule rather than classifying it/u);
+});
+
+// The report is the half `tools/lib/harness-conformance.mjs` reads, so it is driven over the CLI rather than the library:
+// a report and a finding that disagree is the shape this suite could not see before.
+const cliReport = (root) => {
+  const result = spawnSync(process.execPath, [GATE, "--root", root], { encoding: "utf8" });
+  const lines = result.stdout.trim().split("\n");
+  return { status: result.status, report: JSON.parse(lines[lines.length - 1]), stderr: result.stderr };
+};
+
+test("the default run names every rule it can go red on, one report entry per rule", () => {
+  const { status, report } = cliReport(REPOSITORY_ROOT);
+  assert.equal(status, 0, "the tree's own conduct is fully classified");
+  assert.deepEqual(
+    report.checks.map((check) => check.id),
+    ["conduct_population", ...CONDUCT_RULE_CODES],
+    "the report is the population plus one entry per falsifier, in the order the gate lists them",
+  );
+  assert.deepEqual(
+    report.checks.map((check) => check.status),
+    report.checks.map(() => "passed"),
+    "the real tree passes every rule, so a red entry here would be a finding rather than a shape",
+  );
+  assert.equal(
+    report.examined,
+    auditConductClasses({ root: REPOSITORY_ROOT }).examined,
+    "the report carries the same population the library reading does, so one number describes one list",
+  );
+});
+
+test("a form rule in the floor turns that rule's report entry red, not only the exit code", async () => {
+  const floor = withFloorClass(withFloorElement(REAL_FLOOR, REMOVED_RULE), FORM_ENTRY);
+  await withFixtureRoot({ floor }, (root) => {
+    const { status, report, stderr } = cliReport(root);
+    assert.equal(status, 1, `the CLI exits 1 on a form rule, printed: ${stderr}`);
+    const form = report.checks.find((check) => check.id === "floor_governs_form");
+    assert.equal(form?.status, "failed", "the rule's own entry is red, which is what the conformance suite reads");
+    assert.match(form.detail, /^1 violation\(s\) of no rule in the floor governs the turn's form/u);
+    assert.deepEqual(
+      report.checks.filter((check) => check.status === "failed").map((check) => check.id),
+      ["floor_governs_form"],
+      "only the rule that fired is red, so the report names which rule a reader has to fix",
+    );
+    return null;
+  });
+});
+
+test("a blocked reading reports every rule as blocked rather than as passed", async () => {
+  const floor = REAL_FLOOR.replace(
+    "const GAME_SURFACE_INTERACTION_CONDUCT = [",
+    "const GAME_SURFACE_INTERACTION_CONDUCT_RENAMED = [",
+  );
+  await withFixtureRoot({ floor }, (root) => {
+    const { status, report } = cliReport(root);
+    assert.equal(status, 2, "a population this gate cannot see cannot pass");
+    assert.equal(report.examined, 0);
+    assert.deepEqual(
+      report.checks.map((check) => check.status),
+      report.checks.map(() => "blocked"),
+      "nothing was judged, so no rule may claim to have passed over it",
+    );
+    return null;
+  });
 });
 
 test("a rule added without a class is named by its position in the floor and its first words", async () => {

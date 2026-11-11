@@ -43,14 +43,19 @@
  * this reads. A list whose elements are no longer one per line makes the reader throw, and that is reported as blocked:
  * a gate that mis-parsed the floor and then passed would be worse than no gate.
  *
+ * THE DEFAULT RUN PRINTS THE REPORT, ONE `checks[]` ENTRY PER RULE IT CAN GO RED ON, so
+ * `tools/lib/harness-conformance.mjs` reads what this gate judges instead of trusting its prose - the same report shape
+ * `tools/check-snapshot-field-rendering.mjs` prints. The entries come from `CONDUCT_RULES`, which every violation below
+ * splices its code from: a rule that exists on one side and not the other cannot pass unremarked.
+ *
  * Usage:
  *   node tools/check-game-surface-conduct-classes.mjs                 # the gate; exit 1 on a violation, 2 when blocked
  *   node tools/check-game-surface-conduct-classes.mjs --json          # every rule's class, machine-readable
  *   node tools/check-game-surface-conduct-classes.mjs --root <dir>    # the gate's own fixture (a copied tree)
  *
  * red-proof: inject  restoring the deleted "Speak before you act" rule to the floor's list AND classifying it FORM ->
- *            exit 1, `floor_governs_form:speak_before_acting:host/src/game-surface-prompt-floor.ts`
- *            (tools/check-game-surface-conduct-classes.test.mjs).
+ *            exit 1, `floor_governs_form:speak_before_acting:host/src/game-surface-prompt-floor.ts`, and that rule's
+ *            `checks[]` entry reads failed (tools/check-game-surface-conduct-classes.test.mjs).
  */
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -80,6 +85,29 @@ const RULE_DECLARATION = /^export const ([A-Z][A-Z0-9_]*) =\s*$/u;
 
 /** The three kinds the doctrine names. A class outside this set is a finding, not a fourth kind. */
 export const CONDUCT_CLASSES = Object.freeze(["FLOOR", "CHANNEL", "FORM"]);
+
+/**
+ * Every rule this gate can go red on: `code` is the finding code (and the `checks[]` id), `protects` the property it
+ * protects. Violations splice their code from here, so the report and the findings cannot disagree about which rules
+ * exist - the list is written once.
+ */
+const CONDUCT_RULES = Object.freeze({
+  unowned: {
+    code: "conduct_rule_unowned",
+    protects: "every rule the floor composes is declared by a module in CONDUCT_OWNERS",
+  },
+  classless: {
+    code: "conduct_rule_without_a_class",
+    protects: "every composed rule is classified by the table of the module that owns it",
+  },
+  stale: { code: "stale_conduct_class", protects: "no class entry outlives the rule it classifies" },
+  unknown: { code: "conduct_class_unknown", protects: "every class is one of FLOOR / CHANNEL / FORM" },
+  unreasoned: { code: "conduct_class_without_reason", protects: "every class carries the line of argument for it" },
+  form: { code: "floor_governs_form", protects: "no rule in the floor governs the turn's form - the card owns that" },
+});
+
+/** One code per rule, in the order the report lists them. */
+export const CONDUCT_RULE_CODES = Object.freeze(Object.values(CONDUCT_RULES).map((rule) => rule.code));
 
 /** The lines between a declaration's opening line and the line that closes it, trimmed. */
 function declarationBody(source, declaration, module) {
@@ -235,7 +263,7 @@ export function auditConductClasses({ root = REPOSITORY_ROOT } = {}) {
   for (const rule of rules) {
     if (rule.unowned) {
       violations.push({
-        code: `conduct_rule_unowned:${String(rule.index)}:${rule.name}`,
+        code: `${CONDUCT_RULES.unowned.code}:${String(rule.index)}:${rule.name}`,
         detail:
           "the floor composes this rule but no module in CONDUCT_OWNERS declares it: name the module that owns it, " +
           "and give it an entry in that module's table",
@@ -253,7 +281,7 @@ export function auditConductClasses({ root = REPOSITORY_ROOT } = {}) {
       const entry = table[position];
       if (entry === undefined) {
         violations.push({
-          code: `conduct_rule_without_a_class:${String(rule.index)}:${firstWords(rule.text)}`,
+          code: `${CONDUCT_RULES.classless.code}:${String(rule.index)}:${firstWords(rule.text)}`,
           detail:
             `this rule of ${owner.module} carries no class in ${owner.table}: classify it FLOOR, CHANNEL or FORM ` +
             "(and if it is FORM, delete it - the card governs form)",
@@ -262,7 +290,7 @@ export function auditConductClasses({ root = REPOSITORY_ROOT } = {}) {
       }
       if (rule === undefined) {
         violations.push({
-          code: `stale_conduct_class:${entry.id}`,
+          code: `${CONDUCT_RULES.stale.code}:${entry.id}`,
           detail:
             `${owner.table} classifies ${String(table.length)} rule(s) and ${owner.module} carries ${String(mine.length)}: ` +
             "removing a rule must remove its class entry, or the table stops describing the floor. The pairing is " +
@@ -274,7 +302,7 @@ export function auditConductClasses({ root = REPOSITORY_ROOT } = {}) {
       rows.push({ index: rule.index, module: rule.module, class: entry.class, id: entry.id });
       if (!CONDUCT_CLASSES.includes(entry.class)) {
         violations.push({
-          code: `conduct_class_unknown:${entry.id}`,
+          code: `${CONDUCT_RULES.unknown.code}:${entry.id}`,
           detail: `"${entry.class}" is not one of ${CONDUCT_CLASSES.join(" / ")}: a class outside the doctrine is not a class`,
         });
         continue;
@@ -282,12 +310,12 @@ export function auditConductClasses({ root = REPOSITORY_ROOT } = {}) {
       counts[entry.class] += 1;
       if (entry.reason.trim() === "")
         violations.push({
-          code: `conduct_class_without_reason:${entry.id}`,
+          code: `${CONDUCT_RULES.unreasoned.code}:${entry.id}`,
           detail: "a class with no reason is a label nobody argued for, which is how a form rule gets called floor",
         });
       if (entry.class === "FORM")
         violations.push({
-          code: `floor_governs_form:${entry.id}:${owner.module}`,
+          code: `${CONDUCT_RULES.form.code}:${entry.id}:${owner.module}`,
           detail:
             "this rule governs the turn's form, and the card owns that: delete the rule rather than classifying it. " +
             "The floor may bound a monologue; it may not decide how long a turn is or how many beats it carries",
@@ -305,38 +333,59 @@ export function auditConductClasses({ root = REPOSITORY_ROOT } = {}) {
   };
 }
 
-function main(argv) {
-  const rootIndex = argv.indexOf("--root");
-  const root =
-    rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
-  const json = argv.includes("--json");
-  const reading = auditConductClasses({ root });
+/**
+ * One rule's verdict: `blocked` when the reading judged nothing at all, `failed` when the rule fired, `passed` otherwise.
+ */
+function ruleStatus(count, nothingJudged) {
+  if (nothingJudged) return "blocked";
+  return count === 0 ? "passed" : "failed";
+}
+
+/**
+ * The gate's report: its id, verdict and population, plus one `checks[]` entry per rule in `CONDUCT_RULES` - the report
+ * `tools/lib/harness-conformance.mjs` runs this gate to read.
+ */
+export function conductReport(reading) {
+  const nothingJudged = reading.status === "blocked" || reading.examined === 0;
+  const fired = new Map();
+  for (const violation of reading.violations) {
+    const code = violation.code.split(":")[0];
+    fired.set(code, (fired.get(code) ?? 0) + 1);
+  }
+  const checks = [
+    {
+      id: "conduct_population",
+      status: reading.examined === 0 ? "blocked" : "passed",
+      detail: `${String(reading.examined)} rule(s) in GAME_SURFACE_INTERACTION_CONDUCT`,
+    },
+    ...Object.values(CONDUCT_RULES).map((rule) => {
+      const count = fired.get(rule.code) ?? 0;
+      return {
+        id: rule.code,
+        status: ruleStatus(count, nothingJudged),
+        detail: count === 0 ? rule.protects : `${String(count)} violation(s) of ${rule.protects}`,
+      };
+    }),
+  ];
   const blocks = reading.classes;
-  const violationsStatus = (() => {
-    if (reading.examined === 0) return "blocked";
-    if (reading.status === "blocked") return "blocked";
-    return reading.violations.length === 0 ? "passed" : "failed";
-  })();
-  const report = {
+  return {
     gate: "game-surface-conduct-classes",
     status: reading.status,
     examined: reading.examined,
     FLOOR: blocks.FLOOR ?? 0,
     CHANNEL: blocks.CHANNEL ?? 0,
     FORM: blocks.FORM ?? 0,
-    checks: [
-      {
-        id: "conduct_population",
-        status: reading.examined === 0 ? "blocked" : "passed",
-        detail: `${String(reading.examined)} rule(s) in GAME_SURFACE_INTERACTION_CONDUCT`,
-      },
-      {
-        id: "every_rule_classified_and_no_form",
-        status: violationsStatus,
-        detail: `${String(reading.violations.length)} violation(s)`,
-      },
-    ],
+    checks,
   };
+}
+
+function main(argv) {
+  const rootIndex = argv.indexOf("--root");
+  const root =
+    rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
+  const json = argv.includes("--json");
+  const reading = auditConductClasses({ root });
+  const report = conductReport(reading);
   if (json) {
     process.stdout.write(`${JSON.stringify({ ...report, rules: reading.rules })}\n`);
   } else {
