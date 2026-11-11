@@ -112,6 +112,10 @@ export const L0_GATES = Object.freeze([
   // the real Host switch, so it costs a file read rather than a live run.
   "tools/check-stardew-postcondition-delta.mjs",
   "tools/check-stardew-promotion-parity.mjs",
+  // The refusal-detail state set: one fact owned by the Mod's `MayCarryRefusalDetail`, projected by
+  // `BODY_PROGRAM_REFUSAL_DETAIL_NODE_STATES`. Measured 2026-11-11: the Host half of `15a3c57c` was never written, one
+  // refused status frame closed the bridge, and the run's 7th turn was lost. Milliseconds, two file reads.
+  "tools/check-refusal-detail-state-parity.mjs",
   "integrations/stardew/action-development/tests/action-source-projection-drift.test.mjs",
   "integrations/stardew/action-development/tests/action-projection-parity-drift.test.mjs",
   // The vendored patch set. `vendor/magic-context` is a pin we do not own, and the SillyTavern preset seam

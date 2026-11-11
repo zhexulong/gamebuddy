@@ -339,6 +339,14 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   "check-switch-exhaustiveness.mjs",
   "check-contrast-tokens.mjs",
   "check-credential-export-isolation.mjs",
+  // Prints `refusal_detail_states examined N · agree M · missing K` plus a `checks[]` verdict enumerating its three
+  // rules (both declarations readable, every mapped token in the Host's own state table, the two sets equal), so its
+  // default run is the report this suite reads. Its falsifier is tools/check-refusal-detail-state-parity.test.mjs, which
+  // replays the tree of `15a3c57c` - the Mod's `MayCarryRefusalDetail` naming `PartiallySucceeded` while the Host set does
+  // not - and requires `refusal_detail_state_set_drift:partially_succeeded:host`; it also drives the drift in the other
+  // direction (`:mod`), a Host token the Mod's method never permits, a Mod state the wire has no token for, a declaration
+  // that cannot be read, an empty set (exit 2, never green) and the CLI's own exit codes on a throwaway root.
+  "check-refusal-detail-state-parity.mjs",
   "check-evidence-bundle.mjs",
   "check-fail-closed-forward-path.mjs",
   "check-game-context-pressure.mjs",

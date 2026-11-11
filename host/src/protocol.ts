@@ -1948,15 +1948,20 @@ export function bodyProgramNodeStateVerdict(state: string): BodyProgramNodeState
 /**
  * The states a node may carry `refusalDetail` on: the ones where it settled without succeeding.
  *
- * The same three the Mod's journal permits (`BodyProgramValidation.MayCarryRefusalDetail`), stated over the wire
- * token: a `succeeded` node proves an effect, an in-flight one has refused nothing, and `recovery_required` says why in
- * `recoveryDiagnostic` instead. Exported so a gate can exercise the real-detail arm on exactly the states the wire
- * permits it, instead of on a second list written in the test.
+ * The same four the Mod's journal permits (`BodyProgramValidation.MayCarryRefusalDetail`), stated over the wire token: a
+ * `succeeded` node proves an effect, an in-flight one has refused nothing, and `recovery_required` says why in
+ * `recoveryDiagnostic` instead. `partially_succeeded` is in the set because what part of it did NOT happen is a refusal
+ * of exactly that kind, one row at a time. A state the Mod allows here and this set does not is a frame the Mod sends
+ * and this validator refuses, which `local-stardew-bridge.ts` answers by closing the transport;
+ * `tools/check-refusal-detail-state-parity.mjs` derives both sides from those declarations and names the drifting state
+ * rather than leaving the disagreement to a live run. Exported so a gate can exercise the real-detail arm on exactly the
+ * states the wire permits it, instead of on a second list written in the test.
  */
 export const BODY_PROGRAM_REFUSAL_DETAIL_NODE_STATES: ReadonlySet<BodyProgramNodeState> = new Set([
   "failed",
   "cancelled",
   "rejected",
+  "partially_succeeded",
 ]);
 
 /** The Mod's own bound on a refusal detail (`BodyProgramValidation.MaximumNodeRefusalDetailLength`). */
@@ -2002,9 +2007,10 @@ type BodyProgramNodeStatus = Readonly<{
    * WHY a node settled without succeeding, in the refusing layer's own words - e.g.
    * `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1`.
    *
-   * A reason detail, never proof of an effect: it is legal only on `failed`/`cancelled`/`rejected` and never on
-   * `succeeded`, which is the same footing `failureCode` has. Absent when the Mod had nothing more to say than the code,
-   * and the plan answer then says so instead of staying silent (`program-status-wait.ts:planNodeReasonDetail`).
+   * A reason detail, never proof of an effect: it is legal exactly on the states the declaration
+   * `BODY_PROGRAM_REFUSAL_DETAIL_NODE_STATES` names and never on `succeeded`, which is the same footing `failureCode`
+   * has. Absent when the Mod had nothing more to say than the code, and the plan answer then says so instead of staying
+   * silent (`program-status-wait.ts:planNodeReasonDetail`).
    */
   refusalDetail?: string | null;
   /**
