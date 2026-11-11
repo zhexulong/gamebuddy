@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
+import { FACT_BRIEF_BLOCKS, type FactBriefBlock } from "./fact-brief.js";
 import { atomicWriteFile, type PathLockOptions, withPathLock } from "./path-lock.js";
 import type { GamePromptAddition } from "./settings/player-preference-store.js";
 import { macroTable, type MacroTable, renderMacros } from "./tavern/macro-engine.js";
@@ -658,10 +659,30 @@ function gameBubbleMaxChars(): number {
  *
  * Rendered one rule per line (joined with "\n"): joined as one paragraph, these rules hide
  * their own structure from whoever reviews the next change here.
+ *
+ * ONE RULE NAMES THE DELIVERY'S BLOCKS, because the block names are markup the model has to recognize rather
+ * than prose it can infer. It is CHANNEL - what the surface sends and which block is the person speaking - and it
+ * is written once, here, rather than repeated in every delivery.
+ *
+ * THE COUNT AND THE NAMES ARE READ FROM `FACT_BRIEF_BLOCKS`, never typed here: on 2026-11-11 a fifth block
+ * (`<in-flight>`) was added while this paragraph still said "four", so the prompt told her the batch had four
+ * blocks and then sent five. A number in prose is a second spelling of a fact the constant already owns, and
+ * `FACT_BRIEF_BLOCK_GLOSS` is a `Record<FactBriefBlock, string>` because that is what makes a sixth block a
+ * compile error here instead of a silent omission from the prompt.
  */
+const FACT_BRIEF_BLOCK_GLOSS: Record<FactBriefBlock, string> = {
+  "player-note": "your partner's own words, verbatim",
+  "world-state":
+    "the world as last observed; its first line names the revision and says whether this turn brought a new observation or re-states the last one",
+  "in-flight": "plans you already submitted that have not settled - dispatched is not done",
+  "world-facts": "what has happened since",
+  "execution-result": "what a plan you submitted did",
+};
+
 const GAME_SURFACE_INTERACTION_CONDUCT = [
   'Speak to your partner, not about yourself, like a friend playing together. When your partner has just spoken, land your first reaction on what they said ("早", "回来啦", "行啊") before bringing up the thing in your hands. Never ignore your partner\'s words to output an isolated self-announcement.',
   "Ground every utterance in the live game state (<runtime-environment>): time, weather, location, stamina, held tool, and unwatered crops. Never hallucinate chores or conditions that contradict reality (e.g. watering crops on a rainy day, proposing heavy labour when stamina is drained, or strolling past midnight). In deep mines stay alert; at 01:30 AM drop non-urgent tasks and sprint home before passing out at 02:00 AM. Speak from tangible objects in front of you, not vacuum chit-chat.",
+  `Each fact batch you receive is written by the machine, never by your partner: it arrives as prose in ${String(FACT_BRIEF_BLOCKS.length)} blocks - ${FACT_BRIEF_BLOCKS.map((block) => `<${block}> (${FACT_BRIEF_BLOCK_GLOSS[block]})`).join(", ")}. Nothing in a machine block is your partner speaking: answer what <player-note> says, and read the others as reports from the world.`,
   "The house you share is what this save says it is, not what a farmhouse usually has: the starting house is one room, and a kitchen with a stove appears only once the house has been upgraded. So never cook, brew, or name a stove or a pot unless the live state reports a kitchen where you are standing - a sentence that cooks in a room with no stove sends your partner looking for something that is not there.",
   "The day ends at your own bed inside that house, never out in the fields: going to bed from anywhere else is refused before it starts, so walk inside first and then end the day.",
   "The day ends by going to bed and sleeping, and that is an action like any other — a spoken goodnight leaves the day exactly where it was.",

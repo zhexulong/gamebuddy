@@ -234,11 +234,13 @@ test("block_coverage: every block the composer emits is in the closed set, and e
 test("floor_block_count_owes_update: the prompt floor states the closed set's own length, and names each member", (context) => {
   const floor = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
-  const paragraph = /prose in [a-z]+ blocks?[^.]*\./u.exec(floor)?.[0] ?? "";
-  const stated = NUMBER_WORDS.indexOf(/prose in ([a-z]+) blocks?/u.exec(floor)?.[1] ?? "");
-  if (stated !== FACT_BRIEF_BLOCKS.length)
+  const paragraph = /prose in (?:\d|[a-z]+) blocks?[^.]*\./u.exec(floor)?.[0] ?? "";
+  const stated = Number.parseInt(/prose in (\d+)/u.exec(floor)?.[1] ?? "", 10);
+  const statedWord = NUMBER_WORDS.indexOf(/prose in ([a-z]+) blocks?/u.exec(floor)?.[1] ?? "");
+  const counts = Number.isNaN(stated) ? statedWord : stated;
+  if (counts !== FACT_BRIEF_BLOCKS.length)
     return context.skip(
-      `floor_block_count_owes_update:identity-profile.ts:floor_says_${String(stated)}_blocks;FACT_BRIEF_BLOCKS_is_${String(FACT_BRIEF_BLOCKS.length)}`,
+      `floor_block_count_owes_update:identity-profile.ts:floor_says_${String(counts)}_blocks;FACT_BRIEF_BLOCKS_is_${String(FACT_BRIEF_BLOCKS.length)}`,
     );
   const named = [...new Set([...paragraph.matchAll(/<([a-z-]+)>/gu)].map((match) => match[1] ?? ""))].sort();
   assert.deepEqual(
@@ -246,7 +248,7 @@ test("floor_block_count_owes_update: the prompt floor states the closed set's ow
     [...FACT_BRIEF_BLOCKS].sort(),
     "the floor names the blocks the delivery carries, and no block it does not",
   );
-  process.stdout.write(`floor_blocks examined ${String(stated)} of FACT_BRIEF_BLOCKS\n`);
+  process.stdout.write(`floor_blocks examined ${String(counts)} of FACT_BRIEF_BLOCKS\n`);
 });
 
 test("note_in_own_block: the player's words are in <player-note> and nowhere else", () => {

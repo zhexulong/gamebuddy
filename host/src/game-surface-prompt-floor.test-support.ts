@@ -179,30 +179,33 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       "Not a recording at all: this module computes both counts at read time, from integrations/stardew/action-development/contracts/generated/action-surface.v1.json (the artifact the live hello_ack publishes) - its executable actions for `flatPerActionTools`, and the Host's own plan admission (`body-program-script.ts` `planActionsFromRegistrations`) over the same actions for `plannableBuilderMethods`. The pair was 95/92 as literals until 2026-11-10, by which time the artifact published 101 executable actions of which 95 were plannable; the gate that replaced them recorded 101/95, and the surface grew to 102/96 within two days. A count beside the thing it counts is a second spelling, so there is no count here to re-record: it follows the artifact.",
     remeasured_2026_11_10:
       "The Game prompt SHRANK from 13,781 to 10,452 chars (-3,329) in f94d31c6 (2026-11-10 02:22), which cut the card's `characterVoice.text` from ~4,025 to 575 source chars and did not re-record this reading. The CHARACTER columns are re-derived here from the product's own builder exactly: `systemChars` 10,452, and the conduct slice is UNCHANGED at 6,631 chars (its numerator proves it - the block is Host floor text, not card prose), so its share is 6,631 / 10,452 = 0.6344, against the previously recorded 6,631 / 13,781 = 0.4812. The TOKEN and ENVELOPE columns were NOT re-measured in this commit and remain the irreproducible under-counts `remeasured_2026_11_05` describes; they are now additionally stale by the card's cut, and the `systemTokens` recorded here describes a prompt 3,329 chars longer than the one that ships.",
+    remeasured_2026_11_10_b:
+      "The Game prompt GREW by exactly one conduct rule (+559 chars, 10,452 to 11,011): the paragraph naming the four delivery blocks (`<player-note>` <world-state> <world-facts> <execution-result>) and stating that a machine block is not the player speaking. It is 558 chars of text plus the newline the conduct joins it with, and the conduct slice grew by the same 559 (6,631 to 7,190), which is what proves the growth is inside the floor and not in card prose: 7,190 / 11,011 = 0.6530. `envelopeChars`/`envelopeBytes` moved by the JSON-escaped system string's own delta (+560 chars: 558 prose + the newline, escaped as two; +559 bytes, the paragraph is ASCII), which is the whole envelope's delta because `tools` and `messages` are unchanged. The TOKEN columns are carried UNCHANGED and are now a larger under-count still: they describe a prompt 3,889 chars shorter than the one that ships.",
+    remeasured_2026_11_11:
+      "The delivery-block rule stopped being prose with a number in it: its count and its member names are now read from `FACT_BRIEF_BLOCKS`, so a fifth block (`<in-flight>`, added 2026-11-11) is named in the sentence instead of the prompt saying four while the batch carried five. Measured by the test against the product's builder: `systemChars` 11,101 (10,452 + the 559-char rule of 2026-11-10 + 90 from this rewrite) and the conduct slice 7,268 (6,631 + 559 + 78). The two deltas differ by 12 chars and are recorded AS MEASURED, not reconciled: the previous entry asserted the conduct grew by exactly the same 559 as the prompt, which was arithmetic rather than a second reading. `envelopeChars`/`envelopeBytes` follow the system string by its own delta (+90, ASCII, no new escapes). The TOKEN columns are again carried unchanged and are now a larger under-count still.",
   }),
   floor: Object.freeze({
     toolCount: 14,
-    // Re-derived 2026-11-10 from the product's builder by the test itself: 13,781 - 3,329, where the 3,329 is the
-    // card's `characterVoice.text` cut in f94d31c6 (see `remeasured_2026_11_10`). The token column below is the
-    // 2026-11-05 MEASUREMENT, an under-count of a shorter prompt that is no longer this one.
-    systemChars: 10452,
+    // Re-derived from the product's builder by the test itself: 10,452 + the 559-char conduct rule of 2026-11-10 + 90
+    // from the 2026-11-11 rewrite that made the block list derive from `FACT_BRIEF_BLOCKS` (its `remeasured_2026_11_11`
+    // states the arithmetic). The token column below is the 2026-11-05 MEASUREMENT, an under-count of a shorter prompt
+    // that is no longer this one.
+    systemChars: 11101,
     systemTokens: 5119,
     toolsTokens: 3552,
-    // 23,152 + 2,594: the JSON-escaped system string's own delta, which is the whole envelope's delta because the
-    // tool array and the empty message list are unchanged. The extra 69 characters over the raw 2,525 are the added
-    // newlines, which JSON escapes as two characters each.
-    envelopeChars: 25746,
-    // 28,210 + 6,846: the same delta in UTF-8 bytes, measured rather than derived from the character count, because
-    // most of what was added is three bytes per character.
-    envelopeBytes: 35056,
+    // 23,152 + 2,594 (2026-11-05) + 560 (the same JSON-escaped delta as the 559-char rule): the whole envelope's delta,
+    // because the tool array and the empty message list are unchanged.
+    envelopeChars: 26396,
+    // 28,210 + 6,846 (2026-11-05) + 559 in UTF-8 bytes, the rule being ASCII.
+    envelopeBytes: 35705,
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
-    chars: 6631,
+    chars: 7268,
     tokens: 1227,
-    // The measured slice over the measured prompt: 6,631 / 10,452. Recorded as the quotient, not as a share typed
-    // separately from the two numbers it divides - the previous recording carried 0.5619 against 6,194/10,886 = 0.5690.
-    charShareOfSystemPrompt: 0.6344,
+    // The measured slice over the measured prompt: 7,268 / 11,101. Recorded as the quotient, not as a share typed
+    // separately from the two numbers it divides - the previous recording carried 0.653 against 7,190/11,011.
+    charShareOfSystemPrompt: 0.655,
     tokenShareOfSystemPrompt: 0.24,
   }),
   denominator: Object.freeze([

@@ -58,9 +58,12 @@ import { MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH, type Snapshot } from "./protoco
  * ORDER IS THE READING ORDER, and `<in-flight>` sits between the world and the news on purpose: what is true now, then
  * what she has already set in motion and not yet seen land, then what happened.
  *
- * THE PROMPT FLOOR NAMES FOUR OF THESE (`identity-profile.ts`), and the fifth names itself: see
- * `composeInFlight`'s comment for why the count in that paragraph is now a number the floor has to re-derive, and for
- * the token `fact-brief.test.ts` carries while it has not. The closed set is this list, not that sentence.
+ * THE PROMPT FLOOR NAMES EVERY ONE OF THESE (`identity-profile.ts`), and it reads the list and the count from this
+ * array rather than restating them: its paragraph is built from `FACT_BRIEF_BLOCKS.length` and a
+ * `Record<FactBriefBlock, string>` of glosses, so a sixth block is a compile error there instead of a block the prompt
+ * forgot. Between 2026-11-11 and the same day's later commit the floor said "four" while this set held five; that
+ * window is why `fact-brief.test.ts` now asserts the stated count equals this array's length. The closed set is this
+ * list.
  */
 export const FACT_BRIEF_BLOCKS = Object.freeze([
   "player-note",
@@ -371,12 +374,11 @@ const NOT_YET_TRUE = "上面这些只是派出去了：还没结算，就等于�
  * </p>
  *
  * <p>
- * IT NAMES ITSELF, and that is a concession rather than the design. The Game surface's prompt floor (`identity-profile.ts`)
- * lists the blocks the model has to recognize, and that paragraph says "four" - a number written in prose, in a file this
- * change does not own. So the block's first line carries its own meaning instead of depending on being introduced:
- * `in_flight:settled=0;total=2;remaining=2（计划 plan_… 还没结算）` is readable as nothing but what it is. The token is
- * the one a floor, a gate or a run audit can grep (`fact-brief.test.ts` carries `floor_block_count_owes_update`), and
- * when the floor's count is regenerated from `FACT_BRIEF_BLOCKS.length` this concession can be deleted.
+ * IT ALSO NAMES ITSELF, and that is redundant on purpose rather than the design. The prompt floor names every block
+ * (`identity-profile.ts`, from `FACT_BRIEF_BLOCKS`), so the block's own first line is no longer the only place its
+ * meaning comes from: `in_flight:settled=0;total=2;remaining=2（计划 plan_… 还没结算）` stays readable as nothing but
+ * what it is, which is what a batch needs when a reader - a person, a run audit, or the model - arrives with no floor
+ * in hand.
  * </p>
  *
  * <p>
