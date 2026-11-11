@@ -550,13 +550,14 @@ export function crossingsFromEvidence({
   // sources and the calendar are reconciled by the rule above - that is what `crossedBy` publishes - so they are not
   // compared one by one: a run with one sleep and two pass-outs is three nights, not three disagreements. What is left
   // is the WATCH (`day_records`) and the CLAIM (`recorded`), which never decide a count and routinely fall short of it
-  // (round44: `crossings: 2` beside three evidence crossings). When no count could be decided, every readable source is
-  // named, because the disagreement IS the result.
+  // (round44: `crossings: 2` beside three evidence crossings). When NO count could be decided, the evidence sources are
+  // named instead - they are the ones in conflict - and the claim is printed above them anyway.
   const CLAIM_SOURCES = new Set(["day_records", "recorded"]);
+  const EVIDENCE_SOURCES = new Set(["sleep_receipts", "night_endings", "day_started_facts"]);
   const readable = sources.filter((entry) => entry.crossings !== null);
   const differing =
     crossings === null
-      ? readable
+      ? readable.filter((entry) => EVIDENCE_SOURCES.has(entry.name))
       : readable.filter((entry) => CLAIM_SOURCES.has(entry.name) && entry.crossings !== crossings);
   const disagreement =
     differing.length === 0

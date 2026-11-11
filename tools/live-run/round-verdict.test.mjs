@@ -536,7 +536,10 @@ test("evidence sources that disagree are printed with all their numbers rather t
     (runDir) => {
       const output = runVerdict(runDir);
       assert.match(output, /nights\s+crossings not_decided/u);
-      assert.match(output, /DISAGREEMENT\s+crossings_disagree:sleep_receipts=3:day_started_facts=2/u);
+      // The three EVIDENCE sources are named, because they are the ones in conflict (3 receipts against 2 days the world
+      // opened, and no pass-out fact to explain the gap): a run that cannot state how many nights it lived names every
+      // number that refused it. The two claim sources are printed above and are not part of the claim about reality.
+      assert.match(output, /DISAGREEMENT\s+crossings_disagree:sleep_receipts=3:night_endings=0:day_started_facts=2/u);
       assert.match(output, /4 night mechanism\s+PASS\s+crossed=not_decided/u);
       assert.doesNotMatch(output, /crossings 3 by the run's own evidence/u, "two evidence sources, no single number");
     },

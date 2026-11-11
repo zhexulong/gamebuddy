@@ -18,8 +18,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
-import { worldDayStartsFromFacts } from "../lib/multiday-baseline.mjs";
-import { crossingsFromEvidence } from "../lib/multiday-loop.mjs";
+import { worldDayStartsFromFacts, worldNightEndingsFromFacts } from "../lib/multiday-baseline.mjs";
+import { crossingsFromEvidence, wakeReasonReachability } from "../lib/multiday-loop.mjs";
 import { census, format, formatCensus, reading } from "../lib/reading.mjs";
 
 const LADDER = ".live-runs/game-ladder";
@@ -254,6 +254,10 @@ function crossingsBlock(runDir, result) {
   const multiday = result.multiday ?? null;
   const derivation = crossingsFromEvidence({
     sleepReceipts: timeline.rows === null ? null : timeline.rows.filter((row) => row?.type === "execution_receipt"),
+    // THE ENGINE'S OWN CROSSINGS. `night_ended_pass_out_day_<n>` is `Game1.PassOutNewDay()` calling `NewDay` itself, so a
+    // night it took really opened a day. Without this row the count could only see the nights her own sleep ended -
+    // measured 2026-11-11 (`round45`): one receipt against three day starts, which the pairing answered as "no number".
+    worldNightEndings: timeline.rows === null ? null : worldNightEndingsFromFacts(timeline.rows),
     dayStartedDays: timeline.rows === null ? null : worldDayStartsFromFacts(timeline.rows),
     dayRecords: Array.isArray(multiday?.dayRecords) ? multiday.dayRecords : null,
     recorded: typeof multiday?.crossings === "number" ? multiday.crossings : null,
@@ -277,6 +281,14 @@ function crossingsLines({ timelineWhy, derivation }) {
         entry.crossings === null ? "not_measured" : String(entry.crossings)
       }  <- ${entry.source}`,
     );
+  // WHAT EACH CROSSING WAS CAUSED BY, beside the count: a run whose nights the engine ended reads pass_out, and a
+  // crossing the calendar proves and nothing in this run explains reads other rather than being folded into either.
+  const cause = (value) => (value === null ? "not_measured" : String(value));
+  push(
+    `${statusLabel("crossed_by")} sleep ${cause(derivation.crossedBy.sleep)}, pass_out ${cause(
+      derivation.crossedBy.pass_out,
+    )}, other ${cause(derivation.crossedBy.other)}  <- the causes the decided count is made of (sleep = her own advance_day, pass_out = the engine's own NewDay, other = nobody recorded how)`,
+  );
   if (derivation.observed.length > 0)
     push(
       `${statusLabel("observed")} ${derivation.observed.join(", ")}  (a post_watch night was crossed after the watcher stopped, so it was not watched)`,
@@ -284,7 +296,7 @@ function crossingsLines({ timelineWhy, derivation }) {
   if (timelineWhy !== null) push(`${statusLabel("timeline")} ${timelineWhy}`);
   if (derivation.disagreement !== null)
     push(
-      `${statusLabel("DISAGREEMENT")} ${derivation.disagreement}  <- the loop counted the nights it watched and this artifact published that count as the nights it lived`,
+      `${statusLabel("DISAGREEMENT")} ${derivation.disagreement}  <- the sources that do not agree with the decided count; the watch and the published number never decide it`,
     );
   return lines;
 }
@@ -1148,6 +1160,21 @@ function formatEfficiency(report) {
         : `${report.wakes.dayEndOffers} of ${report.turns} prompt turns - the day's work was done and the day was nearly over, so the offer asks and never dispatches`
     }`,
   );
+  // EVERY REASON THE DECIDER OWNS, AGAINST WHAT THIS RUN ISSUED. `round45` published `day_end_offer 0` and
+  // `stall_wake 0` with nothing beside them to say the loop had never produced either reason; the population comes from
+  // `DECIDER_WAKE_REASONS`, so a reason added tomorrow is examined here without editing this line.
+  const reachability = wakeReasonReachability({ byReason: report.wakes?.byReason ?? null });
+  push(
+    `  ${label("wake_reasons")} ${
+      reachability.unmeasured === null
+        ? `${String(reachability.examined.length)} declared reason(s) examined: ${reachability.examined
+            .map((reason) => `${reason} ${String(reachability.issued[reason])}`)
+            .join(", ")}`
+        : notMeasured(reachability.unmeasured)
+    }`,
+  );
+  for (const violation of reachability.violations)
+    push(`  ${label("")} ${violation} - this run never produced it, so nothing here says it works`);
   push(
     `  ${label("floor_turns")} ${
       report.floorTurns === null
