@@ -94,6 +94,12 @@ const assistantMessage = (atMs, parts) => ({
   message: { role: "assistant", timestamp: atMs, durationMs: 1000, content: parts },
 });
 
+const userBatch = (atMs, text) => ({
+  type: "message",
+  timestamp: iso(atMs),
+  message: { role: "user", timestamp: atMs, content: [{ type: "text", text }] },
+});
+
 const window = { startedAtMs: START, endedAtMs: START + 60_000 };
 
 /** A node row as the journal publishes it inside a status snapshot, under the programme that owns it. */
@@ -403,6 +409,7 @@ test("reading_without_a_source_is_silent: every declared question prints its fou
       ],
     },
     records: [
+      userBatch(START - 1_000, "<player-note>seed the row</player-note>"),
       assistantMessage(START, [
         { type: "thinking", thinking: "the seed row is ready" },
         { type: "toolCall", id: "call_a", name: "stardew_observe", arguments: {} },
@@ -465,4 +472,39 @@ test("reading_without_a_source_is_silent: every declared question prints its fou
       );
     }
   }
+});
+
+/**
+ * A turn that speaks twice is two bubbles in the product, and that is what this reader has to make visible.
+ *
+ * `round46b` measured 27 prompt turns producing 55 assistant messages and 49 bubbles - 2.04 messages and 1.81
+ * bubbles per turn, one bubble every 13 seconds - while the prompt floor asks for `One utterance per reply`. The
+ * two spellings of "reply" are the defect, and a reader that counted assistant messages as turns could not see it.
+ */
+test("bubbles counts speech per prompt turn, so a turn that speaks twice is two bubbles and not one turn", (t) => {
+  const directory = fixture({
+    records: [
+      userBatch(START, "<player-note>clear the strip</player-note>"),
+      assistantMessage(START + 1_000, [
+        { type: "text", text: "推开门。" },
+        { type: "toolCall", id: "call_a", name: "stardew_observe", arguments: {} },
+      ]),
+      assistantMessage(START + 2_000, [{ type: "text", text: "门外日头正好。" }]),
+      userBatch(START + 3_000, "<world-state>revision 12</world-state>"),
+      assistantMessage(START + 4_000, [{ type: "toolCall", id: "call_b", name: "stardew_plan_work", arguments: {} }]),
+    ],
+  });
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+
+  const { status, text } = ask(directory, "bubbles");
+  assert.equal(status, 0, text);
+  assert.match(lineFor(text, "prompt turns"), /2 of 2 user batches carrying text/u, text);
+  assert.match(lineFor(text, "assistant messages"), /3 of 3 assistant messages/u, text);
+  assert.match(lineFor(text, "bubbles "), /2 of 3 assistant messages carrying speech/u, text);
+  assert.match(lineFor(text, "bubbles per turn"), /1 over 2 of 2 prompt turns/u, text);
+  assert.match(lineFor(text, "messages per turn"), /1\.5 over 2 of 2 prompt turns/u, text);
+  assert.match(lineFor(text, "speech with a tool call"), /1 of 2 bubbles/u, text);
+  assert.match(lineFor(text, "speech only"), /1 of 2 bubbles/u, text);
+  assert.match(lineFor(text, "tool only, no speech"), /1 of 3 assistant messages/u, text);
+  assert.match(text, /last record /u, "a mid-run read must print the record it stopped at, not imply the run is over");
 });

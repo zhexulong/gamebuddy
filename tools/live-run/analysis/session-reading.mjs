@@ -84,14 +84,23 @@ const SESSION_BIRTH_WINDOW_MS = 60_000;
  * here that prints no source, no population, or a bare number is caught by the suite rather than by the next reader who
  * trusts it.
  */
-export const QUESTIONS = Object.freeze(["tools", "turns", "codes", "nodes", "thinking", "progress", "shape"]);
+export const QUESTIONS = Object.freeze([
+  "tools",
+  "turns",
+  "bubbles",
+  "codes",
+  "nodes",
+  "thinking",
+  "progress",
+  "shape",
+]);
 
 /**
  * The questions only a session can answer. The rest read the bundle first and fall back to the session, so a run whose
  * session was never captured still answers them - refusing them for the missing session would be the reader claiming
  * its own limitation as the run's.
  */
-const SESSION_ONLY_QUESTIONS = Object.freeze(new Set(["tools", "turns", "thinking"]));
+const SESSION_ONLY_QUESTIONS = Object.freeze(new Set(["tools", "turns", "bubbles", "thinking"]));
 
 function out(line) {
   process.stdout.write(`${line}\n`);
@@ -628,6 +637,103 @@ function questionTools({ context }) {
   row("tool calls", count(parts.length, parts.length, "toolCall parts"));
   for (const [name, total] of tally(parts.map((part) => part.name)))
     row(`  ${name}`, count(total, parts.length, "toolCall parts"));
+  return 0;
+}
+
+/** A quotient rounded to the precision a reader can compare, never fifteen digits of float noise. */
+function round2(value) {
+  return Number.isFinite(value) ? Math.round(value * 100) / 100 : value;
+}
+
+function speechOf(message) {
+  const content = Array.isArray(message?.content) ? message.content : [];
+  return content
+    .filter((part) => part?.type === "text")
+    .map((part) => (typeof part.text === "string" ? part.text : ""))
+    .join("")
+    .trim();
+}
+
+/**
+ * How many bubbles the player was spoken at, per prompt turn and per tool call.
+ *
+ * <p>
+ * THE QUESTION EXISTS BECAUSE THE FLOOR AND THE RUNTIME DISAGREE ABOUT `reply`. `identity-profile.ts` asks for one
+ * spoken line per reply and a remark before every action; the runtime makes a reply out of every assistant message,
+ * and one prompt turn produces several (speak, call a tool, hear the result, speak again). Measured `round46b`:
+ * 27 batches, 55 messages, 49 of them carrying speech, 1.63 per tool call - one bubble every 13 seconds.
+ * </p>
+ *
+ * <p>
+ * A MID-RUN READ IS A WINDOW, NOT A VERDICT: a live session file grows while it is read, and a count taken at
+ * minute four called the same file's later batches invisible. So the last record this reading saw is printed beside
+ * the numbers, and the denominator is the batches that existed at that record - not the run.
+ * </p>
+ */
+function questionBubbles({ context }) {
+  const { entries, sessionName, window } = context;
+  let batches = 0;
+  let messages = 0;
+  let bubbles = 0;
+  let speechWithTool = 0;
+  let speechOnly = 0;
+  let toolOnly = 0;
+  let toolCalls = 0;
+  let current = null;
+  let lastAt = null;
+  for (const { record } of entries) {
+    const message = record?.message;
+    if (!message) continue;
+    const content = Array.isArray(message.content) ? message.content : [];
+    if (message.role === "user") {
+      const carriedResults = content.some((part) => part?.type === "toolResult");
+      if (speechOf(message).length > 0 && !carriedResults) {
+        batches += 1;
+        current = { bubbles: 0 };
+      }
+      continue;
+    }
+    if (message.role !== "assistant") continue;
+    messages += 1;
+    if (typeof record.timestamp === "string") lastAt = record.timestamp;
+    const calls = content.filter((part) => part?.type === "toolCall").length;
+    toolCalls += calls;
+    if (speechOf(message).length > 0) {
+      bubbles += 1;
+      if (current !== null) current.bubbles += 1;
+      if (calls > 0) speechWithTool += 1;
+      else speechOnly += 1;
+    } else if (calls > 0) toolOnly += 1;
+  }
+  facts({
+    source: `${sessionName}, message.role + message.content[] part types (fields: text, toolCall, toolResult)`,
+    method:
+      "structured parse; a prompt turn is a user message carrying text and no toolResult (that is what opens a turn), a bubble is an assistant message carrying non-empty text, and the population is the batches that existed at the last record this read saw",
+    window: `${window.text}; last record ${lastAt ?? "(untimed)"}`,
+  });
+  out("");
+  if (batches === 0 || messages === 0) {
+    row(
+      "bubbles",
+      notMeasured("assistant messages carrying text", {
+        reason: "the session holds no prompt turn or no assistant message",
+        missingField: "message.role=user|assistant with content[]",
+      }),
+    );
+    return 2;
+  }
+  row("prompt turns", count(batches, batches, "user batches carrying text"));
+  row("assistant messages", count(messages, messages, "assistant messages"));
+  row("bubbles", count(bubbles, messages, "assistant messages carrying speech"));
+  row("bubbles per turn", magnitude(round2(bubbles / batches), { count: batches, total: batches }, "prompt turns"));
+  row("messages per turn", magnitude(round2(messages / batches), { count: batches, total: batches }, "prompt turns"));
+  row(
+    "bubbles per tool call",
+    magnitude(round2(bubbles / Math.max(toolCalls, 1)), { count: toolCalls, total: toolCalls }, "toolCall parts"),
+  );
+  row("  speech with a tool call", count(speechWithTool, bubbles, "bubbles"));
+  row("  speech only", count(speechOnly, bubbles, "bubbles"));
+  row("  tool only, no speech", count(toolOnly, messages, "assistant messages"));
   return 0;
 }
 
@@ -1289,6 +1395,7 @@ function main(argv) {
   const handlers = {
     tools: () => questionTools({ context }),
     turns: () => questionTurns({ context }),
+    bubbles: () => questionBubbles({ context }),
     codes: () => questionCodes({ context }),
     nodes: () => questionNodes({ context, runDir }),
     thinking: () => questionThinking({ context, argument: options.argument }),
