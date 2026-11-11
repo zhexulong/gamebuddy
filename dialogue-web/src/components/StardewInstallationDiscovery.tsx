@@ -8,7 +8,6 @@ import type {
 import { observedProblemCode } from "../composed-problem-view";
 import {
   companionModLabel,
-  companionModIsReady,
   installationCandidateLabel,
   installationModLoaderLabel,
   installationDiscoveryFailureState,
@@ -126,9 +125,7 @@ export function StardewInstallationDiscovery({ api, labels, onAdmitted }: Props)
    * first instant that folder provably holds a mod loader. Reported rather than assumed: a deployment that
    * refused names its refusal instead of the panel implying the companion is ready.
    */
-  const [companionMod, setCompanionMod] = useState<NonNullable<StardewInstallationMutationV1["companionMod"]> | null>(
-    null,
-  );
+  const [companionMod] = useState<NonNullable<StardewInstallationMutationV1["companionMod"]> | null>(null);
   const [discovery, setDiscovery] = useState<StardewInstallationDiscoveryV1 | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   // What is outstanding, which gates the rendered controls; a ref would not re-render

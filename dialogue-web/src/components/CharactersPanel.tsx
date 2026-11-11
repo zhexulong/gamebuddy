@@ -1,13 +1,13 @@
 import { type ReactElement, useEffect, useRef, useState } from "react";
 import { type Locale, type Messages, messages } from "../i18n";
-import {
-  type CompanionActivationV1,
-  type CompanionListV1,
-  type CompanionVoiceV1,
-  type GreetingV1,
-  type ManagementPipelineApi,
-  type PersonaV1,
-  type ScenarioV1,
+import type {
+  CompanionActivationV1,
+  CompanionListV1,
+  CompanionVoiceV1,
+  GreetingV1,
+  ManagementPipelineApi,
+  PersonaV1,
+  ScenarioV1,
 } from "../management-pipeline-api";
 import { problemTextWithCode } from "../composed-problem-view";
 import { TavernProblemError } from "../management-pipeline-api";
@@ -155,7 +155,6 @@ export function CharactersPanel({
   // The roster row that opened the inspector; the drawer gives focus back to it on
   // close (the shell's own focus-restoration idiom).
   const inspectorOpener = useRef<HTMLElement | null>(null);
-  const [createNameField, setCreateNameField] = useState("");
   const [creating, setCreating] = useState(false);
   const [createNotice, setCreateNotice] = useState<SaveNotice>(null);
   // The roster-level announcement a completed removal leaves: her name, and nothing else on
@@ -1048,7 +1047,7 @@ export function CharactersPanel({
                   />
                   <div className="opening-variants" data-opening-variants tabIndex={0}>
                     {openingVariants.value.map((variant, index) => (
-                      <div key={index} className="opening-variant-row">
+                      <div key={`${variant.label}\u0000${index}`} className="opening-variant-row">
                         <label className="management-settings-label" htmlFor={`opening-variant-${index}-text`}>
                           {labels.openingVariantText} #{index + 1}
                         </label>

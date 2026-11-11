@@ -108,7 +108,7 @@ export function turnFailureText(
  * same way: it is fixed in Settings, where the connection and the model live. `context_overflow` is
  * neither - the room is freed by starting a new chat, which is the one control the sentence names.
  */
-const TURN_FAILURE_STEPS: Readonly<
+export const TURN_FAILURE_STEPS: Readonly<
   Record<NonNullable<BrowserTurnV1["problemCode"]> | NonNullable<BrowserTurnV1["providerFailure"]>, ProblemStep>
 > = {
   interrupted: { kind: "control", id: "composer-send" },

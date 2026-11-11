@@ -136,7 +136,7 @@ function reportRows(report: StagedReport, labels: CharacterLabels): ReactElement
      * fact into an edit they can make.
      */
     ...report.omittedWorldBookEntries.map((entry, index) => (
-      <li key={`omittedWorldBookEntry-${index}`} data-card-import-omitted-entry>
+      <li key={`${entry.title}\u0000${index}`} data-card-import-omitted-entry>
         {labels.importWorldBookOmitted
           .replace("{{entry}}", entry.title)
           .replace(
