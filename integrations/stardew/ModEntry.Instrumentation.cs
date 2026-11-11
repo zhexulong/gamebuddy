@@ -347,6 +347,12 @@ private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
         // it", and `last` names the newest frame.
         LocalPipeBridge.InboundFrameCounters inbound = this.GetEmbodimentState().LocalPipeBridge?.SnapshotInboundFrameCounters()
             ?? default;
+        // The OTHER half of the transport, and the one that could lose a receipt without a trace: a frame the outbound
+        // queue refused past its cap reached nobody, and the Host waiting for it waited on silence. `tx` is
+        // admitted/drained/refused, `peak` is the deepest the queue ever got, and the pair is what tells backpressure
+        // (refused with `peak` at the cap) from a dead generation or an oversized frame (refused below it).
+        LocalPipeBridge.OutboundFrameCounters outbound = this.GetEmbodimentState().LocalPipeBridge?.SnapshotOutboundFrameCounters()
+            ?? default;
         // The numbers that would have explained the deaths the log did not.
         //
         // Three runs (round21, round26, round27) ended the same way: the last Mod line is an ordinary dispatch, the
@@ -391,7 +397,7 @@ private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
             this.Monitor.Log(deepest.ToString(), LogLevel.Warn);
         }
         this.Monitor.Log(
-            $"[DEBUG-native-local-heartbeat] location={player?.currentLocation?.NameOrUniqueName ?? "none"};tile={player?.TilePoint.X ?? -1},{player?.TilePoint.Y ?? -1};can_move={player?.CanMove.ToString() ?? "n/a"};navigate={(navigateBusy ? "busy" : "idle")};bridge={(bridgeConnected ? "connected" : "none")};rx={inbound.Read}/{inbound.Enqueued};last={(inbound.LastType ?? "none")};phase={this.tickWatchdogPhaseForReport()};bodyphase={StardewBodyController.LastPhase};bodyticks={StardewBodyController.EnteredTicks};frame={Game1.ticks};managedMB={managedMb};wsMB={workingSetMb};threads={self.Threads.Count};gc={GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}",
+            $"[DEBUG-native-local-heartbeat] location={player?.currentLocation?.NameOrUniqueName ?? "none"};tile={player?.TilePoint.X ?? -1},{player?.TilePoint.Y ?? -1};can_move={player?.CanMove.ToString() ?? "n/a"};navigate={(navigateBusy ? "busy" : "idle")};bridge={(bridgeConnected ? "connected" : "none")};rx={inbound.Read}/{inbound.Enqueued};tx={outbound.Admitted}/{outbound.Drained}/{outbound.Refused};peak={outbound.Peak};txgen={outbound.Generation};last={(inbound.LastType ?? "none")};phase={this.tickWatchdogPhaseForReport()};bodyphase={StardewBodyController.LastPhase};bodyticks={StardewBodyController.EnteredTicks};frame={Game1.ticks};managedMB={managedMb};wsMB={workingSetMb};threads={self.Threads.Count};gc={GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}",
             LogLevel.Trace);
     }
 

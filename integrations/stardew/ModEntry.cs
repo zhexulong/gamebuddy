@@ -1948,6 +1948,7 @@ public sealed partial class ModEntry : Mod
     {
         if (state.LocalPipeBridge is null || state.BridgeSession is null)
             return;
+        this.PublishRefusedBridgeFrameFacts(state);
         for (int index = 0; index < 8 && state.LocalPipeBridge.TryDequeueInbound(out PipeInbound inbound); index++)
         {
             try
@@ -2203,6 +2204,23 @@ public sealed partial class ModEntry : Mod
         if (generation != 0 && state.BridgeSession.TryCreateStopBodySettledEvent(generation, observation, correlationId, out string json)
             && state.LocalPipeBridge.TryEnqueueOutbound(generation, json))
             state.PendingStopObservation = null;
+    }
+
+    /// <summary>
+    /// Publishes the one fact a refused outbound frame owes its reader.
+    ///
+    /// The bridge refuses a frame past its queue cap, hands the caller false, and used to say nothing anywhere: an
+    /// execution receipt refused there is a terminal state the Host waits for and never receives, and no artifact
+    /// recorded that the frame had ever existed. The bridge names the refusal itself, bounded to one line per second
+    /// with the counts accumulating in between, so this is the one publication point every call site inherits instead
+    /// of each carrying its own copy of the message.
+    /// </summary>
+    private void PublishRefusedBridgeFrameFacts(ScreenEmbodimentState state)
+    {
+        if (state.LocalPipeBridge is null)
+            return;
+        if (state.LocalPipeBridge.TryTakeRefusedFrameFact(Environment.TickCount64, out string kind, out long count))
+            this.Monitor.Log($"bridge_frame_refused:{kind}:{count}", LogLevel.Warn);
     }
 
     private void PublishReceipt(ScreenEmbodimentState state, LocalExecutionReceipt receipt)

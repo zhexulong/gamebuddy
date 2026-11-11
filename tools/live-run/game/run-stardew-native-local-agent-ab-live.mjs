@@ -2476,6 +2476,10 @@ function captureModLogFacts(runDir) {
         .trim()
         .slice(0, 300),
       lastIngress: (rows.filter((row) => row.includes("native chat ingress")).slice(-1)[0] ?? "").trim().slice(0, 300),
+      // The frames the outbound queue REFUSED, by frame kind: a terminal receipt dropped there is a state the Host waits
+      // for and never receives, and until the bridge named it the run read as a companion that simply stopped answering.
+      // The bridge bounds it to one line per second, so this tail is the whole population of a bounded fact.
+      bridgeFrameRefused: tail(/bridge_frame_refused:/, 8),
       lastFrameState: lastWith("game_mode="),
       lastSavingState: lastWith("saving="),
     });

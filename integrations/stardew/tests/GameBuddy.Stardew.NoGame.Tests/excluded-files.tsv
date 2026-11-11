@@ -79,6 +79,7 @@ ItemTileActionTests.cs	mod-assembly	Handlers
 LevelUpMilestoneChoiceTests.cs	mod-assembly	Xna, ExecutionManager, Farmer, IClickableMenu, LevelUpMenu
 LevelUpProfessionPairTests.cs	mod-assembly	ExecutionManager
 LocalPipeBridgeOutboundQueueTests.cs	mod-assembly	LocalPipeBridge, PipeOutbound, PipeOutboundCompletion
+LocalPipeBridgeOutboundRefusalObservabilityTests.cs	mod-assembly	LocalPipeBridge, OutboundFrameCounters
 MagnetPickupItemTests.cs	mod-assembly	Xna, Netcode, StardewModdingAPI, StardewValley, Game1
 MailboxDiscoveryAndApproachTests.cs	mod-assembly	ExecutionManager, Farm, Farmer, Game1, LocalApproachSpec
 MineExitLadderSourceShapeTests.cs	reference-tree	StardewValleyDecompiled (MineShaft.cs :3057/:3073-3081, GameLocation.cs :12388-12400); /ref/ is gitignored, so a hosted checkout has no reference tree

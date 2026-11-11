@@ -16,13 +16,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </summary>
 public sealed class LocalPipeBridgeOutboundQueueTests
 {
-    // Mirrors LocalPipeBridge.MaximumQueuedMessages. The admission cap itself is
-    // not under test here; these tests pin that a drain cannot corrupt the
-    // count that cap is measured against.
-    private const int MaximumQueuedMessages = 64;
-
-    // A connection generation that the generation-0 frames admitted while the
-    // bridge is disconnected cannot belong to, so a drain of it retains them.
+    // The admission cap is not under test here; these tests pin that a drain cannot corrupt the count that cap is
+    // measured against, so they read the cap itself rather than a copy of it.
     private const long DiscardedGeneration = 1;
 
     private static readonly FieldInfo OutboundField =
@@ -66,9 +61,9 @@ public sealed class LocalPipeBridgeOutboundQueueTests
         while (bridge.TryEnqueueOutbound(0, "admitted_after_discard_" + admittedAfterDrain, out _))
             admittedAfterDrain++;
 
-        admittedAfterDrain.Should().Be(MaximumQueuedMessages - queued.Count,
+        admittedAfterDrain.Should().Be(LocalPipeBridge.MaximumQueuedMessages - queued.Count,
             "the admission cap must count the retained frames that are still queued");
-        OutboundQueue(bridge).Count.Should().Be(MaximumQueuedMessages);
+        OutboundQueue(bridge).Count.Should().Be(LocalPipeBridge.MaximumQueuedMessages);
     }
 
     [Fact]
@@ -148,7 +143,7 @@ public sealed class LocalPipeBridgeOutboundQueueTests
         discarding.Join(TimeSpan.FromSeconds(30)).Should().BeTrue("the discarding worker must finish");
         admitting.Join(TimeSpan.FromSeconds(30)).Should().BeTrue("the admitting thread must finish");
 
-        admitted.Should().HaveCount(MaximumQueuedMessages,
+        admitted.Should().HaveCount(LocalPipeBridge.MaximumQueuedMessages,
             "a drain must not corrupt the count the admission cap is measured against");
         OutboundQueue(bridge).Select(message => message.Json).Should().Equal(admitted,
             "an admitted frame must keep its queue position and must never be lost");

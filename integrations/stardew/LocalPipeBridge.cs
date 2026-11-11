@@ -11,7 +11,16 @@ namespace GameBuddy.Stardew;
 /// </summary>
 internal sealed class LocalPipeBridge : IDisposable
 {
-    private const int MaximumQueuedMessages = 64;
+    internal const int MaximumQueuedMessages = 64;
+
+    /// <summary>
+    /// The shortest interval between two published refusal facts.
+    ///
+    /// A queue that refuses a burst of frames must not answer with a burst of log lines, and a refusal nobody names is
+    /// the defect itself: the counts accumulate per frame type between windows, so the totals a reader adds up still
+    /// reach the refused counter instead of being a sample of it.
+    /// </summary>
+    internal const long RefusedFrameFactIntervalMilliseconds = 1_000L;
 
     private long inboundFramesRead;
     private long inboundFramesEnqueued;
@@ -28,6 +37,71 @@ internal sealed class LocalPipeBridge : IDisposable
     internal readonly record struct InboundFrameCounters(long Read, long Enqueued, string? LastType);
     internal InboundFrameCounters SnapshotInboundFrameCounters() =>
         new(Interlocked.Read(ref this.inboundFramesRead), Interlocked.Read(ref this.inboundFramesEnqueued), this.lastInboundFrameType);
+
+    /// <summary>
+    /// The outbound half of the same visibility: the frames this bridge ADMITTED into its bounded queue, the ones its
+    /// writer took back off it, the ones it REFUSED, and the deepest the queue ever got.
+    ///
+    /// A refusal past the cap was the one loss with no trace anywhere: the caller got false, and no artifact could say
+    /// that a terminal receipt had been dropped - so a Host waiting for that receipt waited for a state that would never
+    /// arrive. <c>Generation</c> names the connection the reading describes, and the counters are monotonic for the
+    /// bridge's whole life so a reconnect cannot zero the refusals of the generation that dropped them. <c>Peak</c> is
+    /// what makes a refusal diagnosable: at the cap it is backpressure, below the cap the frame was refused for its
+    /// generation, its size, or a disposal.
+    /// </summary>
+    internal readonly record struct OutboundFrameCounters(long Generation, long Admitted, long Drained, long Refused, int Peak);
+
+    internal OutboundFrameCounters SnapshotOutboundFrameCounters() => new(
+        Interlocked.Read(ref this.connectedGeneration),
+        Interlocked.Read(ref this.outboundFramesAdmitted),
+        Interlocked.Read(ref this.outboundFramesDrained),
+        Interlocked.Read(ref this.outboundFramesRefused),
+        Volatile.Read(ref this.outboundPeakCount));
+
+    /// <summary>
+    /// The next refusal to publish, at most one per <see cref="RefusedFrameFactIntervalMilliseconds"/>.
+    ///
+    /// Naming every refused frame would answer a flood with a flood, and naming none is the defect. So refusals
+    /// accumulate by the frame's own type, and one is released per window - the largest, with the others keeping their
+    /// counts for later windows, so the published totals still add up to <see cref="OutboundFrameCounters.Refused"/>.
+    /// </summary>
+    internal bool TryTakeRefusedFrameFact(long nowMs, out string kind, out long count)
+    {
+        kind = string.Empty;
+        count = 0;
+        if (nowMs - Interlocked.Read(ref this.lastRefusedFrameFactAtMs) < RefusedFrameFactIntervalMilliseconds)
+            return false;
+        lock (this.outboundGate)
+        {
+            string? selected = null;
+            long selectedCount = 0;
+            foreach (KeyValuePair<string, long> candidate in this.refusedFrameCounts)
+            {
+                if (candidate.Value <= selectedCount) continue;
+                selected = candidate.Key;
+                selectedCount = candidate.Value;
+            }
+            if (selected is null || !this.refusedFrameCounts.Remove(selected))
+                return false;
+            kind = selected;
+            count = selectedCount;
+            Interlocked.Exchange(ref this.lastRefusedFrameFactAtMs, nowMs);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Records one frame the bridge refused to queue. Every false return of <see cref="TryEnqueueOutbound"/> passes
+    /// through here, which is what makes <see cref="OutboundFrameCounters.Refused"/> equal to the refusals its callers
+    /// observed instead of a separately maintained tally of them.
+    /// </summary>
+    private void RecordRefusedOutboundFrame(string json)
+    {
+        Interlocked.Increment(ref this.outboundFramesRefused);
+        string kind = FrameTypeOf(json) ?? "untyped";
+        lock (this.outboundGate)
+            this.refusedFrameCounts[kind] = this.refusedFrameCounts.TryGetValue(kind, out long seen) ? seen + 1 : 1;
+    }
     private readonly string pipeName;
     private readonly CancellationTokenSource cancellation = new();
     private readonly ConcurrentQueue<PipeInbound> inbound = new();
@@ -42,6 +116,14 @@ internal sealed class LocalPipeBridge : IDisposable
     private readonly Task worker;
     private int inboundCount;
     private int outboundCount;
+    private int outboundPeakCount;
+    private long outboundFramesAdmitted;
+    private long outboundFramesDrained;
+    private long outboundFramesRefused;
+    private long lastRefusedFrameFactAtMs;
+    // Refusals no published fact has named yet, by frame type. Written by the admitting thread under outboundGate and
+    // taken under it too, so an accumulated count and the fact that releases it can never disagree.
+    private readonly Dictionary<string, long> refusedFrameCounts = new(StringComparer.Ordinal);
     private long activeGeneration;
     private long connectedGeneration;
     private PipeWorkerTerminal? workerTerminal;
@@ -89,6 +171,7 @@ internal sealed class LocalPipeBridge : IDisposable
         if (generation != Interlocked.Read(ref this.connectedGeneration) || this.cancellation.IsCancellationRequested
             || Encoding.UTF8.GetByteCount(json) > BridgeProtocol.MaximumMessageBytes)
         {
+            this.RecordRefusedOutboundFrame(json);
             completion.Resolve(false);
             return false;
         }
@@ -97,19 +180,28 @@ internal sealed class LocalPipeBridge : IDisposable
         {
             admitted = ++this.outboundCount <= MaximumQueuedMessages;
             if (admitted)
+            {
                 this.outbound.Enqueue(new PipeOutbound(generation, json, completion));
+                if (this.outboundCount > this.outboundPeakCount) this.outboundPeakCount = this.outboundCount;
+            }
             else
                 this.outboundCount--;
         }
         if (!admitted)
         {
+            this.RecordRefusedOutboundFrame(json);
             completion.Resolve(false);
             return false;
         }
-        try { this.outboundSignal.Release(); }
+        try
+        {
+            this.outboundSignal.Release();
+            Interlocked.Increment(ref this.outboundFramesAdmitted);
+        }
         catch (ObjectDisposedException)
         {
             lock (this.outboundGate) this.outboundCount--;
+            this.RecordRefusedOutboundFrame(json);
             completion.Resolve(false);
             return false;
         }
@@ -250,6 +342,7 @@ internal sealed class LocalPipeBridge : IDisposable
                 if (!this.outbound.TryDequeue(out message))
                     continue;
                 this.outboundCount--;
+                Interlocked.Increment(ref this.outboundFramesDrained);
             }
             if (message.Generation != generation || generation != Interlocked.Read(ref this.connectedGeneration))
             {
