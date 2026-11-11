@@ -70,10 +70,6 @@ test("Dialogue Web runtime boundary keeps the Vite toolchain build-only", async 
   // two browser-only rendering libraries (marked + DOMPurify) the companion
   // prose renderer needs. Everything else stays build/test-only.
   assert.deepEqual(runtimeDependencies, ["dompurify", "lucide-react", "marked", "react", "react-dom"]);
-  assert.deepEqual(
-    developmentDependencies,
-    ["@axe-core/playwright", "@playwright/test", "@types/react", "@types/react-dom", "@vitejs/plugin-react", "tsx", "typescript", "vite"].sort(),
-  );
 
   // Vite and its PostCSS/nanoid transitive closure are used only by these
   // build/dev entrypoints; the Host serves the generated dist/ files.
@@ -93,6 +89,22 @@ test("Dialogue Web runtime boundary keeps the Vite toolchain build-only", async 
   assert.doesNotMatch(dependencySection, /      (?:'@vitejs\/plugin-react'|vite):/);
   assert.match(devDependencySection, /      '@vitejs\/plugin-react':/);
   assert.match(devDependencySection, /      vite:/);
+
+  // The boundary is disjointness, not an inventory of what is installed. This used to assert that
+  // `devDependencies` was exactly a hand-written list, which says nothing about the bundle: those
+  // packages are never shipped, and the assertion went red for a legitimate tool - `v8-to-istanbul`
+  // arrived with the coverage gate and was reported as a runtime-boundary violation. The property the
+  // title promises is that no build or test tool can reach the bundle, so that is what is asserted,
+  // derived from the tool list rather than restated: every package the manifest calls a devDependency
+  // must be absent from the lockfile importer's runtime set.
+  const declaresRuntimeDependency = (name) =>
+    new RegExp(`^      '?${name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}'?:`, "mu").test(dependencySection);
+  const shippedTools = developmentDependencies.filter(declaresRuntimeDependency);
+  assert.deepEqual(
+    shippedTools,
+    [],
+    `these packages are declared build/test-only and are installed as runtime dependencies: ${shippedTools.join(", ")}`,
+  );
 });
 
 test("direct Vite production build fails closed without a Host-generated inspector descriptor", async () => {
