@@ -185,6 +185,53 @@ test("promotion checker preserves transport, schema, and game-thread guard check
   );
 });
 
+test("the Host request validator's population is its own declaration, and a reader that reads nothing is blocked", () => {
+  // The reading used to harvest `value.action !== "…"` comparisons out of a chain anchored between two functions. The
+  // validator is a lookup over `EXECUTION_REQUEST_ARGUMENT_RULES` now, so the falsifier has to drive the ways a
+  // source-derived reader stops working - and assert the one thing the old shape got wrong: a reader that reads nothing
+  // must report THAT, not one finding per action.
+  const renamed = sources.protocol.replace(
+    "export const EXECUTION_REQUEST_ARGUMENT_RULES",
+    "export const RENAMED_REQUEST_RULES",
+  );
+  assert.notEqual(renamed, sources.protocol, "the mutation must actually apply");
+  const unreadable = failuresFor({ protocol: renamed });
+  assert.ok(
+    unreadable.includes("host_request_declaration_not_found:EXECUTION_REQUEST_ARGUMENT_RULES"),
+    JSON.stringify(unreadable),
+  );
+  assert.deepEqual(
+    unreadable.filter((failure) => failure.startsWith("missing_host_request_validator:")),
+    [],
+    "a declaration nobody could read is one blocked reading, not every action losing its validator",
+  );
+
+  // An action id the union still declares and the table lost is named on both readings rather than resolved by
+  // preferring one of them.
+  const dropped = sources.protocol.replace(/^ {2}move_to_tile: \[.*$/mu, "");
+  assert.notEqual(dropped, sources.protocol, "the mutation must actually apply");
+  assert.ok(failuresFor({ protocol: dropped }).includes("host_request_declaration_missing:move_to_tile"));
+});
+
+test("every action the Host's declaration carries has argument rules, and none of them is empty", () => {
+  const result = validatePromotionSources({
+    ...sources,
+    promotionEvidence: evidence.receipts,
+    surface,
+    writePostconditionBaseline,
+  });
+  assert.deepEqual(result.failures, []);
+  assert.ok(
+    result.hostRequestDeclaration.actions > 90,
+    `the declaration must have been read (found ${result.hostRequestDeclaration.actions} actions)`,
+  );
+  assert.equal(
+    result.hostRequestDeclaration.withArgumentRules,
+    result.hostRequestDeclaration.actions,
+    "an action id with no argument rule is an action the Host admits with nothing checked",
+  );
+});
+
 test("gate descriptors remain non-authoritative coverage metadata", () => {
   const failures = failuresFor({
     descriptors: [{ actionId: "move_to_tile", runner: "invented.mjs", terminalReasonCode: "succeeded" }],

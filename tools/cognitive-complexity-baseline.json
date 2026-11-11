@@ -767,23 +767,6 @@
       "value": 66
     },
     {
-      "id": "ts:host/src/protocol.ts#validateExecutionRequest",
-      "language": "ts",
-      "name": "host/src/protocol.ts#validateExecutionRequest",
-      "file": "host/src/protocol.ts",
-      "line": 3286,
-      "value": 255,
-      "saturated": true
-    },
-    {
-      "id": "ts:host/src/protocol.ts#validateWorldObjectActionArgs",
-      "language": "ts",
-      "name": "host/src/protocol.ts#validateWorldObjectActionArgs",
-      "file": "host/src/protocol.ts",
-      "line": 4769,
-      "value": 57
-    },
-    {
       "id": "ts:host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch",
       "language": "ts",
       "name": "host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch",

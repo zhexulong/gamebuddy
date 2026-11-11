@@ -3283,884 +3283,962 @@ function isNavigationSearchCandidate(value: unknown): value is NavigationSearchC
   );
 }
 
-export function validateExecutionRequest(value: unknown, snapshot: Snapshot, nowMs = Date.now()): string | null {
-  const worldObjectArgsVerdict = validateWorldObjectActionArgs(value);
-  if (worldObjectArgsVerdict !== null) return worldObjectArgsVerdict;
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, ["requestId", "idempotencyKey", "action", "args", "expectedRevision", "deadlineMs"])
-  )
-    return "invalid_request";
-  if (!isOpaqueId(value.requestId) || !isOpaqueId(value.idempotencyKey)) return "invalid_request_id";
-  if (
-    value.action !== "move_to_tile" &&
-    value.action !== "navigate_to_destination" &&
-    value.action !== "equip_tool" &&
-    value.action !== "travel" &&
-    value.action !== "ride_minecart" &&
-    value.action !== "ride_bus" &&
-    value.action !== "withdraw_silo_hay" &&
-    value.action !== "use_obelisk" &&
-    value.action !== "toggle_animal_door" &&
-    value.action !== "clear_fish_pond" &&
-    value.action !== "accept_daily_quest" &&
-    value.action !== "accept_special_order" &&
-    value.action !== "claim_museum_reward" &&
-    value.action !== "redeem_prize_ticket" &&
-    value.action !== "tailor_clothing" &&
-    value.action !== "dye_clothing_with_item" &&
-    value.action !== "open_geode" &&
-    value.action !== "color_placed_object" &&
-    value.action !== "build_farm_building" &&
-    value.action !== "send_multiplayer_chat" &&
-    value.action !== "name_entity" &&
-    value.action !== "place_owned_object" &&
-    value.action !== "remove_placed_item" &&
-    value.action !== "move_placed_furniture" &&
-    value.action !== "rotate_furniture" &&
-    value.action !== "remove_fence" &&
-    value.action !== "put_item_in_fish_tank" &&
-    value.action !== "place_item_on_pedestal" &&
-    value.action !== "break_container" &&
-    value.action !== "use_warp_item" &&
-    value.action !== "pan_ore" &&
-    value.action !== "claim_mail_attachment" &&
-    value.action !== "load_building_chest" &&
-    value.action !== "collect_building_chest_output" &&
-    value.action !== "shop_purchase" &&
-    value.action !== "select_mine_elevator_floor" &&
-    value.action !== "use_raft" &&
-    value.action !== "mount_transport" &&
-    value.action !== "enter_mine" &&
-    value.action !== "use_mine_ladder" &&
-    value.action !== "enter_exit" &&
-    value.action !== "till_soil" &&
-    value.action !== "pickup_forage" &&
-    value.action !== "pickup_item" &&
-    value.action !== "water_crop" &&
-    value.action !== "water_pet_bowl" &&
-    value.action !== "dismiss_modal" &&
-    value.action !== "answer_dialogue" &&
-    value.action !== "respond_level_up" &&
-    value.action !== "water_slime_hutch_trough" &&
-    value.action !== "refill_watering_can" &&
-    value.action !== "harvest_crop" &&
-    value.action !== "plant_seed" &&
-    value.action !== "fertilize_tile" &&
-    value.action !== "place_wood_fence" &&
-    value.action !== "place_crab_pot" &&
-    value.action !== "bait_crab_pot" &&
-    value.action !== "clear_debris" &&
-    value.action !== "break_resource_clump" &&
-    value.action !== "fish_here" &&
-    value.action !== "machine_inspect" &&
-    value.action !== "machine_load" &&
-    value.action !== "machine_collect_output" &&
-    value.action !== "npc_relationship" &&
-    value.action !== "talk_to_npc" &&
-    value.action !== "equip_wearable" &&
-    value.action !== "unequip_wearable" &&
-    value.action !== "dismount_transport" &&
-    value.action !== "pet_animal" &&
-    value.action !== "pet_farm_animal" &&
-    value.action !== "collect_animal_product" &&
-    value.action !== "feed_animal" &&
-    value.action !== "use_item" &&
-    value.action !== "chop_tree" &&
-    value.action !== "break_rock" &&
-    value.action !== "clear_hoedirt" &&
-    value.action !== "dig_artifact_spot" &&
-    value.action !== "express_emote" &&
-    value.action !== "face_direction" &&
-    value.action !== "chest_store" &&
-    value.action !== "chest_retrieve" &&
-    value.action !== "chop_stump" &&
-    value.action !== "plant_sapling" &&
-    value.action !== "cut_weeds" &&
-    value.action !== "cut_grass" &&
-    value.action !== "clear_cask" &&
-    value.action !== "dress_mannequin" &&
-    value.action !== "set_sign_display" &&
-    value.action !== "deposit_silo_hay" &&
-    value.action !== "toggle_tool_light" &&
-    value.action !== "scythe_crop" &&
-    value.action !== "interact_npc_with_item" &&
-    value.action !== "craft_item" &&
-    value.action !== "cook_recipe" &&
-    value.action !== "collect_crab_pot_output" &&
-    value.action !== "ship_item" &&
-    value.action !== "sleep" &&
-    value.action !== "harvest_bush" &&
-    value.action !== "harvest_fruit_tree" &&
-    value.action !== "shake_tree" &&
-    value.action !== "take_pedestal_item" &&
-    value.action !== "toggle_fence_gate"
-  )
-    return "unknown_action";
-  if (!isRecord(value.args)) return "invalid_args";
+/**
+ * What one row of the execution-request declaration decides.
+ *
+ * `field` and `shape` are what a refusal points at, and `refusal` is the code it returns. The codes are the ones this
+ * validator has always returned, word for word, because a validator that stops saying which field it rejected is worse
+ * than a long one. `violated` is the same reading with that one fact broken, so a test walks the rows instead of
+ * trusting them; `execution-request-declaration.test.ts` does exactly that, one row at a time.
+ */
+export type ExecutionRequestRequirement = Readonly<{
+  field: string;
+  shape: string;
+  refusal: string;
+  /**
+   * The exact argument names this row pins, for the rows that pin a set.
+   *
+   * `field` and `shape` describe the row to a READER; this is the same fact as data, so a gate that compares the Host's
+   * demand against the Mod's published `argumentSchema` reads a key list instead of parsing a sentence.
+   */
+  argumentNames?: readonly string[];
+  isMet: (reading: ExecutionRequestReading) => boolean;
+  violated: (reading: ExecutionRequestReading) => ExecutionRequestReading;
+}>;
 
-  if (!Number.isSafeInteger(value.expectedRevision) || value.expectedRevision !== snapshot.revision)
-    return "stale_snapshot";
-  if (
-    typeof value.deadlineMs !== "number" ||
-    !Number.isFinite(value.deadlineMs) ||
-    value.deadlineMs < nowMs ||
-    // A co-op night waits on other players' native ready state, a host save and
-    // a new-day transition, so it shares the navigation ceiling rather than the
-    // ordinary one-minute action ceiling.
-    value.deadlineMs >
-      nowMs + (value.action === "navigate_to_destination" || value.action === "sleep" ? 600_000 : 60_000)
-  )
-    return "invalid_deadline";
-  // REMOVED HERE: the `actionable` short-circuit that returned `player_not_actionable` before the Mod could
-  // see the request. (The sentence deliberately does not repeat the code verbatim: a comment that matches the
-  // removed pattern makes a grep-based check report the defect as still present.)
+/**
+ * The payload under judgement, plus the two facts a row may consult beyond it.
+ *
+ * `args` is the payload's own `args` read as a key set. The `invalid_args` envelope row refuses a payload whose `args` is
+ * not a record before any argument row is reached, so the empty object left here for an unreadable `args` is never the
+ * reason a row agrees.
+ */
+export type ExecutionRequestReading = Readonly<{
+  request: Readonly<Record<string, unknown>>;
+  args: Readonly<Record<string, unknown>>;
+  snapshot: Snapshot;
+  nowMs: number;
+}>;
+
+function requirement(
+  field: string,
+  shape: string,
+  refusal: string,
+  isMet: ExecutionRequestRequirement["isMet"],
+  violated: ExecutionRequestRequirement["violated"],
+  argumentNames?: readonly string[],
+): ExecutionRequestRequirement {
+  return Object.freeze(
+    argumentNames === undefined
+      ? { field, shape, refusal, isMet, violated }
+      : { field, shape, refusal, argumentNames, isMet, violated },
+  );
+}
+
+/** The reading with one argument value replaced, in the payload as well as in the key set the rows read. */
+function withArg(name: string, value: unknown): ExecutionRequestRequirement["violated"] {
+  return (reading) => {
+    const args = { ...reading.args, [name]: value };
+    return { ...reading, args, request: { ...reading.request, args } };
+  };
+}
+
+/** The reading with one required argument REMOVED: the smallest faithful violation of an exact key set. */
+function withoutArg(name: string): ExecutionRequestRequirement["violated"] {
+  return (reading) => {
+    const args = Object.fromEntries(Object.entries(reading.args).filter(([key]) => key !== name));
+    return { ...reading, args, request: { ...reading.request, args } };
+  };
+}
+
+/** The one construction of a reading: the payload, its own `args` as a key set, and the facts a row may consult. */
+export function executionRequestReading(
+  request: Readonly<Record<string, unknown>>,
+  snapshot: Snapshot,
+  nowMs: number,
+): ExecutionRequestReading {
+  return { request, args: isRecord(request.args) ? request.args : {}, snapshot, nowMs };
+}
+
+/** The exact argument set the action's own Mod-side wire parser pins (`BridgeProtocol.ExecutionArgumentProperties`). */
+function exactArgs(names: readonly string[], refusal: string): ExecutionRequestRequirement {
+  return requirement(
+    "args",
+    names.length === 0 ? "no arguments at all" : `exactly [${names.join(", ")}] and nothing else`,
+    refusal,
+    (reading) => hasExactKeys(reading.args, names),
+    names.length === 0 ? withArg("unexpected", true) : withoutArg(names[0] ?? ""),
+    names,
+  );
+}
+
+/** `args.x`/`args.y` as a walkable tile: the in-map range, not the warp-source range. */
+function tileRow(refusal: string): ExecutionRequestRequirement {
+  return requirement(
+    "args.x, args.y",
+    "a tile inside the map",
+    refusal,
+    (reading) => isTileCoordinate(reading.args.x) && isTileCoordinate(reading.args.y),
+    withArg("x", -1),
+  );
+}
+
+/**
+ * `args.x`/`args.y` as a WARP SOURCE.
+ *
+ * A map declares an edge exit with its source outside the grid (`-1 53 BusStop 42 23`) and `snapshot.warps[]` publishes
+ * exactly that source, so requiring an in-map tile here refused the very exit the snapshot had just advertised: the model
+ * copied `{sourceX, sourceY}` and the Host answered `invalid_warp_source`. `isWarpSourceCoordinate` is this side's one
+ * declaration of that range and is already what the `warps` rows are validated with, so reading and asking agree.
+ */
+function warpSourceRow(refusal: string): ExecutionRequestRequirement {
+  return requirement(
+    "args.x, args.y",
+    "a warp source, which may sit at -1 on a boundary axis",
+    refusal,
+    (reading) => isWarpSourceCoordinate(reading.args.x) && isWarpSourceCoordinate(reading.args.y),
+    withArg("x", -2),
+  );
+}
+
+/** `args.slot`: a backpack slot. */
+function slotRow(refusal: string): ExecutionRequestRequirement {
+  return requirement(
+    "args.slot",
+    "a backpack slot",
+    refusal,
+    (reading) => isToolSlot(reading.args.slot),
+    withArg("slot", 99),
+  );
+}
+
+/** `args.expectedTargetId`: the opaque id a snapshot family published. */
+function targetRow(refusal: string): ExecutionRequestRequirement {
+  return requirement(
+    "args.expectedTargetId",
+    "an opaque target id the snapshot published",
+    refusal,
+    (reading) => isOpaqueId(reading.args.expectedTargetId),
+    withArg("expectedTargetId", "not an id"),
+  );
+}
+
+/** `args.expectedQualifiedItemId`: the item's own wire identity, non-empty. */
+function itemRow(refusal: string): ExecutionRequestRequirement {
+  return requirement(
+    "args.expectedQualifiedItemId",
+    "the item's own wire identity",
+    refusal,
+    (reading) =>
+      typeof reading.args.expectedQualifiedItemId === "string" && reading.args.expectedQualifiedItemId.length > 0,
+    withArg("expectedQualifiedItemId", ""),
+  );
+}
+
+/** The same, at the ceiling the action's own Mod-side handler also enforces. */
+function boundedItemRow(refusal: string, maxLength: number): ExecutionRequestRequirement {
+  return requirement(
+    "args.expectedQualifiedItemId",
+    `the item's own wire identity, at most ${maxLength} characters`,
+    refusal,
+    (reading) => isBoundedNonEmptyString(reading.args.expectedQualifiedItemId, maxLength),
+    withArg("expectedQualifiedItemId", ""),
+  );
+}
+
+/** The same, as the engine's qualified form `(prefix)id`. */
+function qualifiedItemRow(refusal: string): ExecutionRequestRequirement {
+  return requirement(
+    "args.expectedQualifiedItemId",
+    "the engine's qualified item id, `(prefix)id`",
+    refusal,
+    (reading) => isQualifiedItemId(reading.args.expectedQualifiedItemId),
+    withArg("expectedQualifiedItemId", "Carrot"),
+  );
+}
+
+/**
+ * The same, pinned to the ONE item the action places.
+ *
+ * A fence, a crab pot and a bait pot are placed from a specific carried item, so the wire names it and the Host refuses
+ * any other: a request that reached the Mod with a different stack would place something the caller did not ask for.
+ */
+function pinnedItemRow(refusal: string, qualifiedItemId: string): ExecutionRequestRequirement {
+  return requirement(
+    "args.expectedQualifiedItemId",
+    `the pinned item \`${qualifiedItemId}\``,
+    refusal,
+    (reading) => reading.args.expectedQualifiedItemId === qualifiedItemId,
+    withArg("expectedQualifiedItemId", ``),
+  );
+}
+
+/** `args.<name>` as an opaque id. */
+function opaqueArgRow(name: string, refusal: string): ExecutionRequestRequirement {
+  return requirement(
+    `args.${name}`,
+    "an opaque id",
+    refusal,
+    (reading) => isOpaqueId(reading.args[name]),
+    withArg(name, "not an id"),
+  );
+}
+
+/** `args.<name>` as a whole number in `[minimum, maximum]`, where a null `maximum` is no ceiling. */
+function integerRow(
+  name: string,
+  minimum: number,
+  maximum: number | null,
+  refusal: string,
+): ExecutionRequestRequirement {
+  return requirement(
+    `args.${name}`,
+    maximum === null ? `a whole number of at least ${minimum}` : `a whole number from ${minimum} to ${maximum}`,
+    refusal,
+    (reading) =>
+      Number.isSafeInteger(reading.args[name]) &&
+      (reading.args[name] as number) >= minimum &&
+      (maximum === null || (reading.args[name] as number) <= maximum),
+    withArg(name, minimum - 1),
+  );
+}
+
+/** `args.<name>` as a non-empty string of at most `maxLength` characters. */
+function boundedTextRow(name: string, maxLength: number, refusal: string): ExecutionRequestRequirement {
+  return requirement(
+    `args.${name}`,
+    `a non-empty string of at most ${maxLength} characters`,
+    refusal,
+    (reading) => isBoundedNonEmptyString(reading.args[name], maxLength),
+    withArg(name, ""),
+  );
+}
+
+/**
+ * `args.text` as the action's ONLY argument.
+ *
+ * One row and not two, because here the arguments are one field: the key set, the blankness and the ceiling are that
+ * field's shape, and all three are refused under the same code.
+ */
+function textOnlyRow(maxLength: number): ExecutionRequestRequirement {
+  return requirement(
+    "args.text",
+    `the only argument, a non-blank string of at most ${maxLength} characters`,
+    "invalid_execution_request",
+    (reading) =>
+      hasExactKeys(reading.args, ["text"]) &&
+      typeof reading.args.text === "string" &&
+      reading.args.text.trim().length > 0 &&
+      reading.args.text.length <= maxLength,
+    withArg("text", ""),
+    ["text"],
+  );
+}
+
+/**
+ * The opaque family target the same snapshot published AT THAT TILE: the horse, the mine entrance, the ladder.
+ *
+ * The tile alone is not enough and the id alone is not enough. The id is re-resolved on the Mod's game thread against the
+ * live world, so a pair that only one of the two could satisfy is a request the snapshot did not offer.
+ */
+function publishedTargetRow(
+  shape: string,
+  refusal: string,
+  family: (snapshot: Snapshot) => readonly Readonly<{ targetId: string; x: number; y: number }>[] | undefined,
+): ExecutionRequestRequirement {
+  return requirement(
+    "args.expectedTargetId, args.x, args.y",
+    shape,
+    refusal,
+    (reading) =>
+      family(reading.snapshot)?.some(
+        (target) =>
+          target.targetId === reading.args.expectedTargetId &&
+          target.x === reading.args.x &&
+          target.y === reading.args.y,
+      ) === true,
+    withArg("x", 12),
+  );
+}
+
+/** The `{x, y, expectedTargetId}` shape, refused under the one code the action's own handler names. */
+function tileAndTarget(refusal: string): readonly ExecutionRequestRequirement[] {
+  return [tileRow(refusal), targetRow(refusal)];
+}
+
+/** The `{slot, x, y, expectedTargetId}` shape. */
+function toolTileAndTarget(refusal: string): readonly ExecutionRequestRequirement[] {
+  return [slotRow(refusal), tileRow(refusal), targetRow(refusal)];
+}
+
+/** The `{x, y, expectedQualifiedItemId, expectedTargetId}` shape. */
+function tileItemAndTarget(refusal: string, item: ExecutionRequestRequirement): readonly ExecutionRequestRequirement[] {
+  return [tileRow(refusal), item, targetRow(refusal)];
+}
+
+/** The `{slot, x, y, expectedQualifiedItemId, expectedTargetId}` shape. */
+function toolTileItemAndTarget(
+  refusal: string,
+  item: ExecutionRequestRequirement,
+): readonly ExecutionRequestRequirement[] {
+  return [slotRow(refusal), tileRow(refusal), item, targetRow(refusal)];
+}
+
+/**
+ * The fields of the execution-request payload the Host validates, in the order it decides them.
+ *
+ * Shape plus code per row, and the order IS the contract: a caller is told the FIRST fact that stopped it, so moving a
+ * row moves which refusal a doubly-wrong payload receives.
+ */
+export const EXECUTION_REQUEST_REQUIREMENTS: readonly ExecutionRequestRequirement[] = Object.freeze([
+  requirement(
+    "the payload",
+    "exactly {requestId, idempotencyKey, action, args, expectedRevision, deadlineMs}",
+    "invalid_request",
+    (reading) =>
+      hasExactKeys(reading.request, [
+        "requestId",
+        "idempotencyKey",
+        "action",
+        "args",
+        "expectedRevision",
+        "deadlineMs",
+      ]),
+    (reading) => ({ ...reading, request: {} }),
+  ),
+  requirement(
+    "requestId, idempotencyKey",
+    "each an opaque id",
+    "invalid_request_id",
+    (reading) => isOpaqueId(reading.request.requestId) && isOpaqueId(reading.request.idempotencyKey),
+    (reading) => ({ ...reading, request: { ...reading.request, idempotencyKey: "not an opaque id" } }),
+  ),
+  requirement(
+    "action",
+    "one of the action ids this declaration carries argument rows for",
+    "unknown_action",
+    (reading) => isExecutionAction(reading.request.action),
+    (reading) => ({ ...reading, request: { ...reading.request, action: "sell_item" } }),
+  ),
+  requirement(
+    "args",
+    "a record",
+    "invalid_args",
+    (reading) => isRecord(reading.request.args),
+    (reading) => ({ ...reading, request: { ...reading.request, args: 5 } }),
+  ),
+  requirement(
+    "expectedRevision",
+    "the revision of the snapshot the request is dispatched against",
+    "stale_snapshot",
+    (reading) =>
+      Number.isSafeInteger(reading.request.expectedRevision) &&
+      reading.request.expectedRevision === reading.snapshot.revision,
+    (reading) => ({ ...reading, request: { ...reading.request, expectedRevision: reading.snapshot.revision + 1 } }),
+  ),
+  requirement(
+    "deadlineMs",
+    "a finite number at or after now and no more than the action's own ceiling beyond it",
+    "invalid_deadline",
+    (reading) => {
+      const { deadlineMs, action } = reading.request;
+      if (typeof deadlineMs !== "number" || !Number.isFinite(deadlineMs) || deadlineMs < reading.nowMs) return false;
+      // A co-op night waits on other players' native ready state, a host save and a new-day transition, so it shares
+      // the navigation ceiling rather than the ordinary one-minute action ceiling.
+      const ceiling = action === "navigate_to_destination" || action === "sleep" ? 600_000 : 60_000;
+      return deadlineMs <= reading.nowMs + ceiling;
+    },
+    (reading) => ({ ...reading, request: { ...reading.request, deadlineMs: reading.nowMs - 1 } }),
+  ),
+  // REMOVED HERE, and deliberately not replaced: the `actionable` short-circuit that returned `player_not_actionable`
+  // before the Mod could see the request. That line was a SECOND implementation of the Mod's admission rule, and it was
+  // the harmful one. WIA §4.2 makes the Mod the single authority on whether the actor's body is free, and
+  // `snapshot.actionable` is false in exactly the situation the modal family exists for (a mounted dialogue), so the
+  // gateway refused `dismiss_modal` and `answer_dialogue` at the moment they were the only way out - the whole
+  // interruption-and-resume loop was unreachable on the Host path. It also collapsed five different holds into one blind
+  // code before the Mod could name them. The request now travels, and the Mod answers with a named hold
+  // (WorldModel.HoldReasonCode) plus the facts its countermeasure needs.
+  requirement(
+    "action",
+    "declared in the snapshot's live capabilities",
+    "capability_not_declared",
+    (reading) =>
+      typeof reading.request.action === "string" && reading.snapshot.capabilities.includes(reading.request.action),
+    (reading) => ({ ...reading, snapshot: { ...reading.snapshot, capabilities: [] } }),
+  ),
+]);
+
+/** The world-object removal shape: the tile, the tool slot and the opaque object target, and nothing else. */
+const REMOVES_PLACED_OBJECT: readonly ExecutionRequestRequirement[] = Object.freeze([
+  exactArgs(["x", "y", "slot", "expectedTargetId"], "invalid_args"),
+  tileRow("invalid_world_object_tile"),
+  slotRow("invalid_world_object_slot"),
+]);
+
+/**
+ * The argument rows per action id.
+ *
+ * This is the per-action half of the request as a DECLARATION rather than a ladder of `value.action === …` arms: each
+ * action lists the fields its Mod-side wire parser pins and the code the Host returns for each, and `satisfies` holds the
+ * table to `ExecutionRequest["action"]` in BOTH directions - an action without rows, or rows for an id the union does
+ * not declare, is a compile error rather than a silent shortfall in a chain. The rows are read, not restated, by
+ * `execution-request-declaration.test.ts`, which walks each one against a payload that breaks exactly it.
+ *
+ * Where a group of actions genuinely shares one decision the rows are one frozen list referenced by each of them
+ * (`REMOVES_PLACED_OBJECT`); where two actions differ only in a code, the code is what the row says. Every refusal string
+ * here is the one this validator has always returned, so a caller reading a receipt sees no change.
+ */
+export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
+  move_to_tile: [exactArgs(["x", "y"], "invalid_args"), tileRow("invalid_target_tile")],
+  navigate_to_destination: [
+    exactArgs(["destination"], "invalid_args"),
+    requirement(
+      "args.destination",
+      "the label-or-ref selector discovery published",
+      "invalid_navigation_destination",
+      (reading) => isExecutionNavigationDestinationSelector(reading.args.destination),
+      withArg("destination", { kind: "label" }),
+    ),
+  ],
+  equip_tool: [
+    exactArgs(["tool"], "invalid_args"),
+    requirement(
+      "args.tool",
+      "one of the tool categories the Mod publishes",
+      "invalid_tool_selector",
+      (reading) => isToolSelector(reading.args.tool),
+      withArg("tool", "not_a_tool"),
+    ),
+  ],
+  travel: [exactArgs(["x", "y"], "invalid_args"), warpSourceRow("invalid_warp_source")],
+  shop_purchase: [
+    exactArgs(["expectedTargetId", "expectedQualifiedItemId", "quantity"], "invalid_args"),
+    targetRow("invalid_shop_target"),
+    itemRow("invalid_expected_item"),
+    // The Mod re-resolves the target and clamps the quantity against live stock and the purse on the game thread, so
+    // nothing here models pricing or stock.
+    integerRow("quantity", 1, null, "invalid_quantity"),
+  ],
+  // The station tile plus one exact published ride. Both x/y and the opaque selector are mandatory: unlike `travel`
+  // there is no "plain" form, so a missing selector is a malformed request rather than an ordinary warp.
+  ride_minecart: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    tileRow("invalid_minecart_station"),
+    // The Mod's own `hasMinecartRideArgs` refused a malformed selector by returning `invalid_args`, and this row keeps
+    // that code: what is wrong is the argument's shape, not the station.
+    requirement(
+      "args.expectedTargetId",
+      "a published `minecart_` ride selector",
+      "invalid_args",
+      (reading) =>
+        typeof reading.args.expectedTargetId === "string" &&
+        /^minecart_[a-f0-9]{16}$/u.test(reading.args.expectedTargetId),
+      withArg("expectedTargetId", "minecart_not_a_selector"),
+    ),
+    requirement(
+      "args.expectedTargetId, args.x, args.y",
+      "one ride this exact snapshot advertised from that station tile",
+      "invalid_minecart_station",
+      (reading) =>
+        Array.isArray(reading.snapshot.minecartTargets) &&
+        reading.snapshot.minecartTargets.some(
+          (target) =>
+            target.targetId === reading.args.expectedTargetId &&
+            target.stationX === reading.args.x &&
+            target.stationY === reading.args.y,
+        ),
+      withArg("x", 12),
+    ),
+  ],
+  // Only the opaque floor target: the floor SET is derived by the Mod from the live lowest level reached, so there is no
+  // coordinate or raw level to check here beyond the shape and the opaque-id form.
+  select_mine_elevator_floor: [
+    exactArgs(["expectedTargetId"], "invalid_args"),
+    opaqueArgRow("expectedTargetId", "invalid_mine_elevator_floor"),
+  ],
+  ride_bus: [exactArgs([], "invalid_args")],
+  withdraw_silo_hay: [exactArgs(["x", "y", "expectedTargetId"], "invalid_execution_request")],
+  // The native placement path needs the item to be the HELD one, so the slot and the identity are both mandatory. No
+  // target: the tile is the placement.
+  place_owned_object: [
+    exactArgs(["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    tileRow("invalid_placement_tile"),
+    slotRow("invalid_placement_slot"),
+    itemRow("invalid_placement_item"),
+  ],
+  remove_placed_item: REMOVES_PLACED_OBJECT,
+  // No slot: which backpack slot receives the piece is the game's own decision
+  // (`GameLocation.removeQueuedFurniture`, GameLocation.cs:8084-8093), so a caller-supplied one would be a value nothing
+  // reads. The id itself is re-derived by the Mod on the game thread and a stale one is refused there by name.
+  move_placed_furniture: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    tileRow("invalid_world_object_tile"),
+  ],
+  // No angle either: which rotation the turn lands on is the piece's own cycle (`Furniture.rotate`, Furniture.cs:1153-
+  // 1162), so a caller-supplied angle would have to pretend to accept orientations the game does not have.
+  rotate_furniture: [exactArgs(["x", "y", "expectedTargetId"], "invalid_args"), tileRow("invalid_world_object_tile")],
+  remove_fence: REMOVES_PLACED_OBJECT,
+  // The native method deposits whatever the actor is HOLDING (`who.ActiveObject`/`who.CurrentItem`,
+  // FishTankFurniture.cs:235), so the slot is what selects the stack and the id is what proves the stack is still the one
+  // the caller saw.
+  put_item_in_fish_tank: [
+    exactArgs(["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    tileRow("invalid_world_object_tile"),
+    slotRow("invalid_world_object_slot"),
+    itemRow("invalid_placement_item"),
+  ],
+  place_item_on_pedestal: [
+    exactArgs(["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    tileRow("invalid_world_object_tile"),
+    slotRow("invalid_world_object_slot"),
+    itemRow("invalid_placement_item"),
+  ],
+  break_container: REMOVES_PLACED_OBJECT,
+  use_obelisk: [exactArgs(["x", "y", "expectedTargetId"], "invalid_execution_request")],
+  toggle_animal_door: [exactArgs(["x", "y", "expectedTargetId"], "invalid_execution_request")],
+  clear_fish_pond: [exactArgs(["x", "y", "expectedTargetId"], "invalid_execution_request")],
+  // The quest identity ALONE. `dailyQuestTargets` publishes no tile, and the Mod's own wire parser pins exactly
+  // { expectedTargetId } (BridgeProtocol.ExecutionArgumentProperties, asserted by AcceptDailyQuestActionTests).
+  // Demanding x/y here - as this row once did, sharing the sibling shape - refused every request the Mod would have
+  // accepted, so the action was advertised and could never execute.
+  accept_daily_quest: [exactArgs(["expectedTargetId"], "invalid_execution_request")],
+  // The offer's identity alone: that projection publishes no tile either.
+  accept_special_order: [exactArgs(["expectedTargetId"], "invalid_execution_request")],
+  claim_museum_reward: [exactArgs(["expectedTargetId"], "invalid_execution_request")],
+  // The Data/Buildings type id, the top-left footprint tile and the opaque site id. The Mod re-resolves the type against
+  // Game1.buildingData and the site against the LIVE world.
+  build_farm_building: [
+    exactArgs(["buildingType", "x", "y", "expectedTargetId"], "invalid_execution_request"),
+    boundedTextRow("buildingType", 128, "invalid_build_building_type"),
+    tileRow("invalid_build_site"),
+    opaqueArgRow("expectedTargetId", "invalid_build_target"),
+  ],
+  // No client-supplied target at all: the prize track head is the game's own `ticketPrizesClaimed` state and the subject
+  // is the actor's own ticket stack, so the args must be exactly empty - the Mod's own wire parser pins the empty set. A
+  // target id "for safety" would make every request invalid.
+  redeem_prize_ticket: [exactArgs([], "invalid_args")],
+  // The sewing-machine pair names the TWO backpack slots and the opaque pair identity discovery published; there is no
+  // coordinate. The Mod's own wire parser pins exactly this shape.
+  tailor_clothing: [
+    exactArgs(["leftSlot", "rightSlot", "expectedTargetId"], "invalid_execution_request"),
+    integerRow("leftSlot", 0, null, "invalid_execution_request"),
+    integerRow("rightSlot", 0, null, "invalid_execution_request"),
+  ],
+  // The same two-slot shape over the dye route: the garment slot, the dye slot and the opaque pair identity.
+  dye_clothing_with_item: [
+    exactArgs(["leftSlot", "rightSlot", "expectedTargetId"], "invalid_execution_request"),
+    integerRow("leftSlot", 0, null, "invalid_execution_request"),
+    integerRow("rightSlot", 0, null, "invalid_execution_request"),
+  ],
+  // The geode travels to the blacksmith's counter as the CURSOR item, so the request names the one backpack slot it comes
+  // from and the id it expects to find there. No coordinate: the counter is Clint's own dialogue case
+  // (`Game1.activeClickableMenu = new GeodeMenu()`, GameLocation.cs:12345-12346), and no opaque target id: the slot's own
+  // live item identifies it.
+  open_geode: [
+    exactArgs(["slot", "expectedQualifiedItemId"], "invalid_execution_request"),
+    integerRow("slot", 0, null, "invalid_execution_request"),
+    boundedItemRow("invalid_execution_request", 128),
+  ],
+  // The chest tile, the opaque target id, and the palette index the repaint asks for. The palette's own SIZE belongs to
+  // the game (`DiscreteColorPicker.totalColors`), so the wire only refuses a negative index; the Mod names
+  // `invalid_color_selection` for one past the palette.
+  color_placed_object: [
+    exactArgs(["x", "y", "expectedTargetId", "colorSelection"], "invalid_execution_request"),
+    integerRow("colorSelection", 0, null, "invalid_color_selection"),
+  ],
+  // One string and nothing else, bounded by the SAME length the Mod enforces (its ChatMessageMaximumLength): an argument
+  // the wire accepts but the handler refuses would be a registered capability that cannot be invoked.
+  send_multiplayer_chat: [textOnlyRow(256)],
+  // The name to write, bounded by the SAME length the Mod enforces (EntityNameMaximumLength).
+  name_entity: [textOnlyRow(64)],
+  // The slot that must hold the totem plus the totem's wire identity; both are re-read on the game thread.
+  use_warp_item: [
+    exactArgs(["slot", "expectedQualifiedItemId"], "invalid_execution_request"),
+    integerRow("slot", 0, null, "invalid_warp_item_slot"),
+    itemRow("invalid_expected_item"),
+  ],
+  // The pan slot plus the live ore-pan site the Mod re-resolves against `orePanPoint`.
+  pan_ore: [
+    exactArgs(["slot", "x", "y"], "invalid_execution_request"),
+    integerRow("slot", 0, null, "invalid_pan_slot"),
+    tileRow("invalid_pan_site"),
+  ],
+  // The mailbox tile plus the opaque id that binds the pending count AND the head letter.
+  claim_mail_attachment: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_execution_request"),
+    tileRow("invalid_mailbox_target"),
+  ],
+  // load_building_chest carries a required `slot` on top of the tile shape: the native Load branch reads
+  // who.ActiveObject (the HELD item), not "some item in the pack", so the request must name the slot that is already the
+  // held one.
+  load_building_chest: [exactArgs(["x", "y", "slot", "expectedTargetId"], "invalid_execution_request")],
+  collect_building_chest_output: [exactArgs(["x", "y", "expectedTargetId"], "invalid_execution_request")],
+  use_raft: [
+    exactArgs(["slot", "x", "y"], "invalid_args"),
+    slotRow("invalid_raft_target"),
+    tileRow("invalid_raft_target"),
+    requirement(
+      "args.x, args.y",
+      "a raft site this exact snapshot published",
+      "invalid_raft_target",
+      (reading) =>
+        Array.isArray(reading.snapshot.raftTargets) &&
+        reading.snapshot.raftTargets.some((target) => target.x === reading.args.x && target.y === reading.args.y),
+      withArg("y", 12),
+    ),
+  ],
+  mount_transport: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    tileRow("invalid_horse_target"),
+    opaqueArgRow("expectedTargetId", "invalid_horse_target"),
+    publishedTargetRow(
+      "the horse this exact snapshot published at that tile",
+      "invalid_horse_target",
+      (snapshot) => snapshot.horseTargets,
+    ),
+  ],
+  enter_mine: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    tileRow("invalid_mine_entrance"),
+    opaqueArgRow("expectedTargetId", "invalid_mine_entrance"),
+    publishedTargetRow(
+      "the mine entrance this exact snapshot published at that tile",
+      "invalid_mine_entrance",
+      (snapshot) => snapshot.mineEntranceTargets,
+    ),
+  ],
+  // The mine level's own way OUT. The wire shape is `enter_mine`'s - the ladder tile plus the opaque id the
+  // `mineEntranceTargets` row published - because both are rows of that one family and the Mod is the side that can tell
+  // the kinds apart. The Host only proves the pair was published; which ladder it names is decided on the game thread,
+  // where a row of the other kind is refused by name with the action that owns it.
+  use_mine_ladder: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    tileRow("invalid_mine_exit_ladder"),
+    opaqueArgRow("expectedTargetId", "invalid_mine_exit_ladder"),
+    publishedTargetRow(
+      "the ladder this exact snapshot published at that tile",
+      "invalid_mine_exit_ladder",
+      (snapshot) => snapshot.mineEntranceTargets,
+    ),
+  ],
+  // The same WARP SOURCE range as `travel`: `enter_exit` resolves the door or warp from this tile, and an edge exit lives
+  // at `-1` on the axis it is the boundary of. The in-map floor belongs to the walk targets, not to the tile a transition
+  // leaves from.
+  enter_exit: [exactArgs(["x", "y"], "invalid_args"), warpSourceRow("invalid_door_target")],
+  till_soil: [exactArgs(["x", "y"], "invalid_args"), tileRow("invalid_soil_target")],
+  pickup_forage: [
+    exactArgs(["x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    ...tileItemAndTarget("invalid_forage_target", boundedItemRow("invalid_forage_target", 128)),
+  ],
+  pickup_item: [
+    exactArgs(["x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    ...tileItemAndTarget("invalid_item_target", boundedItemRow("invalid_item_target", 128)),
+  ],
+  water_crop: [exactArgs(["x", "y", "expectedTargetId"], "invalid_args"), ...tileAndTarget("invalid_crop_target")],
+  refill_watering_can: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_refill_watering_can_target"),
+  ],
+  harvest_crop: [
+    exactArgs(["x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    ...tileItemAndTarget("invalid_harvest_target", boundedItemRow("invalid_harvest_target", 128)),
+  ],
+  plant_seed: [
+    exactArgs(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    ...toolTileItemAndTarget("invalid_seed_target", boundedItemRow("invalid_seed_target", 128)),
+  ],
+  fertilize_tile: [
+    exactArgs(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    ...toolTileItemAndTarget("invalid_fertilizer_target", boundedItemRow("invalid_fertilizer_target", 128)),
+  ],
+  // The three placement actions name the item they place, and the pinned identity IS the check.
+  place_wood_fence: [
+    exactArgs(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    ...toolTileItemAndTarget("invalid_wood_fence_target", pinnedItemRow("invalid_wood_fence_target", "(O)322")),
+  ],
+  place_crab_pot: [
+    exactArgs(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    ...toolTileItemAndTarget("invalid_crab_pot_target", pinnedItemRow("invalid_crab_pot_target", "(O)710")),
+  ],
+  bait_crab_pot: [
+    exactArgs(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    ...toolTileItemAndTarget("invalid_bait_crab_pot_target", pinnedItemRow("invalid_bait_crab_pot_target", "(O)685")),
+  ],
+  // The clump's own native switch decides which tool it needs, so the wire carries no `slot`: the handler resolves,
+  // selects and restores the tool itself.
+  clear_debris: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_debris_target"),
+  ],
+  break_resource_clump: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    ...tileAndTarget("invalid_clump_target"),
+  ],
+  fish_here: [exactArgs(["x", "y", "expectedTargetId"], "invalid_args"), ...tileAndTarget("invalid_fish_here_target")],
+  machine_inspect: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    ...tileAndTarget("invalid_machine_target"),
+  ],
+  machine_load: [
+    exactArgs(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    ...toolTileItemAndTarget("invalid_machine_load_target", qualifiedItemRow("invalid_machine_load_target")),
+    requirement(
+      "args.slot, args.expectedQualifiedItemId",
+      "the load the machine's own published row offers",
+      "machine_load_input_not_published",
+      (reading) => validateMachineLoadAgainstPublishedRow(reading.args, reading.snapshot) === null,
+      withArg("slot", 3),
+    ),
+  ],
+  machine_collect_output: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    ...tileAndTarget("invalid_machine_collect_target"),
+  ],
+  npc_relationship: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    ...tileAndTarget("invalid_npc_relationship_target"),
+  ],
+  // The NPC family's shared shape: the opaque family target id names the villager and x/y is only the published tile the
+  // walk leg heads for. The Mod re-resolves the person from the id on the game thread.
+  talk_to_npc: [exactArgs(["x", "y", "expectedTargetId"], "invalid_args"), ...tileAndTarget("invalid_npc_talk_target")],
+  // The wearable family's shape: an opaque body-slot target id, the backpack slot the item comes from, and that item's
+  // wire identity. The Mod re-resolves the slot and its occupant on the game thread.
+  equip_wearable: [
+    exactArgs(["slot", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    slotRow("invalid_equip_wearable_target"),
+    itemRow("invalid_equip_wearable_target"),
+    targetRow("invalid_equip_wearable_target"),
+  ],
+  // No item id: the item is whatever the named body slot already holds, and `slot` is the EMPTY backpack slot the removed
+  // wearable must land in.
+  unequip_wearable: [
+    exactArgs(["slot", "expectedTargetId"], "invalid_args"),
+    slotRow("invalid_unequip_wearable_target"),
+    targetRow("invalid_unequip_wearable_target"),
+  ],
+  // No arguments at all: the subject is the actor's own mount and its readiness is native state.
+  dismount_transport: [exactArgs([], "invalid_args")],
+  pet_animal: [exactArgs(["x", "y", "expectedTargetId"], "invalid_args"), ...tileAndTarget("invalid_pet_target")],
+  // The farm-animal family's shape: the tile the animal was published at (only the approach leg's destination), and the
+  // opaque `farmAnimalPetTargets` id. The Mod re-resolves the animal from its CURRENT location and measures reach against
+  // its live tile, so a barn animal that wandered is refused by name rather than petted through a stale coordinate.
+  pet_farm_animal: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    ...tileAndTarget("invalid_farm_animal_pet_target"),
+  ],
+  collect_animal_product: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_animal_product_target"),
+  ],
+  feed_animal: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_feed_trough_target"),
+  ],
+  use_item: [
+    exactArgs(["slot", "expectedQualifiedItemId"], "invalid_args"),
+    slotRow("invalid_item_use_target"),
+    boundedItemRow("invalid_item_use_target", 128),
+  ],
+  chop_tree: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_chop_tree_target"),
+  ],
+  break_rock: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_break_rock_target"),
+  ],
+  clear_hoedirt: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_clear_hoedirt_target"),
+  ],
+  dig_artifact_spot: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_dig_artifact_spot_target"),
+  ],
+  express_emote: [exactArgs(["emote"], "invalid_args"), boundedTextRow("emote", 64, "invalid_emote")],
+  face_direction: [exactArgs(["direction"], "invalid_args"), boundedTextRow("direction", 64, "invalid_direction")],
+  // THE CONTAINER IS THE TARGET, so these take a container id and an item id - not a slot, a tile and a target id.
   //
-  // That line was a SECOND implementation of the Mod's admission rule, and it was the harmful one. WIA §4.2
-  // makes the Mod the single authority on whether the actor's body is free, and `snapshot.actionable` is
-  // false in exactly the situation the modal family exists for (a mounted dialogue), so the gateway refused
-  // `dismiss_modal` and `answer_dialogue` at the moment they were the only way out - the whole
-  // interruption-and-resume loop was unreachable on the Host path. It also collapsed five different holds
-  // into one blind code before the Mod could name them. The request now travels, and the Mod answers with a
-  // named hold (WorldModel.HoldReasonCode) plus the facts its countermeasure needs.
-  if (!snapshot.capabilities.includes(value.action)) return "capability_not_declared";
-  if (value.action === "move_to_tile") {
-    if (!hasExactKeys(value.args, ["x", "y"])) return "invalid_args";
-    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_target_tile";
-  } else if (value.action === "navigate_to_destination") {
-    if (!hasExactKeys(value.args, ["destination"])) return "invalid_args";
+  // This row once read the pre-`chests` shape (`slot`, `x`, `y`, `expectedTargetId`). Both the Mod's descriptors
+  // (`ContainerItemTarget`, FarmhandActionDefinitions.cs:290-291) and the generated catalog had moved to
+  // `[chestId, expectedQualifiedItemId]`, so **every** `chest_store`/`chest_retrieve` request was refused `invalid_args`
+  // here before anyone looked at it: the model read the new shape from the catalog and the Host demanded the old one.
+  chest_store: [
+    exactArgs(["chestId", "expectedQualifiedItemId"], "invalid_args"),
+    opaqueArgRow("chestId", "invalid_chest_target"),
+    boundedItemRow("invalid_chest_target", 128),
+  ],
+  chest_retrieve: [
+    exactArgs(["chestId", "expectedQualifiedItemId"], "invalid_args"),
+    opaqueArgRow("chestId", "invalid_chest_target"),
+    boundedItemRow("invalid_chest_target", 128),
+  ],
+  chop_stump: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_tool_target"),
+  ],
+  plant_sapling: [
+    exactArgs(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    ...toolTileItemAndTarget("invalid_sapling_target", itemRow("invalid_sapling_target")),
+  ],
+  cut_weeds: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_tool_target"),
+  ],
+  cut_grass: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_tool_target"),
+  ],
+  clear_cask: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_cask_target"),
+  ],
+  dress_mannequin: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_facility_target"),
+  ],
+  set_sign_display: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_facility_target"),
+  ],
+  deposit_silo_hay: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_facility_target"),
+  ],
+  toggle_tool_light: [
+    exactArgs(["slot", "x", "y"], "invalid_args"),
+    slotRow("invalid_lantern_slot"),
+    tileRow("invalid_lantern_slot"),
+  ],
+  scythe_crop: [
+    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
+    ...toolTileAndTarget("invalid_tool_target"),
+  ],
+  interact_npc_with_item: [
+    exactArgs(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    ...toolTileItemAndTarget("invalid_npc_item_interaction_target", itemRow("invalid_npc_item_interaction_target")),
+  ],
+  craft_item: [
+    exactArgs(["expectedTargetId"], "invalid_args"),
+    opaqueArgRow("expectedTargetId", "invalid_recipe_target"),
+  ],
+  cook_recipe: [
+    exactArgs(["expectedTargetId"], "invalid_args"),
+    opaqueArgRow("expectedTargetId", "invalid_recipe_target"),
+  ],
+  collect_crab_pot_output: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    ...tileAndTarget("invalid_crab_pot_target"),
+  ],
+  // No `slot`: a walk to a bin takes tens of ticks, and a magnet pickup or a stack merge on the way shifts every slot
+  // behind the one that changed. The item id is the intent; the Mod resolves the first carried stack of it on arrival and
+  // names the slot it actually shipped in the receipt.
+  ship_item: [
+    exactArgs(["x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
+    ...tileItemAndTarget("invalid_ship_target", itemRow("invalid_ship_target")),
+  ],
+  water_pet_bowl: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    ...tileAndTarget("invalid_pet_bowl_target"),
+  ],
+  dismiss_modal: [exactArgs([], "invalid_args")],
+  answer_dialogue: [
+    exactArgs(["responseKey"], "invalid_args"),
+    boundedTextRow("responseKey", 128, "invalid_response_key"),
+  ],
+  // The pair is the binding, so the Host refuses an unshaped request before it can reach the Mod: a persistent save
+  // write must not be dispatchable without naming the level-up it is for.
+  //
+  // The three values are the Mod's OWN published vocabulary (`FarmhandActionCatalog.LevelUpChoiceEnum`, projected onto the
+  // descriptor and onto the generated action surface) and the Mod's registry acceptance refuses anything outside it on the
+  // game thread. They are spelled here so the refusal is specific and pre-bridge; `game-tools-argument-contract.test.ts`
+  // holds this list and the published one equal, so a value the Mod's contract declares legal can never be refused here.
+  respond_level_up: [
+    exactArgs(["choice", "expectedSkill", "expectedLevel"], "invalid_args"),
+    requirement(
+      "args.choice",
+      "one of the published level-up choices",
+      "invalid_level_up_choice",
+      (reading) =>
+        typeof reading.args.choice === "string" && ["confirm", "branch_a", "branch_b"].includes(reading.args.choice),
+      withArg("choice", "branch_c"),
+    ),
+    integerRow("expectedSkill", 0, 5, "invalid_level_up_choice"),
+    integerRow("expectedLevel", 1, 10, "invalid_level_up_choice"),
+  ],
+  water_slime_hutch_trough: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    ...tileAndTarget("invalid_slime_hutch_trough_target"),
+  ],
+  harvest_bush: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    ...tileAndTarget("invalid_harvest_bush_target"),
+  ],
+  harvest_fruit_tree: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    ...tileAndTarget("invalid_harvest_fruit_tree_target"),
+  ],
+  shake_tree: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    ...tileAndTarget("invalid_shake_tree_target"),
+  ],
+  take_pedestal_item: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    ...tileAndTarget("invalid_take_pedestal_item_target"),
+  ],
+  toggle_fence_gate: [
+    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
+    ...tileAndTarget("invalid_toggle_fence_gate_target"),
+  ],
+  // The cross-day lifecycle: no client-supplied target, because the bed and the ready state are native facts.
+  sleep: [exactArgs([], "invalid_args")],
+} satisfies Record<ExecutionRequest["action"], readonly ExecutionRequestRequirement[]>);
 
-    if (!isExecutionNavigationDestinationSelector(value.args.destination)) return "invalid_navigation_destination";
-  } else if (value.action === "equip_tool") {
-    if (!hasExactKeys(value.args, ["tool"])) return "invalid_args";
+/** The action ids this declaration carries rows for: the key set the compiler holds equal to `ExecutionRequest["action"]`. */
+const EXECUTION_ACTIONS: ReadonlySet<string> = new Set(Object.keys(EXECUTION_REQUEST_ARGUMENT_RULES));
 
-    if (!isToolSelector(value.args.tool)) return "invalid_tool_selector";
-  } else if (value.action === "travel") {
-    if (!hasExactKeys(value.args, ["x", "y"])) return "invalid_args";
+function isExecutionAction(value: unknown): value is ExecutionRequest["action"] {
+  return typeof value === "string" && EXECUTION_ACTIONS.has(value);
+}
 
-    // A WARP SOURCE tile, so the range is the one the snapshot publishes edge exits in - NOT `isTileCoordinate`.
-    //
-    // A map declares an edge exit with its source outside the grid (`-1 53 BusStop 42 23`), and `snapshot.warps[]`
-    // publishes exactly that source because that is what the location's warp table holds. `travel` names the tile the
-    // actor leaves FROM and the Mod resolves the warp by exact source match
-    // (`farmhandexecutioncontroller.movementactions.cs`, `ResolveLocationWarp`), so requiring an in-map tile here
-    // refused the very exit the snapshot had just advertised: the model copied `{sourceX, sourceY}` and the Host
-    // answered `invalid_warp_source`. `isWarpSourceCoordinate` is this side's one declaration of that range and is
-    // already what the `warps` rows are validated with, so reading and asking now agree.
-    if (!isWarpSourceCoordinate(value.args.x) || !isWarpSourceCoordinate(value.args.y)) return "invalid_warp_source";
-  } else if (value.action === "use_raft") {
-    const args = value.args;
-    if (!hasExactKeys(args, ["slot", "x", "y"])) return "invalid_args";
-    if (!isToolSlot(args.slot) || !isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_raft_target";
-    const targets = snapshot.raftTargets;
-    if (!Array.isArray(targets) || !targets.some((target) => target.x === args.x && target.y === args.y))
-      return "invalid_raft_target";
-  } else if (value.action === "mount_transport") {
-    const mountArgs = value.args;
-    if (!hasExactKeys(mountArgs, ["x", "y", "expectedTargetId"])) return "invalid_args";
-    if (!isTileCoordinate(mountArgs.x) || !isTileCoordinate(mountArgs.y) || !isOpaqueId(mountArgs.expectedTargetId))
-      return "invalid_horse_target";
-    if (
-      !snapshot.horseTargets?.some(
-        (target) =>
-          target.targetId === mountArgs.expectedTargetId && target.x === mountArgs.x && target.y === mountArgs.y,
-      )
-    )
-      return "invalid_horse_target";
-  } else if (value.action === "enter_mine") {
-    const mineArgs = value.args;
-    if (!hasExactKeys(mineArgs, ["x", "y", "expectedTargetId"])) return "invalid_args";
-    if (!isTileCoordinate(mineArgs.x) || !isTileCoordinate(mineArgs.y) || !isOpaqueId(mineArgs.expectedTargetId))
-      return "invalid_mine_entrance";
-    if (
-      !snapshot.mineEntranceTargets?.some(
-        (target) => target.targetId === mineArgs.expectedTargetId && target.x === mineArgs.x && target.y === mineArgs.y,
-      )
-    )
-      return "invalid_mine_entrance";
-  } else if (value.action === "use_mine_ladder") {
-    // The mine level's own way OUT. The wire shape is `enter_mine`'s - the ladder tile plus the opaque id the
-    // `mineEntranceTargets` row published - because both are rows of that one family and the Mod is the side that
-    // can tell the kinds apart. The Host only proves the pair was published; which ladder it names is decided on
-    // the game thread, where a row of the other kind is refused by name with the action that owns it.
-    const ladderArgs = value.args;
-    if (!hasExactKeys(ladderArgs, ["x", "y", "expectedTargetId"])) return "invalid_args";
-    if (!isTileCoordinate(ladderArgs.x) || !isTileCoordinate(ladderArgs.y) || !isOpaqueId(ladderArgs.expectedTargetId))
-      return "invalid_mine_exit_ladder";
-    if (
-      !snapshot.mineEntranceTargets?.some(
-        (target) =>
-          target.targetId === ladderArgs.expectedTargetId && target.x === ladderArgs.x && target.y === ladderArgs.y,
-      )
-    )
-      return "invalid_mine_exit_ladder";
-  } else if (value.action === "ride_minecart") {
-    // The station tile plus one exact published ride. Both x/y and the opaque
-    // selector are mandatory: unlike `travel`, there is no "plain" form, so a
-    // missing selector is a malformed request rather than an ordinary warp.
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_minecart_station";
-    return validateMinecartRideTarget(value.args, snapshot);
-  } else if (value.action === "select_mine_elevator_floor") {
-    // Only the opaque floor target: the floor SET is derived by the Mod from the
-    // live lowest level reached, so there is no coordinate or raw level to check
-    // here beyond the shape and the opaque-id form.
-    if (!hasExactKeys(value.args, ["expectedTargetId"])) return "invalid_args";
-    if (!isOpaqueId(value.args.expectedTargetId)) return "invalid_mine_elevator_floor";
-  } else if (value.action === "shop_purchase") {
-    // An opaque shop target, the good's wire identity, and a positive quantity. The
-    // Mod re-resolves the target and clamps the quantity against live stock and the
-    // purse on the game thread, so nothing here needs to model pricing or stock.
-    if (!hasExactKeys(value.args, ["expectedTargetId", "expectedQualifiedItemId", "quantity"])) return "invalid_args";
-    if (!isOpaqueId(value.args.expectedTargetId)) return "invalid_shop_target";
-    if (typeof value.args.expectedQualifiedItemId !== "string" || value.args.expectedQualifiedItemId.length === 0)
-      return "invalid_expected_item";
-    if (!Number.isSafeInteger(value.args.quantity) || (value.args.quantity as number) < 1) return "invalid_quantity";
-  } else if (
-    value.action === "withdraw_silo_hay" ||
-    value.action === "use_obelisk" ||
-    value.action === "clear_fish_pond" ||
-    value.action === "toggle_animal_door"
-  ) {
-    // The shared { x, y, expectedTargetId } shape and no slot.
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_execution_request";
-  } else if (value.action === "color_placed_object") {
-    // The chest tile, the opaque target id, and the palette index the repaint asks for. The palette's own
-    // SIZE belongs to the game (`DiscreteColorPicker.totalColors`), so the wire only refuses a negative
-    // index; the Mod names `invalid_color_selection` for one past the palette.
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId", "colorSelection"])) return "invalid_execution_request";
-    if (!Number.isSafeInteger(value.args.colorSelection) || (value.args.colorSelection as number) < 0)
-      return "invalid_color_selection";
-  } else if (value.action === "accept_daily_quest") {
-    // The quest identity ALONE. `dailyQuestTargets` publishes no tile, and the Mod's own wire parser
-    // pins exactly { expectedTargetId } (BridgeProtocol.ExecutionArgumentProperties, asserted by
-    // AcceptDailyQuestActionTests). Demanding x/y here - as this branch once did, sharing the sibling
-    // branch above - refused every request the Mod would have accepted, so the action was advertised
-    // and could never execute.
-    if (!hasExactKeys(value.args, ["expectedTargetId"])) return "invalid_execution_request";
-  } else if (value.action === "accept_special_order" || value.action === "claim_museum_reward") {
-    // The offer's / reward set's identity ALONE. Neither projection publishes a tile, and the Mod's own
-    // wire parser pins exactly { expectedTargetId } for both (BridgeProtocol.ExecutionArgumentProperties),
-    // so this branch is not the sibling { x, y, expectedTargetId } shape.
-    if (!hasExactKeys(value.args, ["expectedTargetId"])) return "invalid_execution_request";
-  } else if (value.action === "send_multiplayer_chat") {
-    // One string and nothing else, bounded by the SAME length the Mod enforces (its
-    // ChatMessageMaximumLength): an argument the wire accepts but the handler refuses would be a
-    // registered capability that cannot be invoked.
-    if (!hasExactKeys(value.args, ["text"])) return "invalid_execution_request";
-    if (typeof value.args.text !== "string" || value.args.text.trim().length === 0) return "invalid_execution_request";
-    if (value.args.text.length > 256) return "invalid_execution_request";
-  } else if (value.action === "name_entity") {
-    // One string and nothing else - the name to write. Bounded by the SAME length the Mod
-    // enforces (EntityNameMaximumLength): an argument the wire accepts but the handler refuses
-    // would be a registered capability that cannot be invoked.
-    if (!hasExactKeys(value.args, ["text"])) return "invalid_execution_request";
-    if (typeof value.args.text !== "string" || value.args.text.trim().length === 0) return "invalid_execution_request";
-    if (value.args.text.length > 64) return "invalid_execution_request";
-  } else if (value.action === "build_farm_building") {
-    // The Data/Buildings type id, the top-left footprint tile and the opaque site id. The Mod
-    // re-resolves the type against Game1.buildingData and the site against the LIVE world.
-    if (!hasExactKeys(value.args, ["buildingType", "x", "y", "expectedTargetId"])) return "invalid_execution_request";
-    if (
-      typeof value.args.buildingType !== "string" ||
-      value.args.buildingType.length === 0 ||
-      value.args.buildingType.length > 128
-    )
-      return "invalid_build_building_type";
-    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_build_site";
-    if (typeof value.args.expectedTargetId !== "string" || !isOpaqueId(value.args.expectedTargetId))
-      return "invalid_build_target";
-  } else if (value.action === "collect_building_chest_output") {
-    // All four take the shared { x, y, expectedTargetId } shape and no slot.
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_execution_request";
-  } else if (value.action === "claim_mail_attachment") {
-    // The mailbox tile plus the opaque id that binds the pending count AND the head letter.
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_execution_request";
-    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_mailbox_target";
-  } else if (value.action === "pan_ore") {
-    // The pan slot plus the live ore-pan site the Mod re-resolves against `orePanPoint`.
-    if (!hasExactKeys(value.args, ["slot", "x", "y"])) return "invalid_execution_request";
-    if (!Number.isSafeInteger(value.args.slot) || (value.args.slot as number) < 0) return "invalid_pan_slot";
-    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_pan_site";
-  } else if (value.action === "use_warp_item") {
-    // The slot that must hold the totem plus the totem's wire identity; both are re-read on
-    // the game thread, so this only checks the shape.
-    if (!hasExactKeys(value.args, ["slot", "expectedQualifiedItemId"])) return "invalid_execution_request";
-    if (!Number.isSafeInteger(value.args.slot) || (value.args.slot as number) < 0) return "invalid_warp_item_slot";
-    if (typeof value.args.expectedQualifiedItemId !== "string" || value.args.expectedQualifiedItemId.length === 0)
-      return "invalid_expected_item";
-  } else if (value.action === "load_building_chest") {
-    // load_building_chest carries a required `slot` on top of that shape: the native Load branch
-    // reads who.ActiveObject (the HELD item, i.e. Items[CurrentToolIndex]), not "some item in the
-    // pack", so the request must name the slot that is already the held one.
-    if (!hasExactKeys(value.args, ["x", "y", "slot", "expectedTargetId"])) return "invalid_execution_request";
-  } else if (value.action === "redeem_prize_ticket") {
-    // No client-supplied target at all: the prize track head is the game's own `ticketPrizesClaimed`
-    // state and the subject is the actor's own ticket stack, so the args must be exactly empty - the
-    // Mod's own wire parser pins the empty set (BridgeProtocol.ExecutionArgumentProperties). A target
-    // id "for safety" would make every request invalid.
-    if (!hasExactKeys(value.args, [])) return "invalid_args";
-  } else if (value.action === "tailor_clothing" || value.action === "dye_clothing_with_item") {
-    // The sewing-machine pair names the TWO backpack slots and the opaque pair identity discovery
-    // published; there is no coordinate. The Mod's own wire parser pins exactly this shape
-    // (BridgeProtocol.ExecutionArgumentProperties).
-    if (!hasExactKeys(value.args, ["leftSlot", "rightSlot", "expectedTargetId"])) return "invalid_execution_request";
-    if (!isNonNegativeSafeInteger(value.args.leftSlot) || !isNonNegativeSafeInteger(value.args.rightSlot))
-      return "invalid_execution_request";
-  } else if (value.action === "open_geode") {
-    // The geode travels to the blacksmith's counter as the CURSOR item, so the request names the one
-    // backpack slot it comes from and the id it expects to find there. No coordinate: the counter is
-    // Clint's own dialogue case (`Game1.activeClickableMenu = new GeodeMenu()`,
-    // GameLocation.cs:12345-12346), and no opaque target id: the slot's own live item identifies it.
-    // The Mod's own wire parser pins exactly this shape (BridgeProtocol.ExecutionArgumentProperties).
-    if (!hasExactKeys(value.args, ["slot", "expectedQualifiedItemId"])) return "invalid_execution_request";
-    if (!isNonNegativeSafeInteger(value.args.slot)) return "invalid_execution_request";
-    if (!isBoundedNonEmptyString(value.args.expectedQualifiedItemId, 128)) return "invalid_execution_request";
-  } else if (value.action === "ride_bus") {
-    // The ticket machine of the current location is the whole input: there is no
-    // client-supplied target to validate, so the args must be exactly empty.
-    if (!hasExactKeys(value.args, [])) return "invalid_args";
-  } else if (value.action === "enter_exit") {
-    if (!hasExactKeys(value.args, ["x", "y"])) return "invalid_args";
+/**
+ * The argument rows for one action id, or none for an id no row declares.
+ *
+ * The `unknown_action` envelope row runs before this lookup and admits only an id the table carries, so the empty list is
+ * unreachable on the decision path; it is what a caller would get if that row ever stopped running.
+ */
+function argumentRulesFor(action: unknown): readonly ExecutionRequestRequirement[] {
+  return isExecutionAction(action) ? EXECUTION_REQUEST_ARGUMENT_RULES[action] : [];
+}
 
-    // The same WARP SOURCE range as `travel`: `enter_exit` resolves the door or warp from this tile, and an edge exit
-    // lives at `-1` on the axis it is the boundary of. The in-map floor belongs to the walk targets, not to the tile a
-    // transition leaves from.
-    if (!isWarpSourceCoordinate(value.args.x) || !isWarpSourceCoordinate(value.args.y)) return "invalid_door_target";
-  } else if (value.action === "till_soil") {
-    if (!hasExactKeys(value.args, ["x", "y"])) return "invalid_args";
-
-    if (!isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y)) return "invalid_soil_target";
-  } else if (value.action === "pickup_forage") {
-    if (!hasExactKeys(value.args, ["x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedQualifiedItemId !== "string" ||
-      value.args.expectedQualifiedItemId.length === 0 ||
-      value.args.expectedQualifiedItemId.length > 128 ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_forage_target";
-  } else if (value.action === "pickup_item") {
-    if (!hasExactKeys(value.args, ["x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedQualifiedItemId !== "string" ||
-      value.args.expectedQualifiedItemId.length === 0 ||
-      value.args.expectedQualifiedItemId.length > 128 ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_item_target";
-  } else if (value.action === "refill_watering_can") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_refill_watering_can_target";
-  } else if (value.action === "water_crop") {
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_crop_target";
-  } else if (value.action === "water_pet_bowl") {
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-    if (
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_pet_bowl_target";
-  } else if (value.action === "dismiss_modal") {
-    if (!hasExactKeys(value.args, [])) return "invalid_args";
-  } else if (value.action === "answer_dialogue") {
-    if (!hasExactKeys(value.args, ["responseKey"])) return "invalid_args";
-    if (
-      typeof value.args.responseKey !== "string" ||
-      value.args.responseKey.length < 1 ||
-      value.args.responseKey.length > 128
-    )
-      return "invalid_response_key";
-  } else if (value.action === "respond_level_up") {
-    // The pair is the binding, so the Host refuses an unshaped request before it can reach the Mod: a persistent
-    // save write must not be dispatchable without naming the level-up it is for.
-    //
-    // The three values are the Mod's OWN published vocabulary (`FarmhandActionCatalog.LevelUpChoiceEnum`,
-    // projected onto the descriptor and onto the generated action surface) and the Mod's registry acceptance
-    // refuses anything outside it on the game thread. They are spelled here so the refusal is specific and
-    // pre-bridge; `game-tools-argument-contract.test.ts` holds this list and the published one equal, and a
-    // value the Mod's contract declares legal can never be refused here.
-    if (!hasExactKeys(value.args, ["choice", "expectedSkill", "expectedLevel"])) return "invalid_args";
-    if (
-      typeof value.args.choice !== "string" ||
-      !["confirm", "branch_a", "branch_b"].includes(value.args.choice) ||
-      !Number.isSafeInteger(value.args.expectedSkill) ||
-      (value.args.expectedSkill as number) < 0 ||
-      (value.args.expectedSkill as number) > 5 ||
-      !Number.isSafeInteger(value.args.expectedLevel) ||
-      (value.args.expectedLevel as number) < 1 ||
-      (value.args.expectedLevel as number) > 10
-    )
-      return "invalid_level_up_choice";
-  } else if (value.action === "water_slime_hutch_trough") {
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-    if (
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_slime_hutch_trough_target";
-  } else if (value.action === "harvest_crop") {
-    if (!hasExactKeys(value.args, ["x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId) ||
-      typeof value.args.expectedQualifiedItemId !== "string" ||
-      value.args.expectedQualifiedItemId.length === 0 ||
-      value.args.expectedQualifiedItemId.length > 128
-    )
-      return "invalid_harvest_target";
-  } else if (value.action === "plant_seed") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
-      return "invalid_args";
-
-    if (
-      !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]) ||
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedQualifiedItemId !== "string" ||
-      value.args.expectedQualifiedItemId.length === 0 ||
-      value.args.expectedQualifiedItemId.length > 128 ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_seed_target";
-  } else if (value.action === "fertilize_tile") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
-      return "invalid_args";
-
-    if (
-      !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]) ||
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedQualifiedItemId !== "string" ||
-      value.args.expectedQualifiedItemId.length === 0 ||
-      value.args.expectedQualifiedItemId.length > 128 ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_fertilizer_target";
-  } else if (
-    value.action === "place_wood_fence" ||
-    value.action === "place_crab_pot" ||
-    value.action === "bait_crab_pot"
-  ) {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
-      return "invalid_args";
-
-    if (
-      !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]) ||
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      value.args.expectedQualifiedItemId !==
-        (value.action === "place_wood_fence" ? "(O)322" : value.action === "place_crab_pot" ? "(O)710" : "(O)685") ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return value.action === "place_wood_fence"
-        ? "invalid_wood_fence_target"
-        : value.action === "bait_crab_pot"
-          ? "invalid_bait_crab_pot_target"
-          : "invalid_crab_pot_target";
-  } else if (value.action === "break_resource_clump") {
-    // The clump's own native switch decides which tool it needs, so the wire carries no `slot`: the handler resolves,
-    // selects and restores the tool itself.
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_clump_target";
-  } else if (value.action === "clear_debris") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_debris_target";
-  } else if (value.action === "machine_inspect") {
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_machine_target";
-  } else if (value.action === "machine_load") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
-      return "invalid_args";
-
-    if (
-      !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]) ||
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      !isQualifiedItemId(value.args.expectedQualifiedItemId) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_machine_load_target";
-    const publishedInputVerdict = validateMachineLoadAgainstPublishedRow(value.args, snapshot);
-    if (publishedInputVerdict !== null) return publishedInputVerdict;
-  } else if (value.action === "machine_collect_output") {
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !hasOnlyKeys(value.args, ["x", "y", "expectedTargetId"]) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_machine_collect_target";
-  } else if (value.action === "npc_relationship") {
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_npc_relationship_target";
-  } else if (value.action === "talk_to_npc") {
-    // The NPC family's shared shape: the opaque family target id names the villager and
-    // x/y is only the published tile the walk leg heads for. The Mod re-resolves the person
-    // from the id on the game thread, so there is nothing else to model here.
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-    if (
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_npc_talk_target";
-  } else if (value.action === "equip_wearable") {
-    // The wearable family's shape: an opaque body-slot target id, the backpack slot the item comes
-    // from, and that item's wire identity. The Mod re-resolves the slot and its occupant on the
-    // game thread, so there is nothing else to model here.
-    if (!hasExactKeys(value.args, ["slot", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
-    if (
-      !isToolSlot(value.args.slot) ||
-      typeof value.args.expectedQualifiedItemId !== "string" ||
-      value.args.expectedQualifiedItemId.length === 0 ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_equip_wearable_target";
-  } else if (value.action === "unequip_wearable") {
-    // No item id: the item is whatever the named body slot already holds, and `slot` is the EMPTY
-    // backpack slot the removed wearable must land in.
-    if (!hasExactKeys(value.args, ["slot", "expectedTargetId"])) return "invalid_args";
-    if (
-      !isToolSlot(value.args.slot) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_unequip_wearable_target";
-  } else if (value.action === "dismount_transport") {
-    // No arguments at all: the subject is the actor's own mount and its readiness is native state.
-    if (!hasExactKeys(value.args, [])) return "invalid_args";
-  } else if (value.action === "pet_animal") {
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_pet_target";
-  } else if (value.action === "pet_farm_animal") {
-    // The farm-animal family's shape: the tile the animal was published at (only the approach leg's destination), and
-    // the opaque `farmAnimalPetTargets` id. The Mod re-resolves the animal from its CURRENT location and measures reach
-    // against its live tile, so a barn animal that wandered is refused by name rather than petted through a stale
-    // coordinate.
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_farm_animal_pet_target";
-  } else if (value.action === "collect_animal_product") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_animal_product_target";
-  } else if (value.action === "feed_animal") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_feed_trough_target";
-  } else if (value.action === "break_rock") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_break_rock_target";
-  } else if (value.action === "dig_artifact_spot") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_dig_artifact_spot_target";
-  } else if (value.action === "clear_hoedirt") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_clear_hoedirt_target";
-  } else if (value.action === "chop_tree") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
-
-    if (
-      !hasOnlyKeys(value.args, ["slot", "x", "y", "expectedTargetId"]) ||
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_chop_tree_target";
-  } else if (value.action === "use_item") {
-    if (!hasExactKeys(value.args, ["slot", "expectedQualifiedItemId"])) return "invalid_args";
-
-    if (
-      !isToolSlot(value.args.slot) ||
-      typeof value.args.expectedQualifiedItemId !== "string" ||
-      value.args.expectedQualifiedItemId.length === 0 ||
-      value.args.expectedQualifiedItemId.length > 128
-    )
-      return "invalid_item_use_target";
-  } else if (value.action === "express_emote") {
-    if (!hasExactKeys(value.args, ["emote"])) return "invalid_args";
-
-    if (typeof value.args.emote !== "string" || value.args.emote.length === 0 || value.args.emote.length > 64)
-      return "invalid_emote";
-  } else if (value.action === "face_direction") {
-    if (!hasExactKeys(value.args, ["direction"])) return "invalid_args";
-
-    if (
-      typeof value.args.direction !== "string" ||
-      value.args.direction.length === 0 ||
-      value.args.direction.length > 64
-    )
-      return "invalid_direction";
-  } else if (value.action === "chest_store" || value.action === "chest_retrieve") {
-    // THE CONTAINER IS THE TARGET, so these take a container id and an item id - not a slot, a tile and a target id.
-    //
-    // This branch still read the pre-`chests` shape: `slot`, `x`, `y`, `expectedTargetId`. Both the Mod's descriptors
-    // (`ContainerItemTarget`, `FarmhandActionDefinitions.cs:290-291`) and the generated catalog had moved to
-    // `[chestId, expectedQualifiedItemId]`, so **every** `chest_store`/`chest_retrieve` request was refused
-    // `invalid_args` at this line before anyone looked at it: the model read the new shape from the catalog and the Host
-    // demanded the old one.
-    //
-    // Found by `protocol-catalog-agreement.test.ts`, the gate written for `pickup_forage` - which is why that gate
-    // compares the whole surface instead of asserting the one action that prompted it.
-    if (!hasExactKeys(value.args, ["chestId", "expectedQualifiedItemId"])) return "invalid_args";
-    if (
-      typeof value.args.chestId !== "string" ||
-      !isOpaqueId(value.args.chestId) ||
-      typeof value.args.expectedQualifiedItemId !== "string" ||
-      value.args.expectedQualifiedItemId.length === 0 ||
-      value.args.expectedQualifiedItemId.length > 128
-    )
-      return "invalid_chest_target";
-  } else if (value.action === "clear_cask") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
-    if (
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_cask_target";
-  } else if (
-    value.action === "dress_mannequin" ||
-    value.action === "set_sign_display" ||
-    value.action === "deposit_silo_hay"
-  ) {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
-    if (
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_facility_target";
-  } else if (value.action === "toggle_tool_light") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y"])) return "invalid_args";
-    if (!isToolSlot(value.args.slot) || !isTileCoordinate(value.args.x) || !isTileCoordinate(value.args.y))
-      return "invalid_lantern_slot";
-  } else if (
-    value.action === "chop_stump" ||
-    value.action === "cut_weeds" ||
-    value.action === "cut_grass" ||
-    value.action === "scythe_crop"
-  ) {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedTargetId"])) return "invalid_args";
-    if (
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_tool_target";
-  } else if (value.action === "plant_sapling") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
-      return "invalid_args";
-    if (
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedQualifiedItemId !== "string" ||
-      value.args.expectedQualifiedItemId.length === 0 ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_sapling_target";
-  } else if (value.action === "interact_npc_with_item") {
-    if (!hasExactKeys(value.args, ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"]))
-      return "invalid_args";
-    if (
-      !isToolSlot(value.args.slot) ||
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedQualifiedItemId !== "string" ||
-      value.args.expectedQualifiedItemId.length === 0 ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_npc_item_interaction_target";
-  } else if (value.action === "craft_item" || value.action === "cook_recipe") {
-    if (!hasExactKeys(value.args, ["expectedTargetId"])) return "invalid_args";
-    if (typeof value.args.expectedTargetId !== "string" || !isOpaqueId(value.args.expectedTargetId))
-      return "invalid_recipe_target";
-  } else if (value.action === "collect_crab_pot_output") {
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-    if (
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_crab_pot_target";
-  } else if (value.action === "ship_item") {
-    // No `slot`: a walk to a bin takes tens of ticks, and a magnet pickup or a stack merge on the way shifts
-    // every slot behind the one that changed. The item id is the intent; the Mod resolves the first carried stack
-    // of it on arrival and names the slot it actually shipped in the receipt.
-    if (!hasExactKeys(value.args, ["x", "y", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
-    if (
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedQualifiedItemId !== "string" ||
-      value.args.expectedQualifiedItemId.length === 0 ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return "invalid_ship_target";
-  } else if (
-    [
-      "harvest_bush",
-      "harvest_fruit_tree",
-      "shake_tree",
-      "take_pedestal_item",
-      "toggle_fence_gate",
-      "fish_here",
-    ].includes(value.action)
-  ) {
-    if (!hasExactKeys(value.args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-    if (
-      !isTileCoordinate(value.args.x) ||
-      !isTileCoordinate(value.args.y) ||
-      typeof value.args.expectedTargetId !== "string" ||
-      !isOpaqueId(value.args.expectedTargetId)
-    )
-      return `invalid_${value.action}_target`;
-  } else if (value.action === "sleep") {
-    // No client-supplied target: the bed and the ready state are native facts.
-    if (!hasExactKeys(value.args, [])) return "invalid_args";
-  }
+/**
+ * The first row of a list that refuses the reading, or null when every row is met.
+ *
+ * A bounded fold over a declaration, exported because it IS the decision: `execution-request-declaration.test.ts` runs it
+ * over the full list and over the same list with one row removed, so the table and the behaviour cannot drift apart.
+ */
+export function firstExecutionRequestRefusal(
+  rows: readonly ExecutionRequestRequirement[],
+  reading: ExecutionRequestReading,
+): string | null {
+  for (const row of rows) if (!row.isMet(reading)) return row.refusal;
   return null;
+}
+
+/**
+ * Whether a dispatch may leave the Host at all, and if not, the one code that says why.
+ *
+ * A lookup and a bounded fold: the envelope rows decide the payload and the action's own argument rows decide `args`, and
+ * neither the order nor a code lives in this function. It was a ladder of `value.action === …` arms 255 cognitive points
+ * long; the ladder is now `EXECUTION_REQUEST_REQUIREMENTS` and `EXECUTION_REQUEST_ARGUMENT_RULES` above, and the answer
+ * to "which field did it refuse" is a row's `field` rather than a branch a reader has to count.
+ */
+export function validateExecutionRequest(value: unknown, snapshot: Snapshot, nowMs = Date.now()): string | null {
+  if (!isRecord(value)) return "invalid_request";
+  const reading = executionRequestReading(value, snapshot, nowMs);
+  const envelopeVerdict = firstExecutionRequestRefusal(EXECUTION_REQUEST_REQUIREMENTS, reading);
+  if (envelopeVerdict !== null) return envelopeVerdict;
+  return firstExecutionRequestRefusal(argumentRulesFor(reading.request.action), reading);
 }
 
 export function serializeBounded(value: unknown): string {
@@ -4764,74 +4842,6 @@ function validateExecutionRequestEnvelope(value: Record<string, unknown>): strin
       Number.isFinite(value.deadlineMs))
     ? null
     : "invalid_execution_request";
-}
-
-function validateWorldObjectActionArgs(value: unknown): string | null {
-  if (!isRecord(value) || !isRecord(value.args)) return null;
-  // Only the world-object actions are this helper's business; everything else is validated by
-  // validateExecutionRequestEnvelope and the per-action chain.
-  if (
-    value.action !== "place_owned_object" &&
-    value.action !== "remove_placed_item" &&
-    value.action !== "move_placed_furniture" &&
-    value.action !== "rotate_furniture" &&
-    value.action !== "remove_fence" &&
-    value.action !== "put_item_in_fish_tank" &&
-    value.action !== "place_item_on_pedestal" &&
-    value.action !== "break_container"
-  )
-    return null;
-  const args = value.args;
-  if (value.action === "place_owned_object") {
-    // The tile, the backpack slot holding the item, that item's wire identity and the opaque
-    // placement target: the native placement path needs the item to be the HELD one, so the slot
-    // and the identity are both mandatory.
-    if (!hasExactKeys(args, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
-    if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_placement_tile";
-    if (!isToolSlot(args.slot)) return "invalid_placement_slot";
-    if (typeof args.expectedQualifiedItemId !== "string" || args.expectedQualifiedItemId.length === 0)
-      return "invalid_placement_item";
-  } else if (value.action === "rotate_furniture") {
-    // Turning a placed piece names the tile and the piece's own opaque `placed_furniture` id, and nothing
-    // else. No slot and no angle: which rotation the turn lands on is the piece's own cycle
-    // (`Furniture.rotate`, Furniture.cs:1153-1162), so a caller-supplied angle would have to pretend to
-    // accept orientations the game does not have.
-    if (!hasExactKeys(args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-    if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_world_object_tile";
-  } else if (value.action === "place_item_on_pedestal") {
-    // The same item shape as the tank deposit: the tile, the pack slot the item is taken from, that item's wire
-    // identity and the pedestal's own target id.
-    if (!hasExactKeys(args, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
-    if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_world_object_tile";
-    if (!isToolSlot(args.slot)) return "invalid_world_object_slot";
-    if (typeof args.expectedQualifiedItemId !== "string" || args.expectedQualifiedItemId.length === 0)
-      return "invalid_placement_item";
-  } else if (value.action === "put_item_in_fish_tank") {
-    // The tank deposit names the tile, the pack slot holding the item, that item's wire identity and the tank's
-    // `placed_furniture` id. All four are mandatory: the native method deposits whatever the actor is HOLDING
-    // (`who.ActiveObject`/`who.CurrentItem`, FishTankFurniture.cs:235), so the slot is what selects the stack and the
-    // id is what proves the stack is still the one the caller saw.
-    if (!hasExactKeys(args, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"])) return "invalid_args";
-    if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_world_object_tile";
-    if (!isToolSlot(args.slot)) return "invalid_world_object_slot";
-    if (typeof args.expectedQualifiedItemId !== "string" || args.expectedQualifiedItemId.length === 0)
-      return "invalid_placement_item";
-  } else if (value.action === "move_placed_furniture") {
-    // The furniture pickup names the tile and the piece's own opaque id, and nothing else. There is no
-    // slot: which backpack slot receives the piece is the game's own decision
-    // (`GameLocation.removeQueuedFurniture`, GameLocation.cs:8084-8093), so a caller-supplied one would be
-    // a value nothing reads. The id itself is re-derived by the Mod on the game thread and a stale one is
-    // refused there by name (`move_placed_furniture_target_changed`), exactly as the sibling removal does.
-    if (!hasExactKeys(args, ["x", "y", "expectedTargetId"])) return "invalid_args";
-    if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_world_object_tile";
-  } else {
-    // Removing a placed item and breaking a container both take the tile, the tool slot and the
-    // opaque object target, and nothing else.
-    if (!hasExactKeys(args, ["x", "y", "slot", "expectedTargetId"])) return "invalid_args";
-    if (!isTileCoordinate(args.x) || !isTileCoordinate(args.y)) return "invalid_world_object_tile";
-    if (!isToolSlot(args.slot)) return "invalid_world_object_slot";
-  }
-  return null;
 }
 
 function validateReceipt(value: Record<string, unknown>): string | null {
@@ -5514,28 +5524,6 @@ function isReasonCode(value: unknown): value is string {
 }
 function validToken(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{16,256}$/.test(value);
-}
-function hasMinecartRideArgs(args: Record<string, unknown>): boolean {
-  return (
-    hasExactKeys(args, ["x", "y", "expectedTargetId"]) &&
-    typeof args.expectedTargetId === "string" &&
-    /^minecart_[a-f0-9]{16}$/u.test(args.expectedTargetId)
-  );
-}
-
-/**
- * A named minecart ride must still be an objective this exact snapshot
- * advertised from the same station tile: the companion may not invent a target,
- * and a stale target from a previous observation is refused.
- */
-function validateMinecartRideTarget(args: Record<string, unknown>, snapshot: Snapshot): string | null {
-  if (!hasMinecartRideArgs(args)) return "invalid_args";
-  const targets = snapshot.minecartTargets;
-  if (!Array.isArray(targets)) return "invalid_minecart_station";
-  const match = targets.find((target) => target.targetId === args.expectedTargetId);
-  if (match === undefined) return "invalid_minecart_station";
-  if (match.stationX !== args.x || match.stationY !== args.y) return "invalid_minecart_station";
-  return null;
 }
 /**
  * A machine load must be the load the machine's own data offered: when the dispatched snapshot publishes that machine,

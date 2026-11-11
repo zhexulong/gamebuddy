@@ -35,10 +35,14 @@ import { fileURLToPath } from "node:url";
  * </p>
  *
  * <p>
- * It DERIVES both sides: the catalog from `action-surface.v1.json`, and the Host's requirement from `protocol.ts` itself,
- * so an action added to either side is covered without touching this file.
+ * It DERIVES both sides: the catalog from `action-surface.v1.json`, and the Host's requirement from the Host's own
+ * declaration - `EXECUTION_REQUEST_ARGUMENT_RULES`, imported rather than scraped out of `protocol.ts` by regex, so a
+ * rename or a reformat cannot quietly empty this gate. An action added to either side is covered without touching this
+ * file.
  * </p>
  */
+import { EXECUTION_REQUEST_ARGUMENT_RULES } from "./protocol.js";
+
 /**
  * The repository root, found by walking up to the directory that holds `integrations`.
  *
@@ -69,7 +73,6 @@ const CATALOG = JSON.parse(
     targetFamily?: string;
   }[];
 };
-const PROTOCOL = readFileSync(join(ROOT, "host", "src", "protocol.ts"), "utf8");
 const SCHEMA = JSON.parse(readFileSync(join(ROOT, "protocol", "bridge-v1.schema.json"), "utf8")) as {
   $defs?: Record<
     string,
@@ -82,30 +85,14 @@ const SCHEMA = JSON.parse(readFileSync(join(ROOT, "protocol", "bridge-v1.schema.
 
 export {};
 
-/** actionId -> the exact `hasExactKeys(value.args, [...])` list the Host demands for it. */
-function hostRequiredArguments(): Map<string, string[] | null> {
-  const required = new Map<string, string[] | null>();
-  // Every branch of the envelope validator reads `value.action === "x"` and then a key list. A branch that does not use
-  // `hasExactKeys` still validates arguments, so it is recorded with its action id and no key list rather than skipped -
-  // "we could not read it" and "it demands nothing" must not look the same.
-  const branches = [
-    ...PROTOCOL.matchAll(
-      /value\.action === "([a-z0-9_]+)"\s*\)\s*\{([\s\S]{0,2400}?)(?=\}\s*else if \(value\.action ===|$)/g,
-    ),
-  ];
-  for (const [, actionId, body] of branches) {
-    if (actionId === undefined || body === undefined) continue;
-    const keys = /hasExactKeys\(value\.args,\s*\[([^\]]*)\]\)/.exec(body);
-    if (keys === null) {
-      required.set(actionId, null);
-      continue;
-    }
-    required.set(
+/** actionId -> the exact argument names the Host's declaration pins for it. */
+function hostRequiredArguments(): Map<string, readonly string[] | null> {
+  return new Map(
+    Object.entries(EXECUTION_REQUEST_ARGUMENT_RULES).map(([actionId, rows]) => [
       actionId,
-      [...(keys[1] ?? "").matchAll(/"([A-Za-z0-9_]+)"/g)].map((match) => match[1] ?? ""),
-    );
-  }
-  return required;
+      rows.find((row) => row.argumentNames !== undefined)?.argumentNames ?? null,
+    ]),
+  );
 }
 
 test("every argument the Host demands is published in the catalog", () => {
@@ -114,7 +101,10 @@ test("every argument the Host demands is published in the catalog", () => {
   );
   const demanded = hostRequiredArguments();
 
-  assert.ok(demanded.size > 20, `the Host validator must have been parsed (found ${demanded.size} branches)`);
+  assert.ok(
+    demanded.size > 20,
+    `the Host's declaration must have been read (found ${demanded.size} action(s) with argument rules)`,
+  );
   assert.ok(published.size > 50, `the catalog must have been read (found ${published.size} actions)`);
 
   const disagreements = [];
@@ -144,13 +134,13 @@ test("every argument the Host demands is published in the catalog", () => {
   );
 });
 
-test("the gate is not vacuous: the parser finds a requirement that exists", () => {
-  // A parser that silently matched nothing would report agreement with everything. `enter_exit` is a branch with an
-  // exact key list, so it must be found with the args the Host really checks.
+test("the gate is not vacuous: the declaration names a requirement that exists", () => {
+  // A reader that silently returned nothing would report agreement with everything. `enter_exit` is an action whose rows
+  // pin an exact argument set, so it must be found with the args the Host really checks.
   const demanded = hostRequiredArguments();
   const enterExit = demanded.get("enter_exit");
-  assert.ok(Array.isArray(enterExit), "enter_exit is parsed as a branch WITH a key list");
-  assert.ok(enterExit.includes("x"), `enter_exit demands x; parsed [${enterExit.join(", ")}]`);
+  assert.ok(Array.isArray(enterExit), "enter_exit is declared with an argument set");
+  assert.ok(enterExit.includes("x"), `enter_exit demands x; read [${enterExit.join(", ")}]`);
 });
 
 /**

@@ -346,6 +346,19 @@ export function validatePromotionSources({
     Object.keys(JSON.parse(schema).$defs?.snapshot?.properties ?? {}).map((key) => key.toLowerCase()),
   );
   const descriptorIds = descriptors.map((descriptor) => descriptor.actionId);
+  // TWO READINGS OF ONE FACT, and they are allowed to disagree out loud. `executionRequestUnion` is the payload TYPE's
+  // action list and `hostValidators.actions` is the validator's row set; the compiler holds them equal
+  // (`satisfies Record<ExecutionRequest["action"], …>`), but this gate reads SOURCE, so it must not assume the compiler
+  // ran. A member either reading has and the other lacks is named rather than resolved by preferring one of them.
+  const hostDeclarationReadable = hostValidators.problem === undefined;
+  const hostActionIds = hostValidators.actions;
+  if (!hostDeclarationReadable) failures.push(hostValidators.problem);
+  else
+    for (const actionId of hostActionIds)
+      if (!executionRequestUnion.includes(actionId)) failures.push(`host_request_declaration_not_in_union:${actionId}`);
+  for (const actionId of executionRequestUnion)
+    if (hostDeclarationReadable && !hostActionIds.includes(actionId))
+      failures.push(`host_request_declaration_missing:${actionId}`);
   failures.push(
     ...findMissingBridgeHelloAdvertisements(
       bridgeSession,
@@ -386,7 +399,7 @@ export function validatePromotionSources({
     } else if (host.length > 1) {
       failures.push(`experimental_adapter_duplicates:${definition.actionId}`);
     }
-    if (!hostValidators.includes(definition.actionId))
+    if (hostDeclarationReadable && !hostActionIds.includes(definition.actionId))
       failures.push(`missing_host_request_validator:${definition.actionId}`);
     if (!envelopeValidators.includes(definition.actionId))
       failures.push(`missing_envelope_validator:${definition.actionId}`);
@@ -395,8 +408,8 @@ export function validatePromotionSources({
     if (!schemaActions.includes(definition.actionId))
       failures.push(`missing_schema_execution_action:${definition.actionId}`);
   }
-  for (const actionId of hostValidators)
-    if (!definitions.some((definition) => definition.actionId === actionId))
+  for (const actionId of hostActionIds)
+    if (hostDeclarationReadable && !definitions.some((definition) => definition.actionId === actionId))
       failures.push(`host_request_validator_not_in_definition:${actionId}`);
   for (const actionId of envelopeValidators)
     if (!definitions.some((definition) => definition.actionId === actionId))
@@ -438,6 +451,9 @@ export function validatePromotionSources({
     failures,
     definitions,
     hostEntries,
+    // Printed by the caller: a green run that does not say what it examined cannot be told from a reader that stopped
+    // working, and an action id that lost its row list is exactly what an unprinted zero hides.
+    hostRequestDeclaration: { actions: hostActionIds.length, withArgumentRules: hostValidators.withArgumentRules ?? 0 },
     evidenceReceiptCount: promotionEvidence?.length ?? 0,
     writePostconditions,
   };
@@ -515,11 +531,48 @@ function hasSnapshotCapabilitySurfaceProvenance(source) {
     /(?:BridgeSnapshot snapshot = )?new BridgeSnapshot\([\s\S]*?\n {12}advertisedCapabilities,/.test(body)
   );
 }
-function parseHostRequestValidators(source) {
-  const body =
-    source.match(/export function validateExecutionRequest[\s\S]*?function validateExecutionRequestEnvelope/)?.[0] ??
-    "";
-  return [...new Set([...body.matchAll(/value\.action !== "([a-z0-9_]+)"/g)].map((entry) => entry[1]))];
+/**
+ * The Host's per-action request validator, read from the declaration it now is.
+ *
+ * THIS READER USED TO HARVEST A LADDER. `validateExecutionRequest` was a chain of ~102 `value.action !== "…"` comparisons
+ * between two function anchors, and this gate collected the ids out of that text. `host/src/protocol.ts` declares
+ * `EXECUTION_REQUEST_ARGUMENT_RULES` instead - one key per action id, one row list per key, held to
+ * `ExecutionRequest["action"]` by `satisfies` - so the ladder no longer exists to read and the shape of the reading had
+ * to change with it. Left as it was, this gate would have reported `missing_host_request_validator` for every action: a
+ * loud report of the wrong fact, since the actions did not lose their validators and the reader lost its population.
+ *
+ * A reader that reads nothing has not proved agreement, so an unreadable declaration is BLOCKED by name
+ * (`host_request_declaration_not_found` / `_unterminated`) and the per-definition loops are skipped rather than allowed
+ * to turn one broken reading into a hundred findings. `withArgumentRules` counts the keys whose list is non-empty, because
+ * a key mapped to `[]` is an action the Host accepts with no argument rule at all - a different finding, and one nobody
+ * reads if only the key count is printed.
+ */
+const HOST_REQUEST_DECLARATION = "EXECUTION_REQUEST_ARGUMENT_RULES";
+
+export function parseHostRequestValidators(source) {
+  const at = source.indexOf(`export const ${HOST_REQUEST_DECLARATION} = Object.freeze({`);
+  if (at < 0)
+    return {
+      actions: [],
+      withArgumentRules: 0,
+      problem: `host_request_declaration_not_found:${HOST_REQUEST_DECLARATION}`,
+    };
+  const end = source.indexOf("\n} satisfies Record<", at);
+  if (end < 0)
+    return {
+      actions: [],
+      withArgumentRules: 0,
+      problem: `host_request_declaration_unterminated:${HOST_REQUEST_DECLARATION}`,
+    };
+  // A row list starts at exactly two spaces under the object literal; everything a row contains is indented deeper, so
+  // `^ {2}<id>: ` is the key line and nothing else in the declaration can spell it.
+  const entries = [...source.slice(at, end).matchAll(/^ {2}([a-z0-9_]+): ([^\n]*)$/gmu)];
+  const actions = entries.map(([, actionId]) => actionId);
+  return {
+    actions,
+    withArgumentRules: entries.filter(([, , value]) => !/^\[\s*\],?$/u.test(value.trim())).length,
+    problem: actions.length === 0 ? `host_request_declaration_empty:${HOST_REQUEST_DECLARATION}` : undefined,
+  };
 }
 function parseExecutionRequestUnion(source) {
   const body = source.match(/export type ExecutionRequest[\s\S]*?;\n}>;/)?.[0] ?? "";
@@ -752,6 +805,10 @@ async function main() {
     `write postconditions: checked ${counts.checked} of ${counts.total} write actions` +
       ` (${counts.specific} name an engine fact, ${counts.placeholders} placeholders, ${counts.debt} of those recorded as debt)\n`,
   );
+  process.stdout.write(
+    `host request declaration: actions examined ${result.hostRequestDeclaration.actions}` +
+      ` · with argument rules ${result.hostRequestDeclaration.withArgumentRules}\n`,
+  );
   if (result.failures.length) {
     console.error(JSON.stringify({ state: "failed", ...result }, null, 2));
     process.exitCode = 1;
@@ -783,6 +840,7 @@ async function main() {
           debt: counts.debt,
           baseline: WRITE_POSTCONDITION.baseline,
         },
+        hostRequestDeclaration: result.hostRequestDeclaration,
       },
       null,
       2,
