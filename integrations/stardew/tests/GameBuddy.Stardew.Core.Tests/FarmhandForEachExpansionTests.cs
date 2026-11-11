@@ -1,6 +1,7 @@
 using System.Globalization;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Core.Routing;
@@ -232,7 +233,7 @@ public sealed class FarmhandForEachExpansionTests
         var handler = new RecordingHandler();
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "plant_seed");
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_1", AreaRows(patch), DispatchTo(router, ledger), () => false, _ => true);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_1", AreaRows(patch), DispatchTo(router, ledger), () => false, _ => true, _ => null);
 
         pass.Decided.Should().Be(60, "20 columns by 3 rows is one intent and the measured patch");
         pass.Omitted.Should().Be(0);
@@ -297,7 +298,7 @@ public sealed class FarmhandForEachExpansionTests
             new[] { Occupied(60, 18, 0, "weed"), Occupied(61, 18, 1, "stone"), Occupied(62, 18, 2, FarmhandForEachHealing.NoOccupant) },
             DispatchTo(router, ledger),
             () => false,
-            _ => true);
+            _ => true, _ => null);
 
         pass.Succeeded.Should().Be(1, "the one weed is the row the filter claimed");
         pass.NotMatched.Should().Be(2, "the stone and the empty tile are reported, not skipped - a skipped row reads as a worked one");
@@ -325,7 +326,7 @@ public sealed class FarmhandForEachExpansionTests
             if (handler.Requests.Count == 3) stopRequested = true;
         };
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_stop", AreaRows(patch), DispatchTo(router, ledger), () => stopRequested, _ => true);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_stop", AreaRows(patch), DispatchTo(router, ledger), () => stopRequested, _ => true, _ => null);
 
         pass.Stopped.Should().BeTrue();
         pass.Succeeded.Should().Be(3, "the third effect ran to completion before STOP was consulted again");
@@ -350,7 +351,7 @@ public sealed class FarmhandForEachExpansionTests
         var handler = new RecordingHandler(ExecutionState.Running, "in_flight");
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "till_soil");
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_busy", AreaRows(patch), DispatchTo(router, ledger), () => false, _ => true);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_busy", AreaRows(patch), DispatchTo(router, ledger), () => false, _ => true, _ => null);
 
         handler.Requests.Should().HaveCount(1, "one native body at a time");
         pass.Deferred.Should().Be(60, "the row that started it and the 59 that must wait for it");
@@ -370,7 +371,7 @@ public sealed class FarmhandForEachExpansionTests
         for (int index = 0; index < 100; index++)
             rows.Add(new FarmhandForEachRow(index, 0, 0, index, Row()));
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_bound", rows, DispatchTo(router, ledger), () => false, _ => true);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_bound", rows, DispatchTo(router, ledger), () => false, _ => true, _ => null);
 
         pass.Decided.Should().Be(FarmhandForEachSource.MaximumRows);
         pass.Omitted.Should().Be(100 - FarmhandForEachSource.MaximumRows);
@@ -391,12 +392,63 @@ public sealed class FarmhandForEachExpansionTests
             new(61, 18, 1, 0, Row("rock")),
         };
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_miss", rows, DispatchTo(router, ledger), () => false, _ => true);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_miss", rows, DispatchTo(router, ledger), () => false, _ => true, _ => null);
 
         pass.NotMatched.Should().Be(1);
         pass.Targets[0].ReasonCode.Should().Be("no_rule_matched:rock@60,18");
         pass.Succeeded.Should().Be(1);
         pass.Targets[1].Tile.Should().Be("61,18", "the receipt names the tile, not only the row index");
+    }
+
+    /// <summary>
+    /// A pass that claimed NO row says so ONCE, naming the test and what the tiles carried - not once per tile.
+    ///
+    /// <para>
+    /// Measured 2026-11-11 (`round45`, `plan_66_dc0f5736a9faf977`): a 48-tile pass answered forty-eight entries of
+    /// <c>no_rule_matched:ground@x,y</c>, one per tile, and no caller can act on forty-eight tiles. When EVERY row misses,
+    /// the fact is about the patch: which test the caller wrote, and what the tiles carry instead. The per-tile word stays
+    /// for the MIXED pass (<see cref="AnUnclaimedRowNamesItsKindAndItsTile"/>), where the tiles differ and the row is the
+    /// news.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void APassThatClaimsNoRowSaysSoOnceWithItsTestAndItsOccupants()
+    {
+        var loop = new FarmhandForEachLoop(
+            Rect(60, 18, 3, 1),
+            new[]
+            {
+                new FarmhandForEachPredicate(
+                    FarmhandForEachHealing.OccupantField,
+                    FarmhandForEachComparison.Eq,
+                    new[] { FarmhandForEachValue.Of("weed") }),
+            },
+            new FarmhandForEachEffect(new FarmhandForEachStep("cut_weeds")));
+        var handler = new RecordingHandler();
+        (FarmhandActionRouter router, Ledger ledger) = Table(handler, "cut_weeds");
+        var rows = new[]
+        {
+            Occupied(60, 18, 0, "stone"),
+            Occupied(61, 18, 1, FarmhandForEachHealing.NoOccupant),
+            Occupied(62, 18, 2, "stone"),
+        };
+
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(
+            loop, "pass_none", rows, DispatchTo(router, ledger), () => false, _ => true, _ => null);
+
+        pass.NotMatched.Should().Be(3);
+        handler.Requests.Should().BeEmpty("no row met the test, so no native effect may run");
+        string reason = pass.Targets[0].ReasonCode!;
+        pass.Targets.Select(target => target.ReasonCode).Distinct(StringComparer.Ordinal).Should().ContainSingle(
+            "every row missed the same test, which is one statement about the patch");
+        reason.Should().Be(
+            $"{FarmhandForEachRules.NoRowMatchedWhere}:occupant_eq_weed:stone_none",
+            "the code names the test the caller wrote and the occupants in row order, once");
+        reason.Should().NotContain(
+            FarmhandForEachRules.NoRuleMatchedReasonCode("stone", 60, 18),
+            "the per-tile word is the mixed pass's, not this one");
+        BodyProgramValidation.IsReasonCode(reason).Should().BeTrue(
+            "a node's reason code must satisfy the journal's grammar, or the answer arrives with no reason at all");
     }
 
     /// <summary>The engine's own reason code and the tile travel with the target, verbatim.</summary>
@@ -407,7 +459,7 @@ public sealed class FarmhandForEachExpansionTests
         var handler = new RecordingHandler(ExecutionState.Failed, "no_native_path", "from=60,18;to=60,18;target_enclosed=true");
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "chop_tree");
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_refused", AreaRows(Rect(60, 18, 1, 1)), DispatchTo(router, ledger), () => false, _ => true);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_refused", AreaRows(Rect(60, 18, 1, 1)), DispatchTo(router, ledger), () => false, _ => true, _ => null);
 
         pass.Failed.Should().Be(1);
         pass.Targets[0].ReasonCode.Should().Be("no_native_path");
@@ -430,8 +482,8 @@ public sealed class FarmhandForEachExpansionTests
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "till_soil");
         FarmhandForEachDispatch dispatch = DispatchTo(router, ledger);
 
-        FarmhandForEachPassResult first = FarmhandForEachExpansion.Expand(loop, "pass_replay", AreaRows(patch), dispatch, () => false, _ => true);
-        FarmhandForEachPassResult second = FarmhandForEachExpansion.Expand(loop, "pass_replay", AreaRows(patch), dispatch, () => false, _ => true);
+        FarmhandForEachPassResult first = FarmhandForEachExpansion.Expand(loop, "pass_replay", AreaRows(patch), dispatch, () => false, _ => true, _ => null);
+        FarmhandForEachPassResult second = FarmhandForEachExpansion.Expand(loop, "pass_replay", AreaRows(patch), dispatch, () => false, _ => true, _ => null);
 
         handler.Requests.Should().HaveCount(3, "three rows, three native effects, however many times the pass is entered");
         second.Succeeded.Should().Be(3);
@@ -454,7 +506,7 @@ public sealed class FarmhandForEachExpansionTests
             handler);
         var ledger = new Ledger();
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_throw", AreaRows(Rect(60, 18, 2, 1)), DispatchTo(router, ledger), () => false, _ => true);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_throw", AreaRows(Rect(60, 18, 2, 1)), DispatchTo(router, ledger), () => false, _ => true, _ => null);
 
         handler.Calls.Should().Be(2, "each row is its own effect: an unknown result on one tile does not stop the next");
         pass.Failed.Should().Be(2);
@@ -472,7 +524,7 @@ public sealed class FarmhandForEachExpansionTests
         var handler = new RecordingHandler();
         (FarmhandActionRouter router, Ledger ledger) = Table(handler, "cut_weeds");
 
-        Action expand = () => FarmhandForEachExpansion.Expand(loop, "pass_invalid", AreaRows(Rect(0, 0, 1, 1)), DispatchTo(router, ledger), () => false, _ => true);
+        Action expand = () => FarmhandForEachExpansion.Expand(loop, "pass_invalid", AreaRows(Rect(0, 0, 1, 1)), DispatchTo(router, ledger), () => false, _ => true, _ => null);
 
         expand.Should().Throw<ArgumentException>();
         handler.Requests.Should().BeEmpty();

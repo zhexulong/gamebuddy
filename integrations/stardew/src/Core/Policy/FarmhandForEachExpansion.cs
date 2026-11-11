@@ -227,24 +227,34 @@ public static class FarmhandForEachExpansion
     /// The live action policy, asked about a CLEARING action the caller never named. It is the same set the row itself is
     /// checked against, so a heal cannot reach an action the policy disables.
     /// </param>
+    /// <param name="settled">
+    /// The receipt the ledger already holds for one row identity, or null when it holds none. A pass re-entered after an
+    /// unsettled receipt reads the world AGAIN, and this is what keeps the rows it already worked out of `not_matched`:
+    /// a tile whose weed this pass just cut no longer satisfies `occupant: weed`, so without the receipt the pass would
+    /// report its own work as a row nobody claimed.
+    /// </param>
     public static FarmhandForEachPassResult Expand(
         FarmhandForEachLoop loop,
         string requestId,
         IEnumerable<FarmhandForEachRow> rows,
         FarmhandForEachDispatch dispatch,
         Func<bool> stopRequested,
-        Func<string, bool> isActionEnabled)
+        Func<string, bool> isActionEnabled,
+        Func<string, LocalExecutionReceipt?> settled)
     {
         ArgumentNullException.ThrowIfNull(loop);
         ArgumentNullException.ThrowIfNull(rows);
         ArgumentNullException.ThrowIfNull(dispatch);
         ArgumentNullException.ThrowIfNull(stopRequested);
         ArgumentNullException.ThrowIfNull(isActionEnabled);
+        ArgumentNullException.ThrowIfNull(settled);
         if (!loop.IsValid) throw new ArgumentException("The loop is not one this product can run.", nameof(loop));
         if (string.IsNullOrWhiteSpace(requestId)) throw new ArgumentException("A pass needs a request identity.", nameof(requestId));
 
         string prefix = requestId.Length > RowIdentityPrefixLength ? requestId[..RowIdentityPrefixLength] : requestId;
         var targets = new List<FarmhandForEachTargetResult>();
+        var unmatched = new List<string>();
+        bool anyMatched = false;
         int decided = 0;
         int omitted = 0;
         bool stopped = false;
@@ -269,9 +279,24 @@ public static class FarmhandForEachExpansion
             (bool matched, FarmhandForEachEffect? effect) = FarmhandForEachRules.DecideByRules(loop, row.Fields, row.LocalColumn, row.LocalRow);
             if (!matched)
             {
+                // A ROW THE PASS ALREADY WORKED IS NOT A ROW NOBODY CLAIMED. The predicate is read against the world as
+                // it is NOW, and the pass's own effects move that world: measured `round45`, seven `cut_weeds` rows were
+                // cut and the pass that cut them reported `succeeded=0;not_matched=48` because every tile it had opened
+                // stopped satisfying `occupant: weed` before the re-entered pass read it.
+                FarmhandForEachTargetResult? worked = Worked(row, prefix, settled);
+                if (worked is not null)
+                {
+                    targets.Add(worked);
+                    // A receipt that has not settled still owns the actor, so the rest of the pass defers exactly as it
+                    // would after a dispatched row: "was worked" and "settled" are two facts.
+                    if (worked.Outcome == FarmhandForEachTargetOutcome.Deferred) actorBusy = true;
+                    continue;
+                }
+                unmatched.Add(FarmhandForEachHealing.OccupantOf(row.Fields));
                 targets.Add(Skipped(row, FarmhandForEachTargetOutcome.NotMatched, FarmhandForEachRules.NoRuleMatchedReasonCode(KindOf(row), row.X ?? -1, row.Y ?? -1)));
                 continue;
             }
+            anyMatched = true;
             if (effect is null)
             {
                 targets.Add(Skipped(row, FarmhandForEachTargetOutcome.LeftAlone, null));
@@ -287,6 +312,17 @@ public static class FarmhandForEachExpansion
             FarmhandForEachTargetResult result = DispatchChain(row, effect, prefix, isActionEnabled, dispatch, stopRequested, ref stopped);
             targets.Add(result);
             if (result.Outcome == FarmhandForEachTargetOutcome.Deferred) actorBusy = true;
+        }
+        // A PASS THAT CLAIMED NOTHING SAYS SO ONCE. One code per tile is not a statement about a patch: measured
+        // `round45`, a 48-tile pass answered forty-eight `no_rule_matched:<kind>@<x>,<y>` entries and no caller can act on
+        // forty-eight tiles. The one code names the test and what the tiles actually carried. Only a rule WITH predicates
+        // can miss - a rule that has none claims every row - so the missing list is the test that had to claim these.
+        if (!anyMatched && unmatched.Count > 0 && loop.Where is { } missed)
+        {
+            string reason = FarmhandForEachRules.NoRowMatchedWhereReasonCode(missed, unmatched);
+            for (int index = 0; index < targets.Count; index += 1)
+                if (targets[index].Outcome == FarmhandForEachTargetOutcome.NotMatched)
+                    targets[index] = targets[index] with { ReasonCode = reason };
         }
         return new FarmhandForEachPassResult(targets.AsReadOnly(), omitted, stopped);
     }
@@ -503,11 +539,69 @@ public static class FarmhandForEachExpansion
         string.Create(CultureInfo.InvariantCulture, $"actor_busy:row{row.LocalRow}c{row.LocalColumn}");
 
     /// <summary>
+    /// A row the rules no longer claim, answered from the receipts THIS pass already recorded for it.
+    ///
+    /// <para>
+    /// WHY THIS EXISTS. A row is decided against the world as it is NOW, and the pass's own effects move that world: a
+    /// `cut_weeds`/`break_rock` row removes the thing its predicate asked for. `cut_weeds` also walks the actor in, so its
+    /// first dispatch answers with a receipt that has not settled, the pass ends `deferred`, and the node re-enters - at
+    /// which point every tile it just opened fails `occupant: weed` and the row is reported as one nobody claimed.
+    /// Measured `round45` (`plan_66_dc0f5736a9faf977`): seven weeds cut, `decided=48;succeeded=0;failed=0;refused=0;
+    /// not_matched=48`, node `failed`. The ledger is the record of that work; this reads it instead of re-deriving the row
+    /// from a world the row itself changed.
+    /// </para>
+    /// <para>
+    /// THE IDENTITY IS THE ONE THIS PASS MINTS, so there is no second row model: <see cref="RowIdentity"/> is asked for the
+    /// steps a chain may take, from the LAST backwards (a chain stops at its first non-success, so the highest settled step
+    /// is the row's answer), and for the retry before the attempt it retried (a healed row's answer is the retry's).
+    /// </para>
+    /// <para>
+    /// A RECEIPT THAT HAS NOT SETTLED IS STILL THE ROW'S. It is reported `deferred`, exactly as the dispatched row was -
+    /// what changes between two re-entries is the receipt's state, never whether the row was worked.
+    /// </para>
+    /// </summary>
+    private static FarmhandForEachTargetResult? Worked(
+        FarmhandForEachRow row,
+        string prefix,
+        Func<string, LocalExecutionReceipt?> settled)
+    {
+        for (int step = FarmhandForEachEffect.MaximumSteps - 1; step >= 0; step -= 1)
+            foreach (string kind in ReceiptKinds)
+            {
+                if (settled(RowIdentity(prefix, row, step, kind)) is not { } receipt) continue;
+                FarmhandForEachTargetOutcome outcome =
+                    receipt.State == ExecutionState.Succeeded ? FarmhandForEachTargetOutcome.Succeeded
+                    : receipt.State.IsTerminal() ? FarmhandForEachTargetOutcome.Failed
+                    : FarmhandForEachTargetOutcome.Deferred;
+                return new FarmhandForEachTargetResult(
+                    row.X,
+                    row.Y,
+                    row.LocalColumn,
+                    row.LocalRow,
+                    outcome,
+                    receipt.ActionId is { Length: > 0 } actionId ? new FarmhandForEachTarget(actionId, row.X, row.Y, null) : null,
+                    receipt.ExecutionId,
+                    receipt.State,
+                    receipt.ReasonCode,
+                    receipt.Evidence);
+            }
+        return null;
+    }
+
+    /// <summary>
+    /// The two identities one step of a row can settle under: the retry a heal minted, and the attempt before it.
+    ///
+    /// Retry first, because a retry exists only where the row was opened and re-attempted, and the retry IS the row's
+    /// answer (`FarmhandForEachHealing` says the clearing swing is a means, not the answer).
+    /// </summary>
+    private static readonly string[] ReceiptKinds = { "req-retry", "req" };
+
+    /// <summary>
     /// The row's own dispatch identity, derived from the pass's and not from a counter.
     ///
     /// Deterministic on purpose: re-entering the pass after a STOP, a deferral or a reconnect mints the SAME identity for
     /// the same row AND the same step, so the router answers with the receipt it already recorded instead of running the
-    /// effect twice.
+    /// effect twice - and so <see cref="Worked"/> can ask the ledger about a row the predicates no longer claim.
     ///
     /// THE FIRST STEP KEEPS THE IDENTITY A SINGLE-ACTION LOOP ALREADY GIVES ITS ROW, unsuffixed. A journal holds that
     /// spelling for a row it dispatched before chains existed, and renaming the row's own first step would replay it as a

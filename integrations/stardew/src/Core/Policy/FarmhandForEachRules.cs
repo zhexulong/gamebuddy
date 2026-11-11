@@ -1,3 +1,6 @@
+using System.Globalization;
+using GameBuddy.Stardew.Core.BodyPrograms;
+
 namespace GameBuddy.Stardew.Core.Policy;
 
 /// <summary>
@@ -433,9 +436,77 @@ public static class FarmhandForEachRules
     /// A row no predicate claimed, in the reason-code form the pass reports.
     ///
     /// `no_rule_matched:&lt;kind&gt;@&lt;x&gt;,&lt;y&gt;` names WHICH row and WHICH kind was forgotten: "three rows unmatched" cannot be
-    /// acted on, and the row is what the next rule needs.
+    /// acted on, and the row is what the next rule needs. It is the MIXED pass's word - see
+    /// <see cref="NoRowMatchedWhereReasonCode"/> for the pass that claimed nothing at all.
     /// </summary>
     public static string NoRuleMatchedReasonCode(string kind, int x, int y) => $"no_rule_matched:{kind}@{x},{y}";
+
+    /// <summary>The prefix of the ONE code a pass that claimed no row at all answers with.</summary>
+    public const string NoRowMatchedWhere = "no_row_matched_where";
+
+    /// <summary>
+    /// A pass that claimed NO row, as one code: `no_row_matched_where:&lt;test&gt;:&lt;occupants&gt;`.
+    ///
+    /// <para>
+    /// WHY ONE CODE AND NOT ONE PER TILE. Measured `round45` (`plan_66_dc0f5736a9faf977`): a 48-tile `cut_weeds` pass
+    /// answered forty-eight entries of `no_rule_matched:ground@x,y` and the caller could act on none of them. When EVERY
+    /// row misses, the fact is about the patch and not about the tiles: the test the caller wrote, and what the tiles
+    /// carry instead. The per-tile word stays for the MIXED pass, where the tiles differ and the row is the news.
+    /// </para>
+    /// <para>
+    /// THE BOUND IS THE GRAMMAR, NOT A NUMBER COPIED HERE: an occupant is appended only while the code is still one
+    /// `BodyProgramValidation.IsReasonCode` accepts, so a long `in` list cannot produce a code the journal refuses - which
+    /// would arrive as a node with no reason at all.
+    /// </para>
+    /// </summary>
+    public static string NoRowMatchedWhereReasonCode(IReadOnlyList<FarmhandForEachPredicate> where, IReadOnlyList<string> occupants)
+    {
+        ArgumentNullException.ThrowIfNull(where);
+        ArgumentNullException.ThrowIfNull(occupants);
+        string code = $"{NoRowMatchedWhere}:{SpellingOf(where)}";
+        if (!BodyProgramValidation.IsReasonCode(code)) return NoRowMatchedWhere;
+        bool first = true;
+        foreach (string occupant in occupants.Distinct(StringComparer.Ordinal))
+        {
+            string extended = $"{code}{(first ? ":" : "_")}{occupant}";
+            if (!BodyProgramValidation.IsReasonCode(extended)) break;
+            code = extended;
+            first = false;
+        }
+        return code;
+    }
+
+    /// <summary>Every predicate of one rule, in the order a caller wrote them: `<test>_and_<test>`.</summary>
+    private static string SpellingOf(IReadOnlyList<FarmhandForEachPredicate> where) =>
+        string.Join("_and_", where.Select(SpellingOf));
+
+    /// <summary>
+    /// One predicate's own word: `<field>_<comparison>_<value>`, or `<axis>_every<n>_offset<m>` for a position guard.
+    ///
+    /// Every part comes from the predicate's own declarations (<see cref="FarmhandForEachPredicate.Comparisons"/>,
+    /// <see cref="FarmhandForEachStride.Operators"/>), so the sentence a caller reads is built from the grammar it wrote
+    /// in rather than from a table beside it.
+    /// </summary>
+    private static string SpellingOf(FarmhandForEachPredicate predicate)
+    {
+        if (predicate.IsPositionGuard)
+            return string.Join(
+                "_",
+                predicate.Axis,
+                FarmhandForEachStride.EveryOperator,
+                IntegerText(predicate.Stride!.Every),
+                FarmhandForEachStride.OffsetOperator,
+                IntegerText(predicate.Stride.Offset));
+        string word = FarmhandForEachPredicate.Comparisons
+            .First(comparison => comparison.Kind == predicate.Comparison)
+            .Word;
+        return string.Join("_", new[] { predicate.Field!, word }.Concat(predicate.Values.Select(ValueText)));
+    }
+
+    private static string ValueText(FarmhandForEachValue value) =>
+        value.Text ?? (value.Number is { } number ? number.ToString(CultureInfo.InvariantCulture) : value.Flag!.Value ? "true" : "false");
+
+    private static string IntegerText(int value) => value.ToString(CultureInfo.InvariantCulture);
 
     private static bool Holds(FarmhandForEachPredicate predicate, FarmhandForEachValue value)
     {

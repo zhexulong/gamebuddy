@@ -50,7 +50,7 @@ public sealed class FarmhandForEachHealingTests
         var world = new TileWorld();
         world.Occupy(62, 18, "weed", "cut_weeds");
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_strip", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_strip", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null);
 
         pass.Decided.Should().Be(6);
         pass.Succeeded.Should().Be(6, "every tile of the strip is worked, including the one the weed was on");
@@ -91,7 +91,7 @@ public sealed class FarmhandForEachHealingTests
         var world = new TileWorld();
         world.Occupy(62, 18, "crop", "scythe_crop");
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_crop", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_crop", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null);
 
         world.Carries(62, 18).Should().BeTrue("her crop is still standing after the pass");
         world.Dispatched.Where(target => target.X == 62).Select(target => target.ActionId).Should().Equal(
@@ -125,7 +125,7 @@ public sealed class FarmhandForEachHealingTests
         world.Occupy(60, 18, "weed", "cut_weeds");
         world.KeepBlocking = true;
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_stuck", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_stuck", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null);
 
         pass.Targets.Single().Outcome.Should().Be(FarmhandForEachTargetOutcome.Failed);
         pass.Targets.Single().ReasonCode.Should().Be(
@@ -152,7 +152,7 @@ public sealed class FarmhandForEachHealingTests
         var world = new TileWorld();
         world.Occupy(60, 18, "bush", clearer: null);
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_bush", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_bush", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null);
 
         pass.Targets.Single().Outcome.Should().Be(FarmhandForEachTargetOutcome.Refused);
         pass.Targets.Single().ReasonCode.Should().Be(
@@ -174,7 +174,7 @@ public sealed class FarmhandForEachHealingTests
         world.Occupy(60, 18, "stone", "break_rock");
         world.ClearRefusal = "tool_level_insufficient";
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_stone", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_stone", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null);
 
         pass.Targets.Single().ReasonCode.Should().Be(
             "tool_level_insufficient",
@@ -196,7 +196,7 @@ public sealed class FarmhandForEachHealingTests
         world.Occupy(60, 18, "weed", "cut_weeds");
         world.ClearRefusal = "basic_scythe_not_equipped";
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_notool", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_notool", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null);
 
         FarmhandForEachTargetResult row = pass.Targets.Single();
         row.Target!.ActionId.Should().Be("cut_weeds", "the action that actually ran is the one whose receipt this is");
@@ -223,7 +223,7 @@ public sealed class FarmhandForEachHealingTests
             world.Rows(strip),
             world.Dispatch,
             () => world.Dispatched.Count > 0,
-            world.IsEnabled);
+            world.IsEnabled, _ => null);
 
         pass.Stopped.Should().BeTrue();
         pass.Targets[0].Outcome.Should().Be(FarmhandForEachTargetOutcome.Stopped);
@@ -265,7 +265,7 @@ public sealed class FarmhandForEachHealingTests
                 world.IsEnabled = actionId => string.Equals(actionId, clearingAction, StringComparison.Ordinal);
 
                 FarmhandForEachTargetResult row = FarmhandForEachExpansion
-                    .Expand(loop, "pass_gate", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled)
+                    .Expand(loop, "pass_gate", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null)
                     .Targets.Single();
                 if (row.Outcome == FarmhandForEachTargetOutcome.Succeeded && row.Healed == Healed(occupant, clearingAction)) continue;
                 failures.Add(
@@ -313,7 +313,7 @@ public sealed class FarmhandForEachHealingTests
                 world.Occupy(60, 18, occupant, clearingAction);
 
                 FarmhandForEachTargetResult row = FarmhandForEachExpansion
-                    .Expand(loop, "pass_destructive", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled)
+                    .Expand(loop, "pass_destructive", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null)
                     .Targets.Single();
                 bool dispatched = world.Dispatched.Any(target => string.Equals(target.ActionId, clearingAction, StringComparison.Ordinal));
                 bool standing = world.Carries(60, 18);
@@ -357,7 +357,7 @@ public sealed class FarmhandForEachHealingTests
         var world = new TileWorld();
         world.Occupy(63, 18, "grass", "cut_grass");
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_grass", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_grass", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null);
 
         world.Carries(63, 18).Should().BeTrue("the fodder is still standing after the pass");
         world.Dispatched.Where(target => target.X == 63).Select(target => target.ActionId).Should().Equal(
@@ -414,7 +414,7 @@ public sealed class FarmhandForEachHealingTests
             var world = new TileWorld();
             world.Occupy(60, 18, occupant, clearingAction);
             FarmhandForEachTargetResult row = FarmhandForEachExpansion
-                .Expand(loop, "pass_sentence", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled)
+                .Expand(loop, "pass_sentence", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null)
                 .Targets.Single();
             string projected = RouteReenteringBodyProgramExecutor.RowJson(row);
             if (row.Outcome == FarmhandForEachTargetOutcome.Refused && projected.Contains(sentence, StringComparison.Ordinal)) continue;
@@ -446,7 +446,7 @@ public sealed class FarmhandForEachHealingTests
         var world = new TileWorld();
         world.Occupy(60, 18, "grass", "cut_grass");
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_failed_grass", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_failed_grass", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null);
 
         RouteReenteringBodyProgramExecutor.VerdictFor(pass).Should().Be(ForEachPassVerdict.Failed, "the only row was refused");
         string detail = RouteReenteringBodyProgramExecutor.FailureDetail(pass);

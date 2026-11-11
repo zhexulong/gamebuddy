@@ -69,7 +69,7 @@ public sealed class FarmhandForEachChainTests
                 new FarmhandForEachStep("plant_seed", new Dictionary<string, string>(StringComparer.Ordinal) { ["seed"] = "hops" })));
         var world = new TileWorld();
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_chain", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_chain", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null);
 
         pass.Decided.Should().Be(6);
         pass.Succeeded.Should().Be(6, "both steps of every tile happened in this one pass");
@@ -104,7 +104,7 @@ public sealed class FarmhandForEachChainTests
         var loop = new FarmhandForEachLoop(strip, null, Chain("water_crop", "plant_seed"));
         var world = new TileWorld();
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_precondition", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_precondition", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null);
 
         FarmhandForEachTargetResult row = pass.Targets.Single();
         row.Outcome.Should().Be(FarmhandForEachTargetOutcome.Failed, "the step ran and its own admission refused it");
@@ -135,7 +135,7 @@ public sealed class FarmhandForEachChainTests
         var world = new TileWorld();
         world.Occupy(60, 18, "crop");
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_crop", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, "pass_crop", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null);
 
         FarmhandForEachTargetResult crop = pass.Targets.Single(target => target.X == 60);
         crop.Outcome.Should().Be(FarmhandForEachTargetOutcome.Refused);
@@ -172,7 +172,7 @@ public sealed class FarmhandForEachChainTests
             world.Rows(strip),
             world.Dispatch,
             () => world.Dispatched.Count > 0,
-            world.IsEnabled);
+            world.IsEnabled, _ => null);
 
         pass.Stopped.Should().BeTrue();
         pass.Targets[0].Outcome.Should().Be(FarmhandForEachTargetOutcome.Stopped);
@@ -195,7 +195,7 @@ public sealed class FarmhandForEachChainTests
         var loop = new FarmhandForEachLoop(strip, null, Chain("till_soil", "plant_seed"));
         var world = new TileWorld { HoldPlant = true };
 
-        FarmhandForEachPassResult first = FarmhandForEachExpansion.Expand(loop, "pass_deferred", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+        FarmhandForEachPassResult first = FarmhandForEachExpansion.Expand(loop, "pass_deferred", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null);
 
         first.Deferred.Should().Be(1);
         first.Targets[0].Outcome.Should().Be(FarmhandForEachTargetOutcome.Deferred);
@@ -205,7 +205,7 @@ public sealed class FarmhandForEachChainTests
             FarmhandForEachTargetOutcome.Deferred);
 
         world.HoldPlant = false;
-        FarmhandForEachPassResult second = FarmhandForEachExpansion.Expand(loop, "pass_deferred", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+        FarmhandForEachPassResult second = FarmhandForEachExpansion.Expand(loop, "pass_deferred", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null);
 
         second.Targets[0].Outcome.Should().Be(FarmhandForEachTargetOutcome.Succeeded);
         second.Targets[0].Steps!.Select(step => step.ActionId).Should().Equal("till_soil", "plant_seed");
@@ -228,7 +228,7 @@ public sealed class FarmhandForEachChainTests
         var world = new TileWorld();
         world.Occupy(60, 18, "crop");
 
-        FarmhandForEachPassResult chained = FarmhandForEachExpansion.Expand(loop, "pass_receipt", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled);
+        FarmhandForEachPassResult chained = FarmhandForEachExpansion.Expand(loop, "pass_receipt", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null);
         FarmhandForEachTargetResult crop = chained.Targets.Single(target => target.X == 60);
         string refusedRow = RouteReenteringBodyProgramExecutor.RowJson(
             crop.X, crop.Y, crop.Target?.ActionId, "refused", crop.ReasonCode, crop.Healed, crop.Steps, crop.StoppedAt);
@@ -237,7 +237,7 @@ public sealed class FarmhandForEachChainTests
 
         var single = new FarmhandForEachLoop(strip, null, new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
         FarmhandForEachTargetResult oneAction = FarmhandForEachExpansion
-            .Expand(single, "pass_single", world.Rows(Strip(70, 18, 1)), world.Dispatch, () => false, world.IsEnabled)
+            .Expand(single, "pass_single", world.Rows(Strip(70, 18, 1)), world.Dispatch, () => false, world.IsEnabled, _ => null)
             .Targets.Single();
         RouteReenteringBodyProgramExecutor.RowJson(
                 oneAction.X, oneAction.Y, oneAction.Target?.ActionId, "succeeded", oneAction.ReasonCode, oneAction.Healed, oneAction.Steps, oneAction.StoppedAt)
@@ -274,7 +274,7 @@ public sealed class FarmhandForEachChainTests
             var world = new RecordingEffect();
 
             FarmhandForEachPassResult pass = FarmhandForEachExpansion
-                .Expand(loop, "pass_gate_chain", world.Rows(strip), world.Dispatch, () => false, _ => true);
+                .Expand(loop, "pass_gate_chain", world.Rows(strip), world.Dispatch, () => false, _ => true, _ => null);
 
             foreach (FarmhandForEachTargetResult row in pass.Targets)
             {
@@ -326,7 +326,7 @@ public sealed class FarmhandForEachChainTests
             world.Occupy(60, 18, "crop");
 
             FarmhandForEachTargetResult row = FarmhandForEachExpansion
-                .Expand(loop, "pass_gate_blocked", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled)
+                .Expand(loop, "pass_gate_blocked", world.Rows(strip), world.Dispatch, () => false, world.IsEnabled, _ => null)
                 .Targets.Single();
 
             bool stopped = row.StoppedAt is { Length: > 0 } stoppedAt

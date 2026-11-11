@@ -447,7 +447,19 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         FarmhandForEachDispatch dispatch = (FarmhandForEachTarget target, string requestId, string executionId, out LocalExecutionReceipt receipt, out string reasonCode) =>
             this.DispatchRow(world, target, requestId, executionId, grant.DeadlineMs, out receipt, out reasonCode);
 
-        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(loop, execution.RequestId, rows, dispatch, () => world.StopRequested, world.IsActionEnabled);
+        // THE LEDGER IS THE RECORD OF WHAT THIS ATTEMPT ALREADY DID. A pass re-enters after an unsettled receipt, and by
+        // then its own effects have moved the world: `cut_weeds` walks the actor in and removes the weed, so the row that
+        // was cut stops satisfying `occupant: weed`. Asked about a row identity, the ledger answers with the receipt this
+        // attempt already recorded for it - which is why the rows a pass worked cannot be re-reported as rows nobody
+        // claimed, and why the counts cannot read `succeeded=0` over seven cuts (measured `round45`).
+        FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(
+            loop,
+            execution.RequestId,
+            rows,
+            dispatch,
+            () => world.StopRequested,
+            world.IsActionEnabled,
+            requestId => this.ledger.TryGetExistingReceipt(requestId, out LocalExecutionReceipt existing) ? existing : null);
 
         var table = new List<(int LocalRow, int LocalColumn, string Json)>(outsideFarm);
         foreach (FarmhandForEachTargetResult result in pass.Targets)
@@ -628,7 +640,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// can never match" instead of "these tiles have no crop".
     /// </para>
     /// </summary>
-    private static bool TryBuildRowArguments(
+    internal static bool TryBuildRowArguments(
         IFarmhandForEachWorld world,
         FarmhandForEachTarget target,
         string actionId,
@@ -716,7 +728,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         return true;
     }
 
-    private static bool TryCanonicalizeArgument(string declaredType, string text, out BodyProgramCanonicalValue? value)
+    internal static bool TryCanonicalizeArgument(string declaredType, string text, out BodyProgramCanonicalValue? value)
     {
         value = declaredType switch
         {
