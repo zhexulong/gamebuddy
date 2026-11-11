@@ -47,7 +47,7 @@ import {
   MAX_TARGET_FAMILIES_SHOWN,
   MAX_EMPTY_FAMILIES_NAMED,
 } from "./game-world-vocabulary.js";
-import type { Snapshot } from "./protocol.js";
+import { MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH, type Snapshot } from "./protocol.js";
 
 /** The closed set of block names a delivery may use. The prompt floor names exactly these. */
 export const FACT_BRIEF_BLOCKS = Object.freeze([
@@ -70,6 +70,50 @@ export type FactBriefBlock = (typeof FACT_BRIEF_BLOCKS)[number];
  */
 export const MAX_WORLD_FACT_LINES = 24;
 
+/**
+ * How many delivered turns a re-stated world reading may age before its age stops being a parenthetical and becomes a
+ * named fact.
+ *
+ * <p>
+ * A reading is re-stated into every batch (`host-service.ts#restateWorldSnapshot`), so the block always has an age and
+ * that age was words: `（这是 50 轮之前看到的，世界已经不一样了）`. Measured 2026-11-10 (`round45`): the reading froze at
+ * `revision 352` for 50 turns and 30 minutes while the clock walked from 06:00 through two 02:00 pass-outs and two day
+ * starts, she dispatched nothing for the last 30 minutes, and the only trace was that sentence. Nothing could act on
+ * it - not the model (prose inside the block it invalidates reads as the present tense), not a run audit (no token),
+ * not the wake decider (no fact).
+ * </p>
+ *
+ * <p>
+ * The bound is in TURNS because a turn is a delivery the model read: five turns is long enough that ordinary work
+ * between two observations never reaches it (every dispatch publishes receipts, and an observe is what the model does
+ * when it needs the world) and far below the fifty that were narrated.
+ * </p>
+ */
+export const WORLD_STATE_STALE_TURNS = 5;
+
+/**
+ * Each further stale fact for the SAME reading waits this many bouns of the same silence.
+ *
+ * One per turn would spend the run on one warning: fifty turns of a frozen reading is three facts (5, 20, 35), not
+ * fifty, which keeps the fact alive without paying for it every turn.
+ */
+export const WORLD_STATE_STALE_REARM_MULTIPLE = 4;
+
+/** The turn age at which the `published`-th stale fact for one reading is due. */
+export function worldStateStaleThreshold(published: number): number {
+  return WORLD_STATE_STALE_TURNS * (1 + published * (WORLD_STATE_STALE_REARM_MULTIPLE - 1));
+}
+
+/**
+ * The one spelling of the stale token: `world_state_stale:<turns>;<revision>;<ageMs>`.
+ *
+ * The block, the `<world-facts>` line and the Host's published line all carry this exact string, so a reader - a model,
+ * a log grep, a run audit - never has to reconcile two renderings of one number.
+ */
+export function worldStateStaleCode(reading: Readonly<{ ageTurns: number; revision: number; ageMs: number }>): string {
+  return `world_state_stale:${String(reading.ageTurns)};${String(reading.revision)};${String(reading.ageMs)}`;
+}
+
 /** One node row of a settled programme, as `program-settlement-digest.ts` publishes it. */
 type SettledNode = Readonly<{
   nodeId?: string;
@@ -91,6 +135,14 @@ export type WorldStateReading = Readonly<{
   snapshot: Snapshot;
   revision: number;
   ageTurns: number;
+  /**
+   * Milliseconds since the reading's own revision was admitted.
+   *
+   * The turn age is what the block is judged by, and this is the wall-clock half of the same fact: a turn can take a
+   * minute, so fifty turns is thirty minutes or three hours, and only one of those numbers is about the world she is
+   * describing. Measured from the revision, so a re-stated copy of one reading never looks fresher than it is.
+   */
+  ageMs: number;
 }>;
 
 /** What one delivered batch shows the model. The snapshot is state, everything else is news. */
@@ -146,6 +198,10 @@ function composePlayerNote(inputs: readonly PlayerInput[]): string {
  * told apart without trusting the clock; `本轮无新观察` is the honest label for a re-statement, and `刚刚更新` for the
  * turn the observation arrived in.
  *
+ * PAST THE DECLARED BOUND the age stops being a parenthetical and becomes the token itself
+ * (`world_state_stale:<turns>;<revision>;<ageMs>`): a numbered fact beside the block it invalidates rather than a
+ * sentence inside it, because the sentence was there for fifty turns and changed nothing.
+ *
  * THE PARAGRAPH is `formatGameEnvironmentFacts` - the same line the Chat surface's `<runtime-environment>` carries, from
  * the same vocabulary module, so a clock or a map is spelled one way in both places. On top of it: what she is
  * carrying, and the target families.
@@ -162,7 +218,11 @@ export function composeWorldState(reading: WorldStateReading | undefined): strin
   const world = reading.snapshot;
   if (world === null || typeof world !== "object") return block("world-state", NOTHING_OBSERVED);
   const parts: string[] = [];
-  if (reading.ageTurns >= 1) parts.push(`（这是 ${reading.ageTurns} 轮之前看到的，世界已经不一样了）`);
+  if (reading.ageTurns >= WORLD_STATE_STALE_TURNS)
+    parts.push(
+      `${worldStateStaleCode(reading)}（这块世界观察停在 ${String(reading.ageTurns)} 轮之前、${String(Math.round(reading.ageMs / 1000))} 秒之前，世界已经不是这样了；先看一眼再动手）`,
+    );
+  else if (reading.ageTurns >= 1) parts.push(`（这是 ${reading.ageTurns} 轮之前看到的，世界已经不一样了）`);
   const environment = formatGameEnvironmentFacts(world, true);
   if (environment !== "") parts.push(environment);
   const carrying = formatCarrying(world);
@@ -292,6 +352,7 @@ const WORLD_FACT_KIND_ZH: Readonly<Record<string, string>> = Object.freeze({
   companion_arrival: "她到了",
   native_notice: "游戏里冒出个提示",
   night_ended_pass_out: "夜里没撑住，昏过去了",
+  world_state_stale: "世界观察旧了",
 });
 
 const PROGRAM_SETTLED = "program_settled";
@@ -354,17 +415,55 @@ function receiptLine(fact: WorldFact, at: string): string {
   return `- ${at}${action} ${words}${reason}${detail === "" ? "" : `（${detail}）`}`;
 }
 
-/** The Mod's own evidence detail for a refusal, bounded; never a Host paraphrase of it. */
+/** The Mod's own evidence detail for a receipt, bounded; never a Host paraphrase of it. */
 function evidenceDetail(payload: Readonly<Record<string, unknown>>): string {
   const evidence = payload.evidence;
   if (evidence === null || typeof evidence !== "object") return "";
-  const detail = (evidence as { detail?: unknown }).detail;
-  if (typeof detail !== "string") return "";
-  return detail.length > MAX_EVIDENCE_DETAIL_CHARS ? `${detail.slice(0, MAX_EVIDENCE_DETAIL_CHARS)}…` : detail;
+  return boundedField("evidence", (evidence as { detail?: unknown }).detail) ?? "";
 }
 
-/** One evidence string's share of a line. Measured: a warp refusal writes ~130 characters of tile and door facts. */
-export const MAX_EVIDENCE_DETAIL_CHARS = 160;
+/**
+ * A node hint's ceiling, which is the wire's own number: `protocol.ts:isBodyProgramNodeStatus` refuses a frame carrying a
+ * longer one, so a hint that arrived through the bridge can never meet this ceiling, let alone a smaller one.
+ *
+ * `fact-brief.test.ts` reads that validator and asserts the two numbers are the same one, so this cannot drift from the
+ * bound the Mod's journal enforces.
+ */
+export const MAX_BODY_PROGRAM_NODE_HINT_CHARS = 256;
+
+/**
+ * The ceiling every Mod-authored field this file prints is held to, and where each number comes from.
+ *
+ * <p>
+ * TWO KINDS OF FIELD, TWO KINDS OF NUMBER. A node's `hint` and `reasonDetail` are bounded by their PRODUCER: the Mod's
+ * journal refuses a hint over 256 characters and a refusal detail over 512
+ * (`BodyProgramValidation.MaximumNodeHintLength` / `MaximumNodeRefusalDetailLength`), and `protocol.ts` refuses a frame
+ * over the same two numbers. Printing them up to those bounds is printing them WHOLE, and a smaller number is a Host
+ * opinion about a field the Mod already sized.
+ * </p>
+ *
+ * <p>
+ * WHAT A SMALLER ONE COST, measured 2026-11-11 (`round45`). All 15 failed `for_each` hints reached this file between 169
+ * and 255 characters (median 248) and all 15 of their details between 480 and 507, against a flat 160 ceiling: 30 cuts in
+ * one run's model-visible text. The ledger survived every cut and the per-code tail - `no_safe_clear:crop:scythe_crop=3;
+ * no_rule_matched:ground_58_9=1;…`, the part that says WHICH rows failed - was exactly what fell off, mid-token. The
+ * ceiling was wrong, not the text.
+ * </p>
+ *
+ * <p>
+ * A receipt's `evidence.detail` is the other kind: the wire declares no bound on an `evidence` object, so 160 here is the
+ * Host's own measured share of one `<world-facts>` line. Measured in the same run, a receipt's evidence is 200-600
+ * characters of proof facts - a tool result's job to carry, not one line's.
+ * </p>
+ */
+export const MODEL_FIELD_CEILINGS = Object.freeze({
+  hint: MAX_BODY_PROGRAM_NODE_HINT_CHARS,
+  reasonDetail: MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH,
+  evidence: 160,
+});
+
+/** Every Mod-authored field this file prints under a ceiling. */
+export type ModelVisibleField = keyof typeof MODEL_FIELD_CEILINGS;
 
 function worldFactLine(fact: WorldFact, at: string): string {
   const kind = fact.semanticKind ?? "";
@@ -408,6 +507,12 @@ function worldFactLine(fact: WorldFact, at: string): string {
       const clock =
         typeof fact.payload.inGameTime === "string" ? formatGameClock(Number(fact.payload.inGameTime), true) : "";
       return `- ${at}游戏里冒出个提示：${notice === undefined ? "（没有文字）" : `「${notice}」`}${clock === "" ? "" : `（${clock}）`}`;
+    }
+    case "world_state_stale": {
+      // The token is the whole fact, and it is printed VERBATIM: the pump minted it from the one function that spells it
+      // (`worldStateStaleCode`), so re-deriving it here would be a second rendering of one number.
+      const code = typeof fact.payload.code === "string" ? fact.payload.code : "";
+      return `- ${at}${WORLD_FACT_KIND_ZH.world_state_stale ?? "世界观察旧了"}${code === "" ? "" : `：${code}`}`;
     }
     case "execution_stalled": {
       // The fact exists to say WHICH execution stopped moving and for how long, so the Mod's own identity and labels are
@@ -478,7 +583,7 @@ function failureWords(node: SettledNode): string {
   const code = typeof node.reasonCode === "string" && node.reasonCode !== "" ? node.reasonCode : undefined;
   // Sentence first, its evidence second: the order a reader needs them in. The separator is not `：`, which already
   // introduces the code, so the two halves stay distinguishable in the line.
-  const words = [boundedFailureField(node.hint), boundedFailureField(node.reasonDetail)]
+  const words = [boundedField("hint", node.hint), boundedField("reasonDetail", node.reasonDetail)]
     .filter((part): part is string => part !== undefined)
     .join("｜");
   const reason = words === "" ? code : code === undefined ? words : `${code}：${words}`;
@@ -486,19 +591,23 @@ function failureWords(node: SettledNode): string {
 }
 
 /**
- * One failure field's share of a line: `evidenceDetail`'s own bound, and the cut NAMED by the code that measures it.
+ * One Mod-authored field's share of a line, cut at its own ceiling - and the cut NAMED by the ceiling that made it.
  *
- * A bare ellipsis would leave her reading a partial coordinate list as the whole one; the code says how much of the Mod's
- * text the line is not showing (`evidence_detail_over_ceiling:<length>:<ceiling>`, the same bounded-token shape a node's
- * own `reasonCode` has, so a run audit can grep it). Absent or blank is `undefined`, so the caller joins only the halves
- * that exist.
+ * A bare ellipsis would leave her reading a partial coordinate list, or a partial ledger, as the whole one; the token says
+ * how much of the Mod's text the line is not showing (`evidence_detail_over_ceiling:<length>:<ceiling>`, the same
+ * bounded-token shape a node's own `reasonCode` has, so a run audit greps ONE name and reads the ceiling it met). An
+ * absent or blank value is `undefined`, so a caller joins only the halves that exist.
+ *
+ * At the ceiling it prints whole: the point of `MODEL_FIELD_CEILINGS` is that the node fields are then printed exactly as
+ * the Mod wrote them, because the wire bound them first.
  */
-function boundedFailureField(value: unknown): string | undefined {
+function boundedField(field: ModelVisibleField, value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const text = value.trim();
   if (text === "") return undefined;
-  if (text.length <= MAX_EVIDENCE_DETAIL_CHARS) return text;
-  return `${text.slice(0, MAX_EVIDENCE_DETAIL_CHARS)}…[evidence_detail_over_ceiling:${String(text.length)}:${String(MAX_EVIDENCE_DETAIL_CHARS)}]`;
+  const ceiling = MODEL_FIELD_CEILINGS[field];
+  if (text.length <= ceiling) return text;
+  return `${text.slice(0, ceiling)}…[evidence_detail_over_ceiling:${String(text.length)}:${String(ceiling)}]`;
 }
 
 /**

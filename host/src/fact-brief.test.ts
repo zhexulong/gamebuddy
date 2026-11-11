@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { CompanionEventPump, type WorldFact } from "./event-pump.js";
 import { createStardewObservationTools } from "./game-tools.js";
@@ -7,7 +10,8 @@ import {
   FACT_BRIEF_BLOCKS,
   composeFactBrief,
   composeWorldState,
-  MAX_EVIDENCE_DETAIL_CHARS,
+  MODEL_FIELD_CEILINGS,
+  type ModelVisibleField,
   unchangedWorldAnswer,
 } from "./fact-brief.js";
 import { NON_ROW_FAMILIES, TARGET_FAMILY_LABELS, nearbyTargetFamilies } from "./game-world-vocabulary.js";
@@ -142,7 +146,7 @@ const playerInput = {
 function richBrief(): string {
   return composeFactBrief({
     inputs: [playerInput],
-    snapshot: { snapshot: world, revision: 1205, ageTurns: 0 },
+    snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 },
     events: richBatchFacts(),
     locale: "zh-CN",
   });
@@ -199,9 +203,9 @@ test("bare_json_in_model_text: the composed text is prose, not an envelope", () 
 });
 
 test("the world block names its revision and its freshness, and never claims to be the world", () => {
-  const fresh = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0 });
+  const fresh = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 });
   assert.match(fresh, /^<world-state>\n世界（revision 1205，刚刚更新）$/mu);
-  const stale = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 3 });
+  const stale = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 3, ageMs: 90_000 });
   assert.match(stale, /^<world-state>\n世界（revision 1205，本轮无新观察）$/mu);
   assert.match(stale, /（这是 3 轮之前看到的，世界已经不一样了）/u, "and how old the reading is, in words");
   const nothing = composeWorldState(undefined);
@@ -209,7 +213,7 @@ test("the world block names its revision and its freshness, and never claims to 
 });
 
 test("the world block names the objects she acts on, with their tiles", () => {
-  const text = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0 });
+  const text = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 });
   assert.match(text, /手持: 锄头/u, "the held tool is said in words");
   assert.match(text, /待浇水的作物 \(63,14\)/u, "the nearest dry crop is named with its tile, nearest first");
   assert.match(text, /杂草 \(64,15\)/u, "the nearest weed tile is named");
@@ -219,7 +223,7 @@ test("the world block names the objects she acts on, with their tiles", () => {
 test("a reading that has not changed is one line, not the whole world again", () => {
   const answer = unchangedWorldAnswer(1205);
   assert.equal(answer, "自 revision 1205 以来世界没有变化");
-  const full = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0 });
+  const full = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 });
   // The reading is stated as the two lengths, so a future change that quietly returns the dump cannot pass by
   // looking like a sentence.
   assert.ok(
@@ -271,7 +275,7 @@ test("prose_cost_per_batch: what one delivery costs, against the envelope it rep
   const inputs = [playerInput];
   const prose = composeFactBrief({
     inputs,
-    snapshot: { snapshot: world, revision: 1205, ageTurns: 0 },
+    snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 },
     events: facts,
     locale: "zh-CN",
   });
@@ -408,7 +412,10 @@ test("observe_result_chars: the observation answer is the state block, and an un
  */
 test("execution_result_evidence: every settled node's refusal detail reaches the model beside its hint", () => {
   const detail = "owner=Pierre;owner_tile=4,17;actor_tile=5,19;radius=1";
-  const longDetail = `${"far=".repeat(60)}end`;
+  // Past the ceiling, deliberately: the Mod's journal refuses a refusal detail over 512 characters, so this one cannot
+  // arrive through the bridge - and when one does, the line must say it was cut rather than print a partial coordinate
+  // list as the whole one.
+  const longDetail = `${"far=".repeat(130)}end`;
   const nodes = [
     {
       nodeId: "n01",
@@ -462,7 +469,7 @@ test("execution_result_evidence: every settled node's refusal detail reaches the
   );
   for (const node of withDetail) {
     const expected = node.reasonDetail.trim();
-    const shown = expected.slice(0, MAX_EVIDENCE_DETAIL_CHARS);
+    const shown = expected.slice(0, MODEL_FIELD_CEILINGS.reasonDetail);
     assert.ok(
       block.includes(shown),
       `${node.nodeId}: its refusal detail ${JSON.stringify(expected)} never reaches the model; the line it should be ` +
@@ -477,18 +484,172 @@ test("execution_result_evidence: every settled node's refusal detail reaches the
   // list as the whole one.
   assert.ok(!block.includes(longDetail), "n05's detail is bounded, not printed whole");
   assert.ok(
-    block.includes(`${longDetail.slice(0, MAX_EVIDENCE_DETAIL_CHARS)}…`),
+    block.includes(`${longDetail.slice(0, MODEL_FIELD_CEILINGS.reasonDetail)}…`),
     "n05's detail is printed up to the bound, and marked",
   );
   // AND THE MARK IS THE CEILING'S OWN NAME, in the bounded-token shape a `reasonCode` has: the length the Mod wrote and
   // the ceiling it met. The count used to be Chinese prose beside the ellipsis, which named the cut but not the ceiling -
   // nothing reading this line could tell which limit had been met, or grep for it.
   assert.ok(
-    block.includes(`evidence_detail_over_ceiling:${String(longDetail.length)}:${String(MAX_EVIDENCE_DETAIL_CHARS)}`),
+    block.includes(
+      `evidence_detail_over_ceiling:${String(longDetail.length)}:${String(MODEL_FIELD_CEILINGS.reasonDetail)}`,
+    ),
     "the cut names the ceiling and the measured length, not only that something was cut",
   );
   // AND THE HALVES THAT ARE ALONE STAY: a detail without a hint, a hint without a detail, and a node with neither.
   assert.ok(block.includes("item=(O)388;stock=0"), "n02's detail is its whole account");
   assert.ok(block.includes("被打断了"), "n03's hint survives, and no detail was invented for it");
   assert.ok(block.includes("not_ready"), "n04 is explained by the Mod's own code");
+});
+
+/**
+ * One Host source file, read from the repository rather than from the compiled artifact.
+ *
+ * The suite runs emitted JavaScript out of a flat `dist-test`, so `import.meta.url` names no `.ts` - and the point of the
+ * gate below is to read what the WRITER says, not what it compiled to.
+ */
+function hostSource(name: string): string {
+  let directory = dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const candidate = join(directory, "src", name);
+    if (existsSync(candidate)) return readFileSync(candidate, "utf8");
+    const parent = dirname(directory);
+    if (parent === directory) throw new Error(`host/src/${name} was not found from ${import.meta.url}`);
+    directory = parent;
+  }
+}
+
+/**
+ * One batch whose single Mod-authored field carries exactly `value`, for the field-ceiling gate below.
+ *
+ * A node field rides a settled programme; a receipt's evidence rides an execution receipt. Nothing else is in the batch,
+ * so the text that comes back is that one field and the words around it.
+ */
+function composedField(field: ModelVisibleField, value: string): string {
+  if (field === "evidence") {
+    return composeFactBrief({
+      inputs: [],
+      snapshot: undefined,
+      events: [
+        fact({
+          kind: "execution_receipt",
+          eventId: "receipt_ceiling",
+          payload: {
+            actionId: "water_crop",
+            state: "rejected",
+            reasonCode: "not_adjacent",
+            evidence: { detail: value },
+          },
+        }),
+      ],
+      locale: "zh-CN",
+    });
+  }
+  return composeFactBrief({
+    inputs: [],
+    snapshot: undefined,
+    events: [
+      fact({
+        kind: "world_fact",
+        eventId: "program_settled_ceiling",
+        semanticKind: "program_settled",
+        payload: {
+          total: 1,
+          counts: { succeeded: 0 },
+          nodes: [{ actionId: "for_each", state: "failed", reasonCode: "blocked", [field]: value }],
+        },
+      }),
+    ],
+    locale: "zh-CN",
+  });
+}
+
+/**
+ * TRUNCATED ENUMERATION IS SILENT - unless the line says what it left out, and unless it left out nothing the wire had
+ * already bounded.
+ *
+ * <p>
+ * THE DEFECT THIS CLOSES, measured 2026-11-11 (`round45`): every failed `for_each` hint reached this file between 169 and
+ * 255 characters and every one of their details between 480 and 507, all against ONE flat 160-character ceiling. Thirty
+ * cuts in one run's model-visible text - and the ledger (`decided=18;succeeded=0;…;omitted=0`, ~100 characters) survived
+ * every one of them, so what fell off was exactly the per-code tail that says WHICH rows failed and why, sliced mid-token.
+ * </p>
+ *
+ * <p>
+ * POPULATION, from the writer rather than from a list: every field name `fact-brief.ts` hands to `boundedField`, read out
+ * of its own source and printed below. It must equal the declared ceilings both ways - a field printed under no ceiling,
+ * and a ceiling for a field nothing prints, are both drift. The node fields' ceilings are then checked against the WIRE's
+ * own numbers (`protocol.ts`), because a Host ceiling below the producer's bound is the ceiling that cut these.
+ * </p>
+ *
+ * <p>
+ * PROPERTY, per field: at the ceiling it prints whole; one character over, it is cut AND named with the length the Mod
+ * wrote and the ceiling it met, so a partial enumeration can never read as a complete one.
+ * </p>
+ */
+test("truncated_enumeration_is_silent: each field prints whole to its producer's bound, and a cut is named", () => {
+  const source = hostSource("fact-brief.ts");
+  const bounded = new Set(
+    [...source.matchAll(/boundedField\("(\w+)"/gu)].map((match) => match[1] ?? "").filter((name) => name !== ""),
+  );
+  const declared = Object.keys(MODEL_FIELD_CEILINGS);
+  assert.ok(bounded.size > 0, "the writer calls boundedField at all, or this gate examines nothing");
+  assert.deepEqual(
+    [...bounded].sort(),
+    [...declared].sort(),
+    `the writer bounds ${[...bounded].sort().join(", ")} and MODEL_FIELD_CEILINGS declares ` +
+      `${[...declared].sort().join(", ")}; a field printed under no declared ceiling - or a ceiling for a field nothing ` +
+      "prints - is drift in this table, and the count examined is " +
+      String(bounded.size),
+  );
+
+  const protocol = hostSource("protocol.ts");
+  const wireBounds: Readonly<Record<string, number>> = Object.freeze({
+    hint: Number(/value\.hint\.length <= (\d+)/u.exec(protocol)?.[1]),
+    reasonDetail: Number(/MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH = (\d+)/u.exec(protocol)?.[1]),
+  });
+
+  for (const field of declared as readonly ModelVisibleField[]) {
+    const ceiling = MODEL_FIELD_CEILINGS[field];
+    assert.ok(
+      Number.isInteger(ceiling) && ceiling > 0,
+      `${field}: its ceiling is a positive integer (${String(ceiling)})`,
+    );
+
+    const atCeiling = "位".repeat(ceiling);
+    const whole = composedField(field, atCeiling);
+    assert.ok(
+      whole.includes(atCeiling),
+      `${field}: a value at its own ceiling (${String(ceiling)} characters) must reach the model WHOLE; the text says ` +
+        JSON.stringify(whole),
+    );
+    assert.equal(
+      whole.includes("over_ceiling"),
+      false,
+      `${field}: a value at its own ceiling is not a cut, so nothing here may be marked as one`,
+    );
+
+    const overCeiling = `${atCeiling}位`;
+    const cut = composedField(field, overCeiling);
+    assert.ok(
+      cut.includes(`${atCeiling}…[evidence_detail_over_ceiling:${String(overCeiling.length)}:${String(ceiling)}]`),
+      `${field}: one character over the ceiling must be printed up to the ceiling AND named - the length the Mod wrote ` +
+        `and the ceiling it met - so a partial enumeration never reads as the whole one; the text says ${JSON.stringify(cut)}`,
+    );
+
+    const wire = wireBounds[field];
+    if (wire === undefined) continue;
+    assert.equal(
+      Number.isNaN(wire) ? undefined : wire,
+      ceiling,
+      `${field}: its ceiling must be the bound the WIRE already enforces (protocol.ts says ${String(wire)}) - a smaller ` +
+        "one cuts a frame that arrived valid, which is exactly how round45 lost every for_each ledger tail",
+    );
+  }
+
+  assert.equal(
+    Object.keys(MODEL_FIELD_CEILINGS).length,
+    bounded.size,
+    `examined ${String(bounded.size)} model-visible fields; every one of them is asserted above`,
+  );
 });
