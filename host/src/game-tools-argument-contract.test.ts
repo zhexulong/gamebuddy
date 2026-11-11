@@ -10,6 +10,7 @@ import { createStardewActionTools, type MoveCapableIntegration } from "./game-to
 import {
   type ActionRegistration,
   type ActionRegistrationDescriptor,
+  EXECUTION_REQUEST_ARGUMENT_RULES,
   type ExecutionReceipt,
   type ExecutionRequest,
   type Scope,
@@ -43,6 +44,18 @@ import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-ada
  *
  * Each test asserts one rule over whatever the Mod publishes, so it follows the catalog rather than a
  * hand-maintained list.
+ *
+ * THE DECLARED SET IS THE PROTOCOL'S SET. The behavioural probe below proves that what a tool declares is what
+ * reaches the bridge, but it can only speak about a tool the model can already call: it reads the schema the tool
+ * HAS. The equality test states the rule directly and takes its population from `EXECUTION_REQUEST_ARGUMENT_RULES`,
+ * so an action the declaration grows is checked the moment it gets a tool, and a tool whose schema still carries an
+ * earlier shape is named rather than measured. Deriving the schemas from the declaration itself is the remaining
+ * step owed here: the rows carry a field and a prose `shape` per requirement, not a machine-readable per-field JSON
+ * schema, so a derivation would first need the declaration to publish one.
+ *
+ * red-proof: leave `chest_store`'s schema on the pre-`chests` shape ->
+ *   `stardew_chest_store (chest_store): the schema declares [expectedQualifiedItemId, expectedTargetId, slot, x, y]
+ *    while the protocol pins [chestId, expectedQualifiedItemId]`
  */
 const hostRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const SURFACE_PATH = resolve(
@@ -61,6 +74,7 @@ const SCOPE: Scope = {
 
 const IDENTITY_ARGUMENT_KEYS = new Set(["requestId", "idempotencyKey"]);
 const TARGET_ID = "gateTargetId1";
+const QUALIFIED_ITEM_ID = "(O)322";
 const MINECART_TARGET_ID = `minecart_${"a".repeat(16)}`;
 const SCENE_REF = `sr1_${"a".repeat(16)}`;
 
@@ -247,6 +261,9 @@ function valueFor(node: JsonObject, name: string, action: string): unknown {
   const pattern = typeof node.pattern === "string" ? node.pattern : "";
   if (pattern.includes("sr1_")) return SCENE_REF;
   if (name === "expectedTargetId") return action === "ride_minecart" ? MINECART_TARGET_ID : TARGET_ID;
+  // The item's wire identity is the engine's qualified form; a schema that accepts any string still reaches a
+  // protocol row that reads this one as `(prefix)id`, and the probe must not fail on a value IT invented.
+  if (name === "expectedQualifiedItemId") return QUALIFIED_ITEM_ID;
   return "aa";
 }
 
@@ -424,6 +441,50 @@ function instructedNames(description: string): readonly string[] {
   const recipe = /([A-Za-z][A-Za-z0-9_]*(?:(?:,| and)\s+[A-Za-z][A-Za-z0-9_]*)*)\s+must be copied/g;
   return [...description.matchAll(recipe)].flatMap((match) => (match[1] as string).split(/,\s*| and\s+/));
 }
+
+test("every tooled action's schema declares exactly the argument set the protocol pins for it", () => {
+  const mounted = new Map(mountedTools().map((tool) => [tool.action, tool]));
+  const declaredActions = Object.keys(EXECUTION_REQUEST_ARGUMENT_RULES) as readonly ExecutionRequest["action"][];
+  const offenders: string[] = [];
+  const examined: string[] = [];
+
+  for (const action of declaredActions) {
+    const tool = mounted.get(action);
+    if (tool === undefined) {
+      offenders.push(`${action}: the protocol pins an argument set for it, but no tool is mounted under that action`);
+      continue;
+    }
+    const pinned = EXECUTION_REQUEST_ARGUMENT_RULES[action].find(
+      (row) => row.argumentNames !== undefined,
+    )?.argumentNames;
+    if (pinned === undefined) {
+      offenders.push(`${action}: no row pins the exact argument set, so there is nothing to hold the schema against`);
+      continue;
+    }
+    examined.push(action);
+    const schemaKeys = [...declaredArgumentKeys(tool.schema, false)].sort();
+    const pinnedKeys = [...pinned].sort();
+    if (JSON.stringify(schemaKeys) !== JSON.stringify(pinnedKeys)) {
+      offenders.push(
+        `${tool.name} (${action}): the schema declares [${schemaKeys.join(", ")}] while the protocol pins [${pinnedKeys.join(", ")}]`,
+      );
+      continue;
+    }
+    const required = new Set(declaredArgumentKeys(tool.schema, true));
+    const optional = pinnedKeys.filter((key) => !required.has(key));
+    if (optional.length > 0)
+      offenders.push(
+        `${tool.name} (${action}): the schema makes [${optional.join(", ")}] optional, but the protocol refuses the request that omits them`,
+      );
+  }
+
+  assert.ok(examined.length >= 90, `expected the declaration to be walked, examined ${examined.length} actions`);
+  assert.deepEqual(
+    offenders,
+    [],
+    "a tool whose schema is not the protocol's own argument set shows the model a shape the validator will refuse",
+  );
+});
 
 test("a description's argument recipe names only schema arguments and covers every required one", () => {
   const offenders: string[] = [];

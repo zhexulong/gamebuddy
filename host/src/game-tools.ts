@@ -2430,26 +2430,20 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.chest_store,
         label: "Store Item in Chest",
         description:
-          "Move one carried inventory stack into a live adjacent chest. x, y and expectedTargetId must be copied exactly from one `chests` entry of the MOST RECENT observe result for the current location (that entry's chestId is the expectedTargetId; never invent or guess coordinates), and slot plus expectedQualifiedItemId from the carried stack itself. No ItemGrabMenu is opened. Returns chest_stored with the exact stack conservation evidence.",
+          "Move one carried inventory stack into a reachable chest. chestId and expectedQualifiedItemId must be copied from the MOST RECENT observe result for the current location: chestId is the `chestId` of one `chests` entry, which already names that container's location and tile, and expectedQualifiedItemId is the `qualifiedItemId` of the carried stack you mean. There is no x, y, expectedTargetId or slot to send - the container is the whole address, and the body takes the first stack of that item in the backpack and names the slot it moved in the receipt. No ItemGrabMenu is opened. Refused chest_target_changed when no live container answers to chestId, and item_not_owned_in_slot when the backpack holds none of that item by then. Returns chest_stored with the exact stack conservation evidence.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          chestId: Type.String({ minLength: 1, maxLength: 128 }),
           expectedQualifiedItemId: Type.String({
             minLength: 1,
             maxLength: 128,
           }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
           requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "chest_store",
         toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
+          chestId: params.chestId,
           expectedQualifiedItemId: params.expectedQualifiedItemId,
-          expectedTargetId: params.expectedTargetId,
         }),
       }),
     );
@@ -2461,26 +2455,20 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.chest_retrieve,
         label: "Take Item From Chest",
         description:
-          "Move one item out of an observed chest into the Farmhand inventory. x, y and expectedTargetId must be copied exactly from one `chests` entry of the MOST RECENT observe result (that entry's chestId is the expectedTargetId), and expectedQualifiedItemId from one item in that entry's `items` list, which carries every item the container holds. expectedQualifiedItemId pins the observed item so an item that is gone is refused (chest_empty) rather than substituted. No ItemGrabMenu is opened. Returns chest_retrieved.",
+          "Move one item out of a reachable chest into the Farmhand inventory. chestId and expectedQualifiedItemId must be copied from the MOST RECENT observe result for the current location: chestId is the `chestId` of one `chests` entry, which already names that container's location and tile, and expectedQualifiedItemId is the `qualifiedItemId` of one item in that entry's `items` list, which carries every item the container holds. There is no x, y, expectedTargetId or slot to send - the container and the item are the whole address, so nothing is picked by position. The item id pins the observed item, so one that is gone by then is refused chest_empty rather than substituted. No ItemGrabMenu is opened. Returns chest_retrieved.",
         parameters: Type.Object({
-          slot: Type.Integer({ minimum: 0, maximum: 36 }),
-          x: Type.Integer({ minimum: 0, maximum: 1000 }),
-          y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          chestId: Type.String({ minLength: 1, maxLength: 128 }),
           expectedQualifiedItemId: Type.String({
             minLength: 1,
             maxLength: 128,
           }),
-          expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
           requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "chest_retrieve",
         toArgs: (params) => ({
-          slot: params.slot,
-          x: params.x,
-          y: params.y,
+          chestId: params.chestId,
           expectedQualifiedItemId: params.expectedQualifiedItemId,
-          expectedTargetId: params.expectedTargetId,
         }),
       }),
     );
@@ -2601,7 +2589,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.clear_cask,
         label: "Clear Cask",
         description:
-          "Clear one live adjacent Cask with a heavy hitter that is not a melee weapon (an Axe, Pickaxe or Hoe); the action takes that tool out of the pack itself and puts the actor's previous selection back, so slot is the number from toolSlots in the MOST RECENT observe result and need not be the held one. x and expectedTargetId must be copied exactly from caskTargets. A filled Cask drops its contents and remains; an empty Cask is removed. Returns cask_cleared.",
+          "Clear one live adjacent Cask with a heavy hitter that is not a melee weapon (an Axe, Pickaxe or Hoe); the action takes that tool out of the pack itself and puts the actor's previous selection back, so slot is the number from toolSlots in the MOST RECENT observe result and need not be the held one. x, y and expectedTargetId must be copied exactly from caskTargets. A filled Cask drops its contents and remains; an empty Cask is removed. Returns cask_cleared.",
         parameters: Type.Object({
           slot: Type.Integer({ minimum: 0, maximum: 36 }),
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
