@@ -353,7 +353,7 @@ export const EXEMPTIONS = Object.freeze([
     path: "tools/check-child-output-parsing.mjs",
     reason:
       "debt: measured red at HEAD — 3 sites hand-parse subprocess output and all three are files another lane holds " +
-      "uncommitted (`tools/refusal-exp.mjs`, `tools/sandbox/sandbox-bus.mjs`, `tools/scripts/check-workspace-debris.mjs`), " +
+      "uncommitted (`tools/sandbox/sandbox-bus.mjs`, `tools/scripts/check-workspace-debris.mjs`), " +
       "so adopting it needs their fix, not the wiring",
     runsIn: "on-demand",
   },
