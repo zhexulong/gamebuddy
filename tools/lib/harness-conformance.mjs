@@ -347,6 +347,21 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // direction (`:mod`), a Host token the Mod's method never permits, a Mod state the wire has no token for, a declaration
   // that cannot be read, an empty set (exit 2, never green) and the CLI's own exit codes on a throwaway root.
   "check-refusal-detail-state-parity.mjs",
+  // Prints `frames examined N · paired P · measured here M · owned elsewhere O · exempt E · unmeasured U` and
+  // `fields examined M · accepted A · unaccepted K` plus a three-entry `checks[]` verdict enumerating its rules (both
+  // declarations readable, every Host frame accounted for, every field accepted), so its default run is the report this
+  // suite reads. Its falsifier is tools/check-cross-language-wire-parity.test.mjs: a field added to the real
+  // `BridgeBodyProgramNodeStatus` and `"refusalDetail"` deleted from the real `isBodyProgramNodeStatus` key list are both
+  // `wire_field_unaccepted:program_status_result:<field>:<C# type>`, a property added to the real Host `ExecutionRequest`
+  // is `wire_field_unknown_to_mod:execution_request:<field>`, an exemption downgrades a crossing while one for a field
+  // that does not drift is `stale_wire_exemption`, an exemption with no reason or owner is refused, a frame injected into
+  // the Host's switch that nothing pairs is `frame_not_measured:<frame>` and BLOCKS the run (exit 2) instead of passing
+  // over it, a frame whose paired declaration carries no fields and one whose declaration was moved out of the reader are
+  // `frame_without_fields`, a frame exemption downgrades the block while one for a frame that now pairs is
+  // `stale_wire_exemption:<frame>`, a missing naming policy, a policy the mapping cannot read, an armless
+  // `validateBridgeMessage` and a Models directory with no wire type are all `blocked`, and the CLI's own exit codes are
+  // asserted on a throwaway root.
+  "check-cross-language-wire-parity.mjs",
   // Prints `snapshot fields examined N · rendered M · exempt K` plus a two-entry `checks[]` verdict, so its default
   // run is the report this suite reads. Its falsifier is tools/check-snapshot-field-rendering.test.mjs: the water line
   // deleted from a copy of `host/src/fact-brief.ts` is `snapshot_field_never_rendered:wateringCanFacts`, a field added

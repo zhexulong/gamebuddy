@@ -121,6 +121,14 @@ export const L0_GATES = Object.freeze([
   // `BODY_PROGRAM_REFUSAL_DETAIL_NODE_STATES`. Measured 2026-11-11: the Host half of `15a3c57c` was never written, one
   // refused status frame closed the bridge, and the run's 7th turn was lost. Milliseconds, two file reads.
   "tools/check-refusal-detail-state-parity.mjs",
+  // The field-level sibling of the two above, and the wider half of the same incident class: every field the Mod puts on
+  // a frame it SENDS must be a name the Host's validators accept for that frame, and every field the Host declares on a
+  // request must be readable by the Mod. Frames come from the Mod's own framing calls and fields from the C# declarations,
+  // so a payload that grows a key is named here instead of closing the transport on the next live run. It blocks (exit 2)
+  // on a frame it cannot pair instead of reporting a pass over the population it happened to measure, names the frames an
+  // existing gate already owns (`snapshot`, `execution_receipt`) rather than checking them twice, and carries exactly one
+  // frame exemption (`body_node_admission_grant`) with the owner who owes the pairing. Milliseconds, six file reads.
+  "tools/check-cross-language-wire-parity.mjs",
   "integrations/stardew/action-development/tests/action-source-projection-drift.test.mjs",
   "integrations/stardew/action-development/tests/action-projection-parity-drift.test.mjs",
   // The vendored patch set. `vendor/magic-context` is a pin we do not own, and the SillyTavern preset seam
