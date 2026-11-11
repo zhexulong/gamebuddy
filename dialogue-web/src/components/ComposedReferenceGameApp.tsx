@@ -3,8 +3,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { readChatSnapshotPair } from "../chat-snapshot-pair";
 import {
   declaredProblemSentence,
-  PROBLEM_RETRY_READ,
   composedProblemView as problemView,
+  problemDrawsOwnRead,
+  problemStepLine,
 } from "../composed-problem-view";
 import type { ComposedReferenceGameBrowserRootV1 } from "../composed-reference-game-browser-api";
 import {
@@ -756,8 +757,8 @@ export function ComposedReferenceGameApp() {
    * button shows nothing while the read is outstanding, so a second state would only be a second
    * `/state`.
    *
-   * The action carries `PROBLEM_RETRY_READ` as its id, and `ProblemView` draws it for exactly the
-   * failures whose `step` names that control: a refusal whose answer is something else (`turn_busy`, a
+   * The card draws its own control for exactly the failures whose `step` names it
+   * (`problemDrawsOwnRead`): a refusal whose answer is something else (`turn_busy`, a
    * signed-out session, an oversized message) states its own step instead and gets no button that
    * cannot help it.
    */
@@ -1490,9 +1491,8 @@ export function ComposedReferenceGameApp() {
           <ProblemView
             title={view.title}
             detail={view.detail}
-            step={view.step}
-            action={{ id: PROBLEM_RETRY_READ, label: labels().problemRetryRead, run: retryProblemView }}
-            labels={labels()}
+            stepLine={problemStepLine(view.step, labels())}
+            action={problemDrawsOwnRead(view.step) ? { label: labels().problemRetryRead, run: retryProblemView } : null}
           />
         )}
         {view.kind === "ready" && view.session.snapshot.chat !== null && (

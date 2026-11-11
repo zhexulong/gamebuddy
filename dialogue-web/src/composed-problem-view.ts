@@ -1,3 +1,4 @@
+import { assertNever } from "./assert-never";
 import {
   ComposedReferenceGameProblemError,
   ComposedReferenceGameProtocolError,
@@ -99,9 +100,10 @@ export type ProblemStep =
 /**
  * The card's own control: the read the failure came from, taken again.
  *
- * It is the only step this whole-window card can perform - `ProblemView` draws a button for exactly
- * this id and for no other - which is why it is a named constant rather than a string at each
- * family: `ComposedReferenceGameApp` builds the action from it and `ProblemView` renders it.
+ * It is the only step this whole-window card can perform, which is why it is a named constant rather
+ * than a string at each family. `ProblemView` renders the marker as a literal because the boundary
+ * rule forbids shared UI importing this module; `tools/check-fail-closed-forward-path.mjs` holds the
+ * two spellings equal, and a rename that misses one is a control no element carries.
  */
 export const PROBLEM_RETRY_READ = "problem-retry-read";
 
@@ -111,6 +113,53 @@ const RESTART_GAMEBUDDY: ProblemStep = { kind: "outside_surface", step: "restart
 const HOST_RETRIES: ProblemStep = { kind: "self_heals", because: "host_retries" };
 /** Nothing is in flight; the page is simply behind, and its next read is the state it is owed. */
 const NEXT_READ: ProblemStep = { kind: "self_heals", because: "next_read" };
+
+/**
+ * The step's sentence, or null when the card draws the step's own control instead.
+ *
+ * It is here rather than in `ProblemView` because "which of the four kinds is this, and what does the
+ * player read for it" is a fact about the refusal vocabulary. The card is a props-driven primitive
+ * in the shared-UI layer and may not import a surface's model.
+ */
+export function problemStepLine(step: ProblemStep, labels: Messages): string | null {
+  switch (step.kind) {
+    case "control":
+      // The control is a real one the player can press - on the surface the sentence beside this
+      // line names. The card draws only its own read, so it says where the step is rather than
+      // offering a second control that is not it.
+      return labels.problemStepElsewhere;
+    case "outside_surface":
+      return {
+        open_settings: labels.problemStepOpenSettings,
+        retry_bootstrap: labels.problemStepRetryBootstrap,
+        restart_gamebuddy: labels.problemStepRestartGamebuddy,
+      }[step.step];
+    case "self_heals":
+      return {
+        host_retries: labels.problemStepSelfHealsHostRetries,
+        next_read: labels.problemStepSelfHealsNextRead,
+        stream_resumes: labels.problemStepSelfHealsStreamResumes,
+      }[step.because];
+    case "no_step":
+      return {
+        over_a_ceiling: labels.problemStepNoStepOverACeiling,
+        already_true: labels.problemStepNoStepAlreadyTrue,
+        not_this_artifact: labels.problemStepNoStepNotThisArtifact,
+      }[step.because];
+    default:
+      return assertNever(step);
+  }
+}
+
+/**
+ * True when the step names the shell's own read, so the card draws exactly that control.
+ *
+ * `control` also covers controls this whole-window card cannot draw (`message-delete`, `new-chat`,
+ * `game-stop`): those are read by `problemStepLine` and get the sentence instead.
+ */
+export function problemDrawsOwnRead(step: ProblemStep): boolean {
+  return step.kind === "control" && step.id === PROBLEM_RETRY_READ;
+}
 
 /** One player-facing sentence pair, shared by every code whose fact and next step are the same. */
 type ProblemSentence = (labels: Messages) => ProblemViewState;
