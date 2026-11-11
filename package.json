@@ -189,6 +189,7 @@
     "test:gate-red-proofs": "node --test tools/audit-gate-red-proofs.test.mjs",
     "test:switch-exhaustiveness": "node --test tools/check-switch-exhaustiveness.test.mjs",
     "test:refusal-detail-state-parity": "node --test tools/check-refusal-detail-state-parity.test.mjs",
+    "test:game-surface-conduct-classes": "node --test tools/check-game-surface-conduct-classes.test.mjs",
     "test:game-ladder-live": "node --test tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs tools/live-run/game/night-verdict.test.mjs tools/lib/system-findings.test.mjs tools/lib/action-breadth.test.mjs",
     "test:gameplay-capability-catalog": "node --test tools/check-gameplay-capability-catalog.test.mjs",
     "test:host-diagnostic-output": "node --test tools/check-host-diagnostic-output.test.mjs",

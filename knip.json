@@ -108,7 +108,16 @@
       "project": [
         "src/**/*.{ts,tsx,mjs}",
         "scripts/**/*.mjs"
-      ]
+      ],
+      // The two conduct tables are read BY NAME out of the source by
+      // `tools/check-game-surface-conduct-classes.mjs`, which parses the floor's declarations rather than importing them:
+      // a class is a claim about a rule's TEXT, and a gate that imported the table would still have to parse the rules.
+      // No module imports these bindings, so an import-graph tool cannot see the only consumer - the same shape as
+      // `src/identity-profile.ts!` above, and narrower than making the files entry points.
+      "ignoreIssues": {
+        "src/game-surface-prompt-floor.ts": ["exports"],
+        "src/games/stardew/prompt/stardew-game-conduct.ts": ["exports"]
+      }
     },
     "dialogue-web": {
       "entry": [

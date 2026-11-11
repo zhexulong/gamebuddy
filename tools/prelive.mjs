@@ -149,6 +149,13 @@ export const L0_GATES = Object.freeze([
   // `assets/tavern/presets/PERSONA-REVISION.md` in the same commit. 2.0 s here (three git spawns, batched), and it
   // names the drifting field rather than a file.
   "tools/check-persona-prose.mjs",
+  // The Game floor's own composition, classified rule by rule: FLOOR (what she must never do), CHANNEL (how to
+  // operate the surface) or FORM (how long a turn is, how many beats it carries - the card's, so a FORM rule is
+  // deleted). It runs here because its defect is invisible everywhere else: the rule it was built for
+  // (`Speak before you act ... never run tools in total silence`) was reviewed, shipped, and answered with 132
+  // bubbles over 93 prompt turns - 90 of them standalone speech with no tool call - before anyone asked what KIND
+  // of rule it was. Pure file reads, milliseconds.
+  "tools/check-game-surface-conduct-classes.mjs",
   // The FULL totality audit, because the place that could fail on its findings never did: CI runs it on every push with
   // `continue-on-error: true`, only so `--verbose` can be uploaded as an artifact, so a blocking finding reached nobody
   // - and this rung ran `audit-totality-head.mjs` above instead, whose entry guard is missing, so it exits 0 having

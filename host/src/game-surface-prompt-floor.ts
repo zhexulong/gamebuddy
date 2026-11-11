@@ -51,6 +51,13 @@ import type { GamePromptAddition } from "./settings/player-preference-store.js";
  *    must look like. `stardew_express_emote` is a channel fact; "at most one short stage direction" was form wearing a
  *    channel's clothes.</li>
  * </ul>
+ *
+ * <p>
+ * The classification is not a matter of taste, so it is written down beside the rules: `GAME_SURFACE_CONDUCT_CLASSES`
+ * gives every rule this module owns one class and one line saying why, the Stardew module carries the same table for the
+ * rules it owns, and `tools/check-game-surface-conduct-classes.mjs` fails by name when a rule arrives without a class or
+ * when a rule classified FORM is still in the floor.
+ * </p>
  */
 
 /**
@@ -174,6 +181,109 @@ const GAME_SURFACE_INTERACTION_CONDUCT = [
   'A question about a concrete thing is fine ("这颗金星南瓜你留着还是卖掉？"); what is not is handing the choice of your own next move back to your partner instead of deciding yourself.',
   "Talk to your partner, never to a customer. The assistant register and customer-service warmth both give you away: no 当然可以, no 祝你玩得开心, no 还有什么需要吗, no closing line that offers further help, no chore checklist of what you finished, and no summarising back what you just said you would do.",
 ].join("\n");
+
+/**
+ * The classification of every rule this module owns, in the order the composed list reads them.
+ *
+ * <p>
+ * The correspondence is POSITIONAL: entry `n` classifies this module's rule `n`, and `games/stardew/prompt/` carries the
+ * matching table for the rules it owns. That is why the table sits beside the list instead of merged into it - a rule
+ * added without a class is then one population and not the other, which the gate can see and name.
+ * </p>
+ *
+ * <p>
+ * It is exported, and read by name from outside this module: `tools/check-game-surface-conduct-classes.mjs` parses it out
+ * of the source and fails the build naming the rule and the module when a rule is unclassified or when a rule classified
+ * FORM is still in the floor. Nothing here computes with it - the classification is a declaration, not a filter: a FORM
+ * rule is deleted, never skipped at render time.
+ * </p>
+ */
+export const GAME_SURFACE_CONDUCT_CLASSES: readonly Readonly<{
+  /** Stable short id, used by that gate's failure codes. */
+  id: string;
+  /** One of the doctrine's three kinds. `FORM` is a finding here, not an option: the card owns form. */
+  class: "FLOOR" | "CHANNEL" | "FORM";
+  /** The one line of argument for that class - a class nobody argued for is how a shape rule gets called floor. */
+  reason: string;
+}>[] = Object.freeze([
+  {
+    id: "partner_words_first",
+    class: "FLOOR",
+    reason: "the person before the work: answering her partner's words is the product, not a style preference.",
+  },
+  {
+    id: "fact_batch_blocks",
+    class: "CHANNEL",
+    reason: "the block names are markup the model cannot infer; what the surface sends and who is speaking in it.",
+  },
+  {
+    id: "company_not_step_reports",
+    class: "FLOOR",
+    reason:
+      "forbids the monologue that makes her a status reporter - the doctrine's own example of a floor pacing bound.",
+  },
+  {
+    id: "no_dispatcher_logging",
+    class: "FLOOR",
+    reason: "never speak out of world: coordinates and route waypoints are the machine talking in her voice.",
+  },
+  {
+    id: "tangible_specifics",
+    class: "FLOOR",
+    reason: "grounding: an abstract declaration about a body and a farm she has not looked at is what this forbids.",
+  },
+  {
+    id: "one_bubble_of_size",
+    class: "CHANNEL",
+    reason:
+      "the bubble is the surface's delivery unit and cannot be retracted; its size is read from GAME_DELIVERY_PACING.",
+  },
+  {
+    id: "one_utterance_per_reply",
+    class: "CHANNEL",
+    reason: "the surface draws one spoken line per bubble; markdown is the document form it has no room for.",
+  },
+  {
+    id: "observed_only",
+    class: "FLOOR",
+    reason:
+      "what she may assert: an NPC reaction the game never reported is the contract violation live runs produced.",
+  },
+  {
+    id: "machine_fields_translated",
+    class: "CHANNEL",
+    reason:
+      "a receipt's field names are machine vocabulary; the channel says what to do with them instead of reading them out.",
+  },
+  {
+    id: "refusal_in_person",
+    class: "CHANNEL",
+    reason:
+      "what to do when an action is refused is a channel fact: the reason code is the machine's, the reaction is hers.",
+  },
+  {
+    id: "body_language_is_native",
+    class: "CHANNEL",
+    reason: "the two mounted tools that move her body, and the three bracketed forms this surface never draws.",
+  },
+  {
+    id: "decide_yourself",
+    class: "FLOOR",
+    reason:
+      "never hand the choice back: an assistant waits for instructions, a partner decides and lets the player redirect.",
+  },
+  {
+    id: "concrete_question_ok",
+    class: "FLOOR",
+    reason: "the boundary of that rule, stated so the ban is not read as never asking the player anything.",
+  },
+  {
+    id: "never_a_customer",
+    class: "FLOOR",
+    reason:
+      "never speak as a helper: the assistant register and the closing offer of further help are what give her away.",
+  },
+]);
 
 /**
  * The Game companion's prompt, with the player's own addition appended after the floor.
