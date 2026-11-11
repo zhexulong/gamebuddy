@@ -203,16 +203,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         {
             this.activeBusRide = null;
             this.revision++;
-            LocalExecutionReceipt receipt = new(
-                ride.ExecutionId,
+            this.RememberTerminal(
                 ride.RequestId,
+                ride.ExecutionId,
                 ExecutionState.Succeeded,
                 "bus_arrived",
-                this.revision,
                 $"origin={ride.OriginLocation};destination={arrival};fare={ride.TicketPrice};money_before={ride.MoneyBefore};money_after={actor?.Money ?? ride.MoneyBefore}");
-            this.Remember(receipt);
-            this.AddTrace(receipt);
-            this.PublishIdleAfterRelease(ride.ExecutionId, ride.RequestId);
             return;
         }
 
@@ -220,16 +216,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         {
             this.activeBusRide = null;
             this.revision++;
-            LocalExecutionReceipt receipt = new(
-                ride.ExecutionId,
+            this.RememberTerminal(
                 ride.RequestId,
+                ride.ExecutionId,
                 ExecutionState.Uncertain,
                 "bus_arrival_unconfirmed",
-                this.revision,
                 $"origin={ride.OriginLocation};expected={BusDestinationLocation};observed={arrival};fare={ride.TicketPrice};money_before={ride.MoneyBefore}");
-            this.Remember(receipt);
-            this.AddTrace(receipt);
-            this.PublishIdleAfterRelease(ride.ExecutionId, ride.RequestId);
         }
     }
 
@@ -244,16 +236,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             return;
         this.activeBusRide = null;
         this.revision++;
-        LocalExecutionReceipt receipt = new(
-            ride.ExecutionId,
+        this.RememberTerminal(
             ride.RequestId,
+            ride.ExecutionId,
             ExecutionState.Uncertain,
             "bus_departure_invalidated",
-            this.revision,
             $"origin={ride.OriginLocation};expected={BusDestinationLocation};reason={reasonCode};fare={ride.TicketPrice};money_before={ride.MoneyBefore}");
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(ride.ExecutionId, ride.RequestId);
     }
 
     private static bool TryFindTicketMachine(GameLocation location, out int tileX, out int tileY)
