@@ -387,8 +387,9 @@
       "language": "cs",
       "name": "ResourceToolActionHandler.Execute(BridgeExecutionRequest,IExecutionLedger)",
       "file": "integrations/stardew/Handlers/ResourceToolActionHandler.cs",
-      "line": 16,
-      "value": 192
+      "line": 37,
+      "value": 44,
+      "reason": "192 -> 44 in cd9af513: the family is a row per action, so 44 is 1 for the switch plus 43 for its arms (42 actions and the fail-closed default) - the floor for a closed 42-action dispatch in one method in C#. Going lower means moving the dispatch out of the method, a structural change to the family topology and not a refactor."
     },
     {
       "id": "cs:RouteReenteringBodyProgramExecutor.TryBuildExecutionRequest(IReadOnlyDictionary<string, BodyProgramCanonicalValue>,string,string,string,long,BridgeExecutionRequest?,string)",
