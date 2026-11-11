@@ -183,29 +183,30 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       "The Game prompt GREW by exactly one conduct rule (+559 chars, 10,452 to 11,011): the paragraph naming the four delivery blocks (`<player-note>` <world-state> <world-facts> <execution-result>) and stating that a machine block is not the player speaking. It is 558 chars of text plus the newline the conduct joins it with, and the conduct slice grew by the same 559 (6,631 to 7,190), which is what proves the growth is inside the floor and not in card prose: 7,190 / 11,011 = 0.6530. `envelopeChars`/`envelopeBytes` moved by the JSON-escaped system string's own delta (+560 chars: 558 prose + the newline, escaped as two; +559 bytes, the paragraph is ASCII), which is the whole envelope's delta because `tools` and `messages` are unchanged. The TOKEN columns are carried UNCHANGED and are now a larger under-count still: they describe a prompt 3,889 chars shorter than the one that ships.",
     remeasured_2026_11_11:
       "The delivery-block rule stopped being prose with a number in it: its count and its member names are now read from `FACT_BRIEF_BLOCKS`, so a fifth block (`<in-flight>`, added 2026-11-11) is named in the sentence instead of the prompt saying four while the batch carried five. Measured by the test against the product's builder: `systemChars` 11,101 (10,452 + the 559-char rule of 2026-11-10 + 90 from this rewrite) and the conduct slice 7,268 (6,631 + 559 + 78). The two deltas differ by 12 chars and are recorded AS MEASURED, not reconciled: the previous entry asserted the conduct grew by exactly the same 559 as the prompt, which was arithmetic rather than a second reading. `envelopeChars`/`envelopeBytes` follow the system string by its own delta (+90, ASCII, no new escapes). The TOKEN columns are again carried unchanged and are now a larger under-count still.",
+    remeasured_2026_11_11_b:
+      "The Game prompt SHRANK by exactly one conduct rule (-437 chars, 11,101 to 10,664): the rule that ordered a spoken remark to the partner before every action or planning tool (`Speak before you act ... Never run tools in total silence ...`). It was FORM by the doctrine this floor's own module states - how long a turn is and how many beats it carries - and the shipped card already governs that (`default-companion/card.json`: 「说话紧扣当下真实生活体验，收放自如，不啰嗦不客套」), so an unconditional 'always deliver a spoken remark first' overrode 收放自如 with its opposite. Measured consequence (round46b, 36 minutes over 2 in-game days): 93 prompt turns, 159 assistant messages, 132 bubbles, of which 90 were standalone speech with no tool call in the same message - one bubble every 16 seconds, 1.42 per turn, 1.91 per tool call. The CHARACTER columns are re-derived from the product's builder exactly: `systemChars` 10,664 and the conduct slice 6,831 (7,268 - 437), so its share is 6,831 / 10,664 = 0.6406, recorded as 0.641. The two deltas agree (-437 both) because the deleted text was inside the floor and nowhere else. `envelopeChars`/`envelopeBytes` follow the system string by its own delta (-437: the rule is ASCII, so JSON-escaped characters and UTF-8 bytes move together) with `tools` and `messages` unchanged, which is what makes that the whole envelope's delta. The TOKEN columns were NOT re-measured in this commit and are now stale by 437 characters as well as by everything `remeasured_2026_11_05` describes.",
   }),
   floor: Object.freeze({
     toolCount: 14,
-    // Re-derived from the product's builder by the test itself: 10,452 + the 559-char conduct rule of 2026-11-10 + 90
-    // from the 2026-11-11 rewrite that made the block list derive from `FACT_BRIEF_BLOCKS` (its `remeasured_2026_11_11`
-    // states the arithmetic). The token column below is the 2026-11-05 MEASUREMENT, an under-count of a shorter prompt
-    // that is no longer this one.
-    systemChars: 11101,
+    // Re-derived from the product's builder by the test itself: 11,101 at `remeasured_2026_11_11`, minus the 437 chars
+    // of the deleted "Speak before you act" rule (`remeasured_2026_11_11_b` states both readings). The token column
+    // below is the 2026-11-05 MEASUREMENT, an under-count of a shorter prompt that is no longer this one.
+    systemChars: 10664,
     systemTokens: 5119,
     toolsTokens: 3552,
-    // 23,152 + 2,594 (2026-11-05) + 560 (the same JSON-escaped delta as the 559-char rule): the whole envelope's delta,
-    // because the tool array and the empty message list are unchanged.
-    envelopeChars: 26396,
-    // 28,210 + 6,846 (2026-11-05) + 559 in UTF-8 bytes, the rule being ASCII.
-    envelopeBytes: 35705,
+    // 26,396 - 437, the JSON-escaped delta of the deleted rule: the whole envelope's delta, because the tool array and
+    // the empty message list are unchanged.
+    envelopeChars: 25959,
+    // 35,705 - 437 in UTF-8 bytes, the deleted rule being ASCII.
+    envelopeBytes: 35268,
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
-    chars: 7268,
+    chars: 6831,
     tokens: 1227,
-    // The measured slice over the measured prompt: 7,268 / 11,101. Recorded as the quotient, not as a share typed
-    // separately from the two numbers it divides - the previous recording carried 0.653 against 7,190/11,011.
-    charShareOfSystemPrompt: 0.655,
+    // The measured slice over the measured prompt: 6,831 / 10,664. Recorded as the quotient, not as a share typed
+    // separately from the two numbers it divides - the previous recording carried 0.655 against 7,268/11,101.
+    charShareOfSystemPrompt: 0.641,
     tokenShareOfSystemPrompt: 0.24,
   }),
   denominator: Object.freeze([

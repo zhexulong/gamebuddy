@@ -151,11 +151,18 @@ test("the step-list ban names the one thing it does not forbid, so a plan is not
   assert.match(game, /work quietly until you are done/);
 });
 
-test("the Game conduct commands speaking before acting and forbids silent tool calls", () => {
+test("the Game conduct does not command speech before every action, so the card keeps the turn's form", () => {
+  // Removed 2026-11-11 (round46b: 36 minutes over 2 in-game days): the floor ordered her to "always deliver a spoken
+  // remark ... before calling any action or planning tool", and the run answered it with 132 bubbles over 93 prompt
+  // turns - 90 of them standalone speech with no tool call in the same message, one every 16 seconds. How often she
+  // speaks while working is the card's own form (`default-companion/card.json`: 收放自如), which the doctrine in
+  // `game-surface-prompt-floor.ts` says the prompt never governs. What stays on the floor is the person-facing half
+  // (answer your partner's words first) and the surface's own delivery unit (one utterance per reply).
   const game = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
-  assert.match(game, /Speak before you act/);
-  assert.match(game, /Never run tools in total silence/);
-  assert.match(game, /Never claim work is already finished before the tool has run/);
+  assert.doesNotMatch(game, /Speak before you act/);
+  assert.doesNotMatch(game, /Never run tools in total silence/);
+  assert.match(game, /land your first reaction on what they said/);
+  assert.match(game, /One utterance per reply/);
 });
 
 test("the Game conduct names how a day ends, so going to bed is an act rather than a guess at an action id", () => {
