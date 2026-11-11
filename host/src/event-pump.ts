@@ -261,7 +261,8 @@ export const DAY_BOUNDARY_SEMANTIC_KINDS: ReadonlySet<string> = Object.freeze(
  */
 export const EXECUTION_STALL_SEMANTIC_KIND = "execution_stalled";
 
-/** The same Host-minted source label the arrival, notice, settled-plan, world-stale and narration facts carry. */
+/** The same Host-minted source label the arrival, notice, settled-plan, world-stale, refresh-refused and narration
+ * facts carry. */
 export const HOST_MINTED_FACT_SOURCE = "host_game_session";
 
 /**
@@ -284,6 +285,72 @@ export const HOST_MINTED_FACT_SOURCE = "host_game_session";
  * </p>
  */
 export const WORLD_STATE_STALE_SEMANTIC_KIND = "world_state_stale";
+
+/**
+ * The semantic kind of the fact the Host mints when it ASKED for a fresh observation and the integration would not
+ * serve one.
+ *
+ * <p>
+ * `world_state_stale` says the reading is old; it does not say whether anybody tried to replace it. A probe that fails
+ * silently is indistinguishable from a probe that found the world unchanged - both leave the reading where it was, and
+ * the second is the ordinary case - so a bridge that is down reads exactly like a world that did not move. Measured
+ * 2026-11-10 (`round45`): fifty turns on `revision 352` with no layer asking for another reading, so "the bridge would
+ * not answer" was never a statement any artifact could carry.
+ * </p>
+ */
+export const WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND = "world_state_refresh_refused";
+
+/**
+ * Fresh observations one CROSSED reading may be asked for, and why three.
+ *
+ * <p>
+ * A crossing is one reading revision that outlived `WORLD_STATE_STALE_TURNS` while the world said it moved. The probe is
+ * re-armed when the REVISION MOVES, never per turn, so a frozen world cannot become a spin: the same revision is never
+ * asked about more than this many times, however many turns it lasts.
+ * </p>
+ *
+ * <p>
+ * One would cover the ordinary case - the bridge is up and the answer moves the reading. The other two exist because the
+ * first can land on a transient (a `bridge_response_timeout` at the exact moment the world crossed), and the cost of not
+ * asking again is the whole defect this exists for: fifty turns on a picture the Host already knows is wrong. Three and
+ * not more, because the probes are spent one per stale fact and `worldStateStaleThreshold` spaces those fifteen turns
+ * apart (5, 20, 35, 50), so three probes span most of an hour of a frozen world. A run that spends all three has a
+ * bridge that is not answering, which is then SAID (`world_state_refresh_refused:<reason>`) rather than retried.
+ * </p>
+ */
+export const WORLD_STATE_REFRESH_ATTEMPTS = 3;
+
+/**
+ * Where a stale reading is acted on: the integration's own fresh observation, and the one route a Host-minted fact is
+ * published by.
+ *
+ * <p>
+ * `observe` is the producer `stardew_observe` and the execute path's `stale_snapshot` re-take already call
+ * (`StardewBridgeConnection.observe` -> `observe_request`), so this asks the Mod exactly what the model's own tool asks
+ * and puts no new message on the wire. `publish` is `CompanionHostService.acceptHostMintedFact`, so a refusal travels
+ * the same route every other Host-minted fact does and cannot become a second way to start a turn.
+ * </p>
+ */
+export type WorldStateRefreshPort = Readonly<{
+  /** Ask the integration for a fresh observation; what it published arrives as an ordinary snapshot fact. */
+  observe(): Promise<unknown>;
+  /** Deliver one fact this pump minted, by the Host's own Host-minted-fact route. */
+  publish(fact: WorldFact): void;
+}>;
+
+/**
+ * What the refresh can say about itself: whether it can fire at all, and what asking has done.
+ *
+ * `attached: false` is a pump that structurally cannot refresh - the composition never installed a port - which is a
+ * condition a gate has to be able to read rather than infer from a message that never appears.
+ */
+export type WorldStateRefreshReading = Readonly<{
+  attached: boolean;
+  /** Fresh observations asked for over this pump's life. */
+  probes: number;
+  /** `world_state_refresh_refused` facts published over this pump's life. */
+  refusals: number;
+}>;
 
 /**
  * The semantic kind of the fact the Host mints when an awake companion has spoken without acting for a while.
@@ -595,6 +662,23 @@ export class CompanionEventPump {
   /** Stale facts already published for the current reading; the re-arm, and the fact's own `staleFactsSoFar`. */
   #worldStateStalePublished = 0;
   /**
+   * Where a stale reading is acted on. Absent means this pump cannot refresh - see `worldStateRefresh.attached`.
+   *
+   * Attached once by the composition that owns the integration (`continuity-semantic-game-runtime-materializer.ts`), and
+   * NOT reset by `clear()`: it is wiring, not one session's measurement.
+   */
+  #worldStateRefreshPort: WorldStateRefreshPort | undefined;
+  /**
+   * The crossed reading whose probes have been spent, and whether its refusal has already been said.
+   *
+   * The re-arm key is the REVISION, not the turn: a probe can only be answered by a NEW reading, so a second probe under
+   * the revision still waiting asked the question this one would ask. That, and `WORLD_STATE_REFRESH_ATTEMPTS`, is what
+   * keeps a frozen world from becoming a spin.
+   */
+  #worldStateRefreshFor: { revision: number; probes: number; refusalPublished: boolean } | undefined;
+  #worldStateRefreshProbes = 0;
+  #worldStateRefreshRefusals = 0;
+  /**
    * Facts since the current reading that say the WORLD moved: the clock, the day, a pass-out, a warp, or a body that is
    * standing somewhere else.
    *
@@ -852,6 +936,11 @@ export class CompanionEventPump {
     this.#lastSnapshotDeliveredBatch = 0;
     this.#lastSnapshotArrivedAtMs = 0;
     this.#worldStateStalePublished = 0;
+    // The probe bookkeeping is one session's measurement too; the attached PORT is not - it is how this pump reaches the
+    // integration at all, and a clear() is a STOP rather than a re-wiring.
+    this.#worldStateRefreshFor = undefined;
+    this.#worldStateRefreshProbes = 0;
+    this.#worldStateRefreshRefusals = 0;
     this.#worldChangesSinceReading = 0;
     this.#lastWorldChange = undefined;
     this.#receipts.clear();
@@ -1663,6 +1752,13 @@ export class CompanionEventPump {
    * in a world that never contradicted it. The block itself states the age on every turn (`fact-brief.ts`), so the
    * distinction is visible where it matters.
    * </p>
+   *
+   * <p>
+   * TAKING IT ASKS. The fact tells her the picture is old; on the same call this asks the integration for a fresh
+   * observation (`#requestWorldStateRefresh`), because in a narration loop being told is exactly what she does not act
+   * on - measured `round45`: fifty turns on one frozen revision, 601 s of silence, two 02:00 pass-outs. The fact itself
+   * is unchanged, so she is still told the world is old even when the probe is refused.
+   * </p>
    */
   public takeWorldStateStaleFact(): WorldFact | undefined {
     const reading = this.#worldStateReading(false);
@@ -1670,7 +1766,7 @@ export class CompanionEventPump {
     this.#worldStateStalePublished += 1;
     const code = worldStateStaleCode(reading);
     const eventId = `${WORLD_STATE_STALE_SEMANTIC_KIND}_${String(reading.revision)}_${String(this.#worldStateStalePublished)}`;
-    return Object.freeze({
+    const fact = Object.freeze({
       source: HOST_MINTED_FACT_SOURCE,
       kind: "world_fact" as const,
       eventId,
@@ -1688,6 +1784,107 @@ export class CompanionEventPump {
         worldChanges: this.#worldChangesSinceReading,
         ...(this.#lastWorldChange === undefined ? {} : { lastWorldChange: this.#lastWorldChange }),
         staleFactsSoFar: this.#worldStateStalePublished,
+      }),
+    });
+    // The fact says the reading is old; this makes something ACT on it. Ordered after the mint so the statement cannot
+    // be lost to a probe that throws, and bounded by the same revision key (see `#requestWorldStateRefresh`).
+    this.#requestWorldStateRefresh(reading.revision);
+    return fact;
+  }
+
+  /**
+   * Install where a stale reading is acted on. One per pump: the composition that owns the integration attaches it once
+   * (`continuity-semantic-game-runtime-materializer.ts`), and a second attach is a wiring bug rather than a policy.
+   */
+  public attachWorldStateRefresh(port: WorldStateRefreshPort): void {
+    if (this.#worldStateRefreshPort !== undefined) throw new Error("world_state_refresh_already_attached");
+    this.#worldStateRefreshPort = port;
+  }
+
+  /** Whether a stale reading can be refreshed at all here, and what asking has done (`WorldStateRefreshReading`). */
+  public get worldStateRefresh(): WorldStateRefreshReading {
+    return Object.freeze({
+      attached: this.#worldStateRefreshPort !== undefined,
+      probes: this.#worldStateRefreshProbes,
+      refusals: this.#worldStateRefreshRefusals,
+    });
+  }
+
+  /**
+   * Ask the integration for a fresh observation of the crossed reading, once per revision, `WORLD_STATE_REFRESH_ATTEMPTS`
+   * times at most.
+   *
+   * Fire and forget on purpose: the answer arrives as an ordinary snapshot fact and the Host admits it on its own path,
+   * so nothing waits on this and no turn is opened by it. What the pump does owe the caller is the FAILURE, which is
+   * minted as a fact (`#refuseWorldStateRefresh`) rather than swallowed - a probe the integration would not serve must
+   * be as visible as the stale reading it could not replace.
+   */
+  #requestWorldStateRefresh(revision: number): void {
+    const port = this.#worldStateRefreshPort;
+    if (port === undefined) return;
+    const episode = this.#worldStateRefreshFor;
+    const same = episode !== undefined && episode.revision === revision;
+    const probes = same ? episode.probes : 0;
+    if (probes >= WORLD_STATE_REFRESH_ATTEMPTS) return;
+    this.#worldStateRefreshFor = {
+      revision,
+      probes: probes + 1,
+      refusalPublished: same ? episode.refusalPublished : false,
+    };
+    this.#worldStateRefreshProbes += 1;
+    void (async () => {
+      try {
+        await port.observe();
+      } catch (error: unknown) {
+        this.#refuseWorldStateRefresh(revision, error);
+      }
+    })();
+  }
+
+  /**
+   * Say that the probe for `revision` came back refused, once per crossed reading.
+   *
+   * Once, not once per probe: the reason is the same statement until the reading moves, and three copies of "the bridge
+   * is not answering" would be three turns spent re-reading one condition. `publish` is the Host's Host-minted-fact
+   * route, so this fact wakes a turn exactly where the stale fact did and nowhere else.
+   */
+  #refuseWorldStateRefresh(revision: number, error: unknown): void {
+    const port = this.#worldStateRefreshPort;
+    const episode = this.#worldStateRefreshFor;
+    if (port === undefined || episode === undefined || episode.revision !== revision) return;
+    if (episode.refusalPublished) return;
+    episode.refusalPublished = true;
+    try {
+      port.publish(this.#worldStateRefreshRefusedFact(revision, error));
+    } catch {
+      // The publisher's own admission refused the fact (a full pump, `event_pump_overflow`). The Host reports that limit
+      // on its own path; what must not happen here is a rejection escaping a fire-and-forget probe.
+      episode.refusalPublished = false;
+      return;
+    }
+    this.#worldStateRefreshRefusals += 1;
+  }
+
+  /** The one spelling of the refusal fact: `world_state_refresh_refused:<reason>`. */
+  #worldStateRefreshRefusedFact(revision: number, error: unknown): WorldFact {
+    const reason = worldStateRefreshRefusalReason(error);
+    const eventId = `${WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND}_${String(revision)}_${String(this.#worldStateRefreshRefusals + 1)}`;
+    return Object.freeze({
+      source: HOST_MINTED_FACT_SOURCE,
+      kind: "world_fact" as const,
+      eventId,
+      sourceEventId: eventId,
+      correlationId: eventId,
+      revision,
+      occurredAtMs: Date.now(),
+      semanticKind: WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND,
+      payload: Object.freeze({
+        kind: WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND,
+        code: `${WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND}:${reason}`,
+        reason,
+        revision,
+        probes: this.#worldStateRefreshFor?.probes ?? 0,
+        attempts: WORLD_STATE_REFRESH_ATTEMPTS,
       }),
     });
   }
@@ -1820,6 +2017,19 @@ export class CompanionEventPump {
 }
 
 /**
+ * Why a fresh observation was refused, as the one token the fact carries after its own kind.
+ *
+ * The route's own words (`bridge_not_authenticated`, `bridge_response_timeout`, `bridge_rejected:<reasonCode>`) are
+ * printed verbatim: they are the producer's vocabulary and the only thing that tells a dead bridge from a busy one. The
+ * first line only, because a thrown value can carry a stack-shaped tail and nothing here parsed the error.
+ */
+function worldStateRefreshRefusalReason(error: unknown): string {
+  const message = (error instanceof Error ? error.message : String(error)).trim();
+  const firstLine = message.split(/\r?\n/u)[0]?.trim() ?? "";
+  return firstLine === "" ? "unknown" : firstLine;
+}
+
+/**
  * The two fact shapes the pump holds latest-only, each with the reason it is safe: the population the
  * classification test reads. A kind may only be held when a NAMED later fact will wake the model for it, otherwise
  * the pump silently swallows the only news the model was going to get.
@@ -1863,6 +2073,8 @@ export const HOST_MINTED_WAKE_KINDS: Readonly<Record<string, string>> = Object.f
     "the Host's stall timer arms from stallWatch.nextStallInMs, and hands this fact to acceptHostMintedFact, which enqueues it and flushes a turn immediately",
   [WORLD_STATE_STALE_SEMANTIC_KIND]:
     "the Host asks takeWorldStateStaleFact after every adapter fact it admits, and hands the fact to acceptHostMintedFact",
+  [WORLD_STATE_REFRESH_REFUSED_SEMANTIC_KIND]:
+    "the pump's own refresh probe rejects, and the port the composition attached publishes this fact through acceptHostMintedFact - the same route the stale fact takes, so a bridge that will not answer wakes a turn instead of waiting one out",
   [NARRATION_WITHOUT_WORK_SEMANTIC_KIND]:
     "the Host reads wakeReason when a flush settles, and when it answers narration_without_work it mints the fact with takeNarrationWithoutWorkFact and hands it to acceptHostMintedFact, which enqueues it and flushes a turn",
 });

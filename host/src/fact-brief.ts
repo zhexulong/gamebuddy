@@ -496,6 +496,7 @@ const WORLD_FACT_KIND_ZH: Readonly<Record<string, string>> = Object.freeze({
   native_notice: "游戏里冒出个提示",
   night_ended_pass_out: "夜里没撑住，昏过去了",
   world_state_stale: "世界观察旧了",
+  world_state_refresh_refused: "世界观察刷新被拒绝",
 });
 
 const PROGRAM_SETTLED = "program_settled";
@@ -666,11 +667,27 @@ function worldFactLine(fact: WorldFact, at: string): string {
       const last = typeof fact.payload.lastFactKind === "string" ? `，最后一条 ${fact.payload.lastFactKind}` : "";
       return `- ${at}${action} 卡住不动了${seconds === undefined ? "" : `（已 ${String(seconds)} 秒没有消息${last}）`}`;
     }
-    default: {
-      const words = WORLD_FACT_KIND_ZH[kind] ?? kind ?? "世界消息";
-      return `- ${at}${words}`;
-    }
+    default:
+      return genericWorldFactLine(fact, at, kind);
   }
+}
+
+/**
+ * A world fact this file has no sentence of its own for.
+ *
+ * <p>
+ * A kind that HAS words here is a kind the Host mints, and those carry their statement in `payload.code`
+ * (`world_state_refresh_refused:bridge_not_authenticated`) - so the code is printed beside the words, verbatim. Without
+ * it a refused refresh reads as "the world observation was not refreshed" and she cannot tell a dead bridge from a world
+ * that did not move, which is the difference between waiting and reporting. A kind this file has no words for (the
+ * Mod's `program_settled`, the pump's own narration count) prints its verbatim kind as it always has.
+ * </p>
+ */
+function genericWorldFactLine(fact: WorldFact, at: string, kind: string): string {
+  const words = WORLD_FACT_KIND_ZH[kind];
+  if (words === undefined) return `- ${at}${kind === "" ? "世界消息" : kind}`;
+  const code = typeof fact.payload.code === "string" && fact.payload.code !== "" ? `：${fact.payload.code}` : "";
+  return `- ${at}${words}${code}`;
 }
 
 /** `<execution-result>`: what a submitted programme did, in sentences, one per settlement. */

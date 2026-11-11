@@ -57,7 +57,7 @@ import type {
   IntegrationActionRegistration,
   IntegrationStateView,
 } from "../game-integration-adapter.js";
-import type { GameConnection } from "../game-connection.js";
+import type { GameConnection, StardewBridgeConnection } from "../game-connection.js";
 import type { RuntimeSession } from "../runtime.js";
 import { formatGameEnvironmentFacts } from "../game-world-vocabulary.js";
 import { identityProfileMetadata } from "../identity-profile.js";
@@ -1608,6 +1608,20 @@ export function createHostGameRuntimeMaterializer(
         // The settled digest rides the pump from here on. `host` is the only layer that owns it, which is why the
         // tools' sink was left unbound until this line.
         announceHostFact = (fact) => host.acceptHostMintedFact(fact);
+        // A stale reading is acted on from here on, for the same reason and with the same two owners: the observation is
+        // the integration's own route (`StardewBridgeConnection.observe`, the one `stardew_observe` calls) and the
+        // refusal goes back through `acceptHostMintedFact`, so the pump never starts a turn of its own.
+        loop.pump.attachWorldStateRefresh(
+          Object.freeze({
+            observe: () => {
+              const observe = (execution.connection as StardewBridgeConnection).observe;
+              return observe === undefined
+                ? Promise.reject(new Error("world_state_observation_route_unavailable"))
+                : observe.call(execution.connection);
+            },
+            publish: (fact) => host.acceptHostMintedFact(fact),
+          }),
+        );
         const operationalGateEvidence =
           options.gameOperationalGateNonceSha256 === undefined
             ? undefined
