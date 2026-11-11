@@ -1,18 +1,13 @@
 {
   "note": "Repo-relative paths biome's linter reports errors in, and how many errors each carries, recorded from the committed tree. Recorded so the lint gate can ratchet: it fails on a file that newly joins this set or whose error count grows, and never on the set itself. Update deliberately, in its own commit, when a change removes errors from it.",
-  "revision": "e466b2a4",
-  "errors": 90,
-  "warnings": 1504,
+  "revision": "87d89442",
+  "errors": 84,
+  "warnings": 1905,
   "files": {
-    "dialogue-web/src/components/CharactersPanel.tsx": 1,
-    "dialogue-web/src/components/ComposedReferenceGameApp.tsx": 1,
     "dialogue-web/src/components/MarkdownMessage.tsx": 1,
     "dialogue-web/src/components/management-panels.tsx": 1,
-    "dialogue-web/src/components/management-surface-panels.tsx": 1,
-    "host/src/action-execution-coordinator.internal.ts": 1,
     "host/src/composed-reference-game-browser.ts": 1,
     "host/src/farmhand-companion-preview.test.ts": 1,
-    "host/src/runtime-core.internal.ts": 1,
     "host/src/stardew-recovery-integration.test.ts": 1,
     "tools/ab-historian-voice.mjs": 1,
     "tools/audit-stardew-admission-fork-delta.mjs": 1,
@@ -44,7 +39,7 @@
     "tools/run-stardew-native-local-player-enter-mine-smoke.mjs": 1,
     "tools/run-stardew-native-local-player-feed-animal-smoke.mjs": 1,
     "tools/run-stardew-native-local-player-interact-npc-with-item-smoke.mjs": 1,
-    "tools/run-stardew-native-local-player-machine-ab-smoke.mjs": 2,
+    "tools/run-stardew-native-local-player-machine-ab-smoke.mjs": 1,
     "tools/run-stardew-native-local-player-machine-collect-output-smoke.mjs": 1,
     "tools/run-stardew-native-local-player-machine-inspect-smoke.mjs": 1,
     "tools/run-stardew-native-local-player-machine-load-smoke.mjs": 1,
@@ -72,8 +67,6 @@
     "tools/run-stardew-native-local-stop-deadline-probe.mjs": 4,
     "tools/run-tavern-management-operation-evidence.mjs": 1,
     "tools/run-tavern-release-live-gate.test.mjs": 2,
-    "tools/scripts/check-script-entry-existence.mjs": 1,
-    "tools/scripts/check-workspace-debris.mjs": 1,
-    "tools/stardew-native-local-runner-fixture-contract.test.mjs": 2
+    "tools/scripts/check-workspace-debris.mjs": 1
   }
 }
