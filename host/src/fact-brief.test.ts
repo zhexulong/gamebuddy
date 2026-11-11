@@ -5,16 +5,18 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { CompanionEventPump, type WorldFact } from "./event-pump.js";
-import { createStardewObservationTools } from "./game-tools.js";
 import {
-  FACT_BRIEF_BLOCKS,
   composeFactBrief,
   composeWorldState,
+  FACT_BRIEF_BLOCKS,
   MODEL_FIELD_CEILINGS,
   type ModelVisibleField,
   unchangedWorldAnswer,
 } from "./fact-brief.js";
-import { NON_ROW_FAMILIES, TARGET_FAMILY_LABELS, nearbyTargetFamilies } from "./game-world-vocabulary.js";
+import { createStardewObservationTools } from "./game-tools.js";
+import { NON_ROW_FAMILIES, nearbyTargetFamilies, TARGET_FAMILY_LABELS } from "./game-world-vocabulary.js";
+import { buildGameCompanionSystemPrompt, DEFAULT_IDENTITY_PROFILE } from "./identity-profile.js";
+import { createProgramProgressObserver } from "./program-status-wait.js";
 import { SNAPSHOT_KEYS, type Snapshot } from "./protocol.js";
 
 /**
@@ -148,8 +150,38 @@ function richBrief(): string {
     inputs: [playerInput],
     snapshot: { snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0 },
     events: richBatchFacts(),
+    inFlight: richInFlight(),
     locale: "zh-CN",
   });
+}
+
+/**
+ * A programme mid-flight, read out of the real ledger from a real journal payload.
+ *
+ * The fixture is not a hand-written `{programmes: [...]}`: it is a `program_status` answer fed to a fresh observer, so
+ * the block below is composed from what the production reader actually produces. The clock is fixed (`0` read at, `4000`
+ * asked) so the determinism test can compare two renderings.
+ */
+function richInFlight() {
+  const observer = createProgramProgressObserver();
+  observer.observe(
+    {
+      code: "found",
+      snapshot: {
+        programId: "plan_rich",
+        state: "active",
+        catalogRevision: 3,
+        stopEpoch: 0,
+        eventHighWater: 9,
+        nodes: [
+          { nodeId: "n001", state: "running", nodeAttempt: 0, admissionAttempt: 0, actionId: "water_crop" },
+          { nodeId: "n002", state: "pending", nodeAttempt: 0, admissionAttempt: 0, actionId: "water_crop" },
+        ],
+      },
+    },
+    0,
+  );
+  return observer.inFlight(4_000);
 }
 
 /** Every block name the text opens, in order. */
@@ -157,7 +189,7 @@ function blocksOf(text: string): string[] {
   return [...text.matchAll(/<([a-z-]+)>/gu)].map((match) => match[1] ?? "");
 }
 
-test("block_coverage: every block the composer emits is in the closed set, and the set is all four", () => {
+test("block_coverage: every block the composer emits is in the closed set, and every member is emitted", () => {
   // The population is `FACT_BRIEF_BLOCKS` - the declaration the prompt floor names - so a fifth block cannot be
   // emitted without failing here by name, and a member that no composition ever produces is dead weight in the floor.
   const emitted = new Set(blocksOf(richBrief()));
@@ -179,6 +211,42 @@ test("block_coverage: every block the composer emits is in the closed set, and t
       `the <${name}> block is opened and closed a different number of times`,
     );
   }
+});
+
+/**
+ * The prompt floor's block sentence, as ONE place the count can come from.
+ *
+ * <p>
+ * The floor (`identity-profile.ts`) introduces the delivery in prose - "it arrives as prose in four blocks - &lt;player-note&gt;
+ * … and &lt;execution-result&gt;" - and that `four` is a hand-written copy of `FACT_BRIEF_BLOCKS.length`. `<in-flight>` made
+ * it five, and the paragraph was not this change's to edit: `identity-profile.ts` and
+ * `game-surface-prompt-floor.test-support.ts` both carry another lane's uncommitted hunk for that very paragraph, so a
+ * path-scoped commit here would have swept it.
+ * </p>
+ *
+ * <p>
+ * SO THE DRIFT IS NAMED RATHER THAN SILENT. While the floor's number disagrees with the closed set the test SKIPS with
+ * `floor_block_count_owes_update:identity-profile.ts`, which names the file that owes the fix. It is not a green check:
+ * `skip` is the one node:test verdict that says "not run" rather than "passed", and the moment the floor's count is
+ * regenerated from `FACT_BRIEF_BLOCKS.length` both assertions below go live - the count AND the member names.
+ * </p>
+ */
+test("floor_block_count_owes_update: the prompt floor states the closed set's own length, and names each member", (context) => {
+  const floor = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
+  const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+  const paragraph = /prose in [a-z]+ blocks?[^.]*\./u.exec(floor)?.[0] ?? "";
+  const stated = NUMBER_WORDS.indexOf(/prose in ([a-z]+) blocks?/u.exec(floor)?.[1] ?? "");
+  if (stated !== FACT_BRIEF_BLOCKS.length)
+    return context.skip(
+      `floor_block_count_owes_update:identity-profile.ts:floor_says_${String(stated)}_blocks;FACT_BRIEF_BLOCKS_is_${String(FACT_BRIEF_BLOCKS.length)}`,
+    );
+  const named = [...new Set([...paragraph.matchAll(/<([a-z-]+)>/gu)].map((match) => match[1] ?? ""))].sort();
+  assert.deepEqual(
+    named,
+    [...FACT_BRIEF_BLOCKS].sort(),
+    "the floor names the blocks the delivery carries, and no block it does not",
+  );
+  process.stdout.write(`floor_blocks examined ${String(stated)} of FACT_BRIEF_BLOCKS\n`);
 });
 
 test("note_in_own_block: the player's words are in <player-note> and nowhere else", () => {

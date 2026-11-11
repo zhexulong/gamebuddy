@@ -202,18 +202,108 @@ export interface ProgramNodeProgress {
   readonly observedInStateMs: number;
 }
 
+/**
+ * One node of a programme the Mod's journal still shows in flight, as the Host last read it.
+ *
+ * `state` is the Mod's own token VERBATIM (`pending`, `host_admitted`, `running`), never a Host word for it: the batch
+ * that carries this row and a `stardew_action_program_status` answer name one node one way.
+ */
+export interface InFlightProgrammeNode {
+  /** 0-based position in the journal's own node list, so the batch and the tool answer count the same steps. */
+  readonly index: number;
+  readonly nodeId: string;
+  /** The Mod's own action name for this node, when the journal row named one. */
+  readonly actionId?: string;
+  readonly state: string;
+  /** How long this Host has watched THIS node in that state. */
+  readonly observedInStateMs: number;
+}
+
+/**
+ * A programme the journal still calls `active`, with nothing settled - what a turn used to have to ask for.
+ *
+ * <p>
+ * MEASURED 2026-11-11 (`round46`), from the run's own session: `plan_work` was accepted at 07:25:53 with
+ * `{"accepted":true,"nodeCount":2,"settled":false,"remaining":2}`, she spoke twice over batches that said nothing about
+ * it (`*推开门，晨风凉凉地扑在脸上* 门前这片草和石头还横着呢…`, `*靴底踩着屋里的木地板往西挪*`), and the world was first
+ * observed moving at 07:26:34. She could not tell "dispatched" from "done", because the batch drew no line between
+ * them: `<world-state>` said `revision 0，本轮无新观察` and `<world-facts>` had no line to add.
+ * </p>
+ *
+ * <p>
+ * THIS IS THE LEDGER'S OWN READING, not a second one. Every field comes from the payloads the Host already reads -
+ * the submit echo, the settlement watch, and every `stardew_action_program_status` call all pass through
+ * `observe` - so the block and the tool cannot disagree about a node's state or its clock.
+ * </p>
+ */
+export interface InFlightProgramme {
+  readonly programId: string;
+  /** The journal's own node count for this programme. */
+  readonly total: number;
+  /** Nodes in a settled state (`NODE_STATES_SETTLED`): done, and nothing more will happen to them. */
+  readonly settled: number;
+  /** `total - settled`: what has NOT happened yet. */
+  readonly remaining: number;
+  /** How long ago the journal read this rendering came from. */
+  readonly readAgeMs: number;
+  /** The rows, journal order, bounded by `MAX_IN_FLIGHT_NODE_ROWS`. */
+  readonly nodes: readonly InFlightProgrammeNode[];
+  /** Node rows the bound left out. `0` inside the bound, and `total` above still covers them. */
+  readonly omitted: number;
+}
+
+/** Every programme the journal still shows in flight, and the ones the bound left out. */
+export interface InFlightProgrammeReading {
+  readonly programmes: readonly InFlightProgramme[];
+  readonly omittedProgrammes: number;
+}
+
+/**
+ * How many node rows the in-flight block names.
+ *
+ * The same order of magnitude as the settled digest's bound (`MAX_SETTLED_DIGEST_NODES`, 20) and below it on purpose:
+ * a node in flight prints a state and a clock, where a settled one prints its refusal. `plan_work` caps a script at 16
+ * nodes, so a 16-node plan arrives at this bound with four rows COUNTED rather than dropped.
+ */
+export const MAX_IN_FLIGHT_NODE_ROWS = 12;
+
+/** How many unsettled programmes the block names. The Mod serializes native mutation on one actor; this is slack. */
+export const MAX_IN_FLIGHT_PROGRAMMES = 4;
+
+/**
+ * How old a journal read may be and still be evidence that a programme is in flight.
+ *
+ * The settlement watch re-reads once a second (`PROGRAM_SETTLEMENT_WATCH_INTERVAL_MS`), so healthy operation is three
+ * orders of magnitude inside this. It exists for the other case: a watch that ended - an expired bound, a drained
+ * runtime - leaves its last read in the ledger, and a batch that kept stating it would be reporting a programme
+ * nothing is watching as though it were running now. Past the bound the reading says nothing, which is honest, and
+ * `execution_stalled` is the fact that speaks for the silence.
+ */
+export const IN_FLIGHT_READING_MAX_AGE_MS = 30_000;
+
 /** How many plans the Host keeps a node clock for. A measured run submitted 66 programs in 24 minutes, so this is slack. */
 const MAX_OBSERVED_PROGRAMS = 64;
 
 /** How long an unread plan keeps its clock: longer than any action, shorter than a session, so ids cannot be inherited. */
 const OBSERVATION_RETENTION_MS = 10 * 60_000;
 
-/** One plan's node clocks: when the Host first saw each node in the state it is in now. */
-type ObservedProgram = { nodes: Map<string, { state: string; since: number }>; lastSeen: number };
+/** One plan's node clocks: when the Host first saw each node in the state it is in now, and that node's action. */
+type ObservedProgram = {
+  readonly programId: string;
+  lastSeen: number;
+  nodes: Map<string, { state: string; since: number; actionId?: string }>;
+};
 
 export interface ProgramProgressObserver {
   /** The progress a `program_status` payload describes, or `null` when that payload is not a found plan. */
   observe(payload: unknown, nowMs?: number): ProgramStatusProgress | null;
+  /**
+   * Every programme this observer has read and the journal still calls `active`, with nothing settled left out.
+   *
+   * A READING, not a poll: it never reads the journal, never mints a fact and never starts a turn. The pump asks it when
+   * it composes a batch, which is the only moment the answer is model-visible.
+   */
+  inFlight(nowMs?: number): InFlightProgrammeReading;
 }
 
 /**
@@ -233,24 +323,18 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
       // Keyed by the plan AND its STOP epoch: a STOP is a new epoch of the same id, whose nodes are about to be
       // cancelled and re-dispatched, so inheriting the previous epoch's clock would time work that no longer exists.
       const key = `${plan.programId}|${plan.stopEpoch}`;
-      const anchors = new Map(programs.get(key)?.nodes ?? []);
+      const previous = programs.get(key);
+      const anchors = new Map(previous?.nodes ?? []);
       let settled = 0;
       let running = 0;
       let current: ProgramStatusProgress["current"] = null;
       let next: ProgramStatusProgress["current"] = null;
       const views: ProgramNodeProgress[] = [];
       for (const node of plan.nodes) {
-        const anchor = anchors.get(node.nodeId);
-        if (anchor === undefined || anchor.state !== node.state)
-          anchors.set(node.nodeId, { state: node.state, since: nowMs });
-        const view = Object.freeze({
-          nodeId: node.nodeId,
-          state: node.state,
-          observedInStateMs: Math.max(0, nowMs - anchors.get(node.nodeId)!.since),
-        });
+        const { view, settled: isSettled, inFlight: isInFlight } = observeNode(anchors, node, nowMs);
         views.push(view);
-        if (NODE_STATES_SETTLED.has(node.state)) settled += 1;
-        else if (NODE_STATES_IN_FLIGHT.has(node.state)) {
+        if (isSettled) settled += 1;
+        else if (isInFlight) {
           running += 1;
           if (current === null) current = view;
         } else if (next === null) next = view;
@@ -258,7 +342,11 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
       // A plan that has stopped keeps no clock: a later plan may reuse the id, and a stale anchor would report another
       // plan's work as this one's.
       if (plan.programId.length > 0 && plan.state === ACTIVE_PROGRAM_STATE)
-        programs.set(key, { nodes: anchors, lastSeen: nowMs });
+        programs.set(key, {
+          programId: plan.programId,
+          lastSeen: nowMs,
+          nodes: anchors,
+        });
       else programs.delete(key);
       pruneObservations(programs, nowMs);
       const remaining = plan.nodes.length - settled;
@@ -272,6 +360,78 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
         nodes: Object.freeze(views),
       });
     },
+    inFlight(nowMs: number = Date.now()): InFlightProgrammeReading {
+      const live: InFlightProgramme[] = [];
+      for (const program of programs.values()) {
+        const readAgeMs = Math.max(0, nowMs - program.lastSeen);
+        if (readAgeMs > IN_FLIGHT_READING_MAX_AGE_MS) continue;
+        const rows = [...program.nodes.entries()];
+        const nodes = rows.slice(0, MAX_IN_FLIGHT_NODE_ROWS).map(([nodeId, anchor], index) =>
+          Object.freeze({
+            index,
+            nodeId,
+            ...(anchor.actionId === undefined ? {} : { actionId: anchor.actionId }),
+            state: anchor.state,
+            observedInStateMs: Math.max(0, nowMs - anchor.since),
+          }),
+        );
+        const settled = rows.filter(([, anchor]) => NODE_STATES_SETTLED.has(anchor.state)).length;
+        live.push(
+          Object.freeze({
+            programId: program.programId,
+            total: rows.length,
+            settled,
+            remaining: rows.length - settled,
+            readAgeMs,
+            nodes: Object.freeze(nodes),
+            omitted: rows.length - nodes.length,
+          }),
+        );
+      }
+      // Oldest programme first, then by id: the one that has been in flight longest is the one a turn is waiting on, and
+      // two batches composed from the same ledger render the same bytes.
+      live.sort((left, right) => left.readAgeMs - right.readAgeMs || left.programId.localeCompare(right.programId));
+      const shown = live.slice(0, MAX_IN_FLIGHT_PROGRAMMES);
+      return Object.freeze({ programmes: Object.freeze(shown), omittedProgrammes: live.length - shown.length });
+    },
+  });
+}
+
+/**
+ * What a `program_status` payload says about one node: its state, why it stopped, and how the pinned `nodeId` joined it.
+ *
+ * @param anchors The plan's clocks, updated in place.
+ * @param node The journal row, as `readPlanProgressSource` read it.
+ * @param nowMs The read's clock.
+ */
+function observeNode(
+  anchors: Map<string, { state: string; since: number; actionId?: string }>,
+  node: Readonly<{ nodeId: string; state: string; actionId?: string }>,
+  nowMs: number,
+): Readonly<{
+  view: ProgramNodeProgress;
+  settled: boolean;
+  inFlight: boolean;
+}> {
+  const anchor = anchors.get(node.nodeId);
+  const actionId = node.actionId ?? anchor?.actionId;
+  if (anchor === undefined || anchor.state !== node.state)
+    anchors.set(node.nodeId, {
+      state: node.state,
+      since: nowMs,
+      ...(actionId === undefined ? {} : { actionId }),
+    });
+  // The action a node runs is stable across its states, so a row that only starts naming it later (a payload that
+  // dropped it, then one that carries it) fills the same anchor rather than restarting the clock above.
+  else if (anchor.actionId === undefined && actionId !== undefined) anchor.actionId = actionId;
+  return Object.freeze({
+    view: Object.freeze({
+      nodeId: node.nodeId,
+      state: node.state,
+      observedInStateMs: Math.max(0, nowMs - anchors.get(node.nodeId)!.since),
+    }),
+    settled: NODE_STATES_SETTLED.has(node.state),
+    inFlight: NODE_STATES_IN_FLIGHT.has(node.state),
   });
 }
 
@@ -282,6 +442,21 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
  * saw running has been running since then rather than since this one began.
  */
 export const programStatusProgress: ProgramProgressObserver = createProgramProgressObserver();
+
+/**
+ * Every programme this process is still reading as in flight - the one reading a delivered batch cannot derive itself.
+ *
+ * <p>
+ * WHY THIS IS A FUNCTION AND NOT A PUMP FIELD. The facts a batch carries are receipts and world events, and none of them
+ * names a programme or a node: an `execution_receipt` carries an `executionId`, not the step that owned it. The one
+ * layer that knows is the journal ledger above, which the submit echo, the settlement watch and every status call all
+ * write - so this hands the pump the SAME rendering `stardew_action_program_status` answers with, instead of a second
+ * read of the bridge (which would be a second authority, and a network round-trip inside a turn).
+ * </p>
+ */
+export function readInFlightProgrammes(nowMs: number = Date.now()): InFlightProgrammeReading {
+  return programStatusProgress.inFlight(nowMs);
+}
 
 /**
  * One node of a plan, answered where the caller wrote it: at its index, with the Mod's own state and reason.
@@ -706,7 +881,7 @@ function readPlanProgressSource(payload: unknown): {
   programId: string;
   stopEpoch: string;
   state: string;
-  nodes: readonly Readonly<{ nodeId: string; state: string }>[];
+  nodes: readonly Readonly<{ nodeId: string; state: string; actionId?: string }>[];
 } | null {
   if (typeof payload !== "object" || payload === null) return null;
   const record = payload as Record<string, unknown>;
@@ -714,12 +889,19 @@ function readPlanProgressSource(payload: unknown): {
   const snapshot = record.snapshot;
   if (typeof snapshot !== "object" || snapshot === null) return null;
   const plan = snapshot as Record<string, unknown>;
-  const nodes: { nodeId: string; state: string }[] = [];
+  const nodes: { nodeId: string; state: string; actionId?: string }[] = [];
   if (Array.isArray(plan.nodes))
     for (const node of plan.nodes) {
       if (typeof node !== "object" || node === null) continue;
       const entry = node as Record<string, unknown>;
-      nodes.push({ nodeId: String(entry.nodeId ?? ""), state: String(entry.state ?? "") });
+      // `actionId` is REQUIRED by the wire's own node validator (`isBodyProgramNodeStatus`), and it is read here for the
+      // one reason a node needs a name in a batch: `- 1/2 enter_exit pending` says which step is standing still where
+      // `- 1/2 pending` only says something is.
+      nodes.push({
+        nodeId: String(entry.nodeId ?? ""),
+        state: String(entry.state ?? ""),
+        ...(typeof entry.actionId === "string" && entry.actionId !== "" ? { actionId: entry.actionId } : {}),
+      });
     }
   return {
     programId: String(plan.programId ?? ""),

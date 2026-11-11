@@ -11,7 +11,7 @@
  * </p>
  *
  * <p>
- * THE CLOSED SET is `FACT_BRIEF_BLOCKS`, and the Game surface's prompt floor names all four, once, at session
+ * THE CLOSED SET is `FACT_BRIEF_BLOCKS`, and the Game surface's prompt floor names four of the five once, at session
  * construction (`identity-profile.ts`). A block with nothing to say is omitted rather than emitted empty - except
  * `<world-state>`, which is emitted on EVERY batch: a session that has heard nothing says `世界：尚未收到观察`, because an
  * omitted world block reads as "there is nothing there" and the model then answers from what it remembers.
@@ -25,6 +25,8 @@
  *   <li>`<player-note>` - the player's own words, verbatim, first, never mixed with a fact;</li>
  *   <li>`<world-state>` - the snapshot as a paragraph: clock, date, weather, where, stamina, what she carries, and the
  *       nearby target families with their tiles;</li>
+ *   <li>`<in-flight>` - the programme she has DISPATCHED and not yet seen settle: what `action_program_status` would
+ *       answer, with its own words drawing the line between dispatched and done;</li>
  *   <li>`<world-facts>` - the events: receipts, dialogue, stalls, milestones, arrivals, lifecycles;</li>
  *   <li>`<execution-result>` - what a submitted programme DID, in sentences. A settlement is deliberately NOT also a
  *       `<world-facts>` line: the two blocks would then state one outcome twice, and the aggregate is the only place a
@@ -40,19 +42,30 @@
 
 import type { PlayerInput, WorldFact } from "./event-pump.js";
 import {
-  formatGameEnvironmentFacts,
   formatGameClock,
+  formatGameEnvironmentFacts,
   gameLocationName,
-  nearbyTargetFamilies,
-  MAX_TARGET_FAMILIES_SHOWN,
   MAX_EMPTY_FAMILIES_NAMED,
+  MAX_TARGET_FAMILIES_SHOWN,
+  nearbyTargetFamilies,
 } from "./game-world-vocabulary.js";
+import type { InFlightProgramme, InFlightProgrammeReading } from "./program-status-wait.js";
 import { MAX_BODY_PROGRAM_REFUSAL_DETAIL_LENGTH, type Snapshot } from "./protocol.js";
 
-/** The closed set of block names a delivery may use. The prompt floor names exactly these. */
+/**
+ * The closed set of block names a delivery may use.
+ *
+ * ORDER IS THE READING ORDER, and `<in-flight>` sits between the world and the news on purpose: what is true now, then
+ * what she has already set in motion and not yet seen land, then what happened.
+ *
+ * THE PROMPT FLOOR NAMES FOUR OF THESE (`identity-profile.ts`), and the fifth names itself: see
+ * `composeInFlight`'s comment for why the count in that paragraph is now a number the floor has to re-derive, and for
+ * the token `fact-brief.test.ts` carries while it has not. The closed set is this list, not that sentence.
+ */
 export const FACT_BRIEF_BLOCKS = Object.freeze([
   "player-note",
   "world-state",
+  "in-flight",
   "world-facts",
   "execution-result",
 ] as const);
@@ -157,9 +170,23 @@ export type FactBriefInput = Readonly<{
   snapshot: WorldStateReading | undefined;
   /** The events, in the order the batch delivers them. */
   events: readonly WorldFact[];
+  /**
+   * The programmes the Mod's journal still shows in flight, as the ledger every status read already fills.
+   *
+   * Omitted means "nothing is unsettled", and that is a different statement from an empty block: a `<in-flight>` holding
+   * no rows would tell the model that a programme exists with nothing in it, which is never true and would teach it that
+   * the block is noise.
+   */
+  inFlight?: InFlightProgrammeReading;
   /** The language the player wrote in. The brief is Chinese; this is what a caller checks it against. */
   locale: string;
 }>;
+
+/** No programme in flight: the reading a batch carries when the journal has nothing unsettled to name. */
+export const NOTHING_IN_FLIGHT: InFlightProgrammeReading = Object.freeze({
+  programmes: Object.freeze([]),
+  omittedProgrammes: 0,
+});
 
 /**
  * The whole model-facing text of one delivery.
@@ -173,6 +200,8 @@ export function composeFactBrief(input: FactBriefInput): string {
   if (note !== "") blocks.push(note);
   const state = composeWorldState(input.snapshot);
   if (state !== "") blocks.push(state);
+  const inFlight = composeInFlight(input.inFlight ?? NOTHING_IN_FLIGHT);
+  if (inFlight !== "") blocks.push(inFlight);
   const settlements = input.events.filter((fact) => fact.semanticKind === PROGRAM_SETTLED);
   const facts = input.events.filter((fact) => fact.semanticKind !== PROGRAM_SETTLED);
   const factBlock = composeWorldFacts(facts);
@@ -309,6 +338,81 @@ function composeNearbyTargets(world: Snapshot): readonly string[] {
     const more = empty.length - named.length;
     lines.push(`这一带没有：${named.join("、")}${more > 0 ? ` 等 ${empty.length} 类` : ""}`);
   }
+  return lines;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The work she has dispatched and not yet seen land.
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * What the block says about every row it just printed: dispatched is not done.
+ *
+ * <p>
+ * THIS SENTENCE IS THE FIX, and it is a STATEMENT rather than an instruction. Measured 2026-11-11 (`round46`):
+ * `plan_work` was accepted at 07:25:53 with `settled: false, remaining: 2`; she spoke 11 s later
+ * (`*推开门，晨风凉凉地扑在脸上* 门前这片草和石头还横着呢…`), corrected the plan at 07:26:17, spoke again 9 s after that
+ * (`*靴底踩着屋里的木地板往西挪*`), and the world was first observed moving at 07:26:34. Neither batch said a step was
+ * outstanding, so "I sent it" and "it happened" were the same sentence to her. A "don't narrate work you haven't
+ * done" rule would be the wrong shape - she was not told the work was outstanding, so the rule would be scolding her
+ * for the batch's silence. This line is the fact the batch owed her.
+ * </p>
+ */
+const NOT_YET_TRUE = "上面这些只是派出去了：还没结算，就等于一步都还没做成。";
+
+/**
+ * `<in-flight>`: the programme she has dispatched, with its own words drawing the line at `settled`.
+ *
+ * <p>
+ * WHAT IT ANSWERS WITHOUT BEING ASKED. `stardew_action_program_status` answered this and cost the run 29 of 96 turns
+ * (`round43`): every field below is that tool's own rendering, taken from the ledger it reports from
+ * (`program-status-wait.ts#programStatusProgress`), so a batch and a status call cannot disagree about a node's state
+ * or its clock.
+ * </p>
+ *
+ * <p>
+ * IT NAMES ITSELF, and that is a concession rather than the design. The Game surface's prompt floor (`identity-profile.ts`)
+ * lists the blocks the model has to recognize, and that paragraph says "four" - a number written in prose, in a file this
+ * change does not own. So the block's first line carries its own meaning instead of depending on being introduced:
+ * `in_flight:settled=0;total=2;remaining=2（计划 plan_… 还没结算）` is readable as nothing but what it is. The token is
+ * the one a floor, a gate or a run audit can grep (`fact-brief.test.ts` carries `floor_block_count_owes_update`), and
+ * when the floor's count is regenerated from `FACT_BRIEF_BLOCKS.length` this concession can be deleted.
+ * </p>
+ *
+ * <p>
+ * ABSENT, NEVER EMPTY. An `<in-flight>` with no rows would read as "a programme exists and has no nodes" - the one
+ * reading this block must never give - so a reading with no programme renders nothing at all.
+ * </p>
+ */
+export function composeInFlight(reading: InFlightProgrammeReading): string {
+  if (reading.programmes.length === 0) return "";
+  const lines: string[] = [];
+  for (const programme of reading.programmes) lines.push(...inFlightProgrammeLines(programme));
+  if (reading.omittedProgrammes > 0) lines.push(`其余 ${String(reading.omittedProgrammes)} 个还没结算的计划未列出`);
+  return block("in-flight", lines.join("\n"));
+}
+
+/**
+ * One unsettled programme: the token and how much of it is done, one row per journal node, and the line that says which
+ * half of the ledger these rows are.
+ *
+ * The rows are the journal's OWN: `index` is the position the journal lists the node at, `state` is the Mod's token
+ * verbatim (`pending`, `host_admitted`, `running`), and `actionId` is the Mod's own action name. Not translated: a batch
+ * that said 准备中 where the tool says `pending` would be two vocabularies for one fact, and the model holds both.
+ */
+function inFlightProgrammeLines(programme: InFlightProgramme): readonly string[] {
+  const lines = [
+    `in_flight:settled=${String(programme.settled)};total=${String(programme.total)};remaining=${String(programme.remaining)}（计划 ${programme.programId} 还没结算）`,
+  ];
+  for (const node of programme.nodes) {
+    const action = node.actionId ?? node.nodeId;
+    lines.push(
+      `- ${String(node.index + 1)}/${String(programme.total)} ${action} ${node.state}（已等 ${String(Math.round(node.observedInStateMs / 1000))} 秒）`,
+    );
+  }
+  if (programme.omitted > 0)
+    lines.push(`其余 ${String(programme.omitted)} 步未列出（这个计划一共 ${String(programme.total)} 步）`);
+  lines.push(NOT_YET_TRUE);
   return lines;
 }
 
