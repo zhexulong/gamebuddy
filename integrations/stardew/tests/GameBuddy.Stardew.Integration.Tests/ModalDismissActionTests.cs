@@ -9,6 +9,7 @@ using GameBuddy.Stardew.Handlers;
 using Netcode;
 using StardewValley.Network;
 using StardewValley;
+using StardewValley.Audio;
 using StardewValley.Menus;
 using Xunit;
 using Xunit.Abstractions;
@@ -42,29 +43,35 @@ public sealed class ModalDismissActionTests
     // ---- success -------------------------------------------------------------
 
     /// <summary>
-    /// The receipt of a clearance NAMES the clearance, in both terminals of the call that performed the native
-    /// close: the succeeded outcome and the postcondition failure. The two differ only in the world outcome they
-    /// report, so a reader can tell "the box is gone" apart from "the close ran and the world was still not
-    /// clean" without inferring it from `dismissed` alone. It also states what the close ITSELF changed, because
-    /// the honest answer differs by type: a whitelisted operation menu is a pure cancel, while closeDialogue
-    /// advances native dialogue state (DialogueBox.cs:198-216, :243-248). A blanket "no side effects" flag would
-    /// be false for exactly the case this action exists for.
+    /// The receipt of a clearance NAMES the clearance, and states what the close ITSELF changed, because the honest
+    /// answer differs by type: a whitelisted operation menu is a pure cancel, while closeDialogue advances native
+    /// dialogue state (DialogueBox.cs:198-216, :243-248). A blanket "no side effects" flag would be false for exactly
+    /// the case this action exists for.
     ///
+    /// <para>
+    /// ONE TERMINAL NOW. The old postcondition read "the menu is gone and no dialogue is up", which made a close that
+    /// the engine's own `Game1.afterDialogues` continuation followed look like a failure (`postcondition_failed`) -
+    /// the failure terminal is gone with it, and what stands is named instead (`has_more_pages`, `next_modal_type`).
+    /// `EveryShapeTheCloseLeavesBehind_IsASuccess_AndTheEvidenceNamesIt` covers that reading over every shape.
+    /// </para>
+    /// <para>
     /// A source probe, like the sibling native-seam pins: the success terminal cannot be produced headless,
     /// because closeDialogue restores Farmer.CanMove through Game1.player (DialogueBox.cs:226) and a probe
-    /// process has no live player. The live claim belongs to the native-local modal chain gate.
+    /// process has no live player - and seeding one drags in the whole net world state that `NetPosition.Get` reads
+    /// (`Game1.HostPaused` -> `netWorldState`). The live claim belongs to the native-local modal chain gate.
+    /// </para>
     /// </summary>
     [Fact]
-    public void Dismiss_Receipt_NamesTheModalItCleared_InBothTerminals()
+    public void Dismiss_Receipt_NamesTheModalItCleared_AndWhatTheCloseChanged()
     {
         string code = StripLineComments(ReadRepositoryText("integrations", "stardew", "farmhandexecutioncontroller.modalactions.cs"));
 
         code.Should().Contain(
-            "modal_type={modalType};dismissed=true;cleared_modal={modalType};close_effect={closeEffect}",
-            "the succeeded receipt must state the clearance next to the modal it dismissed");
+            "modal_type={modalType};dismissed=true;cleared_modal={modalType};close_effect={closeEffect}{continuation}",
+            "the receipt states the clearance next to the modal it dismissed, and what the close left behind");
         code.Should().Contain(
-            "dialogue_up={Game1.dialogueUp};cleared_modal={modalType};close_effect={closeEffect}",
-            "the postcondition-failed receipt performed the same native close, so it must state it too");
+            ";has_more_pages=true;next_modal_type=",
+            "a continuation is named rather than reported as a failure");
         code.Should().Contain(
             "string closeEffect = modal is DialogueBox ? \"native_dialogue_close\" : \"pure_cancel\";",
             "the close's own effect is stated per native type, not as one blanket claim");
@@ -193,6 +200,97 @@ public sealed class ModalDismissActionTests
             ReadPrivate(shipping, "outroFadeTimer").Should().Be(100,
                 "a second dismiss must not re-arm the fade: the engine's commit is entered exactly once");
         });
+    }
+
+    // ---- a dismissal the world continues is still a success ---------------------
+
+    /// <summary>
+    /// GATE, not a test: after the native close has RUN, every shape the world can be left in is a SUCCESS, and the
+    /// evidence says which shape it is. A dismissal cannot report a failure once its close went through.
+    ///
+    /// <para>
+    /// THE AUDIT'S STORY IS WRONG AND ITS SYMPTOM IS RIGHT, so this file records what the engine does.
+    /// `DialogueBox.closeDialogue` (DialogueBox.cs:192-249) mounts nothing: it exits the menu (:196, which is
+    /// `activeClickableMenu = null`, Game1.cs:6128-6131), clears `dialogueUp` (:197) and pops the speaker's
+    /// `CurrentDialogue` only when `dialogueFinished` (:198-201) - a whole `Dialogue`, not one page. A multi-page box
+    /// pages INSIDE one menu (`Dialogue.dialogues` / `characterDialoguesBrokenUp`, DialogueBox.cs:405-450), and the
+    /// object-dialogue branch that could re-raise `dialogueUp` (:206-216) is unreachable in this version because
+    /// `Game1.currentObjectDialogue` is never enqueued anywhere in the decompiled tree.
+    /// </para>
+    /// <para>
+    /// The continuation that DOES exist is `Game1.afterDialogues`, which the close invokes synchronously as its last
+    /// act (:243-248): the engine's own content chains the next box there (`TV.selectChannel` draws each screen and
+    /// re-registers `Game1.afterDialogues = proceedToNextScene`, TV.cs:92-140; `NPC.cs:2691` chains a question), so a
+    /// box is mounted before the close returns. The old postcondition ("the menu is gone and no dialogue is up")
+    /// therefore failed with `Failed/postcondition_failed` exactly when the close SUCCEEDED and the world continued -
+    /// which stops a programme while the next dialogue holds the body.
+    /// </para>
+    /// <para>
+    /// The population is what the close can leave standing, which is also what the pager reports: nothing (the
+    /// dialogue ended), a mounted box (the engine's continuation took over), or the bare `dialogueUp` flag. The count
+    /// is printed, and the reading is the production function rather than a copy of it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryShapeTheCloseLeavesBehind_IsASuccess_AndTheEvidenceNamesIt()
+    {
+        DialogueBox nextPage = CreateDialogue(isQuestion: false);
+        (string Shape, IClickableMenu? Standing, bool DialogueUp, string ExpectedNext)[] shapes =
+        {
+            ("dialogue_closed", null, false, "none"),
+            ("next_box_mounted", nextPage, true, "DialogueBox"),
+            ("dialogue_up_flag", null, true, "dialogue_up"),
+        };
+
+        var rows = new List<(string Shape, ExecutionState State, string ReasonCode, string Evidence, string ExpectedNext)>();
+        foreach ((string shape, IClickableMenu? standing, bool dialogueUp, string expectedNext) in shapes)
+        {
+            (ExecutionState state, string reasonCode, string evidence) = ExecutionManager.DescribeDismissalOutcome(
+                "DialogueBox",
+                "native_dialogue_close",
+                ";text=hello",
+                standing,
+                dialogueUp);
+            rows.Add((shape, state, reasonCode, evidence, expectedNext));
+        }
+
+        foreach ((string shape, ExecutionState state, string reasonCode, string evidence, string expectedNext) in rows)
+            this.output.WriteLine($"{shape}: {state}/{reasonCode};next_modal_type={expectedNext};evidence={evidence}");
+        this.output.WriteLine($"examined {rows.Count} of {shapes.Length} shapes a dismissal can leave behind");
+
+        rows.Should().HaveCount(shapes.Length, "a shape that was not examined is a shape nobody decided");
+        foreach ((string shape, ExecutionState state, string reasonCode, string evidence, string expectedNext) in rows)
+        {
+            state.Should().Be(ExecutionState.Succeeded,
+                $"dialogue_close_is_a_failure:{shape}:{state}/{reasonCode} - the close ran, and the world's shape afterwards is not an effect it failed to produce");
+            reasonCode.Should().Be("modal_dismissed", "the published postcondition name is the action's, in both terminals");
+            evidence.Should().Contain("cleared_modal=DialogueBox");
+            evidence.Should().Contain("close_effect=native_dialogue_close");
+            evidence.Should().Contain(";text=hello", "what the box said is read before the close and stays on the receipt");
+            string expectedPages = expectedNext == "none" ? "has_more_pages=false" : "has_more_pages=true";
+            evidence.Should().Contain(expectedPages,
+                $"the caller's next step depends on whether the presentation continued ({shape})");
+            evidence.Should().Contain($"next_modal_type={expectedNext}",
+                $"a continuation must name WHAT stands, or the caller cannot choose between answer_dialogue and dismiss_modal ({shape})");
+        }
+    }
+
+    /// <summary>
+    /// The failing terminal is gone rather than merely narrowed: a native close that ran has no failure outcome left,
+    /// so the body may not report one. Same treatment `answer_dialogue` got for the same reason
+    /// (AnswerDialogueNpcQuestionDispatchSourceShapeTests).
+    /// </summary>
+    [Fact]
+    public void Dismiss_KeepsNoFailureTerminal_AfterTheNativeCloseRan()
+    {
+        string code = StripLineComments(MethodBody(
+            ReadRepositoryText("integrations", "stardew", "farmhandexecutioncontroller.modalactions.cs"),
+            "public LocalExecutionReceipt RequestLocalDismissModal("));
+
+        code.Should().NotContain("\"postcondition_failed\"",
+            "the close going through is the fact; what stands afterwards is the world's shape, and that is a success with evidence");
+        code.Should().Contain("DescribeDismissalOutcome(",
+            "the postcondition is the production reading, so the shape gate above covers the terminal the handler really answers");
     }
 
     // ---- rejections ----------------------------------------------------------
@@ -785,11 +883,21 @@ public sealed class ModalDismissActionTests
         // closed" an observable reading instead of an exception about a field no test set.
         List<IClickableMenu>? nextMenusBefore = Game1.nextClickableMenu;
         Game1? gameBefore = Game1.game1;
+        GameLocation? locationBefore = gameBefore?.instanceGameLocation;
+        ISoundsHelper? soundsBefore = Game1.sounds;
+        Queue<string>? objectDialogueBefore = Game1.currentObjectDialogue;
+        List<Response>? questionChoicesBefore = Game1.questionChoices;
+        Game1.afterFadeFunction? afterDialoguesBefore = Game1.afterDialogues;
         try
         {
             // The setter reads `Game1.game1` for the text-entry handle, and that instance is null in a probe process.
             if (Game1.game1 is null) Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
             Game1.nextClickableMenu = new List<IClickableMenu>();
+            // `ShippingMenu.okClicked` changes the music track (ShippingMenu.cs:695), and `Game1.changeMusicTrack`
+            // dereferences the current location (:920) - so the commit needs a location and a sound device that is
+            // not a real one.
+            Game1.game1.instanceGameLocation ??= new GameLocation();
+            Game1.sounds = new SilentSoundsHelper();
             menuField.SetValue(null, (object?)dialogue ?? menu);
             Game1.dialogueUp = dialogueUp;
             action();
@@ -800,7 +908,30 @@ public sealed class ModalDismissActionTests
             Game1.dialogueUp = dialogueUpBefore;
             Game1.timeOfDay = timeOfDayBefore;
             Game1.nextClickableMenu = nextMenusBefore!;
-            Game1.game1 = gameBefore!;
+            Game1.currentObjectDialogue = objectDialogueBefore!;
+            Game1.questionChoices = questionChoicesBefore!;
+            Game1.afterDialogues = afterDialoguesBefore;
+            Game1.sounds = soundsBefore!;
+            if (gameBefore is null)
+                Game1.game1 = null!;
+            else
+            {
+                Game1.game1 = gameBefore;
+                gameBefore.instanceGameLocation = locationBefore!;
+            }
+        }
+    }
+
+    /// <summary>
+    /// A sound device that plays nothing, so a native path that plays a cue can run in a probe process
+    /// (`Game1.playSound` -> `Game1.sounds`, Game1.cs:3179-3183).
+    /// </summary>
+    private sealed class SilentSoundsHelper : SoundsHelper
+    {
+        public override bool PlayLocal(string cueName, GameLocation location, Microsoft.Xna.Framework.Vector2? position, int? pitch, SoundContext context, out ICue cue)
+        {
+            cue = null!;
+            return false;
         }
     }
 

@@ -106,8 +106,8 @@ public sealed class ClearancLeaseWiringTests
     [Fact]
     public void TheHostPinnedSuccessEvidenceKeepsItsExactKeySet()
     {
-        // A lease fact in the success detail would fail the Host's exactEvidence check and turn a real success
-        // into a silent non-completion. The Host's list is DERIVED from its own adapter rather than re-typed,
+        // A lease fact in the success detail would fail the Host's declaredCompletionEvidence check and turn a real
+        // success into a silent non-completion. The Host's list is DERIVED from its own adapter rather than re-typed,
         // so the assertion below cannot drift with it.
         //
         // Two facts, and the second is the interesting one:
@@ -232,15 +232,15 @@ public sealed class ClearancLeaseWiringTests
     }
 
     /// <summary>
-    /// The Host's own list for `clear_debris`'s success evidence, read out of the adapter's `exactEvidence`
-    /// call rather than re-typed here.
+    /// The Host's own list for `clear_debris`'s success evidence, read out of the adapter's
+    /// `declaredCompletionEvidence` call rather than re-typed here.
     /// </summary>
     private static IReadOnlyList<string> HostClearDebrisSuccessKeys()
     {
         string source = Read(HostAdapter);
         int action = source.IndexOf("case \"clear_debris\":", StringComparison.Ordinal);
         action.Should().BeGreaterThanOrEqualTo(0, "the Host validates clear_debris");
-        string slice = SliceBetween(source[action..], "exactEvidence(", "],");
+        string slice = SliceBetween(source[action..], "declaredCompletionEvidence(", "],");
         return slice
             .Split('\n')
             .Select(line => line.Trim().TrimEnd(','))

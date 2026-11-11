@@ -379,7 +379,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     executionId,
                     ExecutionState.Succeeded,
                     "modal_dismissed",
-                    $"modal_type={modalType};dismissed=true;clearing=true;close_effect=engine_shipping_commit{modalTextDetail}",
+                    $"modal_type={modalType};dismissed=true;cleared_modal={modalType};clearing=true;close_effect=engine_shipping_commit{modalTextDetail}",
                     this.TryCreateLocalObservation(actor));
             }
             else
@@ -395,24 +395,58 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 $"modal_type={modalType};native_dispatched=false;native_exception={nativeException.GetType().Name}");
         }
 
-        if (Game1.activeClickableMenu is null && !Game1.dialogueUp)
-        {
-            return this.RememberTerminal(
-                request.RequestId,
-                executionId,
-                ExecutionState.Succeeded,
-                "modal_dismissed",
-                $"modal_type={modalType};dismissed=true;cleared_modal={modalType};close_effect={closeEffect}{modalTextDetail}",
-                this.TryCreateLocalObservation(actor));
-        }
-
+        (ExecutionState outcome, string outcomeCode, string outcomeEvidence) = DescribeDismissalOutcome(
+            modalType,
+            closeEffect,
+            modalTextDetail,
+            Game1.activeClickableMenu,
+            Game1.dialogueUp);
         return this.RememberTerminal(
             request.RequestId,
             executionId,
-            ExecutionState.Failed,
-            "postcondition_failed",
-            $"modal_type={modalType};expected_closed=true;menu_closed={Game1.activeClickableMenu is null};dialogue_up={Game1.dialogueUp};cleared_modal={modalType};close_effect={closeEffect}{modalTextDetail}",
+            outcome,
+            outcomeCode,
+            outcomeEvidence,
             this.TryCreateLocalObservation(actor));
+    }
+
+    /// <summary>
+    /// The outcome of a dismissal whose native close has ALREADY run: what the receipt must say about the world the
+    /// close left behind.
+    ///
+    /// <para>
+    /// WHAT THE CLOSE ITSELF DOES. `DialogueBox.closeDialogue` (DialogueBox.cs:192-249) MOUNTS NOTHING. It exits the
+    /// menu (:196, i.e. `activeClickableMenu = null`, Game1.cs:6128-6131), clears `dialogueUp` (:197), and pops the
+    /// speaker's `CurrentDialogue` only when `dialogueFinished` (:198-201) - one whole `Dialogue`, never one page. A
+    /// multi-page box pages inside a single menu (`Dialogue.dialogues` / `characterDialoguesBrokenUp`,
+    /// DialogueBox.cs:405-450), and the object-dialogue branch that could re-raise `dialogueUp` (:206-216) never fires
+    /// in this engine version because `Game1.currentObjectDialogue` is never enqueued anywhere in the decompiled tree.
+    /// </para>
+    /// <para>
+    /// WHY THE WORLD CAN STILL BE HOLING A DIALOGUE. `closeDialogue`'s LAST act is `Game1.afterDialogues` (:243-248),
+    /// and the engine's own content chains the next screen there - `TV.selectChannel` draws a screen and re-registers
+    /// `Game1.afterDialogues = proceedToNextScene` (TV.cs:92-140), `NPC.cs:2691` chains a question - so a box is
+    /// mounted before the close returns. "The menu is gone and nothing is up" is therefore NOT a postcondition of a
+    /// close that went through: a continuation is a fact about the world, and a programme that fails on it stops while
+    /// the next dialogue holds the body. Hence one success with the continuation NAMED (`has_more_pages`,
+    /// `next_modal_type`) instead of a failure, and no failure terminal on this path at all.
+    /// </para>
+    /// </summary>
+    internal static (ExecutionState State, string ReasonCode, string Evidence) DescribeDismissalOutcome(
+        string modalType,
+        string closeEffect,
+        string modalTextDetail,
+        IClickableMenu? standing,
+        bool dialogueUp)
+    {
+        bool continues = standing is not null || dialogueUp;
+        string continuation = continues
+            ? $";has_more_pages=true;next_modal_type={(standing is null ? "dialogue_up" : standing.GetType().Name)}"
+            : ";has_more_pages=false;next_modal_type=none";
+        return (
+            ExecutionState.Succeeded,
+            "modal_dismissed",
+            $"modal_type={modalType};dismissed=true;cleared_modal={modalType};close_effect={closeEffect}{continuation}{modalTextDetail}");
     }
 
     /// <summary>Answers the currently displayed native question dialogue.</summary>

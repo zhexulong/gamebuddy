@@ -269,11 +269,11 @@ public sealed class DeclaredToolSelectionTests
     [Fact]
     public void EveryToolActionStillPublishesExactlyTheEvidenceKeysTheHostPins()
     {
-        // The Host recognises a success by an EXACT receipt-detail key set
-        // (`host/src/stardew-game-integration-adapter.ts`: the cut_weeds/cut_grass branches use `exactEvidence`, and
-        // `hasWaterCropCompletionEvidence` / `hasBreakRockSourceCompletionEvidence` compare key counts). The Mod states
-        // each set once, in ToolActionEvidence, so the paired change is one edit - and this test is what makes a drift
-        // between the two sides fail HERE instead of in a live run.
+        // The Host recognises a success by a DECLARED receipt-detail key set
+        // (`host/src/stardew-game-integration-adapter.ts`: the cut_weeds/cut_grass branches pass their keys to
+        // `declaredCompletionEvidence`, and `hasWaterCropCompletionEvidence` / `hasBreakRockSourceCompletionEvidence`
+        // still compare key counts). The Mod states each set once, in ToolActionEvidence, so the paired change is one
+        // edit - and this test is what makes a drift between the two sides fail HERE instead of in a live run.
         string adapter = Read(HostAdapter);
 
         ToolActionEvidence.CutWeeds.Should().BeEquivalentTo(

@@ -233,7 +233,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
   )
     return false;
   // The guard above narrows `rawDetail` to string in FUNCTION scope, but type narrowing does not travel across a
-  // `switch` boundary into each case, so a plain alias would re-resolve to `unknown` at every `exactEvidence(detail,`
+  // `switch` boundary into each case, so a plain alias would re-resolve to `unknown` at every `declaredCompletionEvidence(detail,`
   // call. Give the narrowed value a name that is visibly a string - once, for every case that follows.
   const detail: string = rawDetail;
   // Each published action is explicit. Unsupported schemas fail closed rather
@@ -247,7 +247,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // object being present on the tile afterwards plus the inventory count dropping by one.
       return (
         receipt.reasonCode === "owned_object_placed" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "target",
@@ -281,7 +281,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // The removal is proved by the tile being empty afterwards, never by a native return value.
       return (
         receipt.reasonCode === "placed_item_removed" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "target",
@@ -317,7 +317,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // container being gone plus the drops the game added during the swing window.
       return (
         receipt.reasonCode === "container_source_broken" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "target",
@@ -361,7 +361,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // than a missing one, because a silent drop becomes a wrong success.
       return (
         (receipt.reasonCode === "tool_equipped" || receipt.reasonCode === "already_equipped") &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["tool", "before", "expected", "after"],
           (e) =>
@@ -379,7 +379,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // fact, because the Mod cannot observe one (the chat box may not exist on a client at all).
       return (
         receipt.reasonCode === "chat_message_sent" &&
-        exactEvidence(detail, ["recipient", "length", "role", "sent"], (e) => {
+        declaredCompletionEvidence(detail, ["recipient", "length", "role", "sent"], (e) => {
           const length = integerEvidenceValue(e.length);
           return (
             e.sent === "true" &&
@@ -399,7 +399,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // here claims a loss.
       return (
         receipt.reasonCode === "fish_pond_cleared" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "pond_id",
@@ -440,7 +440,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // that was commissioned. A receipt that merely says it called the settlement cannot satisfy those.
       return (
         receipt.reasonCode === "farm_building_built" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "target",
@@ -494,7 +494,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // required non-empty because the receipt must name WHICH quest was accepted.
       return (
         receipt.reasonCode === "daily_quest_accepted" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "daily_quest_id",
@@ -537,7 +537,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // when the recipe spends it) and the produced stack reached the world (backpack plus ground drop).
       return (
         receipt.reasonCode === "clothing_tailored" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "target",
@@ -608,7 +608,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // value. A repaint to the colour it already carried is `color_already_set`, never a success.
       return (
         receipt.reasonCode === "placed_object_recolored" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["target", "tile", "location", "color_selection", "color_before", "color_after", "color_changed"],
           (e) =>
@@ -631,7 +631,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // same one) and the dye to have been consumed as the native spend rule says.
       return (
         receipt.reasonCode === "clothing_dyed" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "target",
@@ -682,7 +682,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // the board marker flipped from unset to set.
       return (
         receipt.reasonCode === "special_order_accepted" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "special_order_id",
@@ -724,7 +724,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // recorded, and a fresh read found nothing left.
       return (
         receipt.reasonCode === "museum_rewards_collected" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "target",
@@ -780,7 +780,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // receipt cannot report a prize its own level does not produce.
       return (
         receipt.reasonCode === "prize_ticket_redeemed" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "prize_level",
@@ -833,7 +833,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // the twelve keys, an entity that was unnamed before the call, and a read-back that matched.
       return (
         receipt.reasonCode === "entity_named" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "owner_id",
@@ -869,7 +869,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // rule therefore requires the before/after pair AND the derived flag to agree.
       return (
         receipt.reasonCode === "animal_door_toggled" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "target",
@@ -897,7 +897,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // not merely implied by the terminal code.
       return (
         receipt.reasonCode === "silo_hay_taken" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "target",
@@ -927,7 +927,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // enter_mine / select_mine_elevator_floor terminals use.
       return (
         receipt.reasonCode === "obelisk_arrived" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["expected", "actual"],
           (e) =>
@@ -950,7 +950,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // refusal belonged to; on a success it must be `none`.
       return (
         receipt.reasonCode === "building_chest_loaded" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "tile",
@@ -1021,7 +1021,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // >= 2-stack case is refused by name rather than handed to a container menu.
       return (
         receipt.reasonCode === "building_chest_output_collected" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "tile",
@@ -1098,7 +1098,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
     case "plant_seed":
       return (
         receipt.reasonCode === "seed_planted" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["location", "target", "tile", "item", "crop", "inventory_before", "inventory_after"],
           (e) =>
@@ -1147,7 +1147,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // actor is left NOT movable, which is the native end state rather than a hidden failure.
       return (
         receipt.reasonCode === "talk_to_npc_talked" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "location",
@@ -1195,7 +1195,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // is reported, never asserted (a fare refund/reward may move it either way).
       return (
         receipt.reasonCode === "bus_arrived" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["origin", "destination", "fare", "money_before", "money_after"],
           (e) =>
@@ -1212,7 +1212,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // returns void, so the only proof the launch started is the rafting flag flipping.
       return (
         receipt.reasonCode === "raft_launched" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["tile", "is_rafting", "stamina_before", "stamina_after"],
           (e) =>
@@ -1228,7 +1228,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // characters), so `mounted=true;mounting=false` is the producer's own success state.
       return (
         receipt.reasonCode === "horse_mounted" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["target", "horse_id", "mounted", "mounting"],
           (e) =>
@@ -1261,7 +1261,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // departure proof. The animation's own completion is not a terminal fact.
       return (
         receipt.reasonCode === "emote_started" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["emote", "native_dispatched"],
           (e) => hasBoundedNonemptyEvidenceValue(e.emote) && e.native_dispatched === "true",
@@ -1272,7 +1272,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // FacingDirection, so the emitted direction is the frozen enum spelling.
       return (
         receipt.reasonCode === "actor_facing_matches" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["direction"],
           (e) => e.direction === "up" || e.direction === "right" || e.direction === "down" || e.direction === "left",
@@ -1292,7 +1292,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // records the day AND grants friendship, and both are re-read before the terminal.
       return (
         receipt.reasonCode === "pet_completed" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "location",
@@ -1320,7 +1320,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // `wasPet` marker plus the friendship delta before it answers `farm_animal_petted`.
       return (
         receipt.reasonCode === "farm_animal_petted" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "location",
@@ -1367,7 +1367,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // re-resolved by its own opaque identity and `cleared` is exactly "the clump is gone".
       return (
         receipt.reasonCode === "debris_cleared" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "location",
@@ -1408,7 +1408,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // inspection that mints Succeeded from the live Friendship it just read.
       return (
         receipt.reasonCode === "npc_relationship_inspected" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "location",
@@ -1439,7 +1439,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // successes: append-only `slot/target id` identity plus the body slot's occupant.
       return (
         (receipt.reasonCode === "wearable_already_equipped" &&
-          exactEvidence(
+          declaredCompletionEvidence(
             detail,
             ["body_slot", "source_slot", "requested", "occupant", "moved"],
             (e) =>
@@ -1450,7 +1450,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
               e.moved === "false",
           )) ||
         (receipt.reasonCode === "wearable_equipped" &&
-          exactEvidence(
+          declaredCompletionEvidence(
             detail,
             [
               "body_slot",
@@ -1476,7 +1476,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // empty) and :374-379 (the wearable landed in the named destination slot).
       return (
         (receipt.reasonCode === "wearable_already_unequipped" &&
-          exactEvidence(
+          declaredCompletionEvidence(
             detail,
             ["body_slot", "destination_slot", "occupant", "moved"],
             (e) =>
@@ -1486,7 +1486,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
               e.moved === "false",
           )) ||
         (receipt.reasonCode === "wearable_unequipped" &&
-          exactEvidence(
+          declaredCompletionEvidence(
             detail,
             [
               "body_slot",
@@ -1514,7 +1514,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // is `!who.isRidingHorse()` re-read after the native Horse.dismount call.
       return (
         receipt.reasonCode === "transport_dismounted" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["horse_id", "location", "tile", "riding_before", "mounting_before", "riding_after", "mount_after"],
           (e) =>
@@ -1533,7 +1533,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // LOCATION is the postcondition — the same rule use_obelisk already follows.
       return (
         receipt.reasonCode === "warp_item_arrived" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["expected", "actual"],
           (e) =>
@@ -1547,7 +1547,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // advancing plus the native TimesPanned stat incrementing in the same call.
       return (
         receipt.reasonCode === "ore_panned" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "slot",
@@ -1601,7 +1601,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // holds it). The letter-menu and inventory facts are reported, never asserted.
       return (
         receipt.reasonCode === "mail_claimed" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "target",
@@ -1658,27 +1658,56 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // path and same evidence shape as water_pet_bowl.
       return receipt.reasonCode === "slime_hutch_trough_watered" && hasWateringToolCompletionEvidence(detail);
     case "dismiss_modal":
-      // farmhandexecutioncontroller.modalactions.cs:145-152: the close is proved by the
-      // modal registry and the dialogue flag, and `close_effect` names which of the two
-      // audited close paths actually ran.
+      // farmhandexecutioncontroller.modalactions.cs DescribeDismissalOutcome: the native close ran, and the receipt
+      // names what it left behind. `has_more_pages`/`next_modal_type` are OPTIONAL because a dismissal that the
+      // engine's own continuation follows (`closeDialogue` invokes `Game1.afterDialogues`, DialogueBox.cs:243-248) is
+      // still a success with a different shape, and `text` is optional because only a DialogueBox has anything to
+      // quote. `clearing` is the shipping commit's own state: its close is driven inside the menu's outro
+      // (ShippingMenu.cs:380-428), so the menu is still mounted when the receipt is minted.
+      //
+      // AND THE LATCH'S OWN TERMINAL. farmhandexecutioncontroller.modalactions.cs:353-359 answers a SECOND dismiss of a
+      // shipping commit already under way with `settlement_commit_in_progress` instead of re-entering `okClicked`,
+      // because re-entry re-arms the outro fade. That reason code means "the commit is ALREADY being driven", never
+      // "you dismissed something" - which is why `dismissed=false` is REQUIRED there and not merely tolerated: a caller
+      // that reads `dismissed` as the answer to its request must see the false. Without this arm the latch's two
+      // terminals were readable on only one side, so a receipt-backed re-ask (the recovery path for a dismiss whose
+      // response timed out) landed as a succeeded receipt with zero typed transitions.
       return (
-        receipt.reasonCode === "modal_dismissed" &&
-        exactEvidence(
-          detail,
-          ["modal_type", "dismissed", "cleared_modal", "close_effect"],
-          (e) =>
-            hasOpaqueEvidenceValue(e.modal_type) &&
-            e.dismissed === "true" &&
-            e.cleared_modal === e.modal_type &&
-            (e.close_effect === "native_dialogue_close" || e.close_effect === "pure_cancel"),
-        )
+        (receipt.reasonCode === "modal_dismissed" &&
+          declaredCompletionEvidence(
+            detail,
+            ["modal_type", "dismissed", "cleared_modal", "close_effect"],
+            (e) =>
+              hasOpaqueEvidenceValue(e.modal_type) &&
+              e.dismissed === "true" &&
+              e.cleared_modal === e.modal_type &&
+              (e.close_effect === "native_dialogue_close" ||
+                e.close_effect === "pure_cancel" ||
+                e.close_effect === "engine_shipping_commit") &&
+              (e.has_more_pages === undefined || booleanEvidenceValue(e.has_more_pages)) &&
+              (e.next_modal_type === undefined || hasOpaqueEvidenceValue(e.next_modal_type)),
+            ["text", "has_more_pages", "next_modal_type", "clearing"],
+          )) ||
+        (receipt.reasonCode === "settlement_commit_in_progress" &&
+          declaredCompletionEvidence(
+            detail,
+            ["modal_type", "dismissed", "cleared_modal", "close_effect", "commit_already_driven"],
+            (e) =>
+              hasOpaqueEvidenceValue(e.modal_type) &&
+              e.dismissed === "false" &&
+              e.cleared_modal === e.modal_type &&
+              e.close_effect === "engine_shipping_commit" &&
+              e.commit_already_driven === "true" &&
+              (e.clearing === undefined || booleanEvidenceValue(e.clearing)),
+            ["text", "clearing"],
+          ))
       );
     case "answer_dialogue":
       // farmhandexecutioncontroller.modalactions.cs:255-260: the native answer was accepted
       // and the dialogue's own outro started.
       return (
         receipt.reasonCode === "answer_dialogue_answered" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["modal_type", "question", "response_key", "native_answered", "outro_started", "postcondition"],
           (e) =>
@@ -1715,7 +1744,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // levels stopped showing.
       return (
         receipt.reasonCode === "level_up_resolved" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "modal_type",
@@ -1747,7 +1776,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // the player slot released that same item, and the chest gained exactly the held stack.
       return (
         receipt.reasonCode === "chest_stored" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "location",
@@ -1789,7 +1818,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // not in the receipt, so both observed deltas are required and must agree.
       return (
         receipt.reasonCode === "chest_retrieved" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "location",
@@ -1833,7 +1862,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // (health marker -100) or its terrain feature is gone.
       return (
         receipt.reasonCode === "stump_cleared" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "target",
@@ -1874,7 +1903,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // ran, a Tree now stands on the tile, and the backpack lost exactly one sapling.
       return (
         receipt.reasonCode === "sapling_planted" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "location",
@@ -1905,7 +1934,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // actor's selection back, which is the only place `tool_restored` is written.
       return (
         receipt.reasonCode === "weeds_cut" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "target",
@@ -1945,7 +1974,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // deliberately not re-derived (the producer records only what actually changed).
       return (
         receipt.reasonCode === "grass_cut" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "target",
@@ -1986,7 +2015,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // producer's own re-read of the cask tile (gone, or present and emptied).
       return (
         receipt.reasonCode === "cask_cleared" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["target", "tool", "had_held_object", "held_qualified_item_id", "removed", "postcondition"],
           (e) =>
@@ -2003,7 +2032,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // mannequin now holds exactly the offered item. Slot/item stay in the identity clause.
       return (
         receipt.reasonCode === "mannequin_dressed" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["target", "slot", "item", "stored"],
           (e) =>
@@ -2018,7 +2047,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // request and the sign's own display slot holds exactly the offered item.
       return (
         receipt.reasonCode === "sign_display_set" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["target", "slot", "item"],
           (e) => hasOpaqueIdEvidenceValue(e.target) && validSlot(e.slot) && hasOpaqueEvidenceValue(e.item),
@@ -2029,7 +2058,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // exactly what the held stack lost, and the source slot released that much.
       return (
         receipt.reasonCode === "silo_hay_deposited" &&
-        exactEvidence(detail, ["target", "slot", "stored", "hay_before", "hay_after"], (e) => {
+        declaredCompletionEvidence(detail, ["target", "slot", "stored", "hay_before", "hay_after"], (e) => {
           const stored = positiveIntegerEvidence(e.stored);
           const before = integerEvidenceValue(e.hay_before);
           const after = integerEvidenceValue(e.hay_after);
@@ -2048,7 +2077,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // returns void, so only the lantern's own flag moving proves the toggle.
       return (
         receipt.reasonCode === "tool_light_toggled" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["slot", "was_on", "is_on"],
           (e) =>
@@ -2064,7 +2093,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // mutex, so the in-frame debris delta is OBSERVED and deliberately not asserted.
       return (
         receipt.reasonCode === "bush_harvested" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "target",
@@ -2090,25 +2119,29 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // in the same frame, and that debris delta is the whole postcondition.
       return (
         receipt.reasonCode === "fruit_tree_harvested" &&
-        exactEvidence(detail, ["target", "tile", "debris_before", "debris_after", "fruit_dropped"], (e) => {
-          const before = integerEvidenceValue(e.debris_before);
-          const after = integerEvidenceValue(e.debris_after);
-          return (
-            hasOpaqueIdEvidenceValue(e.target) &&
-            hasTileEvidenceValue(e.tile) &&
-            before !== null &&
-            after !== null &&
-            after > before &&
-            e.fruit_dropped === "true"
-          );
-        })
+        declaredCompletionEvidence(
+          detail,
+          ["target", "tile", "debris_before", "debris_after", "fruit_dropped"],
+          (e) => {
+            const before = integerEvidenceValue(e.debris_before);
+            const after = integerEvidenceValue(e.debris_after);
+            return (
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasTileEvidenceValue(e.tile) &&
+              before !== null &&
+              after !== null &&
+              after > before &&
+              e.fruit_dropped === "true"
+            );
+          },
+        )
       );
     case "shake_tree":
       // farmhandexecutioncontroller.treebushactions.cs:185-188: the seed left the tree AND the
       // native shaken-today lock was recorded, which is exactly the producer's own condition.
       return (
         receipt.reasonCode === "tree_shaken" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["target", "tile", "has_seed_before", "has_seed_after", "shaken_today"],
           (e) =>
@@ -2124,7 +2157,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // held object is empty and the backpack gained at least the stack that was on it.
       return (
         receipt.reasonCode === "pedestal_item_taken" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           ["location", "target", "item", "stack", "inventory_before", "inventory_after", "held_object_empty"],
           (e) => {
@@ -2149,18 +2182,22 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // between its two native values (0 closed / 88 open), and `is_open` is derived from it.
       return (
         receipt.reasonCode === "fence_gate_toggled" &&
-        exactEvidence(detail, ["target", "tile", "gate_position_before", "gate_position_after", "is_open"], (e) => {
-          const before = integerEvidenceValue(e.gate_position_before);
-          const after = integerEvidenceValue(e.gate_position_after);
-          return (
-            hasOpaqueIdEvidenceValue(e.target) &&
-            hasTileEvidenceValue(e.tile) &&
-            before !== null &&
-            after !== null &&
-            ((before === 0 && after === 88) || (before === 88 && after === 0)) &&
-            e.is_open === (after === 88 ? "true" : "false")
-          );
-        })
+        declaredCompletionEvidence(
+          detail,
+          ["target", "tile", "gate_position_before", "gate_position_after", "is_open"],
+          (e) => {
+            const before = integerEvidenceValue(e.gate_position_before);
+            const after = integerEvidenceValue(e.gate_position_after);
+            return (
+              hasOpaqueIdEvidenceValue(e.target) &&
+              hasTileEvidenceValue(e.tile) &&
+              before !== null &&
+              after !== null &&
+              ((before === 0 && after === 88) || (before === 88 && after === 0)) &&
+              e.is_open === (after === 88 ? "true" : "false")
+            );
+          },
+        )
       );
     case "scythe_crop":
       // farmhandexecutioncontroller.farmingconstructionactions.cs: the crop left the HoeDirt AND the matching
@@ -2173,7 +2210,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // this rule the only action that can free a season-killed tile would record zero typed transitions.
       return (
         (receipt.reasonCode === "scythe_crops_harvested" || receipt.reasonCode === "dead_crop_cleared") &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "target",
@@ -2224,7 +2261,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // call also requires exact ingredient consumption, the native craft counter, and no menu.
       return (
         receipt.reasonCode === "crafted_item_created" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "location",
@@ -2290,7 +2327,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // backpack. `numToCatch` is content/state derived (Crabbing book), so the window is the rule.
       return (
         receipt.reasonCode === "crab_pot_output_collected" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "location",
@@ -2347,7 +2384,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // stack, the bin gained exactly it, and the native Farm.lastItemShipped is that item.
       return (
         receipt.reasonCode === "item_shipped" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "location",
@@ -2407,7 +2444,7 @@ export function hasStardewCompletionEvidence(actionId: string, receipt: Integrat
       // like completion coverage while never accepting a success).
       return (
         receipt.reasonCode === "item_purchased" &&
-        exactEvidence(
+        declaredCompletionEvidence(
           detail,
           [
             "shop",
@@ -2575,7 +2612,7 @@ function hasMineEntryCompletionEvidence(detail: string): boolean {
  * is asked with `showResponse: false`, so no dialogue may have been mounted.
  */
 function hasGiftGivenCompletionEvidence(detail: string): boolean {
-  return exactEvidence(
+  return declaredCompletionEvidence(
     detail,
     [
       "location",
@@ -2642,7 +2679,7 @@ function hasGiftGivenCompletionEvidence(detail: string): boolean {
  * receipt's own `dialogue_open_after=false && menu_open_after=false` pair.
  */
 function hasQuestItemDeliveredCompletionEvidence(detail: string): boolean {
-  return exactEvidence(
+  return declaredCompletionEvidence(
     detail,
     [
       "location",
@@ -2789,7 +2826,7 @@ function hasWateringToolCompletionEvidence(detail: string): boolean {
  * The partially-dropped terminal is PartiallySucceeded and never reaches this rule.
  */
 function hasCookRecipeCompletionEvidence(detail: string, droppedOutput: boolean): boolean {
-  return exactEvidence(
+  return declaredCompletionEvidence(
     detail,
     [
       "location",
@@ -2849,18 +2886,33 @@ function hasCookRecipeCompletionEvidence(detail: string, droppedOutput: boolean)
   );
 }
 
-function exactEvidence(
+/**
+ * One completion rule's evidence contract, declared as a SET rather than a key count.
+ *
+ * `required` ⊆ emitted ⊆ `required ∪ optional`. The count form this replaced
+ * (`Object.keys(evidence).length === expectedKeys.length`) made every extra producer field a contract break rather
+ * than a producer bug to look at, and it shipped that way twice: `dismiss_modal` appends `text=` whenever the box has
+ * text, and the shipping commit's `close_effect=engine_shipping_commit` was not among the accepted values, so both of
+ * that action's real successes were unreadable to the Host. A field a producer may publish and a field the rule
+ * requires are different statements; only the second belongs in `required`.
+ *
+ * THE NAME CARRIES A CONSTRAINT, so do not shorten it back to `declaredEvidence`:
+ * `tools/check-stardew-postcondition-delta` derives the Host contract population from the switch arms that mention
+ * `CompletionEvidence`, and the short name drops 61 of the 95 arms out of that gate while every one of them still
+ * reads exactly as before (measured: 34 contracts under `declaredEvidence`, 95 under this name, key sets identical).
+ */
+function declaredCompletionEvidence(
   detail: string,
-  expectedKeys: readonly string[],
+  required: readonly string[],
   validate: (evidence: Readonly<Record<string, string>>) => boolean,
+  optional: readonly string[] = [],
 ): boolean {
   const evidence = parseSemicolonEvidence(detail);
-  return (
-    evidence !== null &&
-    Object.keys(evidence).length === expectedKeys.length &&
-    expectedKeys.every((key) => key in evidence) &&
-    validate(evidence)
-  );
+  if (evidence === null) return false;
+  if (!required.every((key) => key in evidence)) return false;
+  const declared = new Set([...required, ...optional]);
+  if (!Object.keys(evidence).every((key) => declared.has(key))) return false;
+  return validate(evidence);
 }
 function validSlot(value: string | undefined): boolean {
   const slot = integerEvidenceValue(value);
@@ -2898,7 +2950,7 @@ function hasNavigationCompletionEvidence(detail: string): boolean {
 }
 
 function hasMoveToTileCompletionEvidence(detail: string): boolean {
-  return exactEvidence(detail, ["tile", "target", "arrival", "path"], (e) => {
+  return declaredCompletionEvidence(detail, ["tile", "target", "arrival", "path"], (e) => {
     const target = parseCanonicalIntegralTile(e.target);
     const tile = parseFormatTile(e.tile);
     return (

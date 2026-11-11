@@ -414,7 +414,12 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["dismissed", "true"],
       ["cleared_modal", "DialogueBox"],
       ["close_effect", "native_dialogue_close"],
+      // `text` is the box's own line, which the Mod quotes whenever it could read one before the close
+      // (`farmhandexecutioncontroller.modalactions.cs` BoundedModalText). It is OPTIONAL: a box with no readable
+      // text (or a non-dialogue menu) publishes no such key, and neither shape may be refused for that.
+      ["text", "明天的天气预报：大雨"],
     ],
+    requiredFields: ["modal_type", "dismissed", "cleared_modal", "close_effect"],
   },
   answer_dialogue: {
     reasonCode: "answer_dialogue_answered",
@@ -920,6 +925,154 @@ test("every fixture's action is registered, and the table has not shrunk", () =>
   assert.ok(Object.keys(completionFixtures).length >= 40, "the fixture table shrank unexpectedly");
 });
 
+/**
+ * GATE, not a test: every real producer shape is read by its own rule, and a refusal names the member it refused.
+ *
+ * FAMILY. The contract used to be a key COUNT (`Object.keys(evidence).length === expected.length`), so a producer that
+ * published one more true field made its own success unreadable - and the count could not say WHICH field broke it. It
+ * shipped twice on the same action: `dismiss_modal` appends `text=` whenever the box has text, and the shipping
+ * commit's `close_effect=engine_shipping_commit` was not among the values the rule accepted. Both are ordinary
+ * dismissals, so both were recorded as zero typed transitions.
+ *
+ * POPULATION: every (action, reasonCode) pair this file carries a real producer shape for - the per-action table above,
+ * plus the two dismissal shapes that table does not hold (a close the engine's own continuation followed, and the
+ * shipping commit). It is printed, and an empty population blocks rather than passes. What it does NOT read is stated
+ * rather than implied: the coverage test above requires an ARM for every registered action, not a shape for every arm,
+ * so an action with a rule and no fixture is not examined here.
+ *
+ * PROPERTY: emitted ⊆ required ∪ optional. An undeclared key is found BEHAVIOURALLY - the rule accepts the same shape
+ * the moment that one key is removed, so the key whose removal flips the verdict is the undeclared one, and it is
+ * named. A shape refused for a reason that is not a key (a value the rule rejects, a width its validator refuses)
+ * cannot be blamed on a key by this probe, so it is named as its own finding instead of guessed at - which is the half
+ * `close_effect=engine_shipping_commit` failed before the accepted values were widened.
+ *
+ * red-proof: history  `e6184b16`'s rule restored (count equality, `engine_shipping_commit` not among the accepted
+ * values, no declared optional key) -> `evidence_key_not_declared:dismiss_modal:modal_dismissed:text` and
+ * `evidence_shape_not_accepted:dismiss_modal:modal_dismissed:modal_type,dismissed,cleared_modal,clearing,close_effect`
+ * are the two ordinary successes that shipped unreadable; the same run also names the continuation shape
+ * (`...has_more_pages,next_modal_type,text`) and `evidence_key_not_declared:dismiss_modal:settlement_commit_in_progress:clearing`
+ * (host/src/stardew-completion-evidence-coverage.test.ts)
+ */
+test("evidence_key_not_declared: every real producer shape is read by its own rule", () => {
+  const shapes: readonly { actionId: string; reasonCode: string; fields: readonly (readonly [string, string])[] }[] = [
+    ...Object.entries(completionFixtures).map(([actionId, fixture]) => ({
+      actionId,
+      reasonCode: fixture.reasonCode,
+      fields: fixture.fields,
+    })),
+    {
+      actionId: "dismiss_modal",
+      reasonCode: "modal_dismissed",
+      fields: [
+        ["modal_type", "DialogueBox"],
+        ["dismissed", "true"],
+        ["cleared_modal", "DialogueBox"],
+        ["close_effect", "native_dialogue_close"],
+        ["has_more_pages", "true"],
+        ["next_modal_type", "DialogueBox"],
+        ["text", "..."],
+      ],
+    },
+    {
+      actionId: "dismiss_modal",
+      reasonCode: "modal_dismissed",
+      // The morning-after summary: `okClicked` starts an outro the menu survives (ShippingMenu.cs:380-428), so the
+      // receipt carries `clearing` and the commit's own `close_effect`.
+      fields: [
+        ["modal_type", "ShippingMenu"],
+        ["dismissed", "true"],
+        ["cleared_modal", "ShippingMenu"],
+        ["clearing", "true"],
+        ["close_effect", "engine_shipping_commit"],
+      ],
+    },
+    {
+      actionId: "dismiss_modal",
+      reasonCode: "settlement_commit_in_progress",
+      // The latch's idempotent re-ask (farmhandexecutioncontroller.modalactions.cs:353-359): the commit is already
+      // under way, so `dismissed` is FALSE and the receipt names the commit it declined to re-enter.
+      fields: [
+        ["modal_type", "ShippingMenu"],
+        ["dismissed", "false"],
+        ["cleared_modal", "ShippingMenu"],
+        ["clearing", "true"],
+        ["close_effect", "engine_shipping_commit"],
+        ["commit_already_driven", "true"],
+      ],
+    },
+  ];
+
+  const findings: string[] = [];
+  for (const shape of shapes) {
+    if (completionEvidence(shape.actionId, shape.reasonCode, detail(shape.fields))) continue;
+    const offending = shape.fields
+      .filter(
+        ([key]) =>
+          completionEvidence(
+            shape.actionId,
+            shape.reasonCode,
+            detail(shape.fields.filter(([fieldKey]) => fieldKey !== key)),
+          ) === true,
+      )
+      .map(([key]) => key);
+    if (offending.length === 0) {
+      findings.push(
+        `evidence_shape_not_accepted:${shape.actionId}:${shape.reasonCode}:${shape.fields.map(([key]) => key).join(",")}`,
+      );
+      continue;
+    }
+    for (const key of offending)
+      findings.push(`evidence_key_not_declared:${shape.actionId}:${shape.reasonCode}:${key}`);
+  }
+
+  const pairs = new Set(shapes.map((shape) => `${shape.actionId}:${shape.reasonCode}`));
+  console.log(`examined ${shapes.length} producer shapes over ${pairs.size} (action, reasonCode) pairs`);
+  assert.ok(shapes.length > 0, "an empty population agrees with itself");
+  assert.deepEqual(
+    findings,
+    [],
+    "a real success shape the Host refuses: the rule is narrower than the Mod - an undeclared key or an accepted value it was never given",
+  );
+});
+
+test("dismiss_modal: the latch's re-ask is a commit already under way, not a dismissal", () => {
+  // `e6184b16` answers a SECOND dismiss of a shipping commit that is already under way from the latch rather than by
+  // re-entering `okClicked` (a second entry re-arms the outro fade), and receipt-backed recovery is what turns a
+  // dismiss whose response timed out into exactly that second request. So this terminal is reachable, it is a success
+  // for the request it answers, and the `false` in `dismissed` is REQUIRED: a caller that reads that field as the
+  // answer has to see it, or it reports a dismissal nobody performed.
+  const reask: readonly (readonly [string, string])[] = [
+    ["modal_type", "ShippingMenu"],
+    ["dismissed", "false"],
+    ["cleared_modal", "ShippingMenu"],
+    ["clearing", "true"],
+    ["close_effect", "engine_shipping_commit"],
+    ["commit_already_driven", "true"],
+  ];
+  const without = (key: string) => detail(reask.filter(([fieldKey]) => fieldKey !== key));
+  const withDismissed = (value: string) =>
+    detail(reask.map(([key, fieldValue]) => [key, key === "dismissed" ? value : fieldValue] as const));
+
+  assert.equal(completionEvidence("dismiss_modal", "settlement_commit_in_progress", detail(reask)), true);
+  assert.equal(
+    completionEvidence("dismiss_modal", "settlement_commit_in_progress", withDismissed("true")),
+    false,
+    "a re-ask that claims the dismissal happened is the one thing this terminal cannot say",
+  );
+  assert.equal(
+    completionEvidence("dismiss_modal", "settlement_commit_in_progress", without("commit_already_driven")),
+    false,
+    "without the marker the receipt claims a commit it does not name as already driven",
+  );
+  const dismissal = completionFixtures.dismiss_modal;
+  assert.ok(dismissal !== undefined, "the dismiss_modal fixture must exist");
+  assert.equal(
+    completionEvidence("dismiss_modal", "settlement_commit_in_progress", detail(dismissal.fields)),
+    false,
+    "an ordinary dismissal is not readable as the latch's re-ask, and it has its own reason code for that",
+  );
+});
+
 for (const [actionId, fixture] of Object.entries(completionFixtures)) {
   test(`${actionId}: the Mod's own success shape completes`, () => {
     assert.equal(
@@ -983,7 +1136,7 @@ test("till_soil: the selection half is published, and the extended key list is w
   assert.equal(
     completionEvidence("till_soil", "soil_tilled", detail([...shape, ["unknown", "value"]])),
     false,
-    "the key set stays exact, so the widened list is what admits the selection half",
+    "an undeclared key is refused, so the widened list is what admits the selection half",
   );
 });
 
@@ -1045,9 +1198,9 @@ test("shop_purchase: a receipt that spent nothing and gained nothing is not a pu
 
 test("respond_level_up: the profession branch settles, and a contradicting receipt does not", () => {
   // The rule accepts ONE shape, so the generated cases above - which remove a key at a time - cannot tell its
-  // validate clause from `() => true`: removing a key already fails `exactEvidence`'s exact-key-set check. This
-  // pins the clause itself, and pins the OTHER branch of the same terminal: a level-5/10 profession chooser,
-  // whose choice writes `Farmer.professions` and which the receipt names with a numeric id.
+  // validate clause from `() => true`: removing a required key already fails `declaredCompletionEvidence`'s required-set
+  // check. This pins the clause itself, and pins the OTHER branch of the same terminal: a level-5/10 profession
+  // chooser, whose choice writes `Farmer.professions` and which the receipt names with a numeric id.
   const profession: readonly (readonly [string, string])[] = [
     ["modal_type", "LevelUpMenu"],
     ["skill", "0"],

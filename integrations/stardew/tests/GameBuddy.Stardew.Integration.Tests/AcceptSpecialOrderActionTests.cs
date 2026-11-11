@@ -49,8 +49,8 @@ public sealed class AcceptSpecialOrderActionTests
     };
 
     /// <summary>
-    /// The evidence keys, IN ORDER. The Host's completion rule uses <c>exactEvidence</c>, which requires the
-    /// emitted key COUNT to equal its expected key count, so this list is the contract on both sides.
+    /// The evidence keys, IN ORDER. The Host's completion rule uses <c>declaredCompletionEvidence</c>, whose declared
+    /// set is exactly this list, so the two sides carry one spelling of the contract.
     /// </summary>
     private static readonly string[] EvidenceKeys =
     {
