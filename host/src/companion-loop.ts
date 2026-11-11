@@ -429,6 +429,179 @@ export class CompanionLoop {
         await this.session.sendUserMessage(batch, { deliverAs: disposition === "steer" ? "steer" : "followUp" });
         return "unobserved";
       }
+      /**
+       * One assistant message, read from Pi's raw stream and counted into this turn's delivery account.
+       *
+       * <p>
+       * The turn's own ending facts: a surface that projects native content classifies them too, but that observer exists
+       * only where a presenter is installed, and "was this a turn at all" is not a presentation question.
+       * </p>
+       */
+      const noteAssistantMessage = (message: unknown): void => {
+        const assistantFacts = readAssistantMessageFacts(message);
+        if (assistantFacts === undefined) return;
+        sawAssistantMessage = true;
+        assistantTextParts += assistantFacts.textParts;
+        // The roll-up's own input: a message that carried text is one of the messages this turn's
+        // bubble had to fit. Naming them is what lets a reader see 28 messages arrive as 27 bubbles
+        // instead of counting assistant messages and calling that the bubble count.
+        if (assistantFacts.textParts > 0) {
+          textMessages += 1;
+          if (assistantFacts.id !== null) textMessageIds.push(assistantFacts.id);
+        }
+        // Nothing could have shown this message: the turn carried no presentation source, or the
+        // surface installed no presenter, so the observer that names its own withholdings was never
+        // attached. Naming it here is the whole difference between a measured omission and the
+        // remainder no artifact could explain (2026-11-09: 40 of a run's 79 parts, every one of them
+        // in a settlement-driven turn that this loop counted and no projection ever saw).
+        if (assistantFacts.textParts > 0 && nativeContentObserver === undefined)
+          suppressedByReason.set(
+            "no_presentation_lease",
+            (suppressedByReason.get("no_presentation_lease") ?? 0) + assistantFacts.textParts,
+          );
+        if (assistantFacts.hasText) {
+          producedText = true;
+          // The text paths with no projection attached (a reduced adapter, or a turn that carried no presentation
+          // source) never see a delta, so the message's own record is where `speaking` is published for them.
+          noteTextArriving();
+        }
+        if (assistantFacts.hasToolCall) producedToolCall = true;
+        if (assistantFacts.failed) assistantFailed = true;
+      };
+      /**
+       * Open this turn's presentation lineage and its listeners, at the moment Pi consumed the exact batch.
+       *
+       * <p>
+       * Pi has now put this exact batch into its active context. The lineage opens *at this boundary*, not after
+       * `sendUserMessage()` resolves (which is after the whole turn).
+       * </p>
+       */
+      const openTurnPresentation = (): void => {
+        if (sourceEventId === undefined) return;
+        this.#turnObserver?.beginPlayerBatch(sourceEventId, batchId);
+        beganPresentation = true;
+        // Voice: the same Game turn may stream generated companion speech
+        // (NFC-normalized deltas appended as they arrive, finalized when the
+        // final text lands). Voice stays voice-local: a failure here never
+        // poisons the presentation lineage or the durable Game state.
+        if (this.voiceSink !== undefined) {
+          // Fire-and-forget open ordered before every delta/finalize/cancel:
+          // appends and the terminal settle await this same promise, so a
+          // fast stream can never race the job open.
+          voiceBegin = (async () => {
+            await this.voiceSink!.begin(String(batchId ?? sourceEventId));
+            beganVoice = true;
+          })().catch(() => {
+            // Voice degradation is graceful.
+          });
+        }
+        // A production Game composition installs the final-content
+        // presenter before ingress opens. Smaller non-Game consumers of
+        // CompanionLoop intentionally have no Game presentation surface,
+        // so absence means "no projection", never a synthetic fallback.
+        if (this.#turnObserver?.presentNativeAssistantContent !== undefined) {
+          nativeContentObserver = attachNativeCompanionContent(
+            this.session as AgentSession,
+            {
+              // Raw Game companion deltas still feed the same streaming TTS
+              // lane when a voice sink is attached; without one they stay
+              // unprojected at delta granularity.
+              onPreviewDelta: async (delta) => {
+                // Her text has started arriving. Published outside the voice branch below, because voice is one
+                // consumer of the preview lane and not the lane itself.
+                noteTextArriving();
+                if (this.voiceSink === undefined) return;
+                try {
+                  await voiceBegin;
+                  await this.voiceSink.append(delta.normalize("NFC"));
+                } catch {
+                  // Voice degradation is graceful.
+                }
+              },
+              onFinalText: async (text) => {
+                // The turn's ONE bubble: every message's presented text in arrival order, its reaction
+                // sound at the head, cut to the bubble ceiling by `deliverTurn()`. A turn that said
+                // nothing never reaches this sink, so absence is silence rather than an empty bubble.
+                // Voice finalizes after this one piece, so cleanup (finally) never cancels an
+                // already-finalized job.
+                if (this.voiceSink !== undefined) {
+                  try {
+                    await voiceBegin;
+                    await this.voiceSink.finalize();
+                    voiceFinalized = true;
+                  } catch {
+                    // Voice degradation is graceful.
+                  }
+                }
+                const content = Object.freeze({ sourceEventId, text });
+                const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
+                if (presentation !== undefined) {
+                  presentedTextPieces += 1;
+                  nativeContentFinal = presentation;
+                }
+                await presentation;
+              },
+              onMessageText: (outcome) => {
+                // The projection's own answer for one message: its text parts, and the reason
+                // none of them reached the player. Counting here is the whole point - a piece
+                // withheld without a count reads exactly like a companion who said nothing.
+                if (outcome.suppression === null) presentedTextParts += outcome.textParts;
+                else
+                  suppressedByReason.set(
+                    outcome.suppression,
+                    (suppressedByReason.get(outcome.suppression) ?? 0) + outcome.textParts,
+                  );
+              },
+              onRejected: (reason) => {
+                // `aborted`/`error` are the transport-level endings; the remaining reasons are
+                // content rejections (empty, tool-only, identity mismatch) that all mean the turn
+                // produced nothing presentable — recorded as a failure, never as a quiet success.
+                recordOutcome(reason === "aborted" || reason === "error" ? reason : "error");
+              },
+            },
+            {
+              stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION,
+              scaffolding: NATIVE_BUBBLE_SCAFFOLDING,
+              // The bubble's unit is the prompt turn, which is what makes one reply one bubble.
+              deliveryUnit: NATIVE_BUBBLE_DELIVERY_UNIT,
+              // The in-game surface delivers with pacing on; the Chat transcript's
+              // observer is configured elsewhere and takes the off default.
+              pacing: GAME_DELIVERY_PACING,
+              // The turn's own identity seeds the reaction sound and its language
+              // picks the vocabulary. Both come from the authenticated batch facts,
+              // never from generated content.
+              ...(sourceEventId === undefined
+                ? {}
+                : {
+                    turn: Object.freeze({
+                      id: sourceEventId,
+                      ...(turnLocale === undefined ? {} : { locale: turnLocale }),
+                    }),
+                  }),
+            },
+          );
+          nativeContentObserver.open();
+          // Previews unlock the delta lane for the voice job, which reads the raw stream:
+          // the bubble's own text is read from the message at `deliverTurn`, not from
+          // this lane, so nothing here can be split into a second bubble.
+          nativeContentObserver.openPreviews();
+        }
+      };
+      /**
+       * Pi settled this turn: record how it ended, name it on the evidence sink, and release the turn's wait.
+       */
+      const settleTurn = (aborted: boolean): void => {
+        settled = true;
+        // Pi 1.1.0 tells the observer whether the settled run was aborted. Without it, an aborted run
+        // that never produced a final message left no recorded outcome, and the tail of this method
+        // returned `completed` for a run the player had cancelled. The content observer's own
+        // classification stays authoritative when it exists; this only fills the case where nothing
+        // classified the run.
+        if (aborted) recordOutcome("aborted");
+        if (sourceEventId !== undefined && batchId !== undefined)
+          this.#emitLiveEvidence((sink) => sink.piTurnSettled({ batchId, sourceEventId, disposition }));
+        resolveCompleted();
+      };
       unsubscribe = this.session.subscribe((event: AgentSessionEvent) => {
         // Any tool execution in this batch is work: the model chose an action rather than only speaking. Read from the raw
         // event stream because this is the only layer that sees it - the pump sees batches, and `turnOutcome` collapses
@@ -443,157 +616,11 @@ export class CompanionLoop {
         // the next step (`thinking`). Staying at `working` would report a tool that is no longer running.
         if (event.type === "tool_execution_end")
           this.#activity.transition(this.pump.hasExecutionInFlight ? "busy" : "thinking");
-        // The turn's own ending facts, read from Pi's raw stream: a surface that projects native content classifies
-        // them too, but that observer exists only where a presenter is installed, and "was this a turn at all" is not
-        // a presentation question.
-        if (event.type === "message_end") {
-          const assistantFacts = readAssistantMessageFacts(event.message);
-          if (assistantFacts !== undefined) {
-            sawAssistantMessage = true;
-            assistantTextParts += assistantFacts.textParts;
-            // The roll-up's own input: a message that carried text is one of the messages this turn's
-            // bubble had to fit. Naming them is what lets a reader see 28 messages arrive as 27 bubbles
-            // instead of counting assistant messages and calling that the bubble count.
-            if (assistantFacts.textParts > 0) {
-              textMessages += 1;
-              if (assistantFacts.id !== null) textMessageIds.push(assistantFacts.id);
-            }
-            // Nothing could have shown this message: the turn carried no presentation source, or the
-            // surface installed no presenter, so the observer that names its own withholdings was never
-            // attached. Naming it here is the whole difference between a measured omission and the
-            // remainder no artifact could explain (2026-11-09: 40 of a run's 79 parts, every one of them
-            // in a settlement-driven turn that this loop counted and no projection ever saw).
-            if (assistantFacts.textParts > 0 && nativeContentObserver === undefined)
-              suppressedByReason.set(
-                "no_presentation_lease",
-                (suppressedByReason.get("no_presentation_lease") ?? 0) + assistantFacts.textParts,
-              );
-            if (assistantFacts.hasText) {
-              producedText = true;
-              // The text paths with no projection attached (a reduced adapter, or a turn that carried no presentation
-              // source) never see a delta, so the message's own record is where `speaking` is published for them.
-              noteTextArriving();
-            }
-            if (assistantFacts.hasToolCall) producedToolCall = true;
-            if (assistantFacts.failed) assistantFailed = true;
-          }
-        }
+        if (event.type === "message_end") noteAssistantMessage(event.message);
         if (event.type === "message_start" && !accepted && isExactBatchMessage(event.message, batch)) {
-          // Pi has now put this exact batch into its active context. Open the
-          // presentation lineage *at this boundary*, not after
-          // `sendUserMessage()` resolves (which is after the whole turn).
           accepted = true;
           if (tracksPlayerDelivery) this.#queuedPlayerDelivery = false;
-          if (sourceEventId !== undefined) {
-            this.#turnObserver?.beginPlayerBatch(sourceEventId, batchId);
-            beganPresentation = true;
-            // Voice: the same Game turn may stream generated companion speech
-            // (NFC-normalized deltas appended as they arrive, finalized when the
-            // final text lands). Voice stays voice-local: a failure here never
-            // poisons the presentation lineage or the durable Game state.
-            if (this.voiceSink !== undefined) {
-              // Fire-and-forget open ordered before every delta/finalize/cancel:
-              // appends and the terminal settle await this same promise, so a
-              // fast stream can never race the job open.
-              voiceBegin = (async () => {
-                await this.voiceSink!.begin(String(batchId ?? sourceEventId));
-                beganVoice = true;
-              })().catch(() => {
-                // Voice degradation is graceful.
-              });
-            }
-            // A production Game composition installs the final-content
-            // presenter before ingress opens. Smaller non-Game consumers of
-            // CompanionLoop intentionally have no Game presentation surface,
-            // so absence means "no projection", never a synthetic fallback.
-            if (this.#turnObserver?.presentNativeAssistantContent !== undefined) {
-              nativeContentObserver = attachNativeCompanionContent(
-                this.session as AgentSession,
-                {
-                  // Raw Game companion deltas still feed the same streaming TTS
-                  // lane when a voice sink is attached; without one they stay
-                  // unprojected at delta granularity.
-                  onPreviewDelta: async (delta) => {
-                    // Her text has started arriving. Published outside the voice branch below, because voice is one
-                    // consumer of the preview lane and not the lane itself.
-                    noteTextArriving();
-                    if (this.voiceSink === undefined) return;
-                    try {
-                      await voiceBegin;
-                      await this.voiceSink.append(delta.normalize("NFC"));
-                    } catch {
-                      // Voice degradation is graceful.
-                    }
-                  },
-                  onFinalText: async (text) => {
-                    // The turn's ONE bubble: every message's presented text in arrival order, its reaction
-                    // sound at the head, cut to the bubble ceiling by `deliverTurn()`. A turn that said
-                    // nothing never reaches this sink, so absence is silence rather than an empty bubble.
-                    // Voice finalizes after this one piece, so cleanup (finally) never cancels an
-                    // already-finalized job.
-                    if (this.voiceSink !== undefined) {
-                      try {
-                        await voiceBegin;
-                        await this.voiceSink.finalize();
-                        voiceFinalized = true;
-                      } catch {
-                        // Voice degradation is graceful.
-                      }
-                    }
-                    const content = Object.freeze({ sourceEventId, text });
-                    const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
-                    if (presentation !== undefined) {
-                      presentedTextPieces += 1;
-                      nativeContentFinal = presentation;
-                    }
-                    await presentation;
-                  },
-                  onMessageText: (outcome) => {
-                    // The projection's own answer for one message: its text parts, and the reason
-                    // none of them reached the player. Counting here is the whole point - a piece
-                    // withheld without a count reads exactly like a companion who said nothing.
-                    if (outcome.suppression === null) presentedTextParts += outcome.textParts;
-                    else
-                      suppressedByReason.set(
-                        outcome.suppression,
-                        (suppressedByReason.get(outcome.suppression) ?? 0) + outcome.textParts,
-                      );
-                  },
-                  onRejected: (reason) => {
-                    // `aborted`/`error` are the transport-level endings; the remaining reasons are
-                    // content rejections (empty, tool-only, identity mismatch) that all mean the turn
-                    // produced nothing presentable — recorded as a failure, never as a quiet success.
-                    recordOutcome(reason === "aborted" || reason === "error" ? reason : "error");
-                  },
-                },
-                {
-                  stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION,
-                  scaffolding: NATIVE_BUBBLE_SCAFFOLDING,
-                  // The bubble's unit is the prompt turn, which is what makes one reply one bubble.
-                  deliveryUnit: NATIVE_BUBBLE_DELIVERY_UNIT,
-                  // The in-game surface delivers with pacing on; the Chat transcript's
-                  // observer is configured elsewhere and takes the off default.
-                  pacing: GAME_DELIVERY_PACING,
-                  // The turn's own identity seeds the reaction sound and its language
-                  // picks the vocabulary. Both come from the authenticated batch facts,
-                  // never from generated content.
-                  ...(sourceEventId === undefined
-                    ? {}
-                    : {
-                        turn: Object.freeze({
-                          id: sourceEventId,
-                          ...(turnLocale === undefined ? {} : { locale: turnLocale }),
-                        }),
-                      }),
-                },
-              );
-              nativeContentObserver.open();
-              // Previews unlock the delta lane for the voice job, which reads the raw stream:
-              // the bubble's own text is read from the message at `deliverTurn`, not from
-              // this lane, so nothing here can be split into a second bubble.
-              nativeContentObserver.openPreviews();
-            }
-          }
+          openTurnPresentation();
           if (sourceEventId !== undefined && batchId !== undefined)
             this.#emitLiveEvidence((sink) => sink.piTurnAccepted({ batchId, sourceEventId, disposition }));
           // PROVIDER WAITING. Pi has consumed this exact batch, so the request is out and nothing has come back yet.
@@ -611,18 +638,7 @@ export class CompanionLoop {
           recordOutcome("refused");
           return;
         }
-        if (event.type === "agent_settled" && accepted && !settled) {
-          settled = true;
-          // Pi 1.1.0 tells the observer whether the settled run was aborted. Without it, an aborted run
-          // that never produced a final message left no recorded outcome, and the tail of this method
-          // returned `completed` for a run the player had cancelled. The content observer's own
-          // classification stays authoritative when it exists; this only fills the case where nothing
-          // classified the run.
-          if (event.aborted) recordOutcome("aborted");
-          if (sourceEventId !== undefined && batchId !== undefined)
-            this.#emitLiveEvidence((sink) => sink.piTurnSettled({ batchId, sourceEventId, disposition }));
-          resolveCompleted();
-        }
+        if (event.type === "agent_settled" && accepted && !settled) settleTurn(event.aborted);
       });
       // Attach an observed branch immediately: a synchronous/rejected Pi
       // delivery before `message_start` must reject the pump (so it preserves
