@@ -1,8 +1,8 @@
 /**
- * 复杂度棘轮的判定，用两个植入用例试出来。
+ * 复杂度棘轮的判定，用植入用例试出来。
  *
- * 棘轮只有在"文件本来就大"和"你让它变大"之间真的分得清时，才值得替换掉一个永远红的绝对上限门禁。
- * 纯判定用例覆盖分类本身，fixture 用例跑真实脚本确认退出码。
+ * 这个门禁只有在两件事上都试红过才值得存在：一是"文件本来就大"和"你让它变大"分得清，二是它的样本来自扫描 -
+ * 一个基准清单从没听说过的文件也必须被量到。纯判定用例覆盖分类本身，fixture 用例跑真实脚本确认失败码与退出码。
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -12,111 +12,93 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { cleanOutputLines } from "../lib/subprocess-output.mjs";
-import { CEILINGS, limits, measure, ratchet } from "./check-file-complexity-gate.mjs";
+import { CEILINGS_BY_EXTENSION, measure, verdict } from "./check-file-complexity-gate.mjs";
 
 const SCRIPTS_ROOT = dirname(fileURLToPath(import.meta.url));
 const GATE = join(SCRIPTS_ROOT, "check-file-complexity-gate.mjs");
-const [MOD_ENTRY, FIXTURES, STORE, PROTOCOL] = [...CEILINGS.keys()];
+const MJS_CEILING = CEILINGS_BY_EXTENSION.get(".mjs");
+const TS_CEILING = CEILINGS_BY_EXTENSION.get(".ts");
+const BASELINE = ["tools", "scripts", "file-complexity-baseline.json"];
 
-// 四个文件在 HEAD 都已超上限；这正是旧门禁永远红、没人读的原因。
-const OVER_CEILING = { [MOD_ENTRY]: 2887, [FIXTURES]: 5338, [STORE]: 5042, [PROTOCOL]: 5564 };
-const UNDER_CEILING = { "dialogue-web/src/components/ComposedReferenceGameApp.tsx": 1247 };
 const sizesOf = (entries) => new Map(Object.entries(entries));
 
-test("ratchet.1: 植入用例 B - 四个文件仍超上限，但都没变大，门禁通过", () => {
-  const sizes = sizesOf({ ...OVER_CEILING, ...UNDER_CEILING });
-  const recorded = Object.fromEntries(sizes);
-  const result = ratchet({ recorded, sizes });
-  assert.deepEqual(result.grown, []);
-  assert.deepEqual(result.missing, []);
-  for (const [file, ceiling] of CEILINGS)
-    if (OVER_CEILING[file] !== undefined) assert.ok(sizes.get(file) > ceiling, `${file} 应超上限`);
+test("verdict.1: 基准从没听说过的文件超过本扩展名上限，失败码点名路径、行数和上限", () => {
+  const result = verdict({ recorded: {}, sizes: sizesOf({ "src/giant.mjs": 3000 }) });
+  assert.deepEqual(result.overCeiling, [{ file: "src/giant.mjs", lines: 3000, ceiling: MJS_CEILING }]);
+  assert.deepEqual(result.grew, []);
+  assert.deepEqual(result.stale, []);
 });
 
-test("ratchet.2: 植入用例 A - 只给其中一个文件加一行，失败的就是它", () => {
-  const sizes = sizesOf({ ...OVER_CEILING, ...UNDER_CEILING });
-  const recorded = Object.fromEntries(sizes);
-  sizes.set(MOD_ENTRY, OVER_CEILING[MOD_ENTRY] + 1);
-  const result = ratchet({ recorded, sizes });
+test("verdict.2: 界在扩展名上 - 正好等于上限不算超，多一行才算，且同一行数在 .ts 里不算超", () => {
+  const sizes = sizesOf({ "src/exactly.mjs": MJS_CEILING, "src/long.ts": MJS_CEILING });
+  assert.deepEqual(verdict({ recorded: {}, sizes }).overCeiling, []);
+  assert.ok(MJS_CEILING < TS_CEILING, "两个扩展名的上限必须不同，否则按扩展名分上限没有意义");
+  sizes.set("src/exactly.mjs", MJS_CEILING + 1);
   assert.deepEqual(
-    result.grown.map((entry) => entry.file),
-    [MOD_ENTRY],
-  );
-  assert.equal(result.grown[0].lines, 2888);
-  assert.equal(result.grown[0].limit, 2887);
-});
-
-test("ratchet.3: 记录基准才让绝对上限之外的判定生效 - 空基准就是四个文件全红", () => {
-  const sizes = sizesOf({ ...OVER_CEILING, ...UNDER_CEILING });
-  const result = ratchet({ recorded: {}, sizes });
-  assert.deepEqual(
-    result.grown.map((entry) => entry.file),
-    [MOD_ENTRY, FIXTURES, STORE, PROTOCOL],
-    "没有基准时回落为绝对上限",
+    verdict({ recorded: {}, sizes }).overCeiling.map((entry) => entry.file),
+    ["src/exactly.mjs"],
   );
 });
 
-test("ratchet.4: 未破上限的文件对上限于上限为止，和旧门禁一致", () => {
-  const file = "dialogue-web/src/components/ComposedReferenceGameApp.tsx";
-  const sizes = sizesOf({ ...OVER_CEILING, [file]: 1300 });
-  assert.deepEqual(ratchet({ recorded: { ...OVER_CEILING, [file]: 1247 }, sizes }).grown, []);
-  sizes.set(file, 1451);
+test("verdict.3: 已登记的文件本来就大不算失败 - 只有变大才失败", () => {
+  const sizes = sizesOf({ "src/giant.mjs": 3000 });
+  assert.deepEqual(verdict({ recorded: { "src/giant.mjs": 3000 }, sizes }).grew, []);
+  assert.deepEqual(verdict({ recorded: { "src/giant.mjs": 3000 }, sizes }).overCeiling, []);
+});
+
+test("verdict.4: 已登记的文件加一行，失败的就是它，并报出记录值", () => {
+  const result = verdict({ recorded: { "src/giant.mjs": 3000 }, sizes: sizesOf({ "src/giant.mjs": 3001 }) });
+  assert.deepEqual(result.grew, [{ file: "src/giant.mjs", lines: 3001, recorded: 3000, ceiling: MJS_CEILING }]);
+  assert.deepEqual(result.overCeiling, [], "已登记的文件报 grew，不重复报 over_ceiling");
+});
+
+test("verdict.5: 已登记的文件回到上限之内是 stale - 基准只许收紧", () => {
+  const result = verdict({ recorded: { "src/giant.mjs": 3000 }, sizes: sizesOf({ "src/giant.mjs": MJS_CEILING }) });
   assert.deepEqual(
-    ratchet({ recorded: { ...OVER_CEILING, [file]: 1247 }, sizes }).grown.map((entry) => entry.file),
-    [file],
+    result.stale.map((entry) => entry.file),
+    ["src/giant.mjs"],
   );
 });
 
-test("ratchet.5: 已登记却读不到的文件是失败，不是通过", () => {
-  const sizes = sizesOf({ ...OVER_CEILING, ...UNDER_CEILING });
-  sizes.set(PROTOCOL, undefined);
-  const result = ratchet({ recorded: Object.fromEntries(Object.entries(OVER_CEILING)), sizes });
-  assert.deepEqual(result.missing, [PROTOCOL]);
-});
-
-test("limits.1: 判定上限是绝对上限与已记录行数中较大的那个", () => {
-  const computed = limits({ recorded: { [MOD_ENTRY]: 2887, [FIXTURES]: 10 } });
-  assert.equal(computed.get(MOD_ENTRY), 2887);
-  assert.equal(computed.get(FIXTURES), 4500, "记录值低于绝对上限时以上限为准");
+test("verdict.6: 已登记的文件消失也是 stale，不是通过", () => {
+  const result = verdict({ recorded: { "src/gone.mjs": 3000 }, sizes: sizesOf({ "src/other.ts": 10 }) });
+  assert.deepEqual(
+    result.stale.map((entry) => entry.file),
+    ["src/gone.mjs"],
+  );
 });
 
 const writeLines = (path, count) => writeFileSync(path, "// line\n".repeat(count - 1));
 
-const fixture = () => {
+const commit = (root) => {
+  const identity = ["-c", "user.name=complexity-ratchet", "-c", "user.email=complexity-ratchet@example.invalid"];
+  execFileSync("git", [...identity, "add", "-A"], { cwd: root, windowsHide: true, stdio: "ignore" });
+  execFileSync("git", [...identity, "commit", "-m", "fixture"], {
+    cwd: root,
+    windowsHide: true,
+    stdio: "ignore",
+  });
+};
+
+/** 一个 git 工作树：样本由 git 自己回答，所以 fixture 必须是一个仓库。 */
+const fixture = ({ files = {}, baseline = {} } = {}) => {
   const root = mkdtempSync(join(tmpdir(), "gb-complexity-ratchet-"));
-  for (const [file, count] of Object.entries({ ...OVER_CEILING, ...UNDER_CEILING })) {
+  for (const [file, path] of Object.entries({ "src/keep.ts": 10, ...files })) {
     mkdirSync(dirname(join(root, file)), { recursive: true });
-    writeLines(join(root, file), count);
+    writeLines(join(root, file), path);
   }
-  mkdirSync(join(root, "tools", "scripts"), { recursive: true });
+  mkdirSync(dirname(join(root, ...BASELINE)), { recursive: true });
   writeFileSync(
-    join(root, "tools", "scripts", "file-complexity-baseline.json"),
-    `${JSON.stringify({ note: "fixture", revision: "0000000", sizes: { ...OVER_CEILING, ...UNDER_CEILING } }, null, 2)}\n`,
+    join(root, ...BASELINE),
+    `${JSON.stringify({ note: "fixture", revision: "0000000", sizes: baseline }, null, 2)}\n`,
   );
   execFileSync("git", ["init", "--initial-branch=main"], { cwd: root, windowsHide: true, stdio: "ignore" });
-  execFileSync(
-    "git",
-    ["-c", "user.name=complexity-ratchet", "-c", "user.email=complexity-ratchet@example.invalid", "add", "-A"],
-    { cwd: root, windowsHide: true, stdio: "ignore" },
-  );
-  execFileSync(
-    "git",
-    [
-      "-c",
-      "user.name=complexity-ratchet",
-      "-c",
-      "user.email=complexity-ratchet@example.invalid",
-      "commit",
-      "-m",
-      "fixture",
-    ],
-    { cwd: root, windowsHide: true, stdio: "ignore" },
-  );
+  commit(root);
   return root;
 };
 
-const withFixture = (run) => {
-  const root = fixture();
+const withFixture = (run, options) => {
+  const root = fixture(options);
   try {
     return run(root);
   } finally {
@@ -127,45 +109,81 @@ const withFixture = (run) => {
 const runGate = (root, ...args) =>
   spawnSync(process.execPath, [GATE, "--root", root, ...args], { encoding: "utf8", windowsHide: true });
 
-test("planted.B: 四个超上限文件原封不动，fixture 门禁通过并公布债务", () => {
+test("planted.A: 一个基准从没听说过的 3000 行文件 - 未提交也要被量到，并被点名", () => {
   withFixture((root) => {
+    writeLines(join(root, "src", "giant.mjs"), 3000);
     const result = runGate(root);
-    assert.equal(result.status, 0, result.stdout + result.stderr);
-    assert.match(result.stdout, /复杂度棘轮通过/);
-    assert.match(result.stdout, /ModEntry\.cs 2887\/2800/);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.ok(
+      result.stdout.includes(`files examined 2 · over ceiling 1 · baselined 0 · largest src/giant.mjs @ 3000`),
+      result.stdout,
+    );
+    assert.ok(result.stderr.includes(`file_over_ceiling:src/giant.mjs:3000:${MJS_CEILING}`), result.stderr);
     process.stdout.write(
-      `planted.B: 2887/2800 unchanged -> ${result.status === 0 ? "exit 0" : "exit " + result.status}\n`,
+      `planted.A: 3000/${MJS_CEILING} unknown to the baseline -> ${cleanOutputLines(result.stderr).find((line) => line.startsWith("file_over_ceiling"))}\n`,
     );
   });
 });
 
-test("planted.A: 同一个 fixture 只加一行，门禁失败并指出是它变大了", () => {
+test("planted.B: --update 记下它之后通过，再长一行就红在 baselined_file_grew", () => {
   withFixture((root) => {
-    writeFileSync(join(root, MOD_ENTRY), `${readFileSync(join(root, MOD_ENTRY), "utf8")}// grows\n`);
-    const result = runGate(root);
-    assert.equal(result.status, 1);
-    assert.match(result.stdout, /✖ integrations\/stardew\/ModEntry\.cs: 2888 行/);
-    assert.match(result.stderr, /2887 -> 2888 行/);
-    process.stdout.write(
-      `planted.A: 2887 -> 2888 -> ${cleanOutputLines(result.stderr).find((line) => line.includes("->"))}\n`,
-    );
-  });
-});
-
-test("planted.C: --update 重新记录后再次通过", () => {
-  withFixture((root) => {
-    writeFileSync(join(root, MOD_ENTRY), `${readFileSync(join(root, MOD_ENTRY), "utf8")}// grows\n`);
+    writeLines(join(root, "src", "giant.mjs"), 3000);
     assert.equal(runGate(root).status, 1);
     const updated = runGate(root, "--update");
     assert.equal(updated.status, 0, updated.stdout + updated.stderr);
-    assert.match(updated.stdout, /complexity_ratchet_recorded files=5/);
+    assert.match(updated.stdout, /complexity_ratchet_recorded files=1/u);
     assert.equal(runGate(root).status, 0);
+    writeFileSync(join(root, "src", "giant.mjs"), `${readFileSync(join(root, "src", "giant.mjs"), "utf8")}// grows\n`);
+    const grown = runGate(root);
+    assert.equal(grown.status, 1);
+    assert.match(grown.stderr, /baselined_file_grew:src\/giant\.mjs:3001:3000/u);
+    process.stdout.write(
+      `planted.B: recorded 3000 -> 3001 -> ${cleanOutputLines(grown.stderr).find((line) => line.startsWith("baselined_file_grew"))}\n`,
+    );
   });
 });
 
-test("planted.D: 门禁的默认 root 是本仓库，measure 读到真实的五个核心文件", () => {
+test("planted.C: 已登记的文件瘦身回到上限之内，基准条目必须删掉（stale，exit 1）", () => {
+  withFixture(
+    (root) => {
+      const result = runGate(root);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /stale_file_ceiling_baseline:src\/giant\.mjs/u);
+      assert.equal(runGate(root, "--update").status, 0);
+      assert.equal(runGate(root).status, 0, "重新记录后清空该条目");
+    },
+    { baseline: { "src/giant.mjs": 3000 } },
+  );
+});
+
+test("planted.D: 一个文件都没量到是 BLOCKED（exit 2），不是通过", () => {
+  withFixture((root) => {
+    rmSync(join(root, "src"), { recursive: true, force: true });
+    writeFileSync(join(root, "notes.md"), "# 没有可量的源码\n");
+    const result = runGate(root);
+    assert.equal(result.status, 2, result.stdout + result.stderr);
+    assert.match(result.stderr, /status=blocked file_complexity_population_empty/u);
+    process.stdout.write(`planted.D: 0 examined -> exit 2\n`);
+  });
+});
+
+test("planted.E: 每个扩展名的贡献与上限都打印出来，未设上限的扩展名也点名", () => {
+  withFixture((root) => {
+    writeFileSync(join(root, "notes.json"), "{}\n");
+    const result = runGate(root);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.ok(result.stdout.includes(`.ts 1 个文件 · 上限 ${TS_CEILING} 行`), result.stdout);
+    // 两处：刚写的 notes.json 和 fixture 自己的基准文件。
+    assert.match(result.stdout, /未设上限（不参与判定）：\.json 2/u);
+  });
+});
+
+test("planted.F: 门禁的默认 root 是本仓库，扫描读到真实源码而不是一张清单", () => {
   const repositoryRoot = resolve(SCRIPTS_ROOT, "..", "..");
-  const sizes = measure(repositoryRoot);
-  assert.deepEqual([...sizes.keys()], [...CEILINGS.keys()]);
-  for (const [, count] of sizes) assert.ok(count > 0);
+  const { sizes, extensions } = measure(repositoryRoot);
+  assert.ok(sizes.size > 1000, `扫描应读到整个仓库的源码，实际 ${sizes.size} 个文件`);
+  for (const [, count] of extensions) assert.ok(count > 0);
+  for (const file of sizes.keys())
+    assert.ok(CEILINGS_BY_EXTENSION.has(file.slice(file.lastIndexOf("."))), `${file} 的扩展名没有上限`);
+  assert.ok(extensions.size >= 5, `上限表里至少五种扩展名应在树里出现，实际 ${[...extensions.keys()].join(",")}`);
 });

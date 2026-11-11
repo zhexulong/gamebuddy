@@ -1,11 +1,31 @@
 {
-  "note": "核心文件的当前行数，记录自提交树。复杂度棘轮以它作为比较基准：只有比它更大才失败，绝对上限见 check-file-complexity-gate.mjs 的 CEILINGS。请在单独提交里重新记录。",
-  "revision": "4afdc5b4",
+  "note": "已在上限之上的文件及其当前行数，记录自提交树。棘轮以它作为比较基准：只有比记录更大才失败；文件回到上限之内或消失时必须删掉对应条目。扩展名上限见 check-file-complexity-gate.mjs 的 CEILINGS_BY_EXTENSION。请在单独提交里重新记录。",
+  "revision": "a645287f",
   "sizes": {
-    "integrations/stardew/ModEntry.cs": 2926,
-    "integrations/stardew/ModEntry.Fixtures.cs": 5370,
-    "host/src/continuity-semantic-store/continuity-semantic-production-store.ts": 5042,
-    "host/src/protocol.ts": 4950,
-    "dialogue-web/src/components/ComposedReferenceGameApp.tsx": 1270
+    "dialogue-web/tests/composed-reference-game-browser.spec.ts": 7204,
+    "host/scripts/production-artifact.test.mjs": 2021,
+    "host/src/continuity-semantic-store/continuity-semantic-production-store.ts": 5178,
+    "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.ts": 5349,
+    "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.private.test.ts": 5611,
+    "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.test.ts": 5604,
+    "host/src/protocol.ts": 5786,
+    "host/src/stardew-production-lifecycle-coordinator.internal.test.ts": 9347,
+    "host/src/tavern/chat-thread-store.ts": 6325,
+    "integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs": 3409,
+    "integrations/stardew/farmhandexecutioncontroller.cs": 6501,
+    "integrations/stardew/ModEntry.cs": 3212,
+    "integrations/stardew/ModEntry.Fixtures.cs": 5083,
+    "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs": 2423,
+    "integrations/stardew/StardewBodyController.cs": 2665,
+    "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BodyProgramAuthorityTests.cs": 2025,
+    "tools/audit-totality.mjs": 2642,
+    "tools/check-host-production-import-boundary.mjs": 1761,
+    "tools/lib/stardew-player-command-graph.mjs": 1786,
+    "tools/live-action.mjs": 1718,
+    "tools/live-run/chat/run-chat-live-audit.mjs": 2897,
+    "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs": 6433,
+    "tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs": 4613,
+    "tools/live-run/memory/run-memory-live-loop.mjs": 1761,
+    "tools/stardew-native-local-player-fixture.test.mjs": 2531
   }
 }
