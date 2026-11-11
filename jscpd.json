@@ -1,11 +1,14 @@
 {
   "path": [
     "host/src",
+    "host/scripts",
     "dialogue-web/src",
     "packages",
-    "tools"
+    "tools",
+    "integrations/stardew",
+    "desktop"
   ],
-  "minTokens": 50,
+  "minTokens": 40,
   "minLines": 5,
   "ignore": [
     "**/vendor/**",
@@ -16,13 +19,17 @@
     "**/*.test.*",
     "**/node_modules/**",
     "**/.commit-validation/**",
-    "**/tools/lib/**"
+    "**/tools/lib/**",
+    "**/bin/**",
+    "**/obj/**",
+    "**/tests/**",
+    "**/GameBuddy.Desktop.Tests/**"
   ],
   "blame": false,
-  "exitCode": 0,
   "format": [
     "javascript",
-    "typescript"
+    "typescript",
+    "csharp"
   ],
   "reporters": [
     "console"
