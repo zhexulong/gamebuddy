@@ -114,6 +114,17 @@ public sealed class LocalPipeBridgeOutboundRefusalObservabilityTests
         long generation = WaitForGeneration(bridge);
 
         string fullFrame = FullFrame("execution_receipt");
+        // The cap can only be measured against a writer that is already parked, and parking it is this test's own
+        // precondition: the writer takes a frame, decrements the queue count and increments Drained BEFORE it writes
+        // (LocalPipeBridge.WriteLoopAsync), so a frame still waiting to be taken frees a slot inside the measurement
+        // below and the refusal then reads as an admission. One frame is enough to park it - the pipe's output buffer
+        // accepts exactly MaximumMessageBytes and a full frame is that plus its four-byte length, so the writer's
+        // first frame is the only one it can ever take off this queue.
+        bridge.TryEnqueueOutbound(generation, fullFrame, out _).Should().BeTrue();
+        SpinWait.SpinUntil(() => bridge.SnapshotOutboundFrameCounters().Drained > 0, TimeSpan.FromSeconds(5));
+        bridge.SnapshotOutboundFrameCounters().Drained.Should().BeGreaterThan(0,
+            "the writer must have taken a frame and blocked on the peer that never reads before the cap is measured");
+
         int attempts = 0;
         while (attempts < LocalPipeBridge.MaximumQueuedMessages + 8)
         {
@@ -138,6 +149,8 @@ public sealed class LocalPipeBridgeOutboundRefusalObservabilityTests
         stillSaturated.Peak.Should().Be(LocalPipeBridge.MaximumQueuedMessages, "a full queue cannot report a deeper peak");
         stillSaturated.Drained.Should().BeLessThan(stillSaturated.Admitted,
             "a blocked writer cannot have drained the queue it is blocked on");
+        stillSaturated.Drained.Should().Be(1L,
+            "the writer holds the single frame it is parked on, so no dequeue freed a slot while the queue filled");
     }
 
     /// <summary>
