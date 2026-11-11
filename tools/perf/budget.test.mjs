@@ -1,3 +1,5 @@
+// red-proof: inject  raising the budget tolerance from 50 percent to 500 percent -> `✖ the CLI prints the measured
+//   cost and the budget it broke` (tools/perf/budget.test.mjs)
 /**
  * The budget gate's own checks: the comparison it makes, and the verdict it prints.
  *

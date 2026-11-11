@@ -1,3 +1,5 @@
+// red-proof: inject  resolving the fixtures root from LOCALAPPDATA instead of the lane's profile override -> `✖ a lane
+//   moves its profile root and the fixtures root follows it` (tools/stardew-fixture-roots.test.mjs)
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";

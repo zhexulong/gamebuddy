@@ -1,3 +1,5 @@
+// red-proof: inject  a classifier whose rule lookup matches every reason code -> `✖ readiness authentication failure is
+//   fail-fast diagnostic` (tools/stardew-gate-failure-taxonomy.test.mjs)
 import assert from "node:assert/strict";
 import test from "node:test";
 import { classifyStardewGateFailure } from "./lib/stardew-gate-failure-taxonomy.mjs";

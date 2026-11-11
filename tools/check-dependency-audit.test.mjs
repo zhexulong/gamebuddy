@@ -1,3 +1,5 @@
+// red-proof: inject  narrowing the unassessed-advisory guard so only a null assessment counts -> `✖ audit.1: a runtime
+//   advisory with no assessment fails, and the violation names it` (tools/check-dependency-audit.test.mjs)
 /**
  * The audit gate separates "we are not affected" from "nobody looked".
  *

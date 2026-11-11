@@ -1,3 +1,5 @@
+// red-proof: inject  dropping the aliased-local arm from findViolations -> `✖ flags a local copy of another module's
+//   typed error message` and the planted-aliased CLI case (tools/check-error-identity-classification.test.mjs)
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

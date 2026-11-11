@@ -1,3 +1,5 @@
+// red-proof: inject  renaming one rung's scenario in the runner's translation table -> `✖ a retired rung number still
+//   resolves, but only through the one translation table` (tools/live-run/game/run-scenarios.test.mjs)
 // The three-scenario contract: what each one promises, and the things the retirement had to stop doing.
 //
 // The rung numbers 0-5 are gone because they described the order the harness learned things in rather than what

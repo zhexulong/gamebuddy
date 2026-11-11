@@ -1,3 +1,5 @@
+// red-proof: inject  planting a debug-marked print in a production host source -> `✖ the repository's production host
+//   sources carry no debug marker`, naming `fact-brief.ts:774 debug_marker` (tools/check-host-diagnostic-output.test.mjs)
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";

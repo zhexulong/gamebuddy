@@ -1,3 +1,5 @@
+// red-proof: inject  a syntax error in the owned smoke entry -> `✖ the owned Stardew Agent smoke entry parses`
+//   (tools/check-smoke-syntax.test.mjs)
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";

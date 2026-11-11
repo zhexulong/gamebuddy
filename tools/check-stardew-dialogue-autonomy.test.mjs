@@ -1,3 +1,5 @@
+// red-proof: inject  emptying the impure-prompt list in the autonomy judge -> `✖ a goal that names the mechanism is
+//   BLOCKED, however complete the run looks` (tools/check-stardew-dialogue-autonomy.test.mjs)
 import assert from "node:assert/strict";
 import test from "node:test";
 

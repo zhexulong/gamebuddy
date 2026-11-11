@@ -1,3 +1,5 @@
+// red-proof: inject  dropping the missing-live-case refusal from the soil ITM validator -> `✖ rejects a missing class
+//   live case` (tools/stardew-soil-itm-conformance.test.mjs)
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";

@@ -5,6 +5,9 @@
  * Deterministic SillyTavern Character Card V2 (CCv2) and WorldBook specification gate.
  * Validates character cards and world books against official SillyTavern schemas,
  * dialogue syntax rules, and GameBuddy runtime constraints.
+ *
+ * red-proof: fixture  a card whose spec is chara_card_v3 -> `[CARD ERROR] default-companion/card.json: spec must be
+ *   'chara_card_v2'`, exit 1 (tools/validate-tavern-card.mjs)
  */
 
 import fs from "node:fs";

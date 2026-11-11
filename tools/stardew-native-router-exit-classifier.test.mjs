@@ -1,3 +1,5 @@
+// red-proof: inject  letting the missing-invocation guard pass while one invocation is unclassified -> `✖ fails closed
+//   for silent invocation omission and public terms` (tools/stardew-native-router-exit-classifier.test.mjs)
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

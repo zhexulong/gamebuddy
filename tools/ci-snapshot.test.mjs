@@ -1,3 +1,5 @@
+// red-proof: inject  removing the untracked-reference guard from the required-input reader -> `✖ rejects injected or
+//   invalid required-input references` (tools/ci-snapshot.test.mjs)
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { chmod, cp, link, lstat, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";

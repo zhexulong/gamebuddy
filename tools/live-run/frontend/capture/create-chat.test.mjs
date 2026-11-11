@@ -1,3 +1,5 @@
+// red-proof: inject  answering landed:true after the click instead of after the surface appears -> `✖ a picker with no
+//   commit control pressed creates nothing, and the answer says so` (tools/live-run/frontend/capture/create-chat.test.mjs)
 // The create gesture the drivers share, and the premise it stands on.
 //
 // The failure this exists for, measured on `shots-final55`: driver E pressed the opening card's prose

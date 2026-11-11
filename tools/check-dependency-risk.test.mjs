@@ -1,3 +1,5 @@
+// red-proof: inject  dropping mitigated from the disposition status list -> `✖ gate.acceptance: the disposition list
+//   is exactly the advisory schema's status enum` (tools/check-dependency-risk.test.mjs)
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";

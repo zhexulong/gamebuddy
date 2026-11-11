@@ -1,3 +1,5 @@
+// red-proof: inject  inverting the m[0] byte comparison against the no-field turn -> `✖ the good capture holds every
+//   reading` (tools/live-run/chat/run-post-history-live.test.mjs)
 // The runner's pure helper's falsifiers: each case takes a capture that is right in every way but
 // one, so the reading that exists to catch exactly that can be shown to go red.
 import assert from "node:assert/strict";
