@@ -89,6 +89,95 @@ export const TURN_PRODUCTION = Object.freeze({
 export type TurnProduction = (typeof TURN_PRODUCTION)[keyof typeof TURN_PRODUCTION];
 
 /**
+ * The closed list of things that make a batch worth a turn, and the whole population of the opening decision.
+ *
+ * <p>
+ * THE INVARIANT: a turn opens only when the batch carries at least one thing she did not have and that can change what
+ * she does next. Everything outside this list does not open one - in particular a snapshot that re-states the revision
+ * she already has, a programme still in flight with no state change, and an event that only re-states a fact already
+ * delivered.
+ * </p>
+ * <p>
+ * MEASURED 2026-11-11 (`round46b`, `2026-11-11T07-25-22-940Z_01a1c97f`): two consecutive prompt turns,
+ * `07:28:19.998Z` and `07:30:43.718Z`, carried byte-identical content - the same `revision 14` reading marked
+ * `本轮无新观察` and the same `<execution-result>` re-stating one `for_each` settlement. The second turn existed because
+ * the settlement was published again under a fresh event id, and the pump had no record of what it had already handed
+ * her. Nothing in it could have changed what she did next, and this is the class the list exists to close.
+ * </p>
+ */
+export const TURN_OPENING = Object.freeze({
+  /** The person spoke. Always opens a turn, whatever else is pending. */
+  playerInput: "player_input",
+  /** A fact whose content she has not received before: a settlement, a refusal, a notice, a clock mark. */
+  worldFact: "world_fact",
+  /** A snapshot whose revision has moved past the one she was last shown. */
+  observation: "observation",
+  /** A Host-owned schedule came due: the stall watch, a stale reading, a narration run (`HOST_MINTED_WAKE_KINDS`). */
+  due: "due",
+});
+
+export const TURN_OPENINGS = Object.freeze(Object.values(TURN_OPENING));
+
+export type TurnOpening = (typeof TURN_OPENINGS)[number];
+
+/**
+ * Why a flush that was EXAMINED opened no turn. Closed, so "fewer turns" and "lost turns" are distinguishable.
+ *
+ * The two re-statement reasons are derived from the member they answer: a batch whose only pending content is the
+ * `observation` member at a revision already delivered, or `world_fact` members she already received. A fact whose
+ * content is a MOMENT rather than a statement is never a re-statement (`DAY_BOUNDARY_SEMANTIC_KINDS`), so `due` needs no
+ * reason of its own: a Host-minted wake fact carries its re-arm counter in its content, and a clock or day fact is news
+ * every time.
+ *
+ * `nothing_pending` is not a lost turn: there was nothing to deliver, and counting it keeps the arithmetic closed
+ * (`examined === opened + every suppressed reason`).
+ */
+export const TURN_SUPPRESSION = Object.freeze({
+  observationRestated: `${TURN_OPENING.observation}_restated`,
+  worldFactRestated: `${TURN_OPENING.worldFact}_restated`,
+  nothingPending: "nothing_pending",
+});
+
+export const TURN_SUPPRESSIONS = Object.freeze(Object.values(TURN_SUPPRESSION));
+
+export type TurnSuppression = (typeof TURN_SUPPRESSIONS)[number];
+
+/** How the most recent examined flush was decided. */
+export type TurnDecision =
+  | Readonly<{ kind: "opened"; index: number; reason: TurnOpening }>
+  | Readonly<{ kind: "suppressed"; reason: TurnSuppression }>;
+
+/**
+ * What this pump has done with the flushes it examined: one counter per member, one per suppression reason.
+ *
+ * `examined` is DERIVED (`opened + every suppressed reason`) rather than counted, so a flush cannot be decided and then
+ * disappear from the account: a third outcome would break the identity instead of going unreported.
+ */
+export type TurnAccount = Readonly<{
+  opened: number;
+  byReason: Readonly<Record<TurnOpening, number>>;
+  suppressed: Readonly<Record<TurnSuppression, number>>;
+  examined: number;
+  lastDecision: TurnDecision | undefined;
+}>;
+
+/**
+ * The account as the one line a run's log carries, in the shape the invariant is read back in.
+ *
+ * `turns opened N · suppressed M {reason: count} · flushes examined F`. A suppression reason that has never fired is
+ * still printed as `0`: it is a declared member of the closed list, and a reader must be able to see that it exists and
+ * never happened rather than guess from its absence.
+ */
+export function turnAccountLine(account: TurnAccount): string {
+  const suppressed = TURN_SUPPRESSIONS.map((reason) => `${reason}: ${String(account.suppressed[reason])}`).join(", ");
+  return `turns opened ${String(account.opened)} · suppressed ${String(suppressedTotal(account))} {${suppressed}} · flushes examined ${String(account.examined)}`;
+}
+
+function suppressedTotal(account: TurnAccount): number {
+  return TURN_SUPPRESSIONS.reduce((total, reason) => total + account.suppressed[reason], 0);
+}
+
+/**
  * One delivered batch: the model-facing TEXT, and the frame its readers hang on it.
  *
  * <p>
@@ -136,6 +225,31 @@ export const MAX_PENDING_RECEIPTS = 512;
 export const MAX_PENDING_SEMANTIC_EVENTS = 512;
 export const MAX_PENDING_LIFECYCLE = 128;
 export const MAX_PENDING_WORLD_FACTS = 32;
+
+/**
+ * How many delivered fact contents the pump can still recognise as "she already has this".
+ *
+ * Sized from the measured fact traffic rather than from taste: `round46b` delivered 58 fact batches in 36 minutes, so a
+ * 512-entry memory spans roughly five hours of turns - longer than any Game session this product has recorded - while
+ * costing at most a few hundred kilobytes of strings. The drain is FIFO (`#rememberDelivered`), and forgetting one is
+ * the safe direction: it costs a turn rather than a fact.
+ */
+export const MAX_DELIVERED_FACT_IDENTITIES = 512;
+
+/**
+ * The semantic kinds whose CONTENT is a moment rather than a thing: the clock, the day, a pass-out.
+ *
+ * They are the one class a re-statement check must not touch, and the reason is that two of them can be byte-identical
+ * while saying different things: `time_milestone` carries the time and not the day, so a 13:00 mark on day 1 and the
+ * same mark on day 7 agree until the block beside them states which day it is. Suppressing the second would lose a real
+ * turn - a day starting is the fact a companion most needs - so these are news every time.
+ *
+ * ONE SPELLING: `describeWorldChange` (is this the world contradicting the reading?) and the turn-opening rule (is this
+ * a re-statement?) both read this set.
+ */
+export const DAY_BOUNDARY_SEMANTIC_KINDS: ReadonlySet<string> = Object.freeze(
+  new Set(["time_milestone", "day_started", "night_ended_pass_out"]),
+);
 
 /**
  * The semantic kind of the fact the Host mints when an execution stops making progress.
@@ -507,7 +621,7 @@ export class CompanionEventPump {
   readonly #worldFacts = new Map<string, WorldFact>();
   readonly #inputs: PlayerInput[] = [];
   /**
-   * What each held PROGRESS slot last TOLD the model, by slot key (see `progressStateIdentity`).
+   * What each held PROGRESS slot last TOLD the model, by slot key (see `factContentIdentity`).
    *
    * The windows below keep one fact per slot, but the surviving fact was re-delivered into every later
    * batch, so a body that never left its tile was described again and again. Measured 2026-10-27 on a
@@ -516,9 +630,40 @@ export class CompanionEventPump {
    * `execution_settled_succeeded` 219, `body_idle` 211, `execution_started` 184.
    *
    * A fact whose slot already told the model this exact state carries no information, so it stays behind.
-   * It still triggers nothing either way (see `#hasPendingFactTrigger`): progress never minted a turn.
+   * It still triggers nothing either way (see `#opening`): progress never minted a turn.
    */
   readonly #deliveredProgress = new Map<string, string>();
+  /**
+   * What each fact she has been SHOWN said, by content (`factContentIdentity`), so a re-statement cannot open a turn.
+   *
+   * <p>
+   * The windows above cannot answer this: a fact the pump has delivered leaves its window, and the next publish of the
+   * same content arrives under a fresh event id - so "is this news" had no record to ask, and the pump opened a turn for
+   * every copy. Measured 2026-11-11 (`round46b`): two consecutive prompt turns carried the same settlement verbatim.
+   * </p>
+   * <p>
+   * BOUNDED, WITH A DRAIN: the oldest identity is forgotten when `MAX_DELIVERED_FACT_IDENTITIES` is reached, and a
+   * re-delivery moves its own identity to the young end. The only error the drain can make is calling something news
+   * again hours later, which costs a turn rather than losing a fact - and it is the direction a bound on a set of
+   * strings has to err in, because the opposite would silence a real fact.
+   * </p>
+   */
+  readonly #deliveredFactIdentities = new Set<string>();
+  /** Turns this pump opened, one count per `TURN_OPENINGS` member. */
+  readonly #openedByReason: Record<TurnOpening, number> = {
+    [TURN_OPENING.playerInput]: 0,
+    [TURN_OPENING.worldFact]: 0,
+    [TURN_OPENING.observation]: 0,
+    [TURN_OPENING.due]: 0,
+  };
+  #openedTurns = 0;
+  /** Examined flushes that opened no turn, one count per `TURN_SUPPRESSIONS` member. */
+  readonly #suppressedByReason: Record<TurnSuppression, number> = {
+    [TURN_SUPPRESSION.observationRestated]: 0,
+    [TURN_SUPPRESSION.worldFactRestated]: 0,
+    [TURN_SUPPRESSION.nothingPending]: 0,
+  };
+  #lastTurnDecision: TurnDecision | undefined;
   /**
    * One timing record per execution the pump has seen and not seen settle.
    *
@@ -528,7 +673,13 @@ export class CompanionEventPump {
    */
   readonly #watch = new Map<string, ExecutionWatch>();
   #evictedExecutions = 0;
-  #retryBatch: PendingBatch | undefined;
+  /**
+   * The exact batch a rejected delivery owned, WITH the reason it asked for its turn.
+   *
+   * One field rather than two, because a retry that lost its opening reason would be a batch the gate could neither open
+   * a turn for nor name a suppression for: the two facts are one decision and are stored as one.
+   */
+  #retry: Readonly<{ batch: PendingBatch; opening: TurnOpening }> | undefined;
   /**
    * How many batches this pump has handed to a turn that accepted them.
    *
@@ -712,10 +863,17 @@ export class CompanionEventPump {
     this.#watch.clear();
     this.#evictedExecutions = 0;
     this.#worldTransition = null;
-    this.#retryBatch = undefined;
+    this.#retry = undefined;
     this.#turnsWithoutWork = 0;
     this.#lastWorkTurnAtMs = Date.now();
     this.#narrationWithoutWorkPublished = 0;
+    // The turn account and the delivered-content memory are this session's own measurements: a cleared pump belongs to
+    // no run, and carrying either across it would let one session's turns answer for another's.
+    this.#deliveredFactIdentities.clear();
+    this.#openedTurns = 0;
+    for (const reason of TURN_OPENINGS) this.#openedByReason[reason] = 0;
+    for (const reason of TURN_SUPPRESSIONS) this.#suppressedByReason[reason] = 0;
+    this.#lastTurnDecision = undefined;
   }
 
   public get pendingCount(): number {
@@ -726,13 +884,30 @@ export class CompanionEventPump {
       this.#lifecycle.size +
       this.#worldFacts.size +
       this.#inputs.length +
-      (this.#retryBatch === undefined ? 0 : this.#retryBatch.inputs.length + this.#retryBatch.facts.length)
+      (this.#retry === undefined ? 0 : this.#retry.batch.inputs.length + this.#retry.batch.facts.length)
     );
   }
 
   /** True only when pending state can create a Pi turn; held state remains latest-only. */
   public get hasPendingDelivery(): boolean {
-    return this.#retryBatch !== undefined || this.#inputs.length > 0 || this.#hasPendingFactTrigger();
+    return this.#retry !== undefined || this.#opening() !== undefined;
+  }
+
+  /**
+   * What this pump has decided about the flushes it examined (see `TurnAccount`), and the one reading a run's log needs.
+   *
+   * Read by the caller that opens turns (`CompanionLoop.flush`) so the account is printed where turns are created, and by
+   * `turn_without_new_content` so "fewer turns" and "lost turns" are different answers instead of one number.
+   */
+  public get turnAccount(): TurnAccount {
+    const suppressed = TURN_SUPPRESSIONS.reduce((total, reason) => total + this.#suppressedByReason[reason], 0);
+    return Object.freeze({
+      opened: this.#openedTurns,
+      byReason: Object.freeze({ ...this.#openedByReason }),
+      suppressed: Object.freeze({ ...this.#suppressedByReason }),
+      examined: this.#openedTurns + suppressed,
+      lastDecision: this.#lastTurnDecision,
+    });
   }
 
   /**
@@ -847,7 +1022,7 @@ export class CompanionEventPump {
 
   /** Authenticated player input has been accepted but is not yet Pi-consumed. */
   public get hasPendingPlayerInput(): boolean {
-    return this.#inputs.length > 0 || (this.#retryBatch?.inputs.length ?? 0) > 0;
+    return this.#inputs.length > 0 || (this.#retry?.batch.inputs.length ?? 0) > 0;
   }
 
   /**
@@ -1062,13 +1237,31 @@ export class CompanionEventPump {
 
   public async flush(sink: CompanionTurnSink): Promise<CompanionTurnOutcome | undefined> {
     // HELD, NOT DROPPED. A companion whose body is inside a transition does not get woken to read the runtime's
-    // bookkeeping; the facts wait for the transition to end and arrive together with the fact that ended it.
-    if (this.isWorldTransition) return undefined;
-    if (this.#delivering || !this.hasPendingDelivery) return undefined;
+    // bookkeeping; the facts wait for the transition to end and arrive together with the fact that ended it. A hold is
+    // not a decision this gate owns, so it is neither examined nor named - and the previous decision is cleared so a
+    // caller cannot read a hold as the answer to this flush.
+    if (this.isWorldTransition) {
+      this.#lastTurnDecision = undefined;
+      return undefined;
+    }
+    // A delivery already in flight is the same turn, not another one.
+    if (this.#delivering) {
+      this.#lastTurnDecision = undefined;
+      return undefined;
+    }
+    const retry = this.#retry;
+    const opening = retry === undefined ? this.#opening() : retry.opening;
+    if (opening === undefined) {
+      this.#suppress(this.#suppressionReason());
+      return undefined;
+    }
     this.#delivering = true;
     const generation = this.#generation;
-    const pending = this.#retryBatch ?? this.takeBatch();
-    this.#retryBatch = undefined;
+    const pending = retry?.batch ?? this.takeBatch();
+    this.#retry = undefined;
+    this.#openedTurns += 1;
+    this.#openedByReason[opening] += 1;
+    this.#lastTurnDecision = Object.freeze({ kind: "opened", index: this.#openedTurns, reason: opening });
     try {
       const outcome = (await sink.deliver(pending)) ?? undefined;
       this.#deliveredBatches += 1;
@@ -1077,10 +1270,99 @@ export class CompanionEventPump {
     } catch (error) {
       // Do not revive a batch cleared while its asynchronous delivery was in
       // flight. Facts admitted after clear belong to the current generation.
-      if (this.#generation === generation) this.#retryBatch = pending;
+      if (this.#generation === generation) this.#retry = Object.freeze({ batch: pending, opening });
       throw error;
     } finally {
       this.#delivering = false;
+    }
+  }
+
+  /**
+   * Why this flush would open a turn, or `undefined` when everything waiting is something she already has.
+   *
+   * ONE place: `hasPendingDelivery`, `flush` and the account all ask this, so "is a turn owed" and "was one taken"
+   * cannot disagree.
+   */
+  #opening(): TurnOpening | undefined {
+    if (this.#inputs.length > 0) return TURN_OPENING.playerInput;
+    if (this.#snapshotAdvanced()) return TURN_OPENING.observation;
+    for (const fact of this.#ordinaryFacts()) {
+      if (isHeldFact(fact) || this.#isRestatement(fact)) continue;
+      return isDueFact(fact) ? TURN_OPENING.due : TURN_OPENING.worldFact;
+    }
+    return undefined;
+  }
+
+  /**
+   * Whether this fact tells her exactly what a fact already delivered told her.
+   *
+   * A clock or day fact is never one (see `DAY_BOUNDARY_SEMANTIC_KINDS`), and neither is a fact nobody has delivered.
+   */
+  #isRestatement(fact: WorldFact): boolean {
+    return isRestatementEligible(fact) && this.#deliveredFactIdentities.has(factContentIdentity(fact));
+  }
+
+  /**
+   * Whether the held snapshot is a revision she has not been shown.
+   *
+   * A reading with no DELIVERED predecessor is not one: the membership is "moved past the last one delivered", and the
+   * session's first picture is carried by the turn that attachment itself asks for (`host-service.ts` states it in the
+   * arrival fact and re-states it before every turn). Counting the first reading as an opening would turn every session's
+   * attach into a turn of its own, which is a session-start behaviour this gate has no business changing.
+   */
+  #snapshotAdvanced(): boolean {
+    const snapshot = this.#snapshot;
+    const delivered = this.#lastSnapshotDeliveredRevision;
+    return snapshot !== undefined && delivered !== undefined && snapshot.revision > delivered;
+  }
+
+  /** Every fact waiting in an ordinary window: the population the fact members of the closed list are read from. */
+  #ordinaryFacts(): readonly WorldFact[] {
+    return [
+      ...this.#receipts.values(),
+      ...this.#semanticEvents.values(),
+      ...this.#lifecycle.values(),
+      ...this.#worldFacts.values(),
+    ];
+  }
+
+  /**
+   * Which member a suppressed flush was answered by absence of.
+   *
+   * An ordinary fact that is waiting but NOT an opening one is a fact whose content she already received (`#opening`
+   * skipped it for that reason); a snapshot waiting at exactly the revision she was shown is the observation member
+   * re-stated. `nothing_pending` is the rest - including a FIRST reading, which no turn opens for because nothing in it
+   * moved past what she was delivered.
+   */
+  #suppressionReason(): TurnSuppression {
+    if (this.#ordinaryFacts().some((fact) => !isHeldFact(fact) && this.#isRestatement(fact)))
+      return TURN_SUPPRESSION.worldFactRestated;
+    if (this.#snapshot !== undefined && this.#snapshot.revision === this.#lastSnapshotDeliveredRevision)
+      return TURN_SUPPRESSION.observationRestated;
+    return TURN_SUPPRESSION.nothingPending;
+  }
+
+  #suppress(reason: TurnSuppression): void {
+    this.#suppressedByReason[reason] += 1;
+    this.#lastTurnDecision = Object.freeze({ kind: "suppressed", reason });
+  }
+
+  /**
+   * Record what a batch TAUGHT the model, so the same content arriving again is not a turn.
+   *
+   * Recorded for what the batch actually CARRIES (a fact the byte bound pushed into a later batch was not delivered),
+   * for the same reason `#deliveredProgress` is.
+   */
+  #rememberDelivered(facts: readonly WorldFact[]): void {
+    for (const fact of facts) {
+      if (!isRestatementEligible(fact)) continue;
+      const identity = factContentIdentity(fact);
+      this.#deliveredFactIdentities.delete(identity);
+      this.#deliveredFactIdentities.add(identity);
+      for (const oldest of this.#deliveredFactIdentities) {
+        if (this.#deliveredFactIdentities.size <= MAX_DELIVERED_FACT_IDENTITIES) break;
+        this.#deliveredFactIdentities.delete(oldest);
+      }
     }
   }
 
@@ -1158,6 +1440,9 @@ export class CompanionEventPump {
       return Object.freeze({ ...factWithoutProjection, payload: projection });
     });
     const triggerEventIds = Object.freeze(expiring.map(factEventId));
+    // A steer hands these to a turn that is already running, so they are delivered content like any other - and a
+    // milestone published again later must not be a reason to open a new turn for what she has already been told.
+    this.#rememberDelivered(expiring);
     return Object.freeze({
       batchId: randomUUID(),
       disposition: "steer" as const,
@@ -1196,8 +1481,8 @@ export class CompanionEventPump {
       if (fact.kind === "world_fact" && fact.semanticKind === "time_milestone") return true;
     }
     return (
-      this.#retryBatch !== undefined &&
-      this.#retryBatch.facts.some((fact) => fact.kind === "world_fact" && fact.semanticKind === "time_milestone")
+      this.#retry !== undefined &&
+      this.#retry.batch.facts.some((fact) => fact.kind === "world_fact" && fact.semanticKind === "time_milestone")
     );
   }
 
@@ -1217,7 +1502,7 @@ export class CompanionEventPump {
     // slot's CURRENT state is what the next changed fact will carry.
     const facts = [...receipts, ...semanticEvents, ...lifecycle, ...worldFacts].filter((fact) => {
       if (!isHeldProgressFact(fact)) return true;
-      return this.#deliveredProgress.get(factSlotKey(fact)) !== progressStateIdentity(fact);
+      return this.#deliveredProgress.get(factSlotKey(fact)) !== factContentIdentity(fact);
     });
     // takeBatch is called only when input/fact triggering is already known.
     // Hold is represented by retaining latest state in the pump, never by an
@@ -1317,12 +1602,14 @@ export class CompanionEventPump {
       this.#lastSnapshotDeliveredBatch = this.#deliveredBatches;
     }
 
-    // Remember what the model was just told by each held progress slot. Recorded for what the batch actually
-    // CARRIES: a fact the byte bound pushed into a later batch was not delivered and must still go out.
+    // Remember what the model was just told by each held progress slot, and what the batch as a whole taught it, so the
+    // same content arriving again is not a turn. Recorded for what the batch actually CARRIES: a fact the byte bound
+    // pushed into a later batch was not delivered and must still go out.
     for (const fact of composed.batchFacts) {
       if (!isHeldProgressFact(fact)) continue;
-      this.#deliveredProgress.set(factSlotKey(fact), progressStateIdentity(fact));
+      this.#deliveredProgress.set(factSlotKey(fact), factContentIdentity(fact));
     }
+    this.#rememberDelivered(composed.batchFacts);
 
     return Object.freeze({
       batchId,
@@ -1530,15 +1817,6 @@ export class CompanionEventPump {
     const location = (this.#lastSnapshot?.payload as { location?: unknown } | undefined)?.location;
     return typeof location === "string" && location.length > 0 ? location : undefined;
   }
-
-  #hasPendingFactTrigger(): boolean {
-    return [
-      ...this.#receipts.values(),
-      ...this.#semanticEvents.values(),
-      ...this.#lifecycle.values(),
-      ...this.#worldFacts.values(),
-    ].some((fact) => !isHeldFact(fact));
-  }
 }
 
 /**
@@ -1649,6 +1927,28 @@ function bodyOwnerField(payload: Readonly<Record<string, unknown>> | undefined, 
   return field === null || field.length === 0 || field === "unknown" ? undefined : field;
 }
 
+/**
+ * May the same CONTENT arriving twice be the same news?
+ *
+ * No for the clock and the day (`DAY_BOUNDARY_SEMANTIC_KINDS`): their content is a moment, and two moments with one
+ * stamp are still two moments. Yes for everything else - a settlement, a refusal, a notice, a terminal receipt - because
+ * there the content IS the statement, and a second copy of it tells her nothing she did not already have.
+ */
+function isRestatementEligible(fact: WorldFact): boolean {
+  return fact.semanticKind === undefined || !DAY_BOUNDARY_SEMANTIC_KINDS.has(fact.semanticKind);
+}
+
+/**
+ * Is this fact one the HOST minted on its own schedule - the stall watch, a stale reading, a narration run?
+ *
+ * The population is `HOST_MINTED_WAKE_KINDS`, which already names every such kind and the Host path that publishes it,
+ * so a kind added there is classified without editing this predicate.
+ */
+function isDueFact(fact: WorldFact): boolean {
+  const kind = fact.semanticKind;
+  return fact.kind === "world_fact" && kind !== undefined && kind in HOST_MINTED_WAKE_KINDS;
+}
+
 function isTerminalExecutionFact(fact: WorldFact): boolean {
   // ONE classification of "this execution is over": the ledger's, which the launcher and every correlation consumer
   // already share. A hand-written list here left `blocked` out, and a blocked execution therefore kept its stall entry -
@@ -1688,18 +1988,29 @@ function factSlotKey(fact: WorldFact): string {
 }
 
 /**
- * What a held progress fact TELLS the model, as a comparable string.
+ * What a fact TELLS the model, as a comparable string.
  *
  * The per-observation counters are excluded, because they advance on every publish of an unchanged state: the
  * Mod mints a fresh wire message id and a fresh revision for each receipt it publishes, and each body trace
  * carries the game tick it was sampled at. Counting those as content is exactly the defect - a body standing
  * still on `64,15` re-observed forty times would read as forty facts.
  *
+ * The PROVENANCE ids go with them, for the same reason and one step further: `eventId`, `sourceEventId` and
+ * `correlationId` are minted per publish, so a settlement re-read from the journal arrives as a "new" event carrying the
+ * same statement - which is how `round46b` opened a turn at 07:30:43 to say what the 07:28:19 turn had already said.
+ * Identity is about the statement, not the envelope that carried it.
+ *
  * Everything else is content: the kind, the state, the reason, the location, the tile, the active execution and
  * its phase. A change in any of them is a change the model has not been told.
  */
-function progressStateIdentity(fact: WorldFact): string {
-  const { eventId: _eventId, correlationId: _correlationId, occurredAtMs: _occurredAtMs, ...stable } = fact;
+export function factContentIdentity(fact: WorldFact): string {
+  const {
+    eventId: _eventId,
+    sourceEventId: _sourceEventId,
+    correlationId: _correlationId,
+    occurredAtMs: _occurredAtMs,
+    ...stable
+  } = fact;
   return JSON.stringify(stable, (key, value) => (key === "tick" || key === "revision" ? undefined : value));
 }
 
@@ -1737,9 +2048,8 @@ function describeWorldChange(fact: WorldFact, readingLocation: string | undefine
     return `snapshot_changed:${typeof fact.payload.reasonCode === "string" ? fact.payload.reasonCode : "changed"}`;
   if (
     fact.kind === "world_fact" &&
-    (fact.semanticKind === "time_milestone" ||
-      fact.semanticKind === "day_started" ||
-      fact.semanticKind === "night_ended_pass_out")
+    fact.semanticKind !== undefined &&
+    DAY_BOUNDARY_SEMANTIC_KINDS.has(fact.semanticKind)
   )
     return fact.semanticKind;
   const location = locationOf(fact.payload);

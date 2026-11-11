@@ -6,6 +6,8 @@ import { isRefusedTurnEvent } from "./companion-turn-refusal.js";
 import {
   CompanionEventPump,
   TURN_PRODUCTION,
+  TURN_SUPPRESSION,
+  turnAccountLine,
   type CompanionTurnOutcome,
   type DeliveryDisposition,
   type PendingBatch,
@@ -193,9 +195,16 @@ export class CompanionLoop {
    * Flush the pending batch. Resolves with how the delivered turn ended, or `undefined` when there was
    * nothing to deliver (or a delivery is already in flight) — callers must treat `undefined` as
    * `unobserved`, never as success.
+   *
+   * <p>
+   * THIS IS THE ONE CALL SITE THAT OPENS A TURN, so it is also where the pump's own account is printed: "fewer turns"
+   * and "lost turns" have to be distinguishable in a run's log, and only this layer sees both the decision and the run.
+   * A flush suppressed for having nothing at all is not printed - it is not a decision the run paid for - but it stays
+   * counted in `examined`, so the next line's arithmetic still closes.
+   * </p>
    */
   public async flush(): Promise<CompanionTurnOutcome | undefined> {
-    return await this.#pump.flush({
+    const outcome = await this.#pump.flush({
       deliver: async (batch) => {
         // Only the real Pi-consumed batch may activate presentation lineage.
         const sourceEventId = canonicalPresentationSource(batch);
@@ -215,6 +224,22 @@ export class CompanionLoop {
         }
       },
     });
+    this.#reportTurnDecision();
+    return outcome;
+  }
+
+  /**
+   * One line per examined turn decision, in the shape the invariant is read back in.
+   *
+   * An OPENED turn prints the account alone; a suppression prints its own reason first, because the reason is the only
+   * thing that tells "she had nothing new" from "a turn was lost".
+   */
+  #reportTurnDecision(): void {
+    const account = this.#pump.turnAccount;
+    const decision = account.lastDecision;
+    if (decision === undefined || decision.reason === TURN_SUPPRESSION.nothingPending) return;
+    const marker = decision.kind === "opened" ? "GAME_TURN_ACCOUNT" : `GAME_TURN_SUPPRESSED ${decision.reason}`;
+    process.stderr.write(`${marker} ${turnAccountLine(account)}\n`);
   }
 
   /**
