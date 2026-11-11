@@ -267,9 +267,9 @@ test("composed client reports bounded server problems without accepting additive
 test("installation discovery is strict, uses opaque candidate IDs, and gates mutations on CSRF", async () => {
   const candidateId = "A".repeat(22);
   const discovery = { apiVersion: 1, candidates: [{ candidateId, source: "registry", label: "Game", hint: null, status: "candidate" }], diagnostics: [] };
-  // `location` is the contract's one optional candidate key, so a reply that predates
-  // it decodes to the same shape a location-less candidate has.
-  const decoded = { ...discovery, candidates: [{ ...discovery.candidates[0], location: null }] };
+  // `location` and `modLoader` are the contract's two optional candidate keys, so a reply that
+  // predates either decodes to the same shape a candidate without them has.
+  const decoded = { ...discovery, candidates: [{ ...discovery.candidates[0], location: null, modLoader: null }] };
   const recorder = transport(jsonResponse(discovery));
   const api = createComposedReferenceGameBrowserApi(recorder.fetch);
   assert.deepEqual(await api.readStardewInstallationDiscovery(), decoded);
@@ -282,7 +282,7 @@ test("installation discovery is strict, uses opaque candidate IDs, and gates mut
       await createComposedReferenceGameBrowserApi(validRecorder.fetch).readStardewInstallationDiscovery(),
       {
         ...discovery,
-        candidates: [{ ...discovery.candidates[0], candidateId: valid, location: "D: · SteamLibrary" }],
+        candidates: [{ ...discovery.candidates[0], candidateId: valid, location: "D: · SteamLibrary", modLoader: null }],
       },
     );
   }
