@@ -3,7 +3,7 @@
   "artifactKind": "dependency_risk_acceptances",
   "snapshotId": "minimatch-11.0.3-zero-advisories",
   "lockfileHashes": {
-    "pnpm-lock.yaml": "4337739ec6cde03e8581696c5394646b0a6b85d71775ebac7cbe3506b9f2eab0",
+    "pnpm-lock.yaml": "658bfca5198a67b5786048501b2a5c72738cf836f145775b7b3057c9eb4484e9",
     "vendor/magic-context/bun.lock": "5f8b0c7089743ea645277846664bfdeab59115ad8919048204ccc963047301ef",
     "integrations/stardew/packages.lock.json": "7b2b7f4f8325e4a144e8a73b6dbc805a499940be6204d7d5f6ccb8e0e64ec660"
   },

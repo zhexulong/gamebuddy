@@ -68,6 +68,12 @@ overrides:
   # v3 default export, which minimatch 9 removed, so a graph-wide override would break
   # that plugin - and it is development-only, where the audit gate does not gate.
   '@earendil-works/pi-coding-agent>minimatch': 11.0.3
+  # Scope by VERSION RANGE, not by parent: the advisory covers >=7.0.0 <11.0.1, and
+  # the vulnerable copy is a 10.x that two exact pins hold in place
+  # (pi-coding-agent's and @typescript-eslint/typescript-estree's). 3.1.5 is below
+  # the range, so eslint-plugin-jsx-a11y keeps the v3 default export it calls -
+  # which is why the selector must not be a blank `minimatch` override.
+  'minimatch@>=7.0.0 <11.0.1': 11.0.3
   # dependency-cruiser 17.3.2 pins these two to vulnerable exact versions.
   'dependency-cruiser>ajv': 8.18.0
   'dependency-cruiser>picomatch': 4.0.5

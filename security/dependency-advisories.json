@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "artifactKind": "dependency_advisory_snapshot",
   "snapshotId": "minimatch-11.0.3-zero-advisories",
-  "generatedAt": "2026-11-01T05:42:19.148Z",
+  "generatedAt": "2026-11-11T06:14:28.847Z",
   "scanner": {
     "identity": "pnpm-audit",
     "version": "pnpm@11.1.3",
@@ -12,7 +12,7 @@
   "lockfiles": {
     "pnpm-lock.yaml": {
       "present": true,
-      "sha256": "4337739ec6cde03e8581696c5394646b0a6b85d71775ebac7cbe3506b9f2eab0"
+      "sha256": "658bfca5198a67b5786048501b2a5c72738cf836f145775b7b3057c9eb4484e9"
     },
     "vendor/magic-context/bun.lock": {
       "present": true,
