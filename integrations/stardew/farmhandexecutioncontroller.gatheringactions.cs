@@ -226,11 +226,8 @@ internal sealed partial class ExecutionManager
             }
         }
 
-        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision,
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted",
             $"location={location.NameOrUniqueName};target={expectedTargetId};tile={liveTargetTile.X},{liveTargetTile.Y};item={expectedQualifiedItemId};stack={target.Value.Stack};inventory_before={beforeCount};native_auto_collect=true;{magnetFacts}");
-        this.Remember(accepted);
-        this.AddTrace(accepted);
-        return accepted;
     }
 
     /// <summary>

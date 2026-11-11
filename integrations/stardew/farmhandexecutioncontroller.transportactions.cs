@@ -239,10 +239,7 @@ internal sealed partial class ExecutionManager
             this.activeMountTransport = null;
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "horse_action_not_handled", $"target={expectedTargetId}");
         }
-        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "horse_mount_pending", this.revision, $"target={expectedTargetId};tile={horseTileX},{horseTileY};horse_id={horse.HorseId}");
-        this.Remember(accepted);
-        this.AddTrace(accepted);
-        return accepted;
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "horse_mount_pending", $"target={expectedTargetId};tile={horseTileX},{horseTileY};horse_id={horse.HorseId}");
     }
 
     public LocalExecutionReceipt RequestLocalEnterMine(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
@@ -313,10 +310,7 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "mine_entered", $"level={descended.mineLevel};tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};from_level={shaft.mineLevel}");
         LocalTravelSpec descentSpecification = new(executionId, requestId, "enter_mine", shaft.NameOrUniqueName, ladder.TileX, ladder.TileY, MineShaft.GetLevelName(descentLevel), 6, 6, this.revision, requestedDeadlineMs);
         this.activeTravel = descentSpecification;
-        LocalExecutionReceipt descentAccepted = new(executionId, requestId, ExecutionState.Accepted, "mine_entry_pending", this.revision, $"source={shaft.NameOrUniqueName}:{ladder.TileX},{ladder.TileY};target={descentSpecification.TargetLocation}:6,6;level={descentLevel}");
-        this.Remember(descentAccepted);
-        this.AddTrace(descentAccepted);
-        return descentAccepted;
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "mine_entry_pending", $"source={shaft.NameOrUniqueName}:{ladder.TileX},{ladder.TileY};target={descentSpecification.TargetLocation}:6,6;level={descentLevel}");
     }
 
     /// <summary>
@@ -349,10 +343,7 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "mine_entered", $"level={mine.mineLevel};tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}");
         LocalTravelSpec specification = new(executionId, requestId, "enter_mine", location.NameOrUniqueName, entrance.TileX, entrance.TileY, MineShaft.GetLevelName(declaredLevel), 6, 6, this.revision, requestedDeadlineMs);
         this.activeTravel = specification;
-        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "mine_entry_pending", this.revision, $"source={location.NameOrUniqueName}:{entrance.TileX},{entrance.TileY};target={specification.TargetLocation}:6,6;level={declaredLevel}");
-        this.Remember(accepted);
-        this.AddTrace(accepted);
-        return accepted;
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "mine_entry_pending", $"source={location.NameOrUniqueName}:{entrance.TileX},{entrance.TileY};target={specification.TargetLocation}:6,6;level={declaredLevel}");
     }
 
     /// <summary>
@@ -528,11 +519,8 @@ internal sealed partial class ExecutionManager
 
         LocalTravelSpec exitSpecification = new(executionId, requestId, "use_mine_ladder", origin, exit.TileX, exit.TileY, destinationLocation, destinationX, destinationY, this.revision, requestedDeadlineMs);
         this.activeTravel = exitSpecification;
-        LocalExecutionReceipt pending = new(executionId, requestId, ExecutionState.Accepted, "mine_exit_pending", this.revision,
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "mine_exit_pending",
             $"from={origin}:{originLevel};question={MineExitQuestionKey};response={MineExitResponseKey};ladder={exit.TileX},{exit.TileY};target={destinationLocation}:{destinationX},{destinationY};still_in={stillInside.NameOrUniqueName}");
-        this.Remember(pending);
-        this.AddTrace(pending);
-        return pending;
     }
 
     /// <summary>

@@ -174,16 +174,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         this.activeBusRide = new LocalBusRideSpec(executionId, request.RequestId, origin, moneyBefore, ticketPrice, deadlineMs);
         this.revision++;
-        LocalExecutionReceipt acceptedReceipt = new(
-            executionId,
+        return this.RememberTerminal(
             request.RequestId,
+            executionId,
             ExecutionState.Running,
             "bus_departure_started",
-            this.revision,
             $"origin={origin};destination={BusDestinationLocation};fare={ticketPrice};money_before={moneyBefore}");
-        this.Remember(acceptedReceipt);
-        this.AddTrace(acceptedReceipt);
-        return acceptedReceipt;
     }
 
     /// <summary>

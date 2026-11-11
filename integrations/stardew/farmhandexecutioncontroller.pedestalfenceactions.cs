@@ -33,10 +33,11 @@ internal sealed partial class ExecutionManager
         LocalPedestalTakingSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId,
             item!.QualifiedItemId, item.Stack, inventoryBefore, this.tick, deadlineMs);
         this.activePedestalTaking = specification;
-        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision,
+        // Published BEFORE the native take, and the receipt the caller receives is the one that was published:
+        // the funnel below annotates a held-body wait and can bump the revision, so the minted copy is not what the
+        // world saw. The native call then runs in order, and its own branches settle through the same funnel.
+        LocalExecutionReceipt accepted = this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted",
             $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};phase=pending_native_mutex");
-        this.Remember(accepted);
-        this.AddTrace(accepted);
         try
         {
             // Mirror the native checkForAction gate, then perform the native

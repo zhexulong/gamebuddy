@@ -225,7 +225,9 @@ public sealed class ToolApproachContractSourceShapeTests
         string cancel = BlockContaining(controller, "toolApproachCancelled", "if (this.activeToolApproach is not null)");
         cancel.Should().Contain("ExecutionState.Cancelled");
         cancel.Should().Contain("this.active = null", "forgetting the spec without releasing the walk leaves the body owned");
-        cancel.Should().Contain("PublishIdleAfterRelease");
+        (cancel.Contains("PublishIdleAfterRelease", StringComparison.Ordinal)
+            || cancel.Contains("this.RememberTerminal(", StringComparison.Ordinal)).Should().BeTrue(
+            "the cancellation must free the body, directly or through the terminal seam");
 
         // Lifecycle invalidation mints Invalidated, located the same way. The release is one of two spellings: this
         // block either publishes the idle itself or reaches the terminal seam, whose third step publishes it for a

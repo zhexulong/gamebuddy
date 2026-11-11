@@ -151,6 +151,7 @@ TargetFamilyCompletenessTests.cs	mod-assembly	Xna, Netcode, StardewValley, Game1
 TargetFamilyRoundTripTests.cs	mod-assembly	Xna, Netcode, StardewValley, TargetFamilyCompletenessTests, TargetRoundTripProbe
 TargetRoundTripProbe.cs	mod-assembly	Handlers, Netcode, StardewValley, TargetFamilyCompletenessTests, TargetFamilyWorld
 TaskDeliveryActionTests.cs	mod-assembly	Handlers
+ReturnedReceiptIdentityTests.cs	mod-assembly	ExecutionManager, TargetFamilyWorld, MachineAndAnimalActionHandler, Pet
 TerminalIdlePublicationTests.cs	mod-assembly	ExecutionManager, ExecutionTrace, FarmhandCapabilityPublication
 TerminalReceiptObservabilityTests.cs	mod-assembly	BridgeHello, BridgeSession, ExecutionManager
 TileOpenedShopTests.cs	mod-assembly	ExecutionManager

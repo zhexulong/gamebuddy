@@ -111,16 +111,12 @@ internal sealed partial class ExecutionManager
                 $"enable={config.Enable};timeout_seconds={config.TimeoutSeconds};settle_frames={config.SettleFrameBudget};minimum_online_farmers={config.MinimumOnlineFarmers}");
 
         this.activeDayAdvance = new ActiveDayAdvance(executionId, requestId, lifecycle);
-        LocalExecutionReceipt accepted = new(
-            executionId,
+        return this.RememberTerminal(
             requestId,
+            executionId,
             ExecutionState.Accepted,
             "accepted",
-            this.revision,
             "target=own_bed;never_direct_new_day=true");
-        this.Remember(accepted);
-        this.AddTrace(accepted);
-        return accepted;
     }
 
     /// <summary>

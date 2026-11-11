@@ -152,13 +152,13 @@ public sealed class HollowRingStepOutTests
             "the step-out holds body ownership exactly like any other approach");
 
         // And it is ADVERTISED: the accepted receipt names both ends of the move, or a reader cannot tell
-        // a step-out from a walk that happened to begin beside the target.
-        string steppedOut = SliceBetween(body, "string steppedOut =", "LocalExecutionReceipt accepted = new(");
+        // a step-out from a walk that happened to begin beside the target. The acceptance is the seam call's
+        // evidence argument, so the slice ends where that call begins.
+        string steppedOut = SliceBetween(body, "string steppedOut =", "return this.RememberTerminal(");
         steppedOut.Should().Contain("actorOnTarget", "only a hollow-ring correction is reported as one");
         steppedOut.Should().Contain("stepped_out_from=");
         steppedOut.Should().Contain("stepped_out_to=");
-        SliceBetween(body, "LocalExecutionReceipt accepted = new(", "this.Remember(accepted);")
-            .Should().Contain("{steppedOut}", "the accepted receipt carries those facts to the wire");
+        body.Should().Contain("{steppedOut}", "the accepted receipt carries those facts to the wire");
     }
 
     [Fact]

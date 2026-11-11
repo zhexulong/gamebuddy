@@ -287,12 +287,8 @@ internal sealed partial class ExecutionManager
                 // The engine's own refusal to fish this tile. Reached only if the pair above disagreed with `DoFunction`,
                 // which is why it is Uncertain rather than Rejected: the cast may already have spent stamina.
                 this.revision++;
-                LocalExecutionReceipt notCast = new(executionId, requestId, ExecutionState.Uncertain, "fish_here_cast_not_accepted", this.revision,
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "fish_here_cast_not_accepted",
                     $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};rod={rod.QualifiedItemId};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={Game1.player.Stamina.ToString("0.####", CultureInfo.InvariantCulture)}");
-                this.Remember(notCast);
-                this.AddTrace(notCast);
-                this.PublishIdleAfterRelease(executionId, requestId);
-                return notCast;
             }
 
             castStarted = true;
@@ -310,16 +306,12 @@ internal sealed partial class ExecutionManager
                 nowMs,
                 requestedDeadlineMs,
                 LocalFishingPhase.WaitingForBite);
-            LocalExecutionReceipt accepted = new(
-                executionId,
+            return this.RememberTerminal(
                 requestId,
+                executionId,
                 ExecutionState.Accepted,
                 "accepted",
-                this.revision,
                 $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};rod={rod.QualifiedItemId};rod_slot={selection.Slot};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};bait_before={baitBefore};phase=waiting_for_bite");
-            this.Remember(accepted);
-            this.AddTrace(accepted);
-            return accepted;
         }
         finally
         {

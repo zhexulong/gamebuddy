@@ -203,12 +203,8 @@ internal sealed partial class ExecutionManager
             RestoreToolSelection(Game1.player, selection);
             evidence["tool_restored"] = DescribeToolCategory(Game1.player.CurrentTool);
         }
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
+        return this.RememberTerminal(requestId, executionId, state, reasonCode,
             ToolActionEvidence.Compose(ToolActionEvidence.WaterCrop, evidence));
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(executionId, requestId);
-        return receipt;
     }
 
     /// <summary>Native crop harvest limited to ready, ordinary Grab crops.</summary>
@@ -383,12 +379,8 @@ internal sealed partial class ExecutionManager
     string qualityCountsAfter = string.Join(",", qualityAfter.OrderBy(pair => pair.Key).Select(pair => $"{pair.Key}:{pair.Value}"));
     ExecutionState state = nativeAccepted ? ExecutionState.Succeeded : ExecutionState.Uncertain;
     string reasonCode = state == ExecutionState.Succeeded ? "crop_harvested" : "crop_harvest_postcondition_unavailable";
-    LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
+    return this.RememberTerminal(requestId, executionId, state, reasonCode,
         $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};crop={cropId};item={expectedQualifiedHarvestItemId};native_path_return={nativePathReturn.ToString().ToLowerInvariant()};native_accepted={nativeAccepted.ToString().ToLowerInvariant()};regrows={regrowsAfterHarvest.ToString().ToLowerInvariant()};phase_before={phaseBefore};phase_after={cropAfter?.currentPhase.Value.ToString() ?? "none"};day_of_phase_before={dayOfPhaseBefore};day_of_phase_after={cropAfter?.dayOfCurrentPhase.Value.ToString() ?? "none"};regrow_advanced={regrowAdvanced.ToString().ToLowerInvariant()};inventory_before={inventoryBefore};inventory_after={inventoryAfter};inventory_gained={inventoryGained.ToString().ToLowerInvariant()};crop_present_after={cropStillPresent.ToString().ToLowerInvariant()};harvest_quality={harvestedQuality};quality_counts_before={qualityCountsBefore};quality_counts_after={qualityCountsAfter}");
-    this.Remember(receipt);
-    this.AddTrace(receipt);
-    this.PublishIdleAfterRelease(executionId, requestId);
-    return receipt;
     }
 
     /// <summary>
@@ -494,12 +486,8 @@ internal sealed partial class ExecutionManager
         bool inventoryDecremented = afterCount == beforeCount - 1;
         ExecutionState state = placementHandled && cropCreated && inventoryDecremented ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = state == ExecutionState.Succeeded ? "seed_planted" : "seed_plant_postcondition_unavailable";
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
+        return this.RememberTerminal(requestId, executionId, state, reasonCode,
             $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};crop={plantedCropId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount}");
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(executionId, requestId);
-        return receipt;
     }
 
     /// <summary>
@@ -709,11 +697,7 @@ internal sealed partial class ExecutionManager
             this.woodFenceResultDay = Game1.Date.TotalDays;
         }
         string evidence = $"source=(O)322;location={specification.Location};x={targetX};y={targetY};target={expectedTargetId};item=(O)322;slot={slot};source_empty_before={sourceEmptyBefore.ToString().ToLowerInvariant()};is_fence={isFence.ToString().ToLowerInvariant()};is_gate={isGate.ToString().ToLowerInvariant()};health={health.ToString(CultureInfo.InvariantCulture)};max_health={maxHealth.ToString(CultureInfo.InvariantCulture)};inventory_before={beforeCount};inventory_after={afterCount}";
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence);
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(executionId, requestId);
-        return receipt;
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
     public LocalExecutionReceipt RequestLocalPlaceCrabPot(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
@@ -827,11 +811,7 @@ internal sealed partial class ExecutionManager
             this.crabPotResultDay = Game1.Date.TotalDays;
         }
         string evidence = $"source=(O)710;location={specification.Location};x={targetX};y={targetY};target={expectedTargetId};item=(O)710;slot={slot};source_empty_before=true;is_crab_pot={(crabPot is not null).ToString().ToLowerInvariant()};owner={crabPot?.owner.Value ?? 0};offset_x={crabPot?.directionOffset.Value.X.ToString(CultureInfo.InvariantCulture) ?? "none"};offset_y={crabPot?.directionOffset.Value.Y.ToString(CultureInfo.InvariantCulture) ?? "none"};overlay_tiles={string.Join("|", overlayTiles.Select(tile => $"{tile.X},{tile.Y}:{tile.Count}"))};inventory_before={beforeCount};inventory_after={afterCount}";
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence);
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(executionId, requestId);
-        return receipt;
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
     public LocalExecutionReceipt RequestLocalBaitCrabPot(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
@@ -912,11 +892,7 @@ internal sealed partial class ExecutionManager
         string reasonCode = succeeded ? "crab_pot_baited" : "bait_crab_pot_postcondition_unavailable";
         if (succeeded) { this.baitCrabPotResultTarget = new BridgeBaitCrabPotResultTarget(expectedTargetId, location.NameOrUniqueName, slot, targetX, targetY, "(O)710", RequireDisplayName("(O)710"), expectedQualifiedItemId, crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), 1); this.baitCrabPotResultExecutionId = executionId; this.baitCrabPotResultRequestId = requestId; this.baitCrabPotResultRevision = this.revision; this.baitCrabPotResultDay = Game1.Date.TotalDays; }
         string evidence = $"source={expectedQualifiedItemId};location={location.NameOrUniqueName};x={targetX};y={targetY};target={expectedTargetId};pot=(O)710;slot={slot};owner={crabPot.owner.Value};bait_before=none;bait_after={crabPot.bait.Value?.QualifiedItemId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount};actionable={(player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp).ToString().ToLowerInvariant()};active_execution=null";
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence);
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(executionId, requestId);
-        return receipt;
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
     public LocalExecutionReceipt RequestLocalFertilizeTile(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
@@ -1001,12 +977,8 @@ internal sealed partial class ExecutionManager
         bool inventoryDecremented = afterCount == beforeCount - 1;
         ExecutionState state = placementHandled && fertilizerApplied && inventoryDecremented ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = state == ExecutionState.Succeeded ? "fertilizer_applied" : "fertilizer_postcondition_unavailable";
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
+        return this.RememberTerminal(requestId, executionId, state, reasonCode,
             $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};fertilizer_before={beforeFertilizer ?? "none"};fertilizer_after={afterFertilizer ?? "none"};inventory_before={beforeCount};inventory_after={afterCount}");
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(executionId, requestId);
-        return receipt;
     }
 
     public LocalExecutionReceipt RequestLocalClearDebris(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
@@ -1244,21 +1216,16 @@ internal sealed partial class ExecutionManager
         // that state is non-terminal to the Body Program router, which keeps the node bound-Running and replays the
         // same receipt for the same RequestId for ever. "I could not finish this" is a fact the caller can act on;
         // "still running" is a hang.
-        LocalExecutionReceipt receipt = new(
-            executionId,
+        return this.RememberTerminal(
             requestId,
+            executionId,
             cleared ? ExecutionState.Succeeded : ExecutionState.Uncertain,
             cleared ? "debris_cleared" : "debris_not_cleared",
-            this.revision,
             cleared
                 ? $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};parent={parentSheetIndex};tool={toolKind};required_upgrade={requiredUpgrade};health_before={healthBefore:0.##};health_after={healthAfter:0.##};swings={swingCount};clump_removed=true;stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}"
                 // The failure path is not Host-pinned, so it carries the lease's own report: what was still in the
                 // way and that the next step is the caller's decision, not another swing from this intent.
                 : $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};parent={parentSheetIndex};tool={toolKind};required_upgrade={requiredUpgrade};health_before={healthBefore:0.##};health_after={healthAfter:0.##};swings={swingCount};clump_removed=false;stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};{followUp.Evidence}");
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(executionId, requestId);
-        return receipt;
     }
 
     /// <summary>

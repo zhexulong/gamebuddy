@@ -262,13 +262,14 @@ public sealed class TillSoilRefusalNamingTests
 
         int select = body.IndexOf("(int X, int Y)? standingTile = SelectToolApproachTile(", StringComparison.Ordinal);
         int goal = body.IndexOf("(int X, int Y) goal = standingTile.Value;", StringComparison.Ordinal);
-        int accepted = body.IndexOf("LocalExecutionReceipt accepted = new(", StringComparison.Ordinal);
         select.Should().BeGreaterThanOrEqualTo(0, "the standing tile is chosen once");
         goal.Should().BeGreaterThan(select, "and the walk's goal IS that choice");
-        accepted.Should().BeGreaterThan(goal);
 
-        string publication = body[accepted..(body.IndexOf("this.Remember(accepted);", accepted, StringComparison.Ordinal))];
-        publication.Should().Contain("stand_at={goal.X},{goal.Y}", "the receipt names the tile the walk was dispatched to");
+        // The acceptance is the seam call's evidence argument now, so the publication window is everything after the
+        // one selection: exactly one receipt may name the standing tile, and it does so in the leg's own spelling.
+        string publication = body[goal..];
+        Count(publication, "stand_at={goal.X},{goal.Y}")
+            .Should().Be(1, "the receipt names the tile the walk was dispatched to, and only one publication does");
         publication.Should().NotContain("standing={", "one fact, one spelling");
         Count(body, "SelectToolApproachTile(")
             .Should().Be(1, "a second selection in this body could publish a tile the walk does not use");

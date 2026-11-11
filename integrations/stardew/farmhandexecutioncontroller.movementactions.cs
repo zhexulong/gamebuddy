@@ -236,10 +236,7 @@ internal sealed partial class ExecutionManager
                 // arrival re-plans and either continues to THAT tile or refuses. The controller owns the tile it is
                 // actually walking to for this leg, and the evidence names it.
                 string clearAcceptedEvidence = $"route_revision={specification.RouteRevision};requested={FormatTile(targetTile)};clear_step_approach=true;{clearEvidence}";
-                LocalExecutionReceipt clearAccepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, clearAcceptedEvidence);
-                this.Remember(clearAccepted);
-                this.AddTrace(clearAccepted);
-                return clearAccepted;
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted", clearAcceptedEvidence);
             }
 
             this.active = null;
@@ -255,10 +252,7 @@ internal sealed partial class ExecutionManager
                 + (adjacentArrival ? ";adjacent_arrival=true" : string.Empty);
         if (stoodAsideFor.Refused)
             acceptedEvidence += $";stood_aside_for={stoodAsideFor.Format()}";
-        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, acceptedEvidence);
-        this.Remember(accepted);
-        this.AddTrace(accepted);
-        return accepted;
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted", acceptedEvidence);
     }
 
     /// <summary>The refusal a placement with no reachable standing tile reports, and nothing else does.</summary>
@@ -885,16 +879,12 @@ internal sealed partial class ExecutionManager
             resolution.NetworkId,
             destination.Id);
         this.activeTravel = specification;
-        LocalExecutionReceipt accepted = new(
-            executionId,
+        return this.RememberTerminal(
             requestId,
+            executionId,
             ExecutionState.Accepted,
             "accepted",
-            this.revision,
             $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};{FormatMinecartEvidence(resolution.NetworkId, destination)};ticket_price={pricePaid}");
-        this.Remember(accepted);
-        this.AddTrace(accepted);
-        return accepted;
     }
 
     /// <summary>
@@ -1069,32 +1059,29 @@ internal sealed partial class ExecutionManager
                     // No native click entry owns this tile, so the resolved warp
                     // remains the authority (FarmHouse/Cabin exits).
                     this.activeTravel = specification;
-                    LocalExecutionReceipt plainDoorAccepted = new(
-                        executionId,
+                    // Published first, then the native warp - in that order, because the receipt is what a
+                    // caller reads when the warp throws. The value returned is the one the funnel published, so the
+                    // answer and the fact cannot disagree on the held-body path.
+                    LocalExecutionReceipt plainDoorAccepted = this.RememberTerminal(
                         requestId,
+                        executionId,
                         ExecutionState.Accepted,
                         "accepted",
-                        this.revision,
                         $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};entry={entry}{adjacentApproach}");
-                    this.Remember(plainDoorAccepted);
-                    this.AddTrace(plainDoorAccepted);
                     Game1.player.warpFarmer(warp);
                     return plainDoorAccepted;
             }
         }
 
         this.activeTravel = specification;
-        LocalExecutionReceipt accepted = new(
-            executionId,
+        LocalExecutionReceipt accepted = this.RememberTerminal(
             requestId,
+            executionId,
             ExecutionState.Accepted,
             "accepted",
-            this.revision,
             isDoor
                 ? $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};entry={entry}{adjacentApproach}"
                 : $"source={specification.SourceLocation}:{sourceX},{sourceY};target={specification.TargetLocation}:{specification.TargetX},{specification.TargetY}{adjacentApproach}");
-        this.Remember(accepted);
-        this.AddTrace(accepted);
         // A native door entry already ran Game1.warpFarmer; only a plain record
         // (travel, an edge warp, or a door the click path does not own) warps here.
         if (!doorOwned)
@@ -1550,10 +1537,7 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode ?? "approach_unavailable", approachEvidence ?? "phase=approaching;arm=failed", hint: approachHint);
         }
 
-        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, "navigation=accepted;phase=approaching");
-        this.Remember(accepted);
-        this.AddTrace(accepted);
-        return accepted;
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted", "navigation=accepted;phase=approaching");
     }
 
     private static readonly Dictionary<string, int> DirectionMap = new(StringComparer.Ordinal)

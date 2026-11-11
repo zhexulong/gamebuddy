@@ -1561,10 +1561,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 if (this.active is not null)
                     this.active = null;
                 this.revision++;
-                LocalExecutionReceipt cancelledAfterWarpReceipt = new(navigateSpec.ExecutionId, navigateSpec.RequestId, ExecutionState.Uncertain, "navigation_cancelled_after_warp_child", this.revision, $"destination={navigateSpec.CanonicalDestinationIdentity};phase=awaiting_warp;never_retry=true");
-                this.Remember(cancelledAfterWarpReceipt);
-                this.AddTrace(cancelledAfterWarpReceipt);
-                this.PublishIdleAfterRelease(navigateSpec.ExecutionId, navigateSpec.RequestId);
+                LocalExecutionReceipt cancelledAfterWarpReceipt = this.RememberTerminal(navigateSpec.RequestId, navigateSpec.ExecutionId, ExecutionState.Uncertain, "navigation_cancelled_after_warp_child", $"destination={navigateSpec.CanonicalDestinationIdentity};phase=awaiting_warp;never_retry=true");
                 return cancelledAfterWarpReceipt;
             }
 
@@ -1572,10 +1569,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             if (this.active is not null)
                 this.active = null;
             this.revision++;
-            LocalExecutionReceipt navigateReceipt = new(navigateSpec.ExecutionId, navigateSpec.RequestId, ExecutionState.Cancelled, reasonCode, this.revision, $"destination={navigateSpec.CanonicalDestinationIdentity};phase=approaching");
-            this.Remember(navigateReceipt);
-            this.AddTrace(navigateReceipt);
-            this.PublishIdleAfterRelease(navigateSpec.ExecutionId, navigateSpec.RequestId);
+            LocalExecutionReceipt navigateReceipt = this.RememberTerminal(navigateSpec.RequestId, navigateSpec.ExecutionId, ExecutionState.Cancelled, reasonCode, $"destination={navigateSpec.CanonicalDestinationIdentity};phase=approaching");
             return navigateReceipt;
         }
 
@@ -1584,10 +1578,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             LocalTravelSpec travelSpec = this.activeTravel;
             this.activeTravel = null;
             this.revision++;
-            LocalExecutionReceipt travelReceipt = new(travelSpec.ExecutionId, travelSpec.RequestId, ExecutionState.Cancelled, reasonCode, this.revision, $"source={travelSpec.SourceLocation}:{travelSpec.SourceX},{travelSpec.SourceY};target={travelSpec.TargetLocation}:{travelSpec.TargetX},{travelSpec.TargetY}");
-            this.Remember(travelReceipt);
-            this.AddTrace(travelReceipt);
-            this.PublishIdleAfterRelease(travelSpec.ExecutionId, travelSpec.RequestId);
+            LocalExecutionReceipt travelReceipt = this.RememberTerminal(travelSpec.RequestId, travelSpec.ExecutionId, ExecutionState.Cancelled, reasonCode, $"source={travelSpec.SourceLocation}:{travelSpec.SourceX},{travelSpec.SourceY};target={travelSpec.TargetLocation}:{travelSpec.TargetX},{travelSpec.TargetY}");
             return travelReceipt;
         }
 
@@ -1598,9 +1589,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 && this.receiptsByRequestId.TryGetValue(animalProductSpec.RequestId, out LocalExecutionReceipt? deferredReceipt))
                 return deferredReceipt;
             this.revision++;
-            LocalExecutionReceipt animalProductReceipt = new(animalProductSpec.ExecutionId, animalProductSpec.RequestId, ExecutionState.Uncertain, "animal_product_cancelled_after_native_start", this.revision, $"target={animalProductSpec.TargetId};animal={animalProductSpec.AnimalId};native_animation_pending=true");
-            this.Remember(animalProductReceipt);
-            this.AddTrace(animalProductReceipt);
+            LocalExecutionReceipt animalProductReceipt = this.RememberTerminal(animalProductSpec.RequestId, animalProductSpec.ExecutionId, ExecutionState.Uncertain, "animal_product_cancelled_after_native_start", $"target={animalProductSpec.TargetId};animal={animalProductSpec.AnimalId};native_animation_pending=true");
             this.activeAnimalProduct = animalProductSpec with { DeferredTerminalState = ExecutionState.Uncertain, DeferredTerminalReason = "animal_product_cancelled_after_native_start" };
             return animalProductReceipt;
         }
@@ -1610,10 +1599,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             LocalPettingSpec petSpec = this.activePet;
             this.activePet = null;
             this.revision++;
-            LocalExecutionReceipt petReceipt = new(petSpec.ExecutionId, petSpec.RequestId, ExecutionState.Cancelled, reasonCode, this.revision, $"target={petSpec.TargetId};tile={petSpec.TargetX},{petSpec.TargetY}");
-            this.Remember(petReceipt);
-            this.AddTrace(petReceipt);
-            this.PublishIdleAfterRelease(petSpec.ExecutionId, petSpec.RequestId);
+            LocalExecutionReceipt petReceipt = this.RememberTerminal(petSpec.RequestId, petSpec.ExecutionId, ExecutionState.Cancelled, reasonCode, $"target={petSpec.TargetId};tile={petSpec.TargetX},{petSpec.TargetY}");
             return petReceipt;
         }
 
@@ -1622,10 +1608,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             LocalMountTransportSpec mountSpec = this.activeMountTransport;
             this.activeMountTransport = null;
             this.revision++;
-            LocalExecutionReceipt mountReceipt = new(mountSpec.ExecutionId, mountSpec.RequestId, ExecutionState.Uncertain, "horse_mount_cancelled_after_native_start", this.revision, $"target={mountSpec.TargetId};mounting_or_mounted=true");
-            this.Remember(mountReceipt);
-            this.AddTrace(mountReceipt);
-            this.PublishIdleAfterRelease(mountSpec.ExecutionId, mountSpec.RequestId);
+            LocalExecutionReceipt mountReceipt = this.RememberTerminal(mountSpec.RequestId, mountSpec.ExecutionId, ExecutionState.Uncertain, "horse_mount_cancelled_after_native_start", $"target={mountSpec.TargetId};mounting_or_mounted=true");
             return mountReceipt;
         }
 
@@ -1640,11 +1623,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             if (this.active is not null)
                 this.active = null;
             this.revision++;
-            LocalExecutionReceipt toolApproachCancelled = new(toolApproachSpec.ExecutionId, toolApproachSpec.RequestId, ExecutionState.Cancelled, reasonCode, this.revision,
+            LocalExecutionReceipt toolApproachCancelled = this.RememberTerminal(toolApproachSpec.RequestId, toolApproachSpec.ExecutionId, ExecutionState.Cancelled, reasonCode,
                 $"location={toolApproachSpec.Location};target={toolApproachSpec.ExpectedTargetId};tile={toolApproachSpec.TargetX},{toolApproachSpec.TargetY};reach=1;approach=cancelled");
-            this.Remember(toolApproachCancelled);
-            this.AddTrace(toolApproachCancelled);
-            this.PublishIdleAfterRelease(toolApproachSpec.ExecutionId, toolApproachSpec.RequestId);
             return toolApproachCancelled;
         }
 
@@ -1669,11 +1649,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
             this.activeItemPickup = null;
             this.revision++;
-            LocalExecutionReceipt itemPickupReceipt = new(itemPickupSpec.ExecutionId, itemPickupSpec.RequestId, ExecutionState.Cancelled, reasonCode, this.revision,
+            LocalExecutionReceipt itemPickupReceipt = this.RememberTerminal(itemPickupSpec.RequestId, itemPickupSpec.ExecutionId, ExecutionState.Cancelled, reasonCode,
                 $"location={itemPickupSpec.Location};target={itemPickupSpec.TargetId};native_auto_collect_pending=true");
-            this.Remember(itemPickupReceipt);
-            this.AddTrace(itemPickupReceipt);
-            this.PublishIdleAfterRelease(itemPickupSpec.ExecutionId, itemPickupSpec.RequestId);
             return itemPickupReceipt;
         }
 
@@ -1684,9 +1661,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 && this.receiptsByRequestId.TryGetValue(itemSpec.RequestId, out LocalExecutionReceipt? deferredReceipt))
                 return deferredReceipt;
             this.revision++;
-            LocalExecutionReceipt itemReceipt = new(itemSpec.ExecutionId, itemSpec.RequestId, ExecutionState.Uncertain, "item_use_cancelled_after_native_start", this.revision, $"slot={itemSpec.Slot};item={itemSpec.QualifiedItemId};native_animation_pending=true");
-            this.Remember(itemReceipt);
-            this.AddTrace(itemReceipt);
+            LocalExecutionReceipt itemReceipt = this.RememberTerminal(itemSpec.RequestId, itemSpec.ExecutionId, ExecutionState.Uncertain, "item_use_cancelled_after_native_start", $"slot={itemSpec.Slot};item={itemSpec.QualifiedItemId};native_animation_pending=true");
             this.activeItemUse = itemSpec with { DeferredTerminalState = ExecutionState.Uncertain, DeferredTerminalReason = "item_use_cancelled_after_native_start" };
             return itemReceipt;
         }

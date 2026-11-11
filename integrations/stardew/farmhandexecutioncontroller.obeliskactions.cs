@@ -597,17 +597,13 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             request.DeadlineMs);
         this.activeTravel = specification;
 
-        LocalExecutionReceipt accepted = new(
-            executionId,
+        return this.RememberTerminal(
             request.RequestId,
+            executionId,
             ExecutionState.Accepted,
             "accepted",
-            this.revision,
             $"route={resolution.Route};target={targetId};target_tile={targetX},{targetY};origin={origin};"
                 + $"destination={resolution.Destination};destination_tile={resolution.DestinationX},{resolution.DestinationY};"
                 + $"force_dismount={(resolution.ForceDismount ? "true" : "false")}");
-        this.Remember(accepted);
-        this.AddTrace(accepted);
-        return accepted;
     }
 }

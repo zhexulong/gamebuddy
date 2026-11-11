@@ -161,11 +161,7 @@ internal sealed partial class ExecutionManager
             RestoreToolSelection(Game1.player, selection);
         }
         evidence += $";{SelectionSuffix(selection)}";
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence);
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(executionId, requestId);
-        return receipt;
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
     /// <summary>

@@ -408,11 +408,7 @@ internal sealed partial class ExecutionManager
         string? held = machine.heldObject.Value?.QualifiedItemId;
         string? input = machine.lastInputItem.Value?.QualifiedItemId;
         string evidence = $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};machine={machine.QualifiedItemId};ready_for_harvest={machine.readyForHarvest.Value.ToString().ToLowerInvariant()};minutes_until_ready={machine.MinutesUntilReady};held={held ?? "none"};last_input={input ?? "none"}";
-        LocalExecutionReceipt receipt = new(executionId, requestId, ExecutionState.Succeeded, "machine_inspected", this.revision, evidence);
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(executionId, requestId);
-        return receipt;
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "machine_inspected", evidence);
     }
 
 
@@ -470,11 +466,8 @@ internal sealed partial class ExecutionManager
         }
 
         this.activeItemUse = specification;
-        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision,
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted",
             $"slot={slot};item={expectedQualifiedItemId};stack_before={stackBefore};edibility={food.Edibility};drink={isDrink.ToString().ToLowerInvariant()}");
-        this.Remember(accepted);
-        this.AddTrace(accepted);
-        return accepted;
     }
 
     /// <summary>
@@ -550,13 +543,9 @@ internal sealed partial class ExecutionManager
             && string.Equals(placed.QualifiedItemId, "(O)178", StringComparison.Ordinal);
         bool hayConsumed = hayAfter == hayBefore - 1;
         bool succeeded = nativeHandled && troughFilled && hayConsumed;
-        LocalExecutionReceipt receipt = new(executionId, requestId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain,
-            succeeded ? "hay_placed_in_trough" : "feed_trough_postcondition_unavailable", this.revision,
+        return this.RememberTerminal(requestId, executionId, succeeded ? ExecutionState.Succeeded : ExecutionState.Uncertain,
+            succeeded ? "hay_placed_in_trough" : "feed_trough_postcondition_unavailable",
             $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};slot={slot};native_handled={nativeHandled.ToString().ToLowerInvariant()};trough_filled={troughFilled.ToString().ToLowerInvariant()};hay_before={hayBefore};hay_after={hayAfter};hay_consumed={hayConsumed.ToString().ToLowerInvariant()}");
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(executionId, requestId);
-        return receipt;
     }
 
     /// <summary>Experimental native animal-product collection. Only MilkPail/Shears can start their version-locked animation and completion lifecycle.</summary>
@@ -686,11 +675,8 @@ internal sealed partial class ExecutionManager
                 $"tool={toolKind};expected_animal={animal.myID.Value};bound_animal={boundAnimal?.myID.Value.ToString() ?? "none"};tool_tile={(int)(nativeToolLocation.X / 64f)},{(int)(nativeToolLocation.Y / 64f)}");
         }
         this.activeAnimalProduct = specification;
-        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision,
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted",
             $"location={specification.Location};target={expectedTargetId};animal={animal.myID.Value};bound_animal={boundAnimal.myID.Value};tool={toolKind};tool_tile={(int)(nativeToolLocation.X / 64f)},{(int)(nativeToolLocation.Y / 64f)};produce={produce.QualifiedItemId};produce_stack={produceStack}");
-        this.Remember(accepted);
-        this.AddTrace(accepted);
-        return accepted;
     }
 
     /// <summary>
@@ -817,10 +803,7 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pet_action_not_handled", $"target={expectedTargetId}");
         }
 
-        LocalExecutionReceipt accepted = new(executionId, requestId, ExecutionState.Accepted, "accepted", this.revision, $"target={expectedTargetId};pet_day={specification.PetDay};friendship_before={friendshipBefore};expected_friendship_after={specification.ExpectedFriendshipAfter}");
-        this.Remember(accepted);
-        this.AddTrace(accepted);
-        return accepted;
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted", $"target={expectedTargetId};pet_day={specification.PetDay};friendship_before={friendshipBefore};expected_friendship_after={specification.ExpectedFriendshipAfter}");
     }
 
     /// <summary>
@@ -967,18 +950,10 @@ internal sealed partial class ExecutionManager
         string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};animal={animalId};type={animalType};tile={animalTileX},{animalTileY};friendship_before={friendshipBefore};friendship_after={friendshipAfter};friendship_floor={friendshipFloor};happiness_before={happinessBefore};happiness_after={animal.happiness.Value};was_auto_pet_before={autoPettedBefore.ToString().ToLowerInvariant()};was_pet={marked.ToString().ToLowerInvariant()};time_of_day={Game1.timeOfDay}";
         if (!marked || !friendshipApplied)
         {
-            LocalExecutionReceipt uncertain = new(executionId, requestId, ExecutionState.Uncertain, "farm_animal_pet_postcondition_not_observed", this.revision, evidence);
-            this.Remember(uncertain);
-            this.AddTrace(uncertain);
-            this.PublishIdleAfterRelease(executionId, requestId);
-            return uncertain;
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "farm_animal_pet_postcondition_not_observed", evidence);
         }
 
-        LocalExecutionReceipt receipt = new(executionId, requestId, ExecutionState.Succeeded, "farm_animal_petted", this.revision, evidence);
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(executionId, requestId);
-        return receipt;
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "farm_animal_petted", evidence);
     }
 
     /// <summary>
@@ -1063,11 +1038,7 @@ internal sealed partial class ExecutionManager
         int npcTileY = (int)npc.Tile.Y;
         LocalNpcRelationshipInspectionSpec specification = new(executionId, requestId, location.NameOrUniqueName, npcTileX, npcTileY, expectedTargetId, npc.Name, this.revision, requestedDeadlineMs);
         string evidence = $"location={specification.Location};target={expectedTargetId};tile={npcTileX},{npcTileY};npc={specification.NpcName};points={friendship.Points};status={friendship.Status};talked_to_today={friendship.TalkedToToday.ToString().ToLowerInvariant()};gifts_today={friendship.GiftsToday};gifts_this_week={friendship.GiftsThisWeek}";
-        LocalExecutionReceipt receipt = new(executionId, requestId, ExecutionState.Succeeded, "npc_relationship_inspected", this.revision, evidence);
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(executionId, requestId);
-        return receipt;
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "npc_relationship_inspected", evidence);
     }
 
 

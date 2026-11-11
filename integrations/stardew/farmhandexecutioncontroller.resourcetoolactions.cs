@@ -607,12 +607,8 @@ internal sealed partial class ExecutionManager
             RestoreToolSelection(Game1.player, selection);
             evidence["tool_restored"] = DescribeToolCategory(Game1.player.CurrentTool);
         }
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision,
+        return this.RememberTerminal(requestId, executionId, state, reasonCode,
             ToolActionEvidence.Compose(ToolActionEvidence.TillSoil, evidence));
-        this.Remember(receipt);
-        this.AddTrace(receipt);
-        this.PublishIdleAfterRelease(executionId, requestId);
-        return receipt;
     }
 
     /// <summary>
@@ -1665,16 +1661,12 @@ internal sealed partial class ExecutionManager
             : string.Empty;
         // `stand_at` is `goal` - the tile above, chosen once and dispatched to. A second selection here could publish a
         // coordinate the walk does not use, and a caller told to stand somewhere it is not is worse than one told nothing.
-        LocalExecutionReceipt accepted = new(
-            executionId,
+        return this.RememberTerminal(
             requestId,
+            executionId,
             ExecutionState.Accepted,
             "accepted",
-            this.revision,
             $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};distance={distance};reach=1;approach=adjacent;stand_at={goal.X},{goal.Y}{reached}{steppedOut}");
-        this.Remember(accepted);
-        this.AddTrace(accepted);
-        return accepted;
     }
 
     /// <summary>

@@ -414,16 +414,7 @@ internal sealed partial class ExecutionManager
             requestedDeadlineMs);
         this.activeTravel = specification;
 
-        LocalExecutionReceipt accepted = new(
-            executionId,
-            requestId,
-            ExecutionState.Accepted,
-            "accepted",
-            this.revision,
-            evidence);
-        this.Remember(accepted);
-        this.AddTrace(accepted);
-        return accepted;
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted", evidence);
     }
 
     /// <summary>Which native totem arm the owned object takes, so a refusal says what it

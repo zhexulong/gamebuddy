@@ -266,18 +266,14 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         }
 
         this.activeTravel = specification;
-        LocalExecutionReceipt accepted = new(
-            executionId,
+        return this.RememberTerminal(
             request.RequestId,
+            executionId,
             ExecutionState.Accepted,
             "accepted",
-            this.revision,
             $"origin={originLocation};origin_floor={originFloor};floor={floorToSelect};"
                 + $"is_entrance={floorToSelect == 0};target={targetLocation};"
                 + $"lowest_level_reached={lowestLevelReached};elevator_tile={elevatorX},{elevatorY};"
                 + $"riding_mine_elevator={Game1.player.ridingMineElevator}");
-        this.Remember(accepted);
-        this.AddTrace(accepted);
-        return accepted;
     }
 }
