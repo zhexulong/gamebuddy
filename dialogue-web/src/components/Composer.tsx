@@ -301,6 +301,10 @@ export function Composer({
             // management voice-preference route, not on the chat snapshot. The
             // state is projected as a readable label, not only as a dot, so a
             // player who does not hover still learns what the surface can do.
+            // The labels describe the voice LANE, never an interaction: this
+            // surface has no capture path (no acquisition, no ASR request), so a
+            // label that instructs the player to talk would promise a control
+            // that does not exist (tests/chat-surface-voice.spec.ts).
             <span className="voice-status" data-voice-state={voice.state} role="status" title={voiceLabel}>
               <span
                 className={

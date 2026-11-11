@@ -786,6 +786,27 @@ export async function runMountedProviderStart(
     // naming this turn here rather than outliving it into a probe or a title generation.
     scope.runtimeSession.providerTurnHeader.clearTurn(scope.facts.turnId);
     await nativeObserver?.close();
+    // The speech job was opened in THIS scope, so this scope is what closes it on
+    // every exit - not only the two callbacks that normally do (`finalize` from
+    // the final text, `cancel` from a rejected turn). A turn can leave between
+    // them: a revoked admission, an expired deadline, a refused preset, or a
+    // refused variant branch all return before the provider is invoked, and the
+    // Chat surface keeps ONE sink for the life of the page - so the leftover job
+    // would refuse the next turn's `begin()` (`voice_speech_job_already_open`,
+    // swallowed as voice degradation) and lose its voice for good.
+    //
+    // `cancel()` clears the job identity before it writes, so it closes a job the
+    // final text already finalized and one that never streamed a chunk, and it is
+    // a no-op when nothing is open: the ordinary completed turn writes no extra
+    // frame. It runs after the observer's drain above, so it can never preempt a
+    // commit that is still being published.
+    if (speechSink !== undefined) {
+      try {
+        await speechSink.cancel();
+      } catch {
+        // Voice degradation is always graceful.
+      }
+    }
     // The prompt has settled and its final assistant snapshot has been drained, so this is the one
     // moment where both what the prompt appended and which row it was committed as are known. It runs
     // here, before the scope closes and after every terminal transition, and it can never change this

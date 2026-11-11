@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer, type Server, type Socket } from "node:net";
 import test from "node:test";
 import type { ProviderInvocationScope } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js";
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -27,6 +28,7 @@ import {
   type ProviderTurnHeaderScope,
   type ProviderTurnNaming,
 } from "../provider-turn-header.internal.js";
+import { LocalVoiceGatewayClient } from "../voice-gateway-client.js";
 
 function nativeText(text: string) {
   return Object.freeze({ type: "text" as const, text });
@@ -1561,4 +1563,225 @@ test("a refused credential and a throttle do not settle as the same durable fail
     readings[1],
     `a 401 and a 429 must not settle identically; both read ${String(readings[0])}`,
   );
+});
+
+/**
+ * The smallest real Voice Gateway the Chat speech sink can be driven against.
+ *
+ * The sink, its protocol frames and the job rules under test are production
+ * (`voice-gateway-client.ts`); only the peer is a double. It answers the
+ * handshake and the health probe the sink gates its streaming lane on, and it
+ * records every frame, so a reading can name what actually crossed the wire.
+ */
+async function startFakeVoiceGateway(): Promise<
+  Readonly<{
+    connect(): Promise<LocalVoiceGatewayClient>;
+    frames(type: string): readonly Record<string, unknown>[];
+    close(): Promise<void>;
+  }>
+> {
+  const seen: Record<string, unknown>[] = [];
+  let peer: Socket | undefined;
+  const server = await new Promise<Server>((resolvePromise, reject) => {
+    const listener = createServer((socket) => {
+      peer = socket;
+      socket.setEncoding("utf8");
+      let buffer = "";
+      socket.on("data", (chunk: string) => {
+        buffer += chunk;
+        for (;;) {
+          const newline = buffer.indexOf("\n");
+          if (newline < 0) return;
+          const frame = JSON.parse(buffer.slice(0, newline)) as Record<string, unknown> & { requestId: string };
+          buffer = buffer.slice(newline + 1);
+          seen.push(frame);
+          const write = (value: Record<string, unknown>): void => {
+            socket.write(`${JSON.stringify({ requestId: frame.requestId, ...value })}\n`);
+          };
+          if (frame.type === "hello") write({ type: "hello_ack", protocolVersion: 1 });
+          else if (frame.type === "health")
+            write({
+              type: "health",
+              protocolVersion: 1,
+              status: "ready",
+              capabilities: {
+                providerId: "fake-tts",
+                modelRevision: "v1",
+                perUtteranceDirection: false,
+                ready: true,
+                epoch: 3,
+              },
+            });
+        }
+      });
+    });
+    listener.listen(0, "127.0.0.1", () => resolvePromise(listener)).once("error", reject);
+  });
+  const address = server.address();
+  assert.ok(address !== null && typeof address === "object");
+  return Object.freeze({
+    async connect(): Promise<LocalVoiceGatewayClient> {
+      const client = await LocalVoiceGatewayClient.connect({ port: address.port, token: "voice_token_1234567890" });
+      await client.health();
+      return client;
+    },
+    frames: (type: string) => seen.filter((frame) => frame.type === type),
+    async close(): Promise<void> {
+      peer?.destroy();
+      await new Promise<void>((resolvePromise, reject) =>
+        server.close((error) => (error == null ? resolvePromise() : reject(error))),
+      );
+    },
+  });
+}
+
+/**
+ * The speech job a turn opens belongs to that turn's own scope, and the Chat
+ * surface reuses ONE sink for the life of the page. So a job the runner leaves
+ * open is not a local leak: `begin()` refuses the next turn
+ * (`voice_speech_job_already_open`) and that turn is silently mute, because the
+ * refusal is caught and degraded.
+ *
+ * The failure this catches: the job was opened before the provider was invoked
+ * (before the arm revalidation, the preset read, and the prompt), so every exit
+ * between those points - a revoked admission, an expired deadline, a refused
+ * preset, a refused variant branch - returned without the `finalize()` the
+ * content callback sends or the `cancel()` the rejection callback sends.
+ */
+test("a turn that ends before its provider starts closes the voice job it opened", async () => {
+  const gateway = await startFakeVoiceGateway();
+  try {
+    const client = await gateway.connect();
+    const speechSink = client.createChatVoiceStreamingSink();
+    let admissionRevoked = false;
+    const { scope } = createScope({
+      runtimeSession: Object.freeze({
+        installTavernProviderStartObserver: () => () => undefined,
+        session: Object.freeze({ prompt: async () => undefined }),
+      }),
+      assertAdmission: () => {
+        if (admissionRevoked) throw new Error("semantic_chat_runtime_p4_provider_start_deadline_expired");
+      },
+      readAcceptedMessageText: async () => {
+        admissionRevoked = true;
+        return "Hello";
+      },
+    });
+
+    const result = await runMountedProviderStart(scope, undefined, speechSink);
+
+    assert.equal(result.outcome, "not_started", "the turn ends before its provider is invoked");
+    // The decisive reading: the next turn's job is admitted. The production sink
+    // refuses `begin()` while a job is open, and this is the same sink instance
+    // the surface keeps for every later turn.
+    let refusal: unknown;
+    try {
+      await speechSink.begin("turn_02");
+    } catch (error) {
+      refusal = error;
+    }
+    assert.equal(
+      refusal,
+      undefined,
+      `the next turn's speech job was refused by the turn before it: ${String(refusal)}`,
+    );
+  } finally {
+    await gateway.close();
+  }
+});
+
+/**
+ * A Stop during companion speech: Pi aborts the run, so `message_end` carries
+ * `stopReason: "aborted"` (`pi-agent-core`'s `handleRunFailure`), the native
+ * content observer turns that into `onRejected("aborted")`, and the runner
+ * answers it with `speechSink.cancel()`.
+ *
+ * This pins the reading the surface depends on: after an aborted speech turn the
+ * next turn is admitted AND voiced under its own job id - a job left open would
+ * have the second turn refused at `begin()` and its deltas written into the first
+ * turn's abandoned job instead. It also pins that closing the job on the way out
+ * cannot double-cancel: one `cancel_speech` per aborted job.
+ */
+test("an aborted speech turn closes its job, so the next turn is voiced under its own job", async () => {
+  const gateway = await startFakeVoiceGateway();
+  try {
+    const client = await gateway.connect();
+    const speechSink = client.createChatVoiceStreamingSink();
+    let observer: Observer | undefined;
+    const deltas = ["我先想想。", "今天有雨。"];
+    const { scope } = createScope({
+      runtimeSession: Object.freeze({
+        installTavernProviderStartObserver(onStart: Observer) {
+          observer = onStart;
+          return () => undefined;
+        },
+        session: (() => {
+          const listeners = new Set<(event: unknown) => void>();
+          const emit = (event: unknown): void => {
+            for (const listener of [...listeners]) listener(event);
+          };
+          return Object.freeze({
+            subscribe(listener: (event: unknown) => void) {
+              listeners.add(listener);
+              return () => listeners.delete(listener);
+            },
+            async prompt() {
+              const partial = nativeAssistant([nativeText("")]);
+              emit({ type: "message_start", message: partial });
+              queueMicrotask(() => observer?.(Object.freeze({ statusClass: "success" as const })));
+              await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+              emit({
+                type: "message_update",
+                message: partial,
+                assistantMessageEvent: { type: "text_start", contentIndex: 0, partial },
+              });
+              for (const delta of deltas)
+                emit({
+                  type: "message_update",
+                  message: partial,
+                  assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta, partial },
+                });
+              // The Stop: Pi settles the run by aborting it, and the run promise
+              // itself still fulfils - only the message says why it ended.
+              emit({
+                type: "message_end",
+                message: nativeAssistant([nativeText(deltas.join(""))], "assistant_01", "aborted"),
+              });
+            },
+          });
+        })(),
+      }),
+      finalizeCancellation: async () => cancelled(),
+    });
+
+    const result = await runMountedProviderStart(scope, undefined, speechSink);
+
+    assert.equal(result.outcome, "cancelled", "a Stop that aborted the speech wins the turn");
+    // The sink's writes are socket writes: give the loopback peer the tick it
+    // needs before reading what actually crossed the wire.
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 50));
+    const chunks = gateway.frames("stream_speech_chunk");
+    assert.equal(chunks.length, deltas.length, "the reply's deltas reached the gateway as chunks");
+    const cancels = gateway.frames("cancel_speech");
+    assert.equal(cancels.length, 1, "exactly one cancel closes the aborted job");
+    assert.equal(cancels[0]?.speechJobId, chunks[0]?.speechJobId, "the cancel names the streamed job");
+
+    // The decisive reading: the next turn is admitted, and its own chunks carry
+    // its own job and session - not the abandoned turn's.
+    await speechSink.begin("turn_02");
+    await speechSink.append("第二轮的答复。");
+    await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 50));
+    const nextChunks = gateway.frames("stream_speech_chunk").slice(chunks.length);
+    assert.equal(nextChunks.length, 1, "the next turn streams under its own job");
+    assert.ok(
+      String(nextChunks[0]?.speechJobId).startsWith("chat_turn_turn_02_"),
+      "the job id belongs to the second turn",
+    );
+    assert.ok(
+      String(nextChunks[0]?.sessionId).startsWith("chat_turn_turn_02"),
+      "the session belongs to the second turn",
+    );
+  } finally {
+    await gateway.close();
+  }
 });
