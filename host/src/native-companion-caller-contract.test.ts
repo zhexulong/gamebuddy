@@ -5,6 +5,7 @@ import test from "node:test";
 import { CHAT_PACED_DELIVERY } from "./companion-delivery-pacing.js";
 import {
   attachNativeCompanionContent,
+  CHAT_TRANSCRIPT_DELIVERY_UNIT,
   CHAT_TRANSCRIPT_SCAFFOLDING,
   CHAT_TRANSCRIPT_STAGE_DIRECTION,
   type NativeCompanionContentEvent,
@@ -61,6 +62,7 @@ async function piecesFor(turn: Readonly<{ id: string; locale: string }> | undefi
     onRejected: async () => undefined,
   });
   const observer = attachNativeCompanionContent(fx.session, sinks, {
+    deliveryUnit: CHAT_TRANSCRIPT_DELIVERY_UNIT,
     stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,
     scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING,
     pacing: CHAT_PACED_DELIVERY,

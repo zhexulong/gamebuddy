@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   attachNativeCompanionContent,
+  CHAT_TRANSCRIPT_DELIVERY_UNIT,
   NATIVE_BUBBLE_SCAFFOLDING,
   type NativeCompanionContentEvent,
   type NativeCompanionContentOptions,
@@ -50,7 +51,11 @@ function attach(
   stageDirection: NativeCompanionContentOptions["stageDirection"] = "strip",
   scaffolding: NativeCompanionContentOptions["scaffolding"] = NATIVE_BUBBLE_SCAFFOLDING,
 ) {
-  return attachNativeCompanionContent(fx.session, sinks, { stageDirection, scaffolding });
+  return attachNativeCompanionContent(fx.session, sinks, {
+    stageDirection,
+    scaffolding,
+    deliveryUnit: CHAT_TRANSCRIPT_DELIVERY_UNIT,
+  });
 }
 
 test("obtains the provider response identity from its first update when Pi's start snapshot has none", async () => {

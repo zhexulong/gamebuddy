@@ -125,15 +125,40 @@ test("the bundle carries the stale-world facts the Host published, or names why 
   assert.equal(unreadable.unreadable, 1);
 });
 
-test("a run's pieces and its account are the same population, and the reaction sounds are named as such", () => {
-  // The round41 shape, reduced: 46 text parts presented as 46 pieces, plus the one sound each of the thirteen turns
-  // opened with. 59 pieces, 59 accounted, nothing unexplained - which is the answer the bundle could not give.
+test("a run's committed bubbles and its account are the same population, one per turn", () => {
+  // The per-turn record in the shape `companion-loop.ts` now prints: two turns that rolled four messages into two
+  // bubbles. The population the runner counts (`presentation.pieceCount`) and the population the Host names have to be
+  // the same number, and when they are not the account blocks instead of leaving the difference to a reader.
   const records = [
-    { textParts: 4, presented: 4, suppressed: {}, pieces: { text: 4, ahead: 1 } },
-    { textParts: 42, presented: 42, suppressed: {}, pieces: { text: 42, ahead: 12 } },
+    {
+      textParts: 3,
+      presented: 3,
+      suppressed: {},
+      bubbles: 1,
+      messages: { count: 2, ids: ["msg_a1", "msg_a2"] },
+      bubble: { chars: 74, truncatedChars: 0, sentencesDropped: 0 },
+    },
+    {
+      textParts: 43,
+      presented: 43,
+      suppressed: {},
+      bubbles: 1,
+      messages: { count: 2, ids: ["msg_b1", "msg_b2"] },
+      bubble: { chars: 80, truncatedChars: 22, sentencesDropped: 2 },
+    },
   ];
-  const account = summarizeDeliveryAccount({ records, piecesProduced: 59 });
-  assert.deepEqual(account.pieces, { produced: 59, accounted: 59, unaccounted: 0, text: 46, ahead: 13 });
+  const account = summarizeDeliveryAccount({ records, bubblesProduced: 2 });
+  assert.deepEqual(account.bubbles, {
+    produced: 2,
+    accounted: 2,
+    unaccounted: 0,
+    turns: 2,
+    perTurnMax: 1,
+    overOne: [],
+    truncatedTurns: 1,
+    truncatedChars: 22,
+  });
+  assert.deepEqual(account.rollUp, { messages: 4, bubbles: 2 });
   assert.deepEqual(account.parts, {
     produced: 46,
     presented: 46,
@@ -144,17 +169,46 @@ test("a run's pieces and its account are the same population, and the reaction s
   assert.equal(account.blocked, null);
   assert.match(
     describeDeliveryAccount(account),
-    /^pieces produced 59 · accounted 59 · unaccounted 0 · parts produced 46 · presented 46 · suppressed 0 · missing 0 · turns 2 · reconciled$/u,
+    /^bubbles produced 2 · accounted 2 · unaccounted 0 · parts produced 46 · presented 46 · suppressed 0 · missing 0 · turns examined 2 · bubbles 2 · per-turn max 1 · messages rolled up: 4 into 2 · bubbles truncated 1 \(chars 22\) · reconciled$/u,
   );
 });
 
-test("a piece the account never named blocks the run and says which two numbers disagree", () => {
-  // A turn that presented pieces but printed no record - the exact reading round41 could not rule out.
-  const records = [{ textParts: 2, presented: 2, suppressed: {}, pieces: { text: 2, ahead: 0 } }];
-  const account = summarizeDeliveryAccount({ records, piecesProduced: 15 });
-  assert.equal(account.pieces.unaccounted, 13);
+test("a turn that presents two bubbles blocks the run by name and says which turn and which messages", () => {
+  // THE CADENCE GATE. The population is every prompt turn's delivery record, never a count of assistant messages:
+  // MEASURED 2026-11-11 (round46b, 15 minutes): 27 prompt turns produced 55 assistant messages and 49 bubbles, because
+  // each message was presented as a reply of its own. A run in that shape must not be able to call itself reconciled.
+  const records = [
+    { textParts: 1, presented: 1, suppressed: {}, bubbles: 1, messages: { count: 1, ids: ["msg_one"] } },
+    {
+      textParts: 2,
+      presented: 2,
+      suppressed: {},
+      bubbles: 2,
+      messages: { count: 2, ids: ["msg_two_a", "msg_two_b"] },
+    },
+    { textParts: 1, presented: 1, suppressed: {}, bubbles: 1, messages: { count: 1, ids: ["msg_three"] } },
+  ];
+  const account = summarizeDeliveryAccount({ records, bubblesProduced: 4 });
+  assert.equal(account.bubbles.perTurnMax, 2);
+  assert.deepEqual(account.bubbles.overOne, [{ turn: 2, bubbles: 2, messageIds: ["msg_two_a", "msg_two_b"] }]);
+  assert.equal(account.blocked, "bubble_per_turn_over_one");
+  const described = describeDeliveryAccount(account);
+  assert.match(described, /bubble_per_turn_over_one:turn#2:2:msg_two_a,msg_two_b/u);
+  assert.match(described, /per-turn max 2 · messages rolled up: 4 into 4/u);
+  assert.deepEqual(deliveryAccountClause(account), {
+    id: "delivery_account",
+    passed: false,
+    reasonCode: "bubble_per_turn_over_one",
+  });
+});
+
+test("a bubble the account never named blocks the run and says which two numbers disagree", () => {
+  // A turn that presented a bubble but printed no record - the exact reading round41 could not rule out.
+  const records = [{ textParts: 2, presented: 2, suppressed: {}, bubbles: 1, messages: { count: 1, ids: ["msg_a"] } }];
+  const account = summarizeDeliveryAccount({ records, bubblesProduced: 15 });
+  assert.equal(account.bubbles.unaccounted, 14);
   assert.equal(account.blocked, "delivery_account_unaccounted_pieces");
-  assert.match(describeDeliveryAccount(account), /pieces produced 15 · accounted 2 · unaccounted 13/u);
+  assert.match(describeDeliveryAccount(account), /bubbles produced 15 · accounted 1 · unaccounted 14/u);
   assert.deepEqual(deliveryAccountClause(account), {
     id: "delivery_account",
     passed: false,
@@ -169,8 +223,8 @@ test("a piece the account never named blocks the run and says which two numbers 
 });
 
 test("parts that do not add up block the run and print the three populations and the leftover", () => {
-  const records = [{ textParts: 3, presented: 1, suppressed: {}, pieces: { text: 1, ahead: 0 } }];
-  const account = summarizeDeliveryAccount({ records, piecesProduced: 1 });
+  const records = [{ textParts: 3, presented: 1, suppressed: {}, bubbles: 1, messages: { count: 1, ids: ["msg_a"] } }];
+  const account = summarizeDeliveryAccount({ records, bubblesProduced: 1 });
   assert.equal(account.parts.missing, 2, "two parts reached neither the player nor a named suppression");
   assert.equal(account.blocked, "delivery_account_parts_do_not_add_up");
   assert.deepEqual(deliveryAccountClause(account), {
@@ -186,10 +240,10 @@ test("two turns that err in opposite directions do not cancel: the run-level tot
   // so the old account reported `unaccounted 0` and passed a run in which two turns had lost text. The totals still
   // agree - 4 produced, 4 presented - which is why the per-turn identity is checked and not only the aggregate.
   const records = [
-    { textParts: 3, presented: 1, suppressed: {}, pieces: { text: 1, ahead: 0 } },
-    { textParts: 1, presented: 3, suppressed: {}, pieces: { text: 3, ahead: 0 } },
+    { textParts: 3, presented: 1, suppressed: {}, bubbles: 1, messages: { count: 1, ids: ["msg_a"] } },
+    { textParts: 1, presented: 3, suppressed: {}, bubbles: 1, messages: { count: 1, ids: ["msg_b"] } },
   ];
-  const account = summarizeDeliveryAccount({ records, piecesProduced: 4 });
+  const account = summarizeDeliveryAccount({ records, bubblesProduced: 2 });
   assert.equal(
     account.parts.missing,
     0,
@@ -208,35 +262,35 @@ test("two turns that err in opposite directions do not cancel: the run-level tot
 });
 
 test("a run that presented nothing and printed nothing says so instead of agreeing with itself", () => {
-  const account = summarizeDeliveryAccount({ records: [], piecesProduced: 0 });
+  const account = summarizeDeliveryAccount({ records: [], bubblesProduced: 0 });
   assert.equal(account.blocked, null, "nothing to deliver is not a broken account");
   assert.equal(account.nothingPresented, true);
   assert.match(describeDeliveryAccount(account), /nothing presented$/u);
 });
 
-test("pieces with no records at all are an absent account, never a pass", () => {
-  const account = summarizeDeliveryAccount({ records: [], piecesProduced: 7 });
+test("bubbles with no records at all are an absent account, never a pass", () => {
+  const account = summarizeDeliveryAccount({ records: [], bubblesProduced: 7 });
   assert.equal(account.blocked, "delivery_account_absent");
-  assert.equal(account.pieces.unaccounted, 7);
+  assert.equal(account.bubbles.unaccounted, 7);
 });
 
 test("an unreadable record is counted, because an account nobody could read did not agree", () => {
   const text = [
-    line({ textParts: 1, presented: 1, suppressed: {}, pieces: { text: 1, ahead: 0 } }),
+    line({ textParts: 1, presented: 1, suppressed: {}, bubbles: 1, messages: { count: 1, ids: ["msg_a"] } }),
     `${TURN_DELIVERY_PREFIX}{not json`,
   ].join("\n");
   const read = readTurnDeliveryRecords(text);
   assert.equal(read.records.length, 1);
   assert.equal(read.unparsable, 1);
-  assert.equal(summarizeDeliveryAccount({ ...read, piecesProduced: 1 }).blocked, "delivery_account_unreadable");
+  assert.equal(summarizeDeliveryAccount({ ...read, bubblesProduced: 1 }).blocked, "delivery_account_unreadable");
 });
 
 test("the written bundle is judged by the same invariant, and an old bundle blocks rather than passing", () => {
   const reconciled = summarizeDeliveryAccount({
-    records: [{ textParts: 1, presented: 1, suppressed: {}, pieces: { text: 1, ahead: 1 } }],
-    piecesProduced: 2,
+    records: [{ textParts: 1, presented: 1, suppressed: {}, bubbles: 1, messages: { count: 1, ids: ["msg_a"] } }],
+    bubblesProduced: 1,
   });
-  assert.deepEqual(assessBundleDeliveryAccount({ presentation: { pieceCount: 2, deliveryAccount: reconciled } }), {
+  assert.deepEqual(assessBundleDeliveryAccount({ presentation: { pieceCount: 1, deliveryAccount: reconciled } }), {
     ok: true,
     code: "delivery_account_reconciled",
     detail: describeDeliveryAccount(reconciled),
@@ -244,15 +298,21 @@ test("the written bundle is judged by the same invariant, and an old bundle bloc
   // A bundle written before the account existed cannot answer the question, so it does not answer "passed".
   assert.equal(assessBundleDeliveryAccount({ presentation: { pieceCount: 59 } }).code, "delivery_account_absent");
   assert.equal(assessBundleDeliveryAccount({}).code, "delivery_account_bundle_without_presentation");
-  // A bundle whose own piece count disagrees with the account it carries is the drift this gate exists for.
+  // A bundle whose account predates the bubble unit cannot answer the cadence question either.
+  const oldShape = { ...reconciled, bubbles: undefined, pieces: { produced: 1, accounted: 1, unaccounted: 0 } };
   assert.equal(
-    assessBundleDeliveryAccount({ presentation: { pieceCount: 60, deliveryAccount: reconciled } }).code,
+    assessBundleDeliveryAccount({ presentation: { pieceCount: 1, deliveryAccount: oldShape } }).code,
+    "delivery_account_bubbles_absent",
+  );
+  // A bundle whose own count disagrees with the account it carries is the drift this gate exists for.
+  assert.equal(
+    assessBundleDeliveryAccount({ presentation: { pieceCount: 2, deliveryAccount: reconciled } }).code,
     "delivery_account_pieces_produced_disagrees",
   );
   // And a hand-written account whose sum does not hold is refused even though its `blocked` is null.
-  const brokenSum = { ...reconciled, blocked: null, pieces: { ...reconciled.pieces, accounted: 1 } };
+  const brokenSum = { ...reconciled, blocked: null, bubbles: { ...reconciled.bubbles, accounted: 0 } };
   assert.equal(
-    assessBundleDeliveryAccount({ presentation: { pieceCount: 2, deliveryAccount: brokenSum } }).code,
+    assessBundleDeliveryAccount({ presentation: { pieceCount: 1, deliveryAccount: brokenSum } }).code,
     "delivery_account_sum_does_not_hold",
   );
   // The same hand-written reading in the PARTS population: 1 produced, 1 presented, nothing withheld - yet the account
@@ -263,7 +323,7 @@ test("the written bundle is judged by the same invariant, and an old bundle bloc
     blocked: null,
     parts: { ...reconciled.parts, presented: 2, missing: -1 },
   };
-  const partsVerdict = assessBundleDeliveryAccount({ presentation: { pieceCount: 2, deliveryAccount: brokenParts } });
+  const partsVerdict = assessBundleDeliveryAccount({ presentation: { pieceCount: 1, deliveryAccount: brokenParts } });
   assert.equal(partsVerdict.code, "delivery_account_parts_do_not_add_up");
   assert.match(partsVerdict.detail, /delivery_mismatch:produced=1;presented=2;suppressed=0;missing=-1$/u);
 });

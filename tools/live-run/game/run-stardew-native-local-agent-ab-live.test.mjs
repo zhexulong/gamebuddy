@@ -61,7 +61,7 @@ const RUNNER_SOURCE = await readFile(new URL("./run-stardew-native-local-agent-a
  */
 const NOTHING_PRESENTED = Object.freeze({
   pieces: [],
-  deliveryAccount: summarizeDeliveryAccount({ records: [], piecesProduced: 0 }),
+  deliveryAccount: summarizeDeliveryAccount({ records: [], bubblesProduced: 0 }),
 });
 // The baseline module's own text: the night-fact reader lives there (one authority for the minted `night_ended_*` shape),
 // so the assertion about how that shape is read belongs to the module rather than to the runner that calls it.

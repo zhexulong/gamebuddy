@@ -6,6 +6,7 @@ import { canonicalTestRoot } from "../test-support/canonical-test-root.test-supp
 import { dehydrateCompanionSpeech } from "../companion-speech-dehydration.js";
 import {
   attachNativeCompanionContent,
+  CHAT_TRANSCRIPT_DELIVERY_UNIT,
   CHAT_TRANSCRIPT_SCAFFOLDING,
   CHAT_TRANSCRIPT_STAGE_DIRECTION,
   type NativeCompanionContentEvent,
@@ -789,7 +790,11 @@ async function chatPresentationOf(
         rejections.push(reason);
       },
     },
-    { stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION, scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING },
+    {
+      stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,
+      scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING,
+      deliveryUnit: CHAT_TRANSCRIPT_DELIVERY_UNIT,
+    },
   );
   observer.open();
   const message = Object.freeze({

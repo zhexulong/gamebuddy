@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   attachNativeCompanionContent,
+  CHAT_TRANSCRIPT_DELIVERY_UNIT,
   CHAT_TRANSCRIPT_SCAFFOLDING,
   CHAT_TRANSCRIPT_STAGE_DIRECTION,
   type NativeCompanionContentEvent,
@@ -75,7 +76,11 @@ async function reject(errorMessage?: string): Promise<{
         args.push(...received);
       }) as never,
     },
-    { stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION, scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING },
+    {
+      stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,
+      scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING,
+      deliveryUnit: CHAT_TRANSCRIPT_DELIVERY_UNIT,
+    },
   );
   observer.open();
   fx.emit({ type: "message_start", message: failedAssistant() });

@@ -43,11 +43,17 @@ export type CompanionDeliveryPacing = Readonly<{
 }>;
 
 /**
- * The in-game surface's pacing, read by `companion-loop.ts` (which passes the
- * `typing` half to the native-content observer and applies `reaction` and
- * `lengthBudget` to every piece it presents). The Game bubble is a small,
- * glanceable box, so it is the surface where a long paragraph and an instantly
- * complete answer both read as machine output rather than as company.
+ * The in-game surface's pacing, read by `companion-loop.ts`, which passes it whole to the native-content
+ * observer. The Game bubble is a small, glanceable box, so it is the surface where a long paragraph and an
+ * instantly complete answer both read as machine output rather than as company.
+ *
+ * <p>
+ * What each mechanism does on the bubble's own unit (one prompt turn, one bubble): `reaction` is the
+ * interjection at the HEAD of that bubble's text, `lengthBudget` is the ceiling the bubble is cut to, and
+ * `typing` paces the mid-message working remark, which only the message unit has - a turn's speech cannot
+ * leave before the turn ends, so there is nothing to delay. Keeping the record whole means the surface
+ * still names all three even where one of them has nowhere to apply.
+ * </p>
  */
 export const GAME_DELIVERY_PACING: CompanionDeliveryPacing = Object.freeze({
   typing: Object.freeze({
@@ -182,8 +188,7 @@ export function selectReactionSound(seed: string, locale: string, pace: Companio
  */
 export function budgetedSpeechPieces(text: string, budget: CompanionLengthBudget): readonly string[] {
   if (text.length <= budget.maxChars) return Object.freeze([text]);
-  const accumulator = new IncrementalSpeechAccumulator();
-  const units = [...accumulator.push(text), accumulator.flush()];
+  const units = speechSentences(text);
   const pieces: string[] = [];
   let current = "";
   for (const unit of units) {
@@ -196,4 +201,54 @@ export function budgetedSpeechPieces(text: string, budget: CompanionLengthBudget
   }
   if (current.length > 0) pieces.push(current);
   return Object.freeze(pieces);
+}
+
+/**
+ * The head of one turn's speech that fits a single bubble, and what keeping it cost.
+ *
+ * <p>
+ * A bubble holds `budget.maxChars`, so a turn whose whole speech is longer than that cannot arrive
+ * whole - and one bubble per turn means the tail is what goes, not a second bubble. The cut lands on
+ * the last complete sentence that fits, using the same sentence units `budgetedSpeechPieces` splits
+ * on, so a bubble never ends inside a quote, a stage beat or a scaffolding frame.
+ * </p>
+ * <p>
+ * One sentence longer than the budget has no boundary to cut at, so it is cut at the character
+ * ceiling instead: `sentencesDropped` 0 beside a non-zero `truncatedChars` is that shape and the
+ * only one, which is what tells a reader the reply had no complete sentence to stop at.
+ * </p>
+ */
+export function budgetedSpeechHead(
+  text: string,
+  budget: CompanionLengthBudget,
+): Readonly<{ text: string; truncatedChars: number; sentencesDropped: number }> {
+  if (text.length <= budget.maxChars) return Object.freeze({ text, truncatedChars: 0, sentencesDropped: 0 });
+  const units = speechSentences(text).filter((unit) => unit.length > 0);
+  const head = budgetedSpeechPieces(text, budget)[0] ?? "";
+  if (head.length > budget.maxChars) {
+    const cut = text.slice(0, budget.maxChars).trimEnd();
+    return Object.freeze({
+      text: cut,
+      truncatedChars: text.length - cut.length,
+      sentencesDropped: Math.max(0, units.length - 1),
+    });
+  }
+  let kept = 0;
+  let width = 0;
+  for (const unit of units) {
+    if (width + unit.length > head.length) break;
+    width += unit.length;
+    kept += 1;
+  }
+  return Object.freeze({
+    text: head,
+    truncatedChars: text.length - head.length,
+    sentencesDropped: units.length - kept,
+  });
+}
+
+/** The sentences of one text, as both budget readers above walk them. */
+function speechSentences(text: string): readonly string[] {
+  const accumulator = new IncrementalSpeechAccumulator();
+  return Object.freeze([...accumulator.push(text), accumulator.flush()]);
 }

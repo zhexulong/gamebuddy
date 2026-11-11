@@ -12,10 +12,12 @@ import {
 } from "./event-pump.js";
 import {
   attachNativeCompanionContent,
+  NATIVE_BUBBLE_DELIVERY_UNIT,
   NATIVE_BUBBLE_SCAFFOLDING,
   NATIVE_BUBBLE_STAGE_DIRECTION,
   type NativeCompanionContentObserver,
   type NativeCompanionPartSuppression,
+  type NativeCompanionTurnBubble,
   readAssistantMessageFacts,
 } from "./native-companion-content.js";
 
@@ -324,26 +326,31 @@ export class CompanionLoop {
     let presentedTextParts = 0;
     const suppressedByReason = new Map<CompanionTurnPartSuppression, number>();
     /**
-     * How many PIECES this turn's presentation committed, and where each came from.
+     * What this turn's delivery took, in the unit the player experiences: the BUBBLE.
      *
      * <p>
-     * `presentedTextPieces` is the paragraphs the surface handed to the player; `aheadPieces` is what a paced surface
-     * emits BEFORE one - this turn's one reaction sound and its one working remark (`companion-delivery-pacing.ts`,
-     * `native-companion-content.ts`). The parts above cannot express those: a part is a block of model text, while a
-     * piece is one commit the player saw, and one part can be shown as several pieces or behind a sound.
+     * MEASURED 2026-11-11 (round46b, 15 minutes): 27 prompt turns produced 55 assistant messages and 49 bubbles - one
+     * every 13 seconds, 2.04 messages per turn - because every assistant message was presented as a reply of its own.
+     * The surface's unit is now the turn (`native-companion-content.ts` `deliverTurn`), so `presentedTextPieces` counts
+     * the bubbles this turn committed (0 or 1) and `textMessageIds` names the messages those bubbles rolled up. A part is
+     * a block of model text, a bubble is one commit the player saw; publishing both is what lets a run's own
+     * `presentation.pieceCount` reconcile against this record instead of reading the difference as missing turns.
      * </p>
      * <p>
-     * MEASURED 2026-11-09 (round41 `multiday_routine`): `presentation.pieceCount` 59, `AGENT_PRESENTATION_PIECE` 59
-     * lines, `sessionTurns[].spokenLines` 59, and 13 delivery records accounting `textParts` 46 / `presented` 46 /
-     * `unaccounted` 0. Both numbers were right and the account could not say why they differ. The 59 pieces were 11
-     * reaction sounds (one per paced turn), 46 paragraphs, and 2 extra pieces from a paragraph the length budget split
-     * - so 13 pieces that are not assistant text parts. A reader comparing the two numbers could only report thirteen
-     * pieces - a whole turn - with no record at all. The pieces are counted here so the run's own total is reconcilable
-     * against what this account claims.
+     * MEASURED 2026-11-09 (round41 `multiday_routine`): `presentation.pieceCount` 59, `AGENT_PRESENTATION_PIECE` 59 lines,
+     * `sessionTurns[].spokenLines` 59, and 13 delivery records accounting `textParts` 46 / `presented` 46 / `unaccounted`
+     * 0 - and nothing said why the two populations differ. The 59 were 11 reaction sounds (one per paced turn), 46
+     * paragraphs, and 2 extra pieces from a paragraph the length budget split: 13 pieces that are not text parts. Those
+     * sounds are now inside the turn's bubble and a split is a second bubble, which is why the record carries one bubble
+     * count rather than a text/ahead pair.
      * </p>
      */
     let presentedTextPieces = 0;
-    let aheadPieces = 0;
+    /** The assistant messages whose text this turn's bubble rolled up, in arrival order. */
+    let textMessages = 0;
+    const textMessageIds: string[] = [];
+    /** What the turn's one bubble cost when it was presented, or `null` when the turn presented none. */
+    let turnBubble: NativeCompanionTurnBubble | null = null;
     /** Did Pi classify the message it ended on as a provider failure or a cancellation? Read from the raw stream. */
     let assistantFailed = false;
     /**
@@ -419,6 +426,13 @@ export class CompanionLoop {
           if (assistantFacts !== undefined) {
             sawAssistantMessage = true;
             assistantTextParts += assistantFacts.textParts;
+            // The roll-up's own input: a message that carried text is one of the messages this turn's
+            // bubble had to fit. Naming them is what lets a reader see 28 messages arrive as 27 bubbles
+            // instead of counting assistant messages and calling that the bubble count.
+            if (assistantFacts.textParts > 0) {
+              textMessages += 1;
+              if (assistantFacts.id !== null) textMessageIds.push(assistantFacts.id);
+            }
             // Nothing could have shown this message: the turn carried no presentation source, or the
             // surface installed no presenter, so the observer that names its own withholdings was never
             // attached. Naming it here is the whole difference between a measured omission and the
@@ -486,24 +500,11 @@ export class CompanionLoop {
                       // Voice degradation is graceful.
                     }
                   },
-                  // Under incremental activation every completed sentence emitted
-                  // from the delta lane is already a final presentation piece;
-                  // it crosses the same source-lineage presenter as the final
-                  // text, in arrival order, and is never re-chunked.
-                  onIncrementalText: async (piece) => {
-                    const content = Object.freeze({ sourceEventId, text: piece });
-                    const presentation = this.#turnObserver?.presentNativeAssistantContent?.(content);
-                    if (presentation !== undefined) aheadPieces += 1;
-                    await presentation;
-                  },
                   onFinalText: async (text) => {
-                    // One message's text is one paragraph, committed once. The
-                    // previous per-sentence chunking put four bubbles in front
-                    // of the player inside the same instant, which reads as a
-                    // stutter rather than as speech; the only piece allowed to
-                    // leave before this is the working remark the observer
-                    // released after a real silence. Voice finalizes after this
-                    // one piece, so cleanup (finally) never cancels an
+                    // The turn's ONE bubble: every message's presented text in arrival order, its reaction
+                    // sound at the head, cut to the bubble ceiling by `deliverTurn()`. A turn that said
+                    // nothing never reaches this sink, so absence is silence rather than an empty bubble.
+                    // Voice finalizes after this one piece, so cleanup (finally) never cancels an
                     // already-finalized job.
                     if (this.voiceSink !== undefined) {
                       try {
@@ -543,6 +544,8 @@ export class CompanionLoop {
                 {
                   stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION,
                   scaffolding: NATIVE_BUBBLE_SCAFFOLDING,
+                  // The bubble's unit is the prompt turn, which is what makes one reply one bubble.
+                  deliveryUnit: NATIVE_BUBBLE_DELIVERY_UNIT,
                   // The in-game surface delivers with pacing on; the Chat transcript's
                   // observer is configured elsewhere and takes the off default.
                   pacing: GAME_DELIVERY_PACING,
@@ -560,11 +563,9 @@ export class CompanionLoop {
                 },
               );
               nativeContentObserver.open();
-              // Previews unlock the delta lane for every Game surface, not only
-              // voice: incremental presentation consumes completed sentences from
-              // that same stream, so the lane opens whenever a Game presenter is
-              // installed. Voice stays one of its consumers; the message_end
-              // residual still crosses the source-lineage bridge.
+              // Previews unlock the delta lane for the voice job, which reads the raw stream:
+              // the bubble's own text is read from the message at `deliverTurn`, not from
+              // this lane, so nothing here can be split into a second bubble.
               nativeContentObserver.openPreviews();
             }
           }
@@ -645,10 +646,14 @@ export class CompanionLoop {
       if (!accepted) return "unobserved";
       await completed;
       if (!settled) throw new Error("pi_turn_settlement_missing");
-      // The final observer callback is serialized independently of Pi's
-      // settlement notification. Drain it before closing the lineage so the
-      // bridge's source/epoch admission remains current through its only
-      // native-content presentation write.
+      // THE TURN'S ONE BUBBLE, at the moment the turn is over: every message it spoke, in arrival
+      // order, with its reaction sound at the head. It cannot be delivered earlier - a bubble cannot be
+      // retracted, so text produced after the commit would be lost - and it is not delivered at all on
+      // the paths that never reach this line (STOP before consumption, a delivery Pi refused, an
+      // unaccepted or unsettled turn): a stopped or uncertain turn does not speak after the fact. The
+      // final observer callback is serialized independently of Pi's settlement notification, so
+      // `close()` below drains the bubble's own presentation before the lineage closes.
+      turnBubble = nativeContentObserver?.deliverTurn() ?? null;
       try {
         await nativeContentObserver?.close();
       } catch (error) {
@@ -713,12 +718,13 @@ export class CompanionLoop {
       // The identity is `presented + suppressed === textParts`; when it does not hold, this turn says so in the same
       // channel every run reads, and no later reading can make it disappear.
       //
-      // `pieces` is the second population, in the unit the run reports: `text` paragraphs the surface committed and
-      // the `ahead` pieces a paced surface committed before them. `textParts` and `pieces` are different counts of
-      // different things on purpose - a part is a block of model text, a piece is one commit the player saw - and
-      // publishing both is what lets a run reconcile its own `presentation.pieceCount` against this account instead
-      // of reading the difference as missing turns.
-      if (assistantTextParts > 0 || presentedTextPieces > 0 || aheadPieces > 0) {
+      // `bubbles` is the second population, in the unit the player experienced: how many bubbles this turn's
+      // presentation committed, and what its one bubble cost when there was one. `textParts` and `bubbles` are
+      // different counts of different things on purpose - a part is a block of model text, a bubble is one commit the
+      // player saw - and publishing both is what lets a run reconcile its own `presentation.pieceCount` against this
+      // account instead of reading the difference as missing turns. `messages` is the roll-up's own input: the messages
+      // whose text the bubble had to fit, named so "28 messages arrived as 27 bubbles" is visible rather than inferred.
+      if (assistantTextParts > 0 || presentedTextPieces > 0) {
         const suppressed = Object.fromEntries(suppressedByReason);
         const suppressedParts = Object.values(suppressed).reduce((total, count) => total + count, 0);
         process.stderr.write(
@@ -726,13 +732,24 @@ export class CompanionLoop {
             textParts: assistantTextParts,
             presented: presentedTextParts,
             suppressed,
-            pieces: { text: presentedTextPieces, ahead: aheadPieces },
+            bubbles: presentedTextPieces,
+            messages: Object.freeze({ count: textMessages, ids: Object.freeze([...textMessageIds]) }),
+            ...(turnBubble === null ? {} : { bubble: turnBubble }),
           })}\n`,
         );
         const missingParts = assistantTextParts - presentedTextParts - suppressedParts;
         if (missingParts !== 0)
           process.stderr.write(
             `delivery_mismatch:produced=${String(assistantTextParts)};presented=${String(presentedTextParts)};suppressed=${String(suppressedParts)};missing=${String(missingParts)}\n`,
+          );
+        // The bubble's ceiling, when it cut the turn's speech. Named with the turn's own identity because it is a
+        // CADENCE fact: more than one bubble's worth was said inside one turn, and the answer to that is fewer, shorter
+        // turns - not a bigger bubble (`identity-profile.ts` states this same ceiling to the model). A non-zero count of
+        // characters with ZERO sentences dropped is the one shape where no complete sentence fitted at all, so the cut
+        // landed inside a sentence.
+        if (turnBubble !== null && turnBubble.truncatedChars > 0)
+          process.stderr.write(
+            `bubble_truncated:${String(sourceEventId ?? batchId ?? "unknown")}:${String(turnBubble.truncatedChars)}:${String(turnBubble.sentencesDropped)}\n`,
           );
       }
       if (batchId !== undefined) {

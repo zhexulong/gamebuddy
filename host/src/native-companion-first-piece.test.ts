@@ -4,6 +4,7 @@ import test from "node:test";
 import { CHAT_PACED_DELIVERY, GAME_DELIVERY_PACING, typingDurationMs } from "./companion-delivery-pacing.js";
 import {
   attachNativeCompanionContent,
+  CHAT_TRANSCRIPT_DELIVERY_UNIT,
   CHAT_TRANSCRIPT_SCAFFOLDING,
   CHAT_TRANSCRIPT_STAGE_DIRECTION,
   type NativeCompanionContentEvent,
@@ -61,6 +62,7 @@ async function firstPieceDelayMs(opening: string, pacing: typeof CHAT_PACED_DELI
   });
   void seen;
   const observer = attachNativeCompanionContent(fx.session, sinks, {
+    deliveryUnit: CHAT_TRANSCRIPT_DELIVERY_UNIT,
     stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,
     scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING,
     pacing,

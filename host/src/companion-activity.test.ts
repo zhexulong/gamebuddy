@@ -6,7 +6,7 @@ import {
   type CompanionActivityPoint,
   type CompanionActivityState,
 } from "./companion-activity.js";
-import { GAME_DELIVERY_PACING, selectReactionSound } from "./companion-delivery-pacing.js";
+import { GAME_DELIVERY_PACING } from "./companion-delivery-pacing.js";
 import { CompanionLoop } from "./companion-loop.js";
 
 /**
@@ -238,25 +238,38 @@ test("no published state reaches the prompt Pi receives or the text the player i
   // spelling, so a later refactor that renamed points could not slip one in as a JSON fragment.
   for (const batch of run.batches)
     assert.equal(batch.includes(COMPANION_ACTIVITY_LINE), false, "the prompt carries no activity channel");
-  // The presented path: every piece is either this turn's registered reaction sound or one of her own two paragraphs.
-  // A state that reached the bubble would be a piece nobody wrote, which is what rule "never in her voice" forbids.
-  const sound = selectReactionSound("player_source_first", "zh-CN", GAME_DELIVERY_PACING.reaction!);
+  // The presented path: every bubble is this surface's registered reaction sound followed by her own words, one
+  // bubble per turn. A state that reached the bubble would be a segment nobody wrote, which is what rule "never in her
+  // voice" forbids.
+  const vocabulary = GAME_DELIVERY_PACING.reaction!.byLanguage.zh!;
   const herWords = ["先出门去农场。", "水浇好了。", "还有三块地。"];
   assert.equal(
     run.presented.length > 0,
     true,
     "the scripted turn did present her text, so this assertion has a population",
   );
-  for (const piece of run.presented)
-    assert.equal(
-      piece === sound || herWords.includes(piece),
-      true,
-      `a piece the companion never said was presented: ${JSON.stringify(piece)}`,
-    );
-  for (const piece of run.presented)
-    assert.equal(
-      (COMPANION_ACTIVITY_STATES as readonly string[]).includes(piece),
-      false,
-      `a bare state token reached the player as text: ${piece}`,
-    );
+  assert.equal(
+    run.presented.length,
+    1,
+    "one bubble for the turn that carried a presentation lease; the settlement turn's text is named as having no lease",
+  );
+  for (const bubble of run.presented) {
+    const segments = bubble.split(" ");
+    // A turn whose batch carried no locale has no vocabulary to speak, so the sound is optional and its absence is not a
+    // missing piece - the rest of the check is about what the bubble says.
+    const said = vocabulary.includes(segments[0]!) ? segments.slice(1) : segments;
+    assert.equal(said.length > 0, true, `the bubble carried her words: ${JSON.stringify(bubble)}`);
+    for (const part of said)
+      assert.equal(
+        herWords.includes(part),
+        true,
+        `a piece the companion never said was presented: ${JSON.stringify(bubble)}`,
+      );
+    for (const part of segments)
+      assert.equal(
+        (COMPANION_ACTIVITY_STATES as readonly string[]).includes(part),
+        false,
+        `a bare state token reached the player as text: ${part}`,
+      );
+  }
 });

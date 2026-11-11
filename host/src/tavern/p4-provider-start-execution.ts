@@ -1,5 +1,6 @@
 import {
   attachNativeCompanionContent,
+  CHAT_TRANSCRIPT_DELIVERY_UNIT,
   CHAT_TRANSCRIPT_SCAFFOLDING,
   CHAT_TRANSCRIPT_STAGE_DIRECTION,
   type NativeProviderFailureClass,
@@ -485,6 +486,7 @@ export async function runMountedProviderStart(
       {
         stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,
         scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING,
+        deliveryUnit: CHAT_TRANSCRIPT_DELIVERY_UNIT,
         // Absent pacing is the Chat default: every mechanism off, delivery
         // byte-identical to what it was before pacing existed. The caller
         // passes a policy only when the player turned the switch on.

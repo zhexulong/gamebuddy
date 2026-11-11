@@ -6,20 +6,16 @@ import { MAGIC_CONTEXT_REFUSED_TURN_ENTRY_TYPE } from "./companion-turn-refusal.
 import { programSettledDigest } from "./program-settlement-digest.js";
 
 /**
- * What the player receives for one Game turn: that turn's reaction sound, then the words.
+ * What the player receives for one Game turn: ONE bubble - the turn's reaction sound at its head, then the words.
  *
- * The sound is derived from the turn's own identity through the same authority that selects it at
- * delivery time, so this does not spell a second copy of the vocabulary; what the assertion below
- * pins is that the sound arrives FIRST and belongs to the same source event as the reply, not which
- * interjection a particular hash happens to pick.
+ * The sound is derived from the turn's own identity through the same authority that selects it at delivery time, so this
+ * does not spell a second copy of the vocabulary; what the assertions below pin is that the sound arrives as the HEAD of
+ * the same bubble as the reply and belongs to the same source event, not which interjection a particular hash picks.
  */
 function presentedWithReaction(sourceEventId: string, locale: string, text: string): readonly unknown[] {
   const sound = selectReactionSound(sourceEventId, locale, GAME_DELIVERY_PACING.reaction!);
   assert.notEqual(sound, null, `${locale} must have a reaction vocabulary for this case to assert one`);
-  return [
-    { sourceEventId, text: sound },
-    { sourceEventId, text },
-  ];
+  return [{ sourceEventId, text: `${sound} ${text}` }];
 }
 
 type SessionEvent = {
@@ -376,7 +372,8 @@ test("CompanionLoop presents incremental sentences without any voice sink", asyn
   };
   const presented: unknown[] = [];
   // No voiceSink argument: the delta lane still opens (previews are unlocked
-  // for every Game presenter), so completed sentences present immediately.
+  // for every Game presenter), and it feeds the voice job when one exists; the
+  // bubble itself is the turn's, so it arrives once at the end.
   const loop = new CompanionLoop(
     {
       async sendUserMessage(text: string) {
@@ -442,7 +439,7 @@ test("CompanionLoop presents incremental sentences without any voice sink", asyn
   assert.deepEqual(presented, presentedWithReaction("player_source_incr", "zh-CN", "早安!今天下雨。"));
 });
 
-test("CompanionLoop presents only the buffered residual when no sentence ever completed", async () => {
+test("CompanionLoop delivers a message whose deltas never carried a boundary in full, not just its buffered head", async () => {
   const listeners = new Set<(event: unknown) => void>();
   const emit = (event: unknown) => {
     for (const listener of [...listeners]) listener(event);
@@ -465,8 +462,8 @@ test("CompanionLoop presents only the buffered residual when no sentence ever co
           message: trackedPartial,
           assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
         });
-        // No boundary arrives before message_end: nothing presents
-        // incrementally, and the whole stream commits once as the residual.
+        // No boundary arrives before message_end, so nothing could have been spoken mid-message. The bubble is built
+        // from the MESSAGE, so the boundary-less head is not mistaken for the whole reply.
         emit({
           type: "message_update",
           message: trackedPartial,
@@ -510,10 +507,10 @@ test("CompanionLoop presents only the buffered residual when no sentence ever co
     timestampMs: 1,
   });
   await loop.flush();
-  assert.deepEqual(presented, presentedWithReaction("player_source_residual", "zh-CN", "我这就去"));
+  assert.deepEqual(presented, presentedWithReaction("player_source_residual", "zh-CN", "我这就去。把草拔了。"));
 });
 
-test("CompanionLoop presents incremental sentences as they arrive and the message_end residual last", async () => {
+test("CompanionLoop presents a multi-sentence message as ONE bubble holding every sentence", async () => {
   const listeners = new Set<(event: unknown) => void>();
   const emit = (event: unknown) => {
     for (const listener of [...listeners]) listener(event);
@@ -536,9 +533,8 @@ test("CompanionLoop presents incremental sentences as they arrive and the messag
           message: trackedPartial,
           assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
         });
-        // The stream completes two sentences inside one delta; each presents
-        // immediately. The last sentence loses its boundary to message_end, so
-        // it stays buffered and lands as the single residual final piece.
+        // Three sentences complete inside one delta: nothing about that makes them three bubbles, because the unit is
+        // the turn and this turn has one message.
         emit({
           type: "message_update",
           message: trackedPartial,
@@ -587,15 +583,13 @@ test("CompanionLoop presents incremental sentences as they arrive and the messag
     timestampMs: 1,
   });
   await loop.flush();
-  // One finished reply, one presented piece: the buffered sentences and the
-  // unbounded tail are joined instead of arriving as a burst of fragments.
   assert.deepEqual(
     presented,
-    presentedWithReaction("player_source_chunk", "zh-CN", "我这就去南瓜地浇水。把杂草也一起拔了。然后把种子撒上"),
+    presentedWithReaction("player_source_chunk", "zh-CN", "我这就去南瓜地浇水。把杂草也一起拔了。然后把种子撒上。"),
   );
 });
 
-test("CompanionLoop finalizes the voice job exactly once with identical incremental sentences and one residual", async () => {
+test("CompanionLoop finalizes the voice job exactly once and repeats no sentence inside the bubble", async () => {
   const listeners = new Set<(event: unknown) => void>();
   const emit = (event: unknown) => {
     for (const listener of [...listeners]) listener(event);
@@ -625,8 +619,8 @@ test("CompanionLoop finalizes the voice job exactly once with identical incremen
           message: trackedPartial,
           assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: trackedPartial },
         });
-        // Three identical sentences complete incrementally; the trailing "好"
-        // without its boundary stays buffered as the message_end residual.
+        // Four identical sentences stream in: the bubble must carry each one once, because it is built from the
+        // message rather than accumulated from the stream.
         emit({
           type: "message_update",
           message: trackedPartial,
@@ -687,8 +681,8 @@ test("CompanionLoop finalizes the voice job exactly once with identical incremen
     timestampMs: 1,
   });
   await loop.flush();
-  // One paragraph piece, even though three identical sentences completed first.
-  assert.deepEqual(presented, presentedWithReaction("player_source_dup", "zh-CN", "好。好。好。好"));
+  // One bubble, each sentence once, even though four identical sentences streamed in.
+  assert.deepEqual(presented, presentedWithReaction("player_source_dup", "zh-CN", "好。好。好。好。"));
   // The voice job must open once and finalize exactly once, never twice.
   assert.equal(voiceOps.filter((op) => op === "finalize").length, 1);
   assert.equal(voiceOps.filter((op) => op.startsWith("begin:")).length, 1);
@@ -1882,8 +1876,8 @@ test("CompanionLoop prints one delivery account per turn: the parts it had, the 
   const sound = selectReactionSound("player_source_delivery", "zh-CN", GAME_DELIVERY_PACING.reaction!);
   assert.deepEqual(
     presented.map((entry) => entry.text),
-    [sound, "先出门去农场。", "花椰菜给她了。"],
-    "the beat-only message presents nothing, and every other message presents its whole text",
+    [`${sound} 先出门去农场。 花椰菜给她了。`],
+    "three messages answered this turn and the player got ONE bubble: the sound, then every message in order",
   );
   const line = printed.split("\n").find((entry) => entry.startsWith("NATIVE_COMPANION_TURN_DELIVERY "));
   assert.notEqual(line, undefined, `no delivery account was printed; stderr was: ${printed}`);
@@ -1891,10 +1885,11 @@ test("CompanionLoop prints one delivery account per turn: the parts it had, the 
     textParts: 3,
     presented: 2,
     suppressed: { empty_after_projection: 1 },
-    // Three pieces reached the player: this turn's reaction sound, its one working remark (the first paragraph, released
-    // mid-message after a real silence), and the paragraph that committed at the end. The beat-only message is the
-    // withheld part, so it contributes no piece at all.
-    pieces: { text: 1, ahead: 2 },
+    // ONE bubble, and the roll-up that produced it: three messages carried text and the beat-only one was withheld, so
+    // two delivered messages became the turn's single bubble.
+    bubbles: 1,
+    messages: { count: 3, ids: ["assistant_1", "assistant_2", "assistant_3"] },
+    bubble: { chars: `${sound} 先出门去农场。 花椰菜给她了。`.length, truncatedChars: 0, sentencesDropped: 0 },
   });
   // The three populations add up, so the turn states no mismatch: 2 presented + 1 withheld is 3 produced.
   assert.doesNotMatch(printed, /delivery_mismatch:/u);
@@ -1998,7 +1993,8 @@ test("a turn with no presentation source accounts for its text instead of leavin
     textParts: 2,
     presented: 0,
     suppressed: { no_presentation_lease: 2 },
-    pieces: { text: 0, ahead: 0 },
+    bubbles: 0,
+    messages: { count: 2, ids: ["assistant_1", "assistant_2"] },
   });
   assert.doesNotMatch(printed, /delivery_mismatch:/u);
 });
@@ -2083,7 +2079,14 @@ test("a part no layer could account for fails the turn's delivery identity, by n
     textParts: 2,
     presented: 1,
     suppressed: {},
-    pieces: { text: 1, ahead: 1 },
+    bubbles: 1,
+    messages: { count: 2, ids: ["assistant_1", "assistant_2"] },
+    bubble: {
+      chars: `${selectReactionSound("player_source_mismatch", "zh-CN", GAME_DELIVERY_PACING.reaction!)} 先出门去农场。`
+        .length,
+      truncatedChars: 0,
+      sentencesDropped: 0,
+    },
   });
   assert.match(printed, /^delivery_mismatch:produced=2;presented=1;suppressed=0;missing=1$/mu);
 });
@@ -2208,9 +2211,11 @@ test("a settled program opens a presentation lease, because an outcome nobody wa
     textParts: 1,
     presented: 1,
     suppressed: {},
-    // One paragraph and no sound: a settlement batch carries no locale, so the reaction vocabulary has nothing to
-    // speak and the surface correctly emits nothing ahead of the words.
-    pieces: { text: 1, ahead: 0 },
+    // One bubble, and no sound: a settlement batch carries no locale, so the reaction vocabulary has nothing to speak
+    // and the bubble is her words alone.
+    bubbles: 1,
+    messages: { count: 1, ids: ["assistant_settlement"] },
+    bubble: { chars: text.length, truncatedChars: 0, sentencesDropped: 0 },
   });
 });
 
@@ -2243,7 +2248,8 @@ test("an ordinary execution outcome still opens no lease, so volume cannot creep
     textParts: 1,
     presented: 0,
     suppressed: { no_presentation_lease: 1 },
-    pieces: { text: 0, ahead: 0 },
+    bubbles: 0,
+    messages: { count: 1, ids: ["assistant_settlement"] },
   });
 });
 
@@ -2280,15 +2286,15 @@ test("the account names every piece the player was shown, not only the message p
   const sound = selectReactionSound("player_source_piece_account", "zh-CN", GAME_DELIVERY_PACING.reaction!);
   assert.deepEqual(
     presented.map((entry) => entry.text),
-    [sound, text],
-    "this turn presented two pieces: the sound, then the paragraph",
+    [`${sound} ${text}`],
+    "this turn presented ONE bubble: the sound at the head of her words, not a bubble of its own",
   );
-  // The parts partition and the pieces stay two separate facts, both published: one message part was presented, and it
-  // reached the player as one piece BEHIND the sound this turn opened with. `pieces.text + pieces.ahead` is what the
-  // presentation port committed, which is the number a run's `presentation.pieceCount` adds up.
+  // The parts partition and the bubbles stay two separate facts, both published: one message part was presented, and it
+  // reached the player inside the turn's single bubble. `bubbles` is what the presentation port committed, which is the
+  // number a run's `presentation.pieceCount` adds up.
   assert.equal(account.textParts, 1, "the population the suppressor reasons count");
   assert.equal(account.presented, 1, "and how many of those parts the player was shown");
-  assert.deepEqual(account.pieces, { text: 1, ahead: 1 }, "the pieces, named by where they came from");
+  assert.equal(account.bubbles, 1, "one prompt turn, one bubble");
 });
 
 test("a turn that ran with no projection is named, so its text is never an unexplained remainder", async () => {
@@ -2318,6 +2324,7 @@ test("a turn that ran with no projection is named, so its text is never an unexp
     textParts: 1,
     presented: 0,
     suppressed: { no_presentation_lease: 1 },
-    pieces: { text: 0, ahead: 0 },
+    bubbles: 0,
+    messages: { count: 1, ids: ["assistant_settlement"] },
   });
 });

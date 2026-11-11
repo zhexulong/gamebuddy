@@ -10,8 +10,11 @@ import { fileURLToPath } from "node:url";
  * both closed.
  *
  * `attachNativeCompanionContent` is the seam that decides what text the model
- * produced reaches a surface as. Two independent choices live there:
+ * produced reaches a surface as. Three independent choices live there:
  *
+ *  - `deliveryUnit`: `"turn"` for the in-game bubble, which is ONE bubble per prompt
+ *    turn however many assistant messages answered it; `"message"` for the Chat
+ *    transcript, whose durable row is one assistant message.
  *  - `stageDirection`: `"strip"` for a surface that cannot draw a `*...*` beat
  *    (the in-game bubble and the voice); `"keep"` for the Chat transcript, whose
  *    renderer draws the beat and whose durable row is what the player reads back.
@@ -32,10 +35,15 @@ type SourceFile = Readonly<{ path: string; text: string }>;
 
 /** The named presentation choices each production caller must carry, by caller path. */
 const CALLERS: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  "companion-loop.ts": Object.freeze(["NATIVE_BUBBLE_STAGE_DIRECTION", "NATIVE_BUBBLE_SCAFFOLDING"]),
+  "companion-loop.ts": Object.freeze([
+    "NATIVE_BUBBLE_STAGE_DIRECTION",
+    "NATIVE_BUBBLE_SCAFFOLDING",
+    "NATIVE_BUBBLE_DELIVERY_UNIT",
+  ]),
   "tavern/p4-provider-start-execution.ts": Object.freeze([
     "CHAT_TRANSCRIPT_STAGE_DIRECTION",
     "CHAT_TRANSCRIPT_SCAFFOLDING",
+    "CHAT_TRANSCRIPT_DELIVERY_UNIT",
   ]),
 });
 
@@ -45,6 +53,8 @@ const CHOICE_VALUES: Readonly<Record<string, string>> = Object.freeze({
   CHAT_TRANSCRIPT_STAGE_DIRECTION: "keep",
   NATIVE_BUBBLE_SCAFFOLDING: "unchanged",
   CHAT_TRANSCRIPT_SCAFFOLDING: "drop",
+  NATIVE_BUBBLE_DELIVERY_UNIT: "turn",
+  CHAT_TRANSCRIPT_DELIVERY_UNIT: "message",
 });
 
 /** The option each named choice is passed as. */
@@ -53,9 +63,11 @@ const CHOICE_AXES: Readonly<Record<string, string>> = Object.freeze({
   CHAT_TRANSCRIPT_STAGE_DIRECTION: "stageDirection",
   NATIVE_BUBBLE_SCAFFOLDING: "scaffolding",
   CHAT_TRANSCRIPT_SCAFFOLDING: "scaffolding",
+  NATIVE_BUBBLE_DELIVERY_UNIT: "deliveryUnit",
+  CHAT_TRANSCRIPT_DELIVERY_UNIT: "deliveryUnit",
 });
 
-const OPTION_AXES = Object.freeze(["stageDirection", "scaffolding"]);
+const OPTION_AXES = Object.freeze(["stageDirection", "scaffolding", "deliveryUnit"]);
 const ATTACH = "attachNativeCompanionContent(";
 
 /**
@@ -154,11 +166,13 @@ test("a third caller, a literal choice, a missing scaffolding name, or a flipped
     'export const CHAT_TRANSCRIPT_STAGE_DIRECTION = "keep" as const;',
     'export const NATIVE_BUBBLE_SCAFFOLDING = "unchanged" as const;',
     'export const CHAT_TRANSCRIPT_SCAFFOLDING = "drop" as const;',
+    'export const NATIVE_BUBBLE_DELIVERY_UNIT = "turn" as const;',
+    'export const CHAT_TRANSCRIPT_DELIVERY_UNIT = "message" as const;',
   ].join("\n");
   const bubbleOptions =
-    "{\n  stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION,\n  scaffolding: NATIVE_BUBBLE_SCAFFOLDING,\n}";
+    "{\n  stageDirection: NATIVE_BUBBLE_STAGE_DIRECTION,\n  scaffolding: NATIVE_BUBBLE_SCAFFOLDING,\n  deliveryUnit: NATIVE_BUBBLE_DELIVERY_UNIT,\n}";
   const chatOptions =
-    "{\n  stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,\n  scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING,\n}";
+    "{\n  stageDirection: CHAT_TRANSCRIPT_STAGE_DIRECTION,\n  scaffolding: CHAT_TRANSCRIPT_SCAFFOLDING,\n  deliveryUnit: CHAT_TRANSCRIPT_DELIVERY_UNIT,\n}";
   const allowed: readonly SourceFile[] = [
     { path: "native-companion-content.ts", text: declarations },
     { path: "companion-loop.ts", text: `attachNativeCompanionContent(session, sinks, ${bubbleOptions});` },

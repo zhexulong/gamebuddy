@@ -1,11 +1,11 @@
 /**
- * The run's delivery account, reconciled against the pieces the run actually presented.
+ * The run's delivery account, reconciled against what the run actually presented.
  *
  * <p>
  * The Host prints one `NATIVE_COMPANION_TURN_DELIVERY` line per turn that had anything to deliver
- * (`host/src/companion-loop.ts`): the assistant text PARTS that turn produced, how many reached the player, every part
- * withheld with its reason, and the PIECES the presentation port committed. The runner counts the pieces itself, in
- * `presentation.pieceCount`, from the port that committed them.
+ * (`host/src/companion-loop.ts`): the assistant text PARTS that turn produced, how many reached the turn's bubble,
+ * every part withheld with its reason, the assistant messages a bubble rolled up, and what the bubble itself cost.
+ * The runner counts the bubbles itself, in `presentation.pieceCount`, from the port that committed them.
  * </p>
  * <p>
  * MEASURED 2026-11-09 (round41 `multiday_routine`): `presentation.pieceCount` 59, `AGENT_PRESENTATION_PIECE` 59 lines,
@@ -13,8 +13,13 @@
  * `unaccounted` 0. Both numbers were right, and nothing in the bundle explained the difference: the 59 pieces were 11
  * reaction sounds (one per paced turn), 46 paragraphs, and 2 extra pieces from a paragraph the length budget split, so
  * 13 pieces were not assistant text parts. A reader comparing the two could only report thirteen pieces - a whole
- * turn's worth - with no record at all, which is the failure this account exists to make impossible: every committed
- * piece is either a presented paragraph, a piece the surface emitted ahead of one, or a named remainder.
+ * turn's worth - with no record at all, which is the failure this account exists to make impossible.
+ * </p>
+ * <p>
+ * MEASURED 2026-11-11 (round46b, 15 minutes) is why the unit changed: 27 prompt turns produced 55 assistant messages
+ * and 49 bubbles, because every assistant message was presented as a reply of its own. A bubble is now one prompt
+ * turn's delivery, the reaction sound lives inside it, and the cadence gate below names every turn that presents
+ * more than one.
  * </p>
  */
 
@@ -215,18 +220,32 @@ function numberOrNull(value) {
  * identity. The per-turn check is therefore part of the gate, not a convenience: two totals can agree while every turn
  * behind them is wrong in a different direction, and `mismatchedTurns` is how many did.
  *
- * `pieces` is what the presentation port committed, which is the population `presentation.pieceCount` counts - one
- * paragraph can be several pieces, and a paced surface emits pieces that are not text at all. `pieces.accounted` is the
- * sum of what the Host named PER TURN, so a turn that never printed its record cannot hide inside the total.
+ * `bubbles` is the SAME account in the unit the player experienced. A bubble is one commit the surface made - a piece
+ * of speech the player saw - and `presentation.pieceCount` is the runner's own count of those commits, so the two are
+ * compared rather than derived from one another. `bubbles.accounted` sums what the Host named PER TURN, so a turn that
+ * never printed its record cannot hide inside the total.
+ *
+ * `bubbles.perTurnMax` and `bubbles.overOne` are the cadence gate: ONE PROMPT TURN IS ONE BUBBLE. MEASURED 2026-11-11
+ * (round46b, 15 minutes): 27 prompt turns, 55 assistant messages, 49 bubbles - 2.04 messages per turn - because every
+ * assistant message was delivered as a reply of its own. A turn that presents two bubbles is BLOCKED by name, so the
+ * defect cannot read as a busy companion nobody counted.
+ *
+ * `rollUp` names the many-to-one mapping that makes one bubble per turn possible: how many assistant messages carried
+ * text, and into how many bubbles they went. `messages rolled up: 28 into 27` is a healthy run; the inverse is a turn
+ * that spoke twice.
  */
-export function summarizeDeliveryAccount({ records, piecesProduced, unparsable = 0 }) {
+export function summarizeDeliveryAccount({ records, bubblesProduced, unparsable = 0 }) {
   const suppressed = {};
   let textParts = 0;
   let presented = 0;
-  let textPieces = 0;
-  let aheadPieces = 0;
+  let accountedBubbles = 0;
+  let messages = 0;
+  let truncatedTurns = 0;
+  let truncatedChars = 0;
   let mismatchedTurns = 0;
-  for (const record of records ?? []) {
+  let perTurnMax = 0;
+  const overOne = [];
+  for (const [index, record] of (records ?? []).entries()) {
     const turnParts = Number(record.textParts) || 0;
     const turnPresented = Number(record.presented) || 0;
     const turnSuppressed = sumSuppressed(record.suppressed);
@@ -235,16 +254,32 @@ export function summarizeDeliveryAccount({ records, piecesProduced, unparsable =
     presented += turnPresented;
     for (const [reason, count] of Object.entries(record.suppressed ?? {}))
       suppressed[reason] = (suppressed[reason] ?? 0) + (Number(count) || 0);
-    textPieces += Number(record.pieces?.text) || 0;
-    aheadPieces += Number(record.pieces?.ahead) || 0;
+    const bubbles = Number(record.bubbles) || 0;
+    accountedBubbles += bubbles;
+    perTurnMax = Math.max(perTurnMax, bubbles);
+    // Named with the turn's own index and the messages it rolled up, so a reader knows WHICH turn spoke twice and what
+    // it had to say: a bare count would leave them to bisect the run.
+    if (bubbles > 1)
+      overOne.push(
+        Object.freeze({
+          turn: index + 1,
+          bubbles,
+          messageIds: Object.freeze(Array.isArray(record.messages?.ids) ? record.messages.ids : []),
+        }),
+      );
+    messages += Number(record.messages?.count) || 0;
+    const turnTruncated = Number(record.bubble?.truncatedChars) || 0;
+    if (turnTruncated > 0) {
+      truncatedTurns += 1;
+      truncatedChars += turnTruncated;
+    }
   }
-  const produced = Number(piecesProduced) || 0;
-  const accounted = textPieces + aheadPieces;
+  const produced = Number(bubblesProduced) || 0;
+  const unaccountedBubbles = produced - accountedBubbles;
   const missingParts = textParts - presented - sumSuppressed(suppressed);
   // Three zeroes, told apart. Nothing was presented and no turn had anything to deliver: a real state, named, and not
   // the same answer as an account that failed to add up.
   const nothingPresented = produced === 0 && (records ?? []).length === 0;
-  const piecesUnaccounted = produced - accounted;
   const blocked = nothingPresented
     ? null
     : unparsable > 0
@@ -253,9 +288,11 @@ export function summarizeDeliveryAccount({ records, piecesProduced, unparsable =
         ? "delivery_account_absent"
         : missingParts !== 0 || mismatchedTurns > 0
           ? "delivery_account_parts_do_not_add_up"
-          : piecesUnaccounted !== 0
+          : unaccountedBubbles !== 0
             ? "delivery_account_unaccounted_pieces"
-            : null;
+            : overOne.length > 0
+              ? "bubble_per_turn_over_one"
+              : null;
   return Object.freeze({
     turns: (records ?? []).length,
     unreadableTurns: unparsable,
@@ -267,13 +304,17 @@ export function summarizeDeliveryAccount({ records, piecesProduced, unparsable =
       missing: missingParts,
       mismatchedTurns,
     }),
-    pieces: Object.freeze({
+    bubbles: Object.freeze({
       produced,
-      accounted,
-      unaccounted: piecesUnaccounted,
-      text: textPieces,
-      ahead: aheadPieces,
+      accounted: accountedBubbles,
+      unaccounted: unaccountedBubbles,
+      turns: (records ?? []).length,
+      perTurnMax,
+      overOne: Object.freeze(overOne),
+      truncatedTurns,
+      truncatedChars,
     }),
+    rollUp: Object.freeze({ messages, bubbles: accountedBubbles }),
     blocked,
   });
 }
@@ -286,12 +327,30 @@ disagreed with their own numbers, and the run's `delivery_mismatch:produced=…;
  * only in a verdict field somebody has to open the bundle to read.
  */
 export function describeDeliveryAccount(account) {
-  const { parts, pieces } = account;
+  const { parts, bubbles } = account;
   const verdict =
     account.blocked === null ? (account.nothingPresented ? "nothing presented" : "reconciled") : account.blocked;
   const mismatched = parts.mismatchedTurns > 0 ? ` · turns mismatched ${parts.mismatchedTurns}` : "";
   const mismatch = parts.missing === 0 && parts.mismatchedTurns === 0 ? "" : ` · ${describeDeliveryMismatch(parts)}`;
-  return `pieces produced ${pieces.produced} · accounted ${pieces.accounted} · unaccounted ${pieces.unaccounted} · parts produced ${parts.produced} · presented ${parts.presented} · suppressed ${sumSuppressed(parts.suppressed)} · missing ${parts.missing}${mismatched} · turns ${account.turns} · ${verdict}${mismatch}`;
+  // The cadence sentence is the gate's own reading, in the unit the player experiences: how many turns were examined, how
+  // many bubbles they produced, and the worst one. `messages rolled up` states the many-to-one mapping beside it, because
+  // one bubble per turn is only legitimate while the mapping is many-to-one - and the count of truncations says when the
+  // turning itself overshot the bubble.
+  const cadence = `turns examined ${bubbles.turns} · bubbles ${bubbles.accounted} · per-turn max ${bubbles.perTurnMax} · messages rolled up: ${account.rollUp.messages} into ${account.rollUp.bubbles}`;
+  const truncated =
+    bubbles.truncatedTurns > 0
+      ? ` · bubbles truncated ${bubbles.truncatedTurns} (chars ${bubbles.truncatedChars})`
+      : "";
+  const over =
+    bubbles.overOne.length === 0
+      ? ""
+      : ` · ${bubbles.overOne
+          .map(
+            (turn) =>
+              `bubble_per_turn_over_one:turn#${String(turn.turn)}:${String(turn.bubbles)}:${turn.messageIds.join(",") || "-"}`,
+          )
+          .join(" ")}`;
+  return `bubbles produced ${bubbles.produced} · accounted ${bubbles.accounted} · unaccounted ${bubbles.unaccounted} · parts produced ${parts.produced} · presented ${parts.presented} · suppressed ${sumSuppressed(parts.suppressed)} · missing ${parts.missing}${mismatched} · ${cadence}${truncated} · ${verdict}${over}${mismatch}`;
 }
 
 /** The rung clause: a run whose own commitment count disagrees with its account is not a passed run. */
@@ -314,8 +373,9 @@ export function deliveryAccountClause(account) {
 /**
  * The same invariant, asked of a bundle that was already written.
  *
- * A bundle that predates the field is BLOCKED rather than passed: the question this gate asks ("do the pieces and the
- * account agree?") cannot be answered from it, and a check whose population is empty must not agree with itself.
+ * A bundle that predates the fields is BLOCKED rather than passed: the question this gate asks ("do the committed
+ * bubbles and the account agree, and was one turn one bubble?") cannot be answered from it, and a check whose
+ * population is empty must not agree with itself.
  */
 export function assessBundleDeliveryAccount(bundle) {
   const presentation = bundle?.presentation;
@@ -323,19 +383,21 @@ export function assessBundleDeliveryAccount(bundle) {
     return Object.freeze({ ok: false, code: "delivery_account_bundle_without_presentation" });
   const account = presentation.deliveryAccount;
   if (account === undefined || account === null) return Object.freeze({ ok: false, code: "delivery_account_absent" });
+  const bubbles = account.bubbles;
+  if (bubbles === undefined || bubbles === null)
+    return Object.freeze({ ok: false, code: "delivery_account_bubbles_absent" });
   const produced = Number(presentation.pieceCount);
-  if (Number.isFinite(produced) && produced !== Number(account.pieces?.produced))
+  if (Number.isFinite(produced) && produced !== Number(bubbles.produced))
     return Object.freeze({
       ok: false,
       code: "delivery_account_pieces_produced_disagrees",
-      detail: `presentation.pieceCount ${String(presentation.pieceCount)} · account ${String(account.pieces?.produced)}`,
+      detail: `presentation.pieceCount ${String(presentation.pieceCount)} · account ${String(bubbles.produced)}`,
     });
-  const pieces = account.pieces ?? {};
-  if (Number(pieces.accounted) + Number(pieces.unaccounted) !== Number(pieces.produced))
+  if (Number(bubbles.accounted) + Number(bubbles.unaccounted) !== Number(bubbles.produced))
     return Object.freeze({
       ok: false,
       code: "delivery_account_sum_does_not_hold",
-      detail: `produced ${String(pieces.produced)} · accounted ${String(pieces.accounted)} + unaccounted ${String(pieces.unaccounted)}`,
+      detail: `produced ${String(bubbles.produced)} · accounted ${String(bubbles.accounted)} + unaccounted ${String(bubbles.unaccounted)}`,
     });
   const parts = account.parts ?? {};
   if (Number(parts.presented) + sumSuppressed(parts.suppressed) !== Number(parts.produced))

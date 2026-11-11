@@ -1416,7 +1416,7 @@ function summarizePresentationEvidence() {
   const deliveryAccount = summarizeDeliveryAccount({
     records: delivery.records,
     unparsable: delivery.unparsable,
-    piecesProduced: presentationPieces.length,
+    bubblesProduced: presentationPieces.length,
   });
   console.error("DELIVERY_ACCOUNT", describeDeliveryAccount(deliveryAccount));
   // What she was doing BETWEEN the pieces, off the same log the delivery account is read from. Bounded, and

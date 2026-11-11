@@ -1,6 +1,7 @@
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import {
+  budgetedSpeechHead,
   budgetedSpeechPieces,
   CHAT_DELIVERY_PACING,
   type CompanionDeliveryPacing,
@@ -106,6 +107,45 @@ export const CHAT_TRANSCRIPT_SCAFFOLDING = "drop" as const;
 /** The in-game bubble and the voice: their projection already removes scaffolding. */
 export const NATIVE_BUBBLE_SCAFFOLDING = "unchanged" as const;
 
+/**
+ * The unit one surface delivers assistant text in - the third named presentation choice, beside the
+ * stage-direction and scaffolding pair above.
+ *
+ * <p>
+ * `"turn"` is the in-game bubble: ONE prompt turn is one bubble, whatever number of assistant
+ * messages Pi produced to answer it. The floor already asks for one spoken line per reply
+ * (`identity-profile.ts`), and a reply is one prompt turn; the surface had been treating each
+ * assistant message as a reply of its own, so a turn that spoke and then acted delivered two bubbles
+ * and the player heard a running commentary instead of an answer.
+ * </p>
+ * <p>
+ * `"message"` is the Chat transcript: its durable row is one assistant message, read back later by
+ * message, so rolling messages together would edit the record instead of the delivery.
+ * </p>
+ */
+export type NativeCompanionDeliveryUnit = "turn" | "message";
+
+export const NATIVE_BUBBLE_DELIVERY_UNIT = "turn" as const;
+
+export const CHAT_TRANSCRIPT_DELIVERY_UNIT = "message" as const;
+
+/**
+ * What one prompt turn's single bubble cost when the surface presented it.
+ *
+ * <p>
+ * `chars` is what the player can read. `truncatedChars` and `sentencesDropped` say the turn's speech
+ * did not fit one bubble and where the cut landed: a non-zero `truncatedChars` with
+ * `sentencesDropped` 0 is a single sentence cut at the character ceiling (there was no sentence
+ * boundary to stop at). This is a CADENCE fact, not a text fact - a turn that trips it spoke more
+ * than one bubble's worth inside one turn.
+ * </p>
+ */
+export type NativeCompanionTurnBubble = Readonly<{
+  chars: number;
+  truncatedChars: number;
+  sentencesDropped: number;
+}>;
+
 export type NativeCompanionContentOptions = Readonly<{
   stageDirection: StageDirectionPresentation;
   scaffolding: ScaffoldingPresentation;
@@ -122,6 +162,8 @@ export type NativeCompanionContentOptions = Readonly<{
    * a language the surface never named is worse than the silence it replaced.
    */
   turn?: Readonly<{ id: string; locale?: string }>;
+  /** Whether this surface delivers one bubble per prompt turn or one per assistant message. */
+  deliveryUnit: NativeCompanionDeliveryUnit;
 }>;
 
 /**
@@ -150,13 +192,16 @@ export type NativeProviderFailureClass = ProviderFailureClass;
  *
  * `blank_text` and `empty_after_projection` are the surface refusing to draw something a player
  * cannot read; `unstreamed_text` is the paragraph lane meeting a message whose deltas never came;
- * `intermediate_message` is a surface whose single-shot contract has nowhere to put a message that
- * is not the turn's answer; `provider_error` and `aborted` are Pi's own ending of the message.
+ * `undrawable_text` is the turn lane meeting text its own guard refuses (unprintable control
+ * characters, or more bytes than one message may carry); `intermediate_message` is a surface whose
+ * single-shot contract has nowhere to put a message that is not the turn's answer; `provider_error`
+ * and `aborted` are Pi's own ending of the message.
  */
 export type NativeCompanionPartSuppression =
   | "blank_text"
   | "empty_after_projection"
   | "unstreamed_text"
+  | "undrawable_text"
   | "intermediate_message"
   | "provider_error"
   | "aborted";
@@ -188,8 +233,9 @@ export type NativeCompanionContentSinks = Readonly<{
    * release ONE working remark per assistant turn - the first completed sentence
    * of an open message, and only after the player has been silent for a real
    * pause. Everything else leaves through `onFinalText`. When it is absent the
-   * observer keeps its preview/final semantics exactly; Chat consumers never
-   * provide it.
+   * observer keeps its preview/final semantics exactly. Only the MESSAGE unit
+   * uses this lane (the Chat transcript when the player turned pacing on); the
+   * bubble's unit is the turn, so its one piece is `onFinalText`.
    */
   onIncrementalText?(text: string): void | Promise<void>;
   /**
@@ -232,6 +278,21 @@ export type NativeCompanionContentObserver = Readonly<{
   revoke(): void;
   /** Detaches the subscription and waits for already-admitted callbacks. */
   close(): Promise<void>;
+  /**
+   * Ends this prompt turn's delivery, for a surface whose unit is the turn.
+   *
+   * <p>
+   * Presents everything the turn said as ONE bubble and reports what that cost. The turn's owning
+   * surface calls this once, after the turn has settled and before `close()`: the bubble cannot be
+   * presented earlier, because text produced later belongs in the same bubble, and a stopped or
+   * uncertain turn must not speak after the fact - a revoked or closed observer therefore delivers
+   * nothing.
+   * </p>
+   *
+   * @returns `null` when the turn said nothing (absent, not an empty bubble), when the unit is the
+   * message, or when the observer is no longer delivering.
+   */
+  deliverTurn(): NativeCompanionTurnBubble | null;
 }>;
 
 /**
@@ -243,6 +304,12 @@ export type NativeCompanionContentObserver = Readonly<{
  * silence; the message's own text then commits once, as a single paragraph, at
  * `message_end`. Without that sink the preview/final semantics are unchanged.
  * Callers own surface-specific durable commit and cancellation admission.
+ *
+ * `options.deliveryUnit` decides what ONE delivery is. `"message"` is the Chat
+ * transcript: one assistant message, committed at its `message_end`. `"turn"` is
+ * the in-game bubble: one prompt turn, delivered by `deliverTurn()` when the
+ * surface that owns the turn calls it after settlement, with every message's
+ * text in arrival order inside it.
  *
  * `options.stageDirection` is the explicit presentation choice. `"strip"` is
  * for a surface that cannot draw a `*...*` beat (the in-game bubble, the voice);
@@ -320,7 +387,9 @@ export function attachNativeCompanionContent(
   // over several seconds left the player in silence and then put the whole answer
   // on screen in one instant. The two rules that replace it are named below: one
   // working remark per turn after a real silence, and everything still held at
-  // `message_end` as one paragraph.
+  // `message_end` as one paragraph. BOTH belong to the MESSAGE unit: the bubble's
+  // unit is the turn, so its text cannot leave before the turn ends at all, and
+  // `deliverTurn()` presents the turn's one bubble instead.
   let pendingSentences: string[] = [];
   // The pacing policy this surface chose. Absent means the Chat default, where
   // all three mechanisms are off and delivery is byte-identical to what it was
@@ -330,6 +399,13 @@ export function attachNativeCompanionContent(
   const reaction = pacing.reaction;
   const lengthBudget = pacing.lengthBudget;
   const turnIdentity = options.turn;
+  const turnUnit = options.deliveryUnit === "turn";
+  // The bubble lane's turn: every message's presented text in arrival order, and the stop reason of the
+  // last one. Holding it is the whole point - a bubble cannot be retracted, so a turn's later text
+  // belongs in the same bubble as its earlier text, which means the bubble leaves when the turn ends.
+  let turnParagraphs: string[] = [];
+  let turnStopReason: NativeAssistantStopReason = "stop";
+  let turnDelivered = false;
   let reactionReleased = false;
   // One working remark per Pi turn. A step report is emitted step by step, so it
   // appears in EVERY tool-use message; allowing exactly one piece per turn
@@ -353,20 +429,28 @@ export function attachNativeCompanionContent(
   };
 
   /**
-   * Emits this turn's one reaction sound, if the surface asked for one and the
-   * turn's language has vocabulary for it. It runs at the head of the first
-   * dispatched piece, and `dispatch` serializes that queue, so the sound is
-   * always heard before the words it introduces. The sound is a closed-set
-   * interjection chosen from the turn's own identity: it asserts nothing about
+   * This turn's one reaction sound, or `null` when the surface asked for none and when the turn's
+   * language has no vocabulary for it. Selection is seeded by the turn's own identity, so a replay
+   * reproduces it and two turns differ. It is a closed-set interjection that asserts nothing about
    * the world, so a reply that never happened cannot be implied by it.
+   *
+   * <p>
+   * On the message unit it runs at the head of the first dispatched piece, and `dispatch` serializes
+   * that queue, so the sound is always heard before the words it introduces. On the turn unit it is
+   * the HEAD OF THE BUBBLE'S OWN TEXT (`deliverTurn`): one bubble per turn leaves no second bubble
+   * for a sound, and the floor asks for the reaction to arrive before the thing in her hands.
+   * </p>
    */
-  const emitReaction = async (): Promise<void> => {
-    if (reactionReleased) return;
+  const reactionSound = (): string | null => {
+    if (reactionReleased) return null;
     reactionReleased = true;
-    if (reaction === null || !incrementalActive || turnIdentity === undefined) return;
-    const sound = selectReactionSound(turnIdentity.id, turnIdentity.locale ?? "", reaction);
-    if (sound === null) return;
-    await sinks.onIncrementalText!(sound);
+    if (reaction === null || turnIdentity === undefined) return null;
+    return selectReactionSound(turnIdentity.id, turnIdentity.locale ?? "", reaction);
+  };
+
+  const emitReaction = async (): Promise<void> => {
+    const sound = reactionSound();
+    if (sound !== null) await sinks.onIncrementalText!(sound);
   };
 
   /**
@@ -399,6 +483,21 @@ export function attachNativeCompanionContent(
     return presentIsEmpty(raw) ? "empty_after_projection" : "unstreamed_text";
   };
 
+  /**
+   * Why the bubble lane drew nothing from a message.
+   *
+   * <p>
+   * The same three predicates as `suppressionReasonFor`, minus the one answer that belongs to the
+   * delta lane: the bubble's text is read from the message itself, so "its deltas never came" cannot
+   * be the reason there. Text that exists and is still not drawable is the bubble's own guard -
+   * unprintable control characters, or more bytes than one message may carry - and it is named.
+   * </p>
+   */
+  const bubbleSuppressionFor = (message: AssistantMessage): NativeCompanionPartSuppression => {
+    const reason = suppressionReasonFor(message);
+    return reason === "unstreamed_text" ? "undrawable_text" : reason;
+  };
+
   /** Names what became of one message's parts: the only per-message delivery fact a caller gets. */
   const reportMessageText = (message: AssistantMessage, suppression: NativeCompanionPartSuppression | null): void => {
     if (sinks.onMessageText === undefined) return;
@@ -406,6 +505,42 @@ export function attachNativeCompanionContent(
     if (textParts === 0) return;
     const outcome: NativeCompanionMessageText = Object.freeze({ textParts, suppression });
     dispatch(async () => await sinks.onMessageText?.(outcome));
+  };
+
+  /**
+   * The turn's one bubble: its reaction sound, then every message's presented text in arrival order,
+   * cut to the surface's own bubble ceiling.
+   *
+   * <p>
+   * MEASURED 2026-11-11 (round46b, 15 minutes): 27 prompt turns produced 55 assistant messages and 49
+   * bubbles - one bubble every 13 seconds, 2.04 messages per turn - because every assistant message
+   * was delivered as a reply of its own. The floor asks for one spoken line per reply, and a reply is
+   * one prompt turn; the two spellings of "reply" were the defect. Coalescing cannot lose text: every
+   * non-empty text part of the turn is in the result, and the only cut is the bubble's ceiling, which
+   * `deliverTurn` reports by name rather than hiding (`bubble_truncated:`, printed by the turn loop).
+   * </p>
+   */
+  const deliverTurn = (): NativeCompanionTurnBubble | null => {
+    if (!turnUnit || turnDelivered || revoked || closed) return null;
+    // A turn that said nothing has no bubble: the sound is a head on speech, never a line of its own.
+    if (turnParagraphs.length === 0) return null;
+    turnDelivered = true;
+    const speech = turnParagraphs.join(" ");
+    // The sound is spent from the same ceiling: a bubble that is nothing but the interjection would spend the player's
+    // whole glance on "欸。" and say none of what she actually said.
+    const sound = reactionSound();
+    const soundChars = sound === null ? 0 : sound.length + 1;
+    const head =
+      lengthBudget === null
+        ? Object.freeze({ text: speech, truncatedChars: 0, sentencesDropped: 0 })
+        : budgetedSpeechHead(speech, { maxChars: Math.max(1, lengthBudget.maxChars - soundChars) });
+    const text = sound === null ? head.text : `${sound} ${head.text}`;
+    dispatch(async () => await sinks.onFinalText(text, turnStopReason));
+    return Object.freeze({
+      chars: text.length,
+      truncatedChars: head.truncatedChars,
+      sentencesDropped: head.sentencesDropped,
+    });
   };
 
   /**
@@ -517,13 +652,15 @@ export function attachNativeCompanionContent(
         const delta = assistantMessageEvent.delta as string;
         // A `drop` surface releases only what no reasoning frame can still
         // claim, so the fragment may be shorter than the delta, or empty while a
-        // marker is being spelled out. Under incremental activation every delta
-        // additionally feeds this message's accumulator; each sentence completed
-        // in arrival order is dehydrated and emitted immediately, so the surface
-        // can present finished dialogue before message_end.
+        // marker is being spelled out. Under the message unit's incremental
+        // activation every delta additionally feeds this message's accumulator;
+        // each sentence completed in arrival order is dehydrated and emitted
+        // immediately, so the surface can present finished dialogue before
+        // message_end. The turn unit has no mid-turn piece at all: its text is
+        // read from the message at `message_end`.
         const released = previewProjection === undefined ? delta : previewProjection.push(delta);
         if (released.length > 0) dispatch(async () => await sinks.onPreviewDelta(released));
-        if (incrementalActive) {
+        if (incrementalActive && !turnUnit) {
           // Each sentence that completes inside this delta joins the message's
           // held paragraph; the silence timer decides whether the first one has
           // been held long enough to be spoken as the turn's working remark.
@@ -568,6 +705,41 @@ export function attachNativeCompanionContent(
       const previewTail = previewProjection?.flush() ?? "";
       if (previewTail.length > 0 && finalMessage.stopReason !== "toolUse")
         dispatch(async () => await sinks.onPreviewDelta(previewTail));
+      // A refusal or a cancellation ends the message wherever the surface's unit is: its text is not
+      // the companion speaking, and the reason it is withheld is Pi's own classification.
+      const stopReason = readStopReason(finalMessage.stopReason);
+      if (stopReason === "aborted") {
+        reportMessageText(finalMessage, "aborted");
+        dispatch(async () => await sinks.onRejected("aborted"));
+        return;
+      }
+      if (stopReason === "error") {
+        // The refusal's cause is read here and nowhere else. Pi has already folded the
+        // provider's status and body into `errorMessage`; only the class it supports
+        // may cross, because that body is arbitrary bytes from an endpoint the player
+        // chose.
+        const providerFailureClass = classifyProviderFailure(finalMessage.errorMessage);
+        reportMessageText(finalMessage, "provider_error");
+        dispatch(async () => await sinks.onRejected("error", providerFailureClass));
+        return;
+      }
+      if (turnUnit) {
+        // ONE BUBBLE PER PROMPT TURN. This message's text joins the turn's speech instead of being
+        // presented on its own, and the tool-use case is the one this changes most: a message that
+        // also calls a tool is the companion speaking while she works, and it now speaks in the same
+        // bubble as the answer instead of in a bubble of its own. Nothing is dropped - the bubble
+        // carries every non-empty text part of the turn, in arrival order - and nothing is delivered
+        // early either, because a bubble cannot be retracted and later text belongs in it.
+        const paragraph = readSafeAssistantText(finalMessage, stripStageDirection, dropScaffolding);
+        if (paragraph === null) {
+          reportMessageText(finalMessage, bubbleSuppressionFor(finalMessage));
+          return;
+        }
+        reportMessageText(finalMessage, null);
+        turnParagraphs.push(paragraph);
+        turnStopReason = stopReason;
+        return;
+      }
       // A tool-use assistant message is an intermediate agent-loop result, not the turn's answer:
       // it may be followed by a typed Game action and another assistant message, so it must never
       // terminalize this observer. Its text is the companion speaking while she works.
@@ -600,22 +772,6 @@ export function attachNativeCompanionContent(
           await emitReaction();
           for (const piece of pieces) await sinks.onIncrementalText!(piece);
         });
-        return;
-      }
-      const stopReason = readStopReason(finalMessage.stopReason);
-      if (stopReason === "aborted") {
-        reportMessageText(finalMessage, "aborted");
-        dispatch(async () => await sinks.onRejected("aborted"));
-        return;
-      }
-      if (stopReason === "error") {
-        // The refusal's cause is read here and nowhere else. Pi has already folded the
-        // provider's status and body into `errorMessage`; only the class it supports
-        // may cross, because that body is arbitrary bytes from an endpoint the player
-        // chose.
-        const providerFailureClass = classifyProviderFailure(finalMessage.errorMessage);
-        reportMessageText(finalMessage, "provider_error");
-        dispatch(async () => await sinks.onRejected("error", providerFailureClass));
         return;
       }
       if (incrementalActive) {
@@ -657,6 +813,7 @@ export function attachNativeCompanionContent(
   };
 
   return Object.freeze({
+    deliverTurn,
     openPreviews(): void {
       if (!opened || revoked || closed) return;
       previewsEnabled = true;
@@ -782,7 +939,9 @@ function readSafeAssistantText(
  */
 export function readAssistantMessageFacts(
   message: unknown,
-): Readonly<{ hasText: boolean; hasToolCall: boolean; failed: boolean; textParts: number }> | undefined {
+):
+  | Readonly<{ hasText: boolean; hasToolCall: boolean; failed: boolean; textParts: number; id: string | null }>
+  | undefined {
   if (!isAssistantLifecycleMessage(message)) return undefined;
   // One spelling of "text part" for both readers: a content entry of type text, blank ones included. A
   // blank part is what `blank_text` names, and it is the population the delivery accounting counts.
@@ -794,7 +953,9 @@ export function readAssistantMessageFacts(
   // Pi's own classification of the message it ended on. `error` is a provider refusal (which has its own retry policy
   // and its own recorded class); `aborted` is a cancellation, which is the player's or Magic Context's decision.
   const failed = message.stopReason === "error" || message.stopReason === "aborted";
-  return Object.freeze({ hasText, hasToolCall, failed, textParts });
+  // The message's own identity, when Pi minted one, so a delivery record can name which messages a bubble rolled up.
+  const id = typeof message.id === "string" && message.id.length > 0 ? message.id : null;
+  return Object.freeze({ hasText, hasToolCall, failed, textParts, id });
 }
 
 function readStopReason(value: unknown): NativeAssistantStopReason {
