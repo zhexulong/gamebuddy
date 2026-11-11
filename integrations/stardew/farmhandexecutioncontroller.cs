@@ -1828,10 +1828,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             LocalTravelSpec specification = this.activeTravel;
             this.activeTravel = null;
             this.revision++;
-            LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Expired, "travel_deadline_expired", this.revision, null);
-            this.Remember(receipt);
-            this.AddTrace(receipt);
-            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Expired, "travel_deadline_expired", null);
         }
         if (this.activeNavigate is not null && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > this.activeNavigate.DeadlineMs)
         {
@@ -1844,10 +1841,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.revision++;
             ExecutionState deadlineState = specification.Phase == LocalNavigatePhase.AwaitingWarp ? ExecutionState.Uncertain : ExecutionState.Expired;
             string reasonCode = specification.Phase == LocalNavigatePhase.AwaitingWarp ? "navigation_deadline_expired_after_warp" : "navigation_deadline_expired";
-            LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, deadlineState, reasonCode, this.revision, $"destination={specification.CanonicalDestinationIdentity};phase={specification.Phase}");
-            this.Remember(receipt);
-            this.AddTrace(receipt);
-            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            this.RememberTerminal(specification.RequestId, specification.ExecutionId, deadlineState, reasonCode, $"destination={specification.CanonicalDestinationIdentity};phase={specification.Phase}");
         }
         if (this.activeToolApproach is { } settledToolApproach)
         {
@@ -1863,11 +1857,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 {
                     this.activeToolApproach = null;
                     this.revision++;
-                    LocalExecutionReceipt approachExpiredReceipt = new(settledToolApproach.ExecutionId, settledToolApproach.RequestId, ExecutionState.Expired, "tool_approach_deadline_expired", this.revision,
+                    this.RememberTerminal(settledToolApproach.RequestId, settledToolApproach.ExecutionId, ExecutionState.Expired, "tool_approach_deadline_expired",
                         $"target={settledToolApproach.ExpectedTargetId};tile={settledToolApproach.TargetX},{settledToolApproach.TargetY};approach=adjacent");
-                    this.Remember(approachExpiredReceipt);
-                    this.AddTrace(approachExpiredReceipt);
-                    this.PublishIdleAfterRelease(settledToolApproach.ExecutionId, settledToolApproach.RequestId);
                 }
                 else
                 {
@@ -1898,21 +1889,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 this.activePedestalTaking = null;
                 this.revision++;
-                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Succeeded, "pedestal_item_taken", this.revision,
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "pedestal_item_taken",
                     $"location={specification.Location};target={specification.TargetId};item={specification.QualifiedItemId};stack={specification.StackBefore};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};held_object_empty=true");
-                this.Remember(receipt);
-                this.AddTrace(receipt);
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
             else if (mutexWindowExhausted)
             {
                 this.activePedestalTaking = null;
                 this.revision++;
-                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Uncertain, "pedestal_take_postcondition_unavailable", this.revision,
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "pedestal_take_postcondition_unavailable",
                     $"location={specification.Location};target={specification.TargetId};held_object_empty={pedestalEmpty.ToString().ToLowerInvariant()};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}");
-                this.Remember(receipt);
-                this.AddTrace(receipt);
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
         if (this.activeItemPickup is not null)
@@ -1949,11 +1934,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 this.activeItemPickup = null;
                 this.revision++;
-                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Succeeded, "item_picked_up", this.revision,
-                    pickupEvidence);
-                this.Remember(receipt);
-                this.AddTrace(receipt);
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "item_picked_up", pickupEvidence);
             }
             else if ((!sameLocation || nowMs > specification.DeadlineMs) && approachSettled)
             {
@@ -1972,19 +1953,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 // it is simply false while the pickup was real. Requiring both made a successful pickup look unresolved.
                 if (inventoryGained)
                 {
-                    LocalExecutionReceipt picked = new(specification.ExecutionId, specification.RequestId, ExecutionState.Succeeded, "item_picked_up", this.revision,
-                            pickupEvidence);
-                    this.Remember(picked);
-                    this.AddTrace(picked);
-                    this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+                    this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "item_picked_up", pickupEvidence);
                     return;
                 }
                 string reasonCode = !sameLocation ? "item_pickup_location_changed" : "item_pickup_postcondition_unavailable";
-                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Uncertain, reasonCode, this.revision,
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, reasonCode,
                     $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};target_gone={targetGone.ToString().ToLowerInvariant()};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};inventory_gained={inventoryGained.ToString().ToLowerInvariant()}");
-                this.Remember(receipt);
-                this.AddTrace(receipt);
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
         if (this.activeItemUse is not null)
@@ -2012,19 +1986,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 this.activeItemUse = null;
                 this.revision++;
-                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Succeeded, "item_used", this.revision,
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "item_used",
                     $"slot={specification.Slot};item={specification.QualifiedItemId};stack_before={specification.StackBefore};stack_after={remaining?.Stack ?? 0};edibility={specification.Edibility};drink={specification.IsDrink.ToString().ToLowerInvariant()};stamina_before={specification.StaminaBefore.ToString("0.##", CultureInfo.InvariantCulture)};stamina_after={Game1.player.Stamina.ToString("0.##", CultureInfo.InvariantCulture)};health_before={specification.HealthBefore};health_after={Game1.player.health};animation_complete=true");
-                this.Remember(receipt);
-                this.AddTrace(receipt);
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
             else if (nowMs > specification.DeadlineMs)
             {
                 this.revision++;
-                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Uncertain, "item_use_postcondition_unavailable", this.revision,
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "item_use_postcondition_unavailable",
                     $"slot={specification.Slot};item={specification.QualifiedItemId};consumed={consumed.ToString().ToLowerInvariant()};animation_complete={animationComplete.ToString().ToLowerInvariant()}");
-                this.Remember(receipt);
-                this.AddTrace(receipt);
                 if (animationComplete)
                 {
                     this.activeItemUse = null;
@@ -2068,19 +2037,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 // MilkPail/Shears each deduct a flat 4f inside their DoFunction;
                 // the animation runs the native tool use exactly on the bound animal.
                 float expectedStaminaCost = 4f;
-                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Succeeded, "animal_product_collected", this.revision,
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "animal_product_collected",
                     $"location={specification.Location};target={specification.TargetId};animal={specification.AnimalId};tool={specification.ToolKind};produce={specification.QualifiedProduceItemId};produce_stack={specification.ProduceStack};produce_cleared=true;inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};inventory_gained=true;animation_complete=true;stamina_before={specification.StaminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}");
-                this.Remember(receipt);
-                this.AddTrace(receipt);
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
             else if (nowMs > specification.DeadlineMs)
             {
                 this.revision++;
-                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Uncertain, "animal_product_postcondition_unavailable", this.revision,
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "animal_product_postcondition_unavailable",
                     $"location={specification.Location};target={specification.TargetId};animal={specification.AnimalId};tool={specification.ToolKind};produce_cleared={produceCleared.ToString().ToLowerInvariant()};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};inventory_gained={inventoryGained.ToString().ToLowerInvariant()};animation_complete={animationComplete.ToString().ToLowerInvariant()}");
-                this.Remember(receipt);
-                this.AddTrace(receipt);
                 if (animationComplete)
                 {
                     Game1.player.CurrentToolIndex = specification.PreviousSlot;
@@ -2103,19 +2067,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 this.activeMountTransport = null;
                 this.revision++;
-                LocalExecutionReceipt mountReceipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Succeeded, "horse_mounted", this.revision, $"target={specification.TargetId};horse_id={specification.HorseId};mounted=true;mounting=false");
-                this.Remember(mountReceipt);
-                this.AddTrace(mountReceipt);
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "horse_mounted", $"target={specification.TargetId};horse_id={specification.HorseId};mounted=true;mounting=false");
             }
             else if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > specification.DeadlineMs)
             {
                 this.activeMountTransport = null;
                 this.revision++;
-                LocalExecutionReceipt mountReceipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Uncertain, "horse_mount_postcondition_unavailable", this.revision, $"target={specification.TargetId};mounted={(Game1.player.mount is not null).ToString().ToLowerInvariant()};mounting={horse?.mounting.Value.ToString().ToLowerInvariant() ?? "unknown"}");
-                this.Remember(mountReceipt);
-                this.AddTrace(mountReceipt);
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "horse_mount_postcondition_unavailable", $"target={specification.TargetId};mounted={(Game1.player.mount is not null).ToString().ToLowerInvariant()};mounting={horse?.mounting.Value.ToString().ToLowerInvariant() ?? "unknown"}");
             }
         }
         if (this.activePet is not null)
@@ -2129,21 +2087,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             {
                 this.activePet = null;
                 this.revision++;
-                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Succeeded, "pet_completed", this.revision,
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "pet_completed",
                     $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};pet_day={specification.PetDay};friendship_before={specification.FriendshipBefore};friendship_after={pet!.friendshipTowardFarmer.Value};day_recorded=true;friendship_callback=true");
-                this.Remember(receipt);
-                this.AddTrace(receipt);
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
             else if (nowMs > specification.DeadlineMs)
             {
                 this.activePet = null;
                 this.revision++;
-                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Uncertain, "pet_postcondition_unavailable", this.revision,
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "pet_postcondition_unavailable",
                     $"location={specification.Location};target={specification.TargetId};day_recorded={dayRecorded.ToString().ToLowerInvariant()};friendship_applied={friendshipApplied.ToString().ToLowerInvariant()}");
-                this.Remember(receipt);
-                this.AddTrace(receipt);
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
         // Controller success releases its native ownership only after its

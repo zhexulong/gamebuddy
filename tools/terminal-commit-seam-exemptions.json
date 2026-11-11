@@ -119,24 +119,6 @@
       "reason": "stores and publishes a non-terminal marker (Accepted/Running); the seam's terminal-only work does not apply to it"
     },
     {
-      "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "member": "Update",
-      "line": 1832,
-      "sites": 15,
-      "family": "controller",
-      "kind": "faithful_copy",
-      "reason": "faithful copy of the seam (Remember, AddTrace, PublishIdleAfterRelease); converting it to RememberTerminal is behaviour-identical"
-    },
-    {
-      "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "member": "Update",
-      "line": 2082,
-      "sites": 1,
-      "family": "controller",
-      "kind": "missing_idle",
-      "reason": "terminal commit that never publishes PublishIdleAfterRelease, so converting it would ADD a body_idle fact - a behaviour change"
-    },
-    {
       "file": "integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs",
       "member": "ExecuteBaitCrabPot",
       "line": 910,
