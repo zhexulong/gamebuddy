@@ -14,6 +14,7 @@ import {
   runCompiledTests,
   runDiscoveredTests,
   runTestBatches,
+  ungroupedPlayerHostLifecycleFiles,
 } from "./run-tests.mjs";
 import { assertTestArtifactFreshness, assertTestArtifactInventory, writeTestArtifactInventory } from "./test-artifact-inventory.mjs";
 
@@ -251,6 +252,26 @@ test("runs sorted test files in bounded fresh-coordinator batches with one suite
       exclusiveGroupsFor("dist-test/stardew-production-lifecycle-coordinator.internal.test.js").length,
       1,
       "the Player Host lifecycle file must be declared exclusive",
+    );
+    // That measurement belongs to the seam, not to one file name: every group the file was split into drives the same
+    // real Player Host over the same named-pipe bridge, so each must be grouped too - and a file that names the family
+    // while matching no group must be refused (`ungrouped_heavy_suite`) rather than quietly rejoin the pool that
+    // produced the 27-minute silence.
+    assert.equal(
+      exclusiveGroupsFor("dist-test/stardew-production-lifecycle-coordinator-resume.internal.test.js").length,
+      1,
+      "a group the Player Host lifecycle file was split into must stay exclusive",
+    );
+    assert.deepEqual(ungroupedPlayerHostLifecycleFiles(["dist-test/stardew-production-lifecycle-coordinator.test.js"]), [
+      "dist-test/stardew-production-lifecycle-coordinator.test.js",
+    ]);
+    assert.deepEqual(
+      ungroupedPlayerHostLifecycleFiles([
+        "dist-test/stardew-production-lifecycle-coordinator-resume.internal.test.js",
+        "dist-test/runtime.test.js",
+      ]),
+      [],
+      "a grouped family member and an ordinary file are both left alone",
     );
 
     let inFlight = 0;

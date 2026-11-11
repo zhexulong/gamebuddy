@@ -54,10 +54,29 @@ export const EXCLUSIVE_FILE_GROUPS = Object.freeze([
     // the real Player Host and a real named-pipe bridge, so its round trips degrade under company exactly as the
     // group above does. Grouped by the runner rather than slowed by a bigger budget, because the reading that
     // distinguished the two - `silent_for_ms` - showed silence, not work.
+    //
+    // The family, not one file: the measurement belongs to the seam every one of these files drives, so a group that
+    // named a single file would leave the other groups it was split into in the parallel pool.
     name: "stardew-player-host-lifecycle",
-    pattern: /stardew-production-lifecycle-coordinator\.internal\.test\.js$/u,
+    pattern: /stardew-production-lifecycle-coordinator(?:-[a-z0-9]+)*\.internal\.test\.js$/u,
   }),
 ]);
+
+/**
+ * The compiled files whose name begins with this drive one real Player Host over one real named-pipe bridge, so every
+ * one of them has to belong to a declared exclusive group. Declared once: the group's pattern above and the coverage
+ * assertion below both read it, so a file added to the family cannot miss the group and quietly rejoin the pool that
+ * produced the 27-minute silence.
+ */
+export const PLAYER_HOST_LIFECYCLE_FAMILY = "stardew-production-lifecycle-coordinator";
+
+/** The `dist-test`-relative files that name the family but belong to no exclusive group. */
+export function ungroupedPlayerHostLifecycleFiles(relativePaths) {
+  return relativePaths.filter((path) => {
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    return name.startsWith(PLAYER_HOST_LIFECYCLE_FAMILY) && exclusiveGroupsFor(path).length === 0;
+  });
+}
 
 /** The declared exclusive groups a path belongs to, identified by its `dist-test`-relative shape. */
 export function exclusiveGroupsFor(relativePath) {
@@ -514,12 +533,18 @@ export async function runCompiledTests({
     throw runnerError("invalid_test_file_timeout", String(perFileMs));
   await preflightTestArtifact();
   const files = await discoverTestFiles(defaultTestRoot, ".test.js");
+  const relativeFiles = files.map((file) => relative(hostRoot, file).replaceAll("\\", "/"));
   for (const group of EXCLUSIVE_FILE_GROUPS) {
-    const matched = files.filter((file) => group.pattern.test(relative(hostRoot, file).replaceAll("\\\\", "/")));
+    const matched = relativeFiles.filter((path) => group.pattern.test(path));
     // Self-invalidating: a group whose files are gone (renamed, deleted, folded into one
     // build-once step) must fail here rather than quietly keep serializing nothing.
     if (matched.length === 0) throw runnerError("exclusive_group_matches_nothing", group.name);
   }
+  // The other half of the same rule: a file that names the family but matched no group is a finding, not an ordinary
+  // file. A pattern nobody re-checks would come back as a 27-minute silence under company, so the name is worth
+  // nothing unless the runner refuses to run it ungrouped.
+  const ungrouped = ungroupedPlayerHostLifecycleFiles(relativeFiles);
+  if (ungrouped.length > 0) throw runnerError("ungrouped_heavy_suite", ungrouped.join(","));
   return await runTestBatches(files, {
     suite: "compiled",
     batchSize,

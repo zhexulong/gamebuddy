@@ -9,7 +9,6 @@
     "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.private.test.ts": 5611,
     "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.test.ts": 5604,
     "host/src/protocol.ts": 5786,
-    "host/src/stardew-production-lifecycle-coordinator.internal.test.ts": 9347,
     "host/src/tavern/chat-thread-store.ts": 6325,
     "integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs": 3409,
     "integrations/stardew/farmhandexecutioncontroller.cs": 6501,
