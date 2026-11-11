@@ -76,6 +76,12 @@ const gameProfileWithLaunch = composeGameProfile({
   operationIds: ["game.state.read", "game.launch"],
   navigationItemIds: ["game"],
 });
+const gameProfileWithEndgame = composeGameProfile({
+  profileId: "gamebuddy.game.preview",
+  releaseTier: "game_preview",
+  operationIds: ["game.state.read", "game.endgame"],
+  navigationItemIds: ["game"],
+});
 const gameProfileWithSettings = composeGameProfile({
   profileId: "gamebuddy.game.preview",
   releaseTier: "game_preview",
@@ -3133,6 +3139,114 @@ test("unmounted game.resume.cancel route stays unavailable", async () => {
       }),
     });
     assert.equal(response.status, 404);
+  } finally {
+    await server.close();
+  }
+});
+
+test("authenticated game.endgame writes the settlement's own bytes and measured length", async () => {
+  // Failure caught: the endgame route answering through the shared JSON writer instead of writing the settlement it
+  // was handed - a different content type and no measured length - which is the one reply on this wire that is not
+  // re-checked against a result schema beside it.
+  const calls: unknown[] = [];
+  let handler!: ReturnType<typeof createComposedReferenceGameBrowserRequestHandler>;
+  handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithEndgame }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+    gameEndgame: async (admission, command) => {
+      const consumed = consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        handler.lifecycleActivationIssuer,
+        admission,
+        "game_endgame",
+        (facts) => {
+          calls.push({ command, facts });
+          return true;
+        },
+      );
+      if (consumed !== true) throw new Error("endgame_admission_invalid");
+      return { apiVersion: 1, status: "gameended" };
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
+    const path = `${server.origin}/api/composed-reference-game/v1/game/endgame`;
+    const command = {
+      apiVersion: 1,
+      idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+      expectedAttachmentGeneration: 2,
+      confirm: true,
+    };
+    const response = await fetch(path, {
+      method: "POST",
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(command),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "application/json");
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const text = await response.text();
+    assert.equal(response.headers.get("content-length"), String(Buffer.byteLength(text, "utf8")));
+    assert.deepEqual(JSON.parse(text), { apiVersion: 1, status: "gameended" });
+    assert.equal(calls.length, 1);
+    assert.deepEqual((calls[0] as { command: unknown }).command, command);
+
+    const malformed = await fetch(path, {
+      method: "POST",
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ ...command, confirm: "yes" }),
+    });
+    assert.equal(malformed.status, 409);
+    assert.deepEqual(await malformed.json(), { code: "malformed_request" });
+    assert.equal(calls.length, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("unmounted game.endgame route stays unavailable", async () => {
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
+    const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/endgame`, {
+      method: "POST",
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        apiVersion: 1,
+        idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+        expectedAttachmentGeneration: 2,
+        confirm: true,
+      }),
+    });
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { code: "not_found" });
   } finally {
     await server.close();
   }

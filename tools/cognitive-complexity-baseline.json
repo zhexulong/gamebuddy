@@ -511,23 +511,6 @@
       "value": 36
     },
     {
-      "id": "ts:host/src/composed-reference-game-browser.ts#dispatch",
-      "language": "ts",
-      "name": "host/src/composed-reference-game-browser.ts#dispatch",
-      "file": "host/src/composed-reference-game-browser.ts",
-      "line": 1245,
-      "value": 255,
-      "saturated": true
-    },
-    {
-      "id": "ts:host/src/composed-reference-game-browser.ts#issueComposedReferenceGameBrowserLifecycleActivationAdmission",
-      "language": "ts",
-      "name": "host/src/composed-reference-game-browser.ts#issueComposedReferenceGameBrowserLifecycleActivationAdmission",
-      "file": "host/src/composed-reference-game-browser.ts",
-      "line": 881,
-      "value": 52
-    },
-    {
       "id": "ts:host/src/composition/desktop-host-composition.ts#createDesktopProductComposition",
       "language": "ts",
       "name": "host/src/composition/desktop-host-composition.ts#createDesktopProductComposition",

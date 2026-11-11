@@ -760,6 +760,12 @@ const delegatedAuthContextSessions = new WeakMap<object, BrowserSession>();
 
 type LifecycleActivationIssuerState = Readonly<{
   currentSession(): BrowserSession | undefined;
+  /**
+   * The admitted wire shapes this broker publishes, by the one-shot operation each answers as. The route table is the
+   * only declaration of them: a wire shape can mint no admission unless a row names it, and the operation a row is
+   * admitted under is the row's own kind.
+   */
+  admissionOperations: ReadonlyMap<string, LifecycleAdmissionOperation>;
 }>;
 
 type LifecycleAdmissionOperation =
@@ -901,46 +907,8 @@ export function issueComposedReferenceGameBrowserLifecycleActivationAdmission(
     return null;
   }
 
-  let operation: LifecycleAdmissionOperation;
-  if (request.method === "POST" && requestUrl.pathname === LIFECYCLE_ACTIVATE_PATH) {
-    operation = "lifecycle_activation";
-  } else if (request.method === "GET" && requestUrl.pathname === DISCOVERY_PATH) {
-    operation = "discovery_read";
-  } else if (request.method === "POST" && requestUrl.pathname === DISCOVERY_CONFIRM_PATH) {
-    operation = "discovery_confirm";
-  } else if (request.method === "POST" && requestUrl.pathname === DISCOVERY_RETRY_PATH) {
-    operation = "discovery_retry";
-  } else if (request.method === "POST" && requestUrl.pathname === DISCOVERY_CANCEL_PATH) {
-    operation = "discovery_cancel";
-  } else if (request.method === "POST" && requestUrl.pathname === DISCOVERY_PICKER_PATH) {
-    operation = "discovery_picker";
-  } else if (request.method === "GET" && requestUrl.pathname === STARDEW_CABINS_PATH) {
-    operation = "cabin_read";
-  } else if (request.method === "GET" && requestUrl.pathname === STARDEW_SETTINGS_PATH) {
-    operation = "settings_read";
-  } else if (request.method === "POST" && requestUrl.pathname === STARDEW_SETTINGS_PATH) {
-    operation = "settings_update";
-  } else if (request.method === "POST" && requestUrl.pathname === STARDEW_CABINS_CONFIRM_PATH) {
-    operation = "cabin_confirm";
-  } else if (request.method === "POST" && requestUrl.pathname === GAME_SETUP_PATH) {
-    operation = "game_setup";
-  } else if (request.method === "POST" && requestUrl.pathname === GAME_LAUNCH_PATH) {
-    operation = "game_launch";
-  } else if (request.method === "POST" && requestUrl.pathname === GAME_STOP_PATH) {
-    operation = "game_stop";
-  } else if (request.method === "POST" && requestUrl.pathname === GAME_RESUME_PATH) {
-    operation = "game_resume";
-  } else if (request.method === "POST" && requestUrl.pathname === GAME_RESUME_CANCEL_PATH) {
-    operation = "game_resume_cancel";
-  } else if (request.method === "POST" && requestUrl.pathname === GAME_REOPEN_PATH) {
-    operation = "game_reopen";
-  } else if (request.method === "POST" && requestUrl.pathname === GAME_DISCONNECT_PATH) {
-    operation = "game_disconnect";
-  } else if (request.method === "POST" && requestUrl.pathname === GAME_ENDGAME_PATH) {
-    operation = "game_endgame";
-  } else if (request.method === "POST" && requestUrl.pathname === GAME_CREATE_PATH) {
-    operation = "game_create";
-  } else {
+  const operation = issuerState.admissionOperations.get(routeKey(request.method, requestUrl.pathname));
+  if (operation === undefined) {
     return null;
   }
 
@@ -1017,6 +985,246 @@ export function consumeComposedReferenceGameBrowserLifecycleActivationAdmission<
       expiresAtMs: activeSession.expiresAtMs,
     }),
   );
+}
+
+/**
+ * The wire shape that decides which route answers a request: the HTTP method plus the exact path. A method or path the
+ * table does not name is refused by the router itself, so anything it never named is `404 not_found`, exactly as it
+ * was.
+ */
+function routeKey(method: string | undefined, pathname: string): string {
+  return `${method ?? ""} ${pathname}`;
+}
+
+/** An inbound request, resolved to the route that answers it. */
+type RouteRequest = Readonly<{
+  request: IncomingMessage;
+  response: ServerResponse;
+  url: URL;
+  origin: string;
+  /** The fieldless issuer this handler minted; an admitted route consumes its own one-shot admission through it. */
+  issuer: ComposedReferenceGameBrowserLifecycleActivationIssuer;
+}>;
+
+/** One declared inbound kind: the wire shape it answers, and the handler that answers it. */
+type ComposedBrowserRoute = Readonly<{
+  method: "GET" | "POST";
+  path: string;
+  handle(request: RouteRequest): Promise<void>;
+}>;
+
+/** The inbound kinds that carry no lifecycle admission. */
+type SessionRouteKind = "bootstrap" | "state_read" | "game_read";
+
+/** What a route requires of the request body before its seam runs. */
+type RouteBody =
+  /** The GET projections read no body at all. */
+  | Readonly<{ kind: "absent" }>
+  /** Exactly zero bytes: the activation command is named by its admission, not by a body. */
+  | Readonly<{ kind: "empty" }>
+  /** One JSON command, bound by the route's own schema. */
+  | Readonly<{ kind: "command"; check(value: unknown): boolean }>;
+
+/** The command a route's seam takes, or the fact that the request was already refused. */
+type CommandRead = Readonly<{ ok: true; command: unknown }> | Readonly<{ ok: false }>;
+
+/** How a route answers the result its seam produced. */
+type RouteReply =
+  /** `204` and no body: the seam's own outcome is the whole answer. */
+  | Readonly<{ kind: "empty" }>
+  /** `200` and the result, once its own contract accepts it. */
+  | Readonly<{ kind: "result"; check(value: unknown): boolean }>
+  /** `200` and the result byte for byte, with the length it measured. */
+  | Readonly<{ kind: "raw" }>;
+
+/** How a thrown seam failure becomes a refusal. */
+type RouteFailure = Readonly<{ statusCode: number; code(error: unknown): string }>;
+
+/**
+ * One lifecycle route: the wire shape it answers, the body shape it requires, what it invokes, how it replies, and how
+ * its failure is refused. None of it is per-kind logic - `dispatchLifecycleRoute` is the whole of the fold, which is
+ * what keeps a row from growing a branch of its own.
+ */
+type LifecycleRouteSpec<C> = Readonly<{
+  method: "GET" | "POST";
+  path: string;
+  /** Whether the profile this handler was built for mounts the operation behind the route. */
+  mounted: boolean;
+  body: RouteBody;
+  run(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission, command: C): Promise<unknown>;
+  reply: RouteReply;
+  failure: RouteFailure;
+}>;
+
+/**
+ * A compiled validator's own `Check`, carried with its receiver: the validator keeps its state on `this`, so a bare
+ * method reference in a row would be called on nothing.
+ */
+function boundCheck(validator: Readonly<{ Check(value: unknown): boolean }>): (value: unknown) => boolean {
+  return (value) => validator.Check(value);
+}
+
+/**
+ * The two refusals every route shares, in the order they have always been answered in: an operation the profile does
+ * not mount is `404 not_found` - the route is not published - and a mounted route asked with a query or a body its
+ * shape does not carry is `409 malformed_request`. Returns whether it refused.
+ */
+function refuseRouteRequest(response: ServerResponse, mounted: boolean, wellFormed: boolean): boolean {
+  if (mounted && wellFormed) {
+    return false;
+  }
+  sendProblem(response, mounted ? 409 : 404, mounted ? "malformed_request" : "not_found");
+  return true;
+}
+
+/**
+ * A refusal on the bootstrap route names its bounded cause; every refusal on every other route is exactly what it was:
+ * the same code, the same status, the same body, and no added header. One helper, because the router refuses an
+ * unauthenticated origin before it knows which route the caller meant.
+ */
+function refuseWithBootstrapCause(context: RouteRequest, statusCode: number, code: string, cause: string): void {
+  if (context.url.pathname === BOOTSTRAP_PATH) {
+    sendBootstrapProblem(context.response, statusCode, code, cause);
+    return;
+  }
+  sendProblem(context.response, statusCode, code);
+}
+
+function sendNoContent(response: ServerResponse): void {
+  response.writeHead(204, { "cache-control": "no-store", "content-length": "0" });
+  response.end();
+}
+
+/**
+ * A one-shot admission bound to the live request, or `undefined` after the `401` every route answers a caller who has
+ * none with.
+ */
+function openRouteAdmission(
+  context: RouteRequest,
+): ComposedReferenceGameBrowserLifecycleActivationAdmission | undefined {
+  const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
+    context.issuer,
+    context.request,
+    context.origin,
+  );
+  if (admission !== null) {
+    return admission;
+  }
+  sendProblem(context.response, 401, "unauthorized");
+  return undefined;
+}
+
+/**
+ * The command the route's seam takes, read from the body the route declares. All three refusals here are the same one,
+ * as they always were: the body could not be read, is not JSON, or is not the command its own schema binds.
+ */
+async function readRouteCommand(context: RouteRequest, body: RouteBody): Promise<CommandRead> {
+  if (body.kind === "absent") {
+    return { ok: true, command: undefined };
+  }
+
+  let bytes: Buffer;
+  try {
+    bytes = await readBody(context.request, body.kind === "empty" ? 0 : MAX_BOOTSTRAP_BODY_BYTES);
+  } catch {
+    sendProblem(context.response, 409, "malformed_request");
+    return { ok: false };
+  }
+
+  if (body.kind === "empty") {
+    if (bytes.length === 0) {
+      return { ok: true, command: undefined };
+    }
+    sendProblem(context.response, 409, "malformed_request");
+    return { ok: false };
+  }
+
+  let command: unknown;
+  try {
+    command = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    sendProblem(context.response, 409, "malformed_request");
+    return { ok: false };
+  }
+
+  if (!body.check(command)) {
+    sendProblem(context.response, 409, "malformed_request");
+    return { ok: false };
+  }
+
+  return { ok: true, command };
+}
+
+/**
+ * The response a result earns. A result its own contract rejects is never sent: the refusal is the generic
+ * `state_unavailable` at `409`, which is what every one of these routes already answered a result that named no
+ * bounded cause with - the discovery rows by sending it directly, the rest by failing the check before `sendJson`.
+ */
+function writeRouteReply(response: ServerResponse, reply: RouteReply, result: unknown): void {
+  if (reply.kind === "empty") {
+    sendNoContent(response);
+    return;
+  }
+
+  if (reply.kind === "raw") {
+    const payload = Buffer.from(JSON.stringify(result), "utf8");
+    response.writeHead(200, {
+      "cache-control": "no-store",
+      "content-type": "application/json",
+      "content-length": String(payload.length),
+    });
+    response.end(payload);
+    return;
+  }
+
+  if (!reply.check(result)) {
+    sendProblem(response, 409, "state_unavailable");
+    return;
+  }
+
+  sendJson(response, 200, result);
+}
+
+/**
+ * The fold every lifecycle kind is answered by: its mount check, its one-shot admission, the body shape it declares,
+ * its seam, and its declared reply - or the refusal its own mapper names. Nothing below this line knows a kind.
+ */
+async function dispatchLifecycleRoute<C>(spec: LifecycleRouteSpec<C>, context: RouteRequest): Promise<void> {
+  const wellFormed =
+    isEmptyQuery(context.url) && (spec.method !== "GET" || hasEmptyRequestBodyHeaders(context.request));
+  if (refuseRouteRequest(context.response, spec.mounted, wellFormed)) {
+    return;
+  }
+
+  const admission = openRouteAdmission(context);
+  if (admission === undefined) {
+    return;
+  }
+
+  const command = await readRouteCommand(context, spec.body);
+  if (!command.ok) {
+    return;
+  }
+
+  try {
+    writeRouteReply(context.response, spec.reply, await spec.run(admission, command.command as C));
+  } catch (error) {
+    sendLifecycleProblem(context.response, spec.failure.statusCode, error, spec.failure.code(error));
+  }
+}
+
+function lifecycleRoute<C>(spec: LifecycleRouteSpec<C>): ComposedBrowserRoute {
+  return { method: spec.method, path: spec.path, handle: (context) => dispatchLifecycleRoute(spec, context) };
+}
+
+/**
+ * The table as pairs, with the kind each row answers as beside it. The cast is sound by construction: every table it
+ * is given is held to `Record<LifecycleAdmissionOperation, …>` by its own `satisfies`, so it can yield no other key.
+ */
+function routeEntries(
+  table: Readonly<Record<LifecycleAdmissionOperation, ComposedBrowserRoute>>,
+): readonly (readonly [LifecycleAdmissionOperation, ComposedBrowserRoute])[] {
+  return Object.entries(table) as readonly (readonly [LifecycleAdmissionOperation, ComposedBrowserRoute])[];
 }
 
 export type ComposedReferenceGameBrowserRequestHandler = Readonly<{
@@ -1154,8 +1362,8 @@ export function createComposedReferenceGameBrowserRequestHandler(
   };
   delegatedAuthStates.set(delegatedAuthCapability, { currentSession });
 
+  // Registered with its issuer state below, once the route table that decides which wire shapes it may admit exists.
   const lifecycleActivationIssuer: ComposedReferenceGameBrowserLifecycleActivationIssuer = Object.freeze({});
-  lifecycleActivationIssuers.set(lifecycleActivationIssuer, { currentSession });
 
   const createContext = (activeSession: BrowserSession): ComposedReferenceGameBrowserReadContext =>
     Object.freeze({
@@ -1242,6 +1450,381 @@ export function createComposedReferenceGameBrowserRequestHandler(
     return game;
   };
 
+  /**
+   * The bootstrap route: the one refusal a launch cannot see any other way, and the one route that mints the session
+   * every other route reads. Each branch names itself on the response, and every code and status is exactly what it
+   * was.
+   */
+  const handleBootstrap = async (context: RouteRequest): Promise<void> => {
+    if (!isEmptyQuery(context.url)) {
+      refuseWithBootstrapCause(context, 409, "malformed_request", "bootstrap_query_rejected");
+      return;
+    }
+    if (!isExactOrigin(context.request, context.origin)) {
+      refuseWithBootstrapCause(context, 401, "unauthorized", "bootstrap_origin_header_mismatch");
+      return;
+    }
+    if (!isExactJsonContentType(context.request.headers["content-type"])) {
+      refuseWithBootstrapCause(context, 409, "malformed_request", "bootstrap_content_type_rejected");
+      return;
+    }
+
+    let body: Buffer;
+    try {
+      body = await readBody(context.request, MAX_BOOTSTRAP_BODY_BYTES);
+    } catch {
+      refuseWithBootstrapCause(context, 409, "malformed_request", "bootstrap_body_unreadable");
+      return;
+    }
+
+    const submittedToken = parseBootstrapRequest(body);
+    if (submittedToken === undefined) {
+      refuseWithBootstrapCause(context, 401, "unauthorized", "bootstrap_request_malformed");
+      return;
+    }
+    if (!BOOTSTRAP_TOKEN_PATTERN.test(submittedToken)) {
+      refuseWithBootstrapCause(context, 401, "unauthorized", "bootstrap_token_shape_invalid");
+      return;
+    }
+    if (bootstrapConsumed) {
+      // The one-shot token was already redeemed. This is what a reload, a second tab or a stale entry looks like, and
+      // it is a different situation from a token this server never minted.
+      refuseWithBootstrapCause(context, 401, "unauthorized", "bootstrap_token_consumed");
+      return;
+    }
+    if (!timingSafeStringEqual(submittedToken, options.bootstrapToken)) {
+      // The one refusal that is deliberately reported no further than this: the caller learns its token is not this
+      // server's, and nothing at all about the token that is.
+      refuseWithBootstrapCause(context, 401, "unauthorized", "bootstrap_token_mismatch");
+      return;
+    }
+
+    bootstrapConsumed = true;
+    const activeSession: BrowserSession = {
+      bearerToken: randomBytes(32).toString("base64url"),
+      csrfToken: randomBytes(32).toString("base64url"),
+      lifecycleSessionId: randomBytes(32).toString("base64url"),
+      expiresAtMs: Date.now() + SESSION_DURATION_MS,
+    };
+    session = activeSession;
+
+    try {
+      const composed = await readComposedRoot(createContext(activeSession));
+      sendJson(context.response, 200, composed, {
+        "set-cookie": `${SESSION_COOKIE_NAME}=${activeSession.bearerToken}; HttpOnly; SameSite=Strict; Path=/`,
+      });
+    } catch (error) {
+      // A session becomes usable only after its first authoritative root projection validates; a broken producer
+      // cannot leave an authenticated browser context behind for a later retry. The refusal names the projection
+      // that broke (or the producer's own bounded code), because a bootstrap that consumed its one-shot token and
+      // then answered a bare `state_unavailable` is exactly the launch that could not be diagnosed.
+      if (session === activeSession) session = undefined;
+      refuseWithBootstrapCause(
+        context,
+        409,
+        "state_unavailable",
+        error instanceof ControlledStateError && error.refusalCode !== undefined
+          ? error.refusalCode
+          : "composed_root_projection_failed",
+      );
+    }
+  };
+
+  /**
+   * The authenticated read both session routes share: no query, no request body, a same-origin caller, and this
+   * broker's own live session cookie. A session past its expiry is retired here, where it has always been retired.
+   */
+  const openSessionContext = async (
+    context: RouteRequest,
+  ): Promise<ComposedReferenceGameBrowserReadContext | undefined> => {
+    if (!isEmptyQuery(context.url) || !hasEmptyRequestBodyHeaders(context.request)) {
+      sendProblem(context.response, 409, "malformed_request");
+      return undefined;
+    }
+    if (!isSameOriginSafeGet(context.request, context.origin)) {
+      sendProblem(context.response, 401, "unauthorized");
+      return undefined;
+    }
+
+    let body: Buffer;
+    try {
+      body = await readBody(context.request, 0);
+    } catch {
+      sendProblem(context.response, 409, "malformed_request");
+      return undefined;
+    }
+    if (body.length !== 0) {
+      sendProblem(context.response, 409, "malformed_request");
+      return undefined;
+    }
+
+    const activeSession = session;
+    const bearerToken = parseSingleCookie(context.request.headers.cookie, SESSION_COOKIE_NAME);
+    if (
+      activeSession === undefined ||
+      activeSession.expiresAtMs <= Date.now() ||
+      bearerToken === undefined ||
+      !timingSafeStringEqual(bearerToken, activeSession.bearerToken)
+    ) {
+      if (activeSession !== undefined && activeSession.expiresAtMs <= Date.now()) {
+        session = undefined;
+      }
+      sendProblem(context.response, 401, "unauthorized");
+      return undefined;
+    }
+
+    return createContext(activeSession);
+  };
+
+  const readStateRoute = async (context: RouteRequest): Promise<void> => {
+    const readContext = await openSessionContext(context);
+    if (readContext === undefined) {
+      return;
+    }
+    try {
+      sendJson(context.response, 200, await readComposedRoot(readContext));
+    } catch {
+      sendProblem(context.response, 409, "state_unavailable");
+    }
+  };
+
+  const readGameRoute = async (context: RouteRequest): Promise<void> => {
+    const readContext = await openSessionContext(context);
+    if (readContext === undefined) {
+      return;
+    }
+    if (options.readGame === undefined) {
+      sendProblem(context.response, 404, "not_found");
+      return;
+    }
+    try {
+      sendJson(context.response, 200, await readGame(readContext));
+    } catch {
+      sendProblem(context.response, 409, "state_unavailable");
+    }
+  };
+
+  /**
+   * Every inbound kind this handler answers, as a DECLARATION rather than a ladder of `if (request.url === …)` arms:
+   * one row per kind, naming the kind, the wire shape it answers, the shape it requires of the request body, what it
+   * invokes, how it replies, and how a thrown seam failure becomes a refusal.
+   *
+   * `satisfies` holds the table to `LifecycleAdmissionOperation` in both directions - a kind with no row, or a row for
+   * a kind the one-shot admission seam does not know, is a compile error rather than a silently unanswerable route -
+   * which is why the kinds must not be restated anywhere else, and why those arms must not be restored. The router
+   * built from it below is its only other reader: a wire shape is admitted exactly where a row names it.
+   *
+   * Every `options.gameX!` below is the mount check above: a profile declares an operation exactly when its seam is
+   * present, and construction refuses the mismount before this table is built.
+   */
+  const lifecycleRoutes = {
+    discovery_read: lifecycleRoute({
+      method: "GET",
+      path: DISCOVERY_PATH,
+      mounted: options.gameDiscovery !== undefined,
+      body: { kind: "absent" },
+      run: (admission) => options.gameDiscovery!.read(admission),
+      reply: { kind: "result", check: boundCheck(GameBrowserValidatorsV1.GameDiscoveryReadResultV1Schema) },
+      failure: { statusCode: 503, code: () => "game_unavailable" },
+    }),
+    discovery_confirm: lifecycleRoute({
+      method: "POST",
+      path: DISCOVERY_CONFIRM_PATH,
+      mounted: options.gameDiscovery !== undefined,
+      body: { kind: "command", check: boundCheck(GameBrowserValidatorsV1.GameDiscoveryConfirmCommandV1Schema) },
+      run: (admission, command: GameDiscoveryConfirmCommandV1) => options.gameDiscovery!.confirm(admission, command),
+      reply: { kind: "result", check: boundCheck(GameBrowserValidatorsV1.GameDiscoveryMutationResultV1Schema) },
+      failure: { statusCode: 503, code: () => "game_unavailable" },
+    }),
+    // Retry, cancel and the manual picker still bind the closed `{apiVersion}` action body, but their seams take the
+    // admission alone: the operation is the row's own, and the admission already names it.
+    discovery_retry: lifecycleRoute({
+      method: "POST",
+      path: DISCOVERY_RETRY_PATH,
+      mounted: options.gameDiscovery !== undefined,
+      body: { kind: "command", check: boundCheck(GameBrowserValidatorsV1.GameDiscoveryActionCommandV1Schema) },
+      run: (admission) => options.gameDiscovery!.retry(admission),
+      reply: { kind: "result", check: boundCheck(GameBrowserValidatorsV1.GameDiscoveryReadResultV1Schema) },
+      failure: { statusCode: 503, code: () => "game_unavailable" },
+    }),
+    discovery_cancel: lifecycleRoute({
+      method: "POST",
+      path: DISCOVERY_CANCEL_PATH,
+      mounted: options.gameDiscovery !== undefined,
+      body: { kind: "command", check: boundCheck(GameBrowserValidatorsV1.GameDiscoveryActionCommandV1Schema) },
+      run: (admission) => options.gameDiscovery!.cancel(admission),
+      reply: { kind: "result", check: boundCheck(GameBrowserValidatorsV1.GameDiscoveryMutationResultV1Schema) },
+      failure: { statusCode: 503, code: () => "game_unavailable" },
+    }),
+    discovery_picker: lifecycleRoute({
+      method: "POST",
+      path: DISCOVERY_PICKER_PATH,
+      mounted: options.gameDiscovery !== undefined,
+      body: { kind: "command", check: boundCheck(GameBrowserValidatorsV1.GameDiscoveryActionCommandV1Schema) },
+      run: (admission) => options.gameDiscovery!.manualPicker(admission),
+      reply: { kind: "result", check: boundCheck(GameBrowserValidatorsV1.GameDiscoveryMutationResultV1Schema) },
+      failure: { statusCode: 503, code: () => "game_unavailable" },
+    }),
+    // The command carries nothing: the session, the install and the attempt are the admission's to name, and a body
+    // here would be a second, unauthenticated way to say what to activate.
+    lifecycle_activation: lifecycleRoute({
+      method: "POST",
+      path: LIFECYCLE_ACTIVATE_PATH,
+      mounted: options.gameActivate !== undefined,
+      body: { kind: "empty" },
+      run: (admission) => options.gameActivate!(admission),
+      reply: { kind: "empty" },
+      failure: { statusCode: 409, code: gameActivateProblemCode },
+    }),
+    game_setup: lifecycleRoute({
+      method: "POST",
+      path: GAME_SETUP_PATH,
+      mounted: options.gameSetup !== undefined,
+      body: { kind: "command", check: boundCheck(GameBrowserValidatorsV1.GamePrerequisitesSetupCommandV1Schema) },
+      run: (admission, command: GamePrerequisitesSetupCommandV1) => options.gameSetup!(admission, command),
+      reply: { kind: "empty" },
+      failure: { statusCode: 409, code: gameSetupProblemCode },
+    }),
+    game_launch: lifecycleRoute({
+      method: "POST",
+      path: GAME_LAUNCH_PATH,
+      mounted: options.gameLaunch !== undefined,
+      body: { kind: "command", check: boundCheck(GameBrowserValidatorsV1.GameLaunchCommandV1Schema) },
+      run: (admission, command: GameLaunchCommandV1) => options.gameLaunch!(admission, command),
+      reply: { kind: "empty" },
+      failure: { statusCode: 409, code: gameLaunchProblemCode },
+    }),
+    game_stop: lifecycleRoute({
+      method: "POST",
+      path: GAME_STOP_PATH,
+      mounted: options.gameStop !== undefined,
+      body: { kind: "command", check: boundCheck(GameBrowserValidatorsV1.GameStopCommandV1Schema) },
+      run: (admission, command: GameStopCommandV1) => options.gameStop!(admission, command),
+      reply: { kind: "empty" },
+      failure: { statusCode: 409, code: gameStopProblemCode },
+    }),
+    game_resume: lifecycleRoute({
+      method: "POST",
+      path: GAME_RESUME_PATH,
+      mounted: options.gameResume !== undefined,
+      body: { kind: "command", check: boundCheck(GameBrowserValidatorsV1.GameResumeCommandV1Schema) },
+      run: (admission, command: GameResumeCommandV1) => options.gameResume!(admission, command),
+      reply: { kind: "result", check: boundCheck(GameBrowserValidatorsV1.GameResumeResultV1Schema) },
+      failure: { statusCode: 409, code: gameResumeProblemCode },
+    }),
+    game_resume_cancel: lifecycleRoute({
+      method: "POST",
+      path: GAME_RESUME_CANCEL_PATH,
+      mounted: options.gameResumeCancel !== undefined,
+      body: { kind: "command", check: boundCheck(GameBrowserValidatorsV1.GameResumeCancelCommandV1Schema) },
+      run: (admission, command: GameResumeCancelCommandV1) => options.gameResumeCancel!(admission, command),
+      reply: { kind: "result", check: boundCheck(GameBrowserValidatorsV1.GameResumeCancelResultV1Schema) },
+      failure: { statusCode: 409, code: gameResumeCancelProblemCode },
+    }),
+    game_create: lifecycleRoute({
+      method: "POST",
+      path: GAME_CREATE_PATH,
+      mounted: options.gameCreate !== undefined,
+      body: { kind: "command", check: boundCheck(GameBrowserValidatorsV1.GameCreateCommandV1Schema) },
+      run: (admission, command: GameCreateCommandV1) => options.gameCreate!(admission, command),
+      reply: { kind: "result", check: boundCheck(GameBrowserValidatorsV1.GameCreateResultV1Schema) },
+      failure: { statusCode: 409, code: gameCreateProblemCode },
+    }),
+    game_reopen: lifecycleRoute({
+      method: "POST",
+      path: GAME_REOPEN_PATH,
+      mounted: options.gameReopen !== undefined,
+      body: { kind: "command", check: boundCheck(GameBrowserValidatorsV1.GameReopenActionAuthorityCommandV1Schema) },
+      run: (admission, command: GameReopenActionAuthorityCommandV1) => options.gameReopen!(admission, command),
+      reply: { kind: "result", check: boundCheck(GameBrowserValidatorsV1.GameReopenActionAuthorityResultV1Schema) },
+      failure: { statusCode: 409, code: gameReopenProblemCode },
+    }),
+    game_disconnect: lifecycleRoute({
+      method: "POST",
+      path: GAME_DISCONNECT_PATH,
+      mounted: options.gameDisconnect !== undefined,
+      body: { kind: "command", check: boundCheck(GameBrowserValidatorsV1.GameDisconnectCommandV1Schema) },
+      run: (admission, command: GameDisconnectCommandV1) => options.gameDisconnect!(admission, command),
+      reply: { kind: "empty" },
+      failure: { statusCode: 409, code: gameDisconnectProblemCode },
+    }),
+    // The settlement answers with the length it wrote and no re-check: its own payload IS the endgame result, and the
+    // shape beside it is already the contract's.
+    game_endgame: lifecycleRoute({
+      method: "POST",
+      path: GAME_ENDGAME_PATH,
+      mounted: options.gameEndgame !== undefined,
+      body: { kind: "command", check: boundCheck(GameBrowserValidatorsV1.GameEndgameCommandV1Schema) },
+      run: (admission, command: GameEndgameCommandV1) => options.gameEndgame!(admission, command),
+      reply: { kind: "raw" },
+      failure: { statusCode: 409, code: gameEndgameProblemCode },
+    }),
+    settings_read: lifecycleRoute({
+      method: "GET",
+      path: STARDEW_SETTINGS_PATH,
+      mounted: options.stardewSettings !== undefined,
+      body: { kind: "absent" },
+      run: (admission) => options.stardewSettings!.read(admission),
+      reply: { kind: "result", check: boundCheck(GameBrowserValidatorsV1.StardewPlayerSettingsV1Schema) },
+      failure: { statusCode: 409, code: stardewSettingsProblemCode },
+    }),
+    settings_update: lifecycleRoute({
+      method: "POST",
+      path: STARDEW_SETTINGS_PATH,
+      mounted: options.stardewSettings !== undefined,
+      body: { kind: "command", check: boundCheck(GameBrowserValidatorsV1.StardewPlayerSettingsCommandV1Schema) },
+      run: (admission, command: StardewPlayerSettingsCommandV1) => options.stardewSettings!.update(admission, command),
+      reply: { kind: "result", check: boundCheck(GameBrowserValidatorsV1.StardewPlayerSettingsV1Schema) },
+      failure: { statusCode: 409, code: stardewSettingsProblemCode },
+    }),
+    // The read has its OWN causes, and one of them is actionable in a way `state_unavailable` is not.
+    //
+    // Measured 2026-10-28: a world with no cabin for the companion throws `stardew_player_host_cabin_unavailable`,
+    // whose cure is "have Robin build one" - the guidance the product already gives. Flattened to
+    // `state_unavailable`, the panel can only say "unavailable" and the player retries forever. The confirm branch
+    // beside this one has always mapped by name; the read branch did not.
+    cabin_read: lifecycleRoute({
+      method: "GET",
+      path: STARDEW_CABINS_PATH,
+      mounted: options.stardewCabins !== undefined,
+      body: { kind: "absent" },
+      run: (admission) => options.stardewCabins!.read(admission),
+      reply: { kind: "result", check: boundCheck(GameBrowserValidatorsV1.StardewCabinChoicesV1Schema) },
+      failure: { statusCode: 409, code: stardewCabinReadProblemCode },
+    }),
+    cabin_confirm: lifecycleRoute({
+      method: "POST",
+      path: STARDEW_CABINS_CONFIRM_PATH,
+      mounted: options.stardewCabins !== undefined,
+      body: { kind: "command", check: boundCheck(GameBrowserValidatorsV1.StardewCabinConfirmCommandV1Schema) },
+      run: (admission, command: StardewCabinConfirmCommandV1) => options.stardewCabins!.confirm(admission, command),
+      reply: { kind: "result", check: boundCheck(GameBrowserValidatorsV1.StardewCabinConfirmResultV1Schema) },
+      failure: { statusCode: 409, code: stardewCabinProblemCode },
+    }),
+  } satisfies Record<LifecycleAdmissionOperation, ComposedBrowserRoute>;
+
+  /** The three kinds that carry no lifecycle admission, held to their own union the same way. */
+  const sessionRoutes = {
+    bootstrap: { method: "POST", path: BOOTSTRAP_PATH, handle: handleBootstrap },
+    state_read: { method: "GET", path: STATE_PATH, handle: readStateRoute },
+    game_read: { method: "GET", path: GAME_PATH, handle: readGameRoute },
+  } satisfies Record<SessionRouteKind, ComposedBrowserRoute>;
+
+  // One lookup per request, and one admission operation per admitted shape: both are read from the declarations
+  // above, so no wire shape can be answered without a row or admitted without one.
+  const routes = new Map<string, ComposedBrowserRoute>();
+  const admissionOperations = new Map<string, LifecycleAdmissionOperation>();
+  for (const [kind, route] of routeEntries(lifecycleRoutes)) {
+    const key = routeKey(route.method, route.path);
+    routes.set(key, route);
+    admissionOperations.set(key, kind);
+  }
+  for (const route of Object.values(sessionRoutes)) {
+    routes.set(routeKey(route.method, route.path), route);
+  }
+  lifecycleActivationIssuers.set(lifecycleActivationIssuer, { currentSession, admissionOperations });
+
+  /** The whole of the routing: the closed gate, the origin guard, and the row the inbound kind resolves to. */
   const dispatch = async (request: IncomingMessage, response: ServerResponse, origin: string): Promise<void> => {
     if (closed) {
       sendProblem(response, 503, "closed");
@@ -1258,16 +1841,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
       return;
     }
 
-    // Every refusal on the bootstrap route carries its bounded cause, and every
-    // refusal on every other route is exactly what it was: the same code, the same
-    // status, the same body, and no added header.
-    const refuseBootstrap = (statusCode: number, code: string, cause: string): void => {
-      if (requestUrl.pathname === BOOTSTRAP_PATH) {
-        sendBootstrapProblem(response, statusCode, code, cause);
-      } else {
-        sendProblem(response, statusCode, code);
-      }
-    };
+    const context: RouteRequest = { request, response, url: requestUrl, origin, issuer: lifecycleActivationIssuer };
 
     if (
       originUrl.protocol !== "http:" ||
@@ -1275,869 +1849,17 @@ export function createComposedReferenceGameBrowserRequestHandler(
       requestUrl.origin !== originUrl.origin ||
       !requestHasExpectedHost(request, originUrl)
     ) {
-      refuseBootstrap(401, "unauthorized", "bootstrap_origin_rejected");
+      refuseWithBootstrapCause(context, 401, "unauthorized", "bootstrap_origin_rejected");
       return;
     }
 
-    if (request.method === "POST" && requestUrl.pathname === BOOTSTRAP_PATH) {
-      if (!isEmptyQuery(requestUrl)) {
-        refuseBootstrap(409, "malformed_request", "bootstrap_query_rejected");
-        return;
-      }
-      if (!isExactOrigin(request, origin)) {
-        refuseBootstrap(401, "unauthorized", "bootstrap_origin_header_mismatch");
-        return;
-      }
-      if (!isExactJsonContentType(request.headers["content-type"])) {
-        refuseBootstrap(409, "malformed_request", "bootstrap_content_type_rejected");
-        return;
-      }
-
-      let body: Buffer;
-      try {
-        body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES);
-      } catch {
-        refuseBootstrap(409, "malformed_request", "bootstrap_body_unreadable");
-        return;
-      }
-
-      const submittedToken = parseBootstrapRequest(body);
-      if (submittedToken === undefined) {
-        refuseBootstrap(401, "unauthorized", "bootstrap_request_malformed");
-        return;
-      }
-      if (!BOOTSTRAP_TOKEN_PATTERN.test(submittedToken)) {
-        refuseBootstrap(401, "unauthorized", "bootstrap_token_shape_invalid");
-        return;
-      }
-      if (bootstrapConsumed) {
-        // The one-shot token was already redeemed. This is what a reload, a second
-        // tab or a stale entry looks like, and it is a different situation from a
-        // token this server never minted.
-        refuseBootstrap(401, "unauthorized", "bootstrap_token_consumed");
-        return;
-      }
-      if (!timingSafeStringEqual(submittedToken, options.bootstrapToken)) {
-        // The one refusal that is deliberately reported no further than this: the
-        // caller learns its token is not this server's, and nothing at all about
-        // the token that is.
-        refuseBootstrap(401, "unauthorized", "bootstrap_token_mismatch");
-        return;
-      }
-
-      bootstrapConsumed = true;
-      const activeSession: BrowserSession = {
-        bearerToken: randomBytes(32).toString("base64url"),
-        csrfToken: randomBytes(32).toString("base64url"),
-        lifecycleSessionId: randomBytes(32).toString("base64url"),
-        expiresAtMs: Date.now() + SESSION_DURATION_MS,
-      };
-      session = activeSession;
-
-      try {
-        const composed = await readComposedRoot(createContext(activeSession));
-        sendJson(response, 200, composed, {
-          "set-cookie": `${SESSION_COOKIE_NAME}=${activeSession.bearerToken}; HttpOnly; SameSite=Strict; Path=/`,
-        });
-      } catch (error) {
-        // A session becomes usable only after its first authoritative root
-        // projection validates; a broken producer cannot leave an authenticated
-        // browser context behind for a later retry. The refusal names the projection
-        // that broke (or the producer's own bounded code), because a bootstrap that
-        // consumed its one-shot token and then answered a bare `state_unavailable` is
-        // exactly the launch that could not be diagnosed.
-        if (session === activeSession) session = undefined;
-        refuseBootstrap(
-          409,
-          "state_unavailable",
-          error instanceof ControlledStateError && error.refusalCode !== undefined
-            ? error.refusalCode
-            : "composed_root_projection_failed",
-        );
-      }
+    const route = routes.get(routeKey(request.method, requestUrl.pathname));
+    if (route === undefined) {
+      sendProblem(response, 404, "not_found");
       return;
     }
 
-    if (requestUrl.pathname === DISCOVERY_PATH && request.method === "GET") {
-      if (!isEmptyQuery(requestUrl) || !hasEmptyRequestBodyHeaders(request) || options.gameDiscovery === undefined) {
-        sendProblem(
-          response,
-          options.gameDiscovery === undefined ? 404 : 409,
-          options.gameDiscovery === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      try {
-        const result = await options.gameDiscovery.read(admission);
-        if (result === undefined) {
-          sendProblem(response, 409, "state_unavailable");
-          return;
-        }
-        if (!GameBrowserValidatorsV1.GameDiscoveryReadResultV1Schema.Check(result)) {
-          sendProblem(response, 409, "state_unavailable");
-          return;
-        }
-        sendJson(response, 200, result);
-      } catch (error) {
-        sendLifecycleProblem(response, 503, error, "game_unavailable");
-      }
-      return;
-    }
-    if (
-      request.method === "POST" &&
-      [DISCOVERY_CONFIRM_PATH, DISCOVERY_RETRY_PATH, DISCOVERY_CANCEL_PATH, DISCOVERY_PICKER_PATH].includes(
-        requestUrl.pathname,
-      )
-    ) {
-      if (!isEmptyQuery(requestUrl) || options.gameDiscovery === undefined) {
-        sendProblem(
-          response,
-          options.gameDiscovery === undefined ? 404 : 409,
-          options.gameDiscovery === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const operation =
-        requestUrl.pathname === DISCOVERY_CONFIRM_PATH
-          ? "discovery_confirm"
-          : requestUrl.pathname === DISCOVERY_RETRY_PATH
-            ? "discovery_retry"
-            : requestUrl.pathname === DISCOVERY_CANCEL_PATH
-              ? "discovery_cancel"
-              : "discovery_picker";
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      let command: unknown;
-      try {
-        command = JSON.parse((await readBody(request, MAX_BOOTSTRAP_BODY_BYTES)).toString("utf8"));
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      if (
-        (operation === "discovery_confirm" &&
-          !GameBrowserValidatorsV1.GameDiscoveryConfirmCommandV1Schema.Check(command)) ||
-        (operation !== "discovery_confirm" &&
-          !GameBrowserValidatorsV1.GameDiscoveryActionCommandV1Schema.Check(command))
-      ) {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      try {
-        const result =
-          operation === "discovery_confirm"
-            ? await options.gameDiscovery.confirm(admission, command as GameDiscoveryConfirmCommandV1)
-            : operation === "discovery_retry"
-              ? await options.gameDiscovery.retry(admission)
-              : operation === "discovery_cancel"
-                ? await options.gameDiscovery.cancel(admission)
-                : await options.gameDiscovery.manualPicker(admission);
-        if (result === undefined) {
-          sendProblem(response, 409, "state_unavailable");
-          return;
-        }
-        const validResult =
-          operation === "discovery_retry"
-            ? GameBrowserValidatorsV1.GameDiscoveryReadResultV1Schema.Check(result)
-            : GameBrowserValidatorsV1.GameDiscoveryMutationResultV1Schema.Check(result);
-        if (!validResult) {
-          sendProblem(response, 409, "state_unavailable");
-          return;
-        }
-        sendJson(response, 200, result);
-      } catch (error) {
-        sendLifecycleProblem(response, 503, error, "game_unavailable");
-      }
-      return;
-    }
-    if (requestUrl.pathname === LIFECYCLE_ACTIVATE_PATH && request.method === "POST") {
-      if (!isEmptyQuery(requestUrl) || options.gameActivate === undefined) {
-        sendProblem(
-          response,
-          options.gameActivate === undefined ? 404 : 409,
-          options.gameActivate === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      // The command carries nothing: the session, the install and the attempt are the
-      // admission's to name, and a body here would be a second, unauthenticated way to
-      // say what to activate.
-      let body: Buffer;
-      try {
-        body = await readBody(request, 0);
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      if (body.length !== 0) {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      try {
-        await options.gameActivate(admission);
-        response.writeHead(204, { "cache-control": "no-store", "content-length": "0" });
-        response.end();
-      } catch (error) {
-        sendLifecycleProblem(response, 409, error, gameActivateProblemCode(error));
-      }
-      return;
-    }
-
-    if (requestUrl.pathname === GAME_SETUP_PATH && request.method === "POST") {
-      if (!isEmptyQuery(requestUrl) || options.gameSetup === undefined) {
-        sendProblem(
-          response,
-          options.gameSetup === undefined ? 404 : 409,
-          options.gameSetup === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      let body: Buffer;
-      try {
-        body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES);
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      let command: unknown;
-      try {
-        command = JSON.parse(body.toString("utf8"));
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      if (!GameBrowserValidatorsV1.GamePrerequisitesSetupCommandV1Schema.Check(command)) {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      try {
-        await options.gameSetup(admission, command as GamePrerequisitesSetupCommandV1);
-        response.writeHead(204, { "cache-control": "no-store", "content-length": "0" });
-        response.end();
-      } catch (error) {
-        sendLifecycleProblem(response, 409, error, gameSetupProblemCode(error));
-      }
-      return;
-    }
-
-    if (requestUrl.pathname === GAME_LAUNCH_PATH && request.method === "POST") {
-      if (!isEmptyQuery(requestUrl) || options.gameLaunch === undefined) {
-        sendProblem(
-          response,
-          options.gameLaunch === undefined ? 404 : 409,
-          options.gameLaunch === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      let body: Buffer;
-      try {
-        body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES);
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      let command: unknown;
-      try {
-        command = JSON.parse(body.toString("utf8"));
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      if (!GameBrowserValidatorsV1.GameLaunchCommandV1Schema.Check(command)) {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      try {
-        await options.gameLaunch(admission, command as GameLaunchCommandV1);
-        response.writeHead(204, { "cache-control": "no-store", "content-length": "0" });
-        response.end();
-      } catch (error) {
-        sendLifecycleProblem(response, 409, error, gameLaunchProblemCode(error));
-      }
-      return;
-    }
-
-    if (requestUrl.pathname === GAME_STOP_PATH && request.method === "POST") {
-      if (!isEmptyQuery(requestUrl) || options.gameStop === undefined) {
-        sendProblem(
-          response,
-          options.gameStop === undefined ? 404 : 409,
-          options.gameStop === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      let body: Buffer;
-      try {
-        body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES);
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      let command: unknown;
-      try {
-        command = JSON.parse(body.toString("utf8"));
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      if (!GameBrowserValidatorsV1.GameStopCommandV1Schema.Check(command)) {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      try {
-        await options.gameStop(admission, command as GameStopCommandV1);
-        response.writeHead(204, { "cache-control": "no-store", "content-length": "0" });
-        response.end();
-      } catch (error) {
-        sendLifecycleProblem(response, 409, error, gameStopProblemCode(error));
-      }
-      return;
-    }
-
-    if (requestUrl.pathname === GAME_RESUME_PATH && request.method === "POST") {
-      if (!isEmptyQuery(requestUrl) || options.gameResume === undefined) {
-        sendProblem(
-          response,
-          options.gameResume === undefined ? 404 : 409,
-          options.gameResume === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      let body: Buffer;
-      try {
-        body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES);
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      let command: unknown;
-      try {
-        command = JSON.parse(body.toString("utf8"));
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      if (!GameBrowserValidatorsV1.GameResumeCommandV1Schema.Check(command)) {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      try {
-        const result = await options.gameResume(admission, command as GameResumeCommandV1);
-        if (!GameBrowserValidatorsV1.GameResumeResultV1Schema.Check(result)) throw new ControlledStateError();
-        sendJson(response, 200, result);
-      } catch (error) {
-        sendLifecycleProblem(response, 409, error, gameResumeProblemCode(error));
-      }
-      return;
-    }
-
-    if (requestUrl.pathname === GAME_RESUME_CANCEL_PATH && request.method === "POST") {
-      if (!isEmptyQuery(requestUrl) || options.gameResumeCancel === undefined) {
-        sendProblem(
-          response,
-          options.gameResumeCancel === undefined ? 404 : 409,
-          options.gameResumeCancel === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      let body: Buffer;
-      try {
-        body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES);
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      let command: unknown;
-      try {
-        command = JSON.parse(body.toString("utf8"));
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      if (!GameBrowserValidatorsV1.GameResumeCancelCommandV1Schema.Check(command)) {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      try {
-        const result = await options.gameResumeCancel(admission, command as GameResumeCancelCommandV1);
-        if (!GameBrowserValidatorsV1.GameResumeCancelResultV1Schema.Check(result)) throw new ControlledStateError();
-        sendJson(response, 200, result);
-      } catch (error) {
-        sendLifecycleProblem(response, 409, error, gameResumeCancelProblemCode(error));
-      }
-      return;
-    }
-
-    if (requestUrl.pathname === GAME_CREATE_PATH && request.method === "POST") {
-      if (!isEmptyQuery(requestUrl) || options.gameCreate === undefined) {
-        sendProblem(
-          response,
-          options.gameCreate === undefined ? 404 : 409,
-          options.gameCreate === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      let body: Buffer;
-      try {
-        body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES);
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      let command: unknown;
-      try {
-        command = JSON.parse(body.toString("utf8"));
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      if (!GameBrowserValidatorsV1.GameCreateCommandV1Schema.Check(command)) {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      try {
-        const result = await options.gameCreate(admission, command as GameCreateCommandV1);
-        if (!GameBrowserValidatorsV1.GameCreateResultV1Schema.Check(result)) throw new ControlledStateError();
-        sendJson(response, 200, result);
-      } catch (error) {
-        sendLifecycleProblem(response, 409, error, gameCreateProblemCode(error));
-      }
-      return;
-    }
-
-    if (requestUrl.pathname === GAME_REOPEN_PATH && request.method === "POST") {
-      if (!isEmptyQuery(requestUrl) || options.gameReopen === undefined) {
-        sendProblem(
-          response,
-          options.gameReopen === undefined ? 404 : 409,
-          options.gameReopen === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      let body: Buffer;
-      try {
-        body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES);
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      let command: unknown;
-      try {
-        command = JSON.parse(body.toString("utf8"));
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      if (!GameBrowserValidatorsV1.GameReopenActionAuthorityCommandV1Schema.Check(command)) {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      try {
-        const result = await options.gameReopen(admission, command as GameReopenActionAuthorityCommandV1);
-        if (!GameBrowserValidatorsV1.GameReopenActionAuthorityResultV1Schema.Check(result))
-          throw new ControlledStateError();
-        sendJson(response, 200, result);
-      } catch (error) {
-        sendLifecycleProblem(response, 409, error, gameReopenProblemCode(error));
-      }
-      return;
-    }
-
-    if (requestUrl.pathname === GAME_DISCONNECT_PATH && request.method === "POST") {
-      if (!isEmptyQuery(requestUrl) || options.gameDisconnect === undefined) {
-        sendProblem(
-          response,
-          options.gameDisconnect === undefined ? 404 : 409,
-          options.gameDisconnect === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      let body: Buffer;
-      try {
-        body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES);
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      let command: unknown;
-      try {
-        command = JSON.parse(body.toString("utf8"));
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      if (!GameBrowserValidatorsV1.GameDisconnectCommandV1Schema.Check(command)) {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      try {
-        await options.gameDisconnect(admission, command as GameDisconnectCommandV1);
-        response.writeHead(204, { "cache-control": "no-store", "content-length": "0" });
-        response.end();
-      } catch (error) {
-        sendLifecycleProblem(response, 409, error, gameDisconnectProblemCode(error));
-      }
-      return;
-    }
-
-    if (requestUrl.pathname === GAME_ENDGAME_PATH && request.method === "POST") {
-      if (!isEmptyQuery(requestUrl) || options.gameEndgame === undefined) {
-        sendProblem(
-          response,
-          options.gameEndgame === undefined ? 404 : 409,
-          options.gameEndgame === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      let body: Buffer;
-      try {
-        body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES);
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      let command: unknown;
-      try {
-        command = JSON.parse(body.toString("utf8"));
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      if (!GameBrowserValidatorsV1.GameEndgameCommandV1Schema.Check(command)) {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      try {
-        const result = await options.gameEndgame(admission, command as GameEndgameCommandV1);
-        const payload = Buffer.from(JSON.stringify(result), "utf8");
-        response.writeHead(200, {
-          "cache-control": "no-store",
-          "content-type": "application/json",
-          "content-length": String(payload.length),
-        });
-        response.end(payload);
-      } catch (error) {
-        sendLifecycleProblem(response, 409, error, gameEndgameProblemCode(error));
-      }
-      return;
-    }
-
-    if (requestUrl.pathname === STARDEW_SETTINGS_PATH && request.method === "GET") {
-      if (!isEmptyQuery(requestUrl) || !hasEmptyRequestBodyHeaders(request) || options.stardewSettings === undefined) {
-        sendProblem(
-          response,
-          options.stardewSettings === undefined ? 404 : 409,
-          options.stardewSettings === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      try {
-        const result = await options.stardewSettings.read(admission);
-        if (!GameBrowserValidatorsV1.StardewPlayerSettingsV1Schema.Check(result)) throw new ControlledStateError();
-        sendJson(response, 200, result);
-      } catch (error) {
-        sendLifecycleProblem(response, 409, error, stardewSettingsProblemCode(error));
-      }
-      return;
-    }
-
-    if (requestUrl.pathname === STARDEW_SETTINGS_PATH && request.method === "POST") {
-      if (!isEmptyQuery(requestUrl) || options.stardewSettings === undefined) {
-        sendProblem(
-          response,
-          options.stardewSettings === undefined ? 404 : 409,
-          options.stardewSettings === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      let body: Buffer;
-      try {
-        body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES);
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      let command: unknown;
-      try {
-        command = JSON.parse(body.toString("utf8"));
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      if (!GameBrowserValidatorsV1.StardewPlayerSettingsCommandV1Schema.Check(command)) {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      try {
-        const result = await options.stardewSettings.update(admission, command as StardewPlayerSettingsCommandV1);
-        if (!GameBrowserValidatorsV1.StardewPlayerSettingsV1Schema.Check(result)) throw new ControlledStateError();
-        sendJson(response, 200, result);
-      } catch (error) {
-        sendLifecycleProblem(response, 409, error, stardewSettingsProblemCode(error));
-      }
-      return;
-    }
-
-    if (requestUrl.pathname === STARDEW_CABINS_PATH && request.method === "GET") {
-      if (!isEmptyQuery(requestUrl) || !hasEmptyRequestBodyHeaders(request) || options.stardewCabins === undefined) {
-        sendProblem(
-          response,
-          options.stardewCabins === undefined ? 404 : 409,
-          options.stardewCabins === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      try {
-        const result = await options.stardewCabins.read(admission);
-        if (!GameBrowserValidatorsV1.StardewCabinChoicesV1Schema.Check(result)) throw new ControlledStateError();
-        sendJson(response, 200, result);
-      } catch (error) {
-        // The read has its OWN causes, and one of them is actionable in a way `state_unavailable` is not.
-        //
-        // Measured 2026-10-28: a world with no cabin for the companion throws
-        // `stardew_player_host_cabin_unavailable`, whose cure is "have Robin build one" - the guidance the product
-        // already gives. Flattened to `state_unavailable`, the panel can only say "unavailable" and the player
-        // retries forever. The confirm branch beside this one has always mapped by name; the read branch did not.
-        sendLifecycleProblem(response, 409, error, stardewCabinReadProblemCode(error));
-      }
-      return;
-    }
-
-    if (requestUrl.pathname === STARDEW_CABINS_CONFIRM_PATH && request.method === "POST") {
-      if (!isEmptyQuery(requestUrl) || options.stardewCabins === undefined) {
-        sendProblem(
-          response,
-          options.stardewCabins === undefined ? 404 : 409,
-          options.stardewCabins === undefined ? "not_found" : "malformed_request",
-        );
-        return;
-      }
-      const admission = issueComposedReferenceGameBrowserLifecycleActivationAdmission(
-        lifecycleActivationIssuer,
-        request,
-        origin,
-      );
-      if (admission === null) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-      let body: Buffer;
-      try {
-        body = await readBody(request, MAX_BOOTSTRAP_BODY_BYTES);
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      let command: unknown;
-      try {
-        command = JSON.parse(body.toString("utf8"));
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      if (!GameBrowserValidatorsV1.StardewCabinConfirmCommandV1Schema.Check(command)) {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      try {
-        const result = await options.stardewCabins.confirm(admission, command as StardewCabinConfirmCommandV1);
-        if (!GameBrowserValidatorsV1.StardewCabinConfirmResultV1Schema.Check(result)) throw new ControlledStateError();
-        sendJson(response, 200, result);
-      } catch (error) {
-        sendLifecycleProblem(response, 409, error, stardewCabinProblemCode(error));
-      }
-      return;
-    }
-
-    if (request.method === "GET" && (requestUrl.pathname === STATE_PATH || requestUrl.pathname === GAME_PATH)) {
-      if (!isEmptyQuery(requestUrl) || !hasEmptyRequestBodyHeaders(request)) {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      if (!isSameOriginSafeGet(request, origin)) {
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-
-      let body: Buffer;
-      try {
-        body = await readBody(request, 0);
-      } catch {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-      if (body.length !== 0) {
-        sendProblem(response, 409, "malformed_request");
-        return;
-      }
-
-      const activeSession = session;
-      const bearerToken = parseSingleCookie(request.headers.cookie, SESSION_COOKIE_NAME);
-      if (
-        activeSession === undefined ||
-        activeSession.expiresAtMs <= Date.now() ||
-        bearerToken === undefined ||
-        !timingSafeStringEqual(bearerToken, activeSession.bearerToken)
-      ) {
-        if (activeSession !== undefined && activeSession.expiresAtMs <= Date.now()) {
-          session = undefined;
-        }
-        sendProblem(response, 401, "unauthorized");
-        return;
-      }
-
-      const context = createContext(activeSession);
-      try {
-        if (requestUrl.pathname === GAME_PATH) {
-          if (options.readGame === undefined) {
-            sendProblem(response, 404, "not_found");
-            return;
-          }
-          sendJson(response, 200, await readGame(context));
-          return;
-        }
-
-        sendJson(response, 200, await readComposedRoot(context));
-      } catch {
-        sendProblem(response, 409, "state_unavailable");
-      }
-      return;
-    }
-
-    sendProblem(response, 404, "not_found");
+    await route.handle(context);
   };
 
   return Object.freeze({
