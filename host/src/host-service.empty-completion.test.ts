@@ -263,8 +263,17 @@ test("the same empty answer is caught with the Game presenter installed, which i
     "the empty answer is re-asked on the surface that produced the 148-minute stall",
   );
   assert.equal(service.providerEmptyCompletions, 1);
-  // The surface may lead with the turn's own reaction sound (`GAME_DELIVERY_PACING`); what must still land is the answer.
-  assert.equal(presented.at(-1), "我在呢。", "and the answer that did arrive is presented exactly as before");
+  // THE PROPERTY, not the bubble's wording: the empty answer drew no bubble (a player saw nothing during the stall),
+  // and the turn that answered drew one that carries the answer. Whether that bubble leads with the turn's own
+  // reaction sound (`GAME_DELIVERY_PACING`) belongs to the surface that builds it - `native-companion-turn-delivery`
+  // asserts the sound at the head - while this asserts what the Game surface must never do, which is lose the answer.
+  // `presented.at(-1) === "我在呢。"` was the MESSAGE unit's shape; `0a600527` made the bubble the turn's, so one
+  // turn's speech arrives inside one bubble that may lead with the sound.
+  assert.equal(presented.length, 1, "the empty answer drew no bubble, and the answered turn drew exactly one");
+  assert.ok(
+    presented.at(-1)?.endsWith("我在呢。"),
+    `and the answer that did arrive is presented: ${JSON.stringify(presented)}`,
+  );
 
   service.close();
 });
