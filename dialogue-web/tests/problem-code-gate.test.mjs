@@ -67,8 +67,12 @@
  * argument index comes from the callee's own parameter named `code`, so
  * `sendSseResync(response, stream, "ambiguous_cursor", generation)` - whose third
  * argument is a *resync reason*, declared as one - is never mistaken for a problem
- * code. The gate asserts the four sender signatures it read, so a renamed parameter
- * fails loudly instead of silently narrowing the scan.
+ * code. That read is itself checked, against a population the declared union owns rather
+ * than a list of sender names: every call that hands a declared code to a function
+ * declared in these same handler files must be read at the argument that actually carries
+ * it. A renamed sender, or a renamed `code` parameter, fails here with the callee and the
+ * line - a parameter that merely moved does not, because the index is taken from the
+ * declaration each time instead of from a remembered position.
  *
  * The composed reference-game route is the one surface with no problem union of
  * its own: it composes the tavern and game routes and its client accepts any bounded
@@ -148,13 +152,6 @@ const MANAGEMENT_MODULES = [join(WEB, "composed-problem-view.ts"), join(WEB, "ma
 /** A bounded token: the shape every problem code has. */
 const BOUNDED_CODE = /^[a-z][a-z0-9_]{0,63}$/u;
 
-/**
- * Sender signatures this gate reads, asserted in `problem-code.5`. If a parameter
- * is renamed the scan would silently stop seeing that sender's code, so the read is
- * itself a finding.
- */
-const EXPECTED_CODE_ARITY = { sendProblem: 2, sendBootstrapProblem: 2, sendLifecycleProblem: 3, refuseBootstrap: 1 };
-
 /** A bounded token: the shape every problem code has. */
 
 function sourceOf(file) {
@@ -211,26 +208,92 @@ export function literalsInTypeAlias(file, name) {
   return found;
 }
 
-/** callee name -> index of its parameter named `code`, read from the handlers themselves. */
-export function codeArity() {
-  const map = new Map();
+/**
+ * Every function the handler files declare, by file and then by name: `callee -> its parameter
+ * names` in order. Keyed by the declaration rather than by the name alone, because `sendProblem`
+ * is declared in four of these files and a reader that merged them would let one file's signature
+ * answer for a call sitting in another - the naming narrowing this gate exists to catch.
+ */
+function declarationsInHandlers() {
+  const byFile = new Map();
   for (const file of ALL_HANDLERS) {
-    const sourceFile = sourceOf(file);
+    const declarations = new Map();
     const record = (name, parameters) => {
-      const index = parameters.findIndex(
-        (parameter) => ts.isIdentifier(parameter.name) && parameter.name.text === "code",
+      declarations.set(
+        name,
+        parameters.map((parameter) => parameter.name.getText()),
       );
-      if (index >= 0) map.set(name, index);
     };
-    walk(sourceFile, (node) => {
+    walk(sourceOf(file), (node) => {
       if (ts.isFunctionDeclaration(node) && node.name !== undefined) record(node.name.text, node.parameters);
       if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined) {
         if (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
           record(node.name.text, node.initializer.parameters);
       }
     });
+    byFile.set(file, declarations);
   }
-  return map;
+  return byFile;
+}
+
+/**
+ * The argument index a call in `file` to `callee` reads a code from: the position of its `code`
+ * parameter, `null` when the function is declared and has no such parameter, `undefined` when no
+ * handler file declares it at all. The calling file's own declaration wins, so a parameter renamed
+ * where the call sits is not answered for by a namesake in another file.
+ */
+function readCodeIndex(byFile, file, callee) {
+  const own = byFile.get(file).get(callee);
+  if (own !== undefined) return own.includes("code") ? own.indexOf("code") : null;
+  for (const [otherFile, declarations] of byFile) {
+    if (otherFile === file) continue;
+    const parameters = declarations.get(callee);
+    if (parameters !== undefined) return parameters.includes("code") ? parameters.indexOf("code") : null;
+  }
+  return undefined;
+}
+
+/**
+ * Calls that hand a *declared* problem code to a function the handler files declare, beside the
+ * argument the reader would take that code from. The population comes from the code union, not
+ * from a list of sender names, so a sender renamed - or a `code` parameter renamed - leaves
+ * `producedCodes` blind to every code passed to it and is named here with its line rather than
+ * narrowing in silence. A parameter that merely moved does not fail: the index is re-read from
+ * the declaration.
+ */
+function unreadCodeArguments(declared) {
+  const byFile = declarationsInHandlers();
+  const senders = new Map();
+  const findings = [];
+  let examined = 0;
+  for (const file of ALL_HANDLERS) {
+    const sourceFile = sourceOf(file);
+    walk(sourceFile, (node) => {
+      if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return;
+      const callee = node.expression.text;
+      // A `*ProblemCode` helper *produces* a code instead of sending one: it names it by returning
+      // it, which `insideProblemCodeFunction` reads, and its string arguments are fallbacks.
+      if (/ProblemCode$/u.test(callee)) return;
+      const read = readCodeIndex(byFile, file, callee);
+      if (read === undefined) return;
+      const index = node.arguments.findIndex((argument) => ts.isStringLiteral(argument) && declared.has(argument.text));
+      if (index < 0) return;
+      examined += 1;
+      if (read === index) {
+        senders.set(callee, read);
+        return;
+      }
+      findings.push({
+        callee,
+        index,
+        parameters: byFile.get(file).get(callee)?.join(", ") ?? "declared elsewhere",
+        read,
+        value: node.arguments[index].text,
+        where: lineAt(node.arguments[index], sourceFile, file),
+      });
+    });
+  }
+  return { findings, examined, senders };
 }
 
 function insideProblemCodeFunction(node) {
@@ -242,8 +305,9 @@ function insideProblemCodeFunction(node) {
 }
 
 /** Every problem code a handler file can produce, with the line that names it. */
-export function producedCodes(file, arity = codeArity()) {
+export function producedCodes(file) {
   const sourceFile = sourceOf(file);
+  const byFile = declarationsInHandlers();
   const found = [];
   walk(sourceFile, (node) => {
     if (
@@ -262,9 +326,9 @@ export function producedCodes(file, arity = codeArity()) {
     )
       found.push({ value: node.expression.text, where: lineAt(node.expression, sourceFile, file) });
     if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return;
-    const index = arity.get(node.expression.text);
-    if (index === undefined) return;
-    const argument = node.arguments[index];
+    const read = readCodeIndex(byFile, file, node.expression.text);
+    if (read === null || read === undefined) return;
+    const argument = node.arguments[read];
     if (argument !== undefined && ts.isStringLiteral(argument) && BOUNDED_CODE.test(argument.text))
       found.push({ value: argument.text, where: lineAt(argument, sourceFile, file) });
   });
@@ -441,12 +505,28 @@ test("problem-code.5: the authorities and the sender signatures are read, not as
   assert.equal(game.size, 24, `the game problem union should have 24 members, read ${game.size}`);
   assert.equal(turn.size, 4, `the turn's problemCode union should have 4 members, read ${turn.size}`);
   assert.deepEqual([...transport], ["payload_too_large"], "the transport extra is the ProblemCode alias literal");
-  const arity = codeArity();
-  for (const [callee, index] of Object.entries(EXPECTED_CODE_ARITY)) {
-    assert.equal(arity.get(callee), index, `${callee}'s code parameter moved; the scan would silently narrow`);
-  }
+  const { findings, examined, senders } = unreadCodeArguments(
+    new Set([...tavern, ...turn, ...game, ...transport]),
+  );
+  assert.ok(
+    examined > 0,
+    `no declared code reaches a handler function by argument; read ${examined} call(s), so this rule holds nothing`,
+  );
+  assert.equal(
+    findings.length,
+    0,
+    `${findings.length} declared code(s) reach a function the reader does not take them from: ${findings
+      .slice(0, 8)
+      .map(
+        (entry) =>
+          `${entry.callee}(${entry.parameters}) takes \`${entry.value}\` at #${entry.index} and the reader reads ${
+            entry.read === null ? "no argument" : `#${entry.read}`
+          } (${entry.where})`,
+      )
+      .join("; ")}${findings.length > 8 ? ` (+${findings.length - 8} more)` : ""}`,
+  );
   t.diagnostic(
-    `problem-code.5: derived ${tavern.size} tavern, ${turn.size} turn, ${game.size} game, ${transport.size} transport code(s); senders ${[...arity.entries()].map(([name, index]) => `${name}#${index}`).join(" ")}`,
+    `problem-code.5: derived ${tavern.size} tavern, ${turn.size} turn, ${game.size} game, ${transport.size} transport code(s); ${examined} declared code(s) passed to a handler function, each read at its own index; senders ${[...senders.entries()].map(([name, index]) => `${name}#${index}`).join(" ")}`,
   );
 });
 
