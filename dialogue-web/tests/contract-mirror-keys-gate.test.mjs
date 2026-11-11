@@ -129,16 +129,37 @@ function unwrap(node) {
 /**
  * Every validator function of one mirror module: the key sets it compares against
  * (named, spread or inline, with the keys resolved) and every key name it knows.
+ *
+ * `source` is a parameter so the mutation test below runs this reader on a planted module: the
+ * defect this reader can have is blindness, and only a planted module can show what it reads.
  */
-export function validatorsOf(name) {
-  const path = join(SRC, name);
-  const sourceFile = ts.createSourceFile(path, readFileSync(path, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+export function validatorsOf(name, source = readFileSync(join(SRC, name), "utf8")) {
+  const sourceFile = ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const lineOf = (node) => sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
   const arrays = new Map();
+  /**
+   * The key list behind an initializer: an array literal, or the array literal a `Set` is built from.
+   *
+   * `new Set([...REQUIRED, ...OPTIONAL])` is how both validators below allow the contract's optional
+   * members, and it is the same allowance as a spread array - reading only array literals made this
+   * rule report those two functions as stricter than the contract for the four keys they DO accept.
+   */
+  const keyList = (initializer) => {
+    const value = unwrap(initializer);
+    if (value === undefined) return undefined;
+    if (ts.isArrayLiteralExpression(value)) return value;
+    if (
+      ts.isNewExpression(value) &&
+      value.arguments?.length === 1 &&
+      ts.isArrayLiteralExpression(unwrap(value.arguments[0]))
+    )
+      return unwrap(value.arguments[0]);
+    return undefined;
+  };
   const collect = (node) => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined) {
-      const initializer = unwrap(node.initializer);
-      if (initializer !== undefined && ts.isArrayLiteralExpression(initializer)) arrays.set(node.name.text, initializer);
+      const list = keyList(node.initializer);
+      if (list !== undefined) arrays.set(node.name.text, list);
     }
     ts.forEachChild(node, collect);
   };
@@ -430,4 +451,31 @@ test("mirror-keys.3 (mutation): a planted contract key the validator omits is re
   const learning = { ...planted, known: [...planted.known, "swipeInfo"] };
   assert.deepEqual(mirrorStricterThanContract([learning], shapes), [], "a validator that knows the declared key is clean");
   t.diagnostic("mirror-keys.3: the planted omission is reported with its location; knowing the declared key clears it");
+});
+
+test("mirror-keys.6 (mutation): a Set-built allowance is read, and a key it really leaves out is still a finding", (t) => {
+  const shapes = [{ declared: ["handle", "role", "swipeInfo"], required: ["handle", "role"], optional: ["swipeInfo"] }];
+  const module = (optionalKeys) =>
+    [
+      'const PLANTED_REQUIRED_KEYS = ["handle", "role"] as const;',
+      `const PLANTED_OPTIONAL_KEYS = [${optionalKeys}] as const;`,
+      "const PLANTED_ALLOWED_KEYS: ReadonlySet<string> = new Set([...PLANTED_REQUIRED_KEYS, ...PLANTED_OPTIONAL_KEYS]);",
+      "function hasPlantedKeys(value: Record<string, unknown>): boolean {",
+      "  const own = Object.keys(value);",
+      "  return PLANTED_REQUIRED_KEYS.every((key) => own.includes(key)) && own.every((key) => PLANTED_ALLOWED_KEYS.has(key));",
+      "}",
+    ].join("\n");
+
+  const [reading] = validatorsOf("planted-mirror.ts", module('"swipeInfo"'));
+  assert.deepEqual(
+    mirrorStricterThanContract([reading], shapes),
+    [],
+    "an optional member the Set admits is a key the validator knows, so the shape the product ships is not a finding",
+  );
+
+  const [omitting] = validatorsOf("planted-mirror.ts", module(""));
+  assert.deepEqual(mirrorStricterThanContract([omitting], shapes), [
+    "planted-mirror.ts:4: hasPlantedKeys claims the contract's required keys [handle, role] but does not know the declared key swipeInfo",
+  ]);
+  t.diagnostic("mirror-keys.6: the Set-built allowance is read; dropping the optional member from it is the finding");
 });
