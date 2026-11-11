@@ -142,6 +142,59 @@ public sealed class ModalDismissActionTests
         dialogueBox[410 - 1].Should().Contain("closeDialogue();");
     }
 
+    // ---- the settlement commit is entered once ---------------------------------
+
+    /// <summary>
+    /// A SECOND dismiss inside the shipping outro must not drive the engine a second time.
+    ///
+    /// <para>
+    /// `ShippingMenu.okClicked` (ShippingMenu.cs:690-696) is not idempotent: it sets `outro = true` and
+    /// `outroFadeTimer = 800`, and `update` fades by DECREMENTING that timer (:380-397) while `draw`
+    /// paints the black overlay as `1 - outroFadeTimer / 800` (:920). So a second call re-arms the
+    /// 800 ms fade from the top: the overlay snaps back to transparent and the outro restarts. The engine's
+    /// own guards (`!outro` at :677, `(outro && !savedYet)` at :701) cannot help, because this handler
+    /// reaches the private method through reflection rather than through an input path.
+    /// </para>
+    /// <para>
+    /// The receipt clears `clearing=true` (:343) and the menu then survives several frames of outro, so a
+    /// second `dismiss_modal` arriving in that window is a REAL shape, not a hypothetical one. The reading
+    /// here is the engine's own timer - brought down to 100 ms as `update` would have brought it - rather
+    /// than a call count, because the timer IS the consequence the guard exists to prevent.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ShippingCommit_IsEnteredOnce_AndASecondDismissInsideTheFadeDoesNotReDriveTheEngine()
+    {
+        ShippingMenu shipping = CreateShipping();
+        RunWithGameState(menu: shipping, action: () =>
+        {
+            ExecutionManager manager = CreateManager(1001);
+
+            LocalExecutionReceipt first = InvokeDismiss(manager, "req_shipping_first");
+            this.output.WriteLine($"first: {first.State}/{first.ReasonCode};evidence={first.Evidence}");
+            // `okClicked` sets both fields BEFORE it plays its sound and changes the music track, and
+            // `Game1.changeMusicTrack` dereferences `Game1.currentLocation` (:920), which a probe process does not
+            // have - so the first terminal is `Uncertain` here for a reason that lives in the audio/location boundary
+            // this test does not own. The two engine fields below are the reading that matters: they are the commit.
+            ReadPrivate(shipping, "outro").Should().Be(true, "okClicked is what starts the outro");
+            ReadPrivate(shipping, "outroFadeTimer").Should().Be(800, "okClicked arms the 800 ms fade (ShippingMenu.cs:693)");
+
+            // Mid-outro: this is where the engine's own update leaves the timer after ~700 ms of fade.
+            typeof(ShippingMenu)
+                .GetField("outroFadeTimer", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(shipping, 100);
+
+            LocalExecutionReceipt second = InvokeDismiss(manager, "req_shipping_second");
+            this.output.WriteLine($"second: {second.State}/{second.ReasonCode};evidence={second.Evidence};outroFadeTimer={ReadPrivate(shipping, "outroFadeTimer")}");
+
+            second.State.Should().Be(ExecutionState.Succeeded,
+                "the settlement the caller asked for is already under way, so the second request is a no-op rather than a failure");
+            second.ReasonCode.Should().Be("settlement_commit_in_progress");
+            ReadPrivate(shipping, "outroFadeTimer").Should().Be(100,
+                "a second dismiss must not re-arm the fade: the engine's commit is entered exactly once");
+        });
+    }
+
     // ---- rejections ----------------------------------------------------------
 
     /// <summary>
@@ -707,6 +760,18 @@ public sealed class ModalDismissActionTests
 
         throw new InvalidOperationException($"unbalanced body for {declaration}");
     }
+
+    /// <summary>
+    /// A FormatterServices shipping menu. Every field the commit path itself touches is a plain value set by
+    /// <c>okClicked</c> (`outro`, `outroFadeTimer`), and the handler's own precondition (<c>readyToClose</c>) is the
+    /// base implementation, so an unset graph is enough to observe the commit being entered twice.
+    /// </summary>
+    private static ShippingMenu CreateShipping() =>
+        (ShippingMenu)FormatterServices.GetUninitializedObject(typeof(ShippingMenu));
+
+    /// <summary>The engine field a claim in this file rests on, read where the engine keeps it.</summary>
+    private static object? ReadPrivate(object instance, string field) =>
+        instance.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(instance);
 
     private static void RunWithGameState(DialogueBox? dialogue = null, IClickableMenu? menu = null, bool dialogueUp = false, Action action = null!)
     {

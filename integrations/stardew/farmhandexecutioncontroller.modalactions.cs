@@ -162,6 +162,27 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             ? responses
             : Game1.questionChoices?.ToArray() ?? Array.Empty<Response>();
 
+    /// <summary>
+    /// The shipping menu whose settlement commit this channel has ALREADY driven, while that same menu is still on
+    /// screen.
+    ///
+    /// <para>
+    /// `ShippingMenu.okClicked` (ShippingMenu.cs:690-696) ARMS the outro - `outro = true; outroFadeTimer = 800` - and
+    /// `update` then runs that fade down to the frame that creates `SaveGameMenu` (:380-428). It is not idempotent: a
+    /// second call re-arms `outroFadeTimer`, so the fade restarts from the top and the outro never reaches the save
+    /// that was the whole point of driving it. The engine's own guards belong to its INPUT paths (`!outro` at :677,
+    /// `(outro && !savedYet)` at :701) and this channel reaches the private method directly, so nothing but this field
+    /// stands between a second `dismiss_modal` and a re-driven commit.
+    /// </para>
+    /// <para>
+    /// Compared by REFERENCE, and released only where the menu actually unloads. The day's own menu leaves the screen
+    /// through `exitThisMenu` inside its update (:361-366), which this Mod does not drive, so the flag is dropped at
+    /// the first dismissal that finds a different menu mounted. Tomorrow's `ShippingMenu` is a different object and is
+    /// therefore never mistaken for the settled one.
+    /// </para>
+    /// </summary>
+    private ShippingMenu? shippingCommitMenu;
+
     public LocalExecutionReceipt RequestLocalDismissModal(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
@@ -196,6 +217,10 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason, null);
 
         string modalType = modal.GetType().Name;
+        // The settlement flag outlives the receipt, not the menu: the first dismissal that finds another menu mounted
+        // is the observation that the one it recorded has unloaded (ShippingMenu.update -> exitThisMenu, :361-366).
+        if (this.shippingCommitMenu is not null && !ReferenceEquals(modal, this.shippingCommitMenu))
+            this.shippingCommitMenu = null;
 
         if (modal is ShopMenu)
         {
@@ -321,6 +346,17 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 // every archived Mod log from the multi-day runs has `saveGameMenu=[]`, the night lifecycle then
                 // burns its save budget and moves to `AwaitingDayStart`, and the world is left with an advanced
                 // calendar, the actor still held as `body_owned_by_day_advance`, and every later request refused.
+                if (ReferenceEquals(this.shippingCommitMenu, shippingMenu))
+                    // The commit is under way and this menu survives it for several frames, so the caller's second
+                    // request asks for a state that already holds. Answering it from the engine again would re-arm
+                    // the outro fade; answering it honestly costs no native call at all.
+                    return this.RememberTerminal(
+                        request.RequestId,
+                        executionId,
+                        ExecutionState.Succeeded,
+                        "settlement_commit_in_progress",
+                        $"modal_type={modalType};dismissed=false;cleared_modal={modalType};clearing=true;close_effect=engine_shipping_commit;commit_already_driven=true{modalTextDetail}",
+                        this.TryCreateLocalObservation(actor));
                 MethodInfo? commit = typeof(ShippingMenu).GetMethod(
                     "okClicked",
                     BindingFlags.Instance | BindingFlags.NonPublic);
@@ -331,6 +367,9 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                         ExecutionState.Rejected,
                         "modal_commit_path_unavailable",
                         $"modal_type={modalType};engine_method=okClicked;available=false");
+                // Latched BEFORE the native call, because the call is not atomic: `okClicked` has already armed the
+                // fade by the time anything after the two field writes can throw, and a second entry would re-arm it.
+                this.shippingCommitMenu = shippingMenu;
                 commit.Invoke(shippingMenu, null);
                 // The engine completes the close in its own timeline (the outro), so the postcondition here is the
                 // commit having run - not the menu already being gone. Reporting the truth is what lets the night
