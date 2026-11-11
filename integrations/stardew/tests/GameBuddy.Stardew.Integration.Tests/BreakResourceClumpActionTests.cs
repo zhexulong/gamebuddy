@@ -313,7 +313,7 @@ public sealed class BreakResourceClumpActionTests
         arm.Should().BeGreaterThanOrEqualTo(0, "an action the router does not arm cannot be invoked");
         string block = handler[arm..handler.IndexOf("\"chop_tree\" =>", arm, StringComparison.Ordinal)];
         block.Should().Contain("RequestLocalBreakResourceClump(");
-        block.Should().NotContain("request.Args.Slot");
+        block.Should().NotContain("call.Slot", "the request has no slot for this action, so the row must not read one");
     }
 
     private static DeclaredToolResolution Resolve(IList<Item?> pack, string actionId) =>

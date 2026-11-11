@@ -212,8 +212,9 @@ public sealed class OpenGeodeActionSourceShapeTests
         registration.Descriptor.NativeBinding.Should().Be("GeodeMenu.receiveLeftClick");
 
         string handler = ReadRepositoryFile(Path.Combine("integrations", "stardew", "Handlers", "ResourceToolActionHandler.cs"));
-        handler.Should().Contain("\"open_geode\" => this.executions.RequestLocalOpenGeode(");
-        handler.Should().Contain("request.Args.ExpectedQualifiedItemId");
+        handler.Should().Contain(
+            "\"open_geode\" => this.executions.RequestLocalOpenGeode(call.RequestId, call.Slot, call.QualifiedItemId, call.DeadlineMs)",
+            "the row hands the seam exactly the two arguments the descriptor publishes, in its order");
     }
 
     /// <summary>
