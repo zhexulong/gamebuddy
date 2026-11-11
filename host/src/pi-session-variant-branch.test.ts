@@ -435,12 +435,69 @@ test("a rewind leaves the dropped exchange out of the model's path, and the sess
 });
 
 /**
+ * The undone half: when the store refuses the truncation, `revert()` puts the model back where it was - and that
+ * restoration is a leaf position like any other, so it has to survive the same re-open the cut does. A bare leaf
+ * move is erased by `_buildIndex` (the file's last entry is still the cut's edit), and the model then loses rows
+ * the store still holds: the transcript the player reads and the context the model carries disagree for good.
+ *
+ * The only caller of this `revert()` is `rewindMountedChatTranscript` in
+ * `continuity-semantic-production-coordinator`, in the catch of the durable truncation.
+ */
+test("a refused rewind's undo survives the session it is re-opened from", async () => {
+  const fixture = await createSession("gamebuddy-rewind-revert-", [FIRST_REPLY, SECOND_REPLY]);
+  let reopened: AgentSession | undefined;
+  try {
+    const before = fixture.modelMessages();
+    assert.equal(countRole(before, "user"), 2);
+    const rewound = rewindPiTranscriptTail(
+      fixture.session,
+      Object.freeze([drop("player", PROMPT_TEXT), drop("companion", SECOND_REPLY)]),
+    );
+    assert.equal(rewound.status, "rewound");
+    assert.equal(countRole(fixture.modelMessages(), "user"), 1);
+    if (rewound.status !== "rewound") return;
+
+    // The store refused, so the caller undoes the cut: in memory the model is back where it was.
+    rewound.revert();
+    assert.deepEqual(fixture.modelMessages(), before);
+
+    // The durable half: the undo is a position the file has to end on, exactly like the cut is.
+    fixture.dispose();
+    const revivedManager = SessionManager.continueRecent(fixture.cwd, fixture.sessionDir);
+    assert.equal(revivedManager.getSessionId(), fixture.sessionManager.getSessionId());
+    const revived = await createAgentSession({
+      cwd: fixture.cwd,
+      agentDir: join(fixture.root, "agent"),
+      sessionManager: revivedManager,
+      noTools: "all",
+      tools: [],
+    });
+    reopened = revived.session;
+    assert.deepEqual(reopened.agent.state.messages.map(projectedMessage), before);
+
+    // And the conversation continues from the restored tail rather than from the cut, which is what
+    // makes this a restoration of the same position rather than of some other one.
+    appendPrompt(revivedManager, THIRD_PROMPT_TEXT);
+    appendReply(revivedManager, REGENERATED_REPLY);
+    reopened.refreshContext();
+    assert.deepEqual(reopened.agent.state.messages.map(projectedMessage), [
+      ...before,
+      ["user", [{ type: "text", text: THIRD_PROMPT_TEXT }]],
+      ["assistant", [{ type: "text", text: REGENERATED_REPLY }]],
+    ]);
+  } finally {
+    reopened?.dispose();
+    await fixture.close();
+  }
+});
+
+/**
  * Every shape the rewind derivation cannot prove refuses, and a refusal is silent: no entry is
  * appended, so the leaf, the entry count and the projection are byte-identical after. An EMPTY suffix is
  * not one of them - the cut's own last row asks for nothing to be removed, and that lands on the entry
  * the conversation already ends at. The whole branch is droppable too - a transcript that becomes empty
  * has no kept entry to pin the cut to, so every dropped entry is omitted - and `revert()` restores
- * exactly what was there.
+ * exactly what was there, for this process and for the file the next mount reads.
  */
 test("a transcript tail the session does not carry refuses and mutates nothing", async () => {
   const fixture = await createSession("gamebuddy-rewind-refusal-", [FIRST_REPLY]);
@@ -476,22 +533,26 @@ test("a transcript tail the session does not carry refuses and mutates nothing",
     // named, so the transcript's LAST row asks for nothing to be removed. The proof pins the cut to the
     // entry the conversation already ends at - the model's path is byte-identical - and the appended
     // no-op edit is what makes that durable for a session re-opened from the file, exactly as every
-    // other cut's pinning edit is. `revert()` puts the leaf back where it was.
+    // other cut's pinning edit is. `revert()` takes the leaf back off that edit: a restored position is
+    // one the file has to END on, so the undo is asserted by what the model reads rather than by the id
+    // the pointer happens to hold.
     const beforeEmpty = quoted(fixture.modelMessages());
-    const leafBeforeEmpty = fixture.sessionManager.getLeafId();
     const nothingDropped = rewindPiTranscriptTail(fixture.session, []);
     assert.equal(nothingDropped.status, "rewound");
     assert.equal(quoted(fixture.modelMessages()), beforeEmpty);
+    const emptyCutLeaf = fixture.sessionManager.getLeafId();
     if (nothingDropped.status === "rewound") nothingDropped.revert();
-    assert.equal(fixture.sessionManager.getLeafId(), leafBeforeEmpty);
+    assert.notEqual(fixture.sessionManager.getLeafId(), emptyCutLeaf);
+    assert.equal(quoted(fixture.modelMessages()), beforeEmpty);
 
     // The whole branch is a legal drop - a transcript that becomes empty - and the omissions are what
     // makes it survive a re-open, because the last edit is the file's last entry.
     const emptied = rewindPiTranscriptTail(fixture.session, [playerLine, drop("companion", FIRST_REPLY)]);
     assert.equal(emptied.status, "rewound");
     assert.deepEqual(fixture.modelMessages(), []);
+    const emptiedCutLeaf = fixture.sessionManager.getLeafId();
     if (emptied.status === "rewound") emptied.revert();
-    assert.equal(fixture.sessionManager.getLeafId(), leafBefore);
+    assert.notEqual(fixture.sessionManager.getLeafId(), emptiedCutLeaf);
     assert.equal(quoted(fixture.modelMessages()), before);
 
     // Re-applied, and then read from the file alone: the omission is a session entry, so it is what a

@@ -39,6 +39,18 @@
  * before either layer is touched (see `resolvePiVariantEntry`). The rewind, edit and delete halves each
  * hand back a `revert()` because the store and Pi cannot be atomic.
  *
+ * A `revert()` is subject to the same rule as the operation it undoes: the leaf alone is not durable,
+ * because `_buildIndex` re-derives it from the file's last entry. So each compensation either appends
+ * nothing (the edit and delete halves put the original contribution back with another append of the
+ * same kind, and `branchPiVariantAnchor` only ever moves a pointer before a prompt) or makes its
+ * restoration the file's last entry (the rewind, which already appended its cut - see `restoreLeaf`).
+ *
+ * The alternative - proving the rewind first, committing the store, and applying the cut afterwards,
+ * so that a refused write leaves nothing to compensate - is deliberately not taken. It would move the
+ * cut across the store's `await`, and `rewindMountedChatTranscript` keeps the durable read, the cut and
+ * the truncation in one synchronous section so that no turn can be admitted against a session shape
+ * the store has already moved past. The ordering is the invariant; `restoreLeaf` exists because of it.
+ *
  * TRANSITIONAL BINDING. The session-shape facts below stand in for a durable
  * Host-message-id to Pi-entry-id binding, which no authority records yet; the
  * durable owner is the prepared-response transaction and branch binding of
@@ -186,6 +198,17 @@ export function selectPiVariantEntry(
  * is the projection's own tail - read through the same pairing every other operation uses, so an edit that
  * replaced the text is read as the text it now contributes.
  */
+export function piActivePathTailReplyText(session: Pick<PiVariantBranchSession, "sessionManager">): string | null {
+  const entries = projectedEntries(session);
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!;
+    for (let position = entry.messages.length - 1; position >= 0; position -= 1) {
+      const reply = chatTranscriptAssistantText(entry.messages[position]);
+      if (reply !== null) return reply;
+    }
+  }
+  return null;
+}
 
 /**
  * The reply text one entry that is OFF the model's active path was appended with, or `null` when it carries none.
@@ -295,7 +318,7 @@ export function rewindPiTranscriptTail(
   return Object.freeze({
     status: "rewound",
     revert: (): void => {
-      branchTo(session, previousLeafId);
+      restoreLeaf(session, previousLeafId);
     },
   });
 }
@@ -360,8 +383,9 @@ export type PiTranscriptRewindResult =
       status: "rewound";
       /**
        * Puts the leaf back where it was, so a rewind whose durable truncation refused leaves the
-       * model's context exactly as it found it. The store and Pi cannot be atomic, so the caller
-       * owns this compensation when its durable commit refuses.
+       * model's context exactly as it found it - in this process AND in the file the next mount reads
+       * (`restoreLeaf`: a pointer alone is erased by every re-open). The store and Pi cannot be atomic,
+       * so the caller owns this compensation when its durable commit refuses.
        */
       revert(): void;
     }>
@@ -438,7 +462,7 @@ function modelCarriedRows(session: PiVariantBranchSession): readonly PiModelCarr
  * An entry this list does not carry is off the active path (a sibling variant waiting to be selected) or omitted
  * from the context; its own message is then its whole contribution.
  */
-function projectedEntries(session: PiVariantBranchSession): SessionProjection["entries"] {
+function projectedEntries(session: Pick<PiVariantBranchSession, "sessionManager">): SessionProjection["entries"] {
   return session.sessionManager.buildSessionProjection().entries;
 }
 
@@ -756,5 +780,36 @@ function branchedTo(session: PiVariantBranchSession, entryId: string | null): Pi
 function branchTo(session: PiVariantBranchSession, entryId: string | null): void {
   if (entryId === null) session.sessionManager.resetLeaf();
   else session.sessionManager.branch(entryId);
+  session.refreshContext();
+}
+
+/**
+ * The extension entry a spent compensation appends so that the leaf it restores is the file's last position.
+ *
+ * A vendor `custom` entry is the one shape that can hang off ANY node and reaches no model: `custom_message`
+ * participates in context, `custom` projects to no message at all (`sessionEntryToContextMessages`), and
+ * `appendContextEdit` refuses it (`"does not contribute editable model content"`), so it can never be read as a
+ * turn, as a compaction, or be edited into one later. It carries no payload: the node it occupies IS the fact, and
+ * writing the restored id into it would be a second spelling of a leaf position the file already states by ending
+ * on it.
+ */
+const LEAF_RESTORE_ENTRY_TYPE = "gamebuddy.leaf_restore";
+
+/**
+ * Puts the leaf back at `entryId` durably: move the pointer, then append a context-free entry as that node's child.
+ *
+ * A pointer alone is erased by every re-open (`SessionManager._buildIndex` re-derives the leaf from the file's last
+ * entry), so an undo that stops there leaves the model reading the shortened shape while the store still holds every
+ * row. Appending is the same mechanism the cut uses, at the one node whose child the file must end on; it costs one
+ * entry per undo, and only the refused-write compensation ever pays it - a rewind that lands is still its single
+ * pinning edit.
+ *
+ * A `null` restore appends nothing, and needs to append nothing: the only cut that leaves the leaf null is a cut
+ * over a session with no entries, which appended no edit either, so the pointer is the whole of that undo.
+ */
+function restoreLeaf(session: PiVariantBranchSession, entryId: string | null): void {
+  branchTo(session, entryId);
+  if (entryId === null) return;
+  session.sessionManager.appendCustomEntry(LEAF_RESTORE_ENTRY_TYPE, {});
   session.refreshContext();
 }
