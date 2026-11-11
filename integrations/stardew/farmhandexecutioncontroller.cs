@@ -5669,15 +5669,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         {
             // Progress rides the same single navigation lineage; never settles.
             this.revision++;
-            LocalExecutionReceipt progress = new(
-                navigation.ExecutionId,
-                navigation.RequestId,
-                state,
-                reasonCode,
-                this.revision,
-                "navigation=running;phase=approaching");
-            this.Remember(progress);
-            this.AddTrace(progress);
+            this.RememberTerminal(navigation.RequestId, navigation.ExecutionId, state, reasonCode, "navigation=running;phase=approaching");
             return;
         }
 

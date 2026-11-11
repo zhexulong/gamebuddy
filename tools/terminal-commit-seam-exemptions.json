@@ -30,15 +30,6 @@
     },
     {
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "member": "HandleNavigationApproachTransition",
-      "line": 5775,
-      "sites": 1,
-      "family": "controller",
-      "kind": "unclassified",
-      "reason": "the receipt's own construction could not be resolved here, so its kind was not decided"
-    },
-    {
-      "file": "integrations/stardew/farmhandexecutioncontroller.cs",
       "member": "RefuseHeldRequest",
       "line": 1263,
       "sites": 1,
