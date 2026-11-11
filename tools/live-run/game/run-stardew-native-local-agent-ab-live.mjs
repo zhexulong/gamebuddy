@@ -1053,6 +1053,19 @@ function agentTurnFailureReason(outcome) {
 }
 
 /**
+ * The reason one unsettled turn is recorded with, or a NAMED absence when the record has none.
+ *
+ * The verdict used to print the literal word `unsettled` for a turn carrying no error, which is how a round46 run ended
+ * with a cause nobody could act on while the reason itself was in the envelope: `unsettled` was doing two jobs - the
+ * class of the answer (`turn_unsettled`) and the whole sentence. The class stays on the verdict; the sentence is the
+ * turn's own named cause, and a missing one says WHERE it is missing rather than defaulting to a plausible word.
+ */
+function unsettledTurnError(turn) {
+  const recorded = typeof turn?.error === "string" ? turn.error.trim() : "";
+  return recorded.length > 0 ? recorded : "abandon_cause_absent:session_turn_record";
+}
+
+/**
  * THIS run's own session record: the files under the surface session directory this run materialized, or an object
  * saying why there is none.
  *
@@ -2048,6 +2061,26 @@ async function deliverDialogueGatesForDay(day, tools) {
   }
 }
 
+/**
+ * Why a turn abandoned for transport loss says so, in one sentence with the fields that discriminate.
+ *
+ * The transport's own code alone is not enough to act on: `turn_ended_by_transport_loss:invalid_body_program_result`
+ * names a validator verdict but not the frame that earned it, and no minute of the turn it happened at. Both are already
+ * on hand when the abandon is decided - the disconnection carries `atMs`, and the bridge publishes
+ * `bridge_frame_refused:<kind>:<validatorCode>` before it closes - so the sentence joins them here instead of making the
+ * next reader reconstruct them from three artifacts (round46).
+ *
+ * `at_turn_ms` is the loss measured from THIS turn's own start, which is the only origin the turn's record has.
+ */
+function transportAbandonCause(reasonCode, disconnection, diagnostics, startedAtMs) {
+  const atTurnMs =
+    Number.isFinite(startedAtMs) && Number.isFinite(disconnection?.atMs)
+      ? String(Math.max(0, disconnection.atMs - startedAtMs))
+      : "unmeasured";
+  const refused = diagnostics.findLast((entry) => entry?.stage === "bridge_frame_refused")?.reasonCode ?? "none";
+  return `${reasonCode};at_turn_ms=${atTurnMs};refused=${refused}`;
+}
+
 async function runAgentTurn(text, tools, wake) {
   // EVERY prompt states why the model is being woken, and the reason is a closed set (`WAKE_REASONS`). A prompt issued
   // because something settled, with no reason it can name, is the defect this harness was paying 94% of its wall clock
@@ -2131,7 +2164,16 @@ async function runAgentTurn(text, tools, wake) {
     // attributed to her behaviour.
     const transportLoss = shouldAbandonTurnForTransport(bridgeDisconnections);
     if (transportLoss.abandon) {
-      return { status: "failed", turn, error: transportLoss.reasonCode };
+      // The cause the abandon was decided on MUST leave with the turn. It used to leave only on the envelope
+      // (`{ turn: null, error }`), which every caller is free to ignore - and the multi-day loop did, so a round46
+      // run ended with the verdict word `unsettled` while the reason sat in the envelope the whole time.
+      const cause = transportAbandonCause(
+        transportLoss.reasonCode,
+        bridgeDisconnections[0],
+        bridgeDiagnostics,
+        turnStartedAtMs,
+      );
+      return { status: "failed", turn: { settled: false, error: cause }, error: cause };
     }
     const programId = turnProgramId();
     try {
@@ -4971,7 +5013,7 @@ try {
   // (`<timestamp>_<sessionId>.jsonl`), not the surface session id the runner minted.
   const unsettledSessionTurns = sessionTurns
     .filter((entry) => entry.turn?.settled !== true)
-    .map((entry) => ({ goalIndex: entry.goalIndex, error: entry.turn?.error ?? "unsettled" }));
+    .map((entry) => ({ goalIndex: entry.goalIndex, error: unsettledTurnError(entry.turn) }));
   // A provider failure is its own per-turn error: the turn was delivered, so it is not `unsettled`,
   // and it produced no text, so it is not silence either.
   const sessionTurnErrors =

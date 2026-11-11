@@ -1170,6 +1170,81 @@ function extractRunnerFunction(source, name, bindings = {}) {
   return value;
 }
 
+/**
+ * The runner's REAL `runAgentTurn`, in a scope a test controls.
+ *
+ * Every name here is part of the turn's module surface, and the list is one spelling because two of them had already
+ * drifted: an eval that carried neither `sampleHostMemory`, `appendTurnMemory` nor `turnMemoryPoint` could not run the
+ * turn at all (`round40`'s sampler commit referenced a name its own test scope never carried), and `transportAbandonCause`
+ * joined that surface when round46's abandon reason started being recorded on the turn.
+ */
+function loadRunAgentTurn({
+  actionTrace = [],
+  factLog = [],
+  programSubmissions = [],
+  client,
+  presentedSummary = "",
+  scenario = "multiday_routine",
+  sampleAdvertisedActions = () => {},
+  submitPlayerPrompt,
+  sampleModHeartbeat = () => ({ count: 1, sinceMs: 0, line: "DEBUG-native-local-heartbeat", silentMs: 0 }),
+  modHeartbeatStallMs,
+  bridgeDisconnections = Object.freeze([]),
+  bridgeDiagnostics = [],
+  waitForSessionQuiet = async (turn) => turn,
+  sampleHostMemory = () => ({ rssMb: 316, freeMb: 2048, heapUsedMb: 208 }),
+}) {
+  const build = new Function(
+    "actionTrace",
+    "factLog",
+    "programSubmissions",
+    "client",
+    "presentedSummary",
+    "SCENARIO",
+    "sampleAdvertisedActions",
+    "submitPlayerPrompt",
+    "shouldAbandonTurnForTransport",
+    "sampleModHeartbeat",
+    "MOD_HEARTBEAT_STALL_MS",
+    "bridgeDisconnections",
+    "waitForSessionQuiet",
+    "WAKE_REASONS",
+    "sampleHostMemory",
+    "appendTurnMemory",
+    "turnMemoryPoint",
+    "diagnostics",
+    `let worldStallReason = null;
+let turnStartedAtMs = null;
+let agentTurnCount = 0;
+const bridgeDiagnostics = diagnostics;
+const hostMemory = { turns: [], turnsOmitted: 0 };
+const runSessionRecord = Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" });
+${extractRunnerFunction(RUNNER_SOURCE, "transportAbandonCause").source}
+${extractRunnerFunction(RUNNER_SOURCE, "runAgentTurn").source}
+return { runAgentTurn, stall: () => worldStallReason, memory: () => hostMemory };`,
+  );
+  return build(
+    actionTrace,
+    factLog,
+    programSubmissions,
+    client,
+    presentedSummary,
+    scenario,
+    sampleAdvertisedActions,
+    submitPlayerPrompt,
+    shouldAbandonTurnForTransport,
+    sampleModHeartbeat,
+    modHeartbeatStallMs,
+    bridgeDisconnections,
+    waitForSessionQuiet,
+    WAKE_REASONS,
+    sampleHostMemory,
+    appendTurnMemory,
+    turnMemoryPoint,
+    bridgeDiagnostics,
+  );
+}
+
 test("memory_covenant is judged by receipts, not keywords", () => {
   // design 10.5 class 1 (preference/production covenant): the companion must
   // harvest the real mature strawberries and then honor the standing rule —
@@ -1828,48 +1903,15 @@ test("a second turn does not answer with the first turn's program", async () => 
     },
     state: { snapshot: { revision: 1 } },
   };
-  const build = new Function(
-    "actionTrace",
-    "factLog",
-    "programSubmissions",
-    "client",
-    "presentedSummary",
-    "SCENARIO",
-    "sampleAdvertisedActions",
-    "submitPlayerPrompt",
-    "shouldAbandonTurnForTransport",
-    "sampleModHeartbeat",
-    "MOD_HEARTBEAT_STALL_MS",
-    "bridgeDisconnections",
-    "waitForSessionQuiet",
-    "WAKE_REASONS",
-    // The turn's own memory instrument: the sampler, the point it builds and the bounded series it appends to. Supplied
-    // as real implementations - the turn records what the sampler measured, and a double here would assert the wiring
-    // against a number no run produced. (Until they were bound, this eval could not even run the turn: `round40`'s
-    // sampler commit referenced a name its own test scope never carried.)
-    "sampleHostMemory",
-    "appendTurnMemory",
-    "turnMemoryPoint",
-    `let worldStallReason = null;
-let turnStartedAtMs = null;
-let agentTurnCount = 0;
-const bridgeDiagnostics = [];
-const hostMemory = { turns: [], turnsOmitted: 0 };
-const runSessionRecord = Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" });
-${extractRunnerFunction(RUNNER_SOURCE, "runAgentTurn").source}
-return { runAgentTurn, stall: () => worldStallReason, memory: () => hostMemory };`,
-  );
-  const { runAgentTurn, stall } = build(
+  const { runAgentTurn, stall } = loadRunAgentTurn({
     actionTrace,
     factLog,
     programSubmissions,
     client,
-    "",
-    "memory_covenant",
-    () => {},
+    scenario: "memory_covenant",
     // Turn 1 submits and is admitted; turn 2 submits nothing and is admitted. Neither admission waits on the stall
     // detector: a fixture whose completion depended on the very check under test could only ever hang, never fail.
-    async () => {
+    submitPlayerPrompt: async () => {
       turnsSubmitted += 1;
       await new Promise((resolve) => setTimeout(resolve, 20));
       if (turnsSubmitted === 1) {
@@ -1880,21 +1922,16 @@ return { runAgentTurn, stall: () => worldStallReason, memory: () => hostMemory }
       }
       return { accepted: true };
     },
-    shouldAbandonTurnForTransport,
-    () => {
+    sampleModHeartbeat: () => {
       heartbeatSamples += 1;
       return { count: 1, sinceMs: 0, line: "DEBUG-native-local-heartbeat", silentMs: heartbeatSilentMs };
     },
-    declaredStallMs,
-    Object.freeze([]),
-    async (turn) => turn,
-    WAKE_REASONS,
+    modHeartbeatStallMs: declaredStallMs,
+    bridgeDisconnections: Object.freeze([]),
     // The real instrument, and a sampler whose readings the test can reason about: the turn's record is what is under
     // test here, not the operating system's free memory.
-    () => ({ rssMb: 316, freeMb: 2048, heapUsedMb: 208 }),
-    appendTurnMemory,
-    turnMemoryPoint,
-  );
+    sampleHostMemory: () => ({ rssMb: 316, freeMb: 2048, heapUsedMb: 208 }),
+  });
   const previousWaitSeconds = process.env.GAMEBUDDY_AGENT_WAIT_SECONDS;
   process.env.GAMEBUDDY_AGENT_WAIT_SECONDS = "5";
   try {
@@ -1924,6 +1961,78 @@ return { runAgentTurn, stall: () => worldStallReason, memory: () => hostMemory }
     if (previousWaitSeconds === undefined) delete process.env.GAMEBUDDY_AGENT_WAIT_SECONDS;
     else process.env.GAMEBUDDY_AGENT_WAIT_SECONDS = previousWaitSeconds;
   }
+});
+
+test("an abandoned turn records the cause, so the verdict cannot print the word unsettled", async () => {
+  // Measured round46: the Mod sent one frame the Host's validator refused, the bridge closed on it, and the waiter
+  // abandoned the turn on its first one-second poll. The envelope carried
+  // `turn_ended_by_transport_loss:invalid_body_program_result`; the multi-day loop kept only `walked.turn`, so
+  // `unsettledSessionTurns` fell back to the literal word `unsettled` and the run's verdict named no cause at all.
+  const refusedFrame = "bridge_frame_refused:program_status_result:invalid_body_program_result";
+  const bridgeDisconnections = [];
+  const bridgeDiagnostics = [];
+  const { runAgentTurn } = loadRunAgentTurn({
+    client: { programStatus: async () => ({ code: "not_found", snapshot: null }), state: { snapshot: null } },
+    bridgeDisconnections,
+    bridgeDiagnostics,
+    // The refusal and the close it causes both arrive while the turn is running, in that order, exactly as the bridge
+    // publishes them: the frame is a fact before the transport loss is a consequence.
+    submitPlayerPrompt: async () => {
+      bridgeDiagnostics.push(
+        Object.freeze({ stage: "bridge_frame_refused", reasonCode: refusedFrame, atMs: Date.now(), elapsedMs: 0 }),
+      );
+      bridgeDisconnections.push(
+        Object.freeze({
+          reasonCode: "invalid_body_program_result",
+          atMs: Date.now(),
+          elapsedMs: 0,
+          dispatchesSoFar: 0,
+        }),
+      );
+      return { accepted: true };
+    },
+  });
+  const previousWaitSeconds = process.env.GAMEBUDDY_AGENT_WAIT_SECONDS;
+  process.env.GAMEBUDDY_AGENT_WAIT_SECONDS = "3";
+  try {
+    const walked = await runAgentTurn("play", {}, { reason: WAKE_REASON.dayStart });
+    assert.equal(walked.turn?.settled, false, "an abandoned turn is recorded as a turn, not as null");
+    assert.match(
+      String(walked.turn?.error),
+      new RegExp(
+        `^turn_ended_by_transport_loss:invalid_body_program_result;at_turn_ms=\\d+;refused=${refusedFrame}$`,
+        "u",
+      ),
+      `the cause carries the code, the frame, the validator code and the turn's own millisecond: ${String(walked.turn?.error)}`,
+    );
+    // The expression round46's verdict ran, against the turn this run recorded: it printed a word then, because the
+    // envelope's turn was null; it prints the cause now, because the turn IS the cause.
+    const verdictReason = walked.turn?.error ?? "unsettled";
+    assert.notEqual(verdictReason, "unsettled", "a run may not end on a word that names no cause");
+    const unsettledTurnError = extractRunnerFunction(RUNNER_SOURCE, "unsettledTurnError");
+    assert.equal(unsettledTurnError(walked.turn), walked.turn.error, "the verdict prints the cause the turn recorded");
+  } finally {
+    if (previousWaitSeconds === undefined) delete process.env.GAMEBUDDY_AGENT_WAIT_SECONDS;
+    else process.env.GAMEBUDDY_AGENT_WAIT_SECONDS = previousWaitSeconds;
+  }
+});
+
+test("a turn that ended for its own reason does not print a transport cause", () => {
+  const unsettledTurnError = extractRunnerFunction(RUNNER_SOURCE, "unsettledTurnError");
+  assert.equal(
+    unsettledTurnError({ settled: false, error: "player_input_refused:admission_not_ready" }),
+    "player_input_refused:admission_not_ready",
+    "a refusal names itself",
+  );
+  assert.doesNotMatch(
+    unsettledTurnError({ settled: false, error: "provider_error:unexpected EOF" }),
+    /turn_ended_by_transport_loss/u,
+    "a provider failure is not a dead pipe",
+  );
+  // A cause that is MISSING is named where it is missing. `unsettled` may stay the class of the answer
+  // (`turn_unsettled`), but it must never again stand in for a cause, which is what made round46 unreadable.
+  assert.equal(unsettledTurnError({ settled: false }), "abandon_cause_absent:session_turn_record");
+  assert.doesNotMatch(RUNNER_SOURCE, /\?\? "unsettled"/u, "no verdict fallback may spell a cause as a word");
 });
 
 test("the night watcher outlives the day turn it accompanies", () => {
