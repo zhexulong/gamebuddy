@@ -3,6 +3,9 @@
 // Two modes, one validator. With `--run-dir` it validates one run's bundle against what is on disk
 // (the mode the lanes use). Without it, it validates the documented bundle shape, so a contract
 // change that stops accepting the very shape the plan specifies fails in CI rather than in a run.
+// red-proof: inject  --run-dir over a directory holding only `{}` ->
+//                    `"status":"failed"` with `schema_version_mismatch` and `timeline_sources_missing`, `examined":1`, exit 1
+//                    (tools/check-evidence-bundle.mjs, the validator this marker names)
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";

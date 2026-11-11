@@ -1,3 +1,8 @@
+/**
+ * red-proof: inject  a dist whose root barrel exports createGameBuddyPlayerMemoryCrudFacade and whose tavern barrel omits registerGameOperationalGateMarker ->
+ *                    `root dist leaks createGameBuddyPlayerMemoryCrudFacade`, `dist/tavern/index.js missing required export: registerGameOperationalGateMarker`, exit 1
+ *                    (tools/check-dist-runtime-exports.mjs)
+ */
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 

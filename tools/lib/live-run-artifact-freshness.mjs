@@ -39,6 +39,9 @@ import {
  * The rebuild it names is the locked public entry (`pnpm build:test`). A bare `tsc` reads as a shorter command,
  * but it bypasses the artifact lock and the test-only overlay, and `--noEmitOnError false` emits a PARTIAL tree
  * by construction - which then surfaces as unrelated module-not-found failures, not as a build error.
+ * red-proof: inject  one byte changed in an input build-manifest.json records, after the build ->
+ * *                    `live-run artifact is STALE (artifact_content_mismatch:<the edited input>)`, exit 1, while the
+ * *                    same tree before the edit printed `current` (tools/lib/live-run-artifact-freshness.mjs)
  */
 export const REBUILD_COMMAND = "cd host && pnpm build:test";
 

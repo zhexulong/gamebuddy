@@ -36,6 +36,8 @@
  * EXIT CODE is 0 unless `--fail-under` is given and missed. It is a report, not a gate, until someone puts a number on what
  * "well covered" means - and that number has to come from what fixtures can support, not from the action count.
  * </p>
+ * red-proof: inject  a run timeline naming a published action that is only ever rejected ->
+ * *                    `action coverage 1% is below the floor of 20%`, exit 1 (tools/check-action-coverage.mjs)
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";

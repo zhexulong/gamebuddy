@@ -24,6 +24,9 @@
  * `tools/lib/companion-interaction-gate.mjs` and `tools/lib/system-findings.mjs`, and a
  * guard scoped to one directory only protects that directory (both are clean today -
  * verified by scanning them).
+ * red-proof: inject  a module whose `const speechPassed = persona === null ? true : persona.ok` under --root ->
+ * *                    `live-run verdict guards: 1 absence-as-pass branch(es)` naming that file:3, exit 1
+ * *                    (tools/check-live-run-verdict-guards.mjs, the scan this marker names)
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";

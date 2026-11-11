@@ -45,6 +45,9 @@
  *     matches no family is a finding, not a default: a new kind of refusal needs a decision.
  *   - Remediation is checked at the seam that OWNS it for each class, so a class whose seam is
  *     silent reports it by name (`*_remediation_missing`, `target_remediation_absent`).
+ * red-proof: inject  a Mod price refusal whose evidence drops `held=` ->
+ * *                    `price_comparison_missing <file>:868 - ... names price= but not held=`, exit 1
+ * *                    (tools/check-refusal-informativeness.mjs, the price rule this marker names)
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";

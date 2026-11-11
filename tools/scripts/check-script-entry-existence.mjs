@@ -10,6 +10,9 @@
 // git-ignored path is not repository content — the same rule the lint and format
 // ratchets already apply — while a TRACKED path that has gone missing still
 // fails, which is the defect this gate exists for.
+// red-proof: inject  a commit that deletes the file `check:tavern-references` still names ->
+//                    `幽灵脚本入口` naming `.:check:tavern-references -> tools/verify-tavern-semantic-references.mjs`, exit 1
+//                    (tools/scripts/check-script-entry-existence.mjs, this gate)
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve, dirname, relative } from "node:path";

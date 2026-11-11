@@ -21,6 +21,9 @@
 //
 // The verdict is three-valued. `unobserved` (no breakpoint ever seen) is NOT a pass and is reported as such;
 // `blocked` names which link is missing; `passed` requires the whole chain.
+// red-proof: inject  a ladder-6 result whose fact stream carries modal_interrupted and no modal_dismissed ->
+//                    `{"state": "blocked", "reason": "incomplete_chain:d1+order"}`, exit 2
+//                    (tools/check-stardew-wia-agent-loop.mjs, the judge this marker names)
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";

@@ -7,6 +7,9 @@
  * or impose a permission model. It verifies only semantic coverage records:
  * target domain, native boundary, result evidence, primitive/composite shape,
  * and the fact that already-published primitives have a corresponding record.
+ * red-proof: history the tree at HEAD, where the Mod surface publishes `fish_here` and no covered catalog row ->
+ * *                    `gameplay_capability_catalog_invalid: Published registry actions missing covered catalog rows:
+ * *                    fish_here.`, exit 1 (tools/check-gameplay-capability-catalog.mjs)
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";

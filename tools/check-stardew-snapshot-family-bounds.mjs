@@ -38,6 +38,9 @@
 // refused: a producer below the ceiling cannot close the transport, and lowering a cap to the
 // producer's exact reach is a wire-contract change rather than a drift fix. Printing it keeps the
 // ceiling from reading as a claim about what actually arrives.
+// red-proof: history the tree at HEAD: BridgeSnapshot's construction site passes 118 arguments and the wire
+//                    record declares 120 -> `[construction_arity_mismatch]` and `0 families derived`, exit 1
+//                    (tools/check-stardew-snapshot-family-bounds.mjs, the arity rule this marker names)
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";

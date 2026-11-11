@@ -33,6 +33,9 @@
  * it exists to catch - the measured over-window session, the oversized denominator that hides it, and an
  * unknown model that must not inherit the largest window. A judge that stopped reporting violations would
  * turn those five checks red instead of printing a green gate.
+ * red-proof: self-check  disabling judgeSession's `input > declared` arm in a copy turns its own case
+ * *                    `the measured 2026-10-27 session is red on BOTH counts` to failed, and the run exits 1
+ * *                    (tools/check-game-context-pressure.mjs, the fixture checks this marker names)
  */
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";

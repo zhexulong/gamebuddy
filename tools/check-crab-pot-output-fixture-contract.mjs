@@ -3,6 +3,9 @@
  * Static, fail-closed validator for the CrabPot output fixture provenance
  * contract. This file validates metadata only; it does not prepare a save,
  * start Stardew, attach a bridge, or execute an action.
+ * red-proof: inject  a contract with `nonClaims` deleted ->
+ * *                    `crab-pot-output-fixture-contract: contract: missing field nonClaims.`, exit 1
+ * *                    (tools/check-crab-pot-output-fixture-contract.mjs, the validator this marker names)
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";

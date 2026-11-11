@@ -22,6 +22,9 @@
  * Usage:
  *   node tools/check-stardew-dialogue-autonomy.mjs <ladder-result.json> [--session <session.jsonl>]
  * Exit: 0 passed, 2 blocked OR unobserved.
+ * red-proof: inject  a talk receipt whose requestId is the harness's own (native_local_wia_req_7) ->
+ * *                    `"reason": "incomplete:a4"` with `a4: false`, exit 2
+ * *                    (tools/check-stardew-dialogue-autonomy.mjs, the judge this marker names)
  */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";

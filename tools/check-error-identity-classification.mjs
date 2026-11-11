@@ -43,6 +43,9 @@
  *   node tools/check-error-identity-classification.mjs [scopeDir]
  *
  * Exit code is 1 when any finding is reported, 0 otherwise.
+ * red-proof: inject  a .ts scope comparing `error.message === "<literal>"` to another file's Error subclass message ->
+ * *                    `error_identity_classification_failed findings=1` naming that file:2, exit 1
+ * *                    (tools/check-error-identity-classification.mjs, the rule this marker names)
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";

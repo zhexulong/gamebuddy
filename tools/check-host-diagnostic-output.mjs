@@ -77,6 +77,9 @@
  *   node tools/check-host-diagnostic-output.mjs <scopeDir> [--baseline <file>]
  *     Both are for the gate's own test: a throwaway scope with a planted violation, and the
  *     baseline it is compared against.
+ * red-proof: inject  a production file printing `[DEBUG-chat-live-p4c]`, the shape commit 77bd0a6a shipped ->
+ * *                    `host_diagnostic_output_failed markers=2` naming that file:2, exit 1
+ * *                    (tools/check-host-diagnostic-output.mjs, the marker arm this proof names)
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";

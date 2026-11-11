@@ -13,6 +13,9 @@
  * Usage:
  *   node tools/check-live-run-multiday-baseline.mjs
  *   node tools/check-live-run-multiday-baseline.mjs --run-dir .live-runs/game-ladder/<run>
+ * red-proof: inject  --run-dir over a bundle recorded in window mode `hidden` ->
+ * *                    `run_used_a_window_mode_the_engine_advances_a_day_in` failed with `windowMode=hidden`, exit 1
+ * *                    (tools/check-live-run-multiday-baseline.mjs, the rule this marker names)
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";

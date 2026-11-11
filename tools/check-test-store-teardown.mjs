@@ -61,6 +61,9 @@
  *   node tools/check-test-store-teardown.mjs <scopeDir> [--baseline <file>]
  *     Both are for the gate's own test: a throwaway scope with a planted construction, and the
  *     baseline it is compared against.
+ * red-proof: inject  a throwaway scope whose test opens `new DatabaseSync(<file path>)` with no baseline entry ->
+ * *                    `test_store_teardown_failed new=1` naming `<file>: 0 -> 1 store-opening line(s)`, exit 1
+ * *                    (tools/check-test-store-teardown.mjs, the ratchet this marker names)
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";

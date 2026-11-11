@@ -1,6 +1,9 @@
 // check-workspace-debris.mjs — CI 工作区零残留门禁。
 // 执行 git status --porcelain，任何未跟踪的临时文件使检查变红。
 // CI checkout 恒绿（只含跟踪文件 + install 产物在缓存目录）；本机跑可抓散落垃圾。
+// red-proof: inject  an untracked ad-hoc `diag-read-runs.mjs` in a copy's root ->
+//                    `检测到未跟踪/未提交残留文件` naming `?? diag-read-runs.mjs`, exit 1
+//                    (tools/scripts/check-workspace-debris.mjs, this file)
 import { execFileSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

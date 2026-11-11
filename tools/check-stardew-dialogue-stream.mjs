@@ -34,6 +34,9 @@ function parseArguments(args) {
  * The Mod puts it in `payloadJson` as a STRING (the Host parses that when no structured payload is present), so
  * reading `payload.pages` directly sees nothing - observed live as `maxPages=0` on a run where the Mod HAD
  * reported `speaker: "Gus", pages: [...]`. A structured payload wins when one is present.
+ * red-proof: inject  a result whose single npc_dialogue_presented fact carries one page ->
+ * *                    `"reason": "incomplete:g2"` with `g2: false`, exit 2
+ * *                    (tools/check-stardew-dialogue-stream.mjs, the judge this marker names)
  */
 export function dialoguePayloadOf(fact) {
   const payload = fact?.worldFactPayload ?? fact?.payload ?? fact;
