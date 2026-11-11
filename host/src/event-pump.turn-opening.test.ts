@@ -236,6 +236,63 @@ test("turn_without_new_content: zero population is blocked, never green", () => 
   assert.match(String(reading.blocked), /^zero_population:/u, "nothing examined is not nothing wrong");
 });
 
+/**
+ * `fact_identity_is_the_statement`: the identity is the STATEMENT, not the bytes that carried it.
+ *
+ * <p>
+ * THE MEMBER ORDER OF A PAYLOAD IS THE PRODUCER'S LAYOUT, NOT HER NEWS. Measured 2026-11-11: the Mod's own snapshot
+ * gate failed on the same twelve thousand values laid out differently - `targetId` moved from the front of its row to
+ * the back - and the payload is the PARSED frame, so an identity computed over its encoded form makes every re-laid-out
+ * copy a new fact. The turn that copy opens is the 07:30:43 re-statement this suite exists to suppress, one layer down.
+ * </p>
+ */
+test("fact_identity_is_the_statement: one statement in two member orders is one identity", () => {
+  const settlement: Record<string, unknown> = { ...RECORDED_SETTLEMENT };
+  const reordered = Object.fromEntries(Object.entries(settlement).reverse());
+  const first = settlementFact("program_settled_plan_r46_weed_row_1", WINDOW_AT_MS);
+  const restated: WorldFact = {
+    ...settlementFact("program_settled_plan_r46_weed_row_2", WINDOW_AT_MS + 90_000),
+    payload: reordered,
+  };
+
+  assert.equal(
+    factContentIdentity(restated),
+    factContentIdentity(first),
+    "the same settlement under a fresh event id and a re-laid-out payload is the SAME fact; counting it as new pays a " +
+      "provider turn and a bubble for nothing",
+  );
+
+  const changed: WorldFact = { ...restated, payload: { ...reordered, decided: 61 } };
+  assert.notEqual(
+    factContentIdentity(changed),
+    factContentIdentity(first),
+    "a changed value is a different fact, so the canonical form must not be collapsing what the payload says",
+  );
+});
+
+test("fact_identity_is_the_statement: a nested row's member order is not news either", () => {
+  const fact = (bodyTrace: Readonly<Record<string, unknown>>): WorldFact => ({
+    source: "stardew_mod",
+    kind: "semantic_event",
+    correlationId: "route_progress_1",
+    revision: 348,
+    observedTick: 900,
+    occurredAtMs: WINDOW_AT_MS,
+    payload: { kind: "route_progress", bodyTrace },
+  });
+
+  assert.equal(
+    factContentIdentity(fact({ location: "Farm", x: 64, y: 15 })),
+    factContentIdentity(fact({ y: 15, x: 64, location: "Farm" })),
+    "the order is not content at any depth: a nested row is still the same observation of the same tile",
+  );
+  assert.notEqual(
+    factContentIdentity(fact({ location: "Farm", x: 64, y: 15 })),
+    factContentIdentity(fact({ location: "Farm", x: 64, y: 16 })),
+    "and the tile she moved to IS news, so the nested form is compared by value and not discarded",
+  );
+});
+
 test("suppressed_turn_is_named: every examined flush is either an opened turn or one counted reason", async () => {
   const pump = new CompanionEventPump();
   const recorder = recordingSink();

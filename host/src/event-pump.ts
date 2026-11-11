@@ -2002,6 +2002,10 @@ function factSlotKey(fact: WorldFact): string {
  *
  * Everything else is content: the kind, the state, the reason, the location, the tile, the active execution and
  * its phase. A change in any of them is a change the model has not been told.
+ *
+ * The ORDER of the members is not content, and the fact's `payload` is the parsed frame the Mod sent, so its member
+ * order is the Mod's byte layout rather than anything she was told: two frames carrying ONE statement in two layouts
+ * have to be one identity here, or a re-serialised payload opens a turn to repeat what she already had.
  */
 export function factContentIdentity(fact: WorldFact): string {
   const {
@@ -2011,7 +2015,35 @@ export function factContentIdentity(fact: WorldFact): string {
     occurredAtMs: _occurredAtMs,
     ...stable
   } = fact;
-  return JSON.stringify(stable, (key, value) => (key === "tick" || key === "revision" ? undefined : value));
+  return canonicalFactJson(stable);
+}
+
+/**
+ * The statement a fact makes, as one string, with the member order decided HERE rather than inherited from the frame.
+ *
+ * <p>
+ * `JSON.stringify` writes an object's members in insertion order - which for a parsed payload is whichever order the
+ * producer's compiler laid the record out in. An identity computed over that is an identity of the ENCODING: the same
+ * settlement published by two builds, or by one build whose record was reordered, reads as two facts, and the pump
+ * pays a provider turn to say the second one. Measured 2026-11-11: the Mod's own snapshot gate failed on the same
+ * twelve thousand values laid out differently, `targetId` moved from the front of its row to the back.
+ * </p>
+ * <p>
+ * Members are therefore ordered by ordinal name at every depth. Arrays keep their order: a list of rows is a sequence
+ * the producer arranged, and reordering it is a different statement.
+ * </p>
+ */
+function canonicalFactJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map((entry) => canonicalFactJson(entry)).join(",")}]`;
+  const members: string[] = [];
+  for (const key of Object.keys(value as Readonly<Record<string, unknown>>).sort()) {
+    if (key === "tick" || key === "revision") continue;
+    const member = (value as Readonly<Record<string, unknown>>)[key];
+    if (member === undefined) continue;
+    members.push(`${JSON.stringify(key)}:${canonicalFactJson(member)}`);
+  }
+  return `{${members.join(",")}}`;
 }
 
 /**

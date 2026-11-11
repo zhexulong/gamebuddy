@@ -88,11 +88,11 @@ public static class BridgeProtocol
         }
         try
         {
-            json = value switch
+            json = WireJson.Canonical(value switch
             {
                 BridgeEnvelope<BodyNodeAdmissionResultWire> envelope => SerializeBodyNodeAdmissionResultEnvelope(envelope),
                 _ => JsonSerializer.Serialize(value, value?.GetType() ?? typeof(T), JsonOptions),
-            };
+            });
             if (System.Text.Encoding.UTF8.GetByteCount(json) > MaximumMessageBytes)
             {
                 // The size is diagnostics, so it does NOT go in the reason code: the reason is a

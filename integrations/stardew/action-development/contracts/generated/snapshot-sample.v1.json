@@ -327,105 +327,105 @@
     "chests": [
       {
         "chestId": "chest_4f1567e1adaddbcf",
-        "x": 2,
-        "y": 4,
         "displayName": "(O)130",
         "isFridge": false,
         "items": [
           {
-            "slot": 0,
-            "qualifiedItemId": "(O)72",
             "displayName": "(O)72",
+            "qualifiedItemId": "(O)72",
+            "slot": 0,
             "stack": 3
           },
           {
-            "slot": 1,
-            "qualifiedItemId": "(O)388",
             "displayName": "(O)388",
+            "qualifiedItemId": "(O)388",
+            "slot": 1,
             "stack": 99
           }
-        ]
+        ],
+        "x": 2,
+        "y": 4
       }
     ],
     "grassTargets": [
       {
-        "targetId": "grass_dda24dda77eaf64e",
-        "location": "ProbeFarm",
-        "x": 4,
-        "y": 3,
         "grassType": 1,
-        "numberOfWeeds": 4
+        "location": "ProbeFarm",
+        "numberOfWeeds": 4,
+        "targetId": "grass_dda24dda77eaf64e",
+        "x": 4,
+        "y": 3
       }
     ],
     "npcRelationshipTargets": [
       {
-        "targetId": "npc_relationship_b5586b3bf4942bb8",
-        "x": 0,
-        "y": 0,
-        "npcName": "Abigail",
         "friendshipPoints": 0,
         "friendshipStatus": "Friendly",
-        "talkedToToday": false,
+        "giftsThisWeek": 0,
         "giftsToday": 0,
-        "giftsThisWeek": 0
+        "npcName": "Abigail",
+        "talkedToToday": false,
+        "targetId": "npc_relationship_b5586b3bf4942bb8",
+        "x": 0,
+        "y": 0
       }
     ],
     "rockSourceTargets": [
       {
-        "targetId": "rock_source_80d6aa75b8267729",
-        "location": "ProbeFarm",
-        "x": 3,
-        "y": 3,
-        "qualifiedItemId": "(O)2",
         "displayName": "(O)2",
-        "health": 3
+        "health": 3,
+        "location": "ProbeFarm",
+        "qualifiedItemId": "(O)2",
+        "targetId": "rock_source_80d6aa75b8267729",
+        "x": 3,
+        "y": 3
       }
     ],
     "toolSlots": [
       {
-        "slot": 0,
+        "category": "axe",
         "label": "(T)Axe",
-        "upgradeLevel": 0,
-        "category": "axe"
+        "slot": 0,
+        "upgradeLevel": 0
       },
       {
-        "slot": 1,
+        "category": "milk_pail",
         "label": "(T)MilkPail",
-        "category": "milk_pail"
+        "slot": 1
       }
     ],
     "treeChopSourceTargets": [
       {
-        "targetId": "tree_chop_source_03c10dd89cce9e22",
-        "location": "ProbeFarm",
-        "x": 3,
-        "y": 2,
-        "treeType": "1",
         "growthStage": 5,
         "health": 10,
-        "stump": false,
+        "location": "ProbeFarm",
         "moss": false,
-        "tapped": false
+        "stump": false,
+        "tapped": false,
+        "targetId": "tree_chop_source_03c10dd89cce9e22",
+        "treeType": "1",
+        "x": 3,
+        "y": 2
       }
     ],
     "treeStumpTargets": [
       {
-        "targetId": "tree_stump_b02e3b2b2aeb3fd1",
+        "health": 5,
         "location": "ProbeFarm",
-        "x": 4,
-        "y": 2,
+        "targetId": "tree_stump_b02e3b2b2aeb3fd1",
         "treeType": "1",
-        "health": 5
+        "x": 4,
+        "y": 2
       }
     ],
     "weedTargets": [
       {
-        "targetId": "weed_73c94f7afaf996a4",
-        "location": "ProbeFarm",
-        "x": 2,
-        "y": 3,
         "health": 1,
-        "isWeeds": true
+        "isWeeds": true,
+        "location": "ProbeFarm",
+        "targetId": "weed_73c94f7afaf996a4",
+        "x": 2,
+        "y": 3
       }
     ]
   },

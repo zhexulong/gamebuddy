@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Protocol;
@@ -55,7 +56,6 @@ public sealed class SnapshotLoopbackExportTests
         using var world = SnapshotSampleWorld.Create();
 
         IReadOnlyDictionary<string, object> realFamilies = world.ConstructRealFamilies();
-        IReadOnlyList<string> declaredFamilies = DeclaredListFamilies();
 
         // Real coverage must be non-empty, or the artifact proves nothing and the Host gate is vacuous.
         realFamilies.Count.Should().BeGreaterThanOrEqualTo(
@@ -64,38 +64,11 @@ public sealed class SnapshotLoopbackExportTests
             + "engine's own durability, a stump at the engine's own felled value, weeds, a rock and grass");
 
         // Every declared family appears -- as real or as explicitly absent. Nothing may be silently dropped.
-        string[] missing = declaredFamilies.Where(field => !realFamilies.ContainsKey(field)).ToArray();
-        var absent = missing.Select(field => new SortedDictionary<string, object>(StringComparer.Ordinal)
-        {
-            ["field"] = field,
-            ["reason"] = NotConstructedReason,
-        }).ToArray();
-
-        var artifact = new SortedDictionary<string, object>(StringComparer.Ordinal)
-        {
-            ["schema"] = SampleSchema,
-            ["producedBy"] =
-                "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/SnapshotLoopbackExportTests.cs - the "
-                + "headless TargetFamilyWorld driven through the real Discover* projections",
-            ["consumedBy"] = "host/src/snapshot-loopback.test.ts",
-            ["real"] = new SortedDictionary<string, object>(
-                realFamilies.ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal),
-                StringComparer.Ordinal),
-            ["absent"] = absent,
-        };
-
-        string json = JsonSerializer.Serialize(
-            artifact,
-            new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = null });
+        string[] missing = Missing(realFamilies);
 
         string target = Path.Combine(RepositoryRoot(), ArtifactRelativePath);
         Path.IsPathFullyQualified(target).Should().BeTrue("the sample must have an absolute destination");
-        // The repository declares its artifacts are LF (`.gitattributes`: `* text=auto eol=lf`), and the committed sample
-        // is LF. System.Text.Json indents with the platform newline, so on Windows the producer emitted CRLF and this
-        // comparison could never pass - the gate would have been red for every run on the only platform it runs on.
-        // Normalising here is what makes the bytes comparable, not a workaround: the artifact IS the LF form.
-        byte[] produced = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(
-            json.Replace("\r\n", "\n", StringComparison.Ordinal) + "\n");
+        byte[] produced = ArtifactBytes(realFamilies);
 
         // THE ARTIFACT IS COMPARED, NOT OVERWRITTEN - and that distinction is what makes it evidence.
         //
@@ -143,6 +116,141 @@ public sealed class SnapshotLoopbackExportTests
         reparsed.RootElement.GetProperty("absent").EnumerateArray()
             .Select(entry => entry.GetProperty("field").GetString())
             .Should().BeEquivalentTo(missing, "every declared family is either real or explicitly absent");
+    }
+
+    /// <summary>
+    /// The same world, projected twice, is the same bytes.
+    ///
+    /// <p>
+    /// The gate above compares today's bytes against the committed ones - a comparison with a PREVIOUS process, which is
+    /// the half a single-process test cannot see. This is the other half: two independent projections of the same world
+    /// in one process, so a projection whose layout depends on anything but the statement fails here instead of as a
+    /// once-a-day full-suite flake.
+    /// </p>
+    /// <p>
+    /// red-proof: injected - a PER-CALL member order (the same names emitted ascending on one call and descending on
+    /// the next) makes the two projections differ, and the assertion names the first differing index. A fixed but
+    /// wrong order does not fail here by design: that is what `WritesEveryPublishedRowInOrdinalNameOrder` is for.
+    /// </p>
+    /// </summary>
+    [Fact]
+    public void ProducesTheSameBytesTwiceFromOneWorld()
+    {
+        using var world = SnapshotSampleWorld.Create();
+        ArtifactBytes(world.ConstructRealFamilies()).Should().Equal(
+            ArtifactBytes(world.ConstructRealFamilies()),
+            "two projections of the same world are one artifact: a wire whose bytes depend on anything but the "
+                + "statement makes every byte comparison, and every identity derived from those bytes, unstable");
+    }
+
+    /// <summary>
+    /// Every published row writes its members in ORDINAL NAME ORDER, and carries only members its type declares.
+    ///
+    /// <p>
+    /// THE POPULATION IS THE PAYLOAD TYPE'S OWN MEMBERS, never a list here: a field added to
+    /// `BridgeNpcRelationshipTarget` or to any other row joins this gate the moment it is declared, and a row whose
+    /// layout is inherited from the runtime's metadata instead of the declared rule fails by name. The rule itself lives
+    /// once, in `WireJson.Canonical`.
+    /// </p>
+    /// <p>
+    /// red-proof: with `TrySerialize` returning the pre-canonical `JsonSerializer.Serialize` output, the rows come back
+    /// in reflection order (`targetId` first) and this assertion reports the row and the member that broke it.
+    /// </p>
+    /// </summary>
+    [Fact]
+    public void WritesEveryPublishedRowInOrdinalNameOrder()
+    {
+        using var world = SnapshotSampleWorld.Create();
+        var examined = new List<string>();
+        foreach ((string field, string discovery) in SnapshotSampleWorld.Families)
+        {
+            foreach (object row in (System.Collections.IEnumerable)world.DiscoverFamily(discovery))
+            {
+                Type rowType = row.GetType();
+                string[] emitted = EmittedMembers(row);
+                string[] declared = rowType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                    .Select(WireName)
+                    .ToArray();
+
+                declared.Should().Contain(
+                    emitted,
+                    $"{field} rows may only carry members {rowType.Name} declares, or the wire publishes a name no "
+                        + "declaration owns");
+                emitted.Should().Equal(
+                    declared.Where(name => emitted.Contains(name, StringComparer.Ordinal))
+                        .OrderBy(name => name, StringComparer.Ordinal),
+                    $"{field}.{rowType.Name} is written in ordinal name order: an order inherited from the runtime's "
+                        + "metadata makes one statement two different byte sequences");
+
+                examined.Add($"{field}.{rowType.Name}");
+            }
+        }
+
+        examined.Should().NotBeEmpty("a row population of zero would make this gate pass while reading nothing");
+    }
+
+    /// <summary>One row's member names, in the order the SHIPPED frame writer emitted them.</summary>
+    private static string[] EmittedMembers(object row)
+    {
+        BridgeProtocol.TrySerialize(row, out string json, out string reasonCode).Should().BeTrue(
+            $"{row.GetType().Name} must be publishable as a frame: {reasonCode}");
+        using JsonDocument document = JsonDocument.Parse(json);
+        return document.RootElement.EnumerateObject().Select(property => property.Name).ToArray();
+    }
+
+    /// <summary>
+    /// The name the wire gives a declared member: its own `[JsonPropertyName]` when it has one, else the declaring
+    /// serialiser's naming policy - the same two steps `System.Text.Json` applies, read from the declaration.
+    /// </summary>
+    private static string WireName(PropertyInfo property) =>
+        property.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name
+        ?? BridgeProtocol.JsonOptions.PropertyNamingPolicy!.ConvertName(property.Name);
+
+    /// <summary>Every declared family this world did not construct, so the artifact can say so instead of omitting it.</summary>
+    private static string[] Missing(IReadOnlyDictionary<string, object> realFamilies) =>
+        DeclaredListFamilies().Where(field => !realFamilies.ContainsKey(field)).ToArray();
+
+    /// <summary>
+    /// The sample artifact's bytes, produced from a world's families through the SHIPPED frame writer.
+    ///
+    /// <p>
+    /// `BridgeProtocol.TrySerialize` is where the wire's bytes are minted, so the artifact carries THAT form rather than
+    /// a second serialisation assembled here: a projection this test invents can be stable while the wire is not, which
+    /// is the distinction the whole file exists to keep.
+    /// </p>
+    /// <p>
+    /// The repository declares its artifacts are LF (`.gitattributes`: `* text=auto eol=lf`), and the committed sample
+    /// is LF. System.Text.Json indents with the platform newline, so on Windows the producer emitted CRLF and this
+    /// comparison could never pass - the gate would have been red for every run on the only platform it runs on.
+    /// Normalising here is what makes the bytes comparable, not a workaround: the artifact IS the LF form.
+    /// </p>
+    /// </summary>
+    private static byte[] ArtifactBytes(IReadOnlyDictionary<string, object> realFamilies)
+    {
+        var absent = Missing(realFamilies).Select(field => new SortedDictionary<string, object>(StringComparer.Ordinal)
+        {
+            ["field"] = field,
+            ["reason"] = NotConstructedReason,
+        }).ToArray();
+
+        var artifact = new SortedDictionary<string, object>(StringComparer.Ordinal)
+        {
+            ["schema"] = SampleSchema,
+            ["producedBy"] =
+                "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/SnapshotLoopbackExportTests.cs - the "
+                + "headless TargetFamilyWorld driven through the real Discover* projections",
+            ["consumedBy"] = "host/src/snapshot-loopback.test.ts",
+            ["real"] = new SortedDictionary<string, object>(
+                realFamilies.ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal),
+                StringComparer.Ordinal),
+            ["absent"] = absent,
+        };
+
+        string json = JsonSerializer.Serialize(
+            artifact,
+            new JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = null });
+        return new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(
+            json.Replace("\r\n", "\n", StringComparison.Ordinal) + "\n");
     }
 
     /// <summary>
@@ -335,21 +443,27 @@ public sealed class SnapshotLoopbackExportTests
             return sample;
         }
 
+        /// <summary>One family's rows from the shipped discovery method, as the CLR objects the wire serialises.</summary>
+        internal object DiscoverFamily(string discovery) => this.world.DiscoverFamily(discovery);
+
+        /// <summary>The families this world builds, as the artifact field and the shipped discovery method that decides it.</summary>
+        internal static readonly (string Field, string Discovery)[] Families =
+        {
+            ("treeChopSourceTargets", "DiscoverTreeChopSourceTargets"),
+            ("treeStumpTargets", "DiscoverTreeStumpTargets"),
+            ("weedTargets", "DiscoverWeedTargets"),
+            ("rockSourceTargets", "DiscoverRockSourceTargets"),
+            ("grassTargets", "DiscoverGrassTargets"),
+            ("chests", "DiscoverChestStates"),
+            ("npcRelationshipTargets", "DiscoverNpcRelationshipTargets"),
+            ("toolSlots", "DiscoverToolSlots"),
+        };
+
         /// <summary>The families this world constructs, each serialised to the exact wire shape the Host reads.</summary>
         internal IReadOnlyDictionary<string, object> ConstructRealFamilies()
         {
             var families = new SortedDictionary<string, object>(StringComparer.Ordinal);
-            foreach ((string field, string discovery) in new[]
-                     {
-                         ("treeChopSourceTargets", "DiscoverTreeChopSourceTargets"),
-                         ("treeStumpTargets", "DiscoverTreeStumpTargets"),
-                         ("weedTargets", "DiscoverWeedTargets"),
-                         ("rockSourceTargets", "DiscoverRockSourceTargets"),
-                         ("grassTargets", "DiscoverGrassTargets"),
-                         ("chests", "DiscoverChestStates"),
-                         ("npcRelationshipTargets", "DiscoverNpcRelationshipTargets"),
-                         ("toolSlots", "DiscoverToolSlots"),
-                     })
+            foreach ((string field, string discovery) in Families)
             {
                 object discovered = this.world.DiscoverFamily(discovery);
                 // A family published empty is not evidence: the Host accepts an empty array trivially, so an empty
@@ -366,14 +480,15 @@ public sealed class SnapshotLoopbackExportTests
         /// <summary>
         /// One family in its wire form.
         ///
-        /// Serialised through `BridgeProtocol.JsonOptions` -- the options the real envelope writer uses -- so the artifact
-        /// carries the field names the Host actually receives (camelCase) rather than a second naming convention this
-        /// test invented.
+        /// Through `BridgeProtocol.TrySerialize` - the writer every outbound frame goes through - so the artifact carries
+        /// the bytes the Host actually receives (camelCase names, and the one member order the wire declares) rather than a
+        /// second serialisation convention this test invented.
         /// </summary>
         private static object Wire(object discovered)
         {
-            var element = JsonSerializer.SerializeToElement(discovered, discovered.GetType(), BridgeProtocol.JsonOptions);
-            return JsonSerializer.Deserialize<object>(element.GetRawText())!;
+            BridgeProtocol.TrySerialize(discovered, out string json, out string reasonCode).Should().BeTrue(
+                $"{discovered.GetType().Name} must be publishable as a frame: {reasonCode}");
+            return JsonSerializer.Deserialize<object>(json)!;
         }
 
         public void Dispose() => this.world.Dispose();
