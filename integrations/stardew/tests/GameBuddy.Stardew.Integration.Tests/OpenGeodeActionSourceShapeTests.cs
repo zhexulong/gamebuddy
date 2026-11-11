@@ -1,6 +1,9 @@
 using System;
 using System.IO;
+using System.Text.Json.Nodes;
 using FluentAssertions;
+using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Protocol;
 using Xunit;
 
 namespace GameBuddy.Stardew.Integration.Tests;
@@ -16,8 +19,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// None of that can be executed in a headless runner - it needs the live game thread, a loaded content
 /// set and a real farmer - so the lifecycle, the ordering constraints and the NEGATIVE claims (what this
 /// body must NOT re-implement) are asserted on the handler source, while the registration side is
-/// asserted against the real catalog objects. The live numbers belong to a live gate, which this lane
-/// deliberately did not run.
+/// asserted against the real catalog objects and the wire side against the Mod's own request parser.
+/// The live numbers belong to a live gate, which this lane deliberately did not run.
 /// </summary>
 // MIXED SHAPE AND BEHAVIOUR: the pins here assert on repository source text because the native seam they cover cannot load in a headless runner, while the registration pins read the real catalog objects; keeping both in one file keeps each pin beside the behaviour it protects.
 [Trait("kind", "source-shape")]
@@ -27,6 +30,9 @@ public sealed class OpenGeodeActionSourceShapeTests
     private const string ExecuteDeclaration = "private LocalExecutionReceipt ExecuteOpenGeode(";
     private const string CrackDeclaration = "private LocalExecutionReceipt CrackGeode(";
     private const string PumpLoopDeclaration = "while (menu.geodeAnimationTimer > 0";
+
+    /// <summary>The admitted <c>open_geode</c> arguments, as the wire carries them.</summary>
+    private const string GeodeArgs = "{\"slot\":3,\"expectedQualifiedItemId\":\"(O)535\"}";
 
     /// <summary>
     /// The menu is opened, loaded, clicked and closed through its own members, in the one order the
@@ -211,23 +217,81 @@ public sealed class OpenGeodeActionSourceShapeTests
     }
 
     /// <summary>
-    /// The Host's own wire contract, so the Mod's argument set and the Host's parser cannot drift: the
-    /// action is in the request union, in both admission whitelists, in the per-action argument switch and
-    /// in the published schema, with the same two names.
+    /// The wire side, DRIVEN: the Mod's execution parser admits a geode request carrying the two arguments
+    /// the action publishes, and refuses a request carrying any other set.
+    ///
+    /// WHY BEHAVIOUR AND NOT SOURCE. This pin used to grep the Host's `protocol.ts` for its per-action
+    /// argument ladder and for the `slot`/`expectedQualifiedItemId` key list it compared. That ladder was
+    /// replaced by a declaration (`EXECUTION_REQUEST_ARGUMENT_RULES`), so the pin failed on a spelling that
+    /// had stopped existing while the behaviour it exists for - a legal geode frame is admitted, an illegal
+    /// one is refused - had not moved at all. It is driven here through the entry point every inbound
+    /// execution request passes (`ModEntry.cs:2390` calls `BridgeProtocol.TryDeserializeExecutionRequest`),
+    /// so a requirement nobody can satisfy now fails as a REFUSAL of a frame this test sends rather than as
+    /// a missing substring.
+    ///
+    /// THE PAYLOAD IS HAND-BUILT from the two arguments the action publishes (`FarmhandActionDefinitions.cs:856`
+    /// declares `slot` and `expectedQualifiedItemId`), because a C# test cannot import the Host's TypeScript
+    /// declaration. The Host half of the same fact lives with the Host: `host/src/execution-request-declaration.test.ts`
+    /// accepts `open_geode: { slot, expectedQualifiedItemId }` and refuses a third key, and
+    /// `host/src/protocol-catalog-agreement.test.ts` holds those names against the Mod's published
+    /// `argumentSchema`.
     /// </summary>
     [Fact]
-    public void HostWire_AcceptsTheSameArgumentSet()
+    public void BridgeParser_AcceptsTheGeodeArgumentSet_AndRefusesAnyOther()
     {
-        string protocol = ReadRepositoryFile(Path.Combine("host", "src", "protocol.ts"));
-        protocol.Should().Contain("| \"open_geode\"");
-        protocol.Should().Contain("value.action !== \"open_geode\" &&");
-        protocol.Should().Contain("value.action === \"open_geode\" ||");
-        protocol.Should().Contain("if (!hasExactKeys(value.args, [\"slot\", \"expectedQualifiedItemId\"])) return \"invalid_execution_request\";");
+        BridgeProtocol.TryDeserializeExecutionRequest(
+            GeodeEnvelope(GeodeArgs),
+            out BridgeEnvelope<BridgeExecutionRequest>? accepted,
+            out string reasonCode)
+            .Should().BeTrue($"open_geode publishes slot and expectedQualifiedItemId, so its own parser must admit {GeodeArgs}; it answered {reasonCode}");
 
-        string schema = ReadRepositoryFile(Path.Combine("protocol", "bridge-v1.schema.json"));
-        schema.Should().Contain("\"open_geode\"", "the published action enum must name it");
-        schema.Should().Contain("\"openGeodeArgs\"");
-        schema.Should().Contain("\"const\": \"open_geode\"", "the args schema is selected by the action value");
+        accepted!.Payload.Action.Should().Be("open_geode");
+        accepted.Payload.Args.Slot.Should().Be(3);
+        accepted.Payload.Args.ExpectedQualifiedItemId.Should().Be("(O)535");
+        accepted.Payload.Args.X.Should().BeNull("an admitted geode request carries those two arguments and nothing else");
+
+        // Every other shape is a malformed request: the parser's exact-key check is what stands between a
+        // dispatch and a handler that would read a fact nobody sent.
+        foreach ((string args, string because) in new[]
+                 {
+                     ("{\"slot\":3}", "the item id is missing"),
+                     ("{\"expectedQualifiedItemId\":\"(O)535\"}", "the slot is missing"),
+                     ("{\"slot\":3,\"expectedItemId\":\"(O)535\"}", "the item id is named by a key the action does not declare"),
+                     ("{\"slot\":3,\"expectedQualifiedItemId\":\"(O)535\",\"targetSlot\":3}", "an extra argument rides along"),
+                 })
+        {
+            BridgeProtocol.TryDeserializeExecutionRequest(GeodeEnvelope(args), out _, out string refusedWith)
+                .Should().BeFalse($"{because}, so the request must not be admitted");
+            refusedWith.Should().Be("invalid_envelope", "a malformed request is refused by name, before any handler sees it");
+        }
+    }
+
+    /// <summary>
+    /// One serialized <c>execution_request</c> frame for <c>open_geode</c>, with <paramref name="args"/> written
+    /// verbatim as the payload's <c>args</c> object so a case can omit a name, rename one or add one.
+    /// </summary>
+    private static string GeodeEnvelope(string args)
+    {
+        var request = new BridgeExecutionRequest(
+            "req_open_geode",
+            "idem_open_geode",
+            "open_geode",
+            new BridgeExecutionArgs { Slot = 3, ExpectedQualifiedItemId = "(O)535" },
+            ExpectedRevision: 7,
+            DeadlineMs: 30_000);
+        var envelope = new BridgeEnvelope<BridgeExecutionRequest>(
+            BridgeProtocol.Version,
+            "msg_open_geode",
+            "corr_open_geode",
+            1_000L,
+            new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01"),
+            "execution_request",
+            request);
+
+        BridgeProtocol.TrySerialize(envelope, out string json, out string reason).Should().BeTrue(reason);
+        JsonNode frame = JsonNode.Parse(json)!;
+        frame["payload"]!["args"] = JsonNode.Parse(args);
+        return frame.ToJsonString();
     }
 
     /// <summary>Extract one member body by brace balance from its declaration.</summary>
