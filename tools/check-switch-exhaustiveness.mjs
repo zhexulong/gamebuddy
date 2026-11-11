@@ -45,7 +45,6 @@
  *                    Both readings are made by tools/check-switch-exhaustiveness.test.mjs, whose fixtures live in a
  *                    throwaway workspace so the red case sits beside the reader instead of in this tree.
  */
-import { readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
@@ -215,6 +214,38 @@ const finding = (code, detail) => ({ code, detail });
  * The reading, over a workspace. `webRoot` and `exemptions` are arguments so the falsifier can point it at a
  * throwaway workspace instead of a second implementation of this reader (`tools/check-switch-exhaustiveness.test.mjs`).
  */
+/**
+ * Exemption bookkeeping, split out of the reading so the reading stays readable: every open-vocabulary subject must be
+ * stated with the count observed, and every statement must still match something (an expired exemption is a lie).
+ */
+function exemptionFindings({ exemptions, byFile }) {
+  const out = [];
+  for (const exemption of exemptions) {
+    const observed = byFile.get(`${exemption.file}\u0000${exemption.subject}`) ?? 0;
+    if (observed === exemption.count) continue;
+    out.push(
+      finding(
+        observed === 0 ? "exemption_expired" : "exemption_count_mismatch",
+        `${exemption.file} subject "${exemption.subject}": stated ${exemption.count} open-vocabulary switch(es), ` +
+          `found ${observed}`,
+      ),
+    );
+  }
+  for (const [key, observed] of byFile) {
+    const [file, subject] = key.split("\u0000");
+    const stated = exemptions.filter((exemption) => exemption.file === file && exemption.subject === subject);
+    if (stated.length > 0) continue;
+    out.push(
+      finding(
+        "exemption_missing",
+        `${file} subject "${subject}" (open vocabulary, ${observed} switch(es)) has no stated exemption, so it reads ` +
+          `as a silent pass: state why it cannot be exhaustive, or give it an assertNever default`,
+      ),
+    );
+  }
+  return out;
+}
+
 export function checkSwitchExhaustiveness({
   webRoot = DEFAULT_WEB_ROOT,
   exemptions = OPEN_VOCABULARY_EXEMPTIONS,
@@ -261,37 +292,17 @@ export function checkSwitchExhaustiveness({
       );
     }
   }
-  for (const exemption of exemptions) {
-    const observed = byFile.get(`${exemption.file}\u0000${exemption.subject}`) ?? 0;
-    if (observed === exemption.count) continue;
-    stack.push(
-      finding(
-        observed === 0 ? "exemption_expired" : "exemption_count_mismatch",
-        `${exemption.file} subject "${exemption.subject}": stated ${exemption.count} open-vocabulary switch(es), ` +
-          `found ${observed}`,
-      ),
-    );
-  }
-  for (const [key, observed] of byFile) {
-    const [file, subject] = key.split("\u0000");
-    const stated = exemptions.filter((exemption) => exemption.file === file && exemption.subject === subject);
-    if (stated.length > 0) continue;
-    stack.push(
-      finding(
-        "exemption_missing",
-        `${file} subject "${subject}" (open vocabulary, ${observed} switch(es)) has no stated exemption, so it reads ` +
-          `as a silent pass: state why it cannot be exhaustive, or give it an assertNever default`,
-      ),
-    );
-  }
-  findings.push(...stack);
+  findings.push(...stack, ...exemptionFindings({ exemptions, byFile }));
   const counts = {
     literal_union: rows.filter((row) => row.kind === "literal_union").length,
     open_vocabulary: rows.filter((row) => row.kind === "open_vocabulary").length,
     not_a_union: rows.filter((row) => row.kind === "not_a_union").length,
   };
+  let status = "failed";
+  if (rows.length === 0) status = "blocked";
+  else if (findings.length === 0) status = "passed";
   return {
-    status: rows.length === 0 ? "blocked" : findings.length === 0 ? "passed" : "failed",
+    status,
     findings,
     examined: rows.length,
     counts,
@@ -300,18 +311,17 @@ export function checkSwitchExhaustiveness({
 }
 
 /** The population as the report prints it: one line per switch, so a green run shows what it read. */
+function verdictOf(row) {
+  if (row.kind !== "literal_union") return row.kind;
+  if (row.unhandled.length > 0) return `misses ${row.unhandled.join(",")}`;
+  if (row.assertsNever === true) return "exhaustive";
+  return "default does not assert never";
+}
+
 function printRows(rows) {
   for (const row of rows) {
-    const verdict =
-      row.kind !== "literal_union"
-        ? row.kind
-        : row.unhandled.length > 0
-          ? `misses ${row.unhandled.join(",")}`
-          : row.assertsNever === true
-            ? "exhaustive"
-            : "default does not assert never";
     console.log(
-      `[switch-exhaustiveness] ${row.file}:${row.line} subject=${row.subject} type=${row.typeText} — ${verdict}`,
+      `[switch-exhaustiveness] ${row.file}:${row.line} subject=${row.subject} type=${row.typeText} — ${verdictOf(row)}`,
     );
   }
 }
