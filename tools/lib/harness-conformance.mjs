@@ -405,6 +405,15 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // calls the seam is `stale_terminal_seam_exemption:<file>:<line>`, and a tree with no seam call at all is blocked
   // rather than green because a scan that measured nothing agrees with itself.
   "check-terminal-commit-single-entry.mjs",
+  // Its default run prints `sites examined N · silent S (terminal T · marker M · unresolved U) · exempt E · families F`
+  // plus a five-entry `checks[]` verdict (the finding itself, a state the site does not say, a stale exemption, an
+  // unreadable state authority, and an empty population), so the reading is a census and not a list. Its falsifier is
+  // tools/check-terminal-idle-publication.test.mjs: a terminal store-and-publish pair with no `PublishIdleAfterRelease`
+  // is `terminal_without_idle_publication:<file>:<line>:<family>`, the same reading over the revision before the fix -
+  // `ExecuteTillSoil` at HEAD - is red on the real tree rather than on a fixture, an exemption for a member that
+  // announces the idle now is `stale_terminal_idle_exemption`, and a tree with no store-and-publish pair at all is
+  // blocked rather than green. Its population is the sibling gate's pairs, so the two cannot disagree about a site.
+  "check-terminal-idle-publication.mjs",
   // Its default run prints `{gate:"presentation-delivery-account", status, examined, checks[]}` and reads whatever
   // bundle it is pointed at, so the report is the gate's own verdict rather than prose. Its falsifier is
   // tools/lib/presentation-delivery-account.test.mjs: 59 pieces against an account of 46 parts is reconciled as 46 text

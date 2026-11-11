@@ -1,0 +1,21 @@
+{
+  "schema": "gamebuddy-terminal-idle-publication-exemptions/v1",
+  "exemptions": [
+    {
+      "file": "integrations/stardew/farmhandexecutioncontroller.cs",
+      "member": "RefuseHeldRequest",
+      "line": 1263,
+      "sites": 1,
+      "family": "controller",
+      "reason": "a request refused while it was still held was never dispatched, so it took no body ownership to release; the seam's own idle guard writes the same rule - it names Succeeded/Cancelled/Invalidated/Failed/Expired/Uncertain and not Rejected (farmhandexecutioncontroller.cs:6221)"
+    },
+    {
+      "file": "integrations/stardew/farmhandexecutioncontroller.cs",
+      "member": "Cancel",
+      "line": 1602,
+      "sites": 2,
+      "family": "controller",
+      "reason": "the two branches that keep a native animation running (animal product, item use) put the spec back with DeferredTerminalState instead of clearing it, so the body is still owned and an idle here would be a lie; the deferred settle publishes it once the animation ends or its deadline passes (farmhandexecutioncontroller.cs:2008/2058)"
+    }
+  ]
+}

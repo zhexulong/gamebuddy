@@ -141,6 +141,7 @@ internal sealed partial class ExecutionManager
         LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence);
         this.Remember(receipt);
         this.AddTrace(receipt);
+        this.PublishIdleAfterRelease(executionId, requestId);
         return receipt;
     }
 

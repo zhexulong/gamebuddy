@@ -411,6 +411,7 @@ internal sealed partial class ExecutionManager
         LocalExecutionReceipt receipt = new(executionId, requestId, ExecutionState.Succeeded, "machine_inspected", this.revision, evidence);
         this.Remember(receipt);
         this.AddTrace(receipt);
+        this.PublishIdleAfterRelease(executionId, requestId);
         return receipt;
     }
 
@@ -554,6 +555,7 @@ internal sealed partial class ExecutionManager
             $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};slot={slot};native_handled={nativeHandled.ToString().ToLowerInvariant()};trough_filled={troughFilled.ToString().ToLowerInvariant()};hay_before={hayBefore};hay_after={hayAfter};hay_consumed={hayConsumed.ToString().ToLowerInvariant()}");
         this.Remember(receipt);
         this.AddTrace(receipt);
+        this.PublishIdleAfterRelease(executionId, requestId);
         return receipt;
     }
 
@@ -968,12 +970,14 @@ internal sealed partial class ExecutionManager
             LocalExecutionReceipt uncertain = new(executionId, requestId, ExecutionState.Uncertain, "farm_animal_pet_postcondition_not_observed", this.revision, evidence);
             this.Remember(uncertain);
             this.AddTrace(uncertain);
+            this.PublishIdleAfterRelease(executionId, requestId);
             return uncertain;
         }
 
         LocalExecutionReceipt receipt = new(executionId, requestId, ExecutionState.Succeeded, "farm_animal_petted", this.revision, evidence);
         this.Remember(receipt);
         this.AddTrace(receipt);
+        this.PublishIdleAfterRelease(executionId, requestId);
         return receipt;
     }
 
@@ -1062,6 +1066,7 @@ internal sealed partial class ExecutionManager
         LocalExecutionReceipt receipt = new(executionId, requestId, ExecutionState.Succeeded, "npc_relationship_inspected", this.revision, evidence);
         this.Remember(receipt);
         this.AddTrace(receipt);
+        this.PublishIdleAfterRelease(executionId, requestId);
         return receipt;
     }
 

@@ -207,6 +207,7 @@ internal sealed partial class ExecutionManager
             ToolActionEvidence.Compose(ToolActionEvidence.WaterCrop, evidence));
         this.Remember(receipt);
         this.AddTrace(receipt);
+        this.PublishIdleAfterRelease(executionId, requestId);
         return receipt;
     }
 
@@ -386,6 +387,7 @@ internal sealed partial class ExecutionManager
         $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};crop={cropId};item={expectedQualifiedHarvestItemId};native_path_return={nativePathReturn.ToString().ToLowerInvariant()};native_accepted={nativeAccepted.ToString().ToLowerInvariant()};regrows={regrowsAfterHarvest.ToString().ToLowerInvariant()};phase_before={phaseBefore};phase_after={cropAfter?.currentPhase.Value.ToString() ?? "none"};day_of_phase_before={dayOfPhaseBefore};day_of_phase_after={cropAfter?.dayOfCurrentPhase.Value.ToString() ?? "none"};regrow_advanced={regrowAdvanced.ToString().ToLowerInvariant()};inventory_before={inventoryBefore};inventory_after={inventoryAfter};inventory_gained={inventoryGained.ToString().ToLowerInvariant()};crop_present_after={cropStillPresent.ToString().ToLowerInvariant()};harvest_quality={harvestedQuality};quality_counts_before={qualityCountsBefore};quality_counts_after={qualityCountsAfter}");
     this.Remember(receipt);
     this.AddTrace(receipt);
+    this.PublishIdleAfterRelease(executionId, requestId);
     return receipt;
     }
 
@@ -496,6 +498,7 @@ internal sealed partial class ExecutionManager
             $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};crop={plantedCropId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount}");
         this.Remember(receipt);
         this.AddTrace(receipt);
+        this.PublishIdleAfterRelease(executionId, requestId);
         return receipt;
     }
 
@@ -709,6 +712,7 @@ internal sealed partial class ExecutionManager
         LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence);
         this.Remember(receipt);
         this.AddTrace(receipt);
+        this.PublishIdleAfterRelease(executionId, requestId);
         return receipt;
     }
 
@@ -826,6 +830,7 @@ internal sealed partial class ExecutionManager
         LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence);
         this.Remember(receipt);
         this.AddTrace(receipt);
+        this.PublishIdleAfterRelease(executionId, requestId);
         return receipt;
     }
 
@@ -907,7 +912,11 @@ internal sealed partial class ExecutionManager
         string reasonCode = succeeded ? "crab_pot_baited" : "bait_crab_pot_postcondition_unavailable";
         if (succeeded) { this.baitCrabPotResultTarget = new BridgeBaitCrabPotResultTarget(expectedTargetId, location.NameOrUniqueName, slot, targetX, targetY, "(O)710", RequireDisplayName("(O)710"), expectedQualifiedItemId, crabPot.owner.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), 1); this.baitCrabPotResultExecutionId = executionId; this.baitCrabPotResultRequestId = requestId; this.baitCrabPotResultRevision = this.revision; this.baitCrabPotResultDay = Game1.Date.TotalDays; }
         string evidence = $"source={expectedQualifiedItemId};location={location.NameOrUniqueName};x={targetX};y={targetY};target={expectedTargetId};pot=(O)710;slot={slot};owner={crabPot.owner.Value};bait_before=none;bait_after={crabPot.bait.Value?.QualifiedItemId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount};actionable={(player.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp).ToString().ToLowerInvariant()};active_execution=null";
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence); this.Remember(receipt); this.AddTrace(receipt); return receipt;
+        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, evidence);
+        this.Remember(receipt);
+        this.AddTrace(receipt);
+        this.PublishIdleAfterRelease(executionId, requestId);
+        return receipt;
     }
 
     public LocalExecutionReceipt RequestLocalFertilizeTile(string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
@@ -996,6 +1005,7 @@ internal sealed partial class ExecutionManager
             $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};fertilizer_before={beforeFertilizer ?? "none"};fertilizer_after={afterFertilizer ?? "none"};inventory_before={beforeCount};inventory_after={afterCount}");
         this.Remember(receipt);
         this.AddTrace(receipt);
+        this.PublishIdleAfterRelease(executionId, requestId);
         return receipt;
     }
 
@@ -1247,6 +1257,7 @@ internal sealed partial class ExecutionManager
                 : $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};parent={parentSheetIndex};tool={toolKind};required_upgrade={requiredUpgrade};health_before={healthBefore:0.##};health_after={healthAfter:0.##};swings={swingCount};clump_removed=false;stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};{followUp.Evidence}");
         this.Remember(receipt);
         this.AddTrace(receipt);
+        this.PublishIdleAfterRelease(executionId, requestId);
         return receipt;
     }
 

@@ -611,6 +611,7 @@ internal sealed partial class ExecutionManager
             ToolActionEvidence.Compose(ToolActionEvidence.TillSoil, evidence));
         this.Remember(receipt);
         this.AddTrace(receipt);
+        this.PublishIdleAfterRelease(executionId, requestId);
         return receipt;
     }
 
