@@ -32,12 +32,11 @@ import {
   printTable,
   releaseRoot,
   row,
-  runCase,
   summarize,
   walkStrings,
 } from "./lib/stress-harness/common.mjs";
 import { CARD_FIXTURES, renderCardFixture } from "./lib/stress-harness/card-fixtures.mjs";
-import { findUnrenderedMacros, macroTableFor } from "./lib/stress-harness/common.mjs";
+import { findUnrenderedMacros } from "./lib/stress-harness/common.mjs";
 
 const args = new Set(process.argv.slice(2));
 const JSON_OUTPUT = args.has("--json");
@@ -91,7 +90,7 @@ async function runCard(fixture, phases, options) {
   const root = await freshRoot(`stress-card-${fixture.name.slice(0, 12)}-`);
   let services;
   try {
-    const { openServices, writeProfile } = await import("./lib/stress-harness/common.mjs");
+    const { openServices } = await import("./lib/stress-harness/common.mjs");
     const id = identity("player-card", `companion-${fixture.name}`, `continuity-${fixture.name}`);
     services = await openServices(root, id);
     const rendered = renderCardFixture(fixture);
@@ -99,10 +98,9 @@ async function runCard(fixture, phases, options) {
 
     // --- import through the product's own service ---
     const importId = `import-${fixture.name}`;
-    let imported;
     let report;
     try {
-      imported = await services.importer.import(importId, rendered.bytes);
+      await services.importer.import(importId, rendered.bytes);
       report = await services.importer.read(importId);
     } catch (error) {
       return row({
@@ -132,14 +130,13 @@ async function runCard(fixture, phases, options) {
     // --- provision a companion through the product's own review + create ---
     let provision;
     try {
-      const { createNewCompanionService, provisionNewCompanion } = await loadHost("tavern/new-companion-service.js");
+      const { provisionNewCompanion } = await loadHost("tavern/new-companion-service.js");
       const reviewInput = reviewableFields(candidate);
       const reviewed = await services.importer.recordReview(importId, {
         reviewedFields: reviewInput,
         approvedAtMs: 1,
       });
       const confirmed = await services.importer.confirmedReview(importId);
-      const { ChatThreadStore: _unused, ...rest } = {};
       provision = await provisionNewCompanion(root, id.playerId, candidate, confirmed, services.threads);
       void reviewed;
     } catch (error) {

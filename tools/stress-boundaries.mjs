@@ -22,21 +22,17 @@
  * Non-zero exit when any case fails. Each case is runnable alone via --case.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   bindHostRuntime,
   freshRoot,
   identity,
   loadHost,
-  macroTableFor,
   printTable,
   releaseRoot,
-  row,
   runCase,
   summarize,
   utf8Bytes,
-  walkStrings,
 } from "./lib/stress-harness/common.mjs";
 import { materializeChatCatalog, promptStrings } from "./lib/stress-harness/turn.mjs";
 import { findUnrenderedMacros } from "./lib/stress-harness/common.mjs";
@@ -185,7 +181,7 @@ async function zeroCases() {
         profileRevision: 1,
         profileHash: "a".repeat(64),
       });
-      const state = await services.service.createNewChat({
+      await services.service.createNewChat({
         chatThreadId: "thread_1",
         chatSurfaceSessionId: "surface_1",
         opening: { kind: "blank" },
