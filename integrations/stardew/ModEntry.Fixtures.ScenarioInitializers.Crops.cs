@@ -732,6 +732,10 @@ public sealed partial class ModEntry
         this.Monitor.Log($"GameBuddy native-local-player initialized water-crop empty-can recovery precondition before bridge attachment: can_water=0; can_max={suppliedEmptyCan.waterCanMax}; unwatered_crop_count={dryCropCount}; farm_water_source={(int)sourceTile.X},{(int)sourceTile.Y}; production alone equips, rejects, refills, and waters.", LogLevel.Info);
     }
 
+    /// <summary>
+    /// The can half of the empty-can recovery Given: exactly one Watering Can, empty. Every other can is removed first, so
+    /// `equip_tool` cannot pick a full one and make the rejection under test impossible.
+    /// </summary>
     private WateringCan SupplyExactlyOneEmptyWateringCan(Farmer player)
     {
         foreach (Item? ownedCan in player.Items.Where(item => item is WateringCan).ToArray())
@@ -750,6 +754,12 @@ public sealed partial class ModEntry
         return suppliedEmptyCan;
     }
 
+    /// <summary>
+    /// The crop half: one dry unwatered crop on native HoeDirt, and the tile it stands on. SpreadDirt+SpreadSeeds fills the
+    /// whole farm (~1700 crops), so the rest are removed - `water_crop` binds the single adjacent unwatered crop, and
+    /// standing inside a dense field makes that binding ambiguous. This is fixture-only world setup (the same class as the
+    /// shipped SpreadDirt/SetupBigFarm initializers), never an action call.
+    /// </summary>
     private Vector2 SpreadExactlyOneDryCropOnTheFarm(Farm farm)
     {
         GameLocation? emptyCanSetupPreviousLocation = Game1.currentLocation;

@@ -233,88 +233,6 @@ public sealed partial class ModEntry
     /// </summary>
     internal static IReadOnlyCollection<string> NativeLocalFixtureScenarioNames => NativeLocalFixtureScenarioRows.Keys;
 
-    /// <summary>
-    /// Folds the declared rows into the lookup, refusing the two ways a table like this goes wrong: a scenario declared
-    /// twice (which world it builds would depend on insertion order) and a row whose stage and initializer shape
-    /// disagree (the dispatch reads the shape the stage names, and would silently skip the other one).
-    /// </summary>
-
-    /// <summary>
-    /// Whether a pre-attachment transition is live. A fixture warp completes through the native lifecycle and its
-    /// `OnWarped` handler finalizes the spatial precondition, so no scenario setup may rerun while one is pending.
-    /// </summary>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    /// <summary>
-    /// The can half of the empty-can recovery Given: exactly one Watering Can, empty. Every other can is removed first, so
-    /// `equip_tool` cannot pick a full one and make the rejection under test impossible.
-    /// </summary>
-
-    /// <summary>
-    /// The crop half: one dry unwatered crop on native HoeDirt, and the tile it stands on. SpreadDirt+SpreadSeeds fills the
-    /// whole farm (~1700 crops), so the rest are removed - `water_crop` binds the single adjacent unwatered crop, and
-    /// standing inside a dense field makes that binding ambiguous. This is fixture-only world setup (the same class as the
-    /// shipped SpreadDirt/SetupBigFarm initializers), never an action call.
-    /// </summary>
-
     private sealed record NativeLocalFixtureScenarioRow(
         string Scenario,
         NativeLocalFixtureStage Stage,
@@ -344,6 +262,11 @@ public sealed partial class ModEntry
             new(scenario, NativeLocalFixtureStage.ActorPrepared, WorldlessInitialize: null, initialize);
     }
 
+    /// <summary>
+    /// Folds the declared rows into the lookup, refusing the two ways a table like this goes wrong: a scenario declared
+    /// twice (which world it builds would depend on insertion order) and a row whose stage and initializer shape
+    /// disagree (the dispatch reads the shape the stage names, and would silently skip the other one).
+    /// </summary>
     private static Dictionary<string, NativeLocalFixtureScenarioRow> FoldNativeLocalFixtureScenarioDeclarations(
         NativeLocalFixtureScenarioRow[] declarations)
     {
@@ -359,6 +282,10 @@ public sealed partial class ModEntry
         return byScenario;
     }
 
+    /// <summary>
+    /// Whether a pre-attachment transition is live. A fixture warp completes through the native lifecycle and its
+    /// `OnWarped` handler finalizes the spatial precondition, so no scenario setup may rerun while one is pending.
+    /// </summary>
     private bool HasPendingNativeLocalFixtureTransition() =>
         this.nativeLocalFeedFixturePending is not null
         || this.nativeLocalCollectAnimalProductFixturePending is not null

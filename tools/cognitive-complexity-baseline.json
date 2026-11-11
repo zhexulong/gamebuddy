@@ -1316,12 +1316,13 @@
     {
       "id": "cs:ModEntry",
       "name": "ModEntry",
-      "parts": 56,
-      "files": 56,
+      "parts": 58,
+      "files": 58,
       "file": "integrations/stardew/ModEntry.Fixtures.AcceptDailyQuest.cs",
       "line": 10,
-      "lines": 15356,
-      "methods": 335
+      "lines": 15363,
+      "methods": 335,
+      "reason": "15,363 is the measured truth, and this raise corrects a record that was wrong rather than loose. The recorded 15,356 (with 335 methods and 56 parts) predates the commit that inlined 68 fixture initialisers into the 2,893-line if chain: the parent of 21bd3a46 measures 15,502 lines with 267 methods, so the gate read 21bd3a46's 76-line shrink as growth (15,356 -> 15,426) because class_size_grew cannot tell a stale record from a grown class. 21bd3a46 removed 2,917 lines from ModEntry.Fixtures.cs and added 2,788 class-span lines across three new partials, net -76 (15,502 -> 15,426). The split's residue then went too: one 60-line blank run deleted and 19 documentation lines moved onto the declarations they describe, 63 more lines down to 15,363. The class is 139 lines smaller than at that parent while this number rises by 7; the rise is the correction, not an allowance."
     },
     {
       "id": "cs:NavigationExecutionManagerTests",
