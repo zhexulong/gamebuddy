@@ -46,7 +46,7 @@
  *            surface's control without asserting on it (still `surface_without_journey`), and a panel
  *            union that cannot be read (`surface_population_unassessable`, never a silent pass).
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 

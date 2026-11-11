@@ -210,11 +210,6 @@ test("the Host contract is the receipt schema for its actions: a pair there is a
       { actionId: "recolor", predicate: "hasRecolorCompletionEvidence", keys: ["color_before", "color_after"] },
     ],
   ]);
-  const result = findPostconditionDeltas({
-    surface: SURFACE,
-    handlers: new Map([["equip_hat", HANDLERS.get("equip_hat")]]),
-    contracts,
-  });
   const nd = findPostconditionDeltas({
     surface: SURFACE,
     handlers: new Map([["equip_hat", HANDLERS.get("equip_hat")]]),

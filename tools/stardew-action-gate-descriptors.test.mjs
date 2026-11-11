@@ -191,9 +191,6 @@ test("descriptor runner identity names the native-local shared-harness runner fo
     use_mine_ladder: "run-stardew-native-local-player-use-mine-ladder-smoke.mjs",
     move_placed_furniture: "run-stardew-native-local-player-move-placed-furniture-smoke.mjs",
     pet_farm_animal: "run-stardew-native-local-player-pet-farm-animal-smoke.mjs",
-    use_mine_ladder: "run-stardew-native-local-player-use-mine-ladder-smoke.mjs",
-    move_placed_furniture: "run-stardew-native-local-player-move-placed-furniture-smoke.mjs",
-    pet_farm_animal: "run-stardew-native-local-player-pet-farm-animal-smoke.mjs",
     // Published before its live run, so that a run CAN dispatch it at all: an Experimental action
     // is off the agent surface and no evidence for it can ever exist.
     fish_here: "run-stardew-native-local-player-fish-here-smoke.mjs",

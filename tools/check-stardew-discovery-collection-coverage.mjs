@@ -189,9 +189,6 @@ export const DISCOVERY_COLLECTIONS = Object.freeze({
     via: ["ResolveShippingBin", "FindShippingBinBuilding"],
   },
 
-  // Animals, which live in `animals` on an `AnimalHouse` and in no other collection.
-  DiscoverFarmAnimalPetTargets: { mustRead: ["animals"] },
-
   // Placed objects (`Object` rows in the object layer), including the many subclasses that live there.
   DiscoverColorTargets: { mustRead: ["objects"] },
   DiscoverCookingStationTargets: { mustRead: ["objects"] },

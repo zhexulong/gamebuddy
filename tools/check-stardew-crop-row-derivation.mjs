@@ -156,36 +156,6 @@ export const ASSEMBLY_PATH_PROOFS = Object.freeze([
 // Source reading: the two populations
 // ---------------------------------------------------------------------------
 
-/** Blank C# line/block comments and string literals out, preserving offsets. */
-function blankCSharpNoise(source) {
-  let out = "";
-  let index = 0;
-  while (index < source.length) {
-    const char = source[index];
-    if (char === "/" && source[index + 1] === "/") {
-      while (index < source.length && source[index] !== "\n") {
-        out += " ";
-        index += 1;
-      }
-      continue;
-    }
-    if (char === "/" && source[index + 1] === "*") {
-      out += "  ";
-      index += 2;
-      while (index < source.length && !(source[index] === "*" && source[index + 1] === "/")) {
-        out += source[index] === "\n" ? "\n" : " ";
-        index += 1;
-      }
-      out += "  ";
-      index += 2;
-      continue;
-    }
-    out += char;
-    index += 1;
-  }
-  return out;
-}
-
 /** Blank TypeScript comments out, preserving every offset and newline. */
 function blankCommentText(source) {
   return source
@@ -425,11 +395,10 @@ export function checkStardewCropRowDerivation({
   //
   // Population: the fact rows this gate already owns (the ones the Host validates key by key). The other `Bridge*`
   // records are ADVISORY: their Host readers tolerate null today, and a blanket rule over them would turn this into a
-  // 30-entry exception list, which is the shape this project refuses. The count is printed so a reader can see how
-  // much of the wire the rule does not cover.
+  // 30-entry exception list, which is the shape this project refuses. They are outside this rule's population and the
+  // gate does not measure them.
   const nullableFindings = nullableWireKeysWithoutOmission(read(BRIDGE_MODELS_PATH));
   for (const finding of nullableFindings) if (finding.member.startsWith(`${ROW_RECORD}.`)) findings.push(finding);
-  const advisoryNullable = nullableFindings.length - nullableFindings.filter((f) => findings.includes(f)).length;
 
   if (workerFields.length === 0)
     push(
@@ -537,7 +506,7 @@ export function checkStardewCropRowDerivation({
 
   // 4. The gaps this row does not close, and the proof that the real path carries what it does.
   const actionDefinitions = read(ACTION_DEFINITIONS_PATH);
-  for (const [actionId, gap] of Object.entries(NOT_COVERED)) {
+  for (const actionId of Object.keys(NOT_COVERED)) {
     if (!actionDefinitions.includes(`E("${actionId}",`))
       push(
         "not_covered_stale",

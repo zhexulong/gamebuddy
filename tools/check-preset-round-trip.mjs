@@ -26,11 +26,10 @@
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const STORE_MODULE = "host/dist-test/tavern/preset-store.js";
 const DOCUMENT_MODULE = "host/dist-test/tavern/preset-document.js";
 
