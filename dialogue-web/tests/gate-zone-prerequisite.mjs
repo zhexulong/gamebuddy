@@ -30,6 +30,7 @@ import { dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { ARTIFACT_MANIFEST_FILE } from "../scripts/browser-artifact-manifest.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const testsRoot = resolve(packageRoot, "tests");
@@ -45,8 +46,10 @@ const ZONES = Object.freeze({
   artifact: Object.freeze({
     script: "test:artifact",
     prerequisite:
-      "the artifact toolchain is installed (`vite` CLI, `vite.config.ts`, the static-artifact manifest scripts); " +
-      "the suites build the artifact they verify into a private staging directory",
+      "the artifact toolchain is installed (`vite` CLI, `vite.config.ts`, the static-artifact manifest scripts), and " +
+      "the production artifact is built - `pnpm --filter @gamebuddy/dialogue-web build` writes `dist/` and its manifest, " +
+      "which is the artifact one of these suites verifies (CI and the release lane both run that build immediately " +
+      "before this zone); the other suite builds its own private staging copy",
   }),
   mounted: Object.freeze({
     script: "test:mounted",
@@ -262,8 +265,19 @@ const probes = {
       "artifact_build_toolchain_missing",
       "the artifact manifest authority is not in the tree",
     );
+    // The published artifact, which is what the product serves. It is NOT this zone's to build:
+    // `manifest-boundary.test.mjs` verifies the manifest and the hashed asset boundary of the build
+    // the product ships, and CI plus the release lane build it one step before this zone. Left
+    // undeclared, a checkout without `dist/` failed inside the manifest module with
+    // `ENOENT: lstat .../dialogue-web/dist` - a red about the runner, not about the edit.
+    assertInstalled(
+      "artifact",
+      `dist/${ARTIFACT_MANIFEST_FILE}`,
+      "artifact_not_built",
+      "run `pnpm --filter @gamebuddy/dialogue-web build`: the manifest suite verifies the production artifact that build emits into dist/",
+    );
     assertPortUnclaimed("artifact");
-    return `${suites.length} suite file(s), artifact toolchain present, no port`;
+    return `${suites.length} suite file(s), artifact toolchain present, production artifact built, no port`;
   },
   async mounted() {
     // The zone is the whole journey directory, so the corpus, not a file list in
