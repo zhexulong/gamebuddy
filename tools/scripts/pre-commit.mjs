@@ -70,34 +70,26 @@ const beforeFormatting = new Map(
     }
   }),
 );
-// AN EMPTY LIST IS A SKIP, NEVER AN INSTRUCTION TO FORMAT THE PROJECT. `biome format --write` with no paths formats
-// everything its configuration includes, so a commit that stages no formattable file used to hand the whole checkout to
-// the formatter - including another lane's gitignored scratch copy, whose own `biome.json` is a nested root. That is how
-// `.tmp/redproof/tree` blocked every commit on 2026-11-11 with `Found a nested root configuration`: the population was
-// empty and the formatter silently widened it to the repository.
-//
-// No `process.exit(0)` either: this hook has a second, blocking job at the end, and an early exit would skip it for
+// No `process.exit(0)` here: this hook has a second, blocking job at the end, and an early exit would skip it for
 // exactly the commits that stage no formattable file.
-if (targets.length === 0) {
-  console.log("pre-commit: nothing formattable staged");
-} else {
-  try {
-    const output = execFileSync("node", [BIOME, "format", "--write", "--max-diagnostics=none", ...targets], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    console.log(`pre-commit: ${cleanOutputLines(output.trim()).slice(-1)[0] ?? "formatted"}`);
-  } catch (error) {
-    const detail = `${error.stdout ?? ""}${error.stderr ?? ""}`;
-    // Biome exits 1 when every given path is one its configuration ignores (for example
-    // `dialogue-web/tests/**`). That is not a formatting failure, and blocking a commit on it would
-    // stop anyone from committing under an ignored directory - so it passes, with the reason printed.
-    if (/were provided but ignored|No files were processed/i.test(detail)) {
-      console.log("pre-commit: nothing to format (the formatter ignores these paths)");
-    } else {
-      console.error(`pre-commit: the formatter failed\n${detail}`);
-      process.exit(1);
-    }
+if (targets.length === 0) console.log("pre-commit: nothing formattable staged");
+
+try {
+  const output = execFileSync("node", [BIOME, "format", "--write", "--max-diagnostics=none", ...targets], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  console.log(`pre-commit: ${cleanOutputLines(output.trim()).slice(-1)[0] ?? "formatted"}`);
+} catch (error) {
+  const detail = `${error.stdout ?? ""}${error.stderr ?? ""}`;
+  // Biome exits 1 when every given path is one its configuration ignores (for example
+  // `dialogue-web/tests/**`). That is not a formatting failure, and blocking a commit on it would
+  // stop anyone from committing under an ignored directory - so it passes, with the reason printed.
+  if (/were provided but ignored|No files were processed/i.test(detail)) {
+    console.log("pre-commit: nothing to format (the formatter ignores these paths)");
+  } else {
+    console.error(`pre-commit: the formatter failed\n${detail}`);
+    process.exit(1);
   }
 }
 

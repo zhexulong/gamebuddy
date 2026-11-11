@@ -13,8 +13,6 @@
     ],
     "experimentalScannerIgnores": [
       "scratch",
-      ".tmp",
-      "tmp",
       ".worktrees",
       "ref",
       "node_modules",

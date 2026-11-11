@@ -6218,7 +6218,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         LocalExecutionReceipt published = this.AddTrace(receipt);
         // Immediate native actions own no continuing controller/animation, so
         // their receipt is followed by the same centralized release check.
-        if (state is ExecutionState.Succeeded or ExecutionState.Cancelled or ExecutionState.Invalidated or ExecutionState.Failed or ExecutionState.Expired or ExecutionState.Uncertain)
+        //
+        // WHICH STATES ANNOUNCE THE FREE BODY IS `ExecutionStateWire.IsTerminal`, not a copy of it. This list used to
+        // name six of the nine terminal states, so `Rejected`, `Blocked` and `PartiallySucceeded` announced the idle
+        // from a hand-written site (`CompleteToolApproach`, `UpdateActiveDayAdvance`, `SettleNavigationTerminal`) and
+        // stayed silent here: the same settled outcome published `body_idle` or nothing depending on which path wrote
+        // the receipt, and a caller converting a site had to keep the leak to stay neutral. An extra publication costs
+        // the Host one evictable latest-only progress slot (host/src/event-pump.ts reads `body_idle` as progress that
+        // the next receipt or plan settlement supersedes); a missing one leaves a companion holding a settled
+        // execution with no actor-free fact. Reading the declaration is what makes this match by construction rather
+        // than by coincidence.
+        if (state.IsTerminal())
             this.PublishIdleAfterRelease(executionId, requestId);
         return published;
     }
