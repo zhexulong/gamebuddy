@@ -152,6 +152,7 @@ public sealed partial class ModEntry : Mod
     private static ModEntry? nativeChatIngressOwner;
     private StardewSalientEventHooks? salientEventHooks;
     private NpcDialoguePager? npcDialoguePager;
+    private ModalTransitionObserver? modalTransitionObserver;
     private readonly ISalientEventFilter salientEventFilter = new SalientEventFilter();
 
     public override void Entry(IModHelper helper)
@@ -176,6 +177,7 @@ public sealed partial class ModEntry : Mod
             () => this.TryGetAiState(out ScreenEmbodimentState state) ? state.BridgeSession?.Scope : null,
             this.Monitor);
         this.npcDialoguePager = new NpcDialoguePager(this.Monitor);
+        this.modalTransitionObserver = new ModalTransitionObserver(this.Monitor);
         helper.Events.GameLoop.GameLaunched += this.OnGameLaunched;
         helper.Events.GameLoop.SaveLoaded += this.OnSaveLoaded;
         helper.Events.GameLoop.UpdateTicked += this.OnUpdateTicked;
@@ -1368,6 +1370,9 @@ public sealed partial class ModEntry : Mod
         // step that never returned or `idle_between_ticks` - which means the Mod finished its tick and the hang is in
         // the engine own update, a different investigation entirely.
         this.LogStageOnce("npc_pager_observe");
+        // The modal observer runs BEFORE the pager: a mount is the news, and the pager may drive the box it just saw
+        // several pages forward inside this same tick.
+        this.modalTransitionObserver?.Observe(nativeLocalState.BridgeSession);
         this.npcDialoguePager?.Observe(nativeLocalState.BridgeSession);
         this.LogStageOnce("stop_observation");
             this.PublishPendingStopObservation(nativeLocalState);
@@ -1417,6 +1422,7 @@ public sealed partial class ModEntry : Mod
         // never waits for Host IPC or invents a challenge/grant while the
         // transport bridge route is still absent.
         state.BodyProgramController?.Update();
+        this.modalTransitionObserver?.Observe(state.BridgeSession);
         this.npcDialoguePager?.Observe(state.BridgeSession);
         this.PublishPendingStopObservation(state);
     }
