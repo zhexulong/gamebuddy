@@ -3585,6 +3585,20 @@ function toolTileItemAndTarget(
 }
 
 /**
+ * The most arguments an execution request may carry, whatever its action takes.
+ *
+ * The wire layer held this bound anonymously - `Object.keys(value.args).length <= 8` inside the envelope expression - and
+ * a bound written inside an `&&` is a bound nobody can find. It is declared here and named by the row below. Which
+ * arguments an action takes is that action's own row list, and every one of those sets is smaller than this ceiling: what
+ * this row says is how many arguments a frame may carry before the frame is no longer the shape of an execution request.
+ *
+ * Because it fires before the action's exact-set row, a nine-argument payload is now refused `invalid_args` where the
+ * actions whose exact-set row carries `invalid_execution_request` used to answer with that code. The count is the
+ * envelope's fact and the names are the action's, so the more specific code is the one that belongs to the payload.
+ */
+export const EXECUTION_REQUEST_ARGUMENT_CEILING = 8;
+
+/**
  * The fields of the execution-request payload the Host validates, in the order it decides them.
  *
  * Shape plus code per row, and the order IS the contract: a caller is told the FIRST fact that stopped it, so moving a
@@ -3626,6 +3640,18 @@ export const EXECUTION_REQUEST_REQUIREMENTS: readonly ExecutionRequestRequiremen
     "invalid_args",
     (reading) => isRecord(reading.request.args),
     (reading) => ({ ...reading, request: { ...reading.request, args: 5 } }),
+  ),
+  requirement(
+    "args",
+    `at most ${EXECUTION_REQUEST_ARGUMENT_CEILING} arguments`,
+    "invalid_args",
+    (reading) => Object.keys(reading.args).length <= EXECUTION_REQUEST_ARGUMENT_CEILING,
+    (reading) => {
+      const args = Object.fromEntries(
+        Array.from({ length: EXECUTION_REQUEST_ARGUMENT_CEILING + 1 }, (_, index) => [`argument${index}`, index]),
+      );
+      return { ...reading, args, request: { ...reading.request, args } };
+    },
   ),
   requirement(
     "expectedRevision",
@@ -4729,119 +4755,37 @@ function validateSnapshot(value: Record<string, unknown>): string | null {
   return snapshotDecisionScalarsAccepted(value) ? null : "invalid_snapshot";
 }
 
+/**
+ * The structural half of an execution request: what the frame says about itself, decided without a snapshot.
+ *
+ * Every payload is held to the SAME requirement set whatever its `action` says, and each refusal is the code
+ * `EXECUTION_REQUEST_REQUIREMENTS` gives that field - `invalid_request` for the key set, `invalid_request_id` for the two
+ * ids, `unknown_action` for the vocabulary, `invalid_args` for `args`, `stale_snapshot` for `expectedRevision` and
+ * `invalid_deadline` for `deadlineMs` - so a frame refused here is refused for the reason the declaration would give.
+ * What depends on the action is an ARGUMENT rule, and `EXECUTION_REQUEST_ARGUMENT_RULES` is where those live and where
+ * they are decided against a snapshot; the vocabulary is that same declaration's key set, read through
+ * `isExecutionAction`, so nothing carries a second list of action ids.
+ *
+ * The rows are decided in the declaration's order. The last two ask only the shape half of their row, because the row on
+ * the send path compares `expectedRevision` with the live snapshot and `deadlineMs` with a clock, and the transport
+ * boundary has neither.
+ *
+ * Measured on the expression this replaced (1 + 27 + 74 = 102 actions): `clear_fish_pond` alone had the key set and the
+ * two ids; 27 actions were admitted by `value.action === "<id>"` alone, with no field read at all; 74 had `args`,
+ * `expectedRevision` and `deadlineMs` but no identity. `&&` binds tighter than `||`, so the grouping read as one
+ * conjunction and was three disjuncts - a frame carrying `{ action: "build_farm_building" }` and nothing else was
+ * admitted. `protocol.test.ts` walks the declaration's whole population and refuses each action once per required field.
+ */
 function validateExecutionRequestEnvelope(value: Record<string, unknown>): string | null {
-  return (hasExactKeys(value, ["requestId", "idempotencyKey", "action", "args", "expectedRevision", "deadlineMs"]) &&
-    isOpaqueId(value.requestId) &&
-    isOpaqueId(value.idempotencyKey) &&
-    value.action === "clear_fish_pond") ||
-    value.action === "build_farm_building" ||
-    value.action === "send_multiplayer_chat" ||
-    value.action === "name_entity" ||
-    value.action === "accept_daily_quest" ||
-    value.action === "accept_special_order" ||
-    value.action === "claim_museum_reward" ||
-    value.action === "redeem_prize_ticket" ||
-    value.action === "tailor_clothing" ||
-    value.action === "dye_clothing_with_item" ||
-    value.action === "open_geode" ||
-    value.action === "color_placed_object" ||
-    value.action === "place_owned_object" ||
-    value.action === "remove_placed_item" ||
-    value.action === "move_placed_furniture" ||
-    value.action === "rotate_furniture" ||
-    value.action === "remove_fence" ||
-    value.action === "put_item_in_fish_tank" ||
-    value.action === "place_item_on_pedestal" ||
-    value.action === "break_container" ||
-    value.action === "equip_wearable" ||
-    value.action === "unequip_wearable" ||
-    value.action === "dismount_transport" ||
-    value.action === "load_building_chest" ||
-    value.action === "collect_building_chest_output" ||
-    value.action === "use_warp_item" ||
-    value.action === "pan_ore" ||
-    value.action === "claim_mail_attachment" ||
-    ((value.action === "move_to_tile" ||
-      value.action === "navigate_to_destination" ||
-      value.action === "equip_tool" ||
-      value.action === "travel" ||
-      value.action === "ride_minecart" ||
-      value.action === "select_mine_elevator_floor" ||
-      value.action === "shop_purchase" ||
-      value.action === "ride_bus" ||
-      value.action === "withdraw_silo_hay" ||
-      value.action === "use_obelisk" ||
-      value.action === "toggle_animal_door" ||
-      value.action === "use_raft" ||
-      value.action === "mount_transport" ||
-      value.action === "enter_mine" ||
-      value.action === "use_mine_ladder" ||
-      value.action === "enter_exit" ||
-      value.action === "till_soil" ||
-      value.action === "pickup_forage" ||
-      value.action === "pickup_item" ||
-      value.action === "water_crop" ||
-      value.action === "water_pet_bowl" ||
-      value.action === "dismiss_modal" ||
-      value.action === "answer_dialogue" ||
-      value.action === "respond_level_up" ||
-      value.action === "water_slime_hutch_trough" ||
-      value.action === "refill_watering_can" ||
-      value.action === "harvest_crop" ||
-      value.action === "plant_seed" ||
-      value.action === "fertilize_tile" ||
-      value.action === "place_wood_fence" ||
-      value.action === "place_crab_pot" ||
-      value.action === "bait_crab_pot" ||
-      value.action === "clear_debris" ||
-      value.action === "break_resource_clump" ||
-      value.action === "fish_here" ||
-      value.action === "machine_inspect" ||
-      value.action === "machine_load" ||
-      value.action === "machine_collect_output" ||
-      value.action === "npc_relationship" ||
-      value.action === "talk_to_npc" ||
-      value.action === "pet_animal" ||
-      value.action === "pet_farm_animal" ||
-      value.action === "collect_animal_product" ||
-      value.action === "feed_animal" ||
-      value.action === "use_item" ||
-      value.action === "chop_tree" ||
-      value.action === "break_rock" ||
-      value.action === "clear_hoedirt" ||
-      value.action === "dig_artifact_spot" ||
-      value.action === "express_emote" ||
-      value.action === "face_direction" ||
-      value.action === "chest_store" ||
-      value.action === "chest_retrieve" ||
-      value.action === "chop_stump" ||
-      value.action === "plant_sapling" ||
-      value.action === "cut_weeds" ||
-      value.action === "cut_grass" ||
-      value.action === "clear_cask" ||
-      value.action === "dress_mannequin" ||
-      value.action === "set_sign_display" ||
-      value.action === "deposit_silo_hay" ||
-      value.action === "toggle_tool_light" ||
-      value.action === "scythe_crop" ||
-      value.action === "interact_npc_with_item" ||
-      value.action === "craft_item" ||
-      value.action === "cook_recipe" ||
-      value.action === "collect_crab_pot_output" ||
-      value.action === "ship_item" ||
-      value.action === "harvest_bush" ||
-      value.action === "harvest_fruit_tree" ||
-      value.action === "shake_tree" ||
-      value.action === "take_pedestal_item" ||
-      value.action === "toggle_fence_gate" ||
-      value.action === "sleep") &&
-      isRecord(value.args) &&
-      Object.keys(value.args).length <= 8 &&
-      Number.isSafeInteger(value.expectedRevision) &&
-      typeof value.deadlineMs === "number" &&
-      Number.isFinite(value.deadlineMs))
-    ? null
-    : "invalid_execution_request";
+  if (!hasExactKeys(value, ["requestId", "idempotencyKey", "action", "args", "expectedRevision", "deadlineMs"]))
+    return "invalid_request";
+  if (!isOpaqueId(value.requestId) || !isOpaqueId(value.idempotencyKey)) return "invalid_request_id";
+  if (!isExecutionAction(value.action)) return "unknown_action";
+  if (!isRecord(value.args) || Object.keys(value.args).length > EXECUTION_REQUEST_ARGUMENT_CEILING)
+    return "invalid_args";
+  if (!Number.isSafeInteger(value.expectedRevision)) return "stale_snapshot";
+  if (typeof value.deadlineMs !== "number" || !Number.isFinite(value.deadlineMs)) return "invalid_deadline";
+  return null;
 }
 
 function validateReceipt(value: Record<string, unknown>): string | null {

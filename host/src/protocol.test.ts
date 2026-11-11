@@ -7,6 +7,8 @@ import { isMachineTargetFact } from "./protocol-target-facts.js";
 import {
   MAX_BODY_PROGRAM_NODES,
   diagnoseBridgeMessage,
+  EXECUTION_REQUEST_ARGUMENT_CEILING,
+  EXECUTION_REQUEST_ARGUMENT_RULES,
   MAX_MESSAGE_BYTES,
   newEnvelope,
   type Scope,
@@ -543,6 +545,132 @@ test("execution envelope accepts published bait_crab_pot", () => {
     now,
   );
   assert.equal(validateBridgeMessage(request, scope, now), null);
+});
+
+/**
+ * One `execution_request` payload per action, well formed at the wire layer: the argument NAMES are the declaration's
+ * per-action business, so the frame carries an empty record and every action is judged as a frame rather than as a call.
+ */
+function executionRequestOf(action: string): Record<string, unknown> {
+  return {
+    requestId: "request_envelope_01",
+    idempotencyKey: "idempotency_envelope_01",
+    action,
+    args: {},
+    expectedRevision: snapshot.revision,
+    deadlineMs: now + 10_000,
+  };
+}
+
+function executionEnvelopeOf(payload: Record<string, unknown>) {
+  return { ...newEnvelope("execution_request", scope, payload, "execution_envelope_01", now), payload };
+}
+
+/**
+ * The six requirement sets an execution request answers to, one broken fact each and the code its declaration row gives.
+ *
+ * Measured on the expression this replaced, the six were partitioned across three disjuncts - `clear_fish_pond` had the
+ * key set and the two ids, 27 actions were admitted by their name alone, and 74 had `args`, `expectedRevision` and
+ * `deadlineMs` but no identity - so no action answered to all six, and not one of the 102 answered any of these six codes:
+ * a frame was either admitted or refused with the one generic `invalid_execution_request`.
+ */
+const ENVELOPE_FACTS: readonly Readonly<{
+  field: string;
+  refusal: string;
+  broken: (payload: Record<string, unknown>) => Record<string, unknown>;
+}>[] = [
+  {
+    field: "the six-key envelope",
+    refusal: "invalid_request",
+    broken: ({ requestId: _requestId, ...withoutRequestId }) => withoutRequestId,
+  },
+  {
+    field: "requestId, idempotencyKey",
+    refusal: "invalid_request_id",
+    broken: (payload) => ({ ...payload, requestId: "not an opaque id" }),
+  },
+  {
+    field: "action",
+    refusal: "unknown_action",
+    broken: (payload) => ({ ...payload, action: "sell_item" }),
+  },
+  {
+    field: "args",
+    refusal: "invalid_args",
+    broken: (payload) => ({ ...payload, args: 5 }),
+  },
+  {
+    field: "the argument ceiling",
+    refusal: "invalid_args",
+    broken: (payload) => ({
+      ...payload,
+      args: Object.fromEntries(
+        Array.from({ length: EXECUTION_REQUEST_ARGUMENT_CEILING + 1 }, (_, index) => [`argument${index}`, index]),
+      ),
+    }),
+  },
+  {
+    field: "expectedRevision",
+    refusal: "stale_snapshot",
+    broken: (payload) => ({ ...payload, expectedRevision: "4" }),
+  },
+  {
+    field: "deadlineMs",
+    refusal: "invalid_deadline",
+    broken: (payload) => ({ ...payload, deadlineMs: "soon" }),
+  },
+];
+
+test("every action's envelope answers to the same requirements, whichever action it names", () => {
+  // The population is the request declaration's own key set: an action added to the wire vocabulary and not to this test
+  // is exactly the action a hand-written list here would have hidden.
+  const actions = Object.keys(EXECUTION_REQUEST_ARGUMENT_RULES);
+  const refused = actions.filter(
+    (action) => validateBridgeMessage(executionEnvelopeOf(executionRequestOf(action)), scope, now) !== null,
+  );
+  assert.deepEqual(refused, [], `these actions' well-formed requests must be admitted: ${refused.join(", ")}`);
+
+  for (const fact of ENVELOPE_FACTS) {
+    const wrong = actions.filter(
+      (action) =>
+        validateBridgeMessage(executionEnvelopeOf(fact.broken(executionRequestOf(action))), scope, now) !==
+        fact.refusal,
+    );
+    assert.deepEqual(
+      wrong,
+      [],
+      `${fact.field}: these actions did not answer \`${fact.refusal}\` when that field was broken - ${wrong.join(", ")}`,
+    );
+  }
+});
+
+test("the wire envelope refuses a broken frame with the code the declaration gives that field", () => {
+  for (const fact of ENVELOPE_FACTS) {
+    const payload = fact.broken(executionRequestOf("move_to_tile"));
+    assert.equal(
+      validateBridgeMessage(executionEnvelopeOf(payload), scope, now),
+      fact.refusal,
+      `${fact.field}: the transport boundary must refuse the frame for the reason the declaration names`,
+    );
+    // The same frame through the send path: one requirement set, so one code. Reading it from `validateExecutionRequest`
+    // rather than trusting the literal here is what keeps these two from drifting apart in silence.
+    assert.equal(
+      validateExecutionRequest(payload, snapshot, now),
+      fact.refusal,
+      `${fact.field}: the declaration must refuse this frame with the same code the wire envelope returned`,
+    );
+  }
+  assert.equal(
+    validateBridgeMessage(
+      executionEnvelopeOf({ ...executionRequestOf("move_to_tile"), action: "sell_item" }),
+      scope,
+      now,
+    ),
+    "unknown_action",
+    "the wire vocabulary is the request declaration's key set, read once; this frame reported invalid_execution_request " +
+      "before, because the vocabulary was a list of id literals in the arm itself, and unknown_action is the more correct " +
+      "of the two because every member of the frame is well formed and the action is the single fact that is wrong",
+  );
 });
 
 test("protocol envelope rejects mismatched identity, version, stale timestamps, and unknown types", () => {
