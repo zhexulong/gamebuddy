@@ -1025,7 +1025,8 @@ async function measure(root) {
 
 function recordBaseline(root, measured) {
   const reasons = recordedReasons(root);
-  const withReason = (entry) => (reasons.has(entry.id) ? { ...entry, reason: reasons.get(entry.id) } : entry);
+  const withReason = (kind) => (entry) =>
+    reasons.has(`${kind}:${entry.id}`) ? { ...entry, reason: reasons.get(`${kind}:${entry.id}`) } : entry;
   const baseline = {
     note: BASELINE_NOTE,
     revision: readRevision(root),
@@ -1045,13 +1046,13 @@ function recordBaseline(root, measured) {
           value,
           ...(saturated === true ? { saturated: true } : {}),
         }))
-        .map(withReason),
+        .map(withReason("members")),
     ),
     classes: sortedById(
       measured.types
         .filter((type) => type.value > CLASS_BOUND)
         .map(({ id, name, parts, file, line, value }) => ({ id, name, parts, file, line, value }))
-        .map(withReason),
+        .map(withReason("classes")),
     ),
     sizes: sortedById(
       measured.types
@@ -1066,7 +1067,7 @@ function recordBaseline(root, measured) {
           lines,
           methods,
         }))
-        .map(withReason),
+        .map(withReason("sizes")),
     ),
   };
   mkdirSync(dirname(join(root, BASELINE_PATH)), { recursive: true });
@@ -1075,18 +1076,22 @@ function recordBaseline(root, measured) {
 }
 
 /**
- * The `reason` each recorded entry already carries, so `--update` re-records a value without erasing why it was
- * bought. A reason describes a commit that added statements to the entry; the entry's number is repeated in the
- * text, so a later growth makes the stale reason visible to the reader instead of silently travelling with it.
+ * The `reason` each recorded entry already carries, keyed `<kind>:<id>` so a reason stays on the row it explains:
+ * `cs:ExecutionManager` is both a class-complexity entry and a size entry, and growth in its LINES must not put a
+ * line-shaped reason on the complexity row. A reason describes a commit that added statements to the entry, and the
+ * entry's number is repeated in the text, so a later growth makes the stale reason visible to the reader instead of
+ * silently travelling with it.
  */
 function recordedReasons(root) {
   const path = join(root, BASELINE_PATH);
   if (!existsSync(path)) return new Map();
   const previous = JSON.parse(readFileSync(path, "utf8"));
   return new Map(
-    [...(previous.members ?? []), ...(previous.classes ?? []), ...(previous.sizes ?? [])]
-      .filter((entry) => typeof entry.reason === "string")
-      .map((entry) => [entry.id, entry.reason]),
+    ["members", "classes", "sizes"].flatMap((kind) =>
+      (previous[kind] ?? [])
+        .filter((entry) => typeof entry.reason === "string")
+        .map((entry) => [`${kind}:${entry.id}`, entry.reason]),
+    ),
   );
 }
 

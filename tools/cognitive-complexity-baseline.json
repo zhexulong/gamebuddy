@@ -1226,8 +1226,7 @@
       "parts": 47,
       "file": "integrations/stardew/farmhandexecutioncontroller.actorstateactions.cs",
       "line": 143,
-      "value": 4771,
-      "reason": "28,097 -> 28,104 lines: commit 4da075af fixed a live defect - an execution body was never released after tilling, watering, harvesting or feeding - by making sixteen terminal paths announce the body idle through PublishIdleAfterRelease, across the farmingconstruction, machinesanimalsitems, petbowl, resourcetool and slimehutchtrough partials. The growth is bought and paid for; 28,104 is the frozen ceiling now, not a new allowance."
+      "value": 4771
     },
     {
       "id": "cs:ModEntry",

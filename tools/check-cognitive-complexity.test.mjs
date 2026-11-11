@@ -683,3 +683,47 @@ test("cli: --update keeps the reason recorded for an entry", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("cli: --update keeps a reason on the row it explains, not on the same id in another section", () => {
+  const root = fixtureRoot();
+  const baselinePath = join(root, "tools", "cognitive-complexity-baseline.json");
+  try {
+    writeBiomeConfig(root);
+    writeTypeScriptSource(root, 0);
+    const padding = Array.from({ length: CLASS_LINE_CEILING }, (_, index) => `    // line ${index}`).join("\n");
+    const methods = Array.from(
+      { length: 11 },
+      (_, index) => `    public void Run${index}(int a)\n    {\n${csharpMember(20)}\n    }`,
+    ).join("\n");
+    writeFileSync(
+      join(root, "integrations", "stardew", "Big.cs"),
+      `namespace Fixture\n{\n  public class Big\n  {\n${padding}\n${methods}\n  }\n}\n`,
+    );
+    assert.equal(run(root, ["--update"]).status, 0);
+    const first = JSON.parse(readFileSync(baselinePath, "utf8"));
+    // One type, two rows: 220 complexity over the class bound and over the line ceiling at once.
+    assert.deepEqual(
+      first.classes.map((entry) => entry.id),
+      ["cs:Fixture.Big"],
+    );
+    assert.deepEqual(
+      first.sizes.map((entry) => entry.id),
+      ["cs:Fixture.Big"],
+    );
+    first.sizes[0].reason = "bought by a fixture commit";
+    writeFileSync(baselinePath, `${JSON.stringify(first, null, 2)}\n`);
+    assert.equal(run(root, ["--update"]).status, 0);
+    const again = JSON.parse(readFileSync(baselinePath, "utf8"));
+    assert.deepEqual(
+      again.sizes.map((entry) => entry.reason),
+      ["bought by a fixture commit"],
+    );
+    assert.deepEqual(
+      again.classes.map((entry) => entry.reason),
+      [undefined],
+      "a line-shaped reason is not a class one",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
