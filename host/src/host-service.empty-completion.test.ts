@@ -84,7 +84,7 @@ function scriptedSession(answers: readonly Answer[]) {
         emit({ type: "message_start", message: { role: "user", content: [{ type: "text", text: batch }] } });
         emit({ type: "message_start", message: ASSISTANT_START });
         if (answer === "tool") {
-          // The one event that means "this turn acted": it is what `turnProducedWork` reads.
+          // The one event that means "this turn acted": it is what `turnProduction` reads.
           emit({ type: "tool_execution_start", toolCallId: "call_1", toolName: "stardew_observe" });
           emit({ type: "message_end", message: toolEnd });
         } else if (answer === "tool_call") {

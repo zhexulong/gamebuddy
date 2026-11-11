@@ -5,6 +5,7 @@ import type { CompanionLiveSourceEvidenceSink } from "./companion-live-source-at
 import { isRefusedTurnEvent } from "./companion-turn-refusal.js";
 import {
   CompanionEventPump,
+  TURN_PRODUCTION,
   type CompanionTurnOutcome,
   type DeliveryDisposition,
   type PendingBatch,
@@ -697,7 +698,14 @@ export class CompanionLoop {
       // the turn completed. `unobserved` is impossible here — reaching this point means the turn ran.
       return turnOutcome ?? "completed";
     } finally {
-      this.pump.turnProducedWork = producedWork;
+      // What this turn DID, in the three states the pump acts on separately: `worked` clears the narration run, `spoke`
+      // extends it, `said_nothing` ends it. `producedText` and not `producedToolCall` is the second half, because a
+      // message that ASKED for a tool and ran none did not narrate.
+      this.pump.turnProduction = producedWork
+        ? TURN_PRODUCTION.worked
+        : producedText
+          ? TURN_PRODUCTION.spoke
+          : TURN_PRODUCTION.saidNothing;
       // One line per turn that had text to deliver: THREE populations, each counted where it was measured - the parts Pi's
       // stream produced, the parts the projection reported as presented, and the parts it named as withheld with a reason.
       // The record carries no residual: a stored difference reads like a fourth measurement and, summed across turns with

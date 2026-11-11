@@ -222,7 +222,7 @@ export const MEASURED_TURN_CADENCE_MS = 42_324;
  * `EXECUTION_STALL_BOUND_MS`, and at the measured cadence that is 2.84 turns - so the first whole turn past it is 3. A
  * companion who speaks once and then works (the ordinary shape, and the reason the retired bound was 2) is never named;
  * one who speaks three turns running is. Later facts re-arm by `EXECUTION_STALL_REARM_MULTIPLE`, so forty narration
- * turns are four facts (3, 12, 21, 30) rather than forty.
+ * turns are five facts (3, 12, 21, 30, 39) rather than forty.
  */
 export const NARRATION_WITHOUT_WORK_TURNS = Math.ceil(EXECUTION_STALL_BOUND_MS / MEASURED_TURN_CADENCE_MS);
 
@@ -1414,8 +1414,8 @@ export class CompanionEventPump {
    * <p>
    * It carries no prose and no instruction: the payload says what happened (`turns`, `lastToolTurnAgoMs`) and the prompt
    * floor already states the rules, so this is a fact beside the block rather than a scolding. `narrationFactsSoFar` is
-   * what keeps it bounded - `narrationWithoutWorkThreshold` moves the next one out, so forty narration turns are four
-   * facts.
+   * what keeps it bounded - `narrationWithoutWorkThreshold` moves the next one out, so forty narration turns are five
+   * facts rather than forty.
    * </p>
    */
   public takeNarrationWithoutWorkFact(): WorldFact | undefined {
