@@ -499,16 +499,32 @@ test("(vi) the populations are parsed from the registry source, not listed here"
       "place_owned_object",
       /* "commented_out" */ "remove_fence",
     ] as const);
+    export const MOD_DESCRIPTOR_REQUIREMENTS = Object.freeze({
+      place_owned_object: [publishesArguments("x", "y")],
+      put_item_in_fish_tank: [
+        publishesArguments("x", "y", "slot"),
+        WRITES_EFFECT,
+      ],
+    } satisfies Record<string, readonly unknown[]>);
     export function isModDescriptorComplete(actionId, descriptor) {
-      if (actionId === "place_owned_object") return true;
-      if (actionId === "put_item_in_fish_tank") return true;
-      return false;
+      return actionId === "a_chain_is_no_longer_the_population";
     }
   `);
   assert.deepEqual(populated.adapters, ["place_owned_object", "remove_placed_item"]);
   assert.deepEqual(populated.toolNames, ["place_owned_object", "rotate_furniture"]);
   assert.deepEqual(populated.descriptorDerived, ["place_owned_object", "remove_fence"]);
-  assert.deepEqual(populated.descriptorValidators, ["place_owned_object", "put_item_in_fish_tank"]);
+  assert.deepEqual(
+    populated.descriptorValidators,
+    ["place_owned_object", "put_item_in_fish_tank"],
+    "the arms are the requirement table's rows: a nested requirement is not a row, and the old arm chain is not read",
+  );
+});
+
+test("(vi) a population that measured nothing is blocked and names the direction", () => {
+  const report = checkPopulationAgreement({ ...cleanPopulations(), descriptorValidators: [] });
+  assert.equal(report.status, "blocked", "an empty population agrees with every other population, so it is no pass");
+  assert.deepEqual(report.emptyPopulations, ["descriptorValidators"]);
+  assert.deepEqual(report.differences, []);
 });
 
 test("(vii) --skip-compile is parsed, and the rung says the build was skipped instead of passed", () => {
@@ -534,7 +550,7 @@ test("(vii) a disagreeing population skips the build, because the member is alre
       'export const STARDEW_ACTION_ADAPTERS = Object.freeze([actionAdapter("only_action", "a", "b", ["c"])]);\n' +
       'export const STARDEW_ACTION_TOOL_NAMES = {\n  only_action: "stardew_only_action",\n  rotate_furniture: "stardew_rotate_furniture",\n};\n' +
       'export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze(["only_action"] as const);\n' +
-      'export function isModDescriptorComplete(actionId, descriptor) { return actionId === "only_action"; }\n',
+      "export const MOD_DESCRIPTOR_REQUIREMENTS = Object.freeze({\n  only_action: [WRITES_EFFECT],\n});\n",
     publishedIds: () => ["only_action"],
     compile: () => (compiled++, { status: "passed", ms: 1 }),
   });

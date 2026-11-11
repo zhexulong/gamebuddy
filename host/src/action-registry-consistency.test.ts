@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  MOD_DESCRIPTOR_REQUIREMENTS,
   STARDEW_ACTION_ADAPTERS,
   STARDEW_ACTION_TOOL_NAMES,
   STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS,
@@ -405,6 +406,50 @@ test("the mounted descriptor-derived set is exactly the published set whose arm 
     `mounted tools differ from the actions whose arm opens: ${failures.join(" | ")}`,
   );
   assert.deepEqual(failures, [], `the mount ledger is inconsistent: ${failures.join(" | ")}`);
+});
+
+/**
+ * The requirement table IS the gate, so it is walked rather than trusted.
+ *
+ * Each row is a claim about what the mounted tool needs, and a claim is only worth the refusal it prints. So every
+ * requirement is violated on the Mod's OWN published descriptor for that action - the producer's output, not a
+ * fixture - and three things must follow: the requirement itself goes unmet, the gate shuts on the copy, and the
+ * refusal still names the field it asked for. A requirement no valid descriptor can fail is a comment, one whose
+ * violated copy still opens the gate is a requirement the gate never reads, and a refusal that stops naming its
+ * field stops being usable by the reader who has to fix the Mod.
+ */
+test("every requirement in the table is one the gate reads, on the Mod's own descriptor", () => {
+  const published = new Map(loadActionSurface().map((action) => [action.actionId, action]));
+  const failures: string[] = [];
+  let examined = 0;
+  for (const actionId of STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS) {
+    const action = published.get(actionId);
+    if (action === undefined) {
+      failures.push(`requirements_for_an_action_the_artifact_does_not_publish:${actionId}`);
+      continue;
+    }
+    const descriptor = publishedDescriptor(action);
+    if (!isModDescriptorComplete(actionId, descriptor)) {
+      failures.push(`requirements_reject_the_publishers_own_descriptor:${actionId}`);
+      continue;
+    }
+    for (const required of MOD_DESCRIPTOR_REQUIREMENTS[actionId]) {
+      examined += 1;
+      if (!required.refusal.includes(required.field)) {
+        failures.push(`refusal_does_not_name_its_field:${actionId}:${required.field}`);
+      }
+      const violated = required.violated(descriptor);
+      if (required.isMet(violated)) failures.push(`requirement_not_violated:${actionId}:${required.field}`);
+      else if (isModDescriptorComplete(actionId, violated))
+        failures.push(`requirement_is_not_read_by_the_gate:${actionId}:${required.field}`);
+    }
+  }
+  // Zero population is BLOCKED, never green: a table that states nothing makes this loop agree with itself.
+  assert.ok(
+    examined > 0,
+    "blocked: the requirement table states nothing for any action, so this gate examines nothing",
+  );
+  assert.deepEqual(failures, [], "the requirement table and the gate have drifted apart");
 });
 
 /**

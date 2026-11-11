@@ -471,14 +471,6 @@
       "value": 38
     },
     {
-      "id": "ts:host/src/action-registry.ts#isModDescriptorComplete",
-      "language": "ts",
-      "name": "host/src/action-registry.ts#isModDescriptorComplete",
-      "file": "host/src/action-registry.ts",
-      "line": 934,
-      "value": 255
-    },
-    {
       "id": "ts:host/src/body-program-for-each.ts#readPredicate",
       "language": "ts",
       "name": "host/src/body-program-for-each.ts#readPredicate",
@@ -509,14 +501,6 @@
       "file": "host/src/companion-loop.ts",
       "line": 245,
       "value": 60
-    },
-    {
-      "id": "ts:host/src/companion-loop.ts#CompanionLoop.<anonymous@407>",
-      "language": "ts",
-      "name": "host/src/companion-loop.ts#CompanionLoop.<anonymous@407>",
-      "file": "host/src/companion-loop.ts",
-      "line": 407,
-      "value": 83
     },
     {
       "id": "ts:host/src/companion-speech-incremental.ts#findSentenceEnd",

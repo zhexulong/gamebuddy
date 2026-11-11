@@ -1,4 +1,9 @@
-import { type ActionRegistration, isValidActionDescriptor } from "./protocol.js";
+import {
+  type ActionDescriptorArgument,
+  type ActionRegistration,
+  type ActionRegistrationDescriptor,
+  isValidActionDescriptor,
+} from "./protocol.js";
 
 export type ActionLifecycle = ActionRegistration["lifecycle"];
 
@@ -867,42 +872,39 @@ export function isDescriptorDerivedActionId(actionId: string): actionId is Stard
   return (STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS as readonly string[]).includes(actionId);
 }
 
+/**
+ * The published arguments of either legal shape, read once for every question the Host asks about them.
+ *
+ * Two shapes reach this gate and both must be read: the hello_ack wire form — `arguments`, an array of
+ * {name,type} — and the action-surface form — `argumentSchema`, keyed by name (BridgeProtocolModels.cs:150-158).
+ * A reader per question is how a completeness gate came to accept one shape while the mount could only use the
+ * other, so every reader below goes through this one and nothing restates the shapes.
+ */
+function publishedArguments(descriptor: ActionRegistrationDescriptor): readonly ActionDescriptorArgument[] {
+  if (descriptor.arguments !== undefined) return descriptor.arguments;
+  const schema = descriptor.argumentSchema;
+  if (schema === undefined) return [];
+  return Object.entries(schema).map(([name, argument]) => ({
+    name,
+    type: argument.type,
+    ...(argument.enum === undefined ? {} : { enum: argument.enum }),
+    ...(argument.description === undefined ? {} : { description: argument.description }),
+  }));
+}
+
 export function getDescriptorArgument(
   descriptor: ActionRegistration["descriptor"],
   argumentName: string,
-): { name: string; type: string; enum?: readonly string[]; boundedEnumValues?: readonly string[] } | undefined {
+): ActionDescriptorArgument | undefined {
   if (!descriptor) return undefined;
-  if (Array.isArray(descriptor.arguments)) {
-    const found = descriptor.arguments.find((arg) => arg.name === argumentName);
-    if (found) return found;
-  }
-  if (descriptor.argumentSchema && isRecord(descriptor.argumentSchema)) {
-    const schema = descriptor.argumentSchema[argumentName];
-    if (schema) {
-      return {
-        name: argumentName,
-        type: schema.type,
-        ...(schema.enum === undefined ? {} : { enum: schema.enum }),
-      };
-    }
-  }
-  return undefined;
+  return publishedArguments(descriptor).find((argument) => argument.name === argumentName);
 }
 
-/**
- * Two legal descriptor shapes reach this gate and both must be read:
- *   * the hello_ack wire form — `arguments` (an array of {name,type}) plus `postcondition` as
- *     `{ name }` (BridgeProtocolModels.cs:150-158);
- *   * the action-surface form — `argumentSchema` (an object keyed by name).
- * Reading only one is how a completeness gate can look present and still shut on the descriptor that
- * actually arrives, so both readers below accept either shape and compare the whole name list in
- * order.
- */
+/** The published argument names in wire order, or `undefined` when the descriptor states no argument shape. */
 function publishedArgumentNames(descriptor: ActionRegistration["descriptor"]): readonly string[] | undefined {
   if (!descriptor) return undefined;
-  if (Array.isArray(descriptor.arguments)) return descriptor.arguments.map((argument) => argument.name);
-  if (descriptor.argumentSchema && isRecord(descriptor.argumentSchema)) return Object.keys(descriptor.argumentSchema);
-  return undefined;
+  if (descriptor.arguments === undefined && descriptor.argumentSchema === undefined) return undefined;
+  return publishedArguments(descriptor).map((argument) => argument.name);
 }
 
 function hasExactPublishedArgumentNames(
@@ -931,393 +933,357 @@ export function getArgumentEnum(
   return undefined;
 }
 
+/**
+ * One fact a mounted tool requires of the descriptor its Mod owner published.
+ *
+ * `field` and `shape` are what a refusal points at, and `refusal` is the sentence it prints: a reader told "the
+ * published descriptor's `nativeBinding` must be the non-empty name of the engine member the action drives" knows
+ * which member of the Mod's record to look at, which is the whole value of the gate. `violated` is the same
+ * descriptor with that one fact removed, so a test can walk the table instead of trusting it.
+ */
+export type DescriptorRequirement = Readonly<{
+  field: string;
+  shape: string;
+  refusal: string;
+  isMet: (descriptor: ActionRegistrationDescriptor) => boolean;
+  violated: (descriptor: ActionRegistrationDescriptor) => ActionRegistrationDescriptor;
+}>;
+
+function requirement(
+  field: string,
+  shape: string,
+  because: string,
+  isMet: DescriptorRequirement["isMet"],
+  violated: DescriptorRequirement["violated"],
+): DescriptorRequirement {
+  return Object.freeze({
+    field,
+    shape,
+    refusal: `the published descriptor's \`${field}\` must be ${shape}, because ${because}`,
+    isMet,
+    violated,
+  });
+}
+
+/** `arguments`: the exact published names, in wire order — the shape the mount forwards. */
+function publishesArguments(...names: readonly string[]): DescriptorRequirement {
+  return requirement(
+    "arguments",
+    names.length === 0 ? "no arguments at all" : `exactly [${names.join(", ")}], in that order`,
+    "the mount forwards those names in that order and the Mod validates the request against them",
+    (descriptor) => hasExactPublishedArgumentNames(descriptor, names),
+    // Dropping one name is the smallest faithful violation: an extra name is refused too, but it would prove the
+    // other half of the rule.
+    (descriptor) => {
+      const { argumentSchema: _schema, ...wire } = descriptor;
+      return {
+        ...wire,
+        arguments:
+          names.length === 0
+            ? [{ name: "unexpected", type: "string" }]
+            : names.slice(1).map((name) => ({ name, type: "string" })),
+      };
+    },
+  );
+}
+
+/** One published argument declared as the type the Mod validates the request against. */
+function publishesArgumentType(name: string, type: string): DescriptorRequirement {
+  return requirement(
+    name,
+    `published as the argument \`${name}\` of type "${type}"`,
+    "the Mod validates the request against the type its descriptor declares",
+    (descriptor) => getDescriptorArgument(descriptor, name)?.type === type,
+    (descriptor) =>
+      withPublishedArgument(descriptor, name, (argument) => ({
+        ...argument,
+        type: type === "string" ? "integer" : "string",
+      })),
+  );
+}
+
+/** One argument's closed vocabulary: the values the Mod's own acceptance admits, and refuses everything outside of. */
+function publishesArgumentEnum(name: string): DescriptorRequirement {
+  return requirement(
+    name,
+    `an argument \`${name}\` carrying a non-empty enum`,
+    "the Mod's registry acceptance refuses every value outside the published vocabulary, so a descriptor that publishes none describes an argument nothing can satisfy",
+    (descriptor) => getArgumentEnum(getDescriptorArgument(descriptor, name)) !== undefined,
+    (descriptor) =>
+      withPublishedArgument(descriptor, name, ({ enum: _enum, boundedEnumValues: _bounded, ...argument }) => argument),
+  );
+}
+
+/**
+ * The descriptor rewritten into the wire shape with exactly one published argument changed.
+ *
+ * The rewrite lands in `arguments` because that is the shape both readers consult first: a violated copy that kept
+ * its `argumentSchema` could go on satisfying the requirement through a shape the requirement never looked at.
+ */
+function withPublishedArgument(
+  descriptor: ActionRegistrationDescriptor,
+  name: string,
+  rewrite: (argument: ActionDescriptorArgument) => ActionDescriptorArgument,
+): ActionRegistrationDescriptor {
+  const { argumentSchema: _schema, ...wire } = descriptor;
+  return {
+    ...wire,
+    arguments: publishedArguments(descriptor).map((argument) =>
+      argument.name === name ? rewrite(argument) : argument,
+    ),
+  };
+}
+
+/** `effect`: every mounted action performs a native write. */
+const WRITES_EFFECT = requirement(
+  "effect",
+  'the string "write"',
+  "a mounted action performs a native write, and the Host does not advertise an effect it cannot see",
+  (descriptor) => descriptor.effect === "write",
+  (descriptor) => ({ ...descriptor, effect: "read" }),
+);
+
+/** `postcondition`: the receipt the Mod mints for this action, by name. */
+function mintsPostcondition(name: string): DescriptorRequirement {
+  return requirement(
+    "postcondition",
+    `the name "${name}"`,
+    "that is the receipt this action's Mod owner mints when the write landed",
+    (descriptor) => publishedPostconditionName(descriptor) === name,
+    (descriptor) => ({
+      ...descriptor,
+      postcondition: {
+        name: name === "native_action_postcondition" ? "unspecified_postcondition" : "native_action_postcondition",
+      },
+    }),
+  );
+}
+
+/** `postcondition`: only its presence, on the actions whose receipt name the Host does not pin. */
+const PUBLISHES_POSTCONDITION = requirement(
+  "postcondition",
+  "some published postcondition name",
+  "the mount offers an action only where the Mod can prove the write it performed",
+  (descriptor) => publishedPostconditionName(descriptor) !== undefined,
+  (descriptor) => {
+    const { postcondition: _postcondition, ...rest } = descriptor;
+    return rest;
+  },
+);
+
+/** `nativeBinding`: the engine member the action drives, which is what the mount hands the request to. */
+const PUBLISHES_NATIVE_BINDING = requirement(
+  "nativeBinding",
+  "the non-empty name of the engine member the action drives",
+  "the mount can only offer an action whose engine member the Mod names",
+  (descriptor) => typeof descriptor.nativeBinding === "string" && descriptor.nativeBinding.length > 0,
+  (descriptor) => {
+    const { nativeBinding: _nativeBinding, ...rest } = descriptor;
+    return rest;
+  },
+);
+
+// The argument shapes the Mod publishes, each named once: a row that repeated a shape by hand would be a second
+// spelling of it, and the refusal printed beside it would drift from the one next door.
+const NO_ARGUMENTS = publishesArguments();
+const TILE_AND_TARGET = publishesArguments("x", "y", "expectedTargetId");
+const TILE_SLOT_AND_TARGET = publishesArguments("x", "y", "slot", "expectedTargetId");
+const TILE_ITEM_AND_TARGET = publishesArguments("x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId");
+
+/**
+ * What the Host requires of a descriptor before it mounts that capability, per action id.
+ *
+ * This is the admission rule as a DECLARATION rather than a ladder of comparisons: each row lists the facts its
+ * mounted tool needs, and every fact carries the sentence a refusal prints. `satisfies` holds the table to
+ * `STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS` in BOTH directions - an enrolled id without a row, or a row for an id the
+ * list does not enrol, is a compile error rather than a silent shortfall in a chain - which is strictly stronger
+ * than the per-action `if (actionId === …)` arms this replaces, and the reason those arms must not be restored. The
+ * rows are read, not restated, by `action-registry-consistency.test.ts`, which walks each one against the Mod's own
+ * published artifact.
+ */
+export const MOD_DESCRIPTOR_REQUIREMENTS = Object.freeze({
+  // The lane's placement shape: the tile, the backpack slot holding the item, the item's own wire identity and the
+  // opaque placement target, all mandatory.
+  place_owned_object: [TILE_ITEM_AND_TARGET, WRITES_EFFECT, mintsPostcondition("owned_object_placed")],
+  remove_placed_item: [TILE_SLOT_AND_TARGET, WRITES_EFFECT, mintsPostcondition("placed_item_removed")],
+  // Furniture is picked up by its own opaque target only: which backpack slot receives the piece is the game's own
+  // decision, so there is no slot argument to admit.
+  move_placed_furniture: [TILE_AND_TARGET, WRITES_EFFECT, mintsPostcondition("placed_furniture_picked_up")],
+  // The rotation the call lands on is the piece's own cycle, so there is no angle argument either.
+  rotate_furniture: [TILE_AND_TARGET, WRITES_EFFECT, mintsPostcondition("furniture_rotated")],
+  remove_fence: [TILE_SLOT_AND_TARGET, WRITES_EFFECT, mintsPostcondition("fence_removed")],
+  place_item_on_pedestal: [TILE_ITEM_AND_TARGET, WRITES_EFFECT, mintsPostcondition("pedestal_item_placed")],
+  put_item_in_fish_tank: [TILE_ITEM_AND_TARGET, WRITES_EFFECT, mintsPostcondition("fish_tank_item_deposited")],
+  break_container: [TILE_SLOT_AND_TARGET, WRITES_EFFECT, mintsPostcondition("container_source_broken")],
+  // A clump is cleared with a tool its own native switch picks, so the request names no slot: the identity-locked
+  // target plus the tile it was published at is the whole input.
+  break_resource_clump: [TILE_AND_TARGET, WRITES_EFFECT, mintsPostcondition("native_action_postcondition")],
+  // A backpack transaction with no tile: the slot the geode occupies and that geode's own wire identity.
+  open_geode: [
+    publishesArguments("slot", "expectedQualifiedItemId"),
+    WRITES_EFFECT,
+    mintsPostcondition("native_action_postcondition"),
+  ],
+  equip_wearable: [
+    publishesArguments("slot", "expectedQualifiedItemId", "expectedTargetId"),
+    WRITES_EFFECT,
+    mintsPostcondition("wearable_equipped"),
+  ],
+  unequip_wearable: [
+    publishesArguments("slot", "expectedTargetId"),
+    WRITES_EFFECT,
+    mintsPostcondition("wearable_unequipped"),
+  ],
+  dismount_transport: [NO_ARGUMENTS, WRITES_EFFECT, mintsPostcondition("transport_dismounted")],
+  // The two body-language actions the Game prompt names: a closed vocabulary of one argument each, a receipt the
+  // Host only requires to be published, and the engine member the mount hands them to.
+  express_emote: [
+    publishesArgumentType("emote", "string"),
+    publishesArgumentEnum("emote"),
+    WRITES_EFFECT,
+    PUBLISHES_POSTCONDITION,
+    PUBLISHES_NATIVE_BINDING,
+  ],
+  face_direction: [
+    publishesArgumentType("direction", "string"),
+    publishesArgumentEnum("direction"),
+    WRITES_EFFECT,
+    PUBLISHES_POSTCONDITION,
+    PUBLISHES_NATIVE_BINDING,
+  ],
+  // The offer routes through the native GameLocation.checkAction ingress (not a single method binding), so the row
+  // covers the exact five-argument shape and the write receipt instead.
+  interact_npc_with_item: [TILE_ITEM_AND_TARGET, WRITES_EFFECT, PUBLISHES_POSTCONDITION],
+  // x/y is only the tile the villager was published at; the person is named by the opaque family target id and
+  // re-resolved on the Mod's game thread.
+  talk_to_npc: [TILE_AND_TARGET, WRITES_EFFECT, mintsPostcondition("npc_talked")],
+  // Both animal families move between observation and dispatch, so the target is bound by identity and x/y is only
+  // the tile it was published at.
+  pet_animal: [TILE_AND_TARGET, WRITES_EFFECT, PUBLISHES_POSTCONDITION],
+  pet_farm_animal: [TILE_AND_TARGET, WRITES_EFFECT, PUBLISHES_POSTCONDITION],
+  // The night carries no arguments at all: the bed and the ready state are native facts.
+  sleep: [NO_ARGUMENTS, WRITES_EFFECT, mintsPostcondition("day_advanced")],
+  // `ride_minecart` has no plain-warp form, unlike `travel`: the station tile plus one advertised ride selector.
+  ride_minecart: [TILE_AND_TARGET, WRITES_EFFECT, mintsPostcondition("minecart_ride_completed")],
+  dismiss_modal: [NO_ARGUMENTS, WRITES_EFFECT, mintsPostcondition("modal_dismissed")],
+  answer_dialogue: [
+    publishesArguments("responseKey"),
+    publishesArgumentType("responseKey", "string"),
+    WRITES_EFFECT,
+    mintsPostcondition("answer_dialogue_answered"),
+  ],
+  // The choice (a closed set, so its enum is part of the contract) plus the pair the Mod validates against the menu
+  // it is holding.
+  respond_level_up: [
+    publishesArguments("choice", "expectedSkill", "expectedLevel"),
+    publishesArgumentType("choice", "string"),
+    publishesArgumentEnum("choice"),
+    publishesArgumentType("expectedSkill", "integer"),
+    publishesArgumentType("expectedLevel", "integer"),
+    WRITES_EFFECT,
+    mintsPostcondition("level_up_resolved"),
+  ],
+  // Deliberately no coordinate: walking is move_to_tile's job, and a walk failure must never be reported as a trade
+  // failure.
+  shop_purchase: [
+    publishesArguments("expectedTargetId", "expectedQualifiedItemId", "quantity"),
+    WRITES_EFFECT,
+    mintsPostcondition("item_purchased"),
+  ],
+  // The ticket machine of the current location is the whole target, so the exact wire shape is the EMPTY set.
+  ride_bus: [NO_ARGUMENTS, WRITES_EFFECT, mintsPostcondition("bus_arrived")],
+  // One opaque already-reached floor and nothing else: a coordinate would be a second source of truth for the one
+  // fact the selector already carries.
+  select_mine_elevator_floor: [
+    publishesArguments("expectedTargetId"),
+    WRITES_EFFECT,
+    mintsPostcondition("mine_elevator_floor_selected"),
+  ],
+  // The ladder KIND is re-derived on the game thread from the level's own Buildings layer, so a wrong id can never
+  // select the other ladder.
+  use_mine_ladder: [TILE_AND_TARGET, WRITES_EFFECT, mintsPostcondition("mine_left")],
+  // The silo tile plus the opaque silo selector: the Mod re-resolves the silo from the target id and refuses on its
+  // own hay and capacity preconditions.
+  withdraw_silo_hay: [TILE_AND_TARGET, WRITES_EFFECT, mintsPostcondition("silo_hay_taken")],
+  use_obelisk: [TILE_AND_TARGET, WRITES_EFFECT, mintsPostcondition("obelisk_arrived")],
+  toggle_animal_door: [TILE_AND_TARGET, WRITES_EFFECT, mintsPostcondition("animal_door_toggled")],
+  // The facility family's building shape: the Agent names the structure and never its internal state.
+  clear_fish_pond: [TILE_AND_TARGET, WRITES_EFFECT, mintsPostcondition("fish_pond_cleared")],
+  send_multiplayer_chat: [publishesArguments("text"), WRITES_EFFECT, mintsPostcondition("chat_message_sent")],
+  // The subject is the actor's own horse, so one string and nothing else.
+  name_entity: [publishesArguments("text"), WRITES_EFFECT, mintsPostcondition("entity_named")],
+  load_building_chest: [TILE_SLOT_AND_TARGET, WRITES_EFFECT, mintsPostcondition("building_chest_loaded")],
+  collect_building_chest_output: [
+    TILE_AND_TARGET,
+    WRITES_EFFECT,
+    mintsPostcondition("building_chest_output_collected"),
+  ],
+  use_warp_item: [
+    publishesArguments("slot", "expectedQualifiedItemId"),
+    WRITES_EFFECT,
+    mintsPostcondition("warp_item_arrived"),
+  ],
+  pan_ore: [publishesArguments("slot", "x", "y"), WRITES_EFFECT, mintsPostcondition("ore_panned")],
+  claim_mail_attachment: [TILE_AND_TARGET, WRITES_EFFECT, mintsPostcondition("mail_claimed")],
+  // The exterior tile the building is raised from and the opaque tile target: the cost and the placement legality
+  // are re-derived on the game thread.
+  build_farm_building: [
+    publishesArguments("buildingType", "x", "y", "expectedTargetId"),
+    WRITES_EFFECT,
+    mintsPostcondition("farm_building_built"),
+  ],
+  // The day's posted help-wanted quest, named by the opaque target id alone: the offer is native world state.
+  accept_daily_quest: [
+    publishesArguments("expectedTargetId"),
+    WRITES_EFFECT,
+    mintsPostcondition("daily_quest_accepted"),
+  ],
+  // The player team's own offered order, likewise named by the opaque target id alone.
+  accept_special_order: [
+    publishesArguments("expectedTargetId"),
+    WRITES_EFFECT,
+    mintsPostcondition("special_order_accepted"),
+  ],
+  // The museum's whole reward set is computed state, not a tile.
+  claim_museum_reward: [
+    publishesArguments("expectedTargetId"),
+    WRITES_EFFECT,
+    mintsPostcondition("museum_rewards_collected"),
+  ],
+  // The prize track head is the game's own state and the subject is the actor's own ticket stack, so there is no
+  // published target a caller could name.
+  redeem_prize_ticket: [NO_ARGUMENTS, WRITES_EFFECT, mintsPostcondition("prize_ticket_redeemed")],
+  // The sewing machine's two-slot recipe pair, named by BOTH backpack slots plus the opaque pair identity.
+  tailor_clothing: [
+    publishesArguments("leftSlot", "rightSlot", "expectedTargetId"),
+    WRITES_EFFECT,
+    mintsPostcondition("clothing_tailored"),
+  ],
+  color_placed_object: [
+    publishesArguments("x", "y", "expectedTargetId", "colorSelection"),
+    WRITES_EFFECT,
+    mintsPostcondition("placed_object_recolored"),
+  ],
+  // The same two-slot shape over the dye route: the garment slot, the dye slot and the opaque pair identity.
+  dye_clothing_with_item: [
+    publishesArguments("leftSlot", "rightSlot", "expectedTargetId"),
+    WRITES_EFFECT,
+    mintsPostcondition("clothing_dyed"),
+  ],
+} satisfies Record<StardewDescriptorDerivedActionId, readonly DescriptorRequirement[]>);
+
+/**
+ * Whether the Mod's published descriptor carries everything the Host mounts for this action.
+ *
+ * A lookup and a fold over `MOD_DESCRIPTOR_REQUIREMENTS`, so the rule lives in one declaration. `false` covers both
+ * "no such capability" and "its descriptor is short of a requirement": to every caller those are the same fact,
+ * that the action is not offered, and which fact was missing is the row's own refusal rather than a sentence made
+ * here.
+ */
 export function isModDescriptorComplete(actionId: string, descriptor: ActionRegistration["descriptor"]): boolean {
   if (!descriptor || !isValidActionDescriptor(descriptor)) return false;
-
-  if (actionId === "place_owned_object") {
-    // The lane's placement shape: the tile, the backpack slot holding the item, the item's own
-    // wire identity and the opaque placement target, all mandatory.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"]))
-      return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "owned_object_placed") return false;
-    return true;
-  }
-  if (actionId === "remove_placed_item") {
-    // The lane's tool shape: the tile, the tool slot and the opaque object target.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "placed_item_removed") return false;
-    return true;
-  }
-  if (actionId === "move_placed_furniture") {
-    // The furniture pickup shape: the tile and the piece's own opaque target - no slot, because which
-    // backpack slot receives the piece is the game's own decision.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "placed_furniture_picked_up") return false;
-    return true;
-  }
-  if (actionId === "rotate_furniture") {
-    // The same tile-and-target shape as the pickup, because it names the same physical piece; the rotation
-    // the call lands on is the piece's own cycle, so there is no angle argument to admit.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "furniture_rotated") return false;
-    return true;
-  }
-  if (actionId === "remove_fence") {
-    // The tool shape, like the sibling removal: the tile, the tool slot and the fence's own object target.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "fence_removed") return false;
-    return true;
-  }
-  if (actionId === "place_item_on_pedestal") {
-    // The item shape, with the pedestal's own target rather than a tank's.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"]))
-      return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "pedestal_item_placed") return false;
-    return true;
-  }
-  if (actionId === "put_item_in_fish_tank") {
-    // The item shape: the tile, the pack slot the item is taken from, that item's identity and the tank's target.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"]))
-      return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "fish_tank_item_deposited") return false;
-    return true;
-  }
-  if (actionId === "break_container") {
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "container_source_broken") return false;
-    return true;
-  }
-  if (actionId === "break_resource_clump") {
-    // A clump is cleared with a tool its own native switch picks, so the request names no slot: the
-    // identity-locked target plus the tile it was published at is the whole input, and the tool family the
-    // clump demands is re-derived on the game thread rather than trusted from the caller.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "native_action_postcondition") return false;
-    return true;
-  }
-  if (actionId === "open_geode") {
-    // A backpack transaction with no tile: the slice the geode occupies and that geode's own wire identity.
-    if (!hasExactPublishedArgumentNames(descriptor, ["slot", "expectedQualifiedItemId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "native_action_postcondition") return false;
-    return true;
-  }
-  if (actionId === "express_emote") {
-    const arg = getDescriptorArgument(descriptor, "emote");
-    if (!arg || arg.type !== "string") return false;
-    const enumVals = getArgumentEnum(arg);
-    if (!enumVals || enumVals.length === 0) return false;
-    if (descriptor.effect !== "write") return false;
-    if (!descriptor.postcondition) return false;
-    if (!descriptor.nativeBinding) return false;
-    return true;
-  }
-  if (actionId === "face_direction") {
-    const arg = getDescriptorArgument(descriptor, "direction");
-    if (!arg || arg.type !== "string") return false;
-    const enumVals = getArgumentEnum(arg);
-    if (!enumVals || enumVals.length === 0) return false;
-    if (descriptor.effect !== "write") return false;
-    if (!descriptor.postcondition) return false;
-    if (!descriptor.nativeBinding) return false;
-    return true;
-  }
-  if (actionId === "interact_npc_with_item") {
-    // The offer routes through the native GameLocation.checkAction ingress
-    // (not a single method binding), so the complete-descriptor gate covers
-    // the exact five-argument shape and the write postcondition instead.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId"]))
-      return false;
-    if (descriptor.effect !== "write") return false;
-    if (!descriptor.postcondition) return false;
-    return true;
-  }
-  if (actionId === "pet_animal") {
-    // An animal moves between observation and dispatch, so the pet target is
-    // bound by identity (expectedTargetId) with live coordinates as geometry,
-    // matching the Mod's identity-locked admission.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (!descriptor.postcondition) return false;
-    return true;
-  }
-  if (actionId === "pet_farm_animal") {
-    // A farm animal wanders inside its building, so the same identity binding applies:
-    // expectedTargetId names the animal, and x/y is only the tile it was published at,
-    // which the Mod uses as the approach destination and never as the petting address.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (!descriptor.postcondition) return false;
-    return true;
-  }
-  if (actionId === "talk_to_npc") {
-    // The NPC family's shared { x, y, expectedTargetId } shape. x/y is only the tile the
-    // villager was published at (the walk leg's destination); the person is named by the
-    // opaque family target id and re-resolved on the Mod's game thread.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "npc_talked") return false;
-    return true;
-  }
-  if (actionId === "ride_minecart") {
-    // The station tile plus one opaque advertised ride selector, both mandatory:
-    // `ride_minecart` has no "plain warp" form, unlike `travel`.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "minecart_ride_completed") return false;
-    return true;
-  }
-  if (actionId === "ride_bus") {
-    // The ticket machine of the current location is the whole target, so the exact wire shape is the
-    // EMPTY set; the fare, the driver check and the cutscene belong to the native ticket interaction.
-    if (!hasExactPublishedArgumentNames(descriptor, [])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "bus_arrived") return false;
-    return true;
-  }
-  if (actionId === "use_mine_ladder") {
-    // The ladder tile plus the opaque id its published row carries: x/y is only which tile the walk leg aims at, and
-    // the ladder KIND is re-derived on the game thread from the level's own Buildings layer. A wrong id can therefore
-    // never select the other ladder - it is refused by name with the action that owns it.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "mine_left") return false;
-    return true;
-  }
-  if (actionId === "select_mine_elevator_floor") {
-    // One opaque already-reached floor and nothing else: the native floor set is a pure function of the
-    // live MineShaft.lowestLevelReached, which the Mod re-derives, so a coordinate would be a second
-    // source of truth for the one fact the selector already carries.
-    if (!hasExactPublishedArgumentNames(descriptor, ["expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "mine_elevator_floor_selected") return false;
-    return true;
-  }
-  if (actionId === "equip_wearable") {
-    if (!hasExactPublishedArgumentNames(descriptor, ["slot", "expectedQualifiedItemId", "expectedTargetId"]))
-      return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "wearable_equipped") return false;
-    return true;
-  }
-  if (actionId === "unequip_wearable") {
-    if (!hasExactPublishedArgumentNames(descriptor, ["slot", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "wearable_unequipped") return false;
-    return true;
-  }
-  if (actionId === "dismount_transport") {
-    if (!hasExactPublishedArgumentNames(descriptor, [])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "transport_dismounted") return false;
-    return true;
-  }
-  if (actionId === "use_warp_item") {
-    if (!hasExactPublishedArgumentNames(descriptor, ["slot", "expectedQualifiedItemId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "warp_item_arrived") return false;
-    return true;
-  }
-  if (actionId === "pan_ore") {
-    if (!hasExactPublishedArgumentNames(descriptor, ["slot", "x", "y"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "ore_panned") return false;
-    return true;
-  }
-  if (actionId === "claim_mail_attachment") {
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "mail_claimed") return false;
-    return true;
-  }
-  if (actionId === "load_building_chest") {
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "slot", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "building_chest_loaded") return false;
-    return true;
-  }
-  if (actionId === "collect_building_chest_output") {
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "building_chest_output_collected") return false;
-    return true;
-  }
-  if (actionId === "withdraw_silo_hay") {
-    // The silo tile plus the opaque silo selector, both mandatory: the Mod re-resolves the silo
-    // from the target id and refuses on its own hay and capacity preconditions.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "silo_hay_taken") return false;
-    return true;
-  }
-  if (actionId === "clear_fish_pond") {
-    // The facility family's building shape: the pond's interaction tile plus the opaque pond
-    // selector, both mandatory. The Agent names the structure and never its internal state.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "fish_pond_cleared") return false;
-    return true;
-  }
-  if (actionId === "send_multiplayer_chat") {
-    // One string and nothing else: the action has no body, no geometry and no target, so any
-    // other argument name would mean the descriptor grew something the action cannot use.
-    if (!hasExactPublishedArgumentNames(descriptor, ["text"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "chat_message_sent") return false;
-    return true;
-  }
-  if (actionId === "name_entity") {
-    // One string and nothing else: the subject is the actor's own horse, so any other argument
-    // name would mean the descriptor grew something the action cannot use.
-    if (!hasExactPublishedArgumentNames(descriptor, ["text"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "entity_named") return false;
-    return true;
-  }
-  if (actionId === "toggle_animal_door") {
-    // Same {x,y,expectedTargetId} shape as its siblings: the building's interaction tile plus the
-    // opaque door selector, both mandatory, because the Agent names the structure and never the
-    // door's internal rectangle.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "animal_door_toggled") return false;
-    return true;
-  }
-  if (actionId === "use_obelisk") {
-    // Same shape as ride_minecart: the structure's tile plus the opaque obelisk selector, both
-    // mandatory, because the Agent names the structure and never the destination.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "obelisk_arrived") return false;
-    return true;
-  }
-  if (actionId === "dismiss_modal") {
-    // No arguments at all: the exact wire shape is the EMPTY set, and the Host rejects extra or
-    // missing keys, so there is nothing to name here. The postcondition is the one the Mod mints.
-    if (!hasExactPublishedArgumentNames(descriptor, [])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "modal_dismissed") return false;
-    return true;
-  }
-  if (actionId === "answer_dialogue") {
-    if (!hasExactPublishedArgumentNames(descriptor, ["responseKey"])) return false;
-    const argument = getDescriptorArgument(descriptor, "responseKey");
-    if (!argument || argument.type !== "string") return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "answer_dialogue_answered") return false;
-    return true;
-  }
-  if (actionId === "respond_level_up") {
-    // The choice (a closed set, so the descriptor's enum is part of the contract) plus the pair the Mod
-    // validates against the menu it is holding.
-    if (!hasExactPublishedArgumentNames(descriptor, ["choice", "expectedSkill", "expectedLevel"])) return false;
-    const choice = getDescriptorArgument(descriptor, "choice");
-    const skill = getDescriptorArgument(descriptor, "expectedSkill");
-    const level = getDescriptorArgument(descriptor, "expectedLevel");
-    if (!choice || choice.type !== "string" || !skill || skill.type !== "integer" || !level || level.type !== "integer")
-      return false;
-    // The vocabulary is part of the contract, not a decoration: the Mod's registry acceptance refuses
-    // every value outside it (`FarmhandExecutionAcceptance`), so a descriptor that publishes none
-    // describes an argument nothing can satisfy - and the Host's tool schema could not state the
-    // model-facing domain either.
-    if (getArgumentEnum(choice) === undefined) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "level_up_resolved") return false;
-    return true;
-  }
-  if (actionId === "shop_purchase") {
-    // The opaque shop the actor already stands next to, the good's wire identity and how many units:
-    // deliberately no coordinate, because walking is move_to_tile's job and a walk failure must never be
-    // reported as a trade failure.
-    if (!hasExactPublishedArgumentNames(descriptor, ["expectedTargetId", "expectedQualifiedItemId", "quantity"]))
-      return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "item_purchased") return false;
-    return true;
-  }
-  if (actionId === "sleep") {
-    // The night carries no arguments at all: the bed and the ready state are
-    // native facts, so the complete-descriptor gate is the empty argument list
-    // plus the declared day-advanced postcondition.
-    if (!hasExactPublishedArgumentNames(descriptor, [])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "day_advanced") return false;
-    return true;
-  }
-  if (actionId === "build_farm_building") {
-    // The blueprint the Agent chooses plus the exterior tile the building is raised from and the opaque
-    // tile target, all mandatory: the cost and the placement legality are re-derived on the game thread.
-    if (!hasExactPublishedArgumentNames(descriptor, ["buildingType", "x", "y", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "farm_building_built") return false;
-    return true;
-  }
-  if (actionId === "accept_daily_quest") {
-    // The day's posted help-wanted quest, named by the opaque target id alone: the offer is native world
-    // state rather than a tile, so there is no coordinate to carry.
-    if (!hasExactPublishedArgumentNames(descriptor, ["expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "daily_quest_accepted") return false;
-    return true;
-  }
-  if (actionId === "accept_special_order") {
-    // One offered special order, named by the opaque target id alone: the offer is the player team's own
-    // state rather than a tile, so there is no coordinate to carry.
-    if (!hasExactPublishedArgumentNames(descriptor, ["expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "special_order_accepted") return false;
-    return true;
-  }
-  if (actionId === "claim_museum_reward") {
-    // The museum's whole reward set, named by the opaque target id alone: the set is computed state, not a
-    // tile, so there is no coordinate to carry.
-    if (!hasExactPublishedArgumentNames(descriptor, ["expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "museum_rewards_collected") return false;
-    return true;
-  }
-  if (actionId === "redeem_prize_ticket") {
-    // No arguments at all: the prize track head is the game's own state (`ticketPrizesClaimed`) and the
-    // subject is the actor's own ticket stack, so there is no published target a caller could name. The
-    // exact wire shape is the EMPTY set, and the Host rejects extra or missing keys.
-    if (!hasExactPublishedArgumentNames(descriptor, [])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "prize_ticket_redeemed") return false;
-    return true;
-  }
-  if (actionId === "tailor_clothing") {
-    // The sewing machine's two-slot recipe pair, named by BOTH backpack slots plus the opaque pair
-    // identity: the subject is the actor's own backpack, not a world tile, so there is no coordinate.
-    if (!hasExactPublishedArgumentNames(descriptor, ["leftSlot", "rightSlot", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "clothing_tailored") return false;
-    return true;
-  }
-  if (actionId === "color_placed_object") {
-    // The chest drawer's tile, the opaque target id, and the palette index the repaint asks for.
-    if (!hasExactPublishedArgumentNames(descriptor, ["x", "y", "expectedTargetId", "colorSelection"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "placed_object_recolored") return false;
-    return true;
-  }
-  if (actionId === "dye_clothing_with_item") {
-    // The same two-slot shape over the dye route: the garment slot, the dye slot and the opaque pair
-    // identity.
-    if (!hasExactPublishedArgumentNames(descriptor, ["leftSlot", "rightSlot", "expectedTargetId"])) return false;
-    if (descriptor.effect !== "write") return false;
-    if (publishedPostconditionName(descriptor) !== "clothing_dyed") return false;
-    return true;
-  }
-  return false;
+  if (!isDescriptorDerivedActionId(actionId)) return false;
+  return MOD_DESCRIPTOR_REQUIREMENTS[actionId].every((required) => required.isMet(descriptor));
 }
 
 /**

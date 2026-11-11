@@ -513,9 +513,12 @@ export function parseActionPopulations(source) {
     (match) => match[1],
   );
   const descriptorDerived = quotedArray(plain, "STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze(");
-  const gate = functionBody(plain, "isModDescriptorComplete");
-  if (gate === null) throw new Error("prelive_block_missing:isModDescriptorComplete");
-  const descriptorValidators = [...gate.body.matchAll(/actionId === "([a-z0-9_]+)"/gu)].map((match) => match[1]);
+  // The descriptor arms are the requirement table's ROWS: one admission rule per capability, keyed by its action id.
+  // This used to be parsed out of `isModDescriptorComplete` as `actionId === "<id>"` comparisons, and it fell from 47
+  // to 0 the moment that chain became a table - silently, because an empty population agrees with everything. The
+  // zero-population guard below is what makes that fall loud instead.
+  const table = braceBlock(plain, "MOD_DESCRIPTOR_REQUIREMENTS = Object.freeze(");
+  const descriptorValidators = [...table.matchAll(/^\s*([a-z0-9_]+): \[/gmu)].map((match) => match[1]);
   return { adapters, toolNames, descriptorDerived, descriptorValidators };
 }
 
@@ -527,12 +530,20 @@ export const POPULATION_LABELS = Object.freeze({
   descriptor_derived_without_adapter:
     "STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS lists it, but no actionAdapter(...) entry carries it",
   descriptor_validator_without_adapter:
-    "isModDescriptorComplete has an arm for it, but no actionAdapter(...) entry carries it",
+    "MOD_DESCRIPTOR_REQUIREMENTS has a row for it, but no actionAdapter(...) entry carries it",
   published_without_adapter: "the Mod publishes it as an execution action, but no actionAdapter(...) entry carries it",
 });
 
 /** Every population against the adapter list, each difference carrying its direction and the member by name. */
 export function checkPopulationAgreement({ adapters, toolNames, descriptorDerived, descriptorValidators, published }) {
+  const populations = { adapters, toolNames, descriptorDerived, descriptorValidators, published };
+  // A population that measured NOTHING agrees with every other population: all five directions below report no
+  // difference and the rung reads green while examining nothing. Measured 2026-11-13: `descriptorValidators` fell
+  // from 47 to 0 when the arm chain it was parsed out of became a declaration, and this rung stayed green. So zero
+  // is `blocked` and names the direction, in the same spirit as a gate refusing to pass on `examined 0`.
+  const emptyPopulations = Object.entries(populations)
+    .filter(([, ids]) => ids.length === 0)
+    .map(([name]) => name);
   const adapterIds = new Set(adapters);
   const names = new Set(toolNames);
   const difference = (direction, ids, members) =>
@@ -547,8 +558,13 @@ export function checkPopulationAgreement({ adapters, toolNames, descriptorDerive
     ...difference("descriptor_validator_without_adapter", descriptorValidators, adapterIds),
     ...difference("published_without_adapter", published, adapterIds),
   ];
+  // A disagreement is `failed`, but a population that measured nothing outranks it: the disagreement itself would be
+  // a verdict about a scan that never happened.
+  let status = "passed";
+  if (differences.length > 0) status = "failed";
+  if (emptyPopulations.length > 0) status = "blocked";
   return {
-    status: differences.length === 0 ? "passed" : "failed",
+    status,
     counts: {
       adapters: adapterIds.size,
       toolNames: names.size,
@@ -556,6 +572,7 @@ export function checkPopulationAgreement({ adapters, toolNames, descriptorDerive
       descriptorValidators: new Set(descriptorValidators).size,
       publishedExecution: new Set(published).size,
     },
+    emptyPopulations,
     differences,
   };
 }
@@ -1066,13 +1083,16 @@ function populationRungLines(rung) {
   for (const entry of rung.population.differences) lines.push(`    ${entry.direction}: ${entry.actionId}`);
   for (const direction of new Set(rung.population.differences.map((entry) => entry.direction)))
     lines.push(`    ${direction} means ${POPULATION_LABELS[direction]}`);
+  // Named, because a zero here is a population that measured nothing rather than a population that agrees.
+  for (const name of rung.population.emptyPopulations)
+    lines.push(`    empty_population: ${name} measured nothing, so it cannot agree with anything`);
   const compile = rung.compile;
   if (compile.status === "passed")
     lines.push(`  l2: compile passed (host/${HOST_TEST_ARTIFACT_BUILD}) in ${compile.ms}ms`);
   else if (compile.status === "skipped")
     lines.push(
       compile.reason === "population_red"
-        ? "  l2: compile skipped: the populations already disagree, so the build would only restate it"
+        ? `  l2: compile skipped: population agreement is ${rung.population.status}, so the build would only restate it`
         : `  l2: compile skipped (${compile.reason}): only population agreement was checked`,
     );
   else if (compile.status === "unavailable")

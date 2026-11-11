@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { isDescriptorDerivedActionId } from "./action-registry.js";
+
 /**
  * The two ways a mounted action can be MOUNTED BUT UNUSABLE - neither of which a native-local runner can see, because
  * those runners call `client.execute` directly and the Host's request validation never runs during a live gate.
@@ -13,9 +15,10 @@ import { fileURLToPath } from "node:url";
  *      and then forwards nothing sends an empty `args` and `validateExecutionRequest` refuses every call. Six published
  *      actions shipped that way - use_obelisk, withdraw_silo_hay, clear_fish_pond, toggle_animal_door,
  *      build_farm_building, accept_daily_quest - visible to the agent and dead on every invocation.
- *   2. `isModDescriptorComplete` is a per-action chain ending in `return false`, so an action without an arm is never
- *      mounted at all and never appears in `visibleActionsFromModCatalog`: the agent cannot see it. Promoting such an
- *      action changes its lifecycle and its gate while the tool does not exist.
+ *   2. `isModDescriptorComplete` answers only for the ids `MOD_DESCRIPTOR_REQUIREMENTS` carries, and `false` for
+ *      every other id, so a mount block asking about an action nobody enrolled is never mounted and never appears
+ *      in `visibleActionsFromModCatalog`: the agent cannot see it. Promoting such an action changes its lifecycle
+ *      and its gate while the tool does not exist.
  *
  * Both assertions read the two sources of truth - the mount blocks in `game-tools.ts` and the Mod's own catalog - so a
  * newly mounted action is covered the moment it is mounted rather than when someone remembers to extend a list.
@@ -27,7 +30,6 @@ const CATALOG = readFileSync(
   join(ROOT, "integrations", "stardew", "src", "Core", "Policy", "FarmhandActionDefinitions.cs"),
   "utf8",
 );
-const REGISTRY = readFileSync(join(ROOT, "host", "src", "action-registry.ts"), "utf8");
 
 /** The mount blocks, with the action id and the toArgs expression that feeds the request. */
 function mountBlocks() {
@@ -47,6 +49,12 @@ function mountBlocks() {
     blocks.push({ action, params: params.trim(), body: body.trim() });
   }
   return blocks;
+}
+
+/** Every action id a mount block asks the completeness gate about, straight from the source. */
+function gateGuardedActionIds(): readonly string[] {
+  const calls = GAME_TOOLS.matchAll(/isModDescriptorComplete\("([a-z_]+)"/gu);
+  return [...new Set([...calls].map((match) => match[1]!))].sort();
 }
 
 /** The arguments the Mod declares, in EITHER descriptor syntax (the long form or the `A(...)` shorthand). */
@@ -89,14 +97,15 @@ test("every mount forwards the arguments its action declares", () => {
   assert.deepEqual(offenders, [], "a mount that drops its arguments is a tool the agent can call and never use");
 });
 
-test("every mounted action has a descriptor-completeness arm, or it cannot be seen at all", () => {
-  const missing = mountBlocks()
-    .map((block) => block.action)
-    .filter((action) => !REGISTRY.includes('if (actionId === "' + action + '")'));
+test("every action the mount gate asks about is enrolled, or it cannot be seen at all", () => {
+  const guarded = gateGuardedActionIds();
+  assert.ok(guarded.length > 0, "blocked: no mount block asks the completeness gate, so this gate examines nothing");
+  const unreachable = guarded.filter((action) => !isDescriptorDerivedActionId(action));
   assert.deepEqual(
-    missing,
+    unreachable,
     [],
-    "isModDescriptorComplete ends in `return false`, so an action without an arm is never mounted or advertised",
+    "isModDescriptorComplete answers false for every id the requirement table does not carry, so a mount block asking " +
+      "about an unenrolled action is dead: nothing mounts it and the action never reaches the Agent",
   );
 });
 
