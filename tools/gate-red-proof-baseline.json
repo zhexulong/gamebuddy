@@ -93,7 +93,6 @@
     "test:stardew-automation-cadence",
     "test:stardew-branch-writeset",
     "test:stardew-clear-fish-pond-runner",
-    "test:stardew-completion-evidence",
     "test:stardew-dialogue-autonomy",
     "test:stardew-dialogue-stream",
     "test:stardew-dialogue-stream-runner",

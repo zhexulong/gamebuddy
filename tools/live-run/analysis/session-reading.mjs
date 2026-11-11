@@ -16,6 +16,20 @@
  * absent prints `not measured` naming the field it needed, and exits 2; it never prints 0, because "we never looked"
  * and "we looked and found none" are different findings and only one of them is about the run.
  *
+ * WHERE THE RECORDS ARE. Three things made the first version point at the wrong place, each fixed at the layer that
+ * decides it rather than worked around in the question:
+ *
+ *   - A run's session is not only under its own `runtime-root`. A run stopped by hand never captures one, so its session
+ *     is still in the runtime root the launcher was given - the same one `tools/live-run/game/launch-ladder-live.mjs`
+ *     passes as `GAMEBUDDY_RUNTIME_ROOT`, defaulting to `%LOCALAPPDATA%/GameBuddy`. Every root tried is printed with
+ *     what was found under it, and a live root is narrowed to the record created seconds after this run started, never
+ *     to whichever record happens to be newest.
+ *   - The session no longer carries node ENDINGS: the model-visible batches are prose now, so no node JSON reaches a
+ *     text part. `codes`, `nodes` and `shape` read the run's bundle first (`result.json` -> `programSubmissions` /
+ *     `programOutcomes`, written at teardown), print what the session says beside it, and name which one answered.
+ *   - A node row appears once per status snapshot. A node's identity is `programId/nodeId`, so every question prints
+ *     `distinct node ids` beside `node rows` and `without_node_id` and no row is read as a piece of work.
+ *
  * THE SEAM NOTE. `tools/lib/reading.mjs` is the shared seam for exactly these four facts (`reading`, `census`,
  * `format`, `crossCheck`). This file prints them by hand instead of importing it: the switch is the NAMED FOLLOW-UP in
  * this folder's README, a two-line change, so that moving four readers into one folder and changing how their numbers
@@ -32,7 +46,8 @@
  *   node tools/live-run/analysis/session-reading.mjs --run <dir> --question progress
  *   node tools/live-run/analysis/session-reading.mjs --run <dir> --question shape <action>
  *
- * It reads `.live-runs/**` and a session file. It starts no game, builds nothing, and writes nothing.
+ * It reads `.live-runs/**`, a session record and, for the bundle questions, a run's own `result.json`. It starts no
+ * game, builds nothing, and writes nothing.
  *
  * Exit: 0 when every number on screen was measured, 2 when one of them is `not measured` or the arguments are wrong.
  */
@@ -53,10 +68,30 @@ const NON_SUCCESS_STATES = Object.freeze(
 /** A gap longer than this is read as silence rather than as one turn following another. */
 const SILENCE_MS = 60_000;
 
-const QUESTIONS = Object.freeze(["tools", "turns", "codes", "nodes", "thinking", "progress", "shape"]);
+/**
+ * How soon after a run starts its session record is created.
+ *
+ * Measured over 47 ladder runs on 2026-11-10: the record named by `toolTiming.record` was created 1.3-3.2 s after
+ * `startedAtMs` in every one of the 27 runs that published a name, and the next-nearest candidate under the live root
+ * was never closer than 181 s. Sixty seconds therefore separates this run's record from every other run's.
+ */
+const SESSION_BIRTH_WINDOW_MS = 60_000;
 
-/** The questions whose input is the run's bundle rather than its session. */
-const BUNDLE_QUESTIONS = Object.freeze(new Set(["nodes", "progress"]));
+/**
+ * The question kinds this reader declares.
+ *
+ * `session-reading.test.mjs` populations its `reading_without_a_source_is_silent` gate from this list, so a kind added
+ * here that prints no source, no population, or a bare number is caught by the suite rather than by the next reader who
+ * trusts it.
+ */
+export const QUESTIONS = Object.freeze(["tools", "turns", "codes", "nodes", "thinking", "progress", "shape"]);
+
+/**
+ * The questions only a session can answer. The rest read the bundle first and fall back to the session, so a run whose
+ * session was never captured still answers them - refusing them for the missing session would be the reader claiming
+ * its own limitation as the run's.
+ */
+const SESSION_ONLY_QUESTIONS = Object.freeze(new Set(["tools", "turns", "thinking"]));
 
 function out(line) {
   process.stdout.write(`${line}\n`);
@@ -117,8 +152,13 @@ function readJsonl(path) {
   return entries;
 }
 
-/** The newest file named `wanted` (or any `.jsonl`) under one directory tree, by mtime. */
-function newestUnder(root, wanted) {
+/**
+ * Every `.jsonl` record under one runtime root, with the two clocks a resolution needs.
+ *
+ * `birth` is when the file was created and `mtime` when it was last written. A root that collected every run's
+ * sessions has to be narrowed by birth; a root copied at one run's teardown can be read by mtime alone.
+ */
+function sessionFiles(root) {
   if (!existsSync(root)) return null;
   const found = [];
   const walk = (directory, depth) => {
@@ -138,16 +178,105 @@ function newestUnder(root, wanted) {
         continue;
       }
       if (stat.isDirectory()) walk(path, depth - 1);
-      else if (wanted(entry)) found.push({ path, mtime: stat.mtimeMs });
+      else if (entry.endsWith(".jsonl"))
+        found.push({ path, name: entry, mtime: stat.mtimeMs, birth: stat.birthtimeMs });
     }
   };
   walk(root, 6);
-  found.sort((left, right) => right.mtime - left.mtime);
-  return found[0]?.path ?? null;
+  return found;
 }
 
-function readResult(runDir) {
-  const path = join(runDir, "result.json");
+/**
+ * The runtime roots a run's session can be under, in the order they are trusted.
+ *
+ * The launcher resolves this one way - `GAMEBUDDY_RUNTIME_ROOT`, defaulting to `%LOCALAPPDATA%/GameBuddy`
+ * (`tools/live-run/game/launch-ladder-live.mjs` passes exactly that) - so this is that resolution, not a second guess
+ * at it. The run's own `runtime-root/contexts` comes first because it is the copy taken at THAT run's teardown, and a
+ * copy taken at teardown cannot hold a later run's session.
+ */
+function sessionRoots(runDir) {
+  const roots = [];
+  if (runDir !== null)
+    roots.push({
+      path: join(runDir, "runtime-root", "contexts"),
+      copiedAtTeardown: true,
+      why: "runtime-root/contexts, this run's own capture",
+    });
+  const configured = process.env.GAMEBUDDY_RUNTIME_ROOT;
+  if (typeof configured === "string" && configured.trim() !== "")
+    roots.push({
+      path: join(configured, "contexts"),
+      copiedAtTeardown: false,
+      why: "GAMEBUDDY_RUNTIME_ROOT/contexts, the root the launcher was given",
+    });
+  const local = process.env.LOCALAPPDATA;
+  if (typeof local === "string" && local.trim() !== "")
+    roots.push({
+      path: join(local, "GameBuddy", "contexts"),
+      copiedAtTeardown: false,
+      why: "%LOCALAPPDATA%/GameBuddy/contexts, the launcher's default root",
+    });
+  const seen = new Set();
+  return roots.filter((root) => {
+    // Two of the three roots can name the same directory; the key is case-folded only where the filesystem is.
+    const key = process.platform === "win32" ? resolve(root.path).toLowerCase() : resolve(root.path);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** When this run started: the bundle's own bound, else the launch record written before anything else runs. */
+function runStart({ runDir, result }) {
+  const fromBundle = Number(result?.startedAtMs);
+  if (Number.isFinite(fromBundle)) return { at: fromBundle, source: "result.json startedAtMs" };
+  const launch = runDir === null ? null : readJson(join(runDir, "launch.json"));
+  const fromLaunch = Number(launch?.startedAtMs);
+  if (Number.isFinite(fromLaunch)) return { at: fromLaunch, source: "launch.json startedAtMs" };
+  return { at: null, source: null };
+}
+
+/**
+ * A file's creation in ms: its birth when the filesystem records one, else its last write.
+ *
+ * `birthtimeMs` is 0 where the filesystem has no birth time (some Linux mounts), and 0 is "unknown", not 1970. The
+ * mtime of a record written by a launch is that same launch, so the fallback keeps the tie that matters and the
+ * reader still refuses to tie a record to a run it cannot place.
+ */
+function birthOf(file) {
+  if (Number.isFinite(file.birth) && file.birth > 0) return file.birth;
+  return Number.isFinite(file.mtime) && file.mtime > 0 ? file.mtime : null;
+}
+
+/**
+ * The record a live root holds for this run: the one created seconds after the launch that created it.
+ *
+ * A live root holds every run's sessions, so its newest file is whichever run finished last - reading that one would
+ * answer a different run's question under this run's name. Birth is the only clock that ties a record to a launch, and
+ * the window is the measured one (see `SESSION_BIRTH_WINDOW_MS`).
+ */
+function bornWithRun(files, start) {
+  if (start.at === null)
+    return {
+      pick: null,
+      reason: `this run's start time is unknown (no result.json startedAtMs and no launch.json), so no record can be tied to it`,
+    };
+  const inside = files
+    .map((file) => ({ file, birth: birthOf(file) }))
+    .filter((entry) => entry.birth !== null && Math.abs(entry.birth - start.at) <= SESSION_BIRTH_WINDOW_MS)
+    .sort((left, right) => right.birth - left.birth);
+  if (inside.length === 0)
+    return {
+      pick: null,
+      reason: `none of its ${files.length} record(s) was created within ${SESSION_BIRTH_WINDOW_MS / 1000}s of ${clock(start.at)} (${start.source})`,
+    };
+  return {
+    pick: inside[0].file,
+    reason: `created ${seconds(Math.abs(inside[0].birth - start.at))} from this run's start (${start.source}), ${inside.length} of ${files.length} record(s) that close`,
+  };
+}
+
+function readJson(path) {
   if (!existsSync(path)) return null;
   try {
     return JSON.parse(readFileSync(path, "utf8"));
@@ -156,34 +285,79 @@ function readResult(runDir) {
   }
 }
 
+function readResult(runDir) {
+  return runDir === null ? null : readJson(join(runDir, "result.json"));
+}
+
 /**
- * The session file this run wrote, from the three places one can be named.
+ * The session file this run wrote, and every root that was asked for it.
  *
- * `--session` wins because a reader checking an OLD run has to be able to point at that run's record. Otherwise the
- * bundle's own `toolTiming.record` names the file the harness bound, and a run stopped by hand published no bundle at
- * all - so the newest `.jsonl` under its runtime root is the activation the launch wrote.
+ * `--session` wins because a reader checking an OLD run has to be able to point at that run's record. Otherwise each
+ * root the launcher could have used is tried in turn: the file the bundle's `toolTiming.record` names wins in any root,
+ * a root copied at teardown is read by its newest record, and a live root only by the record created with this run.
+ * `roots` is returned whole so the caller can print which root answered and what the others held.
  */
 function resolveSession({ runDir, result, explicit }) {
   if (typeof explicit === "string") {
     return existsSync(explicit)
-      ? { path: resolve(explicit), why: "named by --session" }
-      : { path: null, missing: `--session ${explicit}`, reason: "the file named by --session does not exist" };
+      ? { path: resolve(explicit), why: "named by --session", roots: [] }
+      : {
+          path: null,
+          roots: [],
+          missing: `--session ${explicit}`,
+          reason: "the file named by --session does not exist",
+        };
   }
-  if (runDir === null) return { path: null, missing: "--session", reason: "no --run directory and no --session" };
-  const contexts = join(runDir, "runtime-root", "contexts");
-  const record = result?.toolTiming?.record;
-  if (typeof record === "string") {
-    const found = newestUnder(contexts, (entry) => entry === record);
-    if (found !== null) return { path: found, why: "result.json toolTiming.record" };
-  }
-  const newest = newestUnder(contexts, (entry) => entry.endsWith(".jsonl"));
-  return newest === null
-    ? {
-        path: null,
-        missing: "runtime-root/contexts/**/sessions/*.jsonl (or result.json toolTiming.record)",
-        reason: "this run directory holds no session record",
+  if (runDir === null)
+    return { path: null, roots: [], missing: "--session", reason: "no --run directory and no --session" };
+  const roots = sessionRoots(runDir);
+  const start = runStart({ runDir, result });
+  const record = typeof result?.toolTiming?.record === "string" ? result.toolTiming.record : null;
+  const tried = [];
+  for (const root of roots) {
+    const files = sessionFiles(root.path);
+    if (files === null) {
+      tried.push({ path: root.path, why: root.why, outcome: "no such directory" });
+      continue;
+    }
+    if (files.length === 0) {
+      tried.push({ path: root.path, why: root.why, outcome: "no .jsonl under it" });
+      continue;
+    }
+    if (record !== null) {
+      const named = files.find((file) => file.name === record);
+      if (named !== undefined) {
+        tried.push({
+          path: root.path,
+          why: root.why,
+          outcome: "read from: the record result.json toolTiming.record names",
+        });
+        return { path: named.path, why: root.why, roots: tried };
       }
-    : { path: newest, why: "newest .jsonl under runtime-root/contexts (the run published no toolTiming.record)" };
+    }
+    if (root.copiedAtTeardown) {
+      const newest = [...files].sort((left, right) => right.mtime - left.mtime)[0];
+      tried.push({
+        path: root.path,
+        why: root.why,
+        outcome: `read from: its newest of ${files.length} record(s), and a capture taken at teardown holds nothing later`,
+      });
+      return { path: newest.path, why: root.why, roots: tried };
+    }
+    const withRun = bornWithRun(files, start);
+    if (withRun.pick !== null) {
+      tried.push({ path: root.path, why: root.why, outcome: `read from: the record ${withRun.reason}` });
+      return { path: withRun.pick.path, why: root.why, roots: tried };
+    }
+    tried.push({ path: root.path, why: root.why, outcome: `not used: ${withRun.reason}` });
+  }
+  return {
+    path: null,
+    roots: tried,
+    missing:
+      "runtime-root/contexts/**/sessions/*.jsonl, GAMEBUDDY_RUNTIME_ROOT/contexts or %LOCALAPPDATA%/GameBuddy/contexts (every root tried is printed above with what it held), or the file result.json toolTiming.record names",
+    reason: "no record this run wrote was found in any root tried",
+  };
 }
 
 /** The window a reading covers: the run's own bounds when the bundle has them, else the session's own span. */
@@ -286,33 +460,34 @@ function codeOf(value) {
 const isNodeRow = (value) => typeof value.actionId === "string" && typeof value.state === "string";
 
 /**
- * Every node row the session published, whichever shape carried it.
+ * Every node row the session published, with the programme that owns it and the node id it was published under.
  *
- * A programme's rows arrive as `{actionId, state, ...}` - a plan answer's `nodes`, a settled batch's payload - with the
- * coordinates under `tile` or under `x`/`y`, and the reason under `failureCode`, `reasonCode` or `rejectionCode`. The
- * shapes were measured on the 2026-11-09 `multiday_routine` session: seven distinct key sets, 955 rows.
+ * A programme's rows arrive as `{actionId, state, ...}` - a plan answer's `nodes`, a status snapshot's
+ * `snapshot.nodes`, a settled batch's payload - with the coordinates under `tile` or under `x`/`y`, and the reason under
+ * `failureCode`, `reasonCode` or `rejectionCode`. The programme is on the payload that carries them (`programId`).
  *
- * THE SAME PAYLOAD IS REACHABLE TWICE in one record (measured on that session: record 78 carries four programmes' node
- * lists, and each list appears twice in the JSON tree), so a row is deduped by its own serialised content WITHIN its
- * record. `index` alone is not an identity: the same `index: 0` in one record names four different actions, because a
- * node's index is its position in ITS programme, and a record can carry several.
+ * THE SAME PAYLOAD IS REACHABLE TWICE in one record (measured on the 2026-11-09 `multiday_routine` session: a fact
+ * batch carries the same 191 action rows under `worldFacts[].payload.nodes` and under `events[].payload.nodes`), so a
+ * row is deduped by its own serialised content WITHIN its record.
  */
 function nodeRows(entries) {
   const rows = [];
   const seen = new Set();
-  const walk = (value, index, role, depth) => {
+  const walk = (value, context, depth) => {
     if (depth > 8 || value === null || typeof value !== "object") return;
     if (Array.isArray(value)) {
-      for (const item of value) walk(item, index, role, depth + 1);
+      for (const item of value) walk(item, context, depth + 1);
       return;
     }
+    const programme = typeof value.programId === "string" ? value.programId : context.programme;
     if (isNodeRow(value)) {
-      const dedupe = `${index}\u0000${JSON.stringify(value)}`;
+      const dedupe = `${context.index}\u0000${JSON.stringify(value)}`;
       if (!seen.has(dedupe)) {
         seen.add(dedupe);
         rows.push({
-          index,
-          role,
+          index: context.index,
+          role: context.role,
+          programId: programme,
           actionId: value.actionId,
           state: value.state,
           nodeId: typeof value.nodeId === "string" ? value.nodeId : null,
@@ -322,10 +497,91 @@ function nodeRows(entries) {
         });
       }
     }
-    for (const item of Object.values(value)) walk(item, index, role, depth + 1);
+    for (const item of Object.values(value)) walk(item, { ...context, programme }, depth + 1);
   };
-  for (const part of structuredParts(entries)) walk(part.value, part.index, part.role, 0);
+  for (const part of structuredParts(entries))
+    walk(part.value, { index: part.index, role: part.role, programme: null }, 0);
   return rows;
+}
+
+/**
+ * One row per node, because a node appears once per status snapshot.
+ *
+ * The identity is `programId/nodeId`, and the LAST row wins because a node's state progresses. A node id alone is NOT
+ * an identity: measured on the 2026-11-09 `multiday_routine` session, 754 node rows carry 283 nodes whose ids are only
+ * 20 distinct names - the same `n01` is the first node of every one of 98 programmes, so a node id alone would merge 98
+ * different nodes into one.
+ *
+ * A row with no nodeId has nothing to be counted by, so it is not folded into anything: `without_node_id` reports how
+ * many there were, and a question that needs a node says what it was missing instead of counting rows as work.
+ */
+function nodesByIdentity(rows) {
+  const nodes = new Map();
+  let withoutNodeId = 0;
+  for (const row of rows) {
+    if (row.nodeId === null) {
+      withoutNodeId += 1;
+      continue;
+    }
+    const key = `${row.programId ?? "(no programme)"}/${row.nodeId}`;
+    const prior = nodes.get(key);
+    if (prior === undefined || row.index >= prior.index) nodes.set(key, { ...row, key });
+  }
+  return { rows: rows.length, nodes: [...nodes.values()], withoutNodeId };
+}
+
+/** The census every question taken over node rows prints first, so no row is read as a piece of work. */
+function printCensus(census, unit) {
+  out(`  node rows           ${count(census.rows, census.rows, unit)}`);
+  out(
+    `  distinct node ids   ${count(census.nodes.length, census.rows, `${unit} (identity programId/nodeId, one row per node)`)}`,
+  );
+  out(
+    `  without_node_id     ${count(census.withoutNodeId, census.rows, `${unit} (no nodeId, so no node to count them as)`)}`,
+  );
+}
+
+/**
+ * The bundle's own node records: what each programme planned, and how each of its nodes ended.
+ *
+ * This is the authority for endings, and the session is not a substitute for it any more. Measured on the 2026-11-10
+ * `round45` run: 33 node rows, not one terminal state, because the model-visible batches are prose now and no node
+ * JSON reaches a text part. The bundle is assembled at teardown from the journal, so it carries the states, the codes
+ * and the tiles the session no longer does.
+ */
+function bundleNodes(result) {
+  if (result === null) return null;
+  const submissions = Array.isArray(result.programSubmissions) ? result.programSubmissions : [];
+  const outcomes = Array.isArray(result.programOutcomes) ? result.programOutcomes : [];
+  if (submissions.length === 0 && outcomes.length === 0) return null;
+  const planned = submissions.flatMap((programme) =>
+    (Array.isArray(programme.nodes) ? programme.nodes : []).map((node) => ({
+      programId: programme.programId ?? null,
+      nodeId: typeof node.nodeId === "string" ? node.nodeId : null,
+      actionId: typeof node.actionId === "string" ? node.actionId : null,
+    })),
+  );
+  const settled = outcomes.flatMap((programme) =>
+    (Array.isArray(programme.nodeOutcomes) ? programme.nodeOutcomes : []).map((node) => ({
+      programId: programme.programId ?? null,
+      nodeId: typeof node.nodeId === "string" ? node.nodeId : null,
+      actionId: typeof node.actionId === "string" ? node.actionId : null,
+      state: typeof node.state === "string" ? node.state : null,
+      code: codeOf(node),
+      hint: typeof node.hint === "string" ? node.hint : null,
+      tile: tileOf(node),
+    })),
+  );
+  return { planned, settled, programmes: Math.max(submissions.length, outcomes.length) };
+}
+
+/** The shape a tile list reaches, printed by `shape`: the box it spans and how much of that box it fills. */
+function tileShape(tiles) {
+  const xs = tiles.map((tile) => tile.x);
+  const ys = tiles.map((tile) => tile.y);
+  const width = Math.max(...xs) - Math.min(...xs) + 1;
+  const height = Math.max(...ys) - Math.min(...ys) + 1;
+  return { width, height, minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
 }
 
 function tally(values) {
@@ -461,85 +717,234 @@ function questionTurns({ context }) {
   return toolOwned.length === 0 ? 2 : 0;
 }
 
-function questionCodes({ context }) {
-  const { entries, sessionName, window } = context;
-  const rows = nodeRows(entries);
-  const terminal = rows.filter((entry) => NON_SUCCESS_STATES.has(entry.state));
-  facts({
-    source: `${sessionName}, JSON payloads inside text parts, node rows (fields: actionId, state, failureCode/reasonCode/rejectionCode)`,
-    method:
-      "structured parse of each text part as JSON, walking every node row; a code inside a schema, a prompt or an unparsed line is not counted",
-    window: window.text,
+/**
+ * What the session's node rows amount to, as one clause.
+ *
+ * The three counts `printCensus` prints, in a sentence, so a question answered from the bundle can still say what the
+ * session held - including "it held 33 rows and none of them carried a node id", which is the case for every run since
+ * the model-visible batches became prose.
+ */
+function censusClause(census, sessionName) {
+  if (census.rows === 0) return `${sessionName} holds no parsed node row`;
+  if (census.nodes.length === 0)
+    return `${sessionName}: ${count(census.withoutNodeId, census.rows, "node rows carry no nodeId")}`;
+  return `${sessionName}: ${count(census.nodes.length, census.rows, `node rows are distinct nodes, ${census.withoutNodeId} of them without a nodeId`)}`;
+}
+
+/** What the other source says about the same question, so two sources cannot disagree in silence. */
+function crossCheck(line) {
+  out(`  cross-check         ${line}`);
+}
+
+/** Why the bundle could not be asked: the difference between "no file" and "a file that published no programme". */
+function bundleGap(result) {
+  return result === null ? "this run directory holds no readable result.json" : "result.json published no programme";
+}
+
+/**
+ * The sentence a question prints when NEITHER source had anything.
+ *
+ * A run with no session and no bundle has nothing to count, and `0 of 0 node rows` would be "we never looked" wearing a
+ * number - the one thing this reader exists to refuse.
+ */
+function noSource(unit, { bundleWhy, missingField }) {
+  return notMeasured(unit, {
+    reason: `${bundleWhy}, and no session record was found for this run`,
+    missingField,
   });
-  out(`  examined            ${rows.length} node rows, of which ${terminal.length} carry a terminal state`);
-  if (rows.length === 0) {
+}
+
+/**
+ * What the session says beside the bundle's answer to `codes`.
+ *
+ * The two cannot be merged and must not be left to disagree in silence: the bundle is assembled from the journal at
+ * teardown, while the session's last status snapshot can miss a node's final ending. Measured on the 2026-11-09
+ * `multiday_routine` run: 283 nodes, 85 of them terminal, the same twelve codes in the same counts - plus
+ * `crop_target_changed`, which only the bundle carried. So this line carries the comparison and the bundle decides.
+ */
+function codesCrossCheck({ census, bundleTerminal, bundleCoded, sessionName }) {
+  const what = censusClause(census, sessionName);
+  if (census.nodes.length === 0) return `${what}  [silent: the session named no node it could report an ending for]`;
+  const terminal = census.nodes.filter((node) => NON_SUCCESS_STATES.has(node.state));
+  const coded = terminal.filter((node) => node.code !== null);
+  if (terminal.length === 0)
+    return `${what}, ${count(0, census.nodes.length, "nodes ending in a non-success state")}  [silent: the session recorded no ending at all, so the bundle's reading stands alone]`;
+  const bundleCodes = new Map(tally(bundleCoded.map((node) => node.code)));
+  const sessionCodes = new Map(tally(coded.map((node) => node.code)));
+  const onlyBundle = [...bundleCodes.keys()].filter((code) => !sessionCodes.has(code));
+  const onlySession = [...sessionCodes.keys()].filter((code) => !bundleCodes.has(code));
+  const sameCounts = [...bundleCodes].every(([code, total]) => sessionCodes.get(code) === total);
+  const tally_ = `${what}, ${count(terminal.length, census.nodes.length, "nodes ending in a non-success state")}, ${coded.length} with a code`;
+  if (onlyBundle.length === 0 && onlySession.length === 0 && sameCounts && bundleTerminal.length === terminal.length)
+    return `${tally_}  [agrees with the bundle]`;
+  const sides =
+    (onlyBundle.length === 0
+      ? "the bundle carries nothing the session does not"
+      : `only the bundle carries ${onlyBundle.join(", ")}`) +
+    "; " +
+    (onlySession.length === 0
+      ? "the session carries nothing the bundle does not"
+      : `only the session carries ${onlySession.join(", ")}`);
+  return `${tally_}  [differs, and the bundle decided: ${sides}; a status snapshot is taken before the ending it would show]`;
+}
+
+/** `codes` answered from the session: the endings the status snapshots recorded, one row per node. */
+function codesFromSession({ census, sessionName, window, result, hasSession }) {
+  if (!hasSession) {
     row(
       "terminal codes",
-      notMeasured("coded terminal nodes", {
-        reason: "the session holds no parsed node row",
-        missingField: "a text part whose JSON carries {actionId, state}",
+      noSource("coded terminal nodes", {
+        bundleWhy: bundleGap(result),
+        missingField: "result.json programOutcomes[].nodeOutcomes[] or a session node row with a nodeId",
       }),
     );
     return 2;
   }
-  const coded = terminal.filter((entry) => entry.code !== null);
+  facts({
+    source: `${sessionName}, node rows inside text parts (fields: nodeId, state, failureCode/reasonCode/rejectionCode)  [answered: the session - ${bundleGap(result)}]`,
+    method:
+      "structured parse of every text part as JSON, walking every node row and folding a node's snapshots into the last state it was published in; a code inside a schema, a prompt or an unparsed line is not counted",
+    window: window.text,
+  });
+  printCensus(census, "node rows");
+  const terminal = census.nodes.filter((node) => NON_SUCCESS_STATES.has(node.state));
+  out(
+    `  examined            ${count(census.nodes.length, census.rows, "node rows are distinct nodes")}, of which ${terminal.length} ended in a non-success state`,
+  );
+  if (census.nodes.length === 0) {
+    row(
+      "terminal codes",
+      notMeasured("coded terminal nodes", {
+        reason:
+          census.rows === 0
+            ? "the session holds no parsed node row"
+            : `all ${census.rows} node row(s) were published without a nodeId`,
+        missingField: "message.content[] text part whose JSON carries {nodeId, actionId, state}",
+      }),
+    );
+    return 2;
+  }
+  const coded = terminal.filter((node) => node.code !== null);
   if (coded.length === 0) {
     row(
       "terminal codes",
       notMeasured("coded terminal nodes", {
-        reason: `${terminal.length} terminal node row(s) carried no code`,
+        reason: `${terminal.length} node(s) ended in a non-success state and none carried a code`,
         missingField: "failureCode/reasonCode/rejectionCode on a terminal node row",
       }),
     );
     return 2;
   }
   out("");
-  row("coded terminals", count(coded.length, terminal.length, "terminal node rows"));
-  for (const [code, total] of tally(coded.map((entry) => entry.code))) {
-    const carriers = coded.filter((entry) => entry.code === code);
-    const actions = [...new Set(carriers.map((entry) => entry.actionId))];
-    out(`  ${code}`);
+  row("coded terminals", count(coded.length, terminal.length, "non-success nodes"));
+  for (const [code, total] of tally(coded.map((node) => node.code))) {
+    const carriers = coded.filter((node) => node.code === code);
+    const actions = [...new Set(carriers.map((node) => node.actionId))];
     out(
-      `    ${count(total, coded.length, "coded terminal node rows")}; ${actions.length} action(s): ${actions.slice(0, 6).join(", ")}`,
+      `  ${code}  ${count(total, coded.length, "coded non-success nodes")}; ${actions.length} action(s): ${actions.slice(0, 6).join(", ")}`,
     );
-    const example = carriers.find((entry) => entry.hint !== null) ?? carriers[0];
+    const example = carriers.find((node) => node.hint !== null) ?? carriers[0];
     out(
-      `    e.g. ${example.actionId}${example.nodeId === null ? "" : `/${example.nodeId}`} state=${example.state}${example.hint === null ? "" : ` hint=${example.hint.slice(0, 120)}`} (record ${example.index})`,
+      `    e.g. ${example.programId ?? "(no programme)"}/${example.nodeId} ${example.actionId} state=${example.state}${example.hint === null ? "" : ` hint=${example.hint.slice(0, 120)}`} (record ${example.index})`,
     );
   }
   return 0;
 }
 
-function questionNodes({ context, runDir }) {
-  const { result, window } = context;
+/**
+ * `codes`: the endings of the run's nodes and why they ended that way.
+ *
+ * The bundle answers it and the session cannot: the model-visible batches are prose, so no node JSON reaches a text
+ * part and the session's node rows are the plans a programme was submitted with (`state: pending`). Measured on the
+ * 2026-11-10 `round45` run, that reading was `0 terminal node rows` while the bundle held 17 - not an empty run, a
+ * question asked of the file that stopped carrying the answer.
+ */
+function questionCodes({ context }) {
+  const { entries, sessionName, window, result } = context;
+  const census = nodesByIdentity(nodeRows(entries));
+  const bundle = bundleNodes(result);
+  if (bundle === null) return codesFromSession({ census, sessionName, window, result, hasSession: context.hasSession });
+
+  const terminal = bundle.settled.filter((node) => NON_SUCCESS_STATES.has(node.state));
+  const coded = terminal.filter((node) => node.code !== null);
   facts({
-    source: `${basename(runDir)}/result.json, programSubmissions[].nodes[] and programOutcomes[].nodeOutcomes[]`,
-    method: "structured parse of the bundle's own fields: planned nodes against the settled state of the same node id",
+    source: `${basename(context.runDir)}/result.json programOutcomes[].nodeOutcomes[] (fields: state, reasonCode/failureCode/rejectionCode)  [answered: the bundle]`,
+    method:
+      "structured parse of the bundle's own outcome rows, one row per settled node; the session's node rows are printed beside it as a cross-check and never decide",
     window: window.text,
   });
-  if (result === null) {
+  out(
+    `  examined            ${bundle.settled.length} settled node(s) over ${bundle.programmes} programme(s), of which ${terminal.length} ended in a non-success state`,
+  );
+  crossCheck(codesCrossCheck({ census, bundleTerminal: terminal, bundleCoded: coded, sessionName }));
+  if (bundle.settled.length === 0) {
+    row(
+      "terminal codes",
+      notMeasured("coded terminal nodes", {
+        reason: "the bundle published no settled node",
+        missingField: "result.json programOutcomes[].nodeOutcomes[]",
+      }),
+    );
+    return 2;
+  }
+  if (coded.length === 0) {
+    row(
+      "terminal codes",
+      notMeasured("coded terminal nodes", {
+        reason: `${terminal.length} settled node(s) ended in a non-success state and none carried a code`,
+        missingField: "reasonCode/failureCode/rejectionCode on a non-success nodeOutcome",
+      }),
+    );
+    return 2;
+  }
+  out("");
+  row("coded terminals", count(coded.length, terminal.length, "non-success nodes"));
+  for (const [code, total] of tally(coded.map((node) => node.code))) {
+    const carriers = coded.filter((node) => node.code === code);
+    const actions = [...new Set(carriers.map((node) => node.actionId))];
+    out(
+      `  ${code}  ${count(total, coded.length, "coded non-success nodes")}; ${actions.length} action(s): ${actions.slice(0, 6).join(", ")}`,
+    );
+    const example = carriers.find((node) => node.hint !== null) ?? carriers[0];
+    const tile = example.tile === null ? "" : ` tile=(${example.tile.x},${example.tile.y})`;
+    out(
+      `    e.g. ${example.programId ?? "(no programme)"}/${example.nodeId ?? "(no node id)"} ${example.actionId} state=${example.state}${tile}${example.hint === null ? "" : ` hint=${example.hint.slice(0, 120)}`}`,
+    );
+  }
+  return 0;
+}
+
+/**
+ * `nodes`: what the run planned and how much of it settled.
+ *
+ * The bundle is the only source: a plan's node list reaches the session as `{index, actionId, state: pending}`, which
+ * says what was submitted and never what became of it. The session is printed beside it as a cross-check on the
+ * population, so "33 planned, 33 settled" can be read against "33 plan rows in the session".
+ */
+function questionNodes({ context, runDir }) {
+  const { result, window, entries, sessionName } = context;
+  const bundle = bundleNodes(result);
+  facts({
+    source: `${basename(runDir)}/result.json programSubmissions[].nodes[] joined to programOutcomes[].nodeOutcomes[] by programId  [${bundle === null ? `no answer: ${bundleGap(result)}` : "answered: the bundle"}]`,
+    method:
+      "structured parse of the bundle's own fields: each planned node against the settled state of the node id its own programme lists",
+    window: window.text,
+  });
+  if (bundle === null) {
     row(
       "nodes",
       notMeasured("planned and settled nodes", {
-        reason: "this run directory holds no readable result.json",
+        reason: bundleGap(result),
         missingField: "result.json programSubmissions[].nodes[] / programOutcomes[].nodeOutcomes[]",
       }),
     );
     return 2;
   }
-  const planned = (result.programSubmissions ?? []).flatMap((programme) => programme.nodes ?? []);
-  const settled = (result.programOutcomes ?? []).flatMap((programme) => programme.nodeOutcomes ?? []);
-  if (planned.length === 0 && settled.length === 0) {
-    row(
-      "nodes",
-      notMeasured("planned and settled nodes", {
-        reason: "the bundle published no programme",
-        missingField: "result.json programSubmissions / programOutcomes",
-      }),
-    );
-    return 2;
-  }
+  const planned = bundle.planned;
+  const settled = bundle.settled;
   const succeeded = settled.filter((node) => node.state === "succeeded");
+  const census = nodesByIdentity(nodeRows(entries));
+  crossCheck(`${censusClause(census, sessionName)}  [the session plans; the bundle settles]`);
   out("");
   row("planned", count(planned.length, planned.length, "submitted nodes"));
   row("settled", count(settled.length, planned.length, "submitted nodes"));
@@ -607,17 +1012,18 @@ function questionThinking({ context, argument }) {
 
 function questionProgress({ context }) {
   const { result, window, runDir } = context;
+  const submissions = Array.isArray(result?.programSubmissions) ? result.programSubmissions : [];
   facts({
-    source: `${basename(runDir)}/result.json, programSubmissions[] joined to programOutcomes[] by programId`,
+    source: `${basename(runDir)}/result.json programSubmissions[] joined to programOutcomes[] by programId  [${submissions.length === 0 ? `no answer: ${bundleGap(result)}` : "answered: the bundle"}]`,
     method:
       "structured parse of the bundle: total is the nodes the programme planned, settled is the same programId's nodeOutcomes in an ended state, and a programme is superseded when it still held a node and a later submission was accepted",
     window: window.text,
   });
-  if (result === null) {
+  if (submissions.length === 0) {
     row(
       "programmes",
       notMeasured("programmes", {
-        reason: "this run directory holds no readable result.json, and a session cannot answer this question",
+        reason: `${bundleGap(result)}, and a session cannot answer this question`,
         missingField: "result.json programSubmissions[] / programOutcomes[]",
       }),
     );
@@ -681,8 +1087,16 @@ function questionProgress({ context }) {
   return 0;
 }
 
+/**
+ * `shape`: where one action actually worked.
+ *
+ * The bundle answers it, because a tile belongs to a node that SETTLED there: `nodeOutcomes[].tile`. The session's rows
+ * are the plans a programme was submitted with, so reading this out of the session measured intent and called it work -
+ * and counted the same plan once per status snapshot while it was at it (measured on the 2026-11-09 run: 9 node rows
+ * for `plant_seed`, 3 tiles).
+ */
 function questionShape({ context, argument }) {
-  const { entries, sessionName, window } = context;
+  const { entries, sessionName, window, result } = context;
   if (typeof argument !== "string" || argument.trim() === "") {
     row(
       "shape",
@@ -693,52 +1107,59 @@ function questionShape({ context, argument }) {
     );
     return 2;
   }
-  const rows = nodeRows(entries);
-  const carriers = rows.filter((entry) => entry.actionId === argument);
+  const census = nodesByIdentity(nodeRows(entries));
+  const bundle = bundleNodes(result);
+  const carriers = bundle === null ? [] : bundle.settled.filter((node) => node.actionId === argument);
+  if (bundle === null || carriers.length === 0)
+    return shapeFromSession({ census, sessionName, window, argument, result, hasSession: context.hasSession });
+
   facts({
-    source: `${sessionName}, node rows for actionId ${argument} (field: tile / x,y)`,
+    source: `${basename(context.runDir)}/result.json programOutcomes[].nodeOutcomes[] (field: tile, filtered on actionId ${argument})  [answered: the bundle]`,
     method:
-      "structured parse of every node row carrying this action; the bounding box spans every tile it named and the density is distinct tiles over that box",
+      "structured parse of the bundle's settled nodes for this action, one row per node; the box spans every tile one of them reached and the density is the distinct tiles over that box",
     window: window.text,
   });
-  out(`  examined            ${rows.length} node rows, of which ${carriers.length} name ${argument}`);
-  if (carriers.length === 0) {
-    row(
-      "tiles",
-      notMeasured("tiles", {
-        reason: `no node row in this session names ${argument}`,
-        missingField: `a node row with actionId ${argument}`,
-      }),
-    );
-    return 2;
-  }
-  const withTile = carriers.filter(
-    (entry) => entry.tile !== null && Number.isFinite(entry.tile.x) && Number.isFinite(entry.tile.y),
+  const distinctNodes = new Set(
+    carriers.map((node) => `${node.programId ?? "(no programme)"}/${node.nodeId ?? "(no node id)"}`),
   );
-  if (withTile.length === 0) {
+  const withoutNodeId = carriers.filter((node) => node.nodeId === null).length;
+  out(`  node rows           ${count(carriers.length, bundle.settled.length, `settled nodes naming ${argument}`)}`);
+  out(
+    `  distinct node ids   ${count(distinctNodes.size, carriers.length, `settled nodes naming ${argument} (identity programId/nodeId)`)}`,
+  );
+  out(
+    `  without_node_id     ${count(withoutNodeId, carriers.length, `settled nodes naming ${argument} (no nodeId to count them by)`)}`,
+  );
+  crossCheck(`${censusClause(census, sessionName)}  [the session plans; the bundle settles]`);
+  const located = carriers.filter((node) => node.tile !== null);
+  if (located.length === 0) {
     row(
       "tiles",
       notMeasured("tiles", {
-        reason: `${carriers.length} row(s) named ${argument} but none carried coordinates`,
-        missingField: "tile{x,y} or x/y on the node row",
+        reason: `${carriers.length} settled node(s) named ${argument} but none carried coordinates`,
+        missingField: "tile{x,y} on a nodeOutcome",
       }),
     );
     return 2;
   }
-  const distinct = [...new Map(withTile.map((entry) => [`${entry.tile.x},${entry.tile.y}`, entry.tile])).values()];
-  const xs = distinct.map((tile) => tile.x);
-  const ys = distinct.map((tile) => tile.y);
-  const width = Math.max(...xs) - Math.min(...xs) + 1;
-  const height = Math.max(...ys) - Math.min(...ys) + 1;
+  const distinct = [...new Map(located.map((node) => [`${node.tile.x},${node.tile.y}`, node.tile])).values()];
+  printTileShape({ distinct, population: located.length, unit: `settled nodes naming ${argument}` });
+  const states = tally(carriers.map((node) => node.state ?? "unreported"));
   out("");
-  row("tiles reached", count(distinct.length, carriers.length, `node rows naming ${argument}`));
-  row(
-    "bounding box",
-    `${width}x${height} at (${Math.min(...xs)},${Math.min(...ys)})-(${Math.max(...xs)},${Math.max(...ys)})`,
-  );
+  for (const [state, total] of states)
+    row(`  state ${state}`, count(total, carriers.length, `settled nodes naming ${argument}`));
+  return 0;
+}
+
+/** The box, the density and the tile list of a set of tiles, printed the same way whichever source produced them. */
+function printTileShape({ distinct, population, unit }) {
+  const shape = tileShape(distinct);
+  out("");
+  row("tiles reached", count(distinct.length, population, unit));
+  row("bounding box", `${shape.width}x${shape.height} at (${shape.minX},${shape.minY})-(${shape.maxX},${shape.maxY})`);
   row(
     "density",
-    `${distinct.length} of ${width * height} bbox tiles (${((distinct.length / (width * height)) * 100).toFixed(0)}%)`,
+    `${distinct.length} of ${shape.width * shape.height} bbox tiles (${((distinct.length / (shape.width * shape.height)) * 100).toFixed(0)}%)`,
   );
   row(
     "tile list",
@@ -747,10 +1168,58 @@ function questionShape({ context, argument }) {
       .map((tile) => `${tile.x},${tile.y}`)
       .join(" ") + (distinct.length > 24 ? ` … ${distinct.length - 24} more` : ""),
   );
-  const states = tally(carriers.map((entry) => entry.state));
+}
+
+/** `shape` answered from the session, for a run that published no bundle or no node for this action in it. */
+function shapeFromSession({ census, sessionName, window, argument, result, hasSession }) {
+  if (!hasSession) {
+    row(
+      "tiles",
+      notMeasured("tiles", {
+        reason: `${bundleGap(result)}, and no session record was found for this run`,
+        missingField: `result.json programOutcomes[].nodeOutcomes[] or a session node with actionId ${argument}`,
+      }),
+    );
+    return 2;
+  }
+  facts({
+    source: `${sessionName}, node rows for actionId ${argument} (field: tile / x,y)  [answered: the session]`,
+    method:
+      "structured parse of every node row carrying this action, folded to one row per programId/nodeId; the box spans every tile it named and the density is the distinct tiles over that box",
+    window: window.text,
+  });
+  printCensus(census, "node rows");
+  const carriers = census.nodes.filter((node) => node.actionId === argument);
+  out(`  examined            ${count(carriers.length, census.rows, `node rows name ${argument}`)}`);
+  if (carriers.length === 0) {
+    row(
+      "tiles",
+      notMeasured("tiles", {
+        reason: `no node in this session names ${argument}, and the bundle did not answer either`,
+        missingField: `a node row or nodeOutcome with actionId ${argument}`,
+      }),
+    );
+    return 2;
+  }
+  const located = carriers.filter(
+    (node) => node.tile !== null && Number.isFinite(node.tile.x) && Number.isFinite(node.tile.y),
+  );
+  if (located.length === 0) {
+    row(
+      "tiles",
+      notMeasured("tiles", {
+        reason: `${carriers.length} node(s) named ${argument} but none carried coordinates`,
+        missingField: "tile{x,y} or x/y on the node row",
+      }),
+    );
+    return 2;
+  }
+  const distinct = [...new Map(located.map((node) => [`${node.tile.x},${node.tile.y}`, node.tile])).values()];
+  printTileShape({ distinct, population: located.length, unit: `nodes naming ${argument}` });
+  const states = tally(carriers.map((node) => node.state));
   out("");
   for (const [state, total] of states)
-    row(`  state ${state}`, count(total, carriers.length, `node rows naming ${argument}`));
+    row(`  state ${state}`, count(total, carriers.length, `nodes naming ${argument}`));
   return 0;
 }
 
@@ -794,28 +1263,29 @@ function main(argv) {
   const result = runDir === null ? null : readResult(runDir);
   const session = resolveSession({ runDir, result, explicit: options.session });
   out(`run      ${runDir === null ? "(none)" : basename(runDir)}`);
+  // WHICH ROOT ANSWERED, and what the others held. A run stopped by hand never captures its own session, so a reader
+  // that looked only under `runtime-root/contexts` reported `session (absent)` for a session sitting in the live root.
+  for (const root of session.roots) out(`root     ${root.path}  [${root.outcome}]`);
   out(`session  ${session.path ?? "(absent)"}${session.why === undefined ? "" : `  [${session.why}]`}`);
-  // `nodes` and `progress` are questions about the BUNDLE. A run whose session was never copied beside it can still
-  // answer them, and refusing them for the missing session would be the reader claiming its own limitation as the run's.
-  const fromSession = !BUNDLE_QUESTIONS.has(options.question);
-  if (session.path === null && fromSession) {
-    out("");
-    out(
-      `  session             ${notMeasured("session-derived readings", { reason: session.reason, missingField: session.missing })}`,
-    );
-    return 2;
-  }
   const entries = session.path === null ? [] : readJsonl(session.path);
   const context = {
     entries,
     result,
     runDir,
+    hasSession: session.path !== null,
     sessionName: session.path === null ? "(no session)" : basename(session.path),
     window: runWindow({ result, entries }),
   };
   out(`window   ${context.window.text}`);
   out("");
+  // The question is named BEFORE it is refused, so a refusal is still readable as this question's refusal.
   out(`question ${options.question}${options.argument === null ? "" : ` ${options.argument}`}`);
+  if (!context.hasSession && SESSION_ONLY_QUESTIONS.has(options.question)) {
+    out(
+      `  session             ${notMeasured("session-derived readings", { reason: session.reason, missingField: session.missing })}`,
+    );
+    return 2;
+  }
   const handlers = {
     tools: () => questionTools({ context }),
     turns: () => questionTurns({ context }),
