@@ -98,6 +98,7 @@ pass afterwards (second-launch willingness, human blind rating, a second session
 
 ## 7. Never
 - Never print a number without its population, its source, its method and its window. `26 of 26 toolCall parts (session.jsonl, structured parse, 09:01–09:21)` is a reading; `26 calls` is a rumour. The constructor is `tools/lib/reading.mjs` and the gate is `tools/audit-run-reading-shape.mjs`.
+- Never key a comparison on position, order or serialisation form. A hash, an id, a baseline index and a dedupe identity come from content: the same run, diffed against itself, must print no change. Four readings today invented one — an anonymous lambda keyed by line number (`<anonymous@407>` became `@432` after 25 lines were inserted above it, reported as "grew" when nothing grew), a clone group keyed by its representative site, a wire payload whose member order came from reflection (same world, different bytes, a flaky snapshot test), a complexity score stored in a byte (255 was a ceiling, so four unrelated functions tied as "the worst"). Where content-keying is impossible, the reading carries the marker saying it is a floor or an approximation.
 - Never resolve two disagreeing methods by preference: a `disagree` reading blocks the verdict.
 - Never explain behaviour before proving the mechanism was available — count the refusals beside the calls (AGENTS.md, attribution discipline).
 - Never report a point-in-time reading as a whole-run verdict, and never a parallel-run test count as the suite's state: say which mode produced it.
