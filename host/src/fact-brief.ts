@@ -257,6 +257,8 @@ export function composeWorldState(reading: WorldStateReading | undefined): strin
   else if (reading.ageTurns >= 1) parts.push(`（这是 ${reading.ageTurns} 轮之前看到的，世界已经不一样了）`);
   const environment = formatGameEnvironmentFacts(world, true);
   if (environment !== "") parts.push(environment);
+  const canWater = formatCarriedCanWater(world);
+  if (canWater !== "") parts.push(canWater);
   const carrying = formatCarrying(world);
   if (carrying !== "") parts.push(carrying);
   const lines: string[] = [worldStateHeader(reading)];
@@ -311,6 +313,41 @@ function formatCarrying(world: Snapshot): string {
   const shown = named.slice(0, MAX_CARRYING_ROWS).map((row) => `${String(row.stack)} 份 ${row.name}`);
   const rest = named.length - shown.length;
   return `身上带着 ${shown.join("、")}${rest > 0 ? ` 其余 ${String(rest)} 种未列出` : ""}`;
+}
+
+/**
+ * The water in the can she carries, stated beside the tool she is holding.
+ *
+ * <p>
+ * WHY IT IS HERE. Measured 2026-11-11 in that morning's live run: the bridge published
+ * `wateringCanFacts: [{slot:2, qualifiedItemId:"(T)WateringCan", water:40, max:40}]`, and its five observed revisions
+ * of the day carried water 40, 40, 38, 36, 36 of 40. The `<world-state>` she read named the can only as `1 份 喷壶` in
+ * the pack list, so she shook it and narrated a gauge instead: `壶里这点底子够浇这两穴`, `壶底见底了`, `壶空了正好`. A
+ * published field no renderer reads is not a fact she has.
+ * </p>
+ *
+ * <p>
+ * WHICH CAN, AND WHICH NUMBER. The row for the held slot when her hand is in a can; otherwise the can itself when the
+ * pack published exactly one, because that is the can she carries and its water still decides her day (the batch above
+ * held the axe, and the can at slot 2 was exactly the one she was guessing at). Two cans and neither in hand is not a
+ * question this line answers: it says nothing rather than picking one.
+ * </p>
+ *
+ * <p>
+ * ABSENT, NEVER ZERO. `wateringCanFacts` is published only while `refill_watering_can` is advertised, so an absent
+ * family prints nothing - a different statement from `水 0/0`, and the reason this is not `?? 0`. The figure is the
+ * wire's own `water`/`max` unmodified: `isWateringCanFact` bounds both to 0..100 with `water <= max`, and a percentage
+ * would be a second spelling of two numbers. A bottomless can is NOT named as such, because the wire carries no
+ * discriminator (`BridgeWateringCanFact` has five members and the validator refuses a sixth); it reads the full figure
+ * its own `water`/`max` states, which is true of a can that never drains.
+ * </p>
+ */
+function formatCarriedCanWater(world: Snapshot): string {
+  const rows = world.wateringCanFacts;
+  if (!Array.isArray(rows) || rows.length === 0) return "";
+  const can = rows.find((row) => row.slot === world.currentToolSlot) ?? (rows.length === 1 ? rows[0] : undefined);
+  if (can === undefined) return "";
+  return `壶里的水: ${String(can.water)}/${String(can.max)}`;
 }
 
 /**

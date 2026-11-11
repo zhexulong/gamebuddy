@@ -73,6 +73,11 @@ export const L0_GATES = Object.freeze([
   // complete, and this one asks whether the model can ASK about the family at all - a description that names a family
   // consumes it while a full `observe` stays the only way to read its values.
   "tools/check-stardew-observation-consumers.mjs",
+  // The prose half of the same question: the consumer gate asks whether the model can ASK about a published family,
+  // and this one asks whether what the Mod publishes ever reaches the text she reads. Measured 2026-11-11:
+  // `wateringCanFacts` was published with `water 36/40` in every observation of a run whose companion shook the can and
+  // said `壶空了正好`, because no prose rendered the field and nothing asked whether one did. Milliseconds, five reads.
+  "tools/check-snapshot-field-rendering.mjs",
   // The crop row's own gate: every field the engine's `Data/Crops` answer projects must be reachable from a snapshot
   // crop row or carry a stated reason, and the four copies of the row contract (Mod record, Host type, Host validator,
   // schema) must name the same keys. Milliseconds, source-only.

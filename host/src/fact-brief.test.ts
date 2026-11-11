@@ -290,6 +290,60 @@ test("the world block names the objects she acts on, with their tiles", () => {
   assert.match(text, /这一带没有/u, "and a family the Mod published as empty says so");
 });
 
+test("can_water_beside_the_held_tool: the can's own water reaches the prose, and an absent reading says nothing", () => {
+  const block = (snapshot: Snapshot): string => composeWorldState({ snapshot, revision: 1, ageTurns: 0, ageMs: 0 });
+  const can = {
+    slot: 2,
+    qualifiedItemId: "(T)WateringCan",
+    label: "(T)WateringCan",
+    displayName: "喷壶",
+    water: 40,
+    max: 40,
+  };
+  const heldCan = { slot: 2, label: "(T)WateringCan", category: "watering_can" };
+
+  // THE RUN'S OWN SHAPE (2026-11-11, the 08:50 batch): the axe in hand, one can in the pack at slot 2, and the wire
+  // publishing `water 40, max 40` in a family the block never read.
+  const carried = block({ ...world, wateringCanFacts: [can] } as unknown as Snapshot);
+  assert.match(carried, /壶里的水: 40\/40/u, `the published water figure is in the block she reads: ${carried}`);
+  assert.match(carried, /身上带着/u, "and it is added beside the pack list rather than replacing it");
+
+  // Beside the HELD tool: the figure follows the hand that is in the can, in the same reading order.
+  const holding = block({
+    ...world,
+    currentTool: "(T)WateringCan",
+    currentToolSlot: 2,
+    toolSlots: [...(world.toolSlots ?? []), heldCan],
+    wateringCanFacts: [can],
+  } as unknown as Snapshot);
+  assert.match(holding, /手持: 洒水壶/u, "the held tool is still named in words");
+  assert.ok(
+    holding.indexOf("手持: 洒水壶") < holding.indexOf("壶里的水: 40/40"),
+    `the water figure follows the held tool: ${holding}`,
+  );
+
+  // A can the Mod measured as EMPTY is a fact and prints as one: zero is the number a gauge reports, so it must be
+  // distinguishable from silence.
+  assert.match(
+    block({ ...world, wateringCanFacts: [{ ...can, water: 0 }] } as unknown as Snapshot),
+    /壶里的水: 0\/40/u,
+    "a measured empty can says so",
+  );
+
+  // ABSENT IS NOT ZERO: the family is gated on `refill_watering_can` being advertised, so a Mod that did not publish it
+  // must not read as an empty can.
+  const absent = block(world);
+  assert.equal(/壶里的水/u.test(absent), false, `an absent family prints nothing: ${absent}`);
+  assert.equal(/0\/0/u.test(absent), false, "and nothing invents a level for it");
+
+  // Two cans and neither in her hand is not a question one figure answers, so it answers none.
+  const ambiguous = block({
+    ...world,
+    wateringCanFacts: [can, { ...can, slot: 3 }],
+  } as unknown as Snapshot);
+  assert.equal(/壶里的水/u.test(ambiguous), false, `two unheld cans print no figure: ${ambiguous}`);
+});
+
 test("a reading that has not changed is one line, not the whole world again", () => {
   const answer = unchangedWorldAnswer(1205);
   assert.equal(answer, "自 revision 1205 以来世界没有变化");

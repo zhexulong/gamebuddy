@@ -347,6 +347,13 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // direction (`:mod`), a Host token the Mod's method never permits, a Mod state the wire has no token for, a declaration
   // that cannot be read, an empty set (exit 2, never green) and the CLI's own exit codes on a throwaway root.
   "check-refusal-detail-state-parity.mjs",
+  // Prints `snapshot fields examined N · rendered M · exempt K` plus a two-entry `checks[]` verdict, so its default
+  // run is the report this suite reads. Its falsifier is tools/check-snapshot-field-rendering.test.mjs: the water line
+  // deleted from a copy of `host/src/fact-brief.ts` is `snapshot_field_never_rendered:wateringCanFacts`, a field added
+  // to `SNAPSHOT_KEYS` is named on arrival, an exemption for a field the prose renders now and one for a field the wire
+  // dropped are the two directions of `stale_rendering_exemption`, a blank owner is refused, a mention inside a comment
+  // is not a rendering, and a wire list with no keys is blocked (exit 2) rather than green.
+  "check-snapshot-field-rendering.mjs",
   "check-evidence-bundle.mjs",
   "check-fail-closed-forward-path.mjs",
   "check-game-context-pressure.mjs",
