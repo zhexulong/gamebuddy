@@ -2,12 +2,12 @@
 /**
  * A TERMINAL RECEIPT TELLS THE BODY IT IS FREE.
  *
- * `ExecutionManager.RememberTerminal` (farmhandexecutioncontroller.cs:6213) is the one terminal commit, and its body is
+ * `ExecutionManager.RememberTerminal` (farmhandexecutioncontroller.cs) is the one terminal commit, and its body is
  * three things: store the receipt (`Remember`, which also releases the modal owner lease), publish the trace
- * (`AddTrace`), and announce that the body is idle again (`PublishIdleAfterRelease`). The seam's body is copied by hand
- * in ~90 places, because the ledger's own gate (`tools/check-terminal-commit-single-entry.mjs`) ratchets the copies
- * down one at a time. Every field a copy can drop has been dropped by one of them at some point; this gate reads the
- * one that nothing has measured - the LAST of the three, the idle transition.
+ * (`AddTrace`), and announce that the body is idle again (`PublishIdleAfterRelease`). That body used to be copied by
+ * hand in ~90 places, and the ledger's own gate (`tools/check-terminal-commit-single-entry.mjs`) ratcheted the copies
+ * down one at a time until the last of them became a seam call. Every field a copy could drop was dropped by one of
+ * them at some point; this gate reads the one that nothing had measured - the LAST of the three, the idle transition.
  *
  * WHAT THE IDLE TRANSITION IS FOR. `PublishIdleAfterRelease` is also the only writer of the `body_idle` body trace
  * (`DrainPendingIdleAfterRelease` -> `AddPublicTrace("body_idle", ...)`), which is the fact that says the actor is free
@@ -21,6 +21,19 @@
  * (the animation is still using the actor, and its own settle publishes the idle when it ends). The population here is
  * therefore the pairs that say NOTHING, and the property is that each of them is provably non-terminal or named with a
  * reason. A gate that demanded an idle from every pair would demand a bug.
+ *
+ * WHAT A CENSUS OF N PAIRS MEANS NOW, AND WHAT IT DOES NOT. The pair was the population because the pair was copied by
+ * hand: on 2026-11-11, before the conversion, this gate read `sites examined 94 · silent 31`. A site converted to the
+ * seam owns no pair at all, and `RememberTerminal` announces the idle itself (`if (state.IsTerminal())
+ * this.PublishIdleAfterRelease(...)`), so such a site cannot be silent here - there is nothing left for this gate to
+ * see. Every run therefore prints the seam calls standing OUTSIDE its population beside the pairs inside it, and
+ * `sites examined 7 · silent 1` is a statement about the store-and-publish pairs still in the tree - six written by
+ * hand, one the seam's own - and about nothing else. What
+ * covers the rest: the seam's own body is judged here too (a seam that stopped announcing is
+ * `terminal_without_idle_publication` on `RememberTerminal`, which every converted site reaches), and the runtime
+ * guarantee that every terminal state announces is
+ * `integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/TerminalIdlePublicationTests.cs`, which drives every
+ * member of `IsTerminal()` rather than a list of sites.
  *
  * THE STATE IS READ FROM THE SITE. The receipt is built one or two lines above the store, as
  * `new LocalExecutionReceipt(executionId, requestId, <state>, ...)`. The third argument is read three ways, in order:
@@ -50,7 +63,13 @@
  * red-proof: inject  a terminal store-and-publish pair with no idle announcement (`ExecuteTillSoil`'s shape, and the
  *                    whole tool-approach family before this change) ->
  *                    `terminal_without_idle_publication:<file>:<line>:<family>`, exit 1
- *                    (tools/check-terminal-idle-publication.test.mjs)
+ *                    (tools/check-terminal-idle-publication.test.mjs; measured 2026-11-11 on the real tree by adding
+ *                    one to `farmhandexecutioncontroller.busactions.cs`, which read
+ *                    `terminal_without_idle_publication:integrations/stardew/farmhandexecutioncontroller.busactions.cs:41:busactions`)
+ * red-proof: inject  a seam body with its idle announcement removed ->
+ *                    `terminal_without_idle_publication:integrations/stardew/farmhandexecutioncontroller.cs:<line>:controller`
+ *                    (measured 2026-11-11 on the real tree; the seam body is judged here, so the silence every
+ *                    converted site would inherit is named at the one place it would come from)
  * red-proof: inject  an exemption for a member whose site announces the idle now -> `stale_terminal_idle_exemption`
  */
 import { readFileSync } from "node:fs";
@@ -62,10 +81,14 @@ import { collectSourceFiles, familyOf, scanSource } from "./check-terminal-commi
 const GATE_ID = "terminal-idle-publication";
 const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TERMINAL_AUTHORITY = "integrations/stardew/src/Core/Models/BridgeProtocolModels.cs";
-const EXEMPTION_PATH = "tools/terminal-idle-publication-exemptions.json";
+export const EXEMPTION_PATH = "tools/terminal-idle-publication-exemptions.json";
 
 /** The one method that announces a released body, named once. */
 export const IDLE_METHOD = "PublishIdleAfterRelease";
+
+/** The suite that now carries this property for every site the seam conversion moved out of the pair population. */
+export const IDLE_RUNTIME_PROOF =
+  "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/TerminalIdlePublicationTests.cs";
 
 const IDLE_CALL = new RegExp(`\\b${IDLE_METHOD}\\s*\\(`, "u");
 const MEMBER_SIGNATURE =
@@ -256,16 +279,19 @@ function memberAt(lines, lineIndex) {
 }
 
 /**
- * One file's silent sites: every store-and-publish pair outside the seam that does not announce the idle, with the
- * states its receipt can carry. The pair population itself is the sibling gate's - it already derives it from the tree
- * and already owns the seam's own body as the one place the pair belongs.
+ * One file's silent sites: every store-and-publish pair that does not announce the idle, with the states its receipt
+ * can carry. The pair population itself is the sibling gate's - it already derives it from the tree and already owns
+ * the seam's own body as the one place the pair belongs - but the seam's body is JUDGED here as well: it is where
+ * every converted site announces from now, so a seam that stopped announcing would otherwise be 908 silent callers
+ * with nothing measuring them.
  */
 export function scanSourceForIdle(relativePath, text, terminalStates) {
   const lines = text.split(/\r?\n/u);
   const family = familyOf(relativePath);
   const scanned = scanSource(relativePath, text);
   const sites = [];
-  for (const site of scanned.bypasses) {
+  const seamSites = new Set(scanned.seamSites.map((site) => site.line));
+  for (const site of [...scanned.bypasses, ...scanned.seamSites]) {
     const lineIndex = site.line - 1;
     if (publishesIdleAfter(lines, lineIndex)) continue;
     const member = memberAt(lines, lineIndex);
@@ -275,11 +301,17 @@ export function scanSourceForIdle(relativePath, text, terminalStates) {
       family,
       line: site.line,
       member: member.name,
+      seam: seamSites.has(site.line),
       states,
       terminal: states === null ? null : states.filter((state) => terminalStates.includes(state)),
     });
   }
-  return { family, pairs: scanned.bypasses.length + scanned.seamSites.length, sites };
+  return {
+    family,
+    pairs: scanned.bypasses.length + scanned.seamSites.length,
+    seamCalls: scanned.seamCalls.length,
+    sites,
+  };
 }
 
 const siteKey = (site) => `${site.path}\u0000${site.member}`;
@@ -291,9 +323,11 @@ export function classifySites(sites, exemptions) {
     const key = `${entry.file}\u0000${entry.member}`;
     exemptByKey.set(key, [...(exemptByKey.get(key) ?? []), entry]);
   }
-  const owed = sites.filter((site) => site.terminal !== null && site.terminal.length > 0);
-  const markers = sites.filter((site) => site.terminal !== null && site.terminal.length === 0);
-  const unresolved = sites.filter((site) => site.states === null);
+  // A seam-site's receipt state is whatever its callers pass, so a silent seam body is a debt without having to resolve
+  // one: every converted terminal reaches this body, and the announcement that is missing here is missing everywhere.
+  const owed = sites.filter((site) => site.seam === true || (site.terminal !== null && site.terminal.length > 0));
+  const markers = sites.filter((site) => site.seam !== true && site.terminal !== null && site.terminal.length === 0);
+  const unresolved = sites.filter((site) => site.seam !== true && site.states === null);
 
   const findings = [];
   let exempt = 0;
@@ -311,7 +345,10 @@ export function classifySites(sites, exemptions) {
       }
       findings.push({
         code: `terminal_without_idle_publication:${site.path}:${site.line}:${site.family}`,
-        detail: `${site.member} stores and publishes \`${site.states.join("/")}\` without ${IDLE_METHOD}`,
+        detail:
+          site.seam === true
+            ? `${site.member} stores and publishes every receipt its callers pass without ${IDLE_METHOD}`
+            : `${site.member} stores and publishes \`${site.states.join("/")}\` without ${IDLE_METHOD}`,
       });
     }
     if (remaining > 0)
@@ -398,7 +435,7 @@ function checkOutcome(id, status, findings) {
   };
 }
 
-function report(out, { status, examined, verdict }) {
+function report(out, { status, examined, verdict, seamCalls = 0 }) {
   const findings = verdict?.findings ?? [];
   out(
     `${JSON.stringify({
@@ -410,6 +447,8 @@ function report(out, { status, examined, verdict }) {
       nonTerminalMarkers: verdict?.markers ?? 0,
       unresolvedStates: verdict?.unresolved ?? 0,
       exempt: verdict?.exempt ?? 0,
+      seamCallsOutsidePopulation: seamCalls,
+      propertyLivesAt: IDLE_RUNTIME_PROOF,
       findings: findings.length,
       checks: RULE_CODES.map((id) => ({ id, ...checkOutcome(id, status, findings) })),
     })}\n`,
@@ -458,6 +497,7 @@ function decide(root, out, err) {
   const scanned = sources.map((source) => scanSourceForIdle(source.path, source.text, terminalStates.terminal));
   const sites = scanned.flatMap((file) => file.sites);
   const pairPopulation = scanned.reduce((total, file) => total + file.pairs, 0);
+  const seamCalls = scanned.reduce((total, file) => total + file.seamCalls, 0);
   if (pairPopulation === 0) {
     err(
       `${GATE_ID}_blocked:no_terminal_idle_site: examined ${sources.length} file(s) and matched no store-and-publish pair\n`,
@@ -470,9 +510,16 @@ function decide(root, out, err) {
   for (const finding of verdict.findings) err(`${finding.code} ${finding.detail}\n`);
   out(
     `sites examined ${pairPopulation} · silent ${verdict.silent} (terminal ${verdict.owed} · marker ${verdict.markers} · ` +
-      `unresolved ${verdict.unresolved}) · exempt ${verdict.exempt} · families ${new Set(sites.map((site) => site.family)).size}\n`,
+      `unresolved ${verdict.unresolved}) · exempt ${verdict.exempt} · families ${new Set(sites.map((site) => site.family)).size} · ` +
+      `outside this population ${seamCalls} seam call(s), whose idle is RememberTerminal's and whose every terminal ` +
+      `state is driven by ${IDLE_RUNTIME_PROOF}\n`,
   );
-  report(out, { status: verdict.findings.length === 0 ? "passed" : "failed", examined: pairPopulation, verdict });
+  report(out, {
+    status: verdict.findings.length === 0 ? "passed" : "failed",
+    examined: pairPopulation,
+    verdict,
+    seamCalls,
+  });
   return verdict.findings.length === 0 ? 0 : 1;
 }
 
