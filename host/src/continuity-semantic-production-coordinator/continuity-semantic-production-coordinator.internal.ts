@@ -67,6 +67,7 @@ import {
 import { identityKey, type CompanionModelConfig, type RuntimeSession } from "../runtime.js";
 import {
   acknowledgeMountedWorldInfoBinding,
+  type ChatTurnLedger,
   claimMountedAttempt as claimStoreMountedAttempt,
   createChatThreadStore,
   ExactThreadNotFoundError,
@@ -2223,7 +2224,17 @@ export async function createFreshSemanticChatRuntimeProductionAuthorityFromDeplo
     semantic = create(provision, mutex);
     await initializeInitialChatAndCloseContentPort(semantic, manifest);
     binding = await createChatRuntimeBinding(manifest);
-    return createFreshChatRuntimeAuthority(provision, semantic, binding, mutex, broker, options, false, manifest);
+    return createFreshChatRuntimeAuthority(
+      provision,
+      semantic,
+      binding,
+      mutex,
+      broker,
+      options,
+      false,
+      manifest,
+      createWindowsOwnerDeathVerifier(),
+    );
   } catch (error) {
     try {
       await binding?.close();
@@ -2283,7 +2294,17 @@ export async function createKnownSemanticChatRuntimeProductionAuthorityFromDeplo
     // durable successor bridge so a failed owner-proof check cannot orphan one.
     binding = await createChatRuntimeBinding(manifest);
     await semantic.reselectTerminalChatRuntimeSuccessor();
-    return createFreshChatRuntimeAuthority(provision, semantic, binding, mutex, broker, options, false, manifest);
+    return createFreshChatRuntimeAuthority(
+      provision,
+      semantic,
+      binding,
+      mutex,
+      broker,
+      options,
+      false,
+      manifest,
+      createWindowsOwnerDeathVerifier(),
+    );
   } catch (error) {
     try {
       await binding?.close();
@@ -2419,7 +2440,17 @@ export async function createSharedSemanticProductionAuthorityFromDeploymentManif
     // The real mounted runtime projection shares the provision/mutex/broker;
     // its own close tears down the runtime and closes its Chat binding and
     // drain-only store projection, leaving shared resources for the owner.
-    chat = await createFreshChatRuntimeAuthority(provision, semantic, binding, mutex, broker, options, true, manifest);
+    chat = await createFreshChatRuntimeAuthority(
+      provision,
+      semantic,
+      binding,
+      mutex,
+      broker,
+      options,
+      true,
+      manifest,
+      ownerDeathVerifier,
+    );
     binding = undefined;
     return createSharedSemanticProductionAuthorityOwner(chat, game, provision, mutex, broker);
   } catch (error) {
@@ -2518,6 +2549,7 @@ async function createFreshChatRuntimeAuthority(
   options: SemanticChatRuntimeMountOptions,
   sharedOwnerClose: boolean,
   manifest: HostDeploymentManifest,
+  ownerDeathVerifier: WindowsOwnerDeathVerifier,
 ): Promise<SemanticChatRuntimeProductionAuthority> {
   let pending = 0;
   let closing = false;
@@ -2816,12 +2848,76 @@ async function createFreshChatRuntimeAuthority(
     return "released";
   };
 
+  /**
+   * The Chat half of startup recovery. It reads the Chat the runtime is about to mount from the same
+   * durable selection the bootstrap reads, proves the abandoned attempt's owner dead through the one OS
+   * verifier the Game side already uses, and settles the turn as failed/`interrupted` through the
+   * ordinary P5 transition authority - the same durable seam every other turn transition goes through,
+   * fed the attempt facts the ledger itself holds.
+   */
+  async function settleChatTurnRecoveryForMount(): Promise<void> {
+    const selected = await locked(() => provision.store.readChatCatalog().activeSelection);
+    if (selected === null) return;
+    const chat = Object.freeze({
+      chatThreadId: selected.chatThreadId,
+      chatSurfaceSessionId: selected.chatSurfaceSessionId,
+    });
+    await settleAbandonedChatTurnOnStartup(
+      chat,
+      async () => (await mountedStore().resumeThread(chat.chatThreadId, chat.chatSurfaceSessionId)).turnLedger,
+      async (turn) => {
+        const transitionAuthority = createMountedTurnTransitionAuthority();
+        const operationAuthority = transitionAuthority.mintOperation();
+        try {
+          // The settlement is written at the later of now and the turn's own last durable write: a
+          // mount can settle a turn microseconds after the turn's last transition, and the store
+          // refuses any transition timed before the turn it closes.
+          const failedAtMs = Math.max(
+            Date.now(),
+            (await mountedStore().resumeThread(chat.chatThreadId, chat.chatSurfaceSessionId)).thread.updatedAtMs,
+          );
+          await transitionMountedPresentation(
+            Object.freeze({
+              authority: transitionAuthority.authority,
+              operationAuthority: operationAuthority.authority,
+              runtimeRoot: provision.runtimeCwd,
+              playerId: provision.principal.playerId,
+              companionId: provision.principal.companionId,
+              continuityId: provision.principal.continuityId,
+              chatThreadId: chat.chatThreadId,
+              chatSurfaceSessionId: chat.chatSurfaceSessionId,
+              selectionGeneration: turn.attempt.selectionGeneration,
+              runtimeBindingDigest: turn.attempt.runtimeBindingDigest,
+              runtimeOwner: turn.attempt.runtimeOwner,
+              attemptId: turn.attempt.attemptId,
+            }),
+            Object.freeze({ operation: "fail" as const, reasonCode: "interrupted" as const, failedAtMs }),
+          );
+        } finally {
+          operationAuthority.revoke();
+          transitionAuthority.revoke();
+        }
+      },
+      ownerDeathVerifier,
+    );
+  }
+
   const startChatRuntime = (): Promise<ProductionChatRuntimeReadback> => {
     if (startPromise) return startPromise;
     startPromise = begin(async () => {
       // ADR 0009: the recorded expectation is settled before anything of this
       // mount is prepared, so the runtime mounts the Chat the player asked for.
       await settleExpectedChatSelection();
+      // A previous Host's death leaves this Chat's current turn durable but
+      // non-terminal, and `acceptMounted` refuses every new turn until that turn
+      // reaches a terminal status - so the Chat would answer every send with
+      // `turn_busy` forever. Nothing else on this side can close it: the one
+      // process that could have terminalized it exited. It is therefore settled
+      // here, before this mount bootstraps the runtime that serves the Chat's
+      // next turn and before the lease that is the only path a turn is admitted
+      // through exists at all. That is the same order the Game side uses, where
+      // the durable recovery obligation is settled before any Game work is accepted.
+      await settleChatTurnRecoveryForMount();
       let reservation:
         | import("../continuity-semantic-chat-runtime-binding/continuity-semantic-chat-runtime-binding.internal.js").ReservedChatRuntimeMaterialization
         | undefined;
@@ -4444,6 +4540,132 @@ function recordStartupGameRecovery(settlement: StartupGameRecoverySettlement): v
         : "refused: the previous Game owner's death could not be proven, so nothing was recovered";
   process.stderr.write(
     `[game-recovery] startup ${what} operation=${settlement.operationId} session=${settlement.gameSessionId} owner_pid=${String(settlement.ownerPid)} reason=${settlement.recoveryReason ?? "none"} owner=${settlement.ownerOutcome} at=${new Date(settlement.settledAtUnixMs).toISOString()}\n`,
+  );
+}
+/**
+ * The non-terminal ledger states a dead Host can leave a started prompt in, and therefore the only ones
+ * whose death can be settled truthfully as `failed`/`interrupted`: a failed turn carries the observation
+ * of the prompt it lost, and the store writes `failed` only after `running`.
+ */
+export type AbandonedStartedChatTurn = Extract<
+  ChatTurnLedger,
+  { status: "running" | "presentation_committed" | "completion_claimed" }
+>;
+/**
+ * One startup Chat settlement, carrying the facts an operator needs to attribute a recovery nobody
+ * watched: which Chat and turn owed it, who owned the abandoned attempt, what the OS said about that
+ * owner, and whether the turn was settled. No path, token, credential or player text.
+ */
+export type StartupChatTurnRecoverySettlement = Readonly<{
+  settlement: "settled" | "refused";
+  code:
+    | "chat_turn_recovery_settled"
+    | "chat_turn_recovery_blocked_owner_alive"
+    | "chat_turn_recovery_blocked_owner_unknown"
+    | "chat_turn_recovery_blocked_turn_active"
+    | "chat_turn_recovery_blocked_turn_state";
+  chatThreadId: string;
+  chatSurfaceSessionId: string;
+  turnId: string;
+  turnStatus: ChatTurnLedger["status"];
+  /** The abandoned attempt's process, or null for a turn that never named one. */
+  ownerPid: number | null;
+  ownerOutcome: WindowsOwnerDeathOutcome | null;
+  settledAtUnixMs: number;
+}>;
+/**
+ * Settles the one Chat turn a previous Host's death left owed, before this Host admits any Chat work on
+ * that Chat, and reports what it settled.
+ *
+ * It owes a caller this because nothing else can close the turn: `acceptMounted` refuses every new turn
+ * while the current ledger is non-terminal, and the only process that could have terminalized it exited.
+ * The player's consequence is stated where the settlement is recorded: the next message is admitted, and
+ * the abandoned turn reads as failed/`interrupted` instead of vanishing.
+ *
+ * The owner outcomes are kept apart on purpose. `proven_dead` is the one verdict that permits a
+ * settlement. `alive` says a process with that exact pid and start identity still runs, which is either
+ * this very process (a turn its own runner may still settle, and which no one else may terminalize) or
+ * another Host holding the same Chat; the first is reported and binds nothing, the second is a real
+ * single-instance conflict and stops the mount. `mismatch`, `ambiguous` and `unavailable` are all
+ * unknown, and unknown is not dead, so nothing is settled from them; they are fatal here rather than
+ * merely reported, because proceeding would serve turns on a Chat whose owner might still be writing to
+ * it.
+ *
+ * A turn that never started a prompt has no `failed` shape to settle into (the store refuses a failed
+ * turn without a started observation), so it is named and left untouched: it is reported rather than
+ * invented, and the mount continues because nothing of that turn is running.
+ */
+export async function settleAbandonedChatTurnOnStartup(
+  chat: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>,
+  readTurn: () => Promise<ChatTurnLedger | null>,
+  interruptStartedTurn: (turn: AbandonedStartedChatTurn) => Promise<void>,
+  ownerDeathVerifier: WindowsOwnerDeathVerifier,
+): Promise<StartupChatTurnRecoverySettlement | null> {
+  const turn = await readTurn();
+  if (turn === null || isTerminalTurnStatusForCoordinator(turn.status)) return null;
+  const unsettled = {
+    chatThreadId: chat.chatThreadId,
+    chatSurfaceSessionId: chat.chatSurfaceSessionId,
+    turnId: turn.turnId,
+    turnStatus: turn.status,
+    settledAtUnixMs: Date.now(),
+  };
+  if (turn.status !== "running" && turn.status !== "presentation_committed" && turn.status !== "completion_claimed") {
+    const refusal = Object.freeze({
+      ...unsettled,
+      settlement: "refused" as const,
+      code: "chat_turn_recovery_blocked_turn_state" as const,
+      ownerPid: null,
+      ownerOutcome: null,
+    });
+    recordStartupChatTurnRecovery(refusal);
+    return refusal;
+  }
+  const ownerOutcome = await verifyOwnerDeathOrUnknown(ownerDeathVerifier, turn.attempt.runtimeOwner);
+  const decided = {
+    ...unsettled,
+    ownerPid: turn.attempt.runtimeOwner.ownerPid,
+    ownerOutcome,
+  };
+  if (ownerOutcome !== "proven_dead") {
+    const code =
+      ownerOutcome !== "alive"
+        ? ("chat_turn_recovery_blocked_owner_unknown" as const)
+        : turn.attempt.runtimeOwner.ownerPid === process.pid
+          ? ("chat_turn_recovery_blocked_turn_active" as const)
+          : ("chat_turn_recovery_blocked_owner_alive" as const);
+    const refusal = Object.freeze({ ...decided, settlement: "refused" as const, code });
+    recordStartupChatTurnRecovery(refusal);
+    if (code === "chat_turn_recovery_blocked_turn_active") return refusal;
+    throw new SemanticProductionCoordinatorError(code);
+  }
+  await interruptStartedTurn(turn);
+  const settled = Object.freeze({
+    ...decided,
+    settlement: "settled" as const,
+    code: "chat_turn_recovery_settled" as const,
+  });
+  recordStartupChatTurnRecovery(settled);
+  return settled;
+}
+/**
+ * The one record a silent Chat settlement leaves. A turn settled under a mount nobody watched is a turn
+ * nobody can attribute when the Chat later behaves unexpectedly, so a refusal that stops this mount is
+ * written here as well as a settlement that lets it continue.
+ */
+function recordStartupChatTurnRecovery(settlement: StartupChatTurnRecoverySettlement): void {
+  const what =
+    settlement.code === "chat_turn_recovery_settled"
+      ? "settled the turn its dead owner left behind as interrupted; the next message is accepted"
+      : settlement.code === "chat_turn_recovery_blocked_owner_alive"
+        ? "refused: another GameBuddy is already running. Close it, then start GameBuddy again."
+        : settlement.code === "chat_turn_recovery_blocked_turn_active"
+          ? "left the turn this process is still running alone; only its own runner may settle it"
+          : settlement.code === "chat_turn_recovery_blocked_owner_unknown"
+            ? "refused: the previous Chat owner's death could not be proven, so its turn was left untouched"
+            : "refused: the abandoned turn has no started prompt to interrupt, so it was left untouched and its Chat accepts no new message";
+  process.stderr.write(
+    `[chat-recovery] startup ${what} chat=${settlement.chatThreadId} surface=${settlement.chatSurfaceSessionId} turn=${settlement.turnId} state=${settlement.turnStatus} owner_pid=${settlement.ownerPid === null ? "none" : String(settlement.ownerPid)} owner=${settlement.ownerOutcome ?? "none"} at=${new Date(settlement.settledAtUnixMs).toISOString()}\n`,
   );
 }
 function recoveryReceipt(target: ProductionGameRecoveryTarget) {

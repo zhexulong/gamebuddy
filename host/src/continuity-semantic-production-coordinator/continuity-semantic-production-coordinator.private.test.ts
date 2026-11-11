@@ -306,6 +306,7 @@ test("production coordinator exports only the known Game constructor and its saf
     "removeMountedSwipeVariant",
     "rewindMountedChatTranscript",
     "selectMountedSwipeVariant",
+    "settleAbandonedChatTurnOnStartup",
     "settleDurableGameRecoveryOnStartup",
     "settleMountedAuthoredContext",
     "startMountedAttempt",
