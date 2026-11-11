@@ -164,7 +164,7 @@ public sealed class MagnetPickupItemTests
         receipt.ReasonCode.Should().NotBe("item_target_changed");
 
         // ADR-006: a success is proved by action-specific evidence, and for this action the Host decides it by
-        // parsing exactly these nine keys (host/src/stardew-game-integration-adapter.ts,
+        // parsing exactly these nine keys (host/src/stardew-completion-contracts.ts,
         // hasPickupItemCompletionEvidence) with stack >= 1, both flags true and after >= before + stack.
         Dictionary<string, string> evidence = ParseEvidence(receipt.Evidence!);
         evidence.Keys.Should().BeEquivalentTo(new[]

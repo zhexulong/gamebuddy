@@ -1,6 +1,6 @@
 {
   "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`.",
-  "revision": "215c9096",
+  "revision": "889b9630",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -83,7 +83,7 @@
       "language": "cs",
       "name": "ExecutionManager.CompleteTravelAfterWarp()",
       "file": "integrations/stardew/farmhandexecutioncontroller.movementactions.cs",
-      "line": 1342,
+      "line": 1329,
       "value": 93
     },
     {
@@ -91,7 +91,7 @@
       "language": "cs",
       "name": "ExecutionManager.CreateBridgeSnapshot()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 2530,
+      "line": 2427,
       "value": 107
     },
     {
@@ -99,7 +99,7 @@
       "language": "cs",
       "name": "ExecutionManager.CreateSnapshot()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 2424,
+      "line": 2321,
       "value": 34
     },
     {
@@ -107,7 +107,7 @@
       "language": "cs",
       "name": "ExecutionManager.DescribeActiveExecution()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 2800,
+      "line": 2697,
       "value": 99
     },
     {
@@ -115,7 +115,7 @@
       "language": "cs",
       "name": "ExecutionManager.DescribeFrontierClearance(GameLocation,Farmer,(int X, int Y),(int X, int Y),Func<Vector2, bool>)",
       "file": "integrations/stardew/farmhandexecutioncontroller.movementactions.cs",
-      "line": 595,
+      "line": 589,
       "value": 31
     },
     {
@@ -139,7 +139,7 @@
       "language": "cs",
       "name": "ExecutionManager.ExecuteClearDebris(string,string,int,int,int,string,long)",
       "file": "integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs",
-      "line": 1085,
+      "line": 1057,
       "value": 36
     },
     {
@@ -147,7 +147,7 @@
       "language": "cs",
       "name": "ExecutionManager.ExecuteInteractNpcWithItem(string,string,int,int,int,string,string,long)",
       "file": "integrations/stardew/farmhandexecutioncontroller.machinesanimalsitemsactions.cs",
-      "line": 1162,
+      "line": 1133,
       "value": 62
     },
     {
@@ -155,7 +155,7 @@
       "language": "cs",
       "name": "ExecutionManager.RequestLocalDoorTransition(string,int,int,long,bool)",
       "file": "integrations/stardew/farmhandexecutioncontroller.movementactions.cs",
-      "line": 916,
+      "line": 906,
       "value": 35
     },
     {
@@ -179,7 +179,7 @@
       "language": "cs",
       "name": "ExecutionManager.Update()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 1747,
+      "line": 1722,
       "value": 97
     },
     {
@@ -291,7 +291,7 @@
       "language": "cs",
       "name": "ModEntry.InitializeNativeLocalPlaySessionFixture(Farmer,Farm,Vector2?,bool)",
       "file": "integrations/stardew/ModEntry.Fixtures.cs",
-      "line": 3523,
+      "line": 659,
       "value": 60
     },
     {
@@ -357,14 +357,6 @@
       "file": "integrations/stardew/ModEntry.cs",
       "line": 864,
       "value": 58
-    },
-    {
-      "id": "cs:ModEntry.TryInitializeNativeLocalPlayerFixtureScenario(NativeLocalPlayerFixtureConfig)",
-      "language": "cs",
-      "name": "ModEntry.TryInitializeNativeLocalPlayerFixtureScenario(NativeLocalPlayerFixtureConfig)",
-      "file": "integrations/stardew/ModEntry.Fixtures.cs",
-      "line": 307,
-      "value": 971
     },
     {
       "id": "cs:MovementActionHandler.Execute(BridgeExecutionRequest,IExecutionLedger)",
@@ -651,7 +643,7 @@
       "language": "ts",
       "name": "host/src/event-pump.ts#CompanionEventPump.enqueueFact",
       "file": "host/src/event-pump.ts",
-      "line": 713,
+      "line": 797,
       "value": 42
     },
     {
@@ -659,8 +651,8 @@
       "language": "ts",
       "name": "host/src/fact-brief.ts#worldFactLine",
       "file": "host/src/fact-brief.ts",
-      "line": 610,
-      "value": 41
+      "line": 611,
+      "value": 40
     },
     {
       "id": "ts:host/src/game-tools.ts#createStardewActionTools",
@@ -747,7 +739,7 @@
       "language": "ts",
       "name": "host/src/protocol.ts#diagnoseSnapshot",
       "file": "host/src/protocol.ts",
-      "line": 4429,
+      "line": 4533,
       "value": 63
     },
     {
@@ -755,7 +747,7 @@
       "language": "ts",
       "name": "host/src/protocol.ts#isValidActionDescriptor",
       "file": "host/src/protocol.ts",
-      "line": 5589,
+      "line": 5521,
       "value": 174
     },
     {
@@ -806,14 +798,6 @@
       "file": "host/src/stardew-game-install/gog-source.ts",
       "line": 160,
       "value": 39
-    },
-    {
-      "id": "ts:host/src/stardew-game-integration-adapter.ts#hasStardewCompletionEvidence",
-      "language": "ts",
-      "name": "host/src/stardew-game-integration-adapter.ts#hasStardewCompletionEvidence",
-      "file": "host/src/stardew-game-integration-adapter.ts",
-      "line": 226,
-      "value": 110
     },
     {
       "id": "ts:host/src/stardew-integration-launcher-body-program.internal.ts#toWorldFact",
@@ -1192,15 +1176,15 @@
       "parts": 47,
       "file": "integrations/stardew/farmhandexecutioncontroller.actorstateactions.cs",
       "line": 143,
-      "value": 4771
+      "value": 4770
     },
     {
       "id": "cs:ModEntry",
       "name": "ModEntry",
-      "parts": 55,
+      "parts": 56,
       "file": "integrations/stardew/ModEntry.Fixtures.AcceptDailyQuest.cs",
       "line": 10,
-      "value": 3159
+      "value": 2713
     },
     {
       "id": "cs:OpenBodyProgramJournalAuthority",
@@ -1305,7 +1289,7 @@
       "files": 46,
       "file": "integrations/stardew/farmhandexecutioncontroller.actorstateactions.cs",
       "line": 143,
-      "lines": 28104,
+      "lines": 27825,
       "methods": 789,
       "reason": "28,097 -> 28,104 lines: commit 4da075af fixed a live defect - an execution body was never released after tilling, watering, harvesting or feeding - by making sixteen terminal paths announce the body idle through PublishIdleAfterRelease, across the farmingconstruction, machinesanimalsitems, petbowl, resourcetool and slimehutchtrough partials. The growth is bought and paid for; 28,104 is the frozen ceiling now, not a new allowance."
     },
@@ -1332,12 +1316,12 @@
     {
       "id": "cs:ModEntry",
       "name": "ModEntry",
-      "parts": 55,
-      "files": 55,
+      "parts": 56,
+      "files": 56,
       "file": "integrations/stardew/ModEntry.Fixtures.AcceptDailyQuest.cs",
       "line": 10,
-      "lines": 15502,
-      "methods": 267
+      "lines": 15356,
+      "methods": 335
     },
     {
       "id": "cs:NavigationExecutionManagerTests",

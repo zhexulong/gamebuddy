@@ -34,10 +34,10 @@
  * `respond_level_up`, `sleep`, `send_multiplayer_chat`) whose declared postcondition is an EVENT, not an engine member,
  * so the gate records them with reasons rather than passing them (tools/stardew-postcondition-delta-baseline.json)
  *
- *   2. THE HOST's completion-evidence contract (`host/src/stardew-game-integration-adapter.ts`): a per-action `case`
- *      that the receipt must satisfy before the Host will call the action complete, either through a named predicate
- *      or an inline key list. That contract names the exact keys, so it is the receipt SCHEMA for those actions - and
- *      it is production code, not a test.
+ *   2. THE HOST's completion-evidence contract (`host/src/stardew-completion-contracts.ts`): a per-action ROW of the
+ *      declarative table that the receipt must satisfy before the Host will call the action complete, either through a
+ *      named predicate or an inline key list. That contract names the exact keys, so it is the receipt SCHEMA for those
+ *      actions - and it is production code, not a test.
  *
  * An action satisfies the gate when at least one of the two names a complete reading. Neither is a declaration: both
  * are read out of the code that assembles or refuses the receipt.
@@ -79,7 +79,7 @@ const ROOT = resolve(import.meta.dirname, "..");
 
 export const POSTCONDITION_DELTA = Object.freeze({
   surface: "integrations/stardew/action-development/contracts/generated/action-surface.v1.json",
-  hostContract: "host/src/stardew-game-integration-adapter.ts",
+  hostContract: "host/src/stardew-completion-contracts.ts",
   baseline: "tools/stardew-postcondition-delta-baseline.json",
   baselineSchema: "gamebuddy-stardew-postcondition-delta-baseline/v1",
   genericName: "native_action_postcondition",
@@ -305,11 +305,16 @@ function splitTopLevelGuard(value) {
 // ---------------------------------------------------------------------------
 
 /**
- * Every `case "<actionId>":` in the Host adapter that gates completion on evidence KEYS, with the keys it requires.
+ * Every row of the Host's declarative completion table that gates completion on evidence KEYS, with the keys it requires.
  *
- * The keys are the quoted lowercase words inside the case's array literals, whether the case spells them inline, names
- * them in a predicate's `expectedKeys`, or passes them to `exactEvidence`. One reading, because a second parser for
- * the same contract is the drift this repository keeps paying for.
+ * The population is the table's own rows (`  <actionId>: (claim) => {` inside `STARDEW_COMPLETION_CONTRACTS`), so it is
+ * read from the same declaration the adapter folds over rather than from a list kept here. The keys are the quoted
+ * lowercase words inside the row's array literals, whether the row spells them inline, names them in a predicate's
+ * `expectedKeys`, or passes them to `exactEvidence`. One reading, because a second parser for the same contract is the
+ * drift this repository keeps paying for.
+ *
+ * This parser used to read `case "<actionId>":` arms of a `switch`, and the table is that switch converted: the row IS
+ * the arm, so the block a row owns ends where the next row begins.
  *
  * Comments are stripped first, and that is not cosmetic: `shop_purchase`'s evidence literal is described in a comment
  * ABOVE its check, and a gate that counted prose would score that action green off a sentence nobody wrote code for.
@@ -318,16 +323,21 @@ export function readHostCompletionContracts(text) {
   const code = stripLineComments(text);
   const contracts = new Map();
   const findings = [];
-  const cases = [...code.matchAll(/case "([a-z0-9_]+)":/gu)];
-  const defaults = [...code.matchAll(/^\s*default:/gmu)].map((match) => match.index);
-  for (const [index, match] of cases.entries()) {
+  const tableStart = code.indexOf(COMPLETION_TABLE_OPEN);
+  const tableEnd = tableStart < 0 ? -1 : code.indexOf(COMPLETION_TABLE_CLOSE, tableStart);
+  if (tableStart < 0 || tableEnd < 0) {
+    findings.push("postcondition_delta_host_table_not_located");
+    return { contracts, findings };
+  }
+  const table = code.slice(tableStart, tableEnd);
+  const rows = [...table.matchAll(/^ {2}([a-z0-9_]+): \(claim\) =>/gmu)];
+  if (rows.length === 0) {
+    findings.push("postcondition_delta_host_table_empty");
+    return { contracts, findings };
+  }
+  for (const [index, match] of rows.entries()) {
     const actionId = match[1];
-    // A case ends where the next case or the switch's `default` begins. Without the second bound the LAST case in
-    // the switch runs to end-of-file and collects every other predicate's keys - measured: `shop_purchase` inherited
-    // five halves from `hasMineElevatorFloorCompletionEvidence`.
-    const nextCase = index + 1 < cases.length ? cases[index + 1].index : code.length;
-    const nextDefault = defaults.find((offset) => offset > match.index) ?? code.length;
-    const block = code.slice(match.index, Math.min(nextCase, nextDefault));
+    const block = table.slice(match.index, index + 1 < rows.length ? rows[index + 1].index : table.length);
     if (!/CompletionEvidence|exactEvidence/u.test(block)) continue;
     const keys = new Set();
     const collect = (source) => {
@@ -358,8 +368,12 @@ export function readHostCompletionContracts(text) {
   return { contracts, findings };
 }
 
-/** The dispatcher itself, which contains the switch rather than being one of its cases. */
+/** The dispatcher itself, which is the fold over the table rather than one of its rows. */
 const HOST_CONTRACT_ENTRY_POINTS = new Set(["hasStardewCompletionEvidence"]);
+
+/** The completion table's own delimiters, so the row population is read from the declaration, not from a list here. */
+const COMPLETION_TABLE_OPEN = "export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({";
+const COMPLETION_TABLE_CLOSE = "\n} satisfies Record<";
 
 /** Line-leading `//` comments and `/* ... *\/` blocks removed; a key named only in prose is not a key. */
 function stripLineComments(text) {
@@ -756,9 +770,9 @@ export function selfVerification({ files = readModFiles() } = {}) {
 
   const host = readHostCompletionContracts(
     [
-      "function hasStardewCompletionEvidence(actionId: string, detail: string): boolean {",
-      '  switch (actionId) { case "recolor": return exactEvidence(detail, ["color_before", "color_after"]); }',
-      "}",
+      "export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({",
+      '  recolor: (claim) => claim.reasonCode === "recolored" && exactEvidence(claim.detail, ["color_before", "color_after"]),',
+      '} satisfies Record<ExecutionRequest["action"], CompletionContract>);',
     ].join("\n"),
   );
   record(

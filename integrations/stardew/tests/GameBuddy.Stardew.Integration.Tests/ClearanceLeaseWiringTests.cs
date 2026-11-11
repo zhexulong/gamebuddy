@@ -29,7 +29,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class ClearancLeaseWiringTests
 {
     private const string FarmingConstructionActions = "integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs";
-    private const string HostAdapter = "host/src/stardew-game-integration-adapter.ts";
+    private const string HostCompletionContracts = "host/src/stardew-completion-contracts.ts";
 
     [Fact]
     public void TheLeaseDeadlineIsTheRequestsDeadlineNotACountOfTiles()
@@ -232,13 +232,13 @@ public sealed class ClearancLeaseWiringTests
     }
 
     /// <summary>
-    /// The Host's own list for `clear_debris`'s success evidence, read out of the adapter's
-    /// `declaredCompletionEvidence` call rather than re-typed here.
+    /// The Host's own list for `clear_debris`'s success evidence, read out of the completion table's row rather
+    /// than re-typed here.
     /// </summary>
     private static IReadOnlyList<string> HostClearDebrisSuccessKeys()
     {
-        string source = Read(HostAdapter);
-        int action = source.IndexOf("case \"clear_debris\":", StringComparison.Ordinal);
+        string source = Read(HostCompletionContracts);
+        int action = source.IndexOf("  clear_debris: (claim) =>", StringComparison.Ordinal);
         action.Should().BeGreaterThanOrEqualTo(0, "the Host validates clear_debris");
         string slice = SliceBetween(source[action..], "declaredCompletionEvidence(", "],");
         return slice

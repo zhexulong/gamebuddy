@@ -270,16 +270,16 @@ public sealed class DeclaredToolSelectionTests
     public void EveryToolActionStillPublishesExactlyTheEvidenceKeysTheHostPins()
     {
         // The Host recognises a success by a DECLARED receipt-detail key set
-        // (`host/src/stardew-game-integration-adapter.ts`: the cut_weeds/cut_grass branches pass their keys to
+        // (`host/src/stardew-completion-contracts.ts`: the cut_weeds/cut_grass rows pass their keys to
         // `declaredCompletionEvidence`, and `hasWaterCropCompletionEvidence` / `hasBreakRockSourceCompletionEvidence`
         // still compare key counts). The Mod states each set once, in ToolActionEvidence, so the paired change is one
         // edit - and this test is what makes a drift between the two sides fail HERE instead of in a live run.
-        string adapter = Read(HostAdapter);
+        string adapter = Read(HostCompletionContracts);
 
         ToolActionEvidence.CutWeeds.Should().BeEquivalentTo(
-            HostEvidenceKeys(adapter, "case \"cut_weeds\":", "case \"cut_grass\":"));
+            HostEvidenceKeys(adapter, "  cut_weeds: (claim) =>", "  cut_grass: (claim) =>"));
         ToolActionEvidence.CutGrass.Should().BeEquivalentTo(
-            HostEvidenceKeys(adapter, "case \"cut_grass\":", "case \"clear_cask\":"));
+            HostEvidenceKeys(adapter, "  cut_grass: (claim) =>", "  clear_cask: (claim) =>"));
         ToolActionEvidence.BreakRockSource.Should().BeEquivalentTo(
             HostEvidenceKeys(adapter, "function hasBreakRockSourceCompletionEvidence(", "if (Object.keys(evidence).length"));
         ToolActionEvidence.WaterCrop.Should().BeEquivalentTo(
@@ -393,7 +393,7 @@ public sealed class DeclaredToolSelectionTests
 
     private const string ResourceToolActions = "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs";
     private const string FarmingConstructionActions = "integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs";
-    private const string HostAdapter = "host/src/stardew-game-integration-adapter.ts";
+    private const string HostCompletionContracts = "host/src/stardew-completion-contracts.ts";
 
     /// <summary>The claim an action's own registration publishes, read through the Mod's own resolver.</summary>
     private static FarmhandActionResourceTemplateClaim? Claim(string actionId) =>

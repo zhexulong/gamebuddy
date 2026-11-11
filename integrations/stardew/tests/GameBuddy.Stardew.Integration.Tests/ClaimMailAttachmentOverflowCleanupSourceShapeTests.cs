@@ -25,7 +25,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// WHAT THIS FILE PINS. The body must read the QUEUE as well as the active menu, and clear
 /// both AFTER the letter's own delivery, so the actor is actionable again. The clearance
 /// adds no evidence key: the Host's exact-shape contract for this action
-/// (host/src/stardew-game-integration-adapter.ts) names `collection_overflow_pending`
+/// (host/src/stardew-completion-contracts.ts) names `collection_overflow_pending`
 /// plus exactly the eighteen other keys, so the receipt keeps that shape.
 /// </summary>
 [Trait("kind", "source-shape")]

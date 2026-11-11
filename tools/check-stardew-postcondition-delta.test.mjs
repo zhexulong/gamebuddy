@@ -250,19 +250,17 @@ test("hostContractReadings splits pairs, halves and assertions out of a key list
   assert.deepEqual(readings.assertions, ["expected/actual"]);
 });
 
-test("the Host switch is parsed per case, and a key named only in a comment does not count", () => {
+test("the Host table is parsed per row, and a key named only in a comment does not count", () => {
   const text = [
-    "function hasStardewCompletionEvidence(actionId: string, detail: string): boolean {",
-    "  switch (actionId) {",
-    '    case "recolor":',
-    "      // Evidence literal: color_before;color_after from the handler",
-    '      return exactEvidence(detail, ["location", "color_before", "color_after"]);',
-    '    case "equip_hat":',
-    "      return hasEquipHatCompletionEvidence(detail);",
-    "    default:",
-    "      return false;",
-    "  }",
-    "}",
+    "export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({",
+    "  recolor: (claim) => {",
+    "    // Evidence literal: color_before;color_after from the handler",
+    '    return exactEvidence(claim.detail, ["location", "color_before", "color_after"]);',
+    "  },",
+    "  equip_hat: (claim) => {",
+    "    return hasEquipHatCompletionEvidence(claim.detail);",
+    "  },",
+    '} satisfies Record<ExecutionRequest["action"], CompletionContract>);',
     "function hasEquipHatCompletionEvidence(detail: string): boolean {",
     '  const expectedKeys = ["hat_before", "hat_after"];',
     "  return expectedKeys.every((key) => key in detail);",
@@ -276,9 +274,9 @@ test("the Host switch is parsed per case, and a key named only in a comment does
 
 test("a completion predicate nothing calls is a contract no execution path enforces", () => {
   const text = [
-    "function hasStardewCompletionEvidence(actionId: string, detail: string): boolean {",
-    '  switch (actionId) { case "recolor": return exactEvidence(detail, ["color_before", "color_after"]); }',
-    "}",
+    "export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({",
+    '  recolor: (claim) => claim.reasonCode === "recolored" && exactEvidence(claim.detail, ["color_before", "color_after"]),',
+    '} satisfies Record<ExecutionRequest["action"], CompletionContract>);',
     "function hasOrphanCompletionEvidence(detail: string): boolean {",
     '  return exactEvidence(detail, ["orb_before", "orb_after"]);',
     "}",

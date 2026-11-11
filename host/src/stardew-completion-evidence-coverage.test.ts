@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 import { STARDEW_ACTION_ADAPTERS } from "./action-registry.js";
+import { STARDEW_COMPLETION_CONTRACTS } from "./stardew-completion-contracts.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
 /**
@@ -1053,30 +1053,26 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
 
 // ---- the invariants the file exists for ------------------------------------------------------
 
-test("every registered action has a rule: nothing may fall to the adapter default", () => {
-  // The defect this closes: 44 registered actions fell to `default: return false`, so a REAL success receipt was
-  // recorded as zero typed transitions and no test noticed. A fixture per action is not enough to prove coverage -
-  // 43 fixtures existed while the switch covered 79 - so this reads the adapter's own switch and requires the arm
-  // set to equal the registered set exactly.
-  // The emitted artifact is what actually runs, and the compiled test artifact never carries source .ts
-  // files; the closing brace of the top-level rule function is at column zero in both forms.
-  const source = readFileSync(new URL("./stardew-game-integration-adapter.js", import.meta.url), "utf8");
-  const switchAt = source.indexOf("function hasStardewCompletionEvidence(");
-  const switchEnd = source.indexOf("\n}", switchAt);
-  assert.notEqual(switchAt, -1, "the completion switch must be findable");
-  assert.notEqual(switchEnd, -1, "the completion switch must be closed");
-  const arms = new Set<string>();
-  for (const match of source.slice(switchAt, switchEnd).matchAll(/case "([a-z_0-9]+)":/g)) {
-    const armActionId = match[1];
-    assert.ok(armActionId !== undefined, "every case arm must name an action id");
-    arms.add(armActionId);
-  }
+test("every registered action has a row: nothing may fall through the fold", () => {
+  // The defect this closes: 44 registered actions fell to the old switch's `default: return false`, so a REAL success
+  // receipt was recorded as zero typed transitions and no test noticed. A fixture per action is not enough to prove
+  // coverage - 43 fixtures existed while the switch covered 79 - so this compares the TABLE's own key set to the
+  // registered set exactly.
+  //
+  // The population is the table the Host executes, imported rather than parsed: `STARDEW_COMPLETION_CONTRACTS` is the
+  // artifact that answers, so a row that exists only in a source comment, or a switch arm the emitter dropped, cannot
+  // be scored here. The authoring-time half of the same rule is the table's
+  // `satisfies Record<ExecutionRequest["action"], CompletionContract>`, which makes a missing ACTION a compile error.
+  const rows = new Set<string>(Object.keys(STARDEW_COMPLETION_CONTRACTS));
   const registered = new Set<string>(STARDEW_ACTION_ADAPTERS.map((entry) => entry.actionId));
-  const uncovered = [...registered].filter((id) => !arms.has(id) && !actionsWithoutCompletionRule.includes(id));
-  const unknown = [...arms].filter((id) => !registered.has(id));
-  assert.deepEqual(uncovered, [], "these actions would fall to the default and lose their completion evidence");
-  assert.deepEqual(unknown, [], "the switch names actions that are not registered");
+  const uncovered = [...registered].filter((id) => !rows.has(id) && !actionsWithoutCompletionRule.includes(id));
+  const unknown = [...rows].filter((id) => !registered.has(id));
+  assert.deepEqual(uncovered, [], "these actions would fall through the fold and lose their completion evidence");
+  assert.deepEqual(unknown, [], "the table names actions that are not registered");
   assert.deepEqual(actionsWithoutCompletionRule, [], "an exclusion has to be argued into this list, not inherited");
+  // A fold over an EMPTY table agrees with itself, so the population is printed and refused when empty.
+  console.log(`completion contracts: ${String(rows.size)} rows over ${String(registered.size)} registered actions`);
+  assert.ok(rows.size > 0, "an empty table refuses every success and measures nothing");
 });
 
 test("every fixture's action is registered, and the table has not shrunk", () => {

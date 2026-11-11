@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { hasStardewCompletionEvidence } from "./stardew-game-integration-adapter.js";
+import { hasStardewCompletionEvidence } from "./stardew-completion-contracts.js";
 
 /**
  * The Host must recognise the receipt its OWN producer emitted.
