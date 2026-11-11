@@ -2234,20 +2234,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             LocalMountTransportSpec specification = this.activeMountTransport;
             this.activeMountTransport = null;
             this.revision++;
-            LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Uncertain, "horse_mount_invalidated_after_native_start", this.revision, $"target={specification.TargetId};mounting_or_mounted=true");
-            this.Remember(receipt);
-            this.AddTrace(receipt);
-            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "horse_mount_invalidated_after_native_start", $"target={specification.TargetId};mounting_or_mounted=true");
         }
         if (this.activeTravel is not null)
         {
             LocalTravelSpec specification = this.activeTravel;
             this.activeTravel = null;
             this.revision++;
-            LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Invalidated, reasonCode, this.revision, null);
-            this.Remember(receipt);
-            this.AddTrace(receipt);
-            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, null);
         }
         if (this.activeNavigate is not null)
         {
@@ -2261,18 +2255,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 // The warp was already committed natively; an unexpected lifecycle
                 // boundary after that point is only ever an uncertain terminal.
                 this.revision++;
-                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Uncertain, "navigation_invalidated_after_warp_child", this.revision, $"destination={specification.CanonicalDestinationIdentity};phase=awaiting_warp;never_retry=true");
-                this.Remember(receipt);
-                this.AddTrace(receipt);
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "navigation_invalidated_after_warp_child", $"destination={specification.CanonicalDestinationIdentity};phase=awaiting_warp;never_retry=true");
             }
             else
             {
                 this.revision++;
-                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Invalidated, reasonCode, this.revision, $"destination={specification.CanonicalDestinationIdentity};phase=approaching");
-                this.Remember(receipt);
-                this.AddTrace(receipt);
-                this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, $"destination={specification.CanonicalDestinationIdentity};phase=approaching");
             }
         }
         if (this.activeAnimalProduct is not null)
@@ -2281,9 +2269,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             if (specification.DeferredTerminalState is null)
             {
                 this.revision++;
-                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Invalidated, reasonCode, this.revision, "native_animation_pending=true");
-                this.Remember(receipt);
-                this.AddTrace(receipt);
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, "native_animation_pending=true");
                 // WIA: a world-change interruption releases the body NOW. The native animation
                 // a modal cut short may never report completion (measured live 2026-10-05: the
                 // actor stayed non-actionable and every later action was refused as body-owned),
@@ -2295,25 +2281,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
-        if (this.activeMountTransport is not null)
-        {
-            LocalMountTransportSpec specification = this.activeMountTransport;
-            this.activeMountTransport = null;
-            this.revision++;
-            LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Uncertain, "horse_mount_invalidated_after_native_start", this.revision, $"target={specification.TargetId};mounting_or_mounted=true");
-            this.Remember(receipt);
-            this.AddTrace(receipt);
-            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
-        }
+        // A second `activeMountTransport` settle stood here and published the same
+        // `Uncertain/horse_mount_invalidated_after_native_start` as the block at the top of this member - which nulls
+        // the field - so its guard could never be true and nothing ever read what it published. It is deleted rather
+        // than converted: the live settle reaches the seam above now, and converting this one would add a second call
+        // that can only mint the same terminal for an execution already settled.
         if (this.activePet is not null)
         {
             LocalPettingSpec specification = this.activePet;
             this.activePet = null;
             this.revision++;
-            LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Invalidated, reasonCode, this.revision, null);
-            this.Remember(receipt);
-            this.AddTrace(receipt);
-            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, null);
         }
         // The bus may already have committed its native cutscene, so its terminal is
         // always Uncertain (see InvalidateBusRide).
@@ -2327,11 +2305,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             if (this.active is not null)
                 this.active = null;
             this.revision++;
-            LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Invalidated, reasonCode, this.revision,
+            this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode,
                 $"target={specification.ExpectedTargetId};tile={specification.TargetX},{specification.TargetY};reach=1;approach=invalidated");
-            this.Remember(receipt);
-            this.AddTrace(receipt);
-            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
         }
         if (this.activePedestalTaking is not null)
             this.SettlePedestalTakingUncertain("pedestal_take_invalidated_after_native_start", reasonCode);
@@ -2340,10 +2315,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             LocalItemPickupSpec specification = this.activeItemPickup;
             this.activeItemPickup = null;
             this.revision++;
-            LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Invalidated, reasonCode, this.revision, "native_auto_collect_pending=true");
-            this.Remember(receipt);
-            this.AddTrace(receipt);
-            this.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
+            this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, "native_auto_collect_pending=true");
         }
         // The world moved out from under a cast: a modal, an event or a warp. Everything before the engine's win path has
         // consumed nothing beyond the cast itself, so the terminal is Invalidated and the rod is reeled in through the
@@ -2361,9 +2333,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             if (specification.DeferredTerminalState is null)
             {
                 this.revision++;
-                LocalExecutionReceipt receipt = new(specification.ExecutionId, specification.RequestId, ExecutionState.Invalidated, reasonCode, this.revision, "native_animation_pending=true");
-                this.Remember(receipt);
-                this.AddTrace(receipt);
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, "native_animation_pending=true");
                 // Same immediate release as the animal-product slot: the interrupted eating
                 // animation is not a reason to keep owning the body.
                 this.activeItemUse = null;

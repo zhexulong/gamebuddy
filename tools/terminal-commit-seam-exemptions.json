@@ -39,24 +39,6 @@
     },
     {
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "member": "InvalidateForLifecycle",
-      "line": 2286,
-      "sites": 9,
-      "family": "controller",
-      "kind": "faithful_copy",
-      "reason": "faithful copy of the seam (Remember, AddTrace, PublishIdleAfterRelease); converting it to RememberTerminal is behaviour-identical"
-    },
-    {
-      "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "member": "InvalidateForLifecycle",
-      "line": 2333,
-      "sites": 1,
-      "family": "controller",
-      "kind": "missing_idle",
-      "reason": "terminal commit that never publishes PublishIdleAfterRelease, so converting it would ADD a body_idle fact - a behaviour change"
-    },
-    {
-      "file": "integrations/stardew/farmhandexecutioncontroller.cs",
       "member": "RecordControllerTransition",
       "line": 5659,
       "sites": 2,

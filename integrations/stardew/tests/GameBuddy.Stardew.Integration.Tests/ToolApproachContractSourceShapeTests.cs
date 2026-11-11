@@ -227,10 +227,15 @@ public sealed class ToolApproachContractSourceShapeTests
         cancel.Should().Contain("this.active = null", "forgetting the spec without releasing the walk leaves the body owned");
         cancel.Should().Contain("PublishIdleAfterRelease");
 
-        // Lifecycle invalidation mints Invalidated, located the same way.
+        // Lifecycle invalidation mints Invalidated, located the same way. The release is one of two spellings: this
+        // block either publishes the idle itself or reaches the terminal seam, whose third step publishes it for a
+        // terminal state (`ExecutionStateWire.IsTerminal`). Both free the body; the seam gate is what forbids a third,
+        // hand-rolled form.
         string invalidate = BlockContaining(controller, "approach=invalidated", "if (this.activeToolApproach is not null)");
         invalidate.Should().Contain("ExecutionState.Invalidated");
-        invalidate.Should().Contain("PublishIdleAfterRelease");
+        (invalidate.Contains("PublishIdleAfterRelease", StringComparison.Ordinal)
+            || invalidate.Contains("this.RememberTerminal(", StringComparison.Ordinal)).Should().BeTrue(
+            "the invalidation must free the body, directly or through the terminal seam");
 
         // World-change invalidation mints its terminal through the body controller's
         // transition path, and the evidence must agree with the state it ships in:
