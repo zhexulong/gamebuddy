@@ -505,10 +505,11 @@ test("a night crossed after the watcher stopped is counted, named post_watch bes
       assert.match(output, /day_records\s+2\s+<- result\.json multiday\.dayRecords/u);
       assert.match(output, /recorded\s+2\s+<- result\.json multiday\.crossings/u);
       assert.match(output, /observed\s+watch, watch, post_watch/u);
-      assert.match(
-        output,
-        /DISAGREEMENT\s+crossings_disagree:sleep_receipts=3:day_started_facts=3:day_records=2:recorded=2/u,
-      );
+      // THE DISAGREEMENT NAMES THE CLAIM, NOT THE EVIDENCE. The three nights are agreed by the receipts and the calendar
+      // (3 = 3, printed above); what falls short is the loop's own watch and the number this artifact published, which is
+      // the round44 defect - so those are the two sources named, and a run whose evidence also disagreed would name
+      // every readable source instead (the fixture below).
+      assert.match(output, /DISAGREEMENT\s+crossings_disagree:day_records=2:recorded=2/u);
       assert.match(output, /4 night mechanism\s+PASS\s+crossed=3 \(evidence: 2 watched, 1 post_watch\)/u);
       assert.doesNotMatch(output, /crossings 2 by the run's own evidence/u, "the watched count is not the crossings");
     },

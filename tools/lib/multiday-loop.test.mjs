@@ -9,12 +9,17 @@ import {
   classifyActorHold,
   closeIsEngineCommitted,
   crossingsFromEvidence,
+  DECIDER_WAKE_REASONS,
   decideDayWake,
   decideHeldMenu,
+  OBJECTIVE_STATE,
+  objectiveProgressKey,
   QUIET_BOUND_MS,
   readHeldMenu,
+  readObjectiveState,
   runMultiDayLoop,
   WAKE_REASON,
+  wakeReasonReachability,
   WAKE_SUPPRESSION,
   watchRollover,
 } from "./multiday-loop.mjs";
@@ -552,12 +557,17 @@ test("a night crossed after the watcher stopped still counts, and is named post_
     result.sources.map((entry) => [entry.name, entry.crossings]),
     [
       ["sleep_receipts", 3],
+      // Nobody supplied the night-ending facts, so the engine's own crossings were not measured - which is `null`, never
+      // a zero that would have claimed the engine crossed nothing.
+      ["night_endings", null],
       ["day_started_facts", 3],
       ["day_records", 2],
       ["recorded", 2],
     ],
   );
-  assert.equal(result.disagreement, "crossings_disagree:sleep_receipts=3:day_started_facts=3:day_records=2:recorded=2");
+  // THE DISAGREEMENT NAMES THE CLAIM, NOT THE EVIDENCE. The three nights are agreed by the receipts and the calendar; it is
+  // the loop's own records and the artifact's published number that fall short, and that is the round44 defect named.
+  assert.equal(result.disagreement, "crossings_disagree:day_records=2:recorded=2");
 });
 
 test("two evidence sources that disagree produce no number at all, and the disagreement names both", () => {
@@ -603,6 +613,58 @@ test("an empty evidence list is a run that crossed nothing, which is a measureme
   assert.deepEqual(result.observed, []);
   assert.equal(result.postWatch, 0);
   assert.equal(result.disagreement, null);
+});
+
+// THE ENGINE'S PASS-OUT IS A CROSSING, AND THE RUN MUST SAY WHICH CAUSE IT COUNTED.
+//
+// Measured 2026-11-11 (`round45`, `2026-11-10T22-13-25-922Z-multiday_routine`): the world published `day_started_day_5`,
+// `_6`, `_7` and `night_ended_pass_out_day_5`, `_6`, while exactly ONE `sleep` receipt reached `day_advanced`. Counting
+// only her own sleep could not add up to the days the world opened, so the pairing answered `null` - on a run that lived
+// three nights and could name the cause of every one of them.
+const PASS_OUT_NIGHT = (day) => ({ day, cause: "pass_out" });
+
+test("a night the engine passed her out on is a crossing, and every crossing names its cause", () => {
+  const result = crossingsFromEvidence({
+    sleepReceipts: [receipt("r1")],
+    worldNightEndings: [PASS_OUT_NIGHT(5), PASS_OUT_NIGHT(6), PASS_OUT_NIGHT(5)],
+    dayStartedDays: [5, 6, 7],
+    dayRecords: [watched(1)],
+    recorded: 1,
+  });
+  assert.equal(result.crossings, 3, "three days started, so three nights were crossed");
+  assert.equal(result.witness, "sleep_receipts+night_endings+day_started_facts");
+  assert.deepEqual(
+    result.crossedBy,
+    { sleep: 1, pass_out: 2, other: 0 },
+    "a redelivered pass-out fact is the same night",
+  );
+  // The artifact published the number it WATCHED; the evidence says three. That is the disagreement, named.
+  assert.equal(result.disagreement, "crossings_disagree:day_records=1:recorded=1");
+  assert.deepEqual(result.observed, ["watch", "post_watch", "post_watch"]);
+});
+
+test("a crossing nothing in the run explains is `other`, and a claim larger than the world is no count at all", () => {
+  // The calendar proves three nights; her own sleep crossed one; no pass-out fact names either of the others. That is a
+  // recognized cause - `other` - not a mismatch, because the crossing is real and only its attribution is missing.
+  const unexplained = crossingsFromEvidence({
+    sleepReceipts: [receipt("r1")],
+    worldNightEndings: [],
+    dayStartedDays: [5, 6, 7],
+  });
+  assert.equal(unexplained.crossings, 3);
+  assert.deepEqual(unexplained.crossedBy, { sleep: 1, pass_out: 0, other: 2 });
+  assert.equal(unexplained.disagreement, null, "`other` is an answer, so nothing disagrees with it");
+
+  // Three attributed nights against one day the world opened: two sources cannot both be right, so no number is stated.
+  const impossible = crossingsFromEvidence({
+    sleepReceipts: [receipt("r1"), receipt("r2")],
+    worldNightEndings: [PASS_OUT_NIGHT(5)],
+    dayStartedDays: [5],
+  });
+  assert.equal(impossible.crossings, null, "more crossings than days opened has no number");
+  assert.equal(impossible.witness, null);
+  assert.equal(impossible.crossedBy.pass_out, 1, "the cause counts it DID read are still published");
+  assert.match(impossible.disagreement, /^crossings_disagree:/u);
 });
 
 // WHAT MAY START A MODEL TURN.
@@ -705,22 +767,277 @@ test("a stalled body wakes her whatever the objective and the body say", () => {
   }
 });
 
+test("a stale world reading wakes her to look, and outranks the quiet bound that would have said carry on", () => {
+  // Measured 2026-11-10 (`round45`): fifty turns were issued as `continuation` while the block she was handed stayed at
+  // `revision 352` - `06:00 第 6 天` through two 02:00 pass-outs and two day starts - and she dispatched nothing for the
+  // last thirty minutes. A frozen picture of the world is not a quiet world.
+  const stale = decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false, quietMs: 0, worldStateStale: true });
+  assert.equal(stale.wake, true, "a reading older than its bound is a reason to look, whatever the silence says");
+  assert.equal(stale.reason, WAKE_REASON.staleWorld);
+  // A pass in hand is still the owner: it publishes its own facts, and re-reading the world would race it.
+  const busy = decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: true, worldStateStale: true });
+  assert.equal(busy.wake, false, "a pass that can continue owns the next move, stale picture or not");
+  assert.equal(busy.reason, WAKE_SUPPRESSION.bodyStillWorking);
+  // A stall is the body saying it will not continue, which outranks a stale picture: that one changes what she should do
+  // first, and it is still a wake, so nothing is lost by the ordering but the reason's own name.
+  const both = decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false, stalled: true, worldStateStale: true });
+  assert.equal(both.reason, WAKE_REASON.stallWake);
+});
+
 test("the first prompt of a day is the day's own opening, whatever the world is doing", () => {
   const opening = decideDayWake({ ...ROUND44_SETTLEMENT, turnIndex: 0 });
   assert.equal(opening.wake, true, "a day begins by asking her, and that is not a settlement-driven wake");
   assert.equal(opening.reason, WAKE_REASON.dayStart);
 });
 
-test("the day loop can reach every wake reason it declares, and no other", () => {
-  const produced = new Set([
-    decideDayWake({ ...ROUND44_SETTLEMENT, turnIndex: 0 }).reason,
-    decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false, quietMs: QUIET_BOUND_MS * 2 }).reason,
-    decideDayWake({ ...ROUND44_SETTLEMENT, stalled: true }).reason,
+/**
+ * The span a staleness is measured over: ONE PROMPT TURN OF THIS RUN, not a constant of the decider.
+ *
+ * `round45` issued 62 prompt turns in 2510 s, so one turn of that run is about 40 s; the runner measures its own median
+ * interval and passes it, and this number only stands in for it in a replay.
+ */
+const MEASURED_TURN_SPAN_MS = 40_000;
+
+/**
+ * Every reason the day loop's decider can answer, each with the facts that make it answer it.
+ *
+ * A TABLE rather than a set of assertions, because the population is `DECIDER_WAKE_REASONS`: a reason added to the
+ * closed set with no producer here fails `declared_reason_unreachable:<reason>`, and a producer for a reason nobody
+ * declares fails the same test from the other side. Measured 2026-11-11 (`round45`): `day_end_offer` was declared and
+ * wired and was answered ZERO times in a whole run - `decideWake` returned `continuation` whenever `objectiveMet !==
+ * true`, so all 60 wakes of that run took the one branch and the offer branch was never reached.
+ */
+const DAY_LOOP_PRODUCERS = Object.freeze({
+  day_start: () => decideDayWake({ ...ROUND44_SETTLEMENT, turnIndex: 0 }).reason,
+  continuation: () => decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false }).reason,
+  stall_wake: () => decideDayWake({ ...ROUND44_SETTLEMENT, stalled: true }).reason,
+  stale_world: () => decideDayWake({ ...ROUND44_SETTLEMENT, programRunning: false, worldStateStale: true }).reason,
+  day_end_offer: () =>
     decideDayWake({ ...ROUND44_SETTLEMENT, objectiveMet: true, programRunning: false, lateDay: true }).reason,
-  ]);
-  assert.deepEqual(
-    [...produced].sort(),
-    [WAKE_REASON.continuation, WAKE_REASON.dayEndOffer, WAKE_REASON.dayStart, WAKE_REASON.stallWake].sort(),
-    "the day loop produces exactly the four reasons it owns; `player_input` belongs to the session-goal call site",
+  objective_unreachable_for_today: () =>
+    decideDayWake({
+      ...ROUND44_SETTLEMENT,
+      programRunning: false,
+      lateDay: true,
+      objectiveProgressSinceMs: MEASURED_TURN_SPAN_MS * 2,
+      objectiveSpanMs: MEASURED_TURN_SPAN_MS,
+    }).reason,
+});
+
+test("the day loop can reach every wake reason it declares, and no other", () => {
+  console.log(
+    `wake gate: examined ${String(DECIDER_WAKE_REASONS.length)} declared reason(s): ${DECIDER_WAKE_REASONS.join(", ")}`,
   );
+  for (const reason of DECIDER_WAKE_REASONS) {
+    const produce = DAY_LOOP_PRODUCERS[reason];
+    assert.equal(typeof produce, "function", `declared_reason_unreachable:${reason}`);
+    assert.equal(produce(), reason, `declared_reason_unreachable:${reason}`);
+  }
+  assert.deepEqual(
+    Object.keys(DAY_LOOP_PRODUCERS).sort(),
+    [...DECIDER_WAKE_REASONS].sort(),
+    "a declared reason with no producer, or a producer for a reason nobody declares",
+  );
+});
+
+// THE OBJECTIVE HAS THREE STATES, AND THE CONFLATION OF TWO IS THE DEFECT.
+//
+// `round45`: day 2 asked for `a_fish_from_the_water` while the day's admitted actions were `enter_exit` and `move_to_tile`
+// - there was no `fish_here` in its reach - so the purpose judge answered `not_achieved` for the whole day and every wake
+// was issued as `continuation`. She was never asked whether to end the day and the engine passed her out twice.
+test("an achieved, an advancing and a stalled objective are three answers, and only the last one says today cannot finish", () => {
+  assert.equal(
+    readObjectiveState({ objectiveMet: true, sinceProgressMs: 0, spanMs: MEASURED_TURN_SPAN_MS }).state,
+    OBJECTIVE_STATE.achieved,
+    "the judge's own word outranks any span: there is nothing left to measure",
+  );
+  assert.equal(
+    readObjectiveState({ sinceProgressMs: MEASURED_TURN_SPAN_MS - 1, spanMs: MEASURED_TURN_SPAN_MS }).state,
+    OBJECTIVE_STATE.advancing,
+    "progress inside the span is progress",
+  );
+  assert.equal(
+    readObjectiveState({ sinceProgressMs: MEASURED_TURN_SPAN_MS, spanMs: MEASURED_TURN_SPAN_MS }).state,
+    OBJECTIVE_STATE.stalled,
+    "a whole measured turn with the objective's reading unchanged is the stall",
+  );
+  // AN UNMEASURED SPAN IS NOT A STALL: `null`/`NaN` on either side names what was missing and answers `advancing`.
+  for (const facts of [
+    { sinceProgressMs: 10 * MEASURED_TURN_SPAN_MS, spanMs: null },
+    { sinceProgressMs: 10 * MEASURED_TURN_SPAN_MS, spanMs: 0 },
+    { sinceProgressMs: null, spanMs: MEASURED_TURN_SPAN_MS },
+    { sinceProgressMs: Number.NaN, spanMs: MEASURED_TURN_SPAN_MS },
+  ]) {
+    const state = readObjectiveState(facts);
+    assert.equal(state.state, OBJECTIVE_STATE.advancing, JSON.stringify(facts));
+    assert.match(String(state.because), /^objective_(span|progress)_unmeasured$/u);
+  }
+});
+
+/**
+ * A day replayed through the decider: one poll per entry, carrying the purpose reading the judge published at that moment.
+ *
+ * Progress is the READING's own change (`objectiveProgressKey`), which is what the runner observes, rather than a count
+ * the replay invents. `dayEndOffered` is set by whatever this decider answered, so a replay exercises the once-per-day
+ * rule the runner keeps.
+ */
+function replayDay({ polls, objectiveSpanMs = MEASURED_TURN_SPAN_MS, quietMs = QUIET_BOUND_MS * 2 }) {
+  const wakes = [];
+  let progressKey = null;
+  let progressAtMs = 0;
+  let nowMs = 0;
+  let dayEndOffered = false;
+  for (const poll of polls) {
+    nowMs += poll.everyMs;
+    const key = objectiveProgressKey(poll.reading);
+    if (key !== progressKey) {
+      progressKey = key;
+      progressAtMs = nowMs;
+    }
+    const wake = decideDayWake({
+      turnIndex: wakes.length === 0 ? 0 : 1,
+      objectiveMet: poll.reading.state === "achieved",
+      objectiveProgressSinceMs: nowMs - progressAtMs,
+      objectiveSpanMs,
+      programRunning: false,
+      admissionPending: false,
+      quietMs,
+      lateDay: poll.lateDay === true,
+      dayEndOffered,
+      stalled: false,
+      worldStateStale: false,
+    });
+    wakes.push(wake);
+    if (wake.reason === WAKE_REASON.dayEndOffer || wake.reason === WAKE_REASON.objectiveUnreachableForToday)
+      dayEndOffered = true;
+  }
+  return wakes;
+}
+
+/** The round45 day-2 reading: a purpose whose admitted actions never change because the action it needs was not there. */
+const STILL_FISHING_READING = Object.freeze({
+  state: "not_achieved",
+  admittedActionIds: Object.freeze(["enter_exit", "move_to_tile"]),
+});
+
+const pollsOf = (reading, { lateDay, count = 10, everyMs = MEASURED_TURN_SPAN_MS }) =>
+  Array.from({ length: count }, () => ({ reading, lateDay, everyMs }));
+
+test("objective_state_conflates_stalled_and_advancing: a still objective past the evening is offered, a moving one is not", () => {
+  const still = replayDay({ polls: pollsOf(STILL_FISHING_READING, { lateDay: true }) });
+  const offer = still.find((wake) => wake.reason === WAKE_REASON.objectiveUnreachableForToday);
+  assert.ok(
+    offer !== undefined,
+    "a still objective past the evening is a day that can be ended, and she must be asked",
+  );
+  assert.ok(offer.wake === true);
+  // THE CONDITIONS PRINT WITH IT: every fact the branch read, named.
+  assert.deepEqual(
+    [...offer.conditions].map((condition) => condition.split("=")[0]),
+    ["objective_state", "since_objective_progress_ms", "objective_span_ms", "objective_span_source", "late_day"],
+  );
+  assert.ok(offer.conditions.includes("objective_state=stalled"));
+  assert.ok(offer.conditions.includes(`objective_span_ms=${String(MEASURED_TURN_SPAN_MS)}`));
+  assert.ok(offer.conditions.includes("late_day=true"));
+  // Asked ONCE per day: an offer repeated until answered is the ping this decider exists to remove.
+  assert.equal(
+    still.filter((wake) => wake.reason === WAKE_REASON.objectiveUnreachableForToday).length,
+    1,
+    "the day-end offer is one per day, whatever the polls do after it",
+  );
+
+  // THE SAME DAY, WITH AN OBJECTIVE THAT KEEPS MOVING: every poll changes the reading, so it is `advancing` and the day is
+  // never called unfinishable. This is the other half of the conflation, and without it the new reason would be a timer.
+  const moving = replayDay({
+    polls: pollsOf(STILL_FISHING_READING, { lateDay: true }).map((poll, index) => ({
+      ...poll,
+      reading: { state: "not_achieved", admittedActionIds: ["till_soil"], patchTiles: index },
+    })),
+  });
+  assert.equal(
+    moving.some((wake) => wake.reason === WAKE_REASON.objectiveUnreachableForToday),
+    false,
+    "an objective whose reading moves is still being worked on, whatever the clock says",
+  );
+  assert.ok(moving.some((wake) => wake.reason === WAKE_REASON.continuation));
+
+  // AND BEFORE THE EVENING THE SAME STILL OBJECTIVE IS NOT AN OFFER: the day still has hours in it.
+  const early = replayDay({ polls: pollsOf(STILL_FISHING_READING, { lateDay: false }) });
+  assert.equal(
+    early.some((wake) => wake.reason === WAKE_REASON.objectiveUnreachableForToday),
+    false,
+    "`unreachable_for_today` names a day that is nearly over, not an objective that is hard",
+  );
+  assert.ok(early.some((wake) => wake.reason === WAKE_REASON.continuation));
+
+  // WHAT THE DECIDER ANSWERED BEFORE THIS CHANGE, from the same replay: with no span there is no third state, every poll
+  // is `continuation`, and the day is never offered - which is exactly `round45`'s 60 wakes and two 02:00 pass-outs.
+  const noSpan = replayDay({ polls: pollsOf(STILL_FISHING_READING, { lateDay: true }), objectiveSpanMs: null });
+  assert.equal(
+    noSpan.some((wake) => wake.reason === WAKE_REASON.objectiveUnreachableForToday),
+    false,
+  );
+  assert.equal(
+    noSpan.filter((wake) => wake.reason === WAKE_REASON.continuation).length,
+    noSpan.length - 1,
+    "one measured span, and the one branch that conflated `still working` with `cannot be done today` is gone",
+  );
+});
+
+test("a stale world is asked about before a still objective, because seeing comes before deciding", () => {
+  // The ordering is the one `decideWake` keeps above the objective: `stale_world` says we cannot see the world, the
+  // still objective says we can see it and it is not moving. Both are wakes, so only the reason's name is at stake - and
+  // it is the name a reader needs beside a frozen block.
+  const both = decideDayWake({
+    ...ROUND44_SETTLEMENT,
+    programRunning: false,
+    lateDay: true,
+    worldStateStale: true,
+    objectiveProgressSinceMs: MEASURED_TURN_SPAN_MS,
+    objectiveSpanMs: MEASURED_TURN_SPAN_MS,
+  });
+  assert.equal(both.reason, WAKE_REASON.staleWorld);
+  const seenButStill = decideDayWake({
+    ...ROUND44_SETTLEMENT,
+    programRunning: false,
+    lateDay: true,
+    worldStateStale: false,
+    objectiveProgressSinceMs: MEASURED_TURN_SPAN_MS,
+    objectiveSpanMs: MEASURED_TURN_SPAN_MS,
+  });
+  assert.equal(seenButStill.reason, WAKE_REASON.objectiveUnreachableForToday);
+});
+
+// WHAT THE RUN SAYS IT ISSUED, JUDGED AGAINST THE REASONS THE DECIDER OWNS.
+//
+// `round45`'s own wake account, verbatim from `multiday.wakes.byReason` of
+// `2026-11-10T22-13-25-922Z-multiday_routine`. It is the red proof for the gate below: two of the reasons the decider
+// declares were issued zero times in a run that lasted 41.9 minutes.
+const ROUND45_WAKE_ACCOUNT = Object.freeze({ day_start: 2, continuation: 60, stall_wake: 0, day_end_offer: 0 });
+
+test("wake_reason_never_reachable: a run's own wake account names every reason it never produced", () => {
+  const reading = wakeReasonReachability({ byReason: ROUND45_WAKE_ACCOUNT });
+  console.log(
+    `wake gate: examined ${String(reading.examined.length)} declared reason(s): ${reading.examined.join(", ")}`,
+  );
+  assert.deepEqual(
+    [...reading.examined],
+    [...DECIDER_WAKE_REASONS],
+    "the population comes from the decider, not a list here",
+  );
+  assert.equal(reading.issued.continuation, 60);
+  assert.ok(
+    reading.violations.includes("wake_reason_never_reachable:day_end_offer"),
+    "round45 never asked her whether to end the day: the offer branch was unreachable while the objective was not achieved",
+  );
+  assert.ok(
+    reading.violations.includes("wake_reason_never_reachable:objective_unreachable_for_today"),
+    "and the reason for exactly that case did not exist when the run was made",
+  );
+  assert.ok(!reading.violations.includes("wake_reason_never_reachable:continuation"));
+  // A run that published no wake account is NOT a run that issued nothing.
+  const unmeasured = wakeReasonReachability({ byReason: null });
+  assert.ok(unmeasured.unmeasured !== null, "an unread account names itself unmeasured rather than counting zero");
+  assert.deepEqual(unmeasured.violations, []);
+  assert.deepEqual(unmeasured.neverIssued, []);
 });

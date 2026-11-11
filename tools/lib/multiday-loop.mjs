@@ -22,6 +22,7 @@ import {
   LEVEL_UP_MENU,
   MAXIMUM_BASELINE_DAYS,
   MINIMUM_BASELINE_DAYS,
+  NIGHT_CAUSE_PASS_OUT,
   WAIT_ROLLOVER_MENUS,
 } from "./multiday-baseline.mjs";
 
@@ -398,6 +399,25 @@ function distinctRequests(receipts) {
 }
 
 /**
+ * HOW a night was crossed, as the evidence that witnessed it names it.
+ *
+ * A crossing always has a cause, and the run used to record only the nights her own sleep ended: measured 2026-11-11
+ * (`round45`, `2026-11-10T22-13-25-922Z-multiday_routine`), the world published `day_started_day_5`/`_6`/`_7` and
+ * `night_ended_pass_out_day_5`/`_6`, while exactly ONE `sleep` receipt reached `day_advanced` - so the sleep receipts
+ * could not add up to the days the world opened and the pairing answered `null`. Two of those three nights the engine
+ * ended itself (`Game1.PassOutNewDay()` calls `NewDay(0f)`, so the day REALLY starts), and a count that refuses them is
+ * refusing nights the run lived.
+ */
+export const CROSSED_BY = Object.freeze({
+  /** Her own `advance_day` lifecycle crossed it: the `sleep` receipt whose reason is `day_advanced`. */
+  sleep: "sleep",
+  /** The ENGINE crossed it, and the Mod's `night_ended_pass_out` fact names the night it collapsed on. */
+  passOut: "pass_out",
+  /** The calendar moved and nothing in this run says how: a crossing whose cause nobody recorded. */
+  other: "other",
+});
+
+/**
  * The nights a run crossed, from what the run recorded had HAPPENED rather than from the nights a watcher saw.
  *
  * WHY THIS IS NOT THE LOOP'S OWN COUNT. Measured 2026-11-10 (round44, `2026-11-10T11-30-16-268Z-multiday_routine`): her
@@ -407,29 +427,34 @@ function distinctRequests(receipts) {
  * nights that happened and counted the nights that were watched, which is the whole defect: two honest numbers, one
  * false claim.
  *
- * FOUR SOURCES, each with its own file and its own sentence:
+ * FIVE SOURCES, each with its own file and its own sentence:
  *   - `sleepReceipts`: the timeline's execution receipts whose reason is `day_advanced`, one per request. This is the Mod
- *     saying a lifecycle crossed a night, and it is the only source that says HOW as well as that it happened;
+ *     saying a lifecycle crossed a night, and it is the only source that says that SHE crossed it;
+ *   - `worldNightEndings`: the Mod's own `night_ended_*` facts (`worldNightEndingsFromFacts` in
+ *     `multiday-baseline.mjs`). `night_ended_pass_out` is the ENGINE crossing the night, which is a crossing;
  *   - `dayStartedDays`: the world's own `day_started_day_<n>` facts, distinct by day. The crossing witness that cannot
- *     be hidden by which dispatch channel carried the night;
+ *     be hidden by which dispatch channel carried the night, and the POPULATION every attribution must add up to;
  *   - `dayRecords`: the loop's iterations - one per night the watcher saw. It is the WATCH, not the run;
  *   - `recorded`: the number the artifact published, kept so a reader can see what was claimed.
  *
  * `null` is "could not be read" and an empty array is "read, and the run crossed nothing" - the two are never merged,
  * because a count nobody could read must not be judged as a count of none.
  *
- * When the two EVIDENCE sources disagree the crossings are `null`: a run that cannot say how many nights it lived has no
- * number, and printing either one would be picking. When they agree they are the answer even if the loop's records are
- * fewer - a crossing discovered after the watcher stopped still counts, and `observed` says `post_watch` for it so nobody
- * reads it as watched. Every disagreement is named with all the numbers that produced it.
+ * THE CAUSES ADD UP, OR THE RUN HAS NO NUMBER. A sleep receipt and a pass-out fact are both crossings with a cause, and
+ * their sum is the attribution. When the attribution is at or below the days the world opened, the world's own count is
+ * the answer and the difference is `other` - a crossing the calendar proves and nothing explains. When the attribution
+ * EXCEEDS the days the world opened, two sources cannot both be right and the crossings are `null` rather than picked.
+ * The loop's own records and the artifact's published number never decide the count: they are the watch and the claim,
+ * and when they differ from the evidence the disagreement names them by name.
  */
 export function crossingsFromEvidence({
   sleepReceipts = null,
+  worldNightEndings = null,
   dayStartedDays = null,
   dayRecords = null,
   recorded = null,
 } = {}) {
-  const receiptCrossings =
+  const sleepCrossings =
     sleepReceipts === null
       ? null
       : distinctRequests(
@@ -437,6 +462,18 @@ export function crossingsFromEvidence({
             (receipt) => receipt?.reasonCode === CROSSING_REASON,
           ),
         );
+  const passOutCrossings =
+    worldNightEndings === null
+      ? null
+      : new Set(
+          (Array.isArray(worldNightEndings) ? worldNightEndings : [])
+            .filter((ending) => ending?.cause === NIGHT_CAUSE_PASS_OUT && Number.isInteger(ending?.day))
+            .map((ending) => ending.day),
+        ).size;
+  // A crossing is ATTRIBUTED only when both of its cause witnesses could be read: one unreadable half would make a sum
+  // that silently omits the nights it would have named.
+  const attributed = sleepCrossings === null || passOutCrossings === null ? null : sleepCrossings + passOutCrossings;
+  const ATTRIBUTED_WITNESS = "sleep_receipts+night_endings";
   const startedCrossings =
     dayStartedDays === null
       ? null
@@ -447,8 +484,13 @@ export function crossingsFromEvidence({
   const sources = Object.freeze([
     Object.freeze({
       name: "sleep_receipts",
-      crossings: receiptCrossings,
+      crossings: sleepCrossings,
       source: "timeline.jsonl execution receipts with reasonCode day_advanced, one per requestId",
+    }),
+    Object.freeze({
+      name: "night_endings",
+      crossings: passOutCrossings,
+      source: "timeline.jsonl world facts, one per distinct night_ended_pass_out_day_<n> (the engine's own crossing)",
     }),
     Object.freeze({
       name: "day_started_facts",
@@ -465,17 +507,31 @@ export function crossingsFromEvidence({
 
   let crossings = null;
   let witness = null;
-  if (receiptCrossings !== null && startedCrossings !== null && receiptCrossings !== startedCrossings) {
-    // TWO EVIDENCE SOURCES, TWO NUMBERS: the run cannot state one.
-  } else if (receiptCrossings !== null && startedCrossings !== null) {
-    crossings = receiptCrossings;
-    witness = "sleep_receipts+day_started_facts";
-  } else if (receiptCrossings !== null) {
-    crossings = receiptCrossings;
-    witness = "sleep_receipts";
+  // The crossings nothing in this run explains, once the count is decided and both cause witnesses were read.
+  let otherCrossings = null;
+  if (attributed !== null) {
+    if (startedCrossings === null) {
+      crossings = attributed;
+      witness = ATTRIBUTED_WITNESS;
+    } else if (attributed <= startedCrossings) {
+      // THE WORLD'S COUNT IS THE POPULATION, and the attribution is how much of it is explained.
+      crossings = startedCrossings;
+      witness = `${ATTRIBUTED_WITNESS}+day_started_facts`;
+      otherCrossings = startedCrossings - attributed;
+    }
+    // MORE ATTRIBUTED NIGHTS THAN THE WORLD OPENED DAYS: two evidence sources, two numbers, no crossing count.
+  } else if (sleepCrossings !== null && startedCrossings !== null) {
+    if (sleepCrossings <= startedCrossings) {
+      crossings = startedCrossings;
+      witness = "sleep_receipts+day_started_facts";
+    }
+    // A night her own sleep crossed but the world never opened a day for: not a count to state.
   } else if (startedCrossings !== null) {
     crossings = startedCrossings;
     witness = "day_started_facts";
+  } else if (sleepCrossings !== null) {
+    crossings = sleepCrossings;
+    witness = "sleep_receipts";
   } else if (recordedCrossings !== null) {
     crossings = recordedCrossings;
     witness = "recorded";
@@ -490,11 +546,22 @@ export function crossingsFromEvidence({
       ? []
       : Array.from({ length: crossings }, (_, index) => (index < watched ? "watch" : "post_watch"));
 
+  // EVERY SOURCE THAT CLAIMS A COUNT OF ITS OWN IS NAMED WHEN IT DISAGREES WITH THE DECIDED ONE. The two attribution
+  // sources and the calendar are reconciled by the rule above - that is what `crossedBy` publishes - so they are not
+  // compared one by one: a run with one sleep and two pass-outs is three nights, not three disagreements. What is left
+  // is the WATCH (`day_records`) and the CLAIM (`recorded`), which never decide a count and routinely fall short of it
+  // (round44: `crossings: 2` beside three evidence crossings). When no count could be decided, every readable source is
+  // named, because the disagreement IS the result.
+  const CLAIM_SOURCES = new Set(["day_records", "recorded"]);
   const readable = sources.filter((entry) => entry.crossings !== null);
+  const differing =
+    crossings === null
+      ? readable
+      : readable.filter((entry) => CLAIM_SOURCES.has(entry.name) && entry.crossings !== crossings);
   const disagreement =
-    readable.length > 1 && new Set(readable.map((entry) => entry.crossings)).size > 1
-      ? `crossings_disagree:${readable.map((entry) => `${entry.name}=${String(entry.crossings)}`).join(":")}`
-      : null;
+    differing.length === 0
+      ? null
+      : `crossings_disagree:${differing.map((entry) => `${entry.name}=${String(entry.crossings)}`).join(":")}`;
 
   return Object.freeze({
     crossings,
@@ -502,6 +569,14 @@ export function crossingsFromEvidence({
     observed: Object.freeze(observed),
     watched: observed.filter((entry) => entry === "watch").length,
     postWatch: observed.filter((entry) => entry === "post_watch").length,
+    // What each crossing was caused by, as the count rather than as a per-night list: the sources do not carry a shared
+    // night identity, so a list would be an ordering nobody witnessed. `other` is the crossings the calendar proves and
+    // no receipt or night-ending fact explains, and `null` means nobody could say.
+    crossedBy: Object.freeze({
+      sleep: sleepCrossings,
+      pass_out: passOutCrossings,
+      other: otherCrossings,
+    }),
     sources,
     disagreement,
   });
@@ -531,6 +606,16 @@ export const WAKE_REASON = Object.freeze({
   continuation: "continuation",
   /** The Host published `execution_stalled`: the body is NOT continuing, so she is the only thing left that can decide. */
   stallWake: "stall_wake",
+  /**
+   * The Host published `world_state_stale`: the world she would be given is older than the declared bound.
+   *
+   * Measured 2026-11-10 (`round45`): the block froze at `revision 352` and was re-stated for 50 turns - 30 minutes -
+   * while the clock walked through two 02:00 pass-outs and two day starts. Every one of those turns was issued as
+   * `continuation`, which asked her to carry on from a day-old picture; she carried on, in prose, and dispatched
+   * nothing. A stale reading is not a quiet world: it is a world nobody has looked at, and the one move that fixes it
+   * is an observation. Naming it `continuation` would be a reason that lies about its own precondition.
+   */
+  staleWorld: "stale_world",
   /** A turn the player asked for, carrying player text. */
   playerInput: "player_input",
   /**
@@ -542,9 +627,30 @@ export const WAKE_REASON = Object.freeze({
    * measurement. Naming the offer `continuation` would be a reason that lies about its own precondition.
    */
   dayEndOffer: "day_end_offer",
+  /**
+   * The day is past its evening and the objective has not advanced for a measured span: it is not going to be done
+   * today, so the only decision left is what to do with the rest of the day.
+   *
+   * Measured 2026-11-11 (`round45`, `2026-11-10T22-13-25-922Z-multiday_routine`): day 2 was `a_fish_from_the_water` and
+   * its admitted actions were `enter_exit` and `move_to_tile` - there was no `fish_here` in that day's reach - so the
+   * purpose judge answered `not_achieved` for 60 wakes, through two 02:00 pass-outs, and the day-end branch was never
+   * entered because it required `objectiveMet === true`. `not_achieved` conflates "still working on it" with "cannot be
+   * done today", and only the second one makes the rest of the day a decision. Naming this `continuation` would be a
+   * reason that lies about its own precondition: nothing about that day was continuing.
+   */
+  objectiveUnreachableForToday: "objective_unreachable_for_today",
 });
 
 export const WAKE_REASONS = Object.freeze(Object.values(WAKE_REASON));
+
+/**
+ * The reasons the DAY LOOP's decider can answer with, as opposed to the ones a call site declares.
+ *
+ * `player_input` is a turn the player asked for and no decision of this loop can produce it; `day_start` is
+ * `decideDayWake`'s own opening. Both are declared reasons, and neither is a settlement question - which is why the
+ * population a run's wake account is judged against is this narrower set, and why `wakeReasonReachability` prints it.
+ */
+export const DECIDER_WAKE_REASONS = Object.freeze(WAKE_REASONS.filter((reason) => reason !== WAKE_REASON.playerInput));
 
 /**
  * Why a settlement did NOT produce a prompt. Closed for the same reason the wake reasons are, and reported by name so
@@ -573,13 +679,95 @@ export const WAKE_SUPPRESSION_REASONS = Object.freeze(Object.values(WAKE_SUPPRES
 export const QUIET_BOUND_MS = 20_000;
 
 /**
+ * The day's objective, in three states rather than two.
+ *
+ * The purpose judge answers one question - did this day's purpose hold - and its `not_achieved` is the only "no" it has.
+ * That word cannot tell a companion who is still working toward her task from one whose task cannot be finished today,
+ * and the day-end offer needed the second: measured 2026-11-11 (`round45`), an objective that could not advance stayed
+ * `not_achieved` for 60 wakes and the day was never offered. The three states are what the decider reads instead.
+ */
+export const OBJECTIVE_STATE = Object.freeze({
+  /** The purpose judge said the day's purpose held. */
+  achieved: "achieved",
+  /** Not achieved, and the objective's published reading moved within the span: the day's work is going somewhere. */
+  advancing: "advancing",
+  /** Not achieved, and that reading has not moved for the span: nothing about today is going to change it. */
+  stalled: "stalled",
+});
+
+/**
+ * The fields a purpose reading publishes that MOVE only when the objective moves.
+ *
+ * `admittedActionIds` is the progress a step criterion publishes - which of its admitted actions have arrived - and
+ * `patchTiles`/`patchWindow.count`/`largestRectangle.area` are the progress a shape criterion publishes. Nothing else in
+ * the reading is a progress fact: `purpose` is prose, and `state`/`reasonCode` flip once at the end.
+ *
+ * A reading that carries none of them (an `unproven` task, or one whose criterion needs an unpublished fact) has no
+ * progress to observe, and its key is then the reading's own state: it cannot be called "advancing" by a change nobody
+ * published.
+ */
+export function objectiveProgressKey(reading) {
+  if (reading === null || typeof reading !== "object") return null;
+  return JSON.stringify([
+    reading.state ?? null,
+    Array.isArray(reading.admittedActionIds) ? [...reading.admittedActionIds].sort() : null,
+    reading.patchTiles ?? null,
+    reading.patchWindow?.count ?? null,
+    reading.largestRectangle?.area ?? null,
+  ]);
+}
+
+/**
+ * Which of the three states one read of the objective is in, from two measured numbers and one judge answer.
+ *
+ * `spanMs` is the run's OWN measured turn cadence (the median interval between its prompt turns), never a constant
+ * invented here: a companion's turn takes as long as this run's turns take, so "nothing moved for a whole turn" is a
+ * statement about that run rather than about a number someone picked. `sinceProgressMs` is how long the objective's
+ * published reading has stood still.
+ *
+ * AN UNMEASURED SPAN OR PROGRESS IS NOT A STALL. A `null` or `NaN` on either side answers `advancing` with `because`
+ * naming what was missing, so "we could not tell" can never licence the day-end reason - the discipline
+ * `WAKE_SUPPRESSION.quietPeriod` already keeps for an unmeasured quiet.
+ */
+export function readObjectiveState({ objectiveMet = false, sinceProgressMs = null, spanMs = null } = {}) {
+  if (objectiveMet === true)
+    return Object.freeze({ state: OBJECTIVE_STATE.achieved, sinceProgressMs: null, spanMs, because: null });
+  if (!Number.isFinite(spanMs) || spanMs <= 0)
+    return Object.freeze({
+      state: OBJECTIVE_STATE.advancing,
+      sinceProgressMs,
+      spanMs: null,
+      because: "objective_span_unmeasured",
+    });
+  if (!Number.isFinite(sinceProgressMs))
+    return Object.freeze({
+      state: OBJECTIVE_STATE.advancing,
+      sinceProgressMs: null,
+      spanMs,
+      because: "objective_progress_unmeasured",
+    });
+  if (sinceProgressMs < spanMs)
+    return Object.freeze({ state: OBJECTIVE_STATE.advancing, sinceProgressMs, spanMs, because: null });
+  return Object.freeze({ state: OBJECTIVE_STATE.stalled, sinceProgressMs, spanMs, because: null });
+}
+
+/**
  * The facts that decide one wake. Every one is read; none is inferred from another.
  *
  * `stalled` is the Host's own `execution_stalled` fact, not this loop's reading of silence: the pump owns the bound and
- * the re-arm, and a second derivation here would be a second authority for the same claim.
+ * the re-arm, and a second derivation here would be a second authority for the same claim. `worldStateStale` is the
+ * same relation to the Host's `world_state_stale` fact: the pump owns the bound (in turns) and this only reads whether
+ * one has been published.
+ *
+ * `objectiveMet`, `objectiveProgressSinceMs` and `objectiveSpanMs` are the objective's three states (see
+ * `readObjectiveState`): what the purpose judge said, how long its reading has stood still, and the run's own measured
+ * turn cadence. They are READ here rather than inferred from `quietMs`, because a quiet session and a still objective
+ * are different facts and a run can have either without the other.
  */
 export function decideWake({
   objectiveMet,
+  objectiveProgressSinceMs = null,
+  objectiveSpanMs = null,
   programRunning = false,
   admissionPending = false,
   quietMs = null,
@@ -587,18 +775,56 @@ export function decideWake({
   lateDay = false,
   dayEndOffered = false,
   stalled = false,
+  worldStateStale = false,
 } = {}) {
+  const objective = readObjectiveState({
+    objectiveMet,
+    sinceProgressMs: objectiveProgressSinceMs,
+    spanMs: objectiveSpanMs,
+  });
   // A stall outranks everything, including a day whose work is done: it is the body saying it will not continue.
   if (stalled === true) return Object.freeze({ wake: true, reason: WAKE_REASON.stallWake });
   if (programRunning === true || admissionPending === true)
     return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.bodyStillWorking });
+  // A stale reading outranks the quiet period, and is not a quiet period: the world has been speaking and her picture of
+  // it has not moved, so "nothing has moved for long enough to say nothing will" is the wrong claim about it. It sits
+  // BELOW the in-flight check because a running programme owns the next move and publishes its own facts.
+  if (worldStateStale === true) return Object.freeze({ wake: true, reason: WAKE_REASON.staleWorld });
   // An unmeasured quiet is not quiet: "we could not tell" must not licence a wake.
   if (!Number.isFinite(quietMs) || quietMs < quietBoundMs)
     return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.quietPeriod });
-  if (objectiveMet !== true) return Object.freeze({ wake: true, reason: WAKE_REASON.continuation });
-  if (lateDay !== true) return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.objectiveMet });
-  if (dayEndOffered === true) return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.alreadyOffered });
-  return Object.freeze({ wake: true, reason: WAKE_REASON.dayEndOffer });
+  // THE ORDER OF THE TWO "cannot go on" REASONS IS THE POINT, and it continues the order above: `stale_world` (we cannot
+  // see what the world is) outranks `objective_unreachable_for_today` (we can see it, and the objective is not moving in
+  // it). A stale reading means an observation is the one move that fixes her picture, so that question comes first; a
+  // still objective means the rest of the day is a decision about the day, which is the second. Both are wakes, so the
+  // ordering costs only the first reason's name - and that name is what a reader of `wakes.byReason` reads beside a
+  // frozen block.
+  if (objective.state !== OBJECTIVE_STATE.achieved && lateDay !== true)
+    return Object.freeze({ wake: true, reason: WAKE_REASON.continuation, objective });
+  if (objective.state === OBJECTIVE_STATE.stalled) {
+    if (dayEndOffered === true)
+      return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.alreadyOffered, objective });
+    return Object.freeze({
+      wake: true,
+      reason: WAKE_REASON.objectiveUnreachableForToday,
+      objective,
+      // THE CONDITIONS, NAMED AND PRINTED. A reason whose precondition cannot be read back from the run is a reason its
+      // reader has to take on trust: these five fields are every fact the branch above read, in the shape the runner
+      // prints when it fires.
+      conditions: Object.freeze([
+        `objective_state=${OBJECTIVE_STATE.stalled}`,
+        `since_objective_progress_ms=${String(objective.sinceProgressMs)}`,
+        `objective_span_ms=${String(objective.spanMs)}`,
+        "objective_span_source=median_prompt_turn_interval_of_this_run",
+        `late_day=${String(lateDay === true)}`,
+      ]),
+    });
+  }
+  if (objective.state === OBJECTIVE_STATE.advancing)
+    return Object.freeze({ wake: true, reason: WAKE_REASON.continuation, objective });
+  if (lateDay !== true) return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.objectiveMet, objective });
+  if (dayEndOffered === true) return Object.freeze({ wake: false, reason: WAKE_SUPPRESSION.alreadyOffered, objective });
+  return Object.freeze({ wake: true, reason: WAKE_REASON.dayEndOffer, objective });
 }
 
 /**
@@ -610,4 +836,49 @@ export function decideWake({
 export function decideDayWake({ turnIndex, ...facts } = {}) {
   if (turnIndex === 0) return Object.freeze({ wake: true, reason: WAKE_REASON.dayStart });
   return decideWake(facts);
+}
+
+/**
+ * Every reason the day loop's decider can answer, against what ONE run actually issued.
+ *
+ * WHY A RUN IS JUDGED HERE AT ALL. `round45` published `wakes.byReason { day_start 2, continuation 60, stall_wake 0,
+ * day_end_offer 0 }`, and a reader had no way to see that half of the reasons the decider owns had never been produced by
+ * the loop it was reading - the line that would have said "she was never asked whether to end the day", and the one that
+ * would have said "the body stopped and nobody told her". The population comes from `DECIDER_WAKE_REASONS`, which is
+ * derived from `WAKE_REASON`, so a reason added tomorrow is examined without editing this function; a zero is named
+ * `wake_reason_never_reachable:<reason>` rather than printed as a quiet `0`.
+ *
+ * A ZERO IS A COVERAGE READING, NOT A VERDICT. A run with no stall publishes `stall_wake 0` and is not thereby wrong:
+ * the fact the pump owns simply never armed. What the reading refuses is silence - a reason declared and never produced
+ * is a claim about the run nobody checked. `unmeasured` is separate from `neverIssued` for the same reason `null` is
+ * separate from an empty list everywhere else in this module: a run that published no wake account has not been
+ * measured, and is not a run that issued nothing.
+ */
+export function wakeReasonReachability({ byReason = null } = {}) {
+  const examined = DECIDER_WAKE_REASONS;
+  if (byReason === null || typeof byReason !== "object") {
+    return Object.freeze({
+      examined,
+      issued: Object.freeze({}),
+      neverIssued: Object.freeze([]),
+      unmeasured: "result.json multiday.wakes.byReason was not published by this run",
+      violations: Object.freeze([]),
+    });
+  }
+  const issued = Object.freeze(
+    Object.fromEntries(
+      examined.map((reason) => [
+        reason,
+        Number.isInteger(byReason[reason]) && byReason[reason] > 0 ? byReason[reason] : 0,
+      ]),
+    ),
+  );
+  const neverIssued = Object.freeze(examined.filter((reason) => issued[reason] === 0));
+  return Object.freeze({
+    examined,
+    issued,
+    neverIssued,
+    unmeasured: null,
+    violations: Object.freeze(neverIssued.map((reason) => `wake_reason_never_reachable:${reason}`)),
+  });
 }
