@@ -398,6 +398,13 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   "check-game-surface-conduct-classes.mjs",
   "check-live-run-failure-dump.mjs",
   "check-live-run-multiday-baseline.mjs",
+  // Its default run prints `{gate:"terminal-commit-single-entry", status, examined, throughSeam, seamCalls, seamBody,
+  // exempt, families, findings}` over the whole Mod tree, so the reading is a census and not a list. Its falsifiers are
+  // tools/check-terminal-commit-single-entry.test.mjs: a hand-rolled `Remember` + `AddTrace` pair inside the converted
+  // `busactions` family is `terminal_commit_bypasses_seam:<file>:<line>:<family>`, an exemption naming a member that
+  // calls the seam is `stale_terminal_seam_exemption:<file>:<line>`, and a tree with no seam call at all is blocked
+  // rather than green because a scan that measured nothing agrees with itself.
+  "check-terminal-commit-single-entry.mjs",
   // Its default run prints `{gate:"presentation-delivery-account", status, examined, checks[]}` and reads whatever
   // bundle it is pointed at, so the report is the gate's own verdict rather than prose. Its falsifier is
   // tools/lib/presentation-delivery-account.test.mjs: 59 pieces against an account of 46 parts is reconciled as 46 text
