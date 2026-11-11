@@ -317,6 +317,17 @@ export function checkExperimentalRunners({
  */
 const GATES_WITH_FALSIFIER = Object.freeze([
   "check-build-artifact-producers.mjs",
+  // Prints `functions examined N · over the bound K · worst <name> @ <file>:<line> = <n>` per producer, the class
+  // line and the class-size line, then a `checks[]` verdict enumerating its five rules (each language's function
+  // bound, the class complexity bound, the class-size ceiling, and the ratchet over the baseline), so its default
+  // run is the report this suite reads. Its falsifier is tools/check-cognitive-complexity.test.mjs: the S3776 cases
+  // are hand-computed per rule (sequential branches 3, nesting 1+2+3, else-if 3, switch sections 4, catch without a
+  // nesting increment 3, logical runs 1/2/3, a nested function restarting at 0), two partial declarations of one class
+  // are one type with `parts: 2` and the summed value, an unrecorded over-bound member and a grown one and a gone one
+  // are the three ratchet directions, a class sum names `<class>:<parts>:<n>`, a class size names
+  // `<type>:<lines>:<ceiling>:<parts>`, and the CLI over a throwaway root is blocked on an empty population, names a
+  // missing `biome.json`, and goes red -> `--update` -> green -> red as the function grows and then disappears.
+  "check-cognitive-complexity.mjs",
   // Both print a one-entry `checks[]` verdict in their default run since 2026-11-09: they asserted a rule all along
   // (every declared operation reaches a surface; every declared pair meets its minimum) and printed a table the harness
   // could not tell apart from a report. Naming the rule is what makes the check read the gate instead of its prose.
@@ -390,6 +401,15 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // answer that dropped a step is a dead end, a plan-level refusal with a workable remedy is repaired, a refusal naming
   // no remedy is a dead end even when one exists by hand, and an empty or unpublished population is `blocked`.
   "check-plan-legal-fixpoint.mjs",
+  // Prints `files examined N · clone groups M · new K · grown G · baselined B` and a one-entry `checks[]` verdict, so
+  // its default run is the report read here. Its falsifier is tools/check-code-duplication.test.mjs, which drives the
+  // gate's own reader over throwaway trees and jscpd's real report: three copies of the admission body are one group
+  // named with every site (`clone_group:...tokens:3sites:`), a fourth copy against a three-site baseline entry is
+  // `clone_group_grew`, two copies against a four-site entry are `stale_clone_baseline`, a config naming another
+  // population is `jscpd_config_disagrees:<field>` for path, format, ignore and both thresholds, a tree with no source
+  // file is blocked (`code_duplication_examined_no_files`) and a declared `typescript` format with no TypeScript file
+  // is blocked naming the format - the two ways the C# tree and the whole scan could read as measured when they are not.
+  "check-code-duplication.mjs",
   // Prints `observation tools examined N · named M · with a reason K`, one line per tool, and a `checks[]` verdict
   // enumerating its seven rules (the surface still mounts the class it reads, the population is non-empty, the guidance
   // was found, every tool is named or reasoned, the reason table is not stale, its classes are closed, it reads the

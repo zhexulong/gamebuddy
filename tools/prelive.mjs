@@ -41,14 +41,13 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
+import { resolveStardewFixtureRoots } from "./lib/stardew-fixture-roots.mjs";
+import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
+import { GATE_EXEMPT_PUBLISHED_ACTIONS } from "./lib/stardew-published-action-registry.mjs";
 import {
   STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
   STARDEW_PUBLISHED_ACTION_GATES,
 } from "./stardew-action-gate-descriptors.mjs";
-import { resolveStardewFixtureRoots } from "./lib/stardew-fixture-roots.mjs";
-import { GATE_EXEMPT_PUBLISHED_ACTIONS } from "./lib/stardew-published-action-registry.mjs";
-import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
 
 const REPO = fileURLToPath(new URL("..", import.meta.url));
 const TOOLS = path.join(REPO, "tools");
@@ -157,12 +156,11 @@ export const L0_GATES = Object.freeze([
   // `assets/tavern/presets/PERSONA-REVISION.md` in the same commit. 2.0 s here (three git spawns, batched), and it
   // names the drifting field rather than a file.
   "tools/check-persona-prose.mjs",
-  // The Game floor's own composition, classified rule by rule: FLOOR (what she must never do), CHANNEL (how to
-  // operate the surface) or FORM (how long a turn is, how many beats it carries - the card's, so a FORM rule is
-  // deleted). It runs here because its defect is invisible everywhere else: the rule it was built for
-  // (`Speak before you act ... never run tools in total silence`) was reviewed, shipped, and answered with 132
-  // bubbles over 93 prompt turns - 90 of them standalone speech with no tool call - before anyone asked what KIND
-  // of rule it was. Pure file reads, milliseconds.
+  // The Game floor's own composition, classified rule by rule: FLOOR (what she must never do), CHANNEL (how to operate
+  // the surface) or FORM (how long a turn is, how many beats it carries - the card's, so a FORM rule is deleted). It runs
+  // here because its defect is invisible everywhere else: the rule it was built for (`Speak before you act ... never run
+  // tools in total silence`) was reviewed, shipped, and answered with 132 bubbles over 93 prompt turns - 90 of them
+  // standalone speech with no tool call - before anyone asked what KIND of rule it was. Pure file reads, milliseconds.
   "tools/check-game-surface-conduct-classes.mjs",
   // The FULL totality audit, because the place that could fail on its findings never did: CI runs it on every push with
   // `continue-on-error: true`, only so `--verbose` can be uploaded as an artifact, so a blocking finding reached nobody
@@ -173,6 +171,20 @@ export const L0_GATES = Object.freeze([
   // bounds pair and three ceilings a player could meet as a generic failure - and no other gate in any rung reports
   // that class.
   "tools/audit-totality.mjs",
+  // Cognitive complexity per FUNCTION and per CLASS-with-its-partials-merged, plus class size across partials, as a
+  // ratchet over `tools/cognitive-complexity-baseline.json`. It belongs on the ladder because the ladder is what
+  // a lane reads before trusting the tree, and a per-file measure cannot see `ExecutionManager`: 46
+  // `farmhandexecutioncontroller*.cs` files holding one class declared 47 times, 4,771 complexity and 28,097 lines.
+  // Measured 2026-11-13: 4.0-6.2 s here, of which Biome over `host/src` is ~1.8 s and 564 C# files through
+  // tree-sitter is the rest, so the number is written down rather than left as a surprise in a rung whose name says
+  // milliseconds. It reads the two source trees the rungs already cover; nothing it needs comes from a game install.
+  "tools/check-cognitive-complexity.mjs",
+  // The duplication rule, for which this tree had a REPORT and no gate: `jscpd` was installed, configured with
+  // `exitCode: 0`, never tokenised the C# Mod, and no rung ran it. It fails on one block of >= 40 tokens at >= 3 sites
+  // whatever share of the tree that is, because a percentage is what let the eight-step admission pipeline repeated
+  // under 24 method names in `integrations/stardew/farmhandexecutioncontroller.*.cs` read as "10.9% duplicated" and
+  // therefore fine. ~1 s warm (4.3 s on a cold file cache), one child process, no network, no game.
+  "tools/check-code-duplication.mjs",
   "tools/check-prelive-gate-registry.mjs",
 ]);
 
@@ -607,7 +619,7 @@ export function actionRegistryRung({
     return { id: "l2", status: "failed", population, compile: { status: "skipped", reason: "population_red" } };
   if (skipCompile)
     return { id: "l2", status: "passed", population, compile: { status: "skipped", reason: "--skip-compile" } };
-  if (!exists(HOST_TYPESCRIPT_ENTRY) || !exists(`host/${HOST_TEST_ARTIFACT_BUILD}`))
+  if (!(exists(HOST_TYPESCRIPT_ENTRY) && exists(`host/${HOST_TEST_ARTIFACT_BUILD}`)))
     return {
       id: "l2",
       status: "passed",
