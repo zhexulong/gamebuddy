@@ -5,7 +5,7 @@ import test from "node:test";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
-import { type MacroContext } from "./preset-macros.js";
+import type { MacroContext } from "./preset-macros.js";
 import { type PresetBindingStore, createPresetBindingStore } from "./preset-binding.js";
 import { type PresetPass, renderPresetPass } from "./preset-segments.js";
 import { createPresetStore, type PresetStore } from "./preset-store.js";

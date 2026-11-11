@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { compilePlanScript } from "./body-program-script.js";
-import { type ActionRegistration, type Snapshot } from "./protocol.js";
+import type { ActionRegistration, Snapshot } from "./protocol.js";
 import { planActionsFromRegistrations } from "./body-program-script.js";
 
 /**

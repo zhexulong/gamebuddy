@@ -12,7 +12,7 @@ import { canonicalTestRoot } from "../test-support/canonical-test-root.test-supp
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { createPresetAssemblyRead } from "./preset-assembly-read.js";
 import { createPresetBindingStore, type PresetBindingStore } from "./preset-binding.js";
-import { type MacroContext } from "./preset-macros.js";
+import type { MacroContext } from "./preset-macros.js";
 import {
   PRESET_UNFILLED_MARKERS_PREFIX,
   PRESET_UNRESOLVED_MACROS_PREFIX,
