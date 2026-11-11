@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "artifactKind": "dependency_advisory_snapshot",
   "snapshotId": "minimatch-11.0.3-zero-advisories",
-  "generatedAt": "2026-11-11T06:14:28.847Z",
+  "generatedAt": "2026-11-11T06:23:41.497Z",
   "scanner": {
     "identity": "pnpm-audit",
     "version": "pnpm@11.1.3",

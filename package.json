@@ -395,7 +395,8 @@
     "test:preset-round-trip": "node --test tools/check-preset-round-trip.test.mjs",
     "test:plan-legal-fixpoint": "node --test tools/check-plan-legal-fixpoint.test.mjs",
     "test:action-deadline-agreement": "node --test tools/check-action-deadline-agreement.test.mjs",
-    "test:vendor-patches-apply": "node --test tools/check-vendor-patches-apply.test.mjs"
+    "test:vendor-patches-apply": "node --test tools/check-vendor-patches-apply.test.mjs",
+    "refresh:dependency-advisories": "node tools/refresh-dependency-advisories.mjs"
   },
   "devDependencies": {
     "@ast-grep/cli": "0.50.0",
