@@ -5,6 +5,11 @@
  * See `tools/lib/live-run-preflight.mjs` for why each check exists (each one cost a run during the 2026-10-19/20
  * session). Exits 1 with the FIRST failing code on stderr, so a launcher or a shell can refuse to start on it. Pass
  * `--runtime-root` and `--agent-dir` to also ask the provider, which no file tree can answer for.
+ *
+ * red-proof: fixture  a mods directory holding `GameBuddy/` and the stale `GameBuddy.Stardew/` alias beside it, the
+ *                    2026-10-19 shape SMAPI answers by refusing the mod -> `FAIL  mods_path_exactly_one_gamebuddy
+ *                    GameBuddy+GameBuddy.Stardew` then `preflight_failed:mods_path_exactly_one_gamebuddy`, exit 1,
+ *                    while the same tree with one folder prints `preflight_ok` (tools/preflight-live-run.mjs)
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";

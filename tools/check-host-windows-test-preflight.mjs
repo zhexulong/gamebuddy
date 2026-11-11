@@ -1,4 +1,14 @@
 import { lstat, readdir, readFile } from "node:fs/promises";
+/**
+ * Windows test-preflight gate: a host test that parents its temp directory at a POSIX path cannot pass on the
+ * machine this product ships to, and what it produces there is an ENOENT in a fixture the test never reached.
+ *
+ * red-proof: inject  a host test calling `mkdtemp("/tmp/gb-proof-")` ->
+ *                    the gate's own report `verdict=blocked` with a violation
+ *                    `{"path":"gate-proof-posix-parent.test.ts","line":3,"code":"posix_fixture_parent_on_windows"}`,
+ *                    exit 1; the same tree without that file reports `verdict=passed`, `violations []`, exit 0
+ *                    (tools/check-host-windows-test-preflight.mjs)
+ */
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";

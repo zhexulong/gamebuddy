@@ -9,6 +9,10 @@
  *
  * The marker keyword is assembled from two strings rather than written out: this file is owned by the
  * audit under test, and a literal marker here would be read as one of the audit's own proofs.
+ *
+ * red-proof: inject  the anchor test removed from `readRedProofMarkers`, so a marker inside a string literal counts ->
+ *                    `✖ a marker on a code line is not a marker, so a gate cannot satisfy itself` (with five more),
+ *                    exit 1; the unmodified audit passes all ten cases, exit 0 (tools/audit-gate-red-proofs.test.mjs)
  */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";

@@ -25,6 +25,12 @@
  * `checkForExhaustion` itself or the companion silently escapes vanilla's
  * exhaustion penalty -- an embodiment difference that is invisible in the
  * receipt without this gate.
+ *
+ * red-proof: inject  the shared `UseNativeToolOnTile` seam with its closing `checkForExhaustion(` step removed ->
+ *                    `tool-family stamina evidence: 1 violation(s)` with `✖ UseNativeToolOnTile: the seam body must
+ *                    run Farmer.useTool's `checkForExhaustion(` step in native order, after `lastClick = Vector2.Zero``,
+ *                    exit 1; the unmodified tree prints `OK (every tool-family action reports stamina)`, exit 0
+ *                    (tools/check-stardew-tool-family-stamina-evidence.mjs)
  */
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";

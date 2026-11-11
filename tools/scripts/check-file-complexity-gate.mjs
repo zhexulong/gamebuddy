@@ -32,6 +32,10 @@
  *   node tools/scripts/check-file-complexity-gate.mjs              # 棘轮
  *   node tools/scripts/check-file-complexity-gate.mjs --update     # 单独提交里重新记录基准
  *   node tools/scripts/check-file-complexity-gate.mjs --root <dir> # 门禁自己的 fixture（必须是一个 git 工作树）
+ *
+ * red-proof: inject  一个 351 行的 `.py` 新文件（上限 300）进 git 工作树 ->
+ *                    `file_over_ceiling:src/wide.py:351:300`、`files examined 9 · over ceiling 1 · baselined 0`，exit 1；
+ *                    同一工作树在加这个文件之前打印「复杂度棘轮通过」，exit 0（tools/scripts/check-file-complexity-gate.mjs）
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, statSync, writeFileSync } from "node:fs";

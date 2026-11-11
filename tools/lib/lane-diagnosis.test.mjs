@@ -1,6 +1,11 @@
 // The lane-diagnosis falsifiers: a failed lane's cause must be read from its output, not guessed, and the two
 // ways PowerShell hides it (a source line where the message should be; the message on the other stream) are
 // exactly what these pin.
+//
+// red-proof: inject  `classifyLaneFailure`'s unrecognised branch returning `exactly_one_smapi_process` instead of
+//                    naming the unknown -> `✖ a lane failure is classified by what it said, never by default`,
+//                    `fail 1`, exit 1; the unmodified helper prints `fail 0`, exit 0
+//                    (tools/lib/lane-diagnosis.test.mjs)
 import assert from "node:assert/strict";
 import test from "node:test";
 

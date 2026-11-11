@@ -18,6 +18,11 @@
  * reason - the same discipline `ExecutionArgumentWireCoverageTests` uses for the one argument-map drift it tolerates.
  *
  *   node tools/check-stardew-native-notice-coverage.mjs
+ *
+ * red-proof: inject  the hud family's only observer removed from the Mod (a producer family with no reader) ->
+ *                    `"gate":"stardew_native_notice_coverage/v1","status":"failed","examined":106` with
+ *                    `hud_chain_is_routed: 92 native call sites in 29 files, readers: none`, exit 1; the same tree
+ *                    reports `status="passed" examined=106`, exit 0 (tools/check-stardew-native-notice-coverage.mjs)
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";

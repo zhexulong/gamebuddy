@@ -6,6 +6,12 @@
  * against a restored slot) is the operator path in `run-single-step.mjs`.
  *
  * Usage: node tools/check-live-run-failure-dump.mjs
+ *
+ * red-proof: inject  a bundle with no `hostMemory` measurement - the 2026-11-09 round40 shape the contract refuses ->
+ *                    `"gate":"live_run_failure_dump/v1","status":"failed","cases":19` with
+ *                    `{"id":"fixture_complete_completed","status":"failed","detail":":evidence_bundle_invalid:host_memory_missing;root_exists=true"}`,
+ *                    exit 1; the unmodified fixture prints the same gate `"status":"passed","cases":20`, exit 0
+ *                    (tools/check-live-run-failure-dump.mjs)
  */
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

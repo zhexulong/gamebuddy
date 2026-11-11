@@ -1,6 +1,10 @@
 // The multi-day loop's falsifiers: the night must not be declared crossed while a menu still holds the
 // actor, a menu the product must not close must stop the run BY NAME, and the companion must be the one
 // that ends the day.
+//
+// red-proof: inject  the rollover-menu branch answering `dismiss` where the loop must wait ->
+//                    `✖ a menu with no audited handling stops the run by name instead of timing out`, exit 1; the
+//                    unmodified loop passes the same suite, exit 0 (tools/lib/multiday-loop.test.mjs)
 import assert from "node:assert/strict";
 import test from "node:test";
 

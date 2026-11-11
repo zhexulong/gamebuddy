@@ -4,6 +4,12 @@
  * observation. A label is not a measurement merely because a local model can
  * compute it: the evidence must carry the measurement that made the label true.
  * Unknown attribution remains `undecided`.
+ *
+ * red-proof: inject  a synthetic receipt producer (GateProofReceipt.cs) added under integrations/stardew/src/Core/
+ *                    that publishes `path_search=breadth_first` in one evidence string carrying no `measurement=` ->
+ *                    `GateProofReceipt.cs:6 path_search producer_has_no_measurement_field` and
+ *                    `stardew receipt attribution gate: 2 finding(s)`, exit 1; the unmodified tree prints `0 finding(s)`,
+ *                    exit 0 (tools/check-stardew-receipt-attribution.mjs)
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";

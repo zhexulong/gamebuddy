@@ -14,6 +14,11 @@
  *   node tools/check-commit-staging.mjs -- <path> [<path>...] # the staged set must be exactly these
  *   node tools/check-commit-staging.mjs                       # inventory + staged-with-no-content
  *
+ * red-proof: inject  two staged paths, one of them not named by the commit (`-- mine.txt` while `theirs.txt` is
+ *                    staged too) -> `staged but not named by this commit (another lane's work?): theirs.txt`, exit 1;
+ *                    naming both prints `the staged set is exactly the 2 named path(s)`, exit 0
+ *                    (tools/check-commit-staging.mjs)
+ *
  * Named-path mode is the exact check: it fails when the staged set and the named
  * set differ in either direction, and it names every difference. Use it before
  * `git commit -- <the same paths>`.

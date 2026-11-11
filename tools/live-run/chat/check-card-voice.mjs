@@ -18,6 +18,10 @@
  *
  * Read-only: the card belongs to its owner. Exits non-zero when any gate fails, so
  * it is usable as a check; it never spends a provider turn.
+ *
+ * red-proof: inject  `first_mes` replaced by a 3120-character opening ->
+ *                    `first_mes opening 3120 opening_legibility_first_screen_400x800 3993/526px fail`, exit 1; the
+ *                    authored card prints the same row `68/526px pass`, exit 0 (tools/live-run/chat/check-card-voice.mjs)
  */
 
 import { readFileSync } from "node:fs";

@@ -5,6 +5,12 @@
  * comparison it makes really is "no file newly joins the red set": a recorded file that still fails
  * must not be a finding, a file that neither the baseline nor the tree knows must be, and a run that
  * never scanned anything must not read as clean.
+ *
+ * red-proof: inject  `ratchet()` reporting every mis-formatted file as newly grown, recorded or not ->
+ *                    `✖ ratchet.1: a file the baseline never recorded is the finding`, `✖ ratchet.2: a recorded file
+ *                    that still fails is not a finding`, `✖ planted.2: a recorded mis-formatted file is legacy debt,
+ *                    not a finding`, exit 1; the unmodified predicate passes, exit 0
+ *                    (tools/scripts/check-format-ratchet.test.mjs)
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";

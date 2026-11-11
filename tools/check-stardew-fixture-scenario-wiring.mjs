@@ -43,6 +43,12 @@ import { fileURLToPath } from "node:url";
  * population for this direction is DERIVED from the tools function's own
  * `return` literals: a hand-written copy of the scenario names here would be a
  * second authority that drifts from the function that actually decides.
+ *
+ * red-proof: inject  one `native_*_v1` id renamed in `ModConfig.KnownFixtureScenarios` ->
+ *                    `"state":"failed"` with `{"issue":"accepted_by_config_but_refused_before_arming",
+ *                    "scenario":"native_removed_for_the_proof_v1"}` and `armed_without_a_recipe` for the same id,
+ *                    exit 1; the unmodified tree reports `"state":"passed"` with `"known":119` and no violations,
+ *                    exit 0 (tools/check-stardew-fixture-scenario-wiring.mjs)
  */
 
 const here = path.dirname(fileURLToPath(import.meta.url));

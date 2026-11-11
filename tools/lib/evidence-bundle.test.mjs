@@ -1,5 +1,9 @@
 // The evidence bundle's falsifiers: every obligation must be able to fail on its own, and the
 // bundle must refuse to be written when it cannot describe its own run honestly.
+//
+// red-proof: inject  the `repro_command_missing` obligation dropped from `validateEvidenceBundle` ->
+//                    `✖ a failed run without its snapshot or its replay is not evidence`, exit 1; the unmodified
+//                    bundle prints `fail 0`, exit 0 (tools/lib/evidence-bundle.test.mjs)
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

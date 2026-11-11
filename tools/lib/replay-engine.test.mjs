@@ -4,6 +4,10 @@
 // The world is modelled as an explicit clock object rather than by timers: `advancePerWait` game-minutes
 // per gate wait is the only thing that moves it. That makes "the gate waited" and "the gate gave up"
 // observable without a single setTimeout, and it cannot accidentally pass by real time passing.
+//
+// red-proof: inject  `decideReplayDispatch` dispatching whatever the world's clock reads (`current >= 0`) ->
+//                    `✖ the clock gate holds the dispatch until the world reaches the recorded moment`, exit 1;
+//                    the unmodified clock prints `fail 0`, exit 0 (tools/lib/replay-engine.test.mjs)
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

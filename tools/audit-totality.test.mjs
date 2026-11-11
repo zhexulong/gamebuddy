@@ -19,6 +19,12 @@
  * the browser mirrors, and one catalogue. It is not a copy of the product, so a
  * class that only passes because today's tree happens to be shaped a certain way
  * fails here.
+ *
+ * red-proof: inject  the bounds pairing comparing only caps whose measure DISAGREES with the writer constant ->
+ *                    `✖ bounds: the wire's cap and the writer's cap must agree in both directions`, `✖ bounds: one
+ *                    property capped two ways is the drift the element type cannot name`, `✖ bounds: two properties
+ *                    over one element type are two collections, not one cap`, exit 1; the unmodified audit passes,
+ *                    exit 0 (tools/audit-totality.test.mjs)
  */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

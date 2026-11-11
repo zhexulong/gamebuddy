@@ -4,6 +4,11 @@
  *
  * The canary here is the point. A test that only asserted "the sandbox is gone" would pass for an implementation
  * that deletes the player's real Mods tree along with it.
+ *
+ * red-proof: inject  `removeSandboxTree`'s detach step never recognising a reparse point ->
+ *                    `✖ the reclamation walk detaches links and leaves the real target alone` and `✖ a link is
+ *                    never descended into, so its target's FILES are never even enumerated`, exit 1 (`pass 5` of
+ *                    `tests 7`); the unmodified helper passes all 7, exit 0 (tools/lib/windows-process-tree.test.mjs)
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";

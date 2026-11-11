@@ -1,3 +1,9 @@
+// Whitespace-error check: `git diff --check` over the index against HEAD, so a commit cannot land trailing
+// whitespace or a conflict marker that no reviewer reads.
+//
+// red-proof: inject  a tracked file edited to end `beta` with three trailing spaces ->
+//                    `proof.txt:1: trailing whitespace.` then `+beta`, exit 1; the committed tree prints
+//                    `git_diff_check_passed`, exit 0 (tools/check-diff.mjs)
 import { execFileSync } from "node:child_process";
 
 try {

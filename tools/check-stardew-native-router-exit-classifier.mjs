@@ -1,3 +1,12 @@
+/**
+ * Router exit-classifier gate: every syntax invocation in one exact router inventory must receive exactly one
+ * classification, and a dynamic or unresolved exit must carry a blocking gameplay-bearing gap id.
+ *
+ * red-proof: fixture  an inventory with one invocation and a classifier with an empty `records` array ->
+ *                    `router_exit_classifier_unclassified: Every exact router invocation must receive one exit
+ *                    classification.`, exit 1; the same classifier naming that invocation prints its
+ *                    `classificationState` and exits 0 (tools/check-stardew-native-router-exit-classifier.mjs)
+ */
 import { readFile } from "node:fs/promises";
 import { validateNativeRouterExitClassifier } from "./lib/stardew-native-router-exit-classifier.mjs";
 
