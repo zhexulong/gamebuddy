@@ -6029,30 +6029,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.activeNavigate = null;
             this.activeNavigationCoordinator = null;
             this.revision++;
-            LocalExecutionReceipt receipt = new(
-                navigation.ExecutionId,
-                navigation.RequestId,
-                ExecutionState.Uncertain,
-                "navigation_multi_hop_arm_failed",
-                this.revision,
+            this.RememberTerminal(navigation.RequestId, navigation.ExecutionId, ExecutionState.Uncertain, "navigation_multi_hop_arm_failed",
                 $"phase=multi_hop;reason={reasonCode};{(approachEvidence is null ? "" : approachEvidence + ";")}never_retry=true",
-                Hint: approachHint);
-            this.Remember(receipt);
-            this.AddTrace(receipt);
-            this.PublishIdleAfterRelease(navigation.ExecutionId, navigation.RequestId);
+                hint: approachHint);
             return;
         }
 
         this.revision++;
-        LocalExecutionReceipt running = new(
-            navigation.ExecutionId,
-            navigation.RequestId,
-            ExecutionState.Running,
-            "navigation_multi_hop_leg_armed",
-            this.revision,
-            "navigation=multi_hop;phase=approaching");
-        this.Remember(running);
-        this.AddTrace(running);
+        this.RememberTerminal(navigation.RequestId, navigation.ExecutionId, ExecutionState.Running, "navigation_multi_hop_leg_armed", "navigation=multi_hop;phase=approaching");
     }
 
     private static bool IsNavigationCompletedEvidence(string? evidence) =>

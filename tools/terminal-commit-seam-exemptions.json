@@ -56,24 +56,6 @@
       "reason": "faithful copy of the seam (Remember, AddTrace, PublishIdleAfterRelease); converting it to RememberTerminal is behaviour-identical"
     },
     {
-      "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "member": "TryContinueNavigationAfterWarp",
-      "line": 6136,
-      "sites": 1,
-      "family": "controller",
-      "kind": "faithful_copy",
-      "reason": "faithful copy of the seam (Remember, AddTrace, PublishIdleAfterRelease); converting it to RememberTerminal is behaviour-identical"
-    },
-    {
-      "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "member": "TryContinueNavigationAfterWarp",
-      "line": 6150,
-      "sites": 1,
-      "family": "controller",
-      "kind": "non_terminal_marker",
-      "reason": "stores and publishes a non-terminal marker (Accepted/Running); the seam's terminal-only work does not apply to it"
-    },
-    {
       "file": "integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs",
       "member": "ExecuteBaitCrabPot",
       "line": 910,
