@@ -1,6 +1,6 @@
 {
-  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender); `file` and `line` are recorded for the reader. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`.",
-  "revision": "a645287f",
+  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`.",
+  "revision": "215c9096",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -139,7 +139,7 @@
       "language": "cs",
       "name": "ExecutionManager.ExecuteClearDebris(string,string,int,int,int,string,long)",
       "file": "integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs",
-      "line": 1075,
+      "line": 1085,
       "value": 36
     },
     {
@@ -147,7 +147,7 @@
       "language": "cs",
       "name": "ExecutionManager.ExecuteInteractNpcWithItem(string,string,int,int,int,string,string,long)",
       "file": "integrations/stardew/farmhandexecutioncontroller.machinesanimalsitemsactions.cs",
-      "line": 1157,
+      "line": 1162,
       "value": 62
     },
     {
@@ -499,7 +499,7 @@
       "language": "ts",
       "name": "host/src/companion-loop.ts#CompanionLoop.#deliverAndObserve",
       "file": "host/src/companion-loop.ts",
-      "line": 245,
+      "line": 270,
       "value": 60
     },
     {
@@ -516,7 +516,8 @@
       "name": "host/src/composed-reference-game-browser.ts#dispatch",
       "file": "host/src/composed-reference-game-browser.ts",
       "line": 1245,
-      "value": 255
+      "value": 255,
+      "saturated": true
     },
     {
       "id": "ts:host/src/composed-reference-game-browser.ts#issueComposedReferenceGameBrowserLifecycleActivationAdmission",
@@ -535,20 +536,12 @@
       "value": 34
     },
     {
-      "id": "ts:host/src/continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.ts#<anonymous@105>",
+      "id": "ts:host/src/continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.ts#completed#lambda2",
       "language": "ts",
-      "name": "host/src/continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.ts#<anonymous@105>",
+      "name": "host/src/continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.ts#completed#lambda2",
       "file": "host/src/continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.ts",
       "line": 105,
       "value": 42
-    },
-    {
-      "id": "ts:host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts#<anonymous@1414>",
-      "language": "ts",
-      "name": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts#<anonymous@1414>",
-      "file": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
-      "line": 1414,
-      "value": 48
     },
     {
       "id": "ts:host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts#execute",
@@ -559,25 +552,33 @@
       "value": 41
     },
     {
-      "id": "ts:host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#<anonymous@3459>",
+      "id": "ts:host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts#materializeEnter#lambda11",
       "language": "ts",
-      "name": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#<anonymous@3459>",
+      "name": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts#materializeEnter#lambda11",
+      "file": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
+      "line": 1414,
+      "value": 48
+    },
+    {
+      "id": "ts:host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#attempt#lambda1",
+      "language": "ts",
+      "name": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#attempt#lambda1",
       "file": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts",
       "line": 3459,
       "value": 34
     },
     {
-      "id": "ts:host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#<anonymous@3871>",
+      "id": "ts:host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#chatOperation#lambda7",
       "language": "ts",
-      "name": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#<anonymous@3871>",
+      "name": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#chatOperation#lambda7",
       "file": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts",
       "line": 3871,
       "value": 49
     },
     {
-      "id": "ts:host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#<anonymous@4032>",
+      "id": "ts:host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#resumeInitialChatWithContent#lambda1",
       "language": "ts",
-      "name": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#<anonymous@4032>",
+      "name": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#resumeInitialChatWithContent#lambda1",
       "file": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts",
       "line": 4032,
       "value": 37
@@ -599,44 +600,44 @@
       "value": 44
     },
     {
-      "id": "ts:host/src/continuity-semantic-store/continuity-semantic-production-store.ts#<anonymous@1936>",
-      "language": "ts",
-      "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#<anonymous@1936>",
-      "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
-      "line": 1936,
-      "value": 55
-    },
-    {
-      "id": "ts:host/src/continuity-semantic-store/continuity-semantic-production-store.ts#<anonymous@2081>",
-      "language": "ts",
-      "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#<anonymous@2081>",
-      "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
-      "line": 2081,
-      "value": 40
-    },
-    {
-      "id": "ts:host/src/continuity-semantic-store/continuity-semantic-production-store.ts#<anonymous@3911>",
-      "language": "ts",
-      "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#<anonymous@3911>",
-      "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
-      "line": 3911,
-      "value": 49
-    },
-    {
-      "id": "ts:host/src/continuity-semantic-store/continuity-semantic-production-store.ts#<anonymous@4294>",
-      "language": "ts",
-      "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#<anonymous@4294>",
-      "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
-      "line": 4294,
-      "value": 31
-    },
-    {
       "id": "ts:host/src/continuity-semantic-store/continuity-semantic-production-store.ts#currentChatRuntimeState",
       "language": "ts",
       "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#currentChatRuntimeState",
       "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
       "line": 3761,
       "value": 40
+    },
+    {
+      "id": "ts:host/src/continuity-semantic-store/continuity-semantic-production-store.ts#prepareGame#lambda1",
+      "language": "ts",
+      "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#prepareGame#lambda1",
+      "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
+      "line": 4294,
+      "value": 31
+    },
+    {
+      "id": "ts:host/src/continuity-semantic-store/continuity-semantic-production-store.ts#runChatCommand#lambda1",
+      "language": "ts",
+      "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#runChatCommand#lambda1",
+      "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
+      "line": 1936,
+      "value": 55
+    },
+    {
+      "id": "ts:host/src/continuity-semantic-store/continuity-semantic-production-store.ts#runChatLifecycleCommand#lambda1",
+      "language": "ts",
+      "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#runChatLifecycleCommand#lambda1",
+      "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
+      "line": 2081,
+      "value": 40
+    },
+    {
+      "id": "ts:host/src/continuity-semantic-store/continuity-semantic-production-store.ts#step#lambda1",
+      "language": "ts",
+      "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#step#lambda1",
+      "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
+      "line": 3911,
+      "value": 49
     },
     {
       "id": "ts:host/src/continuity-semantic-store/continuity-semantic-production-store.ts#validateMaterialization",
@@ -667,7 +668,7 @@
       "language": "ts",
       "name": "host/src/event-pump.ts#CompanionEventPump.enqueueFact",
       "file": "host/src/event-pump.ts",
-      "line": 562,
+      "line": 713,
       "value": 42
     },
     {
@@ -675,7 +676,7 @@
       "language": "ts",
       "name": "host/src/fact-brief.ts#worldFactLine",
       "file": "host/src/fact-brief.ts",
-      "line": 611,
+      "line": 610,
       "value": 41
     },
     {
@@ -735,9 +736,9 @@
       "value": 34
     },
     {
-      "id": "ts:host/src/knowledge.ts#<anonymous@80>",
+      "id": "ts:host/src/knowledge.ts#rules#lambda1",
       "language": "ts",
-      "name": "host/src/knowledge.ts#<anonymous@80>",
+      "name": "host/src/knowledge.ts#rules#lambda1",
       "file": "host/src/knowledge.ts",
       "line": 80,
       "value": 45
@@ -788,7 +789,8 @@
       "name": "host/src/protocol.ts#validateExecutionRequest",
       "file": "host/src/protocol.ts",
       "line": 3286,
-      "value": 255
+      "value": 255,
+      "saturated": true
     },
     {
       "id": "ts:host/src/protocol.ts#validateWorldObjectActionArgs",
@@ -804,7 +806,8 @@
       "name": "host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch",
       "file": "host/src/reference-pipeline-dialogue-web.delegated.ts",
       "line": 82,
-      "value": 255
+      "value": 255,
+      "saturated": true
     },
     {
       "id": "ts:host/src/reference-pipeline-dialogue-web.ts#dispatch",
@@ -855,30 +858,6 @@
       "value": 32
     },
     {
-      "id": "ts:host/src/stardew-production-lifecycle-coordinator.internal.ts#<anonymous@1929>",
-      "language": "ts",
-      "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#<anonymous@1929>",
-      "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 1929,
-      "value": 44
-    },
-    {
-      "id": "ts:host/src/stardew-production-lifecycle-coordinator.internal.ts#<anonymous@2458>",
-      "language": "ts",
-      "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#<anonymous@2458>",
-      "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 2458,
-      "value": 64
-    },
-    {
-      "id": "ts:host/src/stardew-production-lifecycle-coordinator.internal.ts#<anonymous@2617>",
-      "language": "ts",
-      "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#<anonymous@2617>",
-      "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 2617,
-      "value": 92
-    },
-    {
       "id": "ts:host/src/stardew-production-lifecycle-coordinator.internal.ts#activateHeadlessOperationalGame",
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#activateHeadlessOperationalGame",
@@ -895,12 +874,36 @@
       "value": 49
     },
     {
+      "id": "ts:host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2",
+      "language": "ts",
+      "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2",
+      "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
+      "line": 2458,
+      "value": 64
+    },
+    {
+      "id": "ts:host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2#2",
+      "language": "ts",
+      "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2#2",
+      "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
+      "line": 2617,
+      "value": 92
+    },
+    {
       "id": "ts:host/src/stardew-production-lifecycle-coordinator.internal.ts#closeAttempt",
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#closeAttempt",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
       "line": 3279,
       "value": 54
+    },
+    {
+      "id": "ts:host/src/stardew-production-lifecycle-coordinator.internal.ts#promise#lambda5",
+      "language": "ts",
+      "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#promise#lambda5",
+      "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
+      "line": 1929,
+      "value": 44
     },
     {
       "id": "ts:host/src/strict-bridge-json.ts#number",
@@ -964,7 +967,8 @@
       "name": "host/src/tavern-management-dialogue-web.ts#dispatch",
       "file": "host/src/tavern-management-dialogue-web.ts",
       "line": 1124,
-      "value": 255
+      "value": 255,
+      "saturated": true
     },
     {
       "id": "ts:host/src/tavern-management-dialogue-web.ts#problemFor",
@@ -979,13 +983,13 @@
       "language": "ts",
       "name": "host/src/tavern/browser-contract/index.ts#composeTavernProfile",
       "file": "host/src/tavern/browser-contract/index.ts",
-      "line": 4251,
+      "line": 4258,
       "value": 39
     },
     {
-      "id": "ts:host/src/tavern/catalog-service.ts#<anonymous@561>",
+      "id": "ts:host/src/tavern/catalog-service.ts#deriveVolatileWorldInfoSources#lambda5",
       "language": "ts",
-      "name": "host/src/tavern/catalog-service.ts#<anonymous@561>",
+      "name": "host/src/tavern/catalog-service.ts#deriveVolatileWorldInfoSources#lambda5",
       "file": "host/src/tavern/catalog-service.ts",
       "line": 561,
       "value": 32
@@ -999,52 +1003,12 @@
       "value": 44
     },
     {
-      "id": "ts:host/src/tavern/chat-thread-store.ts#<anonymous@2265>",
+      "id": "ts:host/src/tavern/chat-thread-store.ts#acceptMounted#lambda2",
       "language": "ts",
-      "name": "host/src/tavern/chat-thread-store.ts#<anonymous@2265>",
-      "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 2265,
-      "value": 36
-    },
-    {
-      "id": "ts:host/src/tavern/chat-thread-store.ts#<anonymous@2897>",
-      "language": "ts",
-      "name": "host/src/tavern/chat-thread-store.ts#<anonymous@2897>",
-      "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 2897,
-      "value": 33
-    },
-    {
-      "id": "ts:host/src/tavern/chat-thread-store.ts#<anonymous@3077>",
-      "language": "ts",
-      "name": "host/src/tavern/chat-thread-store.ts#<anonymous@3077>",
-      "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 3077,
-      "value": 46
-    },
-    {
-      "id": "ts:host/src/tavern/chat-thread-store.ts#<anonymous@3305>",
-      "language": "ts",
-      "name": "host/src/tavern/chat-thread-store.ts#<anonymous@3305>",
+      "name": "host/src/tavern/chat-thread-store.ts#acceptMounted#lambda2",
       "file": "host/src/tavern/chat-thread-store.ts",
       "line": 3305,
       "value": 54
-    },
-    {
-      "id": "ts:host/src/tavern/chat-thread-store.ts#<anonymous@3495>",
-      "language": "ts",
-      "name": "host/src/tavern/chat-thread-store.ts#<anonymous@3495>",
-      "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 3495,
-      "value": 59
-    },
-    {
-      "id": "ts:host/src/tavern/chat-thread-store.ts#<anonymous@3604>",
-      "language": "ts",
-      "name": "host/src/tavern/chat-thread-store.ts#<anonymous@3604>",
-      "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 3604,
-      "value": 121
     },
     {
       "id": "ts:host/src/tavern/chat-thread-store.ts#assertP5ReadBack",
@@ -1055,12 +1019,52 @@
       "value": 36
     },
     {
+      "id": "ts:host/src/tavern/chat-thread-store.ts#cancelActiveTurn#lambda1",
+      "language": "ts",
+      "name": "host/src/tavern/chat-thread-store.ts#cancelActiveTurn#lambda1",
+      "file": "host/src/tavern/chat-thread-store.ts",
+      "line": 3077,
+      "value": 46
+    },
+    {
+      "id": "ts:host/src/tavern/chat-thread-store.ts#createProfileAware#lambda1",
+      "language": "ts",
+      "name": "host/src/tavern/chat-thread-store.ts#createProfileAware#lambda1",
+      "file": "host/src/tavern/chat-thread-store.ts",
+      "line": 2265,
+      "value": 36
+    },
+    {
+      "id": "ts:host/src/tavern/chat-thread-store.ts#editTranscriptMessage#lambda2",
+      "language": "ts",
+      "name": "host/src/tavern/chat-thread-store.ts#editTranscriptMessage#lambda2",
+      "file": "host/src/tavern/chat-thread-store.ts",
+      "line": 2897,
+      "value": 33
+    },
+    {
       "id": "ts:host/src/tavern/chat-thread-store.ts#selectAuthoredContextVolatileSourceRefs",
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#selectAuthoredContextVolatileSourceRefs",
       "file": "host/src/tavern/chat-thread-store.ts",
       "line": 294,
       "value": 31
+    },
+    {
+      "id": "ts:host/src/tavern/chat-thread-store.ts#transitionMountedPresentation#lambda3",
+      "language": "ts",
+      "name": "host/src/tavern/chat-thread-store.ts#transitionMountedPresentation#lambda3",
+      "file": "host/src/tavern/chat-thread-store.ts",
+      "line": 3604,
+      "value": 121
+    },
+    {
+      "id": "ts:host/src/tavern/chat-thread-store.ts#transitionMountedProviderStart#lambda1",
+      "language": "ts",
+      "name": "host/src/tavern/chat-thread-store.ts#transitionMountedProviderStart#lambda1",
+      "file": "host/src/tavern/chat-thread-store.ts",
+      "line": 3495,
+      "value": 59
     },
     {
       "id": "ts:host/src/tavern/chat-thread-store.ts#validateP5TerminalishCommon",
@@ -1222,7 +1226,8 @@
       "parts": 47,
       "file": "integrations/stardew/farmhandexecutioncontroller.actorstateactions.cs",
       "line": 143,
-      "value": 4771
+      "value": 4771,
+      "reason": "28,097 -> 28,104 lines: commit 4da075af fixed a live defect - an execution body was never released after tilling, watering, harvesting or feeding - by making sixteen terminal paths announce the body idle through PublishIdleAfterRelease, across the farmingconstruction, machinesanimalsitems, petbowl, resourcetool and slimehutchtrough partials. The growth is bought and paid for; 28,104 is the frozen ceiling now, not a new allowance."
     },
     {
       "id": "cs:ModEntry",
@@ -1335,8 +1340,9 @@
       "files": 46,
       "file": "integrations/stardew/farmhandexecutioncontroller.actorstateactions.cs",
       "line": 143,
-      "lines": 28097,
-      "methods": 789
+      "lines": 28104,
+      "methods": 789,
+      "reason": "28,097 -> 28,104 lines: commit 4da075af fixed a live defect - an execution body was never released after tilling, watering, harvesting or feeding - by making sixteen terminal paths announce the body idle through PublishIdleAfterRelease, across the farmingconstruction, machinesanimalsitems, petbowl, resourcetool and slimehutchtrough partials. The growth is bought and paid for; 28,104 is the frozen ceiling now, not a new allowance."
     },
     {
       "id": "cs:FarmhandActionCatalog",

@@ -22,11 +22,14 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  BIOME_COMPLEXITY_SATURATION,
+  BIOME_SATURATION_READING,
   CLASS_BOUND,
   CLASS_LINE_CEILING,
   CLASS_METHOD_CEILING,
   CS_FUNCTION_BOUND,
   evaluate,
+  formatComplexity,
   measureCSharp,
 } from "./check-cognitive-complexity.mjs";
 
@@ -312,6 +315,53 @@ test("identity: two members that resolve to one name are a collision, not one sh
 });
 
 // ----------------------------------------------------------------------------------------------------------
+// Biome's ceiling: 255 is a floor, not a measurement
+// ----------------------------------------------------------------------------------------------------------
+
+/** A ts member reading at Biome's ceiling, as the producer reports any function at or above 255. */
+const SATURATED_MEMBER = {
+  id: "ts:host/src/x.ts#run",
+  language: "ts",
+  name: "host/src/x.ts#run",
+  file: "host/src/x.ts",
+  line: 5,
+  value: BIOME_COMPLEXITY_SATURATION,
+  saturated: true,
+};
+
+test("reading: a function at Biome's ceiling is named as a floor, never as a count", () => {
+  const verdict = evaluate({
+    members: [SATURATED_MEMBER],
+    types: [],
+    baseline: { members: [], classes: [], sizes: [] },
+    bounds: BOUNDS,
+  });
+  const [finding] = verdict.findings;
+  assert.equal(finding.code, "function_over_bound");
+  assert.equal(
+    finding.detail,
+    `ts:host/src/x.ts#run @ host/src/x.ts:5 = ${BIOME_SATURATION_READING} (bound 30 ts, saturated)`,
+  );
+  assert.doesNotMatch(finding.detail, /= 255\b/u, "nothing prints the ceiling as a measurement");
+  assert.equal(formatComplexity(verdict.counts.ts.worst), `>=255 (biome saturates at 255)`);
+  assert.equal(verdict.counts.ts.saturating, 1, "the report carries the population standing on the floor");
+  assert.equal(formatComplexity({ value: 83 }), "83", "a reading under the ceiling is still a number");
+});
+
+test("ratchet: a recorded function that grows into Biome's ceiling is red, and its new reading is a floor", () => {
+  const verdict = evaluate({
+    members: [SATURATED_MEMBER],
+    types: [],
+    baseline: { members: [{ id: SATURATED_MEMBER.id, value: 52 }], classes: [], sizes: [] },
+    bounds: BOUNDS,
+  });
+  assert.deepEqual(
+    verdict.findings.map((finding) => [finding.code, finding.detail]),
+    [["function_grew", `${SATURATED_MEMBER.id} 52 -> ${BIOME_SATURATION_READING}`]],
+  );
+});
+
+// ----------------------------------------------------------------------------------------------------------
 // The command line, over throwaway roots
 // ----------------------------------------------------------------------------------------------------------
 
@@ -350,6 +400,21 @@ function writeTypeScriptSource(root, branches) {
   writeFileSync(
     join(root, "host", "src", "fixture.ts"),
     `export function run(value: number): number {\n${body}\n  return value;\n}\n`,
+  );
+}
+
+/**
+ * One ANONYMOUS function: a lambda passed straight to `.map`, so nothing names it and its identity has to come from
+ * its owner and ordinal. `branches` is its own complexity; `padLines` are comment lines inserted above the whole
+ * function, which move every line below them and must move no identity.
+ */
+function writeAnonymousLambdaSource(root, branches, padLines = 0) {
+  const pad = Array.from({ length: padLines }, (_, index) => `// padding ${index}`).join("\n");
+  const body = Array.from({ length: branches }, (_, index) => `    if (input > ${index}) { total -= 1; }`).join("\n");
+  writeFileSync(
+    join(root, "host", "src", "fixture.ts"),
+    `${pad}${padLines === 0 ? "" : "\n"}export function run(value: number): number {\n` +
+      `  return [value].map((input) => {\n    let total = input;\n${body}\n    return total;\n  })[0];\n}\n`,
   );
 }
 
@@ -495,6 +560,125 @@ test("cli: a class over the line ceiling is red and recorded", () => {
       new RegExp(`class_lines_over_ceiling: Fixture\\.Long:${CLASS_LINE_CEILING + 3}:${CLASS_LINE_CEILING}:1`, "u"),
     );
     assert.match(result.stdout, new RegExp(`largest Fixture\\.Long @ ${CLASS_LINE_CEILING + 3} lines`, "u"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cli: biome's ceiling is printed as a floor in the reading line, the finding and the json report", () => {
+  const root = fixtureRoot();
+  try {
+    writeBiomeConfig(root, 1);
+    // 300 sequential `if`s: biome's score is a byte, so it reports 255 for this and for any larger function.
+    writeTypeScriptSource(root, BIOME_COMPLEXITY_SATURATION + 45);
+    writeFileSync(join(root, "integrations", "stardew", "Empty.cs"), EMPTY_CSHARP);
+    const red = run(root);
+    assert.equal(red.status, 1);
+    assert.match(red.stdout, /saturating 1 of 1 \(>=255 \(biome saturates at 255\)\)/u);
+    assert.match(
+      red.stdout,
+      /worst host\/src\/fixture\.ts#run @ host\/src\/fixture\.ts:1 = >=255 \(biome saturates at 255\)/u,
+    );
+    assert.match(
+      red.stderr,
+      /function_over_bound: ts:host\/src\/fixture\.ts#run @ host\/src\/fixture\.ts:1 = >=255 \(biome saturates at 255\) \(bound 1 ts, saturated\)/u,
+    );
+    const report = JSON.parse(red.stdout.split("\n").find((line) => line.startsWith('{"gate"')));
+    assert.deepEqual(report.worst.ts, {
+      name: "host/src/fixture.ts#run",
+      file: "host/src/fixture.ts",
+      line: 1,
+      complexity: ">=255 (biome saturates at 255)",
+      saturated: true,
+    });
+    assert.match(report.checks[0].detail, /saturating 1 of 1 at >=255 \(biome saturates at 255\)/u);
+
+    // The floor is recorded as one, with its flag, and then the entry is green while nothing is claimed about size.
+    assert.equal(run(root, ["--update"]).status, 0);
+    const baseline = JSON.parse(readFileSync(join(root, "tools", "cognitive-complexity-baseline.json"), "utf8"));
+    assert.deepEqual(
+      baseline.members.map((entry) => [entry.value, entry.saturated]),
+      [[BIOME_COMPLEXITY_SATURATION, true]],
+    );
+    const green = run(root);
+    assert.equal(green.status, 0);
+    assert.match(green.stdout, /saturating 1 of 1/u);
+
+    // THE LIMITATION, PINNED RATHER THAN HIDDEN: 300 and 500 branches read the same 255, so growth inside the
+    // ceiling cannot be seen by any reading this gate can take. What it does guarantee is that the number is never
+    // printed as exact - the reading below is still `>=255`, not `255, unchanged`.
+    writeTypeScriptSource(root, BIOME_COMPLEXITY_SATURATION + 245);
+    const grownInsideTheCeiling = run(root);
+    assert.equal(grownInsideTheCeiling.status, 0);
+    assert.match(grownInsideTheCeiling.stdout, /= >=255 \(biome saturates at 255\)/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cli: an anonymous member's identity is where it is, not which line it is on", () => {
+  const root = fixtureRoot();
+  const baselinePath = join(root, "tools", "cognitive-complexity-baseline.json");
+  try {
+    writeBiomeConfig(root, 1);
+    writeAnonymousLambdaSource(root, 2);
+    writeFileSync(join(root, "integrations", "stardew", "Empty.cs"), EMPTY_CSHARP);
+    const red = run(root);
+    assert.equal(red.status, 1);
+    // Biome scores a lambda nested in a call at nesting 1, so each `if` costs 2 there and two of them read 4. The
+    // number is not what this case is about: the IDENTITY is.
+    assert.match(
+      red.stderr,
+      /function_over_bound: ts:host\/src\/fixture\.ts#run#lambda1 @ host\/src\/fixture\.ts:2 = 4 \(bound 1 ts\)/u,
+      "the identity is the named owner plus the ordinal, and the line rides beside it",
+    );
+    assert.equal(run(root, ["--update"]).status, 0);
+    assert.deepEqual(
+      JSON.parse(readFileSync(baselinePath, "utf8")).members.map((entry) => entry.id),
+      ["ts:host/src/fixture.ts#run#lambda1"],
+    );
+
+    // The incident this identity exists for: 25 lines inserted above an unchanged lambda. The recorded identity
+    // must hold, so the run stays green instead of reporting one new offender plus one stale entry.
+    writeAnonymousLambdaSource(root, 2, 25);
+    const shifted = run(root);
+    assert.equal(shifted.status, 0);
+    assert.doesNotMatch(shifted.stderr, /stale_complexity_baseline/u);
+    assert.doesNotMatch(shifted.stderr, /function_over_bound/u);
+    // Both readings from the same tree: the line moved and the identity did not, which is what makes the identity
+    // - not the position - the key.
+    assert.equal(run(root, ["--update"]).status, 0);
+    const recorded = JSON.parse(readFileSync(baselinePath, "utf8")).members[0];
+    assert.equal(recorded.id, "ts:host/src/fixture.ts#run#lambda1");
+    assert.ok(recorded.line > 2, `the line moved to ${recorded.line} and the identity held`);
+
+    // The identity also names the lambda in a failure, with the line as the reader's hint rather than as the key.
+    writeAnonymousLambdaSource(root, 3, 25);
+    const grown = run(root);
+    assert.equal(grown.status, 1);
+    assert.match(grown.stderr, /function_grew: ts:host\/src\/fixture\.ts#run#lambda1 4 -> 6/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cli: --update keeps the reason recorded for an entry", () => {
+  const root = fixtureRoot();
+  const baselinePath = join(root, "tools", "cognitive-complexity-baseline.json");
+  try {
+    writeBiomeConfig(root, 1);
+    writeTypeScriptSource(root, 2);
+    writeFileSync(join(root, "integrations", "stardew", "Empty.cs"), EMPTY_CSHARP);
+    assert.equal(run(root, ["--update"]).status, 0);
+    const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
+    baseline.members[0].reason = "bought by a correctness fix in fixture commit";
+    writeFileSync(baselinePath, `${JSON.stringify(baseline, null, 2)}\n`);
+    assert.equal(run(root, ["--update"]).status, 0);
+    assert.deepEqual(
+      JSON.parse(readFileSync(baselinePath, "utf8")).members.map((entry) => entry.reason),
+      ["bought by a correctness fix in fixture commit"],
+      "re-recording a value does not erase why it was bought",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -14,11 +14,13 @@
  * RED ON THE TREE THIS WAS WRITTEN AGAINST (the baseline records these; the gate does not fix them):
  *   cs function  `ModEntry.TryInitializeNativeLocalPlayerFixtureScenario(NativeLocalPlayerFixtureConfig)`
  *                @ integrations/stardew/ModEntry.Fixtures.cs:307 = 971, bound 30
- *   ts function  `isModDescriptorComplete` @ host/src/action-registry.ts:934 = 255, bound 30 (Biome's own number)
+ *   ts function  `isModDescriptorComplete` @ host/src/action-registry.ts:934 = >=255 (biome saturates at 255),
+ *                bound 30 - Biome's own number, at its ceiling; see the paragraph below
  *   class        `ExecutionManager`: 47 partial declarations over 46 files = 4,771 complexity, 28,097 lines,
  *                789 members - the same class a file-based measure would have called 46 healthy files.
- *   Today's readings: 7,405 cs functions (58 over 30), 92 ts functions reported over 30 of 292 files read,
- *   1,113 types merged from 1,214 partial declarations (8 over 200 complexity, 19 over the size ceilings).
+ *   Today's readings: 7,405 cs functions (58 over 30), 90 ts functions reported over 30 of 292 files read
+ *   (4 of them at Biome's ceiling), 1,113 types merged from 1,214 partial declarations (8 over 200 complexity,
+ *   19 over the size ceilings).
  *
  * THE TWO PRODUCERS, AND WHY THEY ARE NEVER COMPARED. Each language's number has one owner, printed beside
  * every number it produced:
@@ -45,6 +47,16 @@
  *       A ts number and a cs number are never summed, averaged or compared: they measure different operator
  *       sets (S3776 counts loops and `switch`, Biome's JS implementation does not), so each bound is its own
  *       constant with its own reason.
+ *
+ * BIOME'S CEILING: 255 IS A FLOOR, NOT A MEASUREMENT. Biome carries the score in a byte, so every function at or
+ * above it reports exactly 255 - measured, not assumed: three synthetic functions of 254, 256 and 300 sequential
+ * `if`s read "254", "255" and "255" from biome 2.2.4, and four unrelated functions in this tree (four `dispatch`/
+ * validator handlers) all read 255 on the same run. A 255 printed with the confidence of `83` breaks the only use
+ * of the list - priority, since every function at the floor ties for "the worst". So a reading AT the ceiling is
+ * printed as `>=255 (biome saturates at 255)` in the reading line, in the failure line, in the baseline and in the
+ * JSON, and the report states how many ts functions sit there (`saturating K of N`, the population). The true value
+ * is NOT recovered by summarising Biome's algorithm: a second implementation of the metric is the thing the ts
+ * half of this gate exists to avoid.
  *
  * WHAT THE C# IMPLEMENTATION COUNTS (SonarSource's published rules, and where this reading was chosen):
  *   +1 (plus the current nesting depth) for `if`, loops (`for`/`foreach`/`while`/`do`), `switch`, `switch`
@@ -82,6 +94,17 @@
  * carries its specifier. `file` and `line` travel in the baseline for the reader and are refreshed by
  * `--update`, which is its own commit.
  *
+ * WHAT THE RATCHET CAN AND CANNOT DISTINGUISH AT THE CEILING. A ts member whose value is at Biome's ceiling is
+ * stored with `saturated: true` beside its value, so a reader of the baseline sees a floor where the gate sees one
+ * and cannot mistake it for a precise count. ENTERING the ceiling is visible: it is growth from a recorded precise
+ * value (`52 -> >=255`), and an unrecorded saturated function is `function_over_bound`, so saturation can never be
+ * acquired silently. LEAVING it is visible: a measured value below 255. What is NOT visible is movement INSIDE the
+ * ceiling - a recorded 255 and a measured 255 compare equal whether the function held its branches or gained a
+ * hundred, because both readings are the same clamp. So a saturated entry passes while it stays saturated, and the
+ * honest content of that pass is the print, not the verdict: the number is `>=255` everywhere and the report counts
+ * the functions standing at the floor. Nothing in this gate can prove such a function did not grow; the only way to
+ * restore a precise reading is to bring it below 255.
+ *
  * CLASS SIZE, over the same stitched type index: total lines (the line span of every declaration merged) and member
  * declarations, against `class_lines_over_ceiling:<type>:<lines>:<ceiling>:<parts>` and
  * `class_methods_over_ceiling:<type>:<methods>:<ceiling>`. Same ratchet shape: a recorded type fails when it
@@ -99,6 +122,10 @@
  *   with the nesting-increment cases pinned in tools/check-cognitive-complexity.test.mjs
  * red-proof: inject  a second partial declaring the same class -> the class is measured once with `parts: 2`,
  *   so the same method split across two files cannot hide (tools/check-cognitive-complexity.test.mjs)
+ * red-proof: inject  a function of 300 sequential `if`s -> biome reads 255, and the gate prints
+ *   `= >=255 (biome saturates at 255)` with `saturating 1 of N` in the reading line, the failure and the JSON,
+ *   never `= 255` as a measurement; growing a recorded 40 into the ceiling is `function_grew: <id> 40 -> >=255`
+ *   (tools/check-cognitive-complexity.test.mjs)
  * red-proof: inject  a baseline entry for a member the tree no longer has -> `stale_complexity_baseline:<member>`
  *   (tools/check-cognitive-complexity.test.mjs)
  */
@@ -189,6 +216,24 @@ const TS_FUNCTION_KINDS = new Set([
 
 const TS_CLASS_KINDS = new Set(["class_declaration", "class", "abstract_class_declaration"]);
 const TS_RULE = "complexity/noExcessiveCognitiveComplexity";
+
+/**
+ * Biome's complexity ceiling: its score is carried in a byte, so 255 is the largest number it can print.
+ *
+ * Measured, not assumed: three synthetic functions of 254, 256 and 300 sequential `if`s read 254, 255 and 255 from
+ * biome 2.2.4, and four unrelated functions in this tree read 255 on one run. A reading at this value is `>=255`
+ * and is never printed as a count, because every function at the floor ties for "the worst" and priority is the
+ * only use of that list.
+ */
+export const BIOME_COMPLEXITY_SATURATION = 255;
+
+/** How one reading at that ceiling is printed, everywhere: `>=255 (biome saturates at 255)`. */
+export const BIOME_SATURATION_READING = `>=${BIOME_COMPLEXITY_SATURATION} (biome saturates at ${BIOME_COMPLEXITY_SATURATION})`;
+
+/** One reading as it may be printed: an exact number, or the floor with the reason it is a floor. */
+export function formatComplexity(reading) {
+  return reading.saturated === true ? BIOME_SATURATION_READING : `${reading.value}`;
+}
 
 // ---------------------------------------------------------------------------------------------------------
 // C#: S3776 over the pinned tree-sitter-c-sharp grammar
@@ -561,6 +606,63 @@ function functionName(node, source) {
   return null;
 }
 
+/** The nearest node at or above `start` this gate can name; `null` when the syntax names nothing above it. */
+function namedOwner(start, source) {
+  for (let current = start; current !== null; current = current.parent) {
+    const name = functionName(current, source);
+    if (name !== null && name !== "") return { node: current, name };
+  }
+  return null;
+}
+
+/**
+ * One anonymous function's place among the anonymous functions inside `owner`, in source order (1-based).
+ *
+ * Counted inside the NAMED owner, so a comment, a statement or a named function inserted above it does not move
+ * the number. Only inserting or deleting an anonymous function above it does - and that ambiguity is why the
+ * ordinal is part of the identity rather than dropped: two lambdas in one owner must never merge into one row,
+ * because a merged row hides the second offender.
+ */
+function anonymousOrdinal(owner, target, source) {
+  let ordinal = 0;
+  let found = false;
+  const visit = (entry) => {
+    if (found) return;
+    if (entry === target) {
+      ordinal += 1;
+      found = true;
+      return;
+    }
+    // A named function opens its own scope: its lambdas are counted under its own identity, not this owner's.
+    if (TS_FUNCTION_KINDS.has(entry.type) && functionName(entry, source) !== null) return;
+    if (TS_FUNCTION_KINDS.has(entry.type)) ordinal += 1;
+    for (const part of childrenOf(entry)) visit(part);
+  };
+  for (const part of childrenOf(owner)) visit(part);
+  return ordinal;
+}
+
+/**
+ * The identity of one measured function: its name, or - for a lambda passed straight to a call, which nothing
+ * names - its nearest named ancestor plus its ordinal: `CompanionLoop.#deliverAndObserve#lambda2`.
+ *
+ * WHY NOT THE LINE NUMBER. This baseline is a ratchet, so an identity that moves when code is inserted above turns
+ * one unchanged function into a new offender plus a stale entry: a recorded `CompanionLoop.<anonymous@407> = 83`
+ * was reported as an unrecorded `<anonymous@432> = 83` after 25 lines were inserted above it - same function, same
+ * complexity, different position. The ordinal survives that insertion because it counts anonymous members, not
+ * lines; the line still travels beside the identity as the reader's hint.
+ */
+function functionIdentity(node, source, rootNode) {
+  const own = functionName(node, source);
+  if (own !== null && own !== "") return own;
+  const owner = namedOwner(node.parent, source) ?? { node: rootNode, name: "" };
+  return `${owner.name}#lambda${anonymousOrdinal(owner.node, node, source)}`;
+}
+
+/** `Class.member`, unless the identity already carries the class - a lambda whose owner is the class itself. */
+const qualify = (className, name) =>
+  className === "" || name === className || name.startsWith(`${className}.`) ? name : `${className}.${name}`;
+
 const countNewlines = (bytes, upTo) => {
   let count = 0;
   for (let index = 0; index < upTo; index += 1) if (bytes[index] === 0x0a) count += 1;
@@ -573,7 +675,10 @@ const countNewlines = (bytes, upTo) => {
  * Biome locates a function by BYTE span only, so the name comes from the surrounding syntax. Two functions may
  * legitimately share a name in one file (`game-tools.ts` has an `execute` per tool factory), so a repeated name
  * takes its source-order occurrence as a suffix: `#execute`, `#execute#2`. The suffix depends on order, not on the
- * line, so inserting code above does not turn a recorded member into a new offender.
+ * line, so inserting code above does not turn a recorded member into a new offender. An anonymous one is named by
+ * its nearest named ancestor plus its ordinal (`run#lambda1`), never by its line, for the same reason.
+ *
+ * A reading at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count.
  */
 async function typeScriptMembers(root, diagnostics) {
   const byFile = new Map();
@@ -596,11 +701,16 @@ async function typeScriptMembers(root, diagnostics) {
         const line = countNewlines(bytes, from) + 1;
         const index = bytes.subarray(0, from).toString("utf8").length;
         const owner = enclosing(tree.rootNode, index, TS_FUNCTION_KINDS);
-        const name = owner === null ? null : functionName(owner, source);
+        const identity = functionIdentity(owner ?? tree.rootNode, source, tree.rootNode);
         const container = enclosing(tree.rootNode, index, TS_CLASS_KINDS);
         const className = container === null ? "" : textOf(child(container, "name"), source);
-        const qualified = `${className === "" ? "" : `${className}.`}${name ?? `<anonymous@${line}>`}`;
-        located.push({ qualified, line, value, position: from });
+        located.push({
+          qualified: qualify(className, identity),
+          line,
+          value,
+          saturated: value >= BIOME_COMPLEXITY_SATURATION,
+          position: from,
+        });
       }
     } finally {
       tree.delete();
@@ -618,6 +728,7 @@ async function typeScriptMembers(root, diagnostics) {
         file,
         line: entry.line,
         value: entry.value,
+        saturated: entry.saturated,
       });
     }
   }
@@ -631,10 +742,14 @@ async function typeScriptMembers(root, diagnostics) {
 const BASELINE_NOTE =
   "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and " +
   "per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials " +
-  "of its class is not a new offender); `file` and `line` are recorded for the reader. Re-record with " +
-  "`node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's " +
-  "complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over " +
-  "tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`.";
+  "of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines " +
+  "above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's " +
+  "ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past " +
+  "and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its " +
+  "growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own " +
+  "commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this " +
+  "gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries " +
+  "its own `producer`.";
 
 const sortedById = (entries) => [...entries].sort((left, right) => left.id.localeCompare(right.id));
 
@@ -648,7 +763,7 @@ export function evaluate({ members, types, baseline, bounds }) {
   const findings = [];
   const measuredMembers = judgeMembers({
     members,
-    recorded: new Map((baseline.members ?? []).map((entry) => [entry.id, entry.value])),
+    recorded: new Map((baseline.members ?? []).map((entry) => [entry.id, entry])),
     bounds,
     findings,
   });
@@ -665,13 +780,22 @@ export function evaluate({ members, types, baseline, bounds }) {
   for (const id of baseline.sizes ?? []) {
     if (!measuredTypes.has(id.id)) findings.push({ code: "stale_class_ceiling", detail: id.id });
   }
-  for (const id of new Map((baseline.members ?? []).map((entry) => [entry.id, entry.value])).keys()) {
+  for (const id of new Map((baseline.members ?? []).map((entry) => [entry.id, entry])).keys()) {
     if (!measuredMembers.has(id)) findings.push({ code: "stale_complexity_baseline", detail: id });
   }
   return { findings, counts: describe(members, types, bounds) };
 }
 
-/** The member half: one bound per language, the ratchet on recorded values, and the identity collision. */
+/**
+ * The member half: one bound per language, the ratchet on recorded values, and the identity collision.
+ *
+ * A recorded value is compared with a measured one through `formatComplexity`, so a ts function standing at
+ * Biome's ceiling is named as a floor in both directions. What this comparison CAN see: entering the ceiling (a
+ * recorded precise value grows to `>=255`), leaving it (a measured value below 255), and any unrecorded function
+ * at the ceiling (`function_over_bound`). What it CANNOT see: movement inside the ceiling - a recorded 255 and a
+ * measured 255 compare equal whether the function held or gained branches, so such an entry stays green. The
+ * baseline stores `saturated: true` beside that value to say so out loud.
+ */
 function judgeMembers({ members, recorded, bounds, findings }) {
   const measured = new Set();
   for (const member of members) {
@@ -680,18 +804,20 @@ function judgeMembers({ members, recorded, bounds, findings }) {
       continue;
     }
     measured.add(member.id);
-    const recordedValue = recorded.get(member.id);
-    if (recordedValue === undefined && member.value > bounds[member.language]) {
+    const record = recorded.get(member.id);
+    if (record === undefined && member.value > bounds[member.language]) {
       findings.push({
         code: "function_over_bound",
         language: member.language,
-        detail: `${member.id} @ ${member.file}:${member.line} = ${member.value} (bound ${bounds[member.language]} ${member.language})`,
+        detail:
+          `${member.id} @ ${member.file}:${member.line} = ${formatComplexity(member)}` +
+          ` (bound ${bounds[member.language]} ${member.language}${member.saturated === true ? ", saturated" : ""})`,
       });
-    } else if (recordedValue !== undefined && member.value > recordedValue) {
+    } else if (record !== undefined && member.value > record.value) {
       findings.push({
         code: "function_grew",
         language: member.language,
-        detail: `${member.id} ${recordedValue} -> ${member.value}`,
+        detail: `${member.id} ${formatComplexity(record)} -> ${formatComplexity(member)}`,
       });
     }
   }
@@ -748,7 +874,9 @@ function describe(members, types, bounds) {
     const own = members.filter((member) => member.language === language);
     const over = own.filter((member) => member.value > bounds[language]);
     const worst = own.reduce((best, member) => (best === null || member.value > best.value ? member : best), null);
-    counters[language] = { examined: own.length, over: over.length, worst };
+    // How many readings sit on the producer's floor: the population that makes `worst` a tie rather than a rank.
+    const saturating = own.filter((member) => member.saturated === true).length;
+    counters[language] = { examined: own.length, over: over.length, saturating, worst };
   }
   const overTypes = types.filter((type) => type.value > CLASS_BOUND);
   counters.classes = {
@@ -767,9 +895,18 @@ function describe(members, types, bounds) {
 }
 
 const describeWorst = (worst) =>
-  worst === null ? "none" : `${worst.name} @ ${worst.file}:${worst.line} = ${worst.value}`;
+  worst === null ? "none" : `${worst.name} @ ${worst.file}:${worst.line} = ${formatComplexity(worst)}`;
 
-/** A measured row without its file set, for the report line. */
+/** The number field of a report row: a floor with its reason, or the exact value. */
+const complexityFieldOf = (row) =>
+  row.saturated === true ? { complexity: formatComplexity(row), saturated: true } : { value: row.value };
+
+/**
+ * A measured row without its file set, for the report line.
+ *
+ * A saturated row carries `complexity: ">=255 (biome saturates at 255)"` and `saturated: true` INSTEAD of a bare
+ * `value`, so no json consumer can read the floor as a count. Every other row keeps its number.
+ */
 const summaryOf = (row) =>
   row === null || row === undefined
     ? null
@@ -777,7 +914,7 @@ const summaryOf = (row) =>
         name: row.name,
         file: row.file,
         line: row.line,
-        ...(row.value === undefined ? {} : { value: row.value }),
+        ...(row.value === undefined ? {} : complexityFieldOf(row)),
         ...(row.lines === undefined
           ? {}
           : { lines: row.lines, methods: row.methods, parts: row.parts, files: row.files.size }),
@@ -788,7 +925,9 @@ function printReading(counts, bounds, tsFilesRead) {
     `ts: producer=biome complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity ${bounds.ts} from biome.json, ${bounds.tsLevel}) biome ${BIOME_VERSION}`,
   );
   console.log(
-    `    functions examined ${counts.ts.examined} · over the bound ${bounds.ts}: ${counts.ts.over} · worst ${describeWorst(counts.ts.worst)}` +
+    `    functions examined ${counts.ts.examined} · over the bound ${bounds.ts}: ${counts.ts.over}` +
+      ` · saturating ${counts.ts.saturating} of ${counts.ts.examined} (${BIOME_SATURATION_READING})` +
+      ` · worst ${describeWorst(counts.ts.worst)}` +
       ` · biome read ${tsFilesRead} file(s), and reports only the functions already over the bound`,
   );
   console.log(
@@ -885,6 +1024,8 @@ async function measure(root) {
 }
 
 function recordBaseline(root, measured) {
+  const reasons = recordedReasons(root);
+  const withReason = (entry) => (reasons.has(entry.id) ? { ...entry, reason: reasons.get(entry.id) } : entry);
   const baseline = {
     note: BASELINE_NOTE,
     revision: readRevision(root),
@@ -895,12 +1036,22 @@ function recordBaseline(root, measured) {
     members: sortedById(
       measured.members
         .filter((member) => member.value > measured.bounds[member.language])
-        .map(({ id, language, name, file, line, value }) => ({ id, language, name, file, line, value })),
+        .map(({ id, language, name, file, line, value, saturated }) => ({
+          id,
+          language,
+          name,
+          file,
+          line,
+          value,
+          ...(saturated === true ? { saturated: true } : {}),
+        }))
+        .map(withReason),
     ),
     classes: sortedById(
       measured.types
         .filter((type) => type.value > CLASS_BOUND)
-        .map(({ id, name, parts, file, line, value }) => ({ id, name, parts, file, line, value })),
+        .map(({ id, name, parts, file, line, value }) => ({ id, name, parts, file, line, value }))
+        .map(withReason),
     ),
     sizes: sortedById(
       measured.types
@@ -914,12 +1065,29 @@ function recordBaseline(root, measured) {
           line,
           lines,
           methods,
-        })),
+        }))
+        .map(withReason),
     ),
   };
   mkdirSync(dirname(join(root, BASELINE_PATH)), { recursive: true });
   writeFileSync(join(root, BASELINE_PATH), `${JSON.stringify(baseline, null, 2)}\n`);
   return baseline;
+}
+
+/**
+ * The `reason` each recorded entry already carries, so `--update` re-records a value without erasing why it was
+ * bought. A reason describes a commit that added statements to the entry; the entry's number is repeated in the
+ * text, so a later growth makes the stale reason visible to the reader instead of silently travelling with it.
+ */
+function recordedReasons(root) {
+  const path = join(root, BASELINE_PATH);
+  if (!existsSync(path)) return new Map();
+  const previous = JSON.parse(readFileSync(path, "utf8"));
+  return new Map(
+    [...(previous.members ?? []), ...(previous.classes ?? []), ...(previous.sizes ?? [])]
+      .filter((entry) => typeof entry.reason === "string")
+      .map((entry) => [entry.id, entry.reason]),
+  );
 }
 
 function readRevision(root) {
@@ -988,7 +1156,7 @@ async function main(argv) {
     {
       id: "ts_function_bound",
       status: functionFindings("ts") === 0 ? "passed" : "failed",
-      detail: `${verdict.counts.ts.examined} reported by biome, ${verdict.counts.ts.over} over ${measured.bounds.ts}, ${functionFindings("ts")} unrecorded or grown`,
+      detail: `${verdict.counts.ts.examined} reported by biome, ${verdict.counts.ts.over} over ${measured.bounds.ts}, saturating ${verdict.counts.ts.saturating} of ${verdict.counts.ts.examined} at ${BIOME_SATURATION_READING}, ${functionFindings("ts")} unrecorded or grown`,
     },
     {
       id: "cs_function_bound",
