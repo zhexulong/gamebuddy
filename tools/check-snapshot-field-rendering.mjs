@@ -73,8 +73,6 @@ export const RENDERER_TABLES = Object.freeze([
  */
 const BODY_HELD_REASON =
   "what is holding her body (a modal, an event, a pass-out) and whether a new command can take it over. The observation's projection states it for `stardew_observe` and the refusal receipt states it after the attempt; `<world-state>` does not, so a companion who is blocked learns it only by trying.";
-const OBSERVED_ON_DEMAND_REASON =
-  "delivered verbatim by a solicited `stardew_observe` (the observation budget copies the field through), where the action that reads it asks for it; not carried by the per-turn prose.";
 const TRUNCATION_COUNT_REASON =
   "the number of rows a Mod cap left out, paired with the family it counts. `<world-state>` prints that family, so the count beside it is the next unit: a family truncated at its cap reads as complete without it.";
 
@@ -98,8 +96,6 @@ export const RENDERING_EXEMPTIONS = Object.freeze({
       "the map's own warp table, addresses rather than places to walk to. `doorTargets` is the family `<world-state>` prints; a warp with a button tile is addressed by `move_to_tile` and read from the observation.",
     owedBy: "host/src/snapshot-projection.ts",
   },
-  fixedInteractionPoints: { reason: OBSERVED_ON_DEMAND_REASON, owedBy: "host/src/snapshot-projection.ts" },
-  soilTiles: { reason: OBSERVED_ON_DEMAND_REASON, owedBy: "host/src/snapshot-projection.ts" },
   discoveryExclusions: {
     reason:
       "what discovery withheld and why, one row per (family, reason). A row means something only beside the list it emptied, and the prose prints no family rows: it prints six tiles per family and a count.",

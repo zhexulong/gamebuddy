@@ -607,9 +607,11 @@ export function renderGameEnvironmentFactsObservation(
 /**
  * The Chinese noun for every coordinate family the wire publishes.
  *
- * THE POPULATION IS `SNAPSHOT_KEYS`, not this table: `fact-brief.private.test.ts` reads the wire's own key list and fails by
- * name when a family appears there with no label here and no entry in `NON_ROW_FAMILIES`. A hand-maintained list of
- * families to print would have gone stale silently the next time the Mod grew one.
+ * THE POPULATION IS THE WIRE'S ROW SHAPE, not this table and not a name suffix: `fact-brief.private.test.ts` reads
+ * `protocol/bridge-v1.schema.json` for the array families whose rows carry `x` and `y` - the two keys this line prints -
+ * and fails by name when one of them has no label here and no entry in `NON_ROW_FAMILIES`. The gate this replaces
+ * filtered `SNAPSHOT_KEYS` on `/(?:Targets|Sites|Slots)$/`, which could not see `soilTiles` - the only family spelled
+ * `*Tiles`, and the whole target list of `till_soil` - so the one ground she can hoe was structurally unprintable.
  */
 export const TARGET_FAMILY_LABELS: Readonly<Record<string, string>> = Object.freeze({
   doorTargets: "门",
@@ -633,6 +635,7 @@ export const TARGET_FAMILY_LABELS: Readonly<Record<string, string>> = Object.fre
   debrisTargets: "杂草碎石",
   rockSourceTargets: "石头",
   clearHoeDirtTargets: "可清的地块",
+  soilTiles: "可锄的地块",
   artifactSpotTargets: "可疑的土堆",
   artifactSpotResultTargets: "挖开过的土堆",
   machineTargets: "机器",
@@ -689,14 +692,19 @@ export const TARGET_FAMILY_LABELS: Readonly<Record<string, string>> = Object.fre
 });
 
 /**
- * The `*Slots` keys that are counts or bags rather than places to walk to, each with its reason.
+ * The wire families the nearby-target line does not print as rows, each with the reason it is not one.
  *
- * Not an exemption from the label table: the gate above refuses a schema family with neither, so a new slot family has
- * to answer here too.
+ * Not an exemption from the label table: the gate above refuses a coordinate family with neither, so a family has to
+ * answer here too. A reason naming another renderer is the record that someone looked at where the fact does print;
+ * a reason nobody can check any more is a second spelling of a withheld fact.
  */
 export const NON_ROW_FAMILIES: Readonly<Record<string, string>> = Object.freeze({
   inventorySlots: "a capacity number; the pack itself is rendered from `inventoryItemFacts`",
   toolSlots: "the tool bag; the HELD tool is rendered by `formatHeldTool` and the rest are labels, not places",
+  villagerWhereabouts:
+    "every loaded map's villagers, printed by `formatNearbyVillagers` on this same line; `npcRelationshipTargets` is the radius-bounded family an action names",
+  fixedInteractionPoints:
+    "the map's own fixed interaction points - a mine ladder, a bed - each with a closed `kind`. No published action declares it as its target family (`mineEntranceTargets` and `doorTargets` are the families actions name), so it reaches her through the observation instead of the per-turn line",
 });
 
 /** Tiles one family names before it counts the rest. Six fits a plan; a 64-row patch does not fit a prompt. */
@@ -705,8 +713,8 @@ export const MAX_TARGET_TILES_SHOWN = 6;
 /** Families the line names before it counts the rest. The non-empty ones are taken first. */
 export const MAX_TARGET_FAMILIES_SHOWN = 12;
 
-/** Empty families named on the one "nothing here" line, before that line counts the rest. */
-export const MAX_EMPTY_FAMILIES_NAMED = 8;
+/** Families named on a counting line - the one "nothing here" line, or the one the family cap left out - before that line counts the rest. */
+export const MAX_COUNTED_FAMILIES_NAMED = 8;
 
 /** One family the snapshot published, as the state line prints it. */
 export type NearbyTargetFamily = Readonly<{

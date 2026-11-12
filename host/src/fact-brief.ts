@@ -45,7 +45,7 @@ import {
   formatGameClock,
   formatGameEnvironmentFacts,
   gameLocationName,
-  MAX_EMPTY_FAMILIES_NAMED,
+  MAX_COUNTED_FAMILIES_NAMED,
   MAX_TARGET_FAMILIES_SHOWN,
   nearbyTargetFamilies,
 } from "./game-world-vocabulary.js";
@@ -357,6 +357,10 @@ function formatCarriedCanWater(world: Snapshot): string {
  * A family the snapshot does not carry is not printed at all, and a family it carries as `[]` is - `nearbyTargetFamilies`
  * owns that distinction and says why. Both caps live here, in the composition, so the consumer is never the thing that
  * decides how much of the world fits.
+ *
+ * THE CAP NAMES WHAT IT DROPPED. A line that said only `其余 1 类未列出` left the reader unable to tell which family of
+ * the thirteen she could not see - the same silence one level up from the family this line used to omit entirely
+ * (`soilTiles`). The names cost a few bytes; a numbered absence costs a turn spent guessing.
  */
 function composeNearbyTargets(world: Snapshot): readonly string[] {
   const families = nearbyTargetFamilies(world);
@@ -370,11 +374,16 @@ function composeNearbyTargets(world: Snapshot): readonly string[] {
   const lines: string[] = [];
   for (const family of occupied.slice(0, MAX_TARGET_FAMILIES_SHOWN))
     if (family.rendered !== undefined) lines.push(family.rendered);
-  const restFamilies = occupied.length - Math.min(occupied.length, MAX_TARGET_FAMILIES_SHOWN);
-  if (restFamilies > 0) lines.push(`其余 ${restFamilies} 类未列出`);
+  const dropped = occupied.slice(MAX_TARGET_FAMILIES_SHOWN).map((family) => family.label);
+  if (dropped.length > 0) {
+    const named = dropped.slice(0, MAX_COUNTED_FAMILIES_NAMED);
+    lines.push(
+      `其余 ${dropped.length} 类未列出：${named.join("、")}${dropped.length > named.length ? ` 等 ${dropped.length} 类` : ""}`,
+    );
+  }
   const empty = families.filter((family) => family.total === 0).map((family) => family.label);
   if (empty.length > 0) {
-    const named = empty.slice(0, MAX_EMPTY_FAMILIES_NAMED);
+    const named = empty.slice(0, MAX_COUNTED_FAMILIES_NAMED);
     const more = empty.length - named.length;
     lines.push(`这一带没有：${named.join("、")}${more > 0 ? ` 等 ${empty.length} 类` : ""}`);
   }

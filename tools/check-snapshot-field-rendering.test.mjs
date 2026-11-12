@@ -142,12 +142,12 @@ test("an exemption with nobody's name on it is a fact quietly left out", async (
   const reading = await withFixtureRoot(tree(), (root) =>
     auditSnapshotRendering({
       root,
-      exemptions: { ...RENDERING_EXEMPTIONS, soilTiles: { reason: "someone looked", owedBy: " " } },
+      exemptions: { ...RENDERING_EXEMPTIONS, catalogRevision: { reason: "someone looked", owedBy: " " } },
     }),
   );
   assert.deepEqual(
     codes(reading.violations),
-    ["exemption_without_owner:soilTiles"],
+    ["exemption_without_owner:catalogRevision"],
     "the exemption is not accepted on a blank owner",
   );
 });

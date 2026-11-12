@@ -14,7 +14,12 @@ import {
   unchangedWorldAnswer,
 } from "./fact-brief.js";
 import { createStardewObservationTools } from "./game-tools.js";
-import { NON_ROW_FAMILIES, nearbyTargetFamilies, TARGET_FAMILY_LABELS } from "./game-world-vocabulary.js";
+import {
+  MAX_TARGET_FAMILIES_SHOWN,
+  NON_ROW_FAMILIES,
+  nearbyTargetFamilies,
+  TARGET_FAMILY_LABELS,
+} from "./game-world-vocabulary.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import { DEFAULT_IDENTITY_PROFILE } from "./identity-profile.js";
 import { createProgramProgressObserver } from "./program-status-wait.js";
@@ -260,8 +265,15 @@ test("note_in_own_block: the player's words are in <player-note> and nowhere els
     1,
     `the player's note appears ${String(occurrences)} times, and it must appear exactly once`,
   );
-  const note = /<player-note>\n([\s\S]*?)\n<\/player-note>/u.exec(text)?.[1];
-  assert.equal(note, playerInput.text, "the note block holds the player's words verbatim, and nothing else");
+  // The block holds a label line per run of his sentences (`player-note.ts` reads the note) and his words inside `「」`:
+  // the words are unbroken, in his order, and the labels are the only added text.
+  const note = /<player-note>\n([\s\S]*?)\n<\/player-note>/u.exec(text)?.[1] ?? "";
+  const quoted = [...note.matchAll(/「([^」]*)」/gu)].map((match) => match[1] ?? "");
+  assert.equal(
+    quoted.join(""),
+    playerInput.text,
+    "the quoted runs of the note block are the player's words, verbatim and in his order",
+  );
 });
 
 test("bare_json_in_model_text: the composed text is prose, not an envelope", () => {
@@ -425,23 +437,173 @@ test("prose_cost_per_batch: what one delivery costs, against the envelope it rep
   );
 });
 
-test("target_family_labels: every row family the wire publishes has a word, or a stated reason it is not a place", () => {
-  // THE POPULATION IS THE WIRE'S OWN KEY LIST. A hand-maintained table of families to print would go stale the next
-  // time the Mod grew one - and the failure would be silent: a family with no label renders nothing.
-  const families = SNAPSHOT_KEYS.filter((key) => /(?:Targets|Sites|Slots)$/u.test(key));
-  const missing = families.filter((key) => !(key in TARGET_FAMILY_LABELS) && !(key in NON_ROW_FAMILIES));
+/** The wire's own schema document: the row shapes the Mod publishes and the Host validates. */
+const WIRE_SCHEMA_PATH = fileURLToPath(new URL("../../protocol/bridge-v1.schema.json", import.meta.url));
+
+/** One array family's declaration, and the record its rows point at. */
+type WireFamily = Readonly<{ type?: string; items?: Readonly<{ $ref?: string }> }>;
+type WireRecord = Readonly<{ properties?: Readonly<Record<string, unknown>> }>;
+
+/**
+ * The families the wire publishes whose rows carry a tile: `x` and `y`, the two keys `nearbyTargetFamilies` prints.
+ *
+ * THE POPULATION IS THE PROTOCOL DOCUMENT'S ROW SHAPE, not a family's name. The gate this replaces - and the one that let
+ * `soilTiles` stay invisible - filtered `SNAPSHOT_KEYS` on `/(?:Targets|Sites|Slots)$/`: 120 keys, 75 examined, and
+ * `soilTiles` is the only family the wire spells `*Tiles`, so the whole target list of `till_soil` sat outside its vision
+ * while it reported green. `x`/`y` is not a spelling, it is the shape this composer prints, and a family added tomorrow is
+ * judged by the same property with no edit here.
+ */
+function wireTileFamilies(): readonly string[] {
+  const schema = JSON.parse(readFileSync(WIRE_SCHEMA_PATH, "utf8")) as Readonly<{
+    $defs?: Readonly<Record<string, WireRecord>>;
+  }>;
+  const families = schema.$defs?.snapshot?.properties as Readonly<Record<string, WireFamily>> | undefined;
+  // A gate that silently examined nothing agrees with itself, so an unreadable document is a throw, not an empty list.
+  if (families === undefined)
+    throw new Error("the wire schema declares no `$defs.snapshot.properties`: this gate reads it by shape");
+  const tile: string[] = [];
+  for (const [family, spec] of Object.entries(families)) {
+    if (spec.type !== "array") continue;
+    const reference = spec.items?.$ref;
+    if (typeof reference !== "string") continue;
+    const row = schema.$defs?.[reference.slice(reference.lastIndexOf("/") + 1)]?.properties;
+    if (row === undefined) continue;
+    if ("x" in row && "y" in row) tile.push(family);
+  }
+  return tile;
+}
+
+/**
+ * A tile family the batch prints has a word, or states why it is not a row here.
+ *
+ * RED AT `ee16cdac` (the commit this unit started from): `soilTiles` - the whole target list of `till_soil` - was the
+ * family with neither, and the companion's only visible ground was `可清的地块`, the hoe-dirt family `till_soil` refuses.
+ * Eleven live attempts to clear and plant a strip tilled 15-46 tiles and never once saw the ground it could till.
+ */
+test("target_family_labels: every tile family the wire publishes has a word, or a stated reason it is not a row", () => {
+  const families = wireTileFamilies();
+  // Refuse to pass on nothing: an empty population agrees with every assertion below.
+  assert.ok(
+    families.length >= 55,
+    `examined ${String(families.length)} tile families, which is too few to be the wire`,
+  );
+  const admitted = new Set<string>(SNAPSHOT_KEYS);
+  const unpublished = families.filter((family) => !admitted.has(family));
   assert.deepEqual(
-    missing,
+    unpublished,
     [],
-    `these wire families have no label and no NON_ROW_FAMILIES reason: ${missing.join(", ")}`,
+    `the wire publishes these tile families and SNAPSHOT_KEYS does not admit them: ${unpublished.join(", ")}`,
   );
-  assert.ok(families.length >= 60, `examined ${String(families.length)} families, which is too few to be the wire`);
-  // And the label table may not name a family the wire does not publish: that is a word for nothing.
-  const unknown = Object.keys(TARGET_FAMILY_LABELS).filter(
-    (key) => !(SNAPSHOT_KEYS as readonly string[]).includes(key),
+  const unaccounted = families.filter((family) => !(family in TARGET_FAMILY_LABELS) && !(family in NON_ROW_FAMILIES));
+  assert.deepEqual(
+    unaccounted,
+    [],
+    `these wire families carry tile coordinates and neither print a name nor state a reason: ${unaccounted.join(", ")}`,
   );
-  assert.deepEqual(unknown, [], `these labels name families the wire does not publish: ${unknown.join(", ")}`);
-  process.stdout.write(`target_family_labels examined ${String(families.length)} families\n`);
+  const blank = Object.entries(NON_ROW_FAMILIES)
+    .filter(([, reason]) => reason.trim() === "")
+    .map(([family]) => family);
+  assert.deepEqual(blank, [], `these families state no reason at all: ${blank.join(", ")}`);
+  // And no word or reason may name a family the wire does not publish: that is an answer to nothing.
+  const unknown = [...Object.keys(TARGET_FAMILY_LABELS), ...Object.keys(NON_ROW_FAMILIES)].filter(
+    (family) => !admitted.has(family),
+  );
+  assert.deepEqual(
+    unknown,
+    [],
+    `these labels and reasons name families the wire does not publish: ${unknown.join(", ")}`,
+  );
+  process.stdout.write(
+    `target_family_labels examined ${String(families.length)} tile families of ${String(SNAPSHOT_KEYS.length)} wire keys\n`,
+  );
+});
+
+/**
+ * `till_soil`'s ground, printed for her.
+ *
+ * The two ground families are separate sentences on purpose: `可清的地块` is the hoe dirt `till_soil` REFUSES (it already
+ * has one, so `clear_hoe_dirt` is the action) and `可锄的地块` is the bare ground it accepts. A line that named only the
+ * first told her the strip was "already tilled but empty" and left her hand-writing coordinates outside it - 27 refusals
+ * of `soil_not_diggable:not_map_diggable` in one measured run.
+ */
+test("soilTiles prints the ground till_soil accepts, beside the hoe dirt it refuses", () => {
+  const snapshot = {
+    ...world,
+    soilTiles: [
+      { x: 65, y: 15 },
+      { x: 66, y: 15, hoeDirt: false },
+    ],
+    clearHoeDirtTargets: [{ targetId: "hoe_dirt_1", x: 67, y: 15 }],
+  } as unknown as Snapshot;
+  const family = nearbyTargetFamilies(snapshot).find((entry) => entry.family === "soilTiles");
+  assert.equal(family?.label, "可锄的地块");
+  assert.equal(family?.total, 2);
+  assert.equal(family?.rendered, "可锄的地块 (65,15) (66,15)");
+  const text = composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0 });
+  assert.match(text, /可锄的地块 \(65,15\) \(66,15\)/u);
+  assert.match(text, /可清的地块 \(67,15\)/u, "the family `till_soil` refuses keeps its own sentence");
+  // A measured empty family is the answer "there is no ground to hoe here", not silence.
+  const none = composeWorldState({
+    snapshot: { ...world, soilTiles: [] } as unknown as Snapshot,
+    revision: 1205,
+    ageTurns: 0,
+    ageMs: 0,
+  });
+  assert.match(none, /这一带没有：[^\n]*可锄的地块/u);
+});
+
+/**
+ * The family cap, made to say what it took.
+ *
+ * `soilTiles` is the thirteenth family a real farm strip publishes, so the cap that prints twelve is the next place the
+ * one ground she can hoe could disappear - and a line that said only `其余 1 类未列出` would leave her unable to tell
+ * which family she cannot see. The names cost a few bytes; the earlier silence cost a run.
+ */
+test("target_family_cap: with thirteen families in reach, the line names the one it left out", () => {
+  const families = [
+    "soilTiles",
+    "cropTargets",
+    "forageTargets",
+    "itemTargets",
+    "harvestTargets",
+    "seedTargets",
+    "fertilizerTargets",
+    "debrisTargets",
+    "rockSourceTargets",
+    "treeStumpTargets",
+    "weedTargets",
+    "grassTargets",
+    "bushTargets",
+  ];
+  // One tile each, one column further away per family: the composer's own order is nearest first, so the last family
+  // listed is the one the cap drops, whatever order the table declares.
+  const rows: Record<string, readonly { x: number; y: number }[]> = {};
+  families.forEach((family, index) => {
+    rows[family] = [{ x: 65 + index, y: 15 }];
+  });
+  const snapshot = {
+    ...world,
+    cropTargets: undefined,
+    weedTargets: undefined,
+    debrisTargets: undefined,
+    rockSourceTargets: undefined,
+    harvestTargets: undefined,
+    ...rows,
+  } as unknown as Snapshot;
+  assert.equal(
+    nearbyTargetFamilies(snapshot).filter((family) => family.rendered !== undefined).length,
+    families.length,
+    "thirteen families are in reach, so the cap has something to leave out",
+  );
+  const text = composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0 });
+  const printed = text.split("\n").filter((line) => /\(-?\d+,-?\d+\)/u.test(line) && !line.includes("未列出"));
+  assert.equal(printed.length, MAX_TARGET_FAMILIES_SHOWN, "the cap prints twelve families and counts the rest");
+  assert.match(
+    text,
+    /其余 1 类未列出：灌木/u,
+    "the cap names the family it dropped (`bushTargets`, the farthest of the thirteen)",
+  );
+  assert.match(text, /可锄的地块 \(65,15\)/u, "and soilTiles is one of the twelve that printed");
 });
 
 test("nearbyTargetFamilies reads the snapshot it is given, and says which families it did not measure", () => {
