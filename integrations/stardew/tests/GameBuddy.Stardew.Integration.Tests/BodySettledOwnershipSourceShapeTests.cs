@@ -1,7 +1,8 @@
 using System;
 using System.IO;
 using System.Collections.Generic;
-using System.Reflection;
+using System.Linq;
+using System.Text.RegularExpressions;
 using FluentAssertions;
 using GameBuddy.Stardew.Core;
 using Xunit;
@@ -27,23 +28,13 @@ namespace GameBuddy.Stardew.Integration.Tests;
 [Trait("kind", "source-shape")]
 public sealed class BodySettledOwnershipSourceShapeTests
 {
-    private static string Source(string relativePath) =>
-        File.ReadAllText(Path.Combine(RepositorySourcePath(), relativePath));
-
-    private static string RepositorySourcePath()
-    {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "AGENTS.md")))
-            directory = directory.Parent;
-        if (directory is null)
-            throw new InvalidOperationException("repository root not found");
-        return directory.FullName;
-    }
+    /// <summary>The source of the file that DECLARES the named type, not a path this test keeps in step by hand.</summary>
+    private static string Source(string typeName) => ModSource.OfType(typeName);
 
     /// <summary>The slot names in the body_owned chain inside <see cref="ExecutionAdmission.Admit"/>.</summary>
     private static List<string> AdmissionSlots()
     {
-        string source = Source("integrations/stardew/ExecutionAdmission.cs");
+        string source = Source("ExecutionAdmission");
         // The rejection call is unique; the chain immediately precedes it.
         int rejection = source.IndexOf("return this.RejectBodyOwned(requestId, executionId);", StringComparison.Ordinal);
         rejection.Should().BeGreaterThan(0, "the admission body-exclusivity rejection must exist");
@@ -69,7 +60,7 @@ public sealed class BodySettledOwnershipSourceShapeTests
     /// </summary>
     private static List<string> SettledSlots()
     {
-        string source = Source("integrations/stardew/ActiveBodySlots.cs");
+        string source = Source("ActiveBodySlots");
         var slots = new List<string>();
         foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
                      source,
@@ -149,7 +140,7 @@ public sealed class BodySettledOwnershipSourceShapeTests
     [Fact]
     public void TheOnlyStateExemptionInTheChainIsTheNightThatHasNotBegun()
     {
-        string source = Source("integrations/stardew/ExecutionAdmission.cs");
+        string source = Source("ExecutionAdmission");
         int rejection = source.IndexOf("return this.RejectBodyOwned(requestId, executionId);", StringComparison.Ordinal);
         rejection.Should().BeGreaterThan(0);
         int chainEnd = source.IndexOf("this.controller.HasActiveExecution", rejection - 900, StringComparison.Ordinal);
@@ -165,8 +156,82 @@ public sealed class BodySettledOwnershipSourceShapeTests
             .ToList();
 
         conditionals.Should().BeEquivalentTo(new[] { "NightAcceptedButNotBegun" });
-        Source("integrations/stardew/ActiveBodySlots.cs").Should().Contain(
+        Source("ActiveBodySlots").Should().Contain(
             "internal bool NightAcceptedButNotBegun => this.DayAdvance.Peek()?.Lifecycle is { IsAwaitingEligibility: true };",
             "the exemption must be the lifecycle's own eligibility phase, not a flag that outlives it");
+    }
+}
+
+/// <summary>
+/// The source of the one file in the Mod tree that DECLARES the named type, found by walking that tree rather than by a
+/// path the test keeps in step by hand.
+///
+/// <para>
+/// A path is an address, and the address is exactly what rots: the admission now lives in
+/// <c>ExecutionAdmission.cs</c> and the body slots in <c>ActiveBodySlots.cs</c>, and every test that still named
+/// <c>farmhandexecutioncontroller.cs</c> read the move as a broken invariant - the same shape of failure a rename
+/// produces, reported against a fact that was fine. Asking the tree which file declares the type cannot answer that
+/// way: a move keeps the declaration, and a rename or a deletion fails naming the type it could not find.
+/// </para>
+///
+/// <para>
+/// It lives beside a test class rather than in a file of its own because this file is compiled into BOTH suites - the
+/// integration one and the game-free one, which references Core alone - and a new file has to be registered in that
+/// measured partition before either suite can see it.
+/// </para>
+/// </summary>
+internal static class ModSource
+{
+    private static readonly Dictionary<string, string> DeclaringFile = new(StringComparer.Ordinal);
+
+    /// <summary>The source of the single Mod file declaring <paramref name="typeName"/>.</summary>
+    internal static string OfType(string typeName) => File.ReadAllText(DeclaringFileOf(typeName));
+
+    private static string DeclaringFileOf(string typeName)
+    {
+        lock (DeclaringFile)
+        {
+            if (DeclaringFile.TryGetValue(typeName, out string? cached))
+                return cached;
+        }
+
+        IReadOnlyList<string> files = ModSourceFiles();
+        string[] declaring = files.Where(file => Declared(typeName, file)).ToArray();
+        declaring.Should().HaveCount(
+            1,
+            $"exactly one Mod source file may declare {typeName}; examined {files.Count} files and found: "
+                + string.Join(", ", declaring.Select(file => Path.GetFileName(file))));
+        lock (DeclaringFile)
+            DeclaringFile[typeName] = declaring[0];
+        return declaring[0];
+    }
+
+    private static bool Declared(string typeName, string file) =>
+        Regex.IsMatch(
+            File.ReadAllText(file),
+            $@"\b(?:class|record|struct|interface|enum)\s+{Regex.Escape(typeName)}\b",
+            RegexOptions.CultureInvariant);
+
+    /// <summary>Every production source file of the Mod: tests, and build output, are not where a type is declared.</summary>
+    private static IReadOnlyList<string> ModSourceFiles()
+    {
+        string root = Path.Combine(RepositoryRoot(), "integrations", "stardew");
+        return Directory
+            .GetFiles(root, "*.cs", SearchOption.AllDirectories)
+            .Where(file => !file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                && !file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                && !file.Contains($"{Path.DirectorySeparatorChar}tests{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            .OrderBy(file => file, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static string RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "AGENTS.md")))
+            directory = directory.Parent;
+        if (directory is null)
+            throw new InvalidOperationException("repository root not found");
+        return directory.FullName;
     }
 }

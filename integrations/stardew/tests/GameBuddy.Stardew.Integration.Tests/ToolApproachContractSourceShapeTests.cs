@@ -28,6 +28,11 @@ namespace GameBuddy.Stardew.Integration.Tests;
 [Trait("kind", "source-shape")]
 public sealed class ToolApproachContractSourceShapeTests
 {
+    /// <summary>
+    /// The source of a file this test names by PATH. Only the two <c>farmhandexecutioncontroller*.cs</c> partials are read
+    /// this way: every one of them declares the same <c>ExecutionManager</c>, so no declaration can single one out - a
+    /// type that has a file of its own is read through <see cref="ModSource.OfType"/> instead.
+    /// </summary>
     private static string Read(string relative) => File.ReadAllText(RepositorySourcePath(relative));
 
     private static string BalancedBody(string source, int start)
@@ -208,7 +213,7 @@ public sealed class ToolApproachContractSourceShapeTests
         // Ownership gates: an approach must count as a busy body so a second action
         // cannot start on top of it. Pinned inside the admission's body-exclusivity chain specifically, because
         // a global count also passes when the admission line is the one that lost the check.
-        string admission = MethodBody(Read("integrations/stardew/ExecutionAdmission.cs"), "internal AdmissionOutcome Admit(");
+        string admission = MethodBody(ModSource.OfType("ExecutionAdmission"), "internal AdmissionOutcome Admit(");
         admission.Should().Contain("this.slots.ToolApproach.Peek() is not null",
             "admission must refuse while an approach walks, not only the snapshot/teardown paths");
         CountOccurrences(controller, "this.activeToolApproach").Should().BeGreaterThanOrEqualTo(5,
@@ -268,7 +273,7 @@ public sealed class ToolApproachContractSourceShapeTests
         settledEnd.Should().BeGreaterThan(settledStart);
         controller.Substring(settledStart, settledEnd - settledStart)
             .Should().Contain("this.slots.IsSettled", "the STOP observation reads the same settled answer as everything else");
-        Read("integrations/stardew/ActiveBodySlots.cs")
+        ModSource.OfType("ActiveBodySlots")
             .Should()
             .MatchRegex(
                 @"new SlotRow\(\s*nameof\(this\.ToolApproach\),[\s\S]*?Settled: true,",
