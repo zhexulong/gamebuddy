@@ -534,15 +534,32 @@ export function baselineKey(finding) {
   return `${finding.code} ${finding.id}`;
 }
 
-/** Findings the baseline does not record, and baseline rows that are no longer findings. Both are red. */
-export function reconcile({ findings, baseline }) {
-  if (baseline === null) return { unrecorded: [...findings], stale: [], baselineMissing: true };
+/**
+ * Findings the baseline does not record, and baseline rows that are no longer findings. Both are red.
+ *
+ * `inert` is the third answer, and it exists because a baseline row can outlive a gate the INDEX stops carrying without the
+ * gate being gone: a lane's whole-tree commit can bring a gate in and a later reset take it out again, and the row would
+ * then read `stale` on a branch where the gate simply is not there yet. A row whose gate the index does not carry is inert
+ * - printed, not counted as red - which is the same rule `tools/lib/indexed-sources.mjs` applies to the population itself:
+ * a gate file that is not staged is not yet anyone's.
+ */
+export function reconcile({ findings, baseline, inert = new Set() }) {
+  if (baseline === null) return { unrecorded: [...findings], stale: [], inertRows: [], baselineMissing: true };
   const keys = new Set(findings.map(baselineKey));
+  const inerts = [...baseline].filter((key) => !keys.has(key) && inert.has(key)).sort();
   return {
     unrecorded: findings.filter((finding) => !baseline.has(baselineKey(finding))),
-    stale: [...baseline].filter((key) => !keys.has(key)).sort(),
+    stale: [...baseline].filter((key) => !(keys.has(key) || inert.has(key))).sort(),
+    inertRows: inerts,
     baselineMissing: false,
   };
+}
+
+/** The baseline rows whose gate the index does not carry: their gate is not in this tree, so they owe nothing here. */
+export function inertBaselineRows({ baseline, untrackedNotCounted }) {
+  if (baseline === null) return new Set();
+  const untracked = new Set(untrackedNotCounted);
+  return new Set([...baseline].filter((key) => untracked.has(key.split(" ").slice(1).join(" "))));
 }
 
 /** The baseline document, with the reading that produced it. Sorted, so `--update` rewrites only what changed. */
@@ -638,7 +655,18 @@ export function buildReport({
 }
 
 /** The human reading: the partition, where this file landed, and every member that made a bucket. */
-function writeHumanRun({ census, self, blocked, outside, findings, unrecorded, stale, baselineMissing, report }) {
+function writeHumanRun({
+  census,
+  self,
+  blocked,
+  outside,
+  findings,
+  unrecorded,
+  stale,
+  inertRows,
+  baselineMissing,
+  report,
+}) {
   for (const line of census.lines) process.stdout.write(`${line}\n`);
   // This file is one of the population and is judged by the same rule, which is the only answer to "would it catch
   // itself" that is a measurement rather than a promise.
@@ -653,6 +681,7 @@ function writeHumanRun({ census, self, blocked, outside, findings, unrecorded, s
   for (const finding of unrecorded)
     process.stdout.write(`gate_population_finding_unrecorded: ${baselineKey(finding)}\n`);
   for (const key of stale) process.stdout.write(`gate_population_baseline_stale: ${key}\n`);
+  for (const key of inertRows) process.stdout.write(`gate_population_baseline_inert: ${key}\n`);
   if (baselineMissing)
     process.stdout.write(`gate_population_baseline_unreadable: ${BASELINE_PATH} is absent or not ${BASELINE_SCHEMA}\n`);
   else if (unrecorded.length === 0 && stale.length === 0) process.stdout.write("gate_population_baseline_current\n");
@@ -693,7 +722,11 @@ function main() {
   }
 
   const baseline = readBaseline({ root });
-  const { unrecorded, stale, baselineMissing } = reconcile({ findings, baseline });
+  const { unrecorded, stale, inertRows, baselineMissing } = reconcile({
+    findings,
+    baseline,
+    inert: inertBaselineRows({ baseline, untrackedNotCounted }),
+  });
   const report = buildReport({
     examined,
     findings,
@@ -709,7 +742,8 @@ function main() {
 
   if (argv.includes("--json"))
     process.stdout.write(`${JSON.stringify({ ...report, findings, blocked, outside }, null, 2)}\n`);
-  else writeHumanRun({ census, self, blocked, outside, findings, unrecorded, stale, baselineMissing, report });
+  else
+    writeHumanRun({ census, self, blocked, outside, findings, unrecorded, stale, inertRows, baselineMissing, report });
 
   const status = ratchetStatus(ratchet);
   return EXIT_FOR_STATUS[status];

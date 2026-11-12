@@ -1493,10 +1493,17 @@ record is red (a new silent gate cannot land), and a baseline row that is no lon
 be deleted, so a row cannot outlive what it described). That is the same mechanism `tools/audit-gate-red-proofs.mjs` uses
 for gates never seen red, and the same `--update` shape as `tools/cognitive-complexity-baseline.json`.
 
-What makes 56 rows acceptable where a 56-line allow-list would not be: the rows ARE the measurement. They are keyed by
+What makes 57 rows acceptable where a 57-line allow-list would not be: the rows ARE the measurement. They are keyed by
 cause and gate (`gate_without_population check:diff`), they expire in both directions, and the number is printed on every
 run. The alternative - a gate that can never be green - is a gate nobody keeps running, which is how this debt stayed
 invisible for a month.
+
+There is a third answer, and this branch needed it within the hour: a row whose gate the INDEX stops carrying is **inert**,
+printed as `gate_population_baseline_inert` and counted as neither green nor red. `inert` exists because another lane's
+whole-tree commit brought `test:action-surface-parity` into the population and a later reset took it out again, which made a
+recorded row read `stale` on a branch where the gate simply was not there. That is the same rule
+`tools/lib/indexed-sources.mjs` applies to the population itself - a gate file that is not staged is not yet anyone's - and
+the alternative, deleting the row, would have meant re-adding it on the next commit.
 
 ### What this check does not see, stated rather than implied
 

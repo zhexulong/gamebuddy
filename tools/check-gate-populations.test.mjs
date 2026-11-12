@@ -24,8 +24,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-
-import { blankComments } from "./prelive.mjs";
 import {
   baselineDocument,
   baselineKey,
@@ -39,6 +37,7 @@ import {
   reconcile,
   subsetCounts,
 } from "./check-gate-populations.mjs";
+import { blankComments } from "./prelive.mjs";
 
 const GATE = fileURLToPath(new URL("./check-gate-populations.mjs", import.meta.url));
 const REPOSITORY_ROOT = path.dirname(path.dirname(GATE));
