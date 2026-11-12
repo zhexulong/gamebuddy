@@ -1129,7 +1129,7 @@ existing rows, both of which are compiled by `dotnet build integrations/stardew/
 
 | reading | before | after |
 | --- | --- | --- |
-| `proven_but_nothing_runs` rows | 33 | 31 |
+| `proven_but_nothing_runs` rows | 32 | 30 |
 | the two that left | — | `audit:stardew-scene-kind-projection:integrations/stardew/navigation/scenecontracts.cs`, `check:terminal-idle-publication:integrations/stardew/farmhandexecutioncontroller.cs` |
 | `test:stardew:core`, `test:stardew:integration` | `proven_but_nothing_runs` for the falsifier's own file | absent from that list, which is the reading the markers claim |
 
