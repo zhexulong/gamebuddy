@@ -135,6 +135,19 @@
   --warning: var(--palette-gold-base);
   --danger: var(--palette-crimson-base);
 
+  /* The plate behind a status notice, as a share of that notice's own ink
+     (`.error-banner`, `.warning-banner`, `.success-banner`). A plate strength is
+     a property of the canvas it sits on, not of the notice family, which is why
+     this is a token each theme states rather than a number every rule repeats.
+     On the near-black canvas a 12% tint of the ink is what makes a notice a
+     plate at all, and it costs the ink almost nothing: the warning tone reads
+     7.56:1 on its own 12% wash. The light canvas is mid-tone, so the same tint
+     pulls it toward the dark ink behind it, and all three notices sat under the
+     4.5:1 floor at 12%/14% - warning 4.34:1, danger 4.24:1, success 4.43:1, as
+     the axe cells in `tests/shell-accessibility-in-both-appearances-and-languages`
+     measure them. */
+  --banner-wash: 12%;
+
   /* Layer 3: Component & Layout Tokens (kept, plus the cadence + floor). */
   --appbar-height: 56px;
   --composer-min-height: 48px;
@@ -219,6 +232,11 @@
   --accent-solid-hover: #8a4349;
   --on-accent: #fdf8f2;
   --selection: #f6ded9;
+
+  /* The dark plate is unaffordable here: see the token's own comment at the dark
+     root. 6% is set by the worst of the three notices, the danger tone on its own
+     wash (`#b02a2a` on `#e6d7cc`), at 4.66:1. */
+  --banner-wash: 6%;
 }
 
 /* ==========================================================================
@@ -4874,7 +4892,10 @@
 
    Each banner is one semantic colour over a wash of that same colour, taken
    from the token rather than restated as a literal, so a palette retune moves
-   all three together. The warning tone is the one the reviewer audit found
+   all three together. The wash's strength is `--banner-wash`, which each theme
+   states, because a plate that reads on a near-black canvas swamps a mid-tone
+   one (the light theme measured 4.35:1 where 4.5:1 is required). The warning
+   tone is the one the reviewer audit found
    missing entirely: the text beside a model conflict or an unselected connection
    was a bare `<p>`, i.e. ordinary prose.
    ========================================================================== */
@@ -4894,19 +4915,19 @@
   }
 
   .error-banner {
-    background-color: color-mix(in srgb, var(--danger) 12%, transparent);
+    background-color: color-mix(in srgb, var(--danger) var(--banner-wash), transparent);
     border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);
     color: var(--danger);
   }
 
   .warning-banner {
-    background-color: color-mix(in srgb, var(--warning) 12%, transparent);
+    background-color: color-mix(in srgb, var(--warning) var(--banner-wash), transparent);
     border: 1px solid color-mix(in srgb, var(--warning) 32%, transparent);
     color: var(--warning);
   }
 
   .success-banner {
-    background-color: color-mix(in srgb, var(--success) 14%, transparent);
+    background-color: color-mix(in srgb, var(--success) var(--banner-wash), transparent);
     border: 1px solid color-mix(in srgb, var(--success) 40%, transparent);
     color: var(--success);
   }

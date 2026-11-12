@@ -11,7 +11,7 @@
  * computed colours over the token canvas, and it reads the catalogue's own text, so both change with
  * the cell. The single cell that was judged before this file existed (the composed surface, English,
  * whatever appearance the OS answered) stayed green while the light appearance carried the defect
- * recorded below.
+ * that this table has since recorded and lost again, in the light theme's `--banner-wash`.
  *
  * THE CELLS ARE PROVEN, NOT ASSUMED
  *
@@ -20,20 +20,26 @@
  * cell matches both the record and what Chromium asks for - `en` is the browser's own answer either
  * way - while the `zh-CN` cell can only come from the record, because the browser still asks `en-US`.
  *
- * THE KNOWN-RED ENTRY
+ * THE ENTRY THIS TABLE USED TO CARRY
  *
- * The light appearance has one serious violation today: `color-contrast` on `.warning-banner > span`,
- * the "no model yet" banner the Chat surface shows on a fresh install. Measured by the engine in both
+ * The light appearance had one serious violation: `color-contrast` on `.warning-banner > span`, the
+ * "no model yet" banner the Chat surface shows on a fresh install. Measured by the engine in both
  * languages: foreground `#7a5713` (the light `--warning` gold) on background `#dcd1bf` (the token's
  * own 12% wash over the light `--surface-canvas`), 4.34:1 at 13px normal weight where 4.5:1 is
- * required. It is recorded here rather than relaxed, because the fix is a token change in
- * `src/style.css` (the light warning tone against its own wash) and this lane does not touch the
- * product's source. The entry is a gate, not a comment: it fails if a second violation appears, and
- * it fails as soon as the tone is fixed, because the recorded set is then no longer what the engine
- * reports - at which point this table becomes empty and the fix is complete.
+ * required. It was recorded rather than relaxed, on the rule that the entry fails if a second
+ * violation appears AND fails as soon as the defect is fixed - so the fix could not land quietly,
+ * and it did not: the light theme's plate is now 6%, the same cell reads the warning notice at
+ * 4.72:1, and this table is empty in both appearances. The recorded shape stays, because the next
+ * defect to arrive will be recorded the same way rather than relaxed.
+ *
+ * THE NOTICES THE LAUNCH DOES NOT RENDER
+ *
+ * A launched shell shows one of the three notices, so the cells above judge one. The family is
+ * measured by the last test in this file, on the same engine.
  */
 import assert from "node:assert/strict";
-import { type AccessibilityFinding, readAccessibility } from "./frontend-criteria.js";
+import { AxeBuilder } from "@axe-core/playwright";
+import { type AccessibilityFinding, BASELINE_TAGS, readAccessibility } from "./frontend-criteria.js";
 import { type Page, expect, test } from "./frontend-coverage";
 import { jsonOk, root, token } from "./composed-reference-game-fixtures";
 
@@ -47,12 +53,14 @@ const CELLS = [
 /**
  * Every violation the engine reports, per appearance, and nothing else.
  *
- * `dark` records none. `light` records the one contrast defect explained in the header; the selector
- * is the element it fired on, so an empty table here is the whole fix.
+ * Both appearances record none: the light appearance's one contrast defect is fixed, and the entry it
+ * used to carry is explained in the header. The shape is kept rather than deleted, because the next
+ * defect to arrive is recorded here - named by the rule, the impact and the selector - instead of
+ * being tolerated.
  */
 const RECORDED_VIOLATIONS = {
   dark: [],
-  light: [{ id: "color-contrast", impact: "serious", targets: [".warning-banner > span"] }],
+  light: [],
 } as const satisfies Readonly<Record<"dark" | "light", readonly AccessibilityFinding[]>>;
 
 /**
@@ -150,9 +158,84 @@ test.describe("the shell is accessible in every appearance and every language", 
       assert.deepEqual(
         observed.violations,
         RECORDED_VIOLATIONS[cell.appearance],
-        `the ${cell.appearance}/${cell.locale} shell violates exactly what this gate records: none in the dark ` +
-          "appearance, and the one known-red light-appearance contrast defect on `.warning-banner > span`",
+        `the ${cell.appearance}/${cell.locale} shell reports exactly the violations this gate records - none, in ` +
+          "either appearance; a new one is recorded in RECORDED_VIOLATIONS with the rule, the impact and the " +
+          "selector it fires on, and not tolerated",
       );
     });
   }
+});
+
+/**
+ * The three notices this product can show, with the sentence each is read as. The text is the
+ * measurement's carriage only - axe weighs the ink against the plate, and it needs something to read.
+ */
+const NOTICES = [
+  { className: "error-banner", text: "The connection to the model provider failed." },
+  { className: "warning-banner", text: "No model is chosen for this conversation yet." },
+  { className: "success-banner", text: "The world book was imported into the library." },
+] as const;
+
+/**
+ * The notices' own ink over their own wash, as a family.
+ *
+ * The four cells above judge the page a launch paints, and that page carries one notice: the Chat
+ * surface's "no model yet" warning. A failed connection and a finished import are reached later, so
+ * a wash that put either of the other two under the floor was reported by nothing - and the measured
+ * family disagreed with itself: at the light theme's original 12%/14% the warning notice read 4.35:1,
+ * the danger notice 4.25:1 and the success notice 4.43:1, all under AA, while the launch rendered
+ * only the first of them. This test mounts all three on the shell that is already running - the
+ * product's own classes, tokens and cascade, no styles of its own - and asks the same engine the same
+ * question, so a plate strength can no longer pass notice by notice.
+ */
+test("every notice reads its own ink over its own wash", async ({ page }) => {
+  await stubRoutes(page, { appearance: "light", locale: "en" });
+  // As in every cell: the OS asks for the other appearance, so the painted one is the record's.
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await expect(page.getByTestId("chat-surface")).toBeVisible();
+  await expect
+    .poll(async () => (await readPainted(page)).appearance, {
+      message: "the shell paints the light appearance the Host's record holds",
+    })
+    .toBe("light");
+
+  const paints = await page.evaluate((notices) => {
+    const host = document.createElement("div");
+    host.setAttribute("data-notice-probe", "");
+    for (const notice of notices) {
+      const banner = document.createElement("div");
+      banner.className = notice.className;
+      const span = document.createElement("span");
+      span.textContent = notice.text;
+      banner.append(span);
+      host.append(banner);
+    }
+    const shell = document.querySelector(".tavern-app-shell");
+    if (shell === null) throw new Error("the shell did not render: `.tavern-app-shell` is absent");
+    shell.append(host);
+    return [...host.children].map((banner) => ({
+      className: banner.className,
+      ink: getComputedStyle(banner).color,
+      plate: getComputedStyle(banner).backgroundColor,
+    }));
+  }, NOTICES);
+
+  const observed = await new AxeBuilder({ page })
+    .withTags([...BASELINE_TAGS])
+    .include("[data-notice-probe]")
+    .analyze();
+  const found = observed.violations.flatMap((violation) =>
+    violation.nodes.map((node) => `${violation.id} on ${node.target.join(" ")}: ${node.any[0]?.message ?? ""}`),
+  );
+  // The ratio the engine settled each passing notice at, so a green run states the margin it keeps
+  // rather than only that it cleared the floor.
+  const settled = observed.passes
+    .filter((rule) => rule.id === "color-contrast")
+    .flatMap((rule) => rule.nodes.map((node) => `${node.target.join(" ")} ${node.any[0]?.data?.contrastRatio}:1`));
+  // The population, printed rather than implied: three notices, and the pair each one paints.
+  console.log(`[notices light] examined=${NOTICES.length} violations=${found.length}`);
+  for (const paint of paints) console.log(`  ${paint.className.padEnd(16)} ink=${paint.ink} plate=${paint.plate}`);
+  for (const reading of settled) console.log(`  settled ${reading}`);
+  assert.deepEqual(found, [], "every notice's own ink reads at AA over its own wash in the light appearance");
 });

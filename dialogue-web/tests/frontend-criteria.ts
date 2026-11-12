@@ -101,7 +101,7 @@ export type AccessibilityObservation = Readonly<{
 }>;
 
 /** The baseline's rule set: WCAG 2.0 and 2.1, level A and AA. */
-const BASELINE_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] as const;
+export const BASELINE_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] as const;
 
 /** The shape of one axe `Result` field this module reads (`violations`, `incomplete`, `passes`). */
 type AxeRule = Readonly<{
