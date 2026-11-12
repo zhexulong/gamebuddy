@@ -1,29 +1,47 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import process from "node:process";
 import test from "node:test";
-import { deriveSoilInteractionTransitionModel, sourceManifestForSoilItm } from "./lib/stardew-soil-itm-canary.mjs";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("../.tmp-stardew-decompile/", import.meta.url);
-const paths = [
-  "StardewValley/Tools/Hoe.cs",
-  "StardewValley/Object.cs",
-  "StardewValley/Utility.cs",
-  "StardewValley/TerrainFeatures/HoeDirt.cs",
-  "StardewValley/Tools/WateringCan.cs",
-  "StardewValley/Crop.cs",
-];
+import {
+  deriveSoilInteractionTransitionModel,
+  missingSoilItmWitnesses,
+  SOIL_ITM_DECOMPILE_ROOT_RELATIVE_PATH,
+  SOIL_ITM_NOT_MEASURED,
+  SOIL_ITM_WITNESS_PATHS,
+  sourceManifestForSoilItm,
+} from "./lib/stardew-soil-itm-canary.mjs";
+import { ALLOW_ABSENT_ROOT_ENV, ALLOW_ABSENT_ROOT_FLAG } from "./stardew-soil-itm-canary-gate.mjs";
 
-// The canary reads its witnesses out of a decompiled Stardew tree, which is
-// gitignored and absent from a checkout. Skip it with a named reason rather than
-// failing every run that has no local decompile.
-const decompileSkipReason = paths.every((path) => existsSync(new URL(path, root)))
-  ? false
-  : "requires the decompiled Stardew source tree at .tmp-stardew-decompile/, which a repository checkout does not create";
+const root = fileURLToPath(new URL(`../${SOIL_ITM_DECOMPILE_ROOT_RELATIVE_PATH}/`, import.meta.url));
+const missingWitnesses = missingSoilItmWitnesses({ root });
+
+// The canary reads its witnesses out of a decompiled Stardew tree, which a checkout does not carry, so every case below
+// skips there - and a suite whose whole population skips is not a measurement. `test:stardew-soil-itm-canary` runs this
+// file through `tools/stardew-soil-itm-canary-gate.mjs`, which reports that absence as exit 2 with
+// `soil_itm_canary_not_measured:decompile_root_absent:<root>` unless the caller passes `--allow-absent-decompile-root`.
+// Running the file directly bypasses the runner, so the same absence fails here rather than reading as five skips.
+if (missingWitnesses.length > 0 && process.env[ALLOW_ABSENT_ROOT_ENV] !== "1") {
+  process.stderr.write(`${SOIL_ITM_NOT_MEASURED}:decompile_root_absent:${root}\n`);
+  process.stderr.write(
+    `  ${missingWitnesses.length} witness(es) absent; run \`pnpm test:stardew-soil-itm-canary\` for the blocked exit ` +
+      `(2), or pass ${ALLOW_ABSENT_ROOT_FLAG} to run the skips deliberately\n`,
+  );
+  process.exit(1);
+}
+
+const decompileSkipReason =
+  missingWitnesses.length === 0
+    ? false
+    : `requires the decompiled Stardew source tree under ${SOIL_ITM_DECOMPILE_ROOT_RELATIVE_PATH}/, absent here by ` +
+      `explicit request`;
 
 async function fixture() {
   const sourceFiles = Object.fromEntries(
-    await Promise.all(paths.map(async (path) => [path, await readFile(new URL(path, root), "utf8")])),
+    await Promise.all(
+      SOIL_ITM_WITNESS_PATHS.map(async (witness) => [witness, await readFile(new URL(witness, root), "utf8")]),
+    ),
   );
   const model = JSON.parse(await readFile(new URL("./stardew-soil-itm-canary.model.json", import.meta.url), "utf8"));
   model.sourceManifestSha256 = sourceManifestForSoilItm(sourceFiles).sha256;

@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 const CANARY_ID = "stardew_1_6_15_soil_interaction_transition_model_v1";
 const _SHA256 = /^[a-f0-9]{64}$/;
@@ -13,6 +15,38 @@ const FORBIDDEN_KEYS = new Set([
 ]);
 const TERMINALS = new Set(["succeeded", "rejected", "cancelled", "timed_out", "uncertain", "protocol_pending"]);
 const REQUIRED_VARIANTS = new Set(["till", "plant_seed", "fertilize_tile", "water", "harvest_grab"]);
+/**
+ * The staged decompiled Stardew tree this canary reads its witnesses out of. A checkout does not create it: the tree
+ * is decompiled locally (the `.tmp-*` `.gitignore` pattern), and every reading of the suite depends on it.
+ */
+export const SOIL_ITM_DECOMPILE_ROOT_RELATIVE_PATH = ".tmp-stardew-decompile";
+
+/**
+ * The version-locked native-realization witnesses, one per source file the five interaction classes cite. The deriver
+ * and the canary read the same set, so a witness added to one and not the other cannot pass as agreement.
+ */
+export const SOIL_ITM_WITNESS_PATHS = Object.freeze([
+  "StardewValley/Tools/Hoe.cs",
+  "StardewValley/Object.cs",
+  "StardewValley/Utility.cs",
+  "StardewValley/TerrainFeatures/HoeDirt.cs",
+  "StardewValley/Tools/WateringCan.cs",
+  "StardewValley/Crop.cs",
+]);
+
+/** The marker a reading of this canary carries when it could not measure, so a consumer matches one string. */
+export const SOIL_ITM_NOT_MEASURED = "soil_itm_canary_not_measured";
+
+/**
+ * The witnesses absent under `root`.
+ *
+ * A suite whose five cases all skip reports the same green as a suite that measured, and the tree this canary needs
+ * is the one thing a checkout never has. The caller asks this question before registering any case, and reports the
+ * absent paths rather than "the suite skipped".
+ */
+export function missingSoilItmWitnesses({ root, witnesses = SOIL_ITM_WITNESS_PATHS, exists = existsSync }) {
+  return witnesses.filter((witness) => !exists(join(root, witness)));
+}
 
 function fail(message, code, details = {}) {
   const error = new Error(message);

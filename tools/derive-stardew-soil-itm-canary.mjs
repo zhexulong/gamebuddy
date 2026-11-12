@@ -1,15 +1,10 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
-import { deriveSoilInteractionTransitionModel, sourceManifestForSoilItm } from "./lib/stardew-soil-itm-canary.mjs";
-
-const REQUIRED_SOURCE_PATHS = [
-  "StardewValley/Tools/Hoe.cs",
-  "StardewValley/Object.cs",
-  "StardewValley/Utility.cs",
-  "StardewValley/TerrainFeatures/HoeDirt.cs",
-  "StardewValley/Tools/WateringCan.cs",
-  "StardewValley/Crop.cs",
-];
+import {
+  deriveSoilInteractionTransitionModel,
+  SOIL_ITM_WITNESS_PATHS,
+  sourceManifestForSoilItm,
+} from "./lib/stardew-soil-itm-canary.mjs";
 
 function parseArgs(argv) {
   const args = new Map();
@@ -34,7 +29,7 @@ function safeRelativePath(root, absolutePath) {
 
 async function readRequiredSources(sourceRoot) {
   const sources = {};
-  for (const relativePath of REQUIRED_SOURCE_PATHS) {
+  for (const relativePath of SOIL_ITM_WITNESS_PATHS) {
     const absolutePath = resolve(sourceRoot, relativePath);
     safeRelativePath(sourceRoot, absolutePath);
     sources[relativePath] = await readFile(absolutePath, "utf8");

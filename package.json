@@ -311,7 +311,7 @@
     "test:stardew-scaffold": "node --test tools/verify-stardew-scaffold.test.mjs",
     "test:stardew-scene-kind-projection": "node --test tools/audit-stardew-scene-kind-projection.test.mjs",
     "test:stardew-state-coverage": "node --test tools/audit-stardew-state-coverage.test.mjs",
-    "test:stardew-soil-itm-canary": "node --test tools/stardew-soil-itm-canary.test.mjs",
+    "test:stardew-soil-itm-canary": "node tools/stardew-soil-itm-canary-gate.mjs",
     "test:stardew-soil-itm-conformance": "node --test tools/stardew-soil-itm-conformance.test.mjs",
     "test:stardew-static-companion-admission": "node --test tools/lib/stardew-companion-production-admission.test.mjs",
     "test:stardew-static-companion-evidence": "node --test tools/lib/stardew-companion-live-evidence.test.mjs",

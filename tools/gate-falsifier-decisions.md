@@ -1154,3 +1154,60 @@ The suite case is `a proof's pointer is executed when a runner names the file or
 marker and `test:format-ratchet`'s pointer to a planted file that is not on disk), is the 351 examined. Both remain
 owed and neither is this batch's: they are gate files another lane owns, and rewriting a claim into a readable one
 without reproducing its red would be the silencer this ledger exists to prevent.
+
+## The twelfth batch: two gates that printed a pass having measured nothing
+
+Two rows of this ledger were never "no red proof yet". They were gates that reported a pass while reading nothing —
+`publint exited null but every failure maps to a known vendor baseline gap; non-blocking here` at exit 0, and five
+skipped cases at exit 0 — which is the defect family the ninth and eleventh batches spent their time deleting, and
+blocked-with-a-reason is the honest state for both. Neither gate is deleted: `check:publint` has no substitute (it
+checks the published shape of the vendored package) and the canary protects an ITM contract.
+
+| gate | the reading, measured before | the reading, after |
+| --- | --- | --- |
+| `check:publint` | `publint exited null but every failure maps to a known vendor baseline gap; non-blocking here`, **exit 0** | `publint_not_measured:executable_unresolvable:bun - no file this process can spawn; found …\bun.cmd (a batch shim, which Node refuses to spawn with \`shell: false\`), …\bun.ps1 (a PowerShell shim, not an executable image), …\bun (an extensionless shell-script shim, not a Win32 executable image)`, **exit 2** |
+| `test:stardew-soil-itm-canary` | `tests 5 · pass 0 · skipped 5`, **exit 0** | `soil_itm_canary_not_measured:decompile_root_absent:E:\projects\ai-game-companion\.tmp-stardew-decompile` plus the six absent witnesses, **exit 2** |
+
+### The canary: the runner decides, because the suite cannot
+
+`test:stardew-soil-itm-canary` is now `node tools/stardew-soil-itm-canary-gate.mjs`. Two facts shape it: `node --test`
+exits 0 when every case skips, and it also collapses a child's own status to 1, so the blocked verdict cannot be
+published from inside the suite file. The runner asks `missingSoilItmWitnesses()` before any case is registered, prints
+`soil_itm_canary_not_measured:decompile_root_absent:<root>` with the witness paths under it, and exits 2. The root, the
+marker and the witness list live once, in `tools/lib/stardew-soil-itm-canary.mjs`, and
+`tools/derive-stardew-soil-itm-canary.mjs` now reads the same list instead of carrying its own copy.
+
+`--allow-absent-decompile-root` runs the five skips on purpose and says so first
+(`soil_itm_canary_not_measured:decompile_root_absent_allowed:<root>`); the default is the blocked verdict. Running the
+suite file directly bypasses the runner, so the file fails there with the same marker instead of reporting five skips —
+the bypass is closed rather than documented.
+
+| | measured on a tree without `.tmp-stardew-decompile/` |
+| --- | --- |
+| HEAD's suite, `node --test tools/stardew-soil-itm-canary.test.mjs` | `tests 5 · pass 0 · skipped 5`, exit 0 |
+| this batch, `node tools/stardew-soil-itm-canary-gate.mjs` | the marker above, exit 2 |
+| this batch, the suite file run directly | the marker on stderr, exit 1 |
+| this batch, `--allow-absent-decompile-root` | `tests 6 · pass 1 · skipped 5`, exit 0 — the five skips plus the runner's own contract case |
+
+The red proof is the second row: the runner was seen red on an injected pre-fix shape (returning `status: "run"` when
+`missing.length > 0`), where `tools/stardew-soil-itm-canary-gate.test.mjs` reported three failures —
+`'run' !== 'not_measured'`, the flag case, and the end-to-end case that spawns the runner and receives exit 0 over five
+skips. The document does not carry a `red-proof:` marker for that, and neither gate is claimed `proven` here: both ids
+still sit in `tools/gate-red-proof-baseline.json`, and deleting an entry from that file is outside this lane's edit set.
+The two-line change that closes the pair when its owner takes it: prefix the "Measured red (…)" lines in
+`tools/check-publint.test.mjs` and `tools/stardew-soil-itm-canary-gate.test.mjs` with `red-proof: `, and delete
+`check:publint` and `test:stardew-soil-itm-canary` from that baseline.
+
+### The other all-skip suites this batch found, and did not repair
+
+The shape is not unique to the canary — two more suites can report green having measured nothing, and both are measured
+on this machine only because its prerequisites happen to exist:
+
+| suite | the prerequisite it skips on | measured here | the all-skip reading |
+| --- | --- | --- | --- |
+| `check:stardew-loop-closure` (`tools/check-stardew-loop-closure.test.mjs`) | `resolveStardewDecompileRoot()` — the whole suite wraps it in a try/catch | 8 pass, exit 0 | `GAMEBUDDY_STARDEW_DECOMPILE_ROOT=.tmp/empty-decompile` → `tests 8 · pass 0 · skipped 8`, **exit 0** |
+| `test:gameplay-capability-catalog` (`tools/check-gameplay-capability-catalog.test.mjs`) | `design/gameplay-capability-catalog.json`, which the unversioned `design/` mount carries | 6 pass, exit 0 | not reproducible here without unmounting `design/`; the skip reason is the same `existsSync` guard |
+
+Neither is a one-liner: each needs the same runner-or-guard shape as the canary, its rule belongs to another lane's
+gate, and the canary's own guard is the pattern to copy.
+
