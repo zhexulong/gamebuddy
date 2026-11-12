@@ -1446,14 +1446,15 @@ about: `357` indexed members, `13` of them naming no source file (the `outside` 
 `deriveGatePopulation` does not name at all
 (`integrations/stardew/action-development/tests/action-{source-projection,projection-parity}-drift.test.mjs`), which is
 `357 − 13 + 2 = 346` examined - and `346 + 13 = 359` is that tool's own total on this tree. `node
-tools/audit-gate-red-proofs.mjs` moves from `population=351` to `357` with this batch and the two gates that landed beside
-it. `node tools/check-harness-conformance.mjs`, run against the index this commit was staged in, reads
-`gates examined 357 · with a red proof 331 · external 4 · declared without 19 · undeclared 1`, and its partition is exact
-as a four-term sum: `proven 331 + external 4 + owed 21 + undeclared 1 = 357`, where the 21 owed are the 19 recorded rows
-plus the two unreadable claims (`check:code-duplication`, `test:format-ratchet`) that no bucket of that line can hold, and
-the single `undeclared` row is `check:generated-artifact-reproducibility` - another lane's gate, with no `red-proof:` marker
-and no baseline row, which this lane does not own and does not silently declare. This batch moved that census by exactly
-two, both proven by the markers above.
+tools/audit-gate-red-proofs.mjs` reads `gates examined 357 · with a red proof 333 · external 4 · declared without 18 ·
+undeclared 0` with this batch, and names both of its gates proven (`check:gate-populations` kind=history at
+`tools/check-gate-populations.mjs:77`, `test:gate-populations` kind=inject at `tools/check-gate-populations.test.mjs:14`).
+`node tools/check-harness-conformance.mjs` prints the same census from the same reading, and its partition is exact as a
+four-term sum: `proven 333 + external 4 + owed 20 + 0 undeclared = 357`, where the 20 owed are the 18 recorded rows plus
+the two unreadable claims (`check:code-duplication`, `test:format-ratchet`) that no bucket of that line can hold. Its one
+remaining `unlisted` member is `check:generated-artifact-reproducibility` - another lane's gate, whose declaration its owner
+has not written - which this lane neither declares nor silences; `check-harness-conformance` therefore still exits 1 on a
+gate this batch does not own. This batch moved that census by exactly two, both proven by the markers above.
 
 ### The three red proofs, and how each copy was made
 
