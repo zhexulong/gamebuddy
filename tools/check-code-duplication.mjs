@@ -50,6 +50,35 @@
  * tell those two apart, and it is safe to be blind to them because the family the gate exists for is five statements
  * of lookup, `revision++`, `Guid.NewGuid`, `nowMs` and the guard, not one.
  *
+ * THE GUARD-FIRST ADMISSION PREAMBLE: FIVE GROUPS COUNTED HERE, AND THE EXTRACTION THAT OWES THEM. Measured 2026-11-12
+ * at e1ca02df, after `ef4f82ae` folded the eight-step preamble behind `BeginLocalExecution`/`AdmitLocalExecution`: the
+ * five groups below are ONE family, not five copies - the guard-first preamble every action that must refuse a
+ * non-scope-bound caller BEFORE it reads the world. Its shape is a signature envelope, the delegation to
+ * `BeginLocalExecution` (or to `AdmitLocalExecution` where admission comes first), the `TryGetBoundActor` refusal, the
+ * `world_not_ready` refusal, and then the action's own first check:
+ *
+ *   14f58a9d0c3f  100 tokens / 3 sites  ClearDebris, FeedAnimal, CollectAnimalProduct
+ *   4334a6a5ca04  162 tokens / 3 sites  WaterCrop, HarvestCrop, PlantSeed
+ *   442859664d14  113 tokens / 4 sites  PlantSeed, PlaceWoodFence, PlaceCrabPot, BaitCrabPot
+ *   9b9454fa5db9  128 tokens / 6 sites  WaterCrop, InspectMachine, PetAnimal, InspectNpcRelationship,
+ *                                         DoorTransition, TillSoil
+ *   e8ea671008f4   51 tokens / 5 sites  TakePedestalItem, ToggleFenceGate, HarvestBush, HarvestFruitTree, ShakeTree
+ *
+ * They are DUPLICATION and not a facade, and the rule's own case for that is what decides it: each one carries
+ * `return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null)` - a call
+ * with a literal argument, which the facade reader above deliberately keeps counted, together with the branch chain
+ * that precedes it. Widening `isFacadeOnly` to release them would release exactly the shape the paragraph above says
+ * it must stay blind to, so the rule is NOT the thing to change. They are not new copies either: the text is the same
+ * text the old admission-pipeline families contained - removing the pipeline from the window made these runs maximum.
+ *
+ * THE FIX IS A FURTHER SEAM IN THE CONTROLLERS AND IT IS OWED, not waived. Folding `BeginLocalExecution` plus the
+ * `TryGetBoundActor` and `world_not_ready` refusals into one call is the same move `ef4f82ae` made for the 62 actions
+ * whose checks come after admission, applied to the actions whose checks come before it; it removes all five groups
+ * and it is a change to `integrations/stardew/farmhandexecutioncontroller.*.cs`, which no lane may make while the
+ * receipt-store extraction owns those partials. Until it lands these five stay `clone_group` findings and
+ * `--write-baseline` stays refused, which is why the ratchet reads `new 5` rather than `new 0` - the baseline is not
+ * allowed to record them, and recording them would be recording the residue of a refactor as debt.
+ *
  * WHAT IT ASSERTS, per clone group - the sites jscpd reports for one repeated text, grouped by that text:
  *
  *   1. a DUPLICATION group with >= MIN_TOKENS tokens at >= MIN_SITES sites is a finding, named with EVERY site and the
