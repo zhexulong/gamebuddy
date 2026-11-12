@@ -494,8 +494,37 @@ export const MODAL_CLEARING_PLAN_ACTION_IDS: readonly string[] = Object.freeze([
 const MAX_PLAN_SCRIPT_CHARS = 8192;
 /** The engine's message is the caller's to fix; it is bounded because it reaches a model's context. */
 const MAX_THROWN_MESSAGE_CHARS = 300;
-/** Wall-clock budget for one compile. A plan is a loop over a snapshot, not a computation. */
-const PLAN_SCRIPT_BUDGET_MS = 50;
+/**
+ * The wall-clock windows one compile runs in, in order: the measurement, and - only when it expired - the re-measurement.
+ *
+ * <p>
+ * WALL CLOCK MEASURES THE MACHINE, NOT THE SCRIPT, and these two windows exist to say so instead of raising one number
+ * until the flake stops. 400 probes of a real compile measured 0.61 ms mean and 3.19 ms worst, and 0.62 / 10.10 ms on a
+ * busier minute (the report this was sent from: 0.67 / 7.33 ms over its own 400), and the 307-compile gate in
+ * `body-program-script.test.ts` still met a single 50 ms window expiring on a script that does under a millisecond of
+ * work - the process was descheduled, a GC pause or another runner took the window whole - after which
+ * `plan_script_timeout` told a companion her plan was slow.
+ * </p>
+ * <p>
+ * The FIRST window is sized to absorb an ordinary pause rather than to be tighter than the work: 250 ms is 25x the worst
+ * compile measured here and 34x the report's, several Windows scheduler quanta (15.6 ms each) and a collection, not a
+ * margin over an average. The SECOND is four times the first, because it is the one that decides and a second stolen
+ * window would have to be four times the pause. Nothing is credited to the script until both are gone, and the reason
+ * that is sound is that the script is DETERMINISTIC: no `Date`, `Math`, `performance`, timer or host reference survives
+ * in the sandbox and the snapshot is deep-frozen, so the re-run re-executes the same computation. A plan that is fine and
+ * a window that was stolen cannot both happen twice in a row.
+ * </p>
+ * <p>
+ * The bound still stops a runaway. A tight `while (true) {}` executes about 3.6e8 iterations per second here (measured:
+ * 1e6 in 2.7 ms), so the worst one pathological plan can cost the Host is 1250 ms of wall clock - and it can mint no
+ * node from it, because the only channel that writes anything is the builder and `MAX_PLAN_BUILDER_CALLS` bounds that.
+ * Do not remove the bound: a sandbox without one is how a malformed plan hangs the Host.
+ * </p>
+ */
+export const PLAN_SCRIPT_BUDGET_MS: readonly number[] = Object.freeze([250, 1000]);
+
+/** The wall clock every window adds up to, so a refusal states the whole measurement rather than one window of it. */
+const PLAN_SCRIPT_BUDGET_TOTAL_MS = PLAN_SCRIPT_BUDGET_MS.reduce((total, windowMs) => total + windowMs, 0);
 /**
  * How many times one script may call the builder, INCLUDING calls that a loop's own guard turns into a no-op.
  *
@@ -507,8 +536,9 @@ const PLAN_SCRIPT_BUDGET_MS = 50;
  * `equipFor` calls beside it.
  * </p>
  * <p>
- * It stays bounded because the budget is wall-clock anyway (`PLAN_SCRIPT_BUDGET_MS`): an unbounded builder-call counter
- * would let a script spend that budget on no-ops, and the refusal has to arrive as a NAME rather than as a timeout.
+ * It stays bounded because a compile's windows are wall clock anyway (`PLAN_SCRIPT_BUDGET_MS`): an unbounded
+ * builder-call counter would let a script spend those windows on no-ops, and the refusal has to arrive as a NAME rather
+ * than as an expiry.
  * </p>
  */
 const MAX_PLAN_BUILDER_CALLS = 1024;
@@ -1087,6 +1117,9 @@ function layoutFactsAbsent(
  * The script receives a frozen copy of the snapshot and the builder, and produces nodes in call
  * order. Every refusal is named and bounded; a refused script produces NO program, so a partial plan
  * can never be submitted as if it were the plan the companion wrote.
+ *
+ * It runs inside the windows `PLAN_SCRIPT_BUDGET_MS` declares, and a window that expired is re-measured
+ * before it is believed: `runPlanScriptWindows` is where that happens and why.
  */
 export function compilePlanScript(
   request: PlanScriptRequest,
@@ -1106,70 +1139,42 @@ export function compilePlanScript(
   if (snapshot === null || snapshot === undefined || !isUsableSnapshot(snapshot))
     return refused("plan_snapshot_unavailable", scriptSource, snapshotRevision);
 
-  const state: PlanScriptState = {
-    nodes: [],
-    refusal: null,
-    heldToolCeiling: heldToolChargeCeiling(snapshot),
-    calls: 0,
-    builderCalls: 0,
-    rejected: [],
-    rejectedCount: 0,
-    acceptedSteps: [],
-    merged: [],
-    noStepNeeded: [],
-    inserted: [],
-    insertedNodeIds: [],
-    argumentOwners: planArgumentOwners(dependencies.actions),
-    worldTileByNode: new Map(),
-    callOfNode: new Map(),
-  };
-  const frozen = deepFreeze(structuredClone(snapshot));
-  const sandbox = Object.freeze({
-    snapshot: frozen,
-    builder: createPlanBuilder(dependencies.actions, frozen, state),
-  });
-  const context = createContext(sandbox, {
-    name: "gamebuddy-plan-script",
-    codeGeneration: { strings: false, wasm: false },
-  });
-  const global = runInContext("globalThis", context) as Record<string, unknown>;
-  // global-strip-sandbox: this deletes the withheld capabilities from the fresh context's own global, so a script that reaches one resolves to nothing
-  for (const name of ABSENT_PLAN_GLOBALS) delete global[name];
-
-  try {
-    runInContext(`(function (snapshot, builder) { "use strict";\n${scriptSource}\n})(snapshot, builder);`, context, {
-      timeout: PLAN_SCRIPT_BUDGET_MS,
-      displayErrors: false,
-      filename: "plan-script.js",
-      // The wrapper's opening line is dropped from every reported line number, so a SyntaxError names a line the
-      // caller wrote rather than one the wrapper added above it.
-      lineOffset: -1,
-    });
-  } catch (error) {
-    if (state.refusal !== null)
-      return refused(state.refusal, scriptSource, snapshotRevision, state.requirement, state.missingArguments, state);
-    if (isTimeout(error))
-      return refused(
-        `plan_script_timeout:${PLAN_SCRIPT_BUDGET_MS}`,
-        scriptSource,
-        snapshotRevision,
-        undefined,
-        undefined,
-        state,
-      );
+  const run = runPlanScriptWindows(
+    `(function (snapshot, builder) { "use strict";\n${scriptSource}\n})(snapshot, builder);`,
+    snapshot,
+    dependencies.actions,
+  );
+  const state = run.state;
+  if (run.attempt.outcome === "refused")
+    return refused(state.refusal!, scriptSource, snapshotRevision, state.requirement, state.missingArguments, state);
+  // A SCRIPT THAT OUTLIVED EVERY WINDOW IS ANSWERED WITH THE WHOLE MEASUREMENT, never one window of it. It names the
+  // total wall clock and the windows that made it up, because that is everything the engine can say: `attempts=1` would
+  // be the code whose remedy is "send it again", this one never reads that way, and its reader is the companion writing
+  // the plan - a loop that did not return in 1250 ms of wall clock spent on it twice is the thing to change, not the
+  // machine, and the refusal is the only place that is said. A release gate reading the same name knows the compile was
+  // measured twice rather than lost once.
+  if (run.attempt.outcome === "expired")
     return refused(
-      `plan_script_threw:${thrownName(error)}`,
+      `plan_script_timeout:${PLAN_SCRIPT_BUDGET_TOTAL_MS}ms:attempts=${PLAN_SCRIPT_BUDGET_MS.length}`,
+      scriptSource,
+      snapshotRevision,
+      undefined,
+      undefined,
+      state,
+    );
+  if (run.attempt.outcome === "threw")
+    return refused(
+      `plan_script_threw:${thrownName(run.attempt.error)}`,
       scriptSource,
       snapshotRevision,
       undefined,
       undefined,
       state,
       {
-        message: thrownMessage(error),
-        line: thrownLine(error, scriptSource),
+        message: thrownMessage(run.attempt.error),
+        line: thrownLine(run.attempt.error, scriptSource),
       },
     );
-  }
   // A script may swallow a refusal with its own try/catch; a refusal that ends the SCRIPT still ends it, because the
   // node it asked for was not added and a program missing that node is not the plan the companion wrote. A refusal that
   // ends only its own CALL never reaches here: the call boundary answers it and the script carries on, so every call is
@@ -1260,6 +1265,105 @@ export function compilePlanScript(
     layoutFactsAbsentCount: layout.count,
     ...planCallAccount(state),
   });
+}
+
+/** How one run of the script ended, and the error it ended with when the engine raised one. */
+type PlanScriptAttempt = Readonly<{
+  outcome: "finished" | "refused" | "expired" | "threw";
+  /** The engine's error: present for `refused` and `threw`, absent for `finished` and `expired`. */
+  error?: unknown;
+}>;
+
+/**
+ * Runs the script once, in a context of its own, under one window.
+ *
+ * The `vm` timeout is wall clock, so an `expired` outcome says only that the window went; whether that was the script or
+ * the machine is what `runPlanScriptWindows` decides. A fresh context per run is what makes a re-measurement a
+ * measurement: the state, the builder and the global the script sees are all new, so nothing the stopped run had
+ * already written can reach the second one.
+ */
+function runPlanScriptAttempt(
+  source: string,
+  frozenSnapshot: Snapshot,
+  actions: readonly PublishedPlanAction[],
+  budgetMs: number,
+  state: PlanScriptState,
+): PlanScriptAttempt {
+  const context = createContext(
+    Object.freeze({ snapshot: frozenSnapshot, builder: createPlanBuilder(actions, frozenSnapshot, state) }),
+    { name: "gamebuddy-plan-script", codeGeneration: { strings: false, wasm: false } },
+  );
+  const global = runInContext("globalThis", context) as Record<string, unknown>;
+  // global-strip-sandbox: this deletes the withheld capabilities from the fresh context's own global, so a script that reaches one resolves to nothing
+  for (const name of ABSENT_PLAN_GLOBALS) delete global[name];
+  try {
+    runInContext(source, context, {
+      timeout: budgetMs,
+      displayErrors: false,
+      filename: "plan-script.js",
+      // The wrapper's opening line is dropped from every reported line number, so a SyntaxError names a line the
+      // caller wrote rather than one the wrapper added above it.
+      lineOffset: -1,
+    });
+    return { outcome: "finished" };
+  } catch (error) {
+    // The script's own refusal is a fact about its plan and outranks a window: it was answered before the deadline and it
+    // names what to fix, where an expiry can only say that the run did not return.
+    if (state.refusal !== null) return { outcome: "refused", error };
+    return isTimeout(error) ? { outcome: "expired" } : { outcome: "threw", error };
+  }
+}
+
+/**
+ * Runs the script under the first window and, while a window expired, re-runs it under the next one with a fresh state.
+ *
+ * <p>
+ * A WINDOW THAT EXPIRED IS NOT YET A VERDICT. Wall clock cannot tell a runaway loop from a process that was not running,
+ * so a single expiry buys a re-measurement instead of a refusal: the script is deterministic and the snapshot is frozen,
+ * which makes the re-run the same computation with more room. Only the last window of `PLAN_SCRIPT_BUDGET_MS` mints
+ * `plan_script_timeout`, so that code always means "two windows were spent and the script still had not returned" - the
+ * one condition wall clock can state without pretending to know which of the two it was. A throw and the script's own
+ * refusal end the loop at once: neither is a load condition, and re-running them would only repeat the same answer.
+ * </p>
+ * <p>
+ * The state of the LAST run is returned, including the calls recorded before its deadline, so a refusal still accounts
+ * for every call the script reached.
+ * </p>
+ */
+function runPlanScriptWindows(
+  source: string,
+  snapshot: Snapshot,
+  actions: readonly PublishedPlanAction[],
+): Readonly<{ state: PlanScriptState; attempt: PlanScriptAttempt }> {
+  const frozenSnapshot = deepFreeze(structuredClone(snapshot));
+  let state = newPlanScriptState(snapshot, actions);
+  let attempt = runPlanScriptAttempt(source, frozenSnapshot, actions, PLAN_SCRIPT_BUDGET_MS[0]!, state);
+  for (let index = 1; index < PLAN_SCRIPT_BUDGET_MS.length && attempt.outcome === "expired"; index += 1) {
+    state = newPlanScriptState(snapshot, actions);
+    attempt = runPlanScriptAttempt(source, frozenSnapshot, actions, PLAN_SCRIPT_BUDGET_MS[index]!, state);
+  }
+  return { state, attempt };
+}
+
+/** The state one run of the script accumulates, empty: a re-measurement starts from here, not from the stopped run's. */
+function newPlanScriptState(snapshot: Snapshot, actions: readonly PublishedPlanAction[]): PlanScriptState {
+  return {
+    nodes: [],
+    refusal: null,
+    heldToolCeiling: heldToolChargeCeiling(snapshot),
+    calls: 0,
+    builderCalls: 0,
+    rejected: [],
+    rejectedCount: 0,
+    acceptedSteps: [],
+    merged: [],
+    noStepNeeded: [],
+    inserted: [],
+    insertedNodeIds: [],
+    argumentOwners: planArgumentOwners(actions),
+    worldTileByNode: new Map(),
+    callOfNode: new Map(),
+  };
 }
 
 /**

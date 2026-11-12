@@ -10,6 +10,7 @@ import {
   compilePlanScript,
   MAX_PLAN_NODES,
   MODAL_CLEARING_PLAN_ACTION_IDS,
+  PLAN_SCRIPT_BUDGET_MS,
   type PublishedPlanAction,
   planActionsFromRegistrations,
   planProgramId,
@@ -128,6 +129,16 @@ const crop = (targetId: string, x: number, y: number) => ({
 function compile(script: string, overrides: Partial<Snapshot> = {}): CompiledPlan {
   return compilePlanScript({ script }, { snapshot: snapshot(overrides), actions: ACTIONS });
 }
+
+/**
+ * The compile windows the compiler declares, read from it rather than restated, and the code that names them.
+ *
+ * A refusal that outlives a window has to say WHICH measurement it is: the total wall clock it spent and how many
+ * windows made it up. Both halves are derived from `PLAN_SCRIPT_BUDGET_MS`, so a change there cannot leave this suite
+ * asserting yesterday's arithmetic.
+ */
+const BUDGET_TOTAL_MS = PLAN_SCRIPT_BUDGET_MS.reduce((total, windowMs) => total + windowMs, 0);
+const TIMEOUT_CODE = `plan_script_timeout:${BUDGET_TOTAL_MS}ms:attempts=${PLAN_SCRIPT_BUDGET_MS.length}`;
 
 function refusalOf(result: CompiledPlan): string {
   if (result.ok) assert.fail("expected a refusal");
@@ -974,9 +985,11 @@ test("with no published dismissal to write, the refusal keeps its name", () => {
  * listed by name.
  * </p>
  * <p>
- * A pair the compiler never finished measuring - `plan_script_timeout`, the compile's own 50 ms budget expiring while the
- * machine is busy - is NOT a dead end: it is not measured, and it is counted as such rather than passing silently. Every
- * pair is retried once before it is written off, so one busy moment does not decide the verdict.
+ * A PAIR THE COMPILER COULD NOT MEASURE FAILS HERE, BY NAME. This gate used to retry a `plan_script_timeout` itself and
+ * file the pair as "not measured", which is how a 50 ms wall-clock window turned machine load into a green gate with a
+ * quiet bucket beside it. The re-measurement belongs to the compiler now (`PLAN_SCRIPT_BUDGET_MS`: a measurement window
+ * and a larger re-measurement), so an expiry that survives it is a finding about the compiler rather than about the box
+ * this ran on - and it is reported as the pairs it stopped, not as a count nobody reads.
  * </p>
  */
 test("every body-yielding pair either compiles or names a remedy that fixes it", () => {
@@ -985,22 +998,17 @@ test("every body-yielding pair either compiles or names a remedy that fixes it",
     ACTIONS.filter((action) => action.actionId !== yieldingId).map((action) => [yieldingId, action.actionId] as const),
   );
   assert.ok(pairs.length > 20, `the pair population is a real population, not ${pairs.length} pairs`);
-  // The budget is wall-clock, so a compile can expire on a loaded machine. A timed-out compile is retried once and, if it
-  // still expires, counted as NOT MEASURED rather than read as a verdict about the pair.
-  const measured = (script: string): CompiledPlan | null => {
-    const first = compile(script);
-    if (first.ok || !first.reasonCode.startsWith("plan_script_timeout")) return first;
-    const second = compile(script);
-    return second.ok || !second.reasonCode.startsWith("plan_script_timeout") ? second : null;
-  };
+  const expiredCode = (result: CompiledPlan): string | null =>
+    !result.ok && result.reasonCode.startsWith("plan_script_timeout") ? result.reasonCode : null;
   const deadEnds: string[] = [];
   const notMeasured: string[] = [];
   let asWritten = 0;
   let repaired = 0;
   for (const [yieldingId, dependentId] of pairs) {
-    const pair = measured(`${builderCall(yieldingId)}\n${builderCall(dependentId)}`);
-    if (pair === null) {
-      notMeasured.push(`${yieldingId}->${dependentId}`);
+    const pair = compile(`${builderCall(yieldingId)}\n${builderCall(dependentId)}`);
+    const pairExpired = expiredCode(pair);
+    if (pairExpired !== null) {
+      notMeasured.push(`${yieldingId}->${dependentId}: ${pairExpired}`);
       continue;
     }
     if (pair.ok) {
@@ -1012,9 +1020,10 @@ test("every body-yielding pair either compiles or names a remedy that fixes it",
       deadEnds.push(`${yieldingId}->${dependentId}: refused with no remedy (${pair.reasonCode})`);
       continue;
     }
-    const remedy = measured(`${builderCall(yieldingId)}\n${builderCall(named)}\n${builderCall(dependentId)}`);
-    if (remedy === null) {
-      notMeasured.push(`${yieldingId}->${dependentId}:${named}`);
+    const remedy = compile(`${builderCall(yieldingId)}\n${builderCall(named)}\n${builderCall(dependentId)}`);
+    const remedyExpired = expiredCode(remedy);
+    if (remedyExpired !== null) {
+      notMeasured.push(`${yieldingId}->${dependentId}:${named}: ${remedyExpired}`);
       continue;
     }
     if (!remedy.ok) {
@@ -1023,10 +1032,12 @@ test("every body-yielding pair either compiles or names a remedy that fixes it",
     }
     repaired += 1;
   }
-  const population =
-    `${pairs.length} pairs, ${pairs.length - notMeasured.length} measured (${asWritten} compiled as written, ${repaired} ` +
-    `only after the named remedy), ${notMeasured.length} not measured`;
-  assert.ok(pairs.length - notMeasured.length > 0, `no pair was measured: ${population}`);
+  const population = `${pairs.length} pairs (${asWritten} compiled as written, ${repaired} only after the named remedy)`;
+  assert.deepEqual(
+    notMeasured,
+    [],
+    `${notMeasured.length} pairs outlived every compile window of ${population}:\n${notMeasured.join("\n")}`,
+  );
   assert.deepEqual(deadEnds, [], `${deadEnds.length} dead ends of ${population}:\n${deadEnds.join("\n")}`);
 });
 
@@ -1572,9 +1583,75 @@ builder.move_to_tile({ x: 11, y: 10 });
   ]);
   assert.deepEqual(accountOf(swallowed).acceptedSteps, ["n02"], "the walk she wrote second did compile");
   assert.equal(refusalOf(compile("throw new TypeError('nope');")), "plan_script_threw:TypeError");
-  assert.equal(refusalOf(compile("while (true) {}")), "plan_script_timeout:50");
+  // A script that never returns is still stopped by the bound - the bound was never the thing to remove - and the answer
+  // names the whole measurement instead of one window of it. The elapsed reading is the point: two windows were spent,
+  // which is the fact that separates "this script did not return" from "one window was taken from it".
+  const runawayStartedAt = performance.now();
+  assert.equal(refusalOf(compile("while (true) {}")), TIMEOUT_CODE);
+  const runawayMs = performance.now() - runawayStartedAt;
+  assert.ok(
+    runawayMs >= BUDGET_TOTAL_MS - 10,
+    `the runaway was stopped after ${runawayMs.toFixed(0)} ms, short of the ${BUDGET_TOTAL_MS} ms both windows must spend`,
+  );
   assert.equal(refusalOf(compile("   ")), "plan_script_invalid");
   assert.equal(refusalOf(compile("const nothing = 1;")), "plan_script_empty_no_builder_call");
+});
+
+/**
+ * WALL CLOCK MEASURES THE MACHINE, SO A COMPILE THAT OUTLIVES A WINDOW IS RE-MEASURED, NOT ACCUSED.
+ *
+ * <p>
+ * The 50 ms window this replaces answered `plan_script_timeout:50` for a script that does 56 ms of arithmetic and then
+ * returns a plan: no loop that cannot terminate, nothing to fix, and a refusal that told the companion her plan was
+ * slow. That exact shape is the first half of this test, and it must come back with the plan.
+ * </p>
+ * <p>
+ * The second half reaches the same condition with work whose size depends on the machine: the burn is grown HERE, by
+ * 1.5x steps, until one compile really outlives the first window - so this test does not pin an iteration count that is
+ * a pause on one box and a program on another. Whichever count outlives it must come back with a PLAN from the second
+ * window, and never with `plan_script_timeout`: that code is reserved for a script that outlived every window, which is
+ * the only reading wall clock can support.
+ * </p>
+ */
+test("a compile slowed past a window is re-measured rather than refused as a plan defect", () => {
+  const burn = (iterations: number) =>
+    `let carried = 0;\n` +
+    `for (let index = 0; index < ${iterations}; index += 1) carried = (carried + index) % 997;\n` +
+    `builder.move_to_tile({ x: 12, y: 8 });\n`;
+
+  // 20M iterations of that loop measured ~56 ms on the machine this was written on: the burn the old window refused.
+  const slowedStartedAt = performance.now();
+  const slowed = compile(burn(20_000_000));
+  const slowedMs = performance.now() - slowedStartedAt;
+  assert.ok(
+    slowed.ok,
+    `a ${slowedMs.toFixed(0)} ms compile of a finite script answered ${slowed.ok ? "" : slowed.reasonCode}`,
+  );
+  assert.equal(slowed.program.nodes.length, 1, "the step written after the burn is the program that compiled");
+
+  const firstWindowMs = PLAN_SCRIPT_BUDGET_MS[0]!;
+  // The target is 1.5x the first window rather than the window itself: a compile that expired reads as `window + work`,
+  // so reaching this reading is what proves the first window really went, not a work time that happened to fit.
+  const outlivesMs = Math.ceil(firstWindowMs * 1.5);
+  let iterations = 500_000;
+  let elapsedMs = 0;
+  do {
+    const startedAt = performance.now();
+    const measured = compile(burn(iterations));
+    elapsedMs = performance.now() - startedAt;
+    if (!measured.ok)
+      assert.fail(`${iterations} iterations in ${elapsedMs.toFixed(0)} ms answered ${measured.reasonCode}`);
+    assert.equal(measured.program.nodes.length, 1, `the step after a ${iterations}-iteration burn is the program`);
+    iterations = Math.ceil(iterations * 1.5);
+  } while (elapsedMs < outlivesMs);
+  assert.ok(
+    elapsedMs >= outlivesMs,
+    `no compile outlived the ${firstWindowMs} ms first window, so the re-measurement was never exercised`,
+  );
+  assert.ok(
+    elapsedMs < BUDGET_TOTAL_MS,
+    `the burn reached ${elapsedMs.toFixed(0)} ms, past both windows (${BUDGET_TOTAL_MS} ms), so it was not a fit test`,
+  );
 });
 
 /**
