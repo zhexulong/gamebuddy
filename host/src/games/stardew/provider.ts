@@ -91,7 +91,20 @@ function projectDiscoveryReadResult(
 function projectDiscoveryMutationResult(
   result: Awaited<ReturnType<StardewProductionLifecycleCoordinator["activationOwner"]["confirmInstallation"]>>,
 ): GameDiscoveryMutationResultV1 {
-  const projected = { apiVersion: 1 as const, status: result.status };
+  const projected = {
+    apiVersion: 1 as const,
+    status: result.status,
+    ...(result.companionMod === undefined ? {} : { companionMod: result.companionMod }),
+  };
+  // Population from the source, not a hand-written list - the same guard as the read projection above, and for the
+  // same measured reason: `companionMod` is published by the owner (`registerInstallationLocator` deploys the Mod as
+  // the last step of registering) and this projection copied `status` alone, so a refused deployment and a successful
+  // one left the Host as the same bytes.
+  for (const [member, value] of Object.entries(result)) {
+    if (value !== undefined && !(member in projected)) {
+      throw new Error(`stardew_installation_discovery_mutation_projection_dropped:${member}`);
+    }
+  }
   if (!GameBrowserValidatorsV1.GameDiscoveryMutationResultV1Schema.Check(projected)) {
     throw new Error("stardew_installation_discovery_mutation_projection_invalid");
   }

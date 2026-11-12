@@ -146,6 +146,34 @@ test("Game installation discovery contract is redacted and exact", () => {
   assert.equal(Compile(GameDiscoveryActionCommandV1Schema).Check({ apiVersion: 1 }), true);
   assert.equal(Compile(GameDiscoveryActionCommandV1Schema).Check({ apiVersion: 1, candidateId: opaqueHandle }), false);
   assert.equal(Compile(GameDiscoveryMutationResultV1Schema).Check({ apiVersion: 1, status: "registered" }), true);
+  // A registration also says what became of the companion Mod, in the launcher's own tokens: without it, a Host that
+  // wrote nothing into `Mods/GameBuddy` answers exactly what a Host that deployed it answers.
+  assert.equal(
+    Compile(GameDiscoveryMutationResultV1Schema).Check({
+      apiVersion: 1,
+      status: "registered",
+      companionMod: "companion-mod-mods-directory-not-writable",
+    }),
+    true,
+  );
+  // The outcome belongs to `registered` alone - a refusal names its own cause and no deployment ran - and a token
+  // outside the launcher's vocabulary is refused here rather than by the browser at runtime.
+  assert.equal(
+    Compile(GameDiscoveryMutationResultV1Schema).Check({
+      apiVersion: 1,
+      status: "mod_loader_missing",
+      companionMod: "companion-mod-installed",
+    }),
+    false,
+  );
+  assert.equal(
+    Compile(GameDiscoveryMutationResultV1Schema).Check({
+      apiVersion: 1,
+      status: "registered",
+      companionMod: "companion-mod-unknown-to-the-launcher",
+    }),
+    false,
+  );
   // The mod-loader refusal is its own outcome, so the search that found the game is
   // never reported as an unavailable one.
   assert.equal(

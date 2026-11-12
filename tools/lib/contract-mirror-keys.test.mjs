@@ -38,9 +38,27 @@ function contractMembers(source, schemaName) {
 
 /** One `const NAME = [...] as const;` list from the mirror. */
 function mirrorList(source, name) {
-  const match = new RegExp(`const ${name}[^=]*=\\s*\\[([^\\]]*)\\]`, "u").exec(source);
+  const match = new RegExp(`const ${name}[^=]*=\\s*(?:Object\\.freeze\\()?\\s*\\[([^\\]]*)\\]`, "u").exec(source);
   if (match === null) throw new Error(`mirror_list_not_found:${name}`);
   return new Set([...match[1].matchAll(/"([^"]+)"/gu)].map((entry) => entry[1]));
+}
+
+/** One `const NAME = Type.Union([Type.Literal("…"), …]);` list from the contract. */
+function contractLiteralUnion(source, name) {
+  const start = source.indexOf(`const ${name} = Type.Union([`);
+  if (start === -1) throw new Error(`contract_literal_union_not_found:${name}`);
+  const end = source.indexOf("\n]);", start);
+  if (end === -1) throw new Error(`contract_literal_union_unterminated:${name}`);
+  return new Set([...source.slice(start, end).matchAll(/Type\.Literal\("([^"]+)"\)/gu)].map((match) => match[1]));
+}
+
+/** One `export type NAME = "…" | "…";` list from the Host module that produces the vocabulary. */
+function hostTypeUnion(source, name) {
+  const start = source.indexOf(`export type ${name} =`);
+  if (start === -1) throw new Error(`host_type_union_not_found:${name}`);
+  const end = source.indexOf(";", start);
+  if (end === -1) throw new Error(`host_type_union_unterminated:${name}`);
+  return new Set([...source.slice(start, end).matchAll(/"([^"]+)"/gu)].map((match) => match[1]));
 }
 
 const diff = (left, right) => ({
@@ -110,4 +128,42 @@ test("the mirror's player-settings keys are the contract's, and its optional mem
     optionalList: "SETTINGS_OPTIONAL_KEYS",
     consequence: "A required member the contract marks optional leaves the settings surface unreadable.",
   });
+});
+
+const DEPLOYMENT = "host/src/stardew-game-install/desktop-entry-mod-deployment.ts";
+
+/**
+ * The companion Mod's outcome vocabulary, which three modules spell.
+ *
+ * The launcher produces it (`CompanionGameModDeploymentOutcome`), the contract declares what may cross the browser
+ * boundary (`CompanionModOutcome`), and the browser mirror validates membership before it renders a sentence
+ * (`COMPANION_MOD_OUTCOMES`). A token added on one side alone is not a cosmetic drift: the mirror refuses the whole
+ * mutation reply, so a registration that refused the Mod deployment arrives at the panel as
+ * `invalid_stardew_installation_mutation` - nothing rendered, nothing to act on - and the panel had no other way to
+ * learn what happened to the Mod.
+ *
+ * The population is the contract's own list, and the drift is reported by token rather than by count, so the next
+ * member fails here in milliseconds instead of in a live run.
+ */
+test("the companion Mod's outcomes are one list: the contract, the browser mirror, and the launcher that produces them", () => {
+  const declared = contractLiteralUnion(readFileSync(CONTRACT, "utf8"), "CompanionModOutcome");
+  const mirrored = mirrorList(readFileSync(MIRROR, "utf8"), "COMPANION_MOD_OUTCOMES");
+  const produced = hostTypeUnion(readFileSync(DEPLOYMENT, "utf8"), "CompanionGameModDeploymentOutcome");
+
+  for (const [label, counterpart] of [
+    ["the browser mirror", mirrored],
+    ["the launcher's own outcome type", produced],
+  ]) {
+    const tokens = diff(declared, counterpart);
+    assert.deepEqual(
+      tokens,
+      { missing: [], extra: [] },
+      `the contract's companion-Mod outcomes and ${label} differ, so a reply carrying one of them is refused at the ` +
+        `browser boundary:\n` +
+        `  + declared by the contract, absent from ${label}: [${tokens.missing.join(", ")}]\n` +
+        `  - in ${label}, not declared by the contract: [${tokens.extra.join(", ")}]`,
+    );
+  }
+
+  assert.ok(declared.size >= 3, `examined ${declared.size} companion-Mod outcome token(s)`);
 });

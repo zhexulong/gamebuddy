@@ -303,6 +303,34 @@ export const GameDiscoveryConfirmCommandV1Schema = strictObject({ apiVersion: Ap
 export const GameDiscoveryActionCommandV1Schema = strictObject({ apiVersion: ApiVersion });
 
 /**
+ * What became of the companion Mod, in the launcher's own vocabulary.
+ *
+ * The same tokens `CompanionGameModDeploymentOutcome` produces
+ * (`stardew-game-install/desktop-entry-mod-deployment.ts`) - one bounded lowercase token per outcome, and the browser
+ * mirror (`dialogue-web/src/composed-reference-game-browser-api.ts`, `COMPANION_MOD_OUTCOMES`) validates membership
+ * before it renders a sentence. Spelled here because this is the copy that crosses the browser boundary, and the three
+ * copies are held to one list by `tools/lib/contract-mirror-keys.test.mjs`: a token added on one side alone makes
+ * every registration reply unreadable on the surface, which is indistinguishable from no reply at all.
+ */
+const CompanionModOutcome = Type.Union([
+  Type.Literal("companion-mod-current"),
+  Type.Literal("companion-mod-installed"),
+  Type.Literal("companion-mod-updated"),
+  Type.Literal("companion-mod-game-not-found"),
+  Type.Literal("companion-mod-choice-required"),
+  Type.Literal("companion-mod-unavailable"),
+  Type.Literal("companion-mod-game-installation-not-found"),
+  Type.Literal("companion-mod-smapi-not-installed"),
+  Type.Literal("companion-mod-mods-directory-missing"),
+  Type.Literal("companion-mod-mods-directory-not-writable"),
+  Type.Literal("companion-mod-existing-mod-version-requires-consent"),
+  Type.Literal("companion-mod-foreign-mod-present"),
+  Type.Literal("companion-mod-installed-mod-manifest-unreadable"),
+  Type.Literal("companion-mod-package-invalid"),
+  Type.Literal("companion-mod-deployment-incomplete"),
+]);
+
+/**
  * Redacted outcomes for installation-discovery mutations.
  *
  * `mod_loader_missing` is the one refusal the player can act on: the chosen folder
@@ -321,7 +349,20 @@ export const GameDiscoveryActionCommandV1Schema = strictObject({ apiVersion: Api
  */
 export const GameDiscoveryMutationResultV1Schema = Type.Union([
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("accepted") }),
-  strictObject({ apiVersion: ApiVersion, status: Type.Literal("registered") }),
+  strictObject({
+    apiVersion: ApiVersion,
+    status: Type.Literal("registered"),
+    /**
+     * What happened to the companion Mod in the folder that was just registered.
+     *
+     * Registering is the first moment the folder provably holds a mod loader, so it is also the first moment our Mod
+     * can go where the game will load it - and the last step of registering is that deployment. Reported rather than
+     * assumed, so a deployment that refused names its refusal instead of the panel implying the companion is ready
+     * while `Mods/GameBuddy` is absent. Optional so a reply from a Host that predates the field stays legal; an absent
+     * field is the only reading that means "the Host did not say", and it is never a claim that the Mod is there.
+     */
+    companionMod: Type.Optional(CompanionModOutcome),
+  }),
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("cancelled") }),
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("unavailable") }),
   strictObject({ apiVersion: ApiVersion, status: Type.Literal("mod_loader_missing") }),
