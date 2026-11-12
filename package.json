@@ -112,6 +112,7 @@
     "create:ci-snapshot": "node tools/create-ci-snapshot.mjs",
     "dependency-audit": "node tools/generate-sbom.mjs --verify",
     "derive:stardew-action-candidates": "node integrations/stardew/action-development/src/analysis/stardew-action-candidates.mjs",
+    "derive:stardew-actor-admissibility": "node tools/derive-stardew-actor-admissibility.mjs",
     "derive:stardew-branch-writeset": "node integrations/stardew/action-development/src/analysis/stardew-branch-writeset-cli.mjs",
     "derive:stardew-csharp-syntax-structural-canary": "node tools/derive-stardew-csharp-syntax-structural-canary.mjs",
     "derive:stardew-method-resolution": "node integrations/stardew/action-development/src/analysis/stardew-method-resolution.mjs",

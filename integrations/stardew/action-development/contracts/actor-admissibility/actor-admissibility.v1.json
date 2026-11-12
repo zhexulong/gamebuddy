@@ -1,0 +1,1509 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "stardew_actor_admissibility",
+  "slice": "world-interruption-arbitration 4.1/4.2 - the body-hold algebra the Mod decides and the engine enters",
+  "note": "DERIVED by tools/derive-stardew-actor-admissibility.mjs from `ActorWorldFacts`, `WorldModel.ReadFacts`/`Classify`, `KindForWire` and `HoldReasonCode` (the population, the publishes and the holding predicates), with the release anchors and the residual rows authored here and re-verified against the decompiled tree by the two gates. Do not hand-edit: a row edited by hand is a claim no generator reproduces.",
+  "populationBound": {
+    "heldFact": "Farmer.canMove = false",
+    "howMeasured": "literal writes of `canMove = false` in ref/external/StardewValleyDecompiled, attributed to a method by a lexical brace walk, with companion writes followed one same-file callee level deep",
+    "notCounted": [
+      "a hold written as an expression (`CanMove = !Game1.eventUp`, Farmer.cs:9015; `CanMove = value`, Farmer.cs:1727)",
+      "a hold written through an alias or a property setter",
+      "a companion established in another type, which needs a residual row"
+    ]
+  },
+  "facts": [
+    {
+      "fact": "EventUp",
+      "reads": [
+        {
+          "member": "Game1.eventUp",
+          "holdsWhen": {
+            "relation": "=",
+            "value": true
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+            "line": 593,
+            "declaration": "public static bool eventUp;"
+          },
+          "resolvesTo": "Game1.eventUp"
+        }
+      ],
+      "publishes": {
+        "kind": "Event",
+        "wire": "event",
+        "reasonCode": "cutscene_active",
+        "transientKind": null,
+        "precedence": 1
+      },
+      "publishedAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 43
+      },
+      "readAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 344,
+        "expression": "Game1.eventUp",
+        "argument": "eventUp",
+        "argumentLine": 376
+      },
+      "classifyAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 166,
+        "condition": "facts.EventUp"
+      },
+      "release": {
+        "kind": "event-end",
+        "bound": "the whole scene, minutes",
+        "clears": [
+          {
+            "reads": [
+              "Game1.eventUp"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:7216",
+            "kind": "event-end",
+            "statement": "eventUp = false;"
+          }
+        ],
+        "bodyRelease": {
+          "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:7217",
+          "statement": "player.CanMove = true;"
+        }
+      },
+      "assertedBy": "tools/check-stardew-actor-admissibility.mjs: FACT-4 release (each anchor still says what this row says, and a literal release must clear its fact)"
+    },
+    {
+      "fact": "MenuType",
+      "reads": [
+        {
+          "member": "Game1.activeClickableMenu",
+          "holdsWhen": {
+            "relation": "!=",
+            "value": null
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+            "line": 1678,
+            "declaration": "public static IClickableMenu activeClickableMenu"
+          },
+          "resolvesTo": "Game1.activeClickableMenu"
+        }
+      ],
+      "publishes": {
+        "kind": "Modal",
+        "wire": "modal",
+        "reasonCode": "actor_held_by_modal",
+        "transientKind": null,
+        "precedence": 3
+      },
+      "publishedAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 44
+      },
+      "readAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 346,
+        "expression": "Game1.activeClickableMenu?.GetType().Name",
+        "argument": "menuType",
+        "argumentLine": 377
+      },
+      "classifyAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 183,
+        "condition": "facts.MenuType is { } menuType"
+      },
+      "release": {
+        "kind": "menu-closed",
+        "bound": "until the menu is closed",
+        "clears": [
+          {
+            "reads": [
+              "Game1.activeClickableMenu"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:6130",
+            "kind": "menu-closed",
+            "statement": "activeClickableMenu = null;"
+          }
+        ],
+        "bodyRelease": {
+          "mechanism": "a mounted menu holds the body through the engine's own control-input gate (`!globalFade && !freezeControls && activeClickableMenu == null`, Game1.cs:4286), not through a CanMove write, so clearing the menu is the whole release"
+        }
+      },
+      "assertedBy": "tools/check-stardew-actor-admissibility.mjs: FACT-4 release (each anchor still says what this row says, and a literal release must clear its fact)"
+    },
+    {
+      "fact": "DialogueUp",
+      "reads": [
+        {
+          "member": "Game1.dialogueUp",
+          "holdsWhen": {
+            "relation": "=",
+            "value": true
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+            "line": 585,
+            "declaration": "public static bool dialogueUp;"
+          },
+          "resolvesTo": "Game1.dialogueUp"
+        }
+      ],
+      "publishes": {
+        "kind": "Modal",
+        "wire": "modal",
+        "reasonCode": "actor_held_by_modal",
+        "transientKind": null,
+        "precedence": 4
+      },
+      "publishedAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 45
+      },
+      "readAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 347,
+        "expression": "Game1.dialogueUp",
+        "argument": "dialogueUp",
+        "argumentLine": 378
+      },
+      "classifyAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 190,
+        "condition": "HasMountedModal(facts)"
+      },
+      "release": {
+        "kind": "dialogue-closed",
+        "bound": "until the box is advanced or closed",
+        "clears": [
+          {
+            "reads": [
+              "Game1.dialogueUp"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:11197",
+            "kind": "dialogue-closed",
+            "statement": "dialogueUp = false;"
+          }
+        ],
+        "bodyRelease": {
+          "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Menus/DialogueBox.cs:226",
+          "statement": "Game1.player.CanMove = true;"
+        }
+      },
+      "assertedBy": "tools/check-stardew-actor-admissibility.mjs: FACT-4 release (each anchor still says what this row says, and a literal release must clear its fact)"
+    },
+    {
+      "fact": "TimeOfDay",
+      "reads": [
+        {
+          "member": "Game1.timeOfDay",
+          "holdsWhen": {
+            "relation": ">=",
+            "value": 2600
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+            "line": 766,
+            "declaration": "public static int timeOfDay;"
+          },
+          "resolvesTo": "Game1.timeOfDay"
+        }
+      ],
+      "publishes": {
+        "kind": "PassOut",
+        "wire": "pass_out",
+        "reasonCode": "actor_passed_out",
+        "transientKind": null,
+        "precedence": 5
+      },
+      "publishedAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 46
+      },
+      "readAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 348,
+        "expression": "Game1.timeOfDay",
+        "argument": "timeOfDay",
+        "argumentLine": 379
+      },
+      "classifyAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 195,
+        "condition": "facts.Stamina <= PassOutStaminaFloor || facts.TimeOfDay >= PassOutDayEndTime"
+      },
+      "release": {
+        "kind": "day-rollover",
+        "bound": "until the new day starts, minutes",
+        "clears": [
+          {
+            "reads": [
+              "Game1.timeOfDay"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:4190",
+            "kind": "day-rollover",
+            "statement": "timeOfDay = 600;"
+          }
+        ],
+        "bodyRelease": {
+          "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:4213",
+          "statement": "player.forceCanMove();"
+        }
+      },
+      "assertedBy": "tools/check-stardew-actor-admissibility.mjs: FACT-4 release (each anchor still says what this row says, and a literal release must clear its fact)"
+    },
+    {
+      "fact": "Stamina",
+      "reads": [
+        {
+          "member": "Farmer.Stamina",
+          "holdsWhen": {
+            "relation": "<=",
+            "value": -15
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs",
+            "line": 1826,
+            "declaration": "public float Stamina"
+          },
+          "resolvesTo": "Farmer.Stamina"
+        }
+      ],
+      "publishes": {
+        "kind": "PassOut",
+        "wire": "pass_out",
+        "reasonCode": "actor_passed_out",
+        "transientKind": null,
+        "precedence": 5
+      },
+      "publishedAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 47
+      },
+      "readAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 380,
+        "expression": "player.Stamina",
+        "argument": "player.Stamina",
+        "argumentLine": 380
+      },
+      "classifyAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 195,
+        "condition": "facts.Stamina <= PassOutStaminaFloor || facts.TimeOfDay >= PassOutDayEndTime"
+      },
+      "release": {
+        "kind": "day-rollover",
+        "bound": "until the new day starts, minutes",
+        "clears": [
+          {
+            "reads": [
+              "Farmer.Stamina"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:2070",
+            "kind": "day-rollover",
+            "statement": "stamina = maxStamina.Value;"
+          }
+        ],
+        "bodyRelease": {
+          "mechanism": "a faint ends with the day: the overnight sequence restores the actor (`player.forceCanMove()`, Game1.cs:4213) rather than the stamina write releasing the body"
+        }
+      },
+      "assertedBy": "tools/check-stardew-actor-admissibility.mjs: FACT-4 release (each anchor still says what this row says, and a literal release must clear its fact)"
+    },
+    {
+      "fact": "FreezePaused",
+      "reads": [
+        {
+          "member": "Farmer.freezePause",
+          "holdsWhen": {
+            "relation": ">",
+            "value": 0
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs",
+            "line": 796,
+            "declaration": "public int freezePause;"
+          },
+          "resolvesTo": "Farmer.freezePause"
+        }
+      ],
+      "publishes": {
+        "kind": "Transient",
+        "wire": "transient",
+        "reasonCode": "transient_busy",
+        "transientKind": "freezePause",
+        "precedence": 10
+      },
+      "publishedAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 48
+      },
+      "readAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 381,
+        "expression": "player.freezePause > 0",
+        "argument": "player.freezePause > 0",
+        "argumentLine": 381
+      },
+      "classifyAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 239,
+        "condition": "facts.FreezePaused"
+      },
+      "release": {
+        "kind": "body-release",
+        "bound": "the frozen window the engine armed, 7000 ms for a faint",
+        "clears": [
+          {
+            "reads": [
+              "Farmer.freezePause"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:7097",
+            "kind": "body-release",
+            "statement": "freezePause = 0;"
+          }
+        ],
+        "bodyRelease": {
+          "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:7095",
+          "statement": "CanMove = true;"
+        }
+      },
+      "assertedBy": "tools/check-stardew-actor-admissibility.mjs: FACT-4 release (each anchor still says what this row says, and a literal release must clear its fact)"
+    },
+    {
+      "fact": "Eating",
+      "reads": [
+        {
+          "member": "Farmer.isEating",
+          "holdsWhen": {
+            "relation": "=",
+            "value": true
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs",
+            "line": 702,
+            "declaration": "public bool isEating;"
+          },
+          "resolvesTo": "Farmer.isEating"
+        }
+      ],
+      "publishes": {
+        "kind": "Transient",
+        "wire": "transient",
+        "reasonCode": "transient_busy",
+        "transientKind": "eating",
+        "precedence": 11
+      },
+      "publishedAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 49
+      },
+      "readAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 382,
+        "expression": "player.isEating",
+        "argument": "player.isEating",
+        "argumentLine": 382
+      },
+      "classifyAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 244,
+        "condition": "facts.Eating"
+      },
+      "release": {
+        "kind": "body-release",
+        "bound": "the item's own eat delay",
+        "clears": [
+          {
+            "reads": [
+              "Farmer.isEating"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:7094",
+            "kind": "body-release",
+            "statement": "isEating = false;"
+          }
+        ],
+        "bodyRelease": {
+          "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:7095",
+          "statement": "CanMove = true;"
+        }
+      },
+      "assertedBy": "tools/check-stardew-actor-admissibility.mjs: FACT-4 release (each anchor still says what this row says, and a literal release must clear its fact)"
+    },
+    {
+      "fact": "UsingTool",
+      "reads": [
+        {
+          "member": "Farmer.UsingTool",
+          "holdsWhen": {
+            "relation": "=",
+            "value": true
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs",
+            "line": 1732,
+            "declaration": "public bool UsingTool"
+          },
+          "resolvesTo": "Farmer.UsingTool"
+        }
+      ],
+      "publishes": {
+        "kind": "Transient",
+        "wire": "transient",
+        "reasonCode": "transient_busy",
+        "transientKind": "toolAnimation",
+        "precedence": 12
+      },
+      "publishedAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 50
+      },
+      "readAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 383,
+        "expression": "player.UsingTool",
+        "argument": "player.UsingTool",
+        "argumentLine": 383
+      },
+      "classifyAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 249,
+        "condition": "facts.UsingTool || facts.ToolCharged"
+      },
+      "release": {
+        "kind": "body-release",
+        "bound": "one swing",
+        "clears": [
+          {
+            "reads": [
+              "Farmer.UsingTool"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:7098",
+            "kind": "body-release",
+            "statement": "UsingTool = false;"
+          }
+        ],
+        "bodyRelease": {
+          "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:7095",
+          "statement": "CanMove = true;"
+        }
+      },
+      "assertedBy": "tools/check-stardew-actor-admissibility.mjs: FACT-4 release (each anchor still says what this row says, and a literal release must clear its fact)"
+    },
+    {
+      "fact": "ToolCharged",
+      "reads": [
+        {
+          "member": "Farmer.toolPower",
+          "holdsWhen": {
+            "relation": "!=",
+            "value": 0
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs",
+            "line": 433,
+            "declaration": "public readonly NetInt toolPower = new NetInt();"
+          },
+          "resolvesTo": "Farmer.toolPower"
+        }
+      ],
+      "publishes": {
+        "kind": "Transient",
+        "wire": "transient",
+        "reasonCode": "transient_busy",
+        "transientKind": "toolAnimation",
+        "precedence": 12
+      },
+      "publishedAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 51
+      },
+      "readAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 384,
+        "expression": "player.toolPower is { Value: not 0 }",
+        "argument": "player.toolPower is { Value: not 0 }",
+        "argumentLine": 384
+      },
+      "classifyAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 249,
+        "condition": "facts.UsingTool || facts.ToolCharged"
+      },
+      "release": {
+        "kind": "charge-spent",
+        "bound": "one swing",
+        "clears": [
+          {
+            "reads": [
+              "Farmer.toolPower"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:11589",
+            "kind": "charge-spent",
+            "statement": "player.toolPower.Value = 0;"
+          }
+        ],
+        "bodyRelease": {
+          "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:6761",
+          "statement": "who.CanMove = true;"
+        }
+      },
+      "assertedBy": "tools/check-stardew-actor-admissibility.mjs: FACT-4 release (each anchor still says what this row says, and a literal release must clear its fact)"
+    },
+    {
+      "fact": "SelfAnimation",
+      "reads": [
+        {
+          "member": "FarmerSprite.PauseForSingleAnimation",
+          "holdsWhen": {
+            "relation": "=",
+            "value": true
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/FarmerSprite.cs",
+            "line": 320,
+            "declaration": "public bool PauseForSingleAnimation"
+          },
+          "resolvesTo": "FarmerSprite.PauseForSingleAnimation"
+        }
+      ],
+      "publishes": {
+        "kind": "Transient",
+        "wire": "transient",
+        "reasonCode": "transient_busy",
+        "transientKind": "selfAnimation",
+        "precedence": 13
+      },
+      "publishedAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 52
+      },
+      "readAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 385,
+        "expression": "player.FarmerSprite.PauseForSingleAnimation",
+        "argument": "player.FarmerSprite.PauseForSingleAnimation",
+        "argumentLine": 385
+      },
+      "classifyAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 258,
+        "condition": "facts.SelfAnimation"
+      },
+      "release": {
+        "kind": "animation-end",
+        "bound": "400-2000 ms depending on the animation",
+        "clears": [
+          {
+            "reads": [
+              "FarmerSprite.PauseForSingleAnimation"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/FarmerSprite.cs:792",
+            "kind": "animation-end",
+            "statement": "PauseForSingleAnimation = false;"
+          }
+        ],
+        "bodyRelease": {
+          "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/FarmerSprite.cs:789",
+          "statement": "owner.CanMove = true;"
+        }
+      },
+      "assertedBy": "tools/check-stardew-actor-admissibility.mjs: FACT-4 release (each anchor still says what this row says, and a literal release must clear its fact)"
+    },
+    {
+      "fact": "Warping",
+      "reads": [
+        {
+          "member": "Game1.isWarping",
+          "holdsWhen": {
+            "relation": "=",
+            "value": true
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+            "line": 1324,
+            "declaration": "public static bool isWarping => _isWarping;"
+          },
+          "resolvesTo": "Game1._isWarping"
+        }
+      ],
+      "publishes": {
+        "kind": "Transient",
+        "wire": "transient",
+        "reasonCode": "transient_busy",
+        "transientKind": "warping",
+        "precedence": 8
+      },
+      "publishedAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 56
+      },
+      "readAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 349,
+        "expression": "Game1.isWarping",
+        "argument": "warping",
+        "argumentLine": 390
+      },
+      "classifyAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 225,
+        "condition": "facts.Warping"
+      },
+      "release": {
+        "kind": "warp-complete",
+        "bound": "the fade to black, ~580 ms",
+        "clears": [
+          {
+            "reads": [
+              "Game1.isWarping"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:6271",
+            "kind": "warp-complete",
+            "statement": "_isWarping = false;"
+          }
+        ],
+        "bodyRelease": {
+          "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:6229",
+          "statement": "player.forceCanMove();"
+        }
+      },
+      "assertedBy": "tools/check-stardew-actor-admissibility.mjs: FACT-4 release (each anchor still says what this row says, and a literal release must clear its fact)"
+    },
+    {
+      "fact": "DayTransition",
+      "reads": [
+        {
+          "member": "Game1.newDay",
+          "holdsWhen": {
+            "relation": "=",
+            "value": true
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+            "line": 591,
+            "declaration": "public static bool newDay;"
+          },
+          "resolvesTo": "Game1.newDay"
+        },
+        {
+          "member": "Game1.farmEvent",
+          "holdsWhen": {
+            "relation": "!=",
+            "value": null
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+            "line": 1023,
+            "declaration": "public static FarmEvent farmEvent;"
+          },
+          "resolvesTo": "Game1.farmEvent"
+        }
+      ],
+      "publishes": {
+        "kind": "Event",
+        "wire": "event",
+        "reasonCode": "cutscene_active",
+        "transientKind": null,
+        "precedence": 6
+      },
+      "publishedAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 61
+      },
+      "readAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 354,
+        "expression": "Game1.newDay || Game1.farmEvent is not null",
+        "argument": "dayTransition",
+        "argumentLine": 391
+      },
+      "classifyAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 205,
+        "condition": "facts.DayTransition"
+      },
+      "release": {
+        "kind": "overnight-sequence",
+        "bound": "the whole overnight sequence, minutes",
+        "clears": [
+          {
+            "reads": [
+              "Game1.newDay"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:8567",
+            "kind": "overnight-sequence",
+            "statement": "newDay = false;"
+          },
+          {
+            "reads": [
+              "Game1.farmEvent"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:8606",
+            "kind": "overnight-sequence",
+            "statement": "farmEvent = null;"
+          }
+        ],
+        "bodyRelease": {
+          "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:4213",
+          "statement": "player.forceCanMove();"
+        }
+      },
+      "assertedBy": "tools/check-stardew-actor-admissibility.mjs: FACT-4 release (each anchor still says what this row says, and a literal release must clear its fact)"
+    },
+    {
+      "fact": "ControlsFrozen",
+      "reads": [
+        {
+          "member": "Game1.freezeControls",
+          "holdsWhen": {
+            "relation": "=",
+            "value": true
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+            "line": 627,
+            "declaration": "public static bool freezeControls;"
+          },
+          "resolvesTo": "Game1.freezeControls"
+        }
+      ],
+      "publishes": {
+        "kind": "Event",
+        "wire": "event",
+        "reasonCode": "cutscene_active",
+        "transientKind": null,
+        "precedence": 7
+      },
+      "publishedAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 67
+      },
+      "readAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 359,
+        "expression": "Game1.freezeControls",
+        "argument": "controlsFrozen",
+        "argumentLine": 392
+      },
+      "classifyAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 215,
+        "condition": "facts.ControlsFrozen"
+      },
+      "release": {
+        "kind": "body-release",
+        "bound": "seconds - a bus ride, the walk to a door",
+        "clears": [
+          {
+            "reads": [
+              "Game1.freezeControls"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:7096",
+            "kind": "body-release",
+            "statement": "Game1.freezeControls = false;"
+          }
+        ],
+        "bodyRelease": {
+          "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:7095",
+          "statement": "CanMove = true;"
+        }
+      },
+      "assertedBy": "tools/check-stardew-actor-admissibility.mjs: FACT-4 release (each anchor still says what this row says, and a literal release must clear its fact)"
+    },
+    {
+      "fact": "Minigame",
+      "reads": [
+        {
+          "member": "Game1.currentMinigame",
+          "holdsWhen": {
+            "relation": "!=",
+            "value": null
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+            "line": 1719,
+            "declaration": "public static IMinigame currentMinigame"
+          },
+          "resolvesTo": "Game1.currentMinigame"
+        }
+      ],
+      "publishes": {
+        "kind": "Event",
+        "wire": "event",
+        "reasonCode": "cutscene_active",
+        "transientKind": null,
+        "precedence": 2
+      },
+      "publishedAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 72
+      },
+      "readAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 364,
+        "expression": "Game1.currentMinigame is not null",
+        "argument": "minigame",
+        "argumentLine": 393
+      },
+      "classifyAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 176,
+        "condition": "facts.Minigame"
+      },
+      "release": {
+        "kind": "minigame-unload",
+        "bound": "up to the minigame's own result screen, 11.1 s on fishing",
+        "clears": [
+          {
+            "reads": [
+              "Game1.currentMinigame"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:4171",
+            "kind": "minigame-unload",
+            "statement": "currentMinigame = null;"
+          }
+        ],
+        "bodyRelease": {
+          "mechanism": "the minigame loop owns the actor while it is mounted (Farmer.cs:7936) and unloads only when the minigame's own tick returns true (Game1.cs:4165-4171); there is no CanMove write to release"
+        }
+      },
+      "assertedBy": "tools/check-stardew-actor-admissibility.mjs: FACT-4 release (each anchor still says what this row says, and a literal release must clear its fact)"
+    },
+    {
+      "fact": "ScreenFade",
+      "reads": [
+        {
+          "member": "Game1.globalFade",
+          "holdsWhen": {
+            "relation": "=",
+            "value": true
+          },
+          "declaredAt": {
+            "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+            "line": 1444,
+            "declaration": "public static bool globalFade"
+          },
+          "resolvesTo": "Game1.globalFade"
+        }
+      ],
+      "publishes": {
+        "kind": "Transient",
+        "wire": "transient",
+        "reasonCode": "transient_busy",
+        "transientKind": "screenFade",
+        "precedence": 9
+      },
+      "publishedAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 77
+      },
+      "readAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 368,
+        "expression": "Game1.globalFade",
+        "argument": "screenFade",
+        "argumentLine": 394
+      },
+      "classifyAt": {
+        "file": "integrations/stardew/WorldModel.cs",
+        "line": 234,
+        "condition": "facts.ScreenFade"
+      },
+      "release": {
+        "kind": "fade-complete",
+        "bound": "the fade's own speed, 380-830 ms by caller",
+        "clears": [
+          {
+            "reads": [
+              "Game1.globalFade"
+            ],
+            "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.BellsAndWhistles/ScreenFade.cs:134",
+            "kind": "fade-complete",
+            "statement": "globalFade = false;"
+          }
+        ],
+        "bodyRelease": {
+          "mechanism": "the global fade writes no CanMove flag of its own; the hold is the caller's write (MineShaft.cs:3025) and the caller's afterFade releases it, while the fade itself clears at ScreenFade.cs:134/:154"
+        }
+      },
+      "assertedBy": "tools/check-stardew-actor-admissibility.mjs: FACT-4 release (each anchor still says what this row says, and a literal release must clear its fact)"
+    }
+  ],
+  "holdReasons": [
+    {
+      "kind": "Idle",
+      "wire": "idle",
+      "reasonCode": "player_not_actionable",
+      "publishedBy": []
+    },
+    {
+      "kind": "Modal",
+      "wire": "modal",
+      "reasonCode": "actor_held_by_modal",
+      "publishedBy": [
+        "MenuType",
+        "DialogueUp"
+      ]
+    },
+    {
+      "kind": "Event",
+      "wire": "event",
+      "reasonCode": "cutscene_active",
+      "publishedBy": [
+        "EventUp",
+        "Minigame",
+        "DayTransition",
+        "ControlsFrozen"
+      ]
+    },
+    {
+      "kind": "PassOut",
+      "wire": "pass_out",
+      "reasonCode": "actor_passed_out",
+      "publishedBy": [
+        "TimeOfDay",
+        "Stamina"
+      ]
+    },
+    {
+      "kind": "Transient",
+      "wire": "transient",
+      "reasonCode": "transient_busy",
+      "publishedBy": [
+        "Warping",
+        "ScreenFade",
+        "FreezePaused",
+        "Eating",
+        "UsingTool",
+        "ToolCharged",
+        "SelfAnimation"
+      ]
+    }
+  ],
+  "environmentReads": [
+    {
+      "member": "Game1.eventUp",
+      "fact": "EventUp",
+      "holdsWhen": {
+        "relation": "=",
+        "value": true
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+        "line": 593,
+        "declaration": "public static bool eventUp;"
+      },
+      "resolvesTo": "Game1.eventUp"
+    },
+    {
+      "member": "Game1.activeClickableMenu",
+      "fact": "MenuType",
+      "holdsWhen": {
+        "relation": "!=",
+        "value": null
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+        "line": 1678,
+        "declaration": "public static IClickableMenu activeClickableMenu"
+      },
+      "resolvesTo": "Game1.activeClickableMenu"
+    },
+    {
+      "member": "Game1.dialogueUp",
+      "fact": "DialogueUp",
+      "holdsWhen": {
+        "relation": "=",
+        "value": true
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+        "line": 585,
+        "declaration": "public static bool dialogueUp;"
+      },
+      "resolvesTo": "Game1.dialogueUp"
+    },
+    {
+      "member": "Game1.timeOfDay",
+      "fact": "TimeOfDay",
+      "holdsWhen": {
+        "relation": ">=",
+        "value": 2600
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+        "line": 766,
+        "declaration": "public static int timeOfDay;"
+      },
+      "resolvesTo": "Game1.timeOfDay"
+    },
+    {
+      "member": "Farmer.Stamina",
+      "fact": "Stamina",
+      "holdsWhen": {
+        "relation": "<=",
+        "value": -15
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs",
+        "line": 1826,
+        "declaration": "public float Stamina"
+      },
+      "resolvesTo": "Farmer.Stamina"
+    },
+    {
+      "member": "Farmer.freezePause",
+      "fact": "FreezePaused",
+      "holdsWhen": {
+        "relation": ">",
+        "value": 0
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs",
+        "line": 796,
+        "declaration": "public int freezePause;"
+      },
+      "resolvesTo": "Farmer.freezePause"
+    },
+    {
+      "member": "Farmer.isEating",
+      "fact": "Eating",
+      "holdsWhen": {
+        "relation": "=",
+        "value": true
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs",
+        "line": 702,
+        "declaration": "public bool isEating;"
+      },
+      "resolvesTo": "Farmer.isEating"
+    },
+    {
+      "member": "Farmer.UsingTool",
+      "fact": "UsingTool",
+      "holdsWhen": {
+        "relation": "=",
+        "value": true
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs",
+        "line": 1732,
+        "declaration": "public bool UsingTool"
+      },
+      "resolvesTo": "Farmer.UsingTool"
+    },
+    {
+      "member": "Farmer.toolPower",
+      "fact": "ToolCharged",
+      "holdsWhen": {
+        "relation": "!=",
+        "value": 0
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs",
+        "line": 433,
+        "declaration": "public readonly NetInt toolPower = new NetInt();"
+      },
+      "resolvesTo": "Farmer.toolPower"
+    },
+    {
+      "member": "FarmerSprite.PauseForSingleAnimation",
+      "fact": "SelfAnimation",
+      "holdsWhen": {
+        "relation": "=",
+        "value": true
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/FarmerSprite.cs",
+        "line": 320,
+        "declaration": "public bool PauseForSingleAnimation"
+      },
+      "resolvesTo": "FarmerSprite.PauseForSingleAnimation"
+    },
+    {
+      "member": "Game1.isWarping",
+      "fact": "Warping",
+      "holdsWhen": {
+        "relation": "=",
+        "value": true
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+        "line": 1324,
+        "declaration": "public static bool isWarping => _isWarping;"
+      },
+      "resolvesTo": "Game1._isWarping"
+    },
+    {
+      "member": "Game1.newDay",
+      "fact": "DayTransition",
+      "holdsWhen": {
+        "relation": "=",
+        "value": true
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+        "line": 591,
+        "declaration": "public static bool newDay;"
+      },
+      "resolvesTo": "Game1.newDay"
+    },
+    {
+      "member": "Game1.farmEvent",
+      "fact": "DayTransition",
+      "holdsWhen": {
+        "relation": "!=",
+        "value": null
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+        "line": 1023,
+        "declaration": "public static FarmEvent farmEvent;"
+      },
+      "resolvesTo": "Game1.farmEvent"
+    },
+    {
+      "member": "Game1.freezeControls",
+      "fact": "ControlsFrozen",
+      "holdsWhen": {
+        "relation": "=",
+        "value": true
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+        "line": 627,
+        "declaration": "public static bool freezeControls;"
+      },
+      "resolvesTo": "Game1.freezeControls"
+    },
+    {
+      "member": "Game1.currentMinigame",
+      "fact": "Minigame",
+      "holdsWhen": {
+        "relation": "!=",
+        "value": null
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+        "line": 1719,
+        "declaration": "public static IMinigame currentMinigame"
+      },
+      "resolvesTo": "Game1.currentMinigame"
+    },
+    {
+      "member": "Game1.globalFade",
+      "fact": "ScreenFade",
+      "holdsWhen": {
+        "relation": "=",
+        "value": true
+      },
+      "declaredAt": {
+        "file": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs",
+        "line": 1444,
+        "declaration": "public static bool globalFade"
+      },
+      "resolvesTo": "Game1.globalFade"
+    }
+  ],
+  "orphanHoldResidual": [
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Crop.cs:541",
+      "method": "harvest",
+      "verdict": "named_by_fact",
+      "namedBy": "SelfAnimation",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Crop.cs:540",
+      "evidence": "`Game1.player.animateOnce(279 + facing)` (Crop.cs:540) raises the animation pause through Farmer.animateOnce -> FarmerSprite.animateOnce (Farmer.cs:6479, FarmerSprite.cs:673) in another type, which this analysis' same-file callee walk cannot follow",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/FarmerSprite.cs:789",
+        "kind": "animation-end",
+        "statement": "owner.CanMove = true;"
+      },
+      "bound": "600 ms (6 frames at 100 ms)"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Crop.cs:629",
+      "method": "harvest",
+      "verdict": "named_by_fact",
+      "namedBy": "SelfAnimation",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Crop.cs:628",
+      "evidence": "the grab branch of the same harvest: `animateOnce(283 + facing)` on the same primitive, one frame later than the row above",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/FarmerSprite.cs:789",
+        "kind": "animation-end",
+        "statement": "owner.CanMove = true;"
+      },
+      "bound": "600 ms"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Event.cs:11460",
+      "method": "OnPlayerControlSequenceEnd",
+      "verdict": "named_by_fact",
+      "namedBy": "EventUp",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/GameLocation.cs:15763",
+      "evidence": "only reachable from the `Event.playerControlSequence` setter, i.e. inside a running event; `Game1.eventUp = true` is set by the event driver (GameLocation.cs:15759-15766) in another file, and the body is given back by `setUpPlayerControlSequence` (Event.cs:11468)",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Event.cs:11468",
+        "kind": "control-sequence-end",
+        "statement": "Game1.player.CanMove = true;"
+      },
+      "bound": "until the event releases the player control sequence"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:6482",
+      "method": "animateOnce",
+      "verdict": "named_by_fact",
+      "namedBy": "SelfAnimation",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/FarmerSprite.cs:673",
+      "evidence": "the engine's own single-animation hold primitive: it calls `FarmerSprite.animateOnce(...)` (Farmer.cs:6479) which raises the pause flag in FarmerSprite.cs, so the establishing write is in the callee's own type",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/FarmerSprite.cs:789",
+        "kind": "animation-end",
+        "statement": "owner.CanMove = true;"
+      },
+      "bound": "the animation's own frame budget"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:8448",
+      "method": "PerformKiss",
+      "verdict": "named_by_fact",
+      "namedBy": "SelfAnimation",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:8452",
+      "evidence": "the guard above requires every other declared fact to be ABSENT (`!Game1.eventUp && !UsingTool && ... && CanMove`), then takes the body and arms a 1000 ms + 1 ms frame pair; the only `PauseForSingleAnimation` write in this method CLEARS the flag, which is why this row is not accompanied",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/FarmerSprite.cs:789",
+        "kind": "animation-end",
+        "statement": "owner.CanMove = true;"
+      },
+      "bound": "1001 ms"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:9315",
+      "method": "grabObject",
+      "verdict": "named_by_fact",
+      "namedBy": "SelfAnimation",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:9316",
+      "evidence": "`CanMove = false` then `animateOnce(64/72/80/88, 50f, 8)`; the animation pause is raised through FarmerSprite in another type, so no same-file callee establishes it here",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/FarmerSprite.cs:789",
+        "kind": "animation-end",
+        "statement": "owner.CanMove = true;"
+      },
+      "bound": "400 ms (8 frames at 50 ms)"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Object.cs:3312",
+      "method": "rainTotem",
+      "verdict": "named_by_fact",
+      "namedBy": "SelfAnimation",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Object.cs:3315",
+      "evidence": "`who.canMove = false` then a one-frame 2000 ms animation whose frame-end behaviour IS the release (`Farmer.canMoveNow`, Object.cs:3315-3318); `Game1.pauseThenMessage` only arms `messageAfterPause`, which no declared read observes",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Farmer.cs:6761",
+        "kind": "animation-frame-end",
+        "statement": "who.CanMove = true;"
+      },
+      "bound": "2000 ms"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.BellsAndWhistles/ParrotUpgradePerch.cs:797",
+      "method": "AttemptConstruction",
+      "verdict": "named_unknown",
+      "namedBy": null,
+      "unknownReason": "the release lives in a per-location `NetMutex`: `RequestLock` defers both callbacks (NetMutex.cs:44-59) and runs them from `Update` (:83-90), so the flag is false for at least one update tick and one server round-trip in multiplayer, and the only readable state is that perch's own mutex",
+      "settledBy": "a 30-second live probe on the perch logging `IsLocked()` per tick, or a `NetMutex`-scoped fact on the actor (a new `ActorWorldFacts` member this contract cannot invent)",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.BellsAndWhistles/ParrotUpgradePerch.cs:800",
+        "kind": "mutex-callback",
+        "statement": "Game1.player.canMove = true;"
+      },
+      "bound": "at least one mutex update tick, one server round-trip in multiplayer"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.BellsAndWhistles/ScreenFade.cs:88",
+      "method": "FadeScreenToBlack",
+      "verdict": "named_by_fact",
+      "namedBy": "Warping",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:10031",
+      "evidence": "this is the WARP's fade, not the global one: it CLEARS `globalFade` (ScreenFade.cs:82) and raises `fadeToBlack`, so the only fact up across it is `Game1.isWarping`, raised by `performWarpFarmer` (Game1.cs:10031) in another file",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:6229",
+        "kind": "warp-complete",
+        "statement": "player.forceCanMove();"
+      },
+      "bound": "the fade to black, ~580 ms"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Events/BirthingEvent.cs:34",
+      "method": "setUp",
+      "verdict": "named_by_fact",
+      "namedBy": "DayTransition",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:8604",
+      "evidence": "a `BaseFarmEvent`: the driver is the new-day sequence (`if (farmEvent != null && farmEvent.setUp())`, Game1.cs:8604) and its own tick (Game1.cs:4187-4193). Farm events run with `eventUp == false` - the two are tracked separately - so `DayTransition` is the fact, and `ActorWorldFacts` reads it as `newDay || farmEvent != null`",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:4213",
+        "kind": "overnight-sequence-end",
+        "statement": "player.forceCanMove();"
+      },
+      "bound": "the overnight sequence, minutes"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Events/PlayerCoupleBirthingEvent.cs:89",
+      "method": "setUp",
+      "verdict": "named_by_fact",
+      "namedBy": "DayTransition",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:8604",
+      "evidence": "the same class and the same driver as the row above: a `BaseFarmEvent` mounted for the night",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:4213",
+        "kind": "overnight-sequence-end",
+        "statement": "player.forceCanMove();"
+      },
+      "bound": "the overnight sequence, minutes"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Locations/BusStop.cs:316",
+      "method": "UpdateWhenCurrentLocation",
+      "verdict": "named_by_fact",
+      "namedBy": "ControlsFrozen",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Locations/BusStop.cs:268",
+      "evidence": "re-asserted every tick while the bus drives (`drivingBack || drivingOff`, BusStop.cs:309-323); the fact is `Game1.freezeControls`, raised where the ride starts (BusStop.cs:268) rather than in this method",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Locations/BusStop.cs:296",
+        "kind": "ride-arrival",
+        "statement": "Game1.player.forceCanMove();"
+      },
+      "bound": "the whole drive"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Locations/ManorHouse.cs:44",
+      "method": "performAction",
+      "verdict": "named_by_fact",
+      "namedBy": "DialogueUp",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:9560",
+      "evidence": "the very next statement is `Game1.multipleDialogues(...)` (ManorHouse.cs:47-51), which mounts the box and sets `dialogueUp = true` (Game1.cs:9557-9562) in another file - the cross-file companion this analysis' same-file callee walk cannot see",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Menus/DialogueBox.cs:226",
+        "kind": "dialogue-closed",
+        "statement": "Game1.player.CanMove = true;"
+      },
+      "bound": "until the box is closed"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Locations/MineShaft.cs:3025",
+      "method": "enterMineShaft",
+      "verdict": "named_by_fact",
+      "namedBy": "ScreenFade",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.BellsAndWhistles/ScreenFade.cs:107",
+      "evidence": "`Game1.globalFadeToBlack(afterFall, 0.045f)` (MineShaft.cs:3024) raises `globalFade` inside ScreenFade, then this line takes the body; between the two the only fact up is the fade, and `afterFall` (:3037-3045) opens a dialogue before the mine re-entry",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Menus/DialogueBox.cs:226",
+        "kind": "dialogue-closed",
+        "statement": "Game1.player.CanMove = true;"
+      },
+      "bound": "the fade plus the fall dialogue"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Locations/VolcanoDungeon.cs:286",
+      "method": "UseVolcanoShortcut",
+      "verdict": "named_by_fact",
+      "namedBy": "Warping",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:10031",
+      "evidence": "`CanMove = false; jump(); Game1.warpFarmer(...)` (VolcanoDungeon.cs:286-288): the warp flag is raised inside `performWarpFarmer` (Game1.cs:10031), one cross-file call away",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:6229",
+        "kind": "warp-complete",
+        "statement": "player.forceCanMove();"
+      },
+      "bound": "the fade to black, ~580 ms"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Minigames/FishingGame.cs:170",
+      "method": "gameDoneAfterFade",
+      "verdict": "named_by_fact",
+      "namedBy": "Minigame",
+      "establishedAt": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:4165",
+      "evidence": "runs as the `afterFade` of `Game1.globalFadeToBlack(gameDoneAfterFade, 0.01f)` (:159) and arms `showResultsTimer = 11100`; the minigame stays mounted until its own tick returns true (Game1.cs:4165-4171), and `Game1.currentMinigame` is the fact",
+      "release": {
+        "anchor": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/Game1.cs:4171",
+        "kind": "minigame-unload",
+        "statement": "currentMinigame = null;"
+      },
+      "bound": "11100 ms"
+    }
+  ],
+  "unattributedHoldSites": [
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/GameLocation.cs:9287",
+      "reason": "the enclosing `switch` arm sits inside a method `enclosingMethod` cannot attribute",
+      "settledBy": "attribute the enclosing method through the switch arm (a brace walk that tracks `case` bodies), then re-derive the row; all four are followed by `Game1.multipleDialogues(...)` (:9289), so they are the same family as ManorHouse.cs:44"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/GameLocation.cs:9297",
+      "reason": "the same brace-walk limit",
+      "settledBy": "the same attribution fix; followed by `Game1.multipleDialogues(...)` at :9300"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/GameLocation.cs:9321",
+      "reason": "the same brace-walk limit",
+      "settledBy": "the same attribution fix; followed by `Game1.multipleDialogues(...)` at :9324"
+    },
+    {
+      "site": "ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley/GameLocation.cs:9345",
+      "reason": "the same brace-walk limit",
+      "settledBy": "the same attribution fix; followed by `Game1.multipleDialogues(...)` at :9349"
+    }
+  ],
+  "adjudication": {
+    "decisionSites": [
+      {
+        "file": "integrations/stardew/farmhandexecutioncontroller.cookingactions.cs",
+        "verdict": "second_spelling_owed",
+        "what": "a carried object blocking the cookout kit's vanilla entry is refused as `player_not_actionable` (line 178), a body-hold word for a station precondition no disposition produced",
+        "owner": "stardew-integration",
+        "closesWhen": "the refusal names the station precondition (`active_object_held;station=cookout_kit`) as its own code instead of the hold vocabulary's"
+      },
+      {
+        "file": "integrations/stardew/farmhandexecutioncontroller.modalactions.cs",
+        "verdict": "second_spelling_owed",
+        "what": "a failed actor/location binding is refused as `player_not_actionable` (line 546) with `actor=...;location=...`, which is an identity guard rather than a hold",
+        "owner": "stardew-integration",
+        "closesWhen": "the identity guard answers with the execution-scope code it already has (`execution_scope_mismatch`) rather than the hold word"
+      },
+      {
+        "file": "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs",
+        "verdict": "not_a_decision",
+        "what": "the two matches (lines 480, 636) are comments describing the `player_menu_open` / `player_event_active` / `player_cannot_move` guards this code replaced; nothing decides anything",
+        "owner": "tools",
+        "closesWhen": "the comments are rewritten without the retired code names, and this row is deleted"
+      },
+      {
+        "file": "integrations/stardew/StardewBodyController.cs",
+        "verdict": "second_spelling_owed",
+        "what": "a movement lock is refused as `player_not_actionable` (line 1127) from `!localPlayer.CanMove`, a second spelling of a hold `WorldModel.DescribeNavigationHold` already publishes as `unknown_holder:CanMove`",
+        "owner": "stardew-integration",
+        "closesWhen": "the body loop reports the navigation hold through `WorldModel.DescribeNavigationHold` instead of minting the collapsed word itself"
+      }
+    ],
+    "derivedInputs": [
+      {
+        "id": "snapshot.actionable",
+        "form": "!snapshot.actionable",
+        "whyForbidden": "a derived boolean collapses every hold into one word: `player_not_actionable` came to mean menu, cutscene, faint, eating and tool swing at once, leaving an Agent no countermeasure to choose",
+        "history": "host/src/stardew-action-remedy.ts:5 - the Host answered a held body with this and nothing else"
+      },
+      {
+        "id": "snapshot.actionable_guard",
+        "form": "if (!snapshot.actionable)",
+        "whyForbidden": "the same boolean read as a guard rather than as evidence; the disposition names the hold, a boolean cannot",
+        "history": null
+      }
+    ],
+    "vocabulary": [
+      "not_a_decision - the match is prose, and nothing is decided there",
+      "second_spelling_owed - the site decides a hold word outside WorldModel; the row names the owner and the condition that closes it"
+    ]
+  }
+}
