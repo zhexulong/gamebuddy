@@ -714,6 +714,7 @@ export function admissionResponse(components: readonly WindowsPathObjectIdentity
 export function admissionInspector(
   chains: readonly (readonly WindowsPathObjectIdentity[])[],
   beforeResponse?: (readIndex: number) => Promise<void>,
+  executablePath: string = admissionExecutable,
 ): ReturnType<typeof createTestWindowsReparseInspector> {
   let index = 0;
   return createTestWindowsReparseInspector(() => {
@@ -731,7 +732,7 @@ export function admissionInspector(
       (chunk: Buffer) =>
         void (async () => {
           const request: unknown = JSON.parse(chunk.toString("utf8"));
-          assert.deepEqual(request, admissionRequest(admissionExecutable));
+          assert.deepEqual(request, admissionRequest(executablePath));
           if (beforeResponse !== undefined) await beforeResponse(readIndex);
           child.stdout.end(admissionResponse(chain));
           child.stderr.end();
@@ -746,6 +747,38 @@ export async function admitForStageC(
   chains: readonly (readonly WindowsPathObjectIdentity[])[],
 ): Promise<AdmittedStardewInstallation> {
   return admitStardewInstallation(admissionInspector(chains), admissionCandidate);
+}
+
+/**
+ * A synthetic identity chain of the exact length `admitStardewInstallation`
+ * expects for one drive-rooted directory: the drive root, the candidate's own
+ * components, and the executable leaf.
+ */
+export function admissionChainFor(candidate: string): readonly WindowsPathObjectIdentity[] {
+  const components = candidate.slice(3).split("\\").length + 2;
+  return Object.freeze(
+    Array.from({ length: components }, (_, index) =>
+      admissionIdentity(
+        index === components - 1 ? "regular_file" : "directory",
+        String(index + 0x11).padStart(32, "0"),
+      ),
+    ),
+  );
+}
+
+/**
+ * Admits one REAL directory as the game installation. The identity chain is the
+ * test-only fabricated one; the root is a real path, so a caller can build the
+ * `<root>\\Mods` folder the admitted installation's own game would carry.
+ */
+export async function admitGameRootForTesting(
+  gameRoot: string,
+  chains: readonly (readonly WindowsPathObjectIdentity[])[],
+): Promise<AdmittedStardewInstallation> {
+  return admitStardewInstallation(
+    admissionInspector(chains, undefined, join(gameRoot, "StardewModdingAPI.exe")),
+    gameRoot,
+  );
 }
 
 export async function createStageBPackage(): Promise<Readonly<{ root: string; entries: readonly string[] }>> {
