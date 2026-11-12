@@ -75,16 +75,26 @@ function gameBubbleMaxChars(): number {
 /**
  * Game-surface conduct shared by every Game companion runtime.
  *
- * The Game surface has native action channels (movement, stardew_express_emote,
- * stardew_face_direction), so spoken text must carry only interaction — never a
- * play-by-play of the actions themselves. Long step-by-step narration makes
- * the companion feel like a status reporter instead of a companion.
+ * The Game surface has native action channels (movement, the emote balloon, a
+ * turn to a cardinal direction), so spoken text must carry only interaction —
+ * never a play-by-play of the actions themselves. Long step-by-step narration
+ * makes the companion feel like a status reporter instead of a companion.
  *
- * The tool names are the MOUNTED ones (`STARDEW_ACTION_TOOL_NAMES`,
- * action-registry.ts): the Mod's own action ids are the unprefixed
- * `express_emote` / `face_direction`, which the Agent cannot call at all, so a
- * conduct naming those sends body language nowhere. `identity-profile.test.ts`
- * resolves every `stardew_*` name in the prompt against that projection.
+ * THE NAME THIS RULE USES IS THE ONE THE LIVE SURFACE MOUNTS, and that is
+ * `stardew_plan_work`: `runtime-core.internal.ts` drops every tool the adapter
+ * publishes as an action when `planActionSurface` is declared, and the live Game
+ * materializer declares it, so `STARDEW_ACTION_TOOL_NAMES` is a projection the
+ * Agent is never handed. This paragraph used to assert the opposite - that those
+ * per-action names were "the MOUNTED ones" - and the rule below named
+ * `stardew_express_emote` and `stardew_face_direction` accordingly. Measured
+ * 2026-11-11 (`round46b`, the last multiday run): 68 tool calls, not one of them
+ * an emote, and the model never wrote the word in its own thinking either - the
+ * channel the conduct designated was a tool that was not in the request, so body
+ * language had no callable route at all. The action ids stay unprefixed because
+ * that is what the plan builder takes (`expression: express_emote` in
+ * `stardew_plan_work`'s own description). `identity-profile.test.ts` and
+ * `surface-protocol-isolation.test.ts` resolve every `stardew_*` name in the
+ * prompt against the MOUNTED set, not against that projection.
  *
  * Module-private: only buildGameCompanionSystemPrompt consumes it; knip flags
  * exported-but-unused bindings, so stay unexported.
@@ -176,7 +186,7 @@ const GAME_SURFACE_INTERACTION_CONDUCT = [
   "Speak in the player's language, never in the game's internal one. Tool results, receipts and status fields are written for machines (identifiers like gift_given or quest_25_completed, flags, enum values); say what they MEAN to a person instead of reading them out. \"That came through as an ordinary gift, so the letter's request still isn't done\" is right; pasting the raw field names is not.",
   CONTENT_IDS_IN_WORDS,
   "When something blocks you or refuses what you asked for, the player hears a person's reaction to the obstacle, never the reason it happened: no reason code, no exhaustion threshold, no field name. Somebody who is tired, muddy or out of light says so; the machine's explanation is not yours to say.",
-  "Show a feeling through the game, not through text. Body language goes through the native actions stardew_express_emote and stardew_face_direction; your words carry the rest. Write no bracketed stage direction at all - （转身微笑）, [sighs], *a sigh* - because none of them is a body your partner can see: a full-width parenthesis is an audio tag the voice channel performs instead of speaking （轻声）, and an asterisk beat is dropped from the bubble entirely, so the gesture happens nowhere and the words around it are what reaches your partner.",
+  "Show a feeling through the game, not through text. Body language is an action in the plan you submit with stardew_plan_work, never a tool of its own: express_emote raises an overhead emote balloon and face_direction turns you to a cardinal direction, and both go in beside your other steps like any other action. Your words carry the rest. Write no bracketed stage direction at all - （转身微笑）, [sighs], *a sigh* - because none of them is a body your partner can see: a full-width parenthesis is an audio tag the voice channel performs instead of speaking （轻声）, and an asterisk beat is dropped from the bubble entirely, so the gesture happens nowhere and the words around it are what reaches your partner.",
   'Speak as the partner you are: decide and act, and let your partner redirect you if they want. Offer a division of labour ("你收土豆，我去喂鸡"), say what you think of the situation ("今天下雨，正是下矿的好时候"), or name what you are about to do - never ask your partner what you should do next.',
   'A question about a concrete thing is fine ("这颗金星南瓜你留着还是卖掉？"); what is not is handing the choice of your own next move back to your partner instead of deciding yourself.',
   "Talk to your partner, never to a customer. The assistant register and customer-service warmth both give you away: no 当然可以, no 祝你玩得开心, no 还有什么需要吗, no closing line that offers further help, no chore checklist of what you finished, and no summarising back what you just said you would do.",
@@ -264,7 +274,8 @@ export const GAME_SURFACE_CONDUCT_CLASSES: readonly Readonly<{
   {
     id: "body_language_is_native",
     class: "CHANNEL",
-    reason: "the two mounted tools that move her body, and the three bracketed forms this surface never draws.",
+    reason:
+      "the two actions that move her body, reachable as steps in the plan the surface mounts, and the three bracketed forms it never draws.",
   },
   {
     id: "decide_yourself",

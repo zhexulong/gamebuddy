@@ -14,6 +14,7 @@ import {
 } from "./action-registry.js";
 import { createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
+import { MOUNTED_GAME_SURFACE_TOOL_NAMES } from "./game-surface-prompt-floor.test-support.js";
 import { DEFAULT_IDENTITY_PROFILE } from "./identity-profile.js";
 import type { ActionRegistration, ActionRegistrationDescriptor, Scope } from "./protocol.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
@@ -460,6 +461,12 @@ test("every requirement in the table is one the gate reads, on the Mod's own des
  * appeared zero times as a mounted tool definition and only in that sentence. Nothing compared the two - the
  * floor is prose, the mount ledger is code, and each was checked on its own. This gate reads the rendered floor
  * the model receives and holds every tool name in it against the list a Game session actually mounts.
+ *
+ * THE LIST A GAME SESSION ACTUALLY MOUNTS IS NOT `mountedToolNames` BELOW. That one is `createStardewActionTools`'
+ * output, and a plan surface drops every entry of it (`runtime-core.internal.ts`, asserted structurally by
+ * `game-surface-prompt-floor.test.ts`) - so this gate compared the floor against a list the request never carried,
+ * and stayed green while the floor named `stardew_express_emote` and the Agent was handed `stardew_plan_work`
+ * instead (measured 2026-11-11, `round46b`: 68 tool calls, no emote). The population is the recorded mounted set.
  */
 const FLOOR_TOOL_NAME = /\bstardew_[a-z0-9_]+/gu;
 
@@ -467,10 +474,23 @@ test("every tool the Game prompt floor names is a tool a Game session mounts", (
   const floor = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   const named = [...new Set([...floor.matchAll(FLOOR_TOOL_NAME)].map((match) => match[0]))].sort();
   assert.ok(named.length > 0, "blocked: the rendered Game prompt names no tool at all, so this gate examines nothing");
-  const mounted = new Set(mountedToolNames(loadActionSurface()));
+  const mounted = new Set(MOUNTED_GAME_SURFACE_TOOL_NAMES);
+  assert.ok(mounted.size > 0, "blocked: the recorded mounted Game tool set is empty, so every name would pass");
   assert.deepEqual(
     named.filter((name) => !mounted.has(name)).map((name) => `floor_names_unmounted_tool:${name}`),
     [],
     `the prompt tells the companion to use a tool no Game session mounts: ${named.join(", ")}`,
+  );
+  // The surface's own rule, DERIVED rather than recorded: a plan surface drops every tool `createStardewActionTools`
+  // returns, so none of those names can appear in the floor however the recorded set changes.
+  const perAction = new Set(mountedToolNames(loadActionSurface()));
+  assert.ok(
+    perAction.size > 0,
+    "blocked: the adapter mounts no per-action tool, so the negative below examines nothing",
+  );
+  assert.deepEqual(
+    named.filter((name) => perAction.has(name)).map((name) => `floor_names_per_action_tool:${name}`),
+    [],
+    `the prompt names a per-action tool the plan surface drops: ${named.filter((name) => perAction.has(name)).join(", ")}`,
   );
 });

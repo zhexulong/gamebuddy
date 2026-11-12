@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
+import { MOUNTED_GAME_SURFACE_TOOL_NAMES } from "./game-surface-prompt-floor.test-support.js";
 import { buildChatCompanionSystemPrompt, COMPANION_ACTION_SYNTAX } from "./identity-profile.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
 
@@ -17,8 +17,10 @@ import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
  *
  * What is asserted here is the NEGATIVE, and its population is derived rather than listed:
  *
- *   - the mounted Game tool names come from `STARDEW_ACTION_TOOL_NAMES`, so a newly published
- *     action is covered by today's rule and a renamed one cannot slip past it;
+ *   - the mounted Game tool names are the recorded mounted set (`MOUNTED_GAME_SURFACE_TOOL_NAMES`), because the
+ *     live Game surface mounts the plan builder and drops every per-action tool the adapter publishes - resolving
+ *     against `STARDEW_ACTION_TOOL_NAMES` here agreed with a conduct that named `stardew_express_emote`, a tool
+ *     the request never carried (measured 2026-11-11, `round46b`);
  *   - the "channel rule" lines come from the COMPILED Game prompt, so a reworded rule is still
  *     covered and a deleted one fails the first test instead of passing this one quietly;
  *   - the stage-direction mark comes from `COMPANION_ACTION_SYNTAX`, the one constant that names
@@ -34,10 +36,8 @@ const LOCALE = "zh-CN";
 const CHAT_PROMPT = buildChatCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, LOCALE);
 const GAME_PROMPT = buildGameCompanionSystemPrompt(DEFAULT_COMPANION_PRESET.profile, LOCALE);
 
-/** Every mounted Game tool name: the registry's values, which are the names an Agent can call. */
-const MOUNTED_GAME_TOOL_NAMES: readonly string[] = Object.freeze([
-  ...new Set(Object.values(STARDEW_ACTION_TOOL_NAMES)),
-]);
+/** Every tool name the live Game surface mounts: the recorded set, not the per-action projection it drops. */
+const MOUNTED_GAME_TOOL_NAMES: readonly string[] = MOUNTED_GAME_SURFACE_TOOL_NAMES;
 
 /**
  * The mark `COMPANION_ACTION_SYNTAX` delimits a stage direction with, read out of the constant.
