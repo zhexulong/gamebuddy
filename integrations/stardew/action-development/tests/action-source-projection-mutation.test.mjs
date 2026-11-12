@@ -100,21 +100,32 @@ test("Host route drift restricts the executable intersection without widening it
 test("protocol/schema drift restricts the executable intersection", () => {
   const protocol = sources.host_protocol;
 
-  const requestValidatorAdrift = protocol.replaceAll(
-    'value.action !== "equip_tool"',
-    'value.action !== "equip_tool_x"',
-  );
-  assert.notEqual(requestValidatorAdrift, protocol, "request validator anchor must match");
+  const requestValidatorAdrift = protocol.replace(/^ {2}equip_tool: \[.*$/mu, "  equip_tool_x: [");
+  assert.notEqual(requestValidatorAdrift, protocol, "request declaration anchor must match");
   const requestProjection = deriveWith({ host_protocol: requestValidatorAdrift });
   assert.ok(!requestProjection.mod.executableActionIds.includes("equip_tool"));
 
-  const envelopeValidatorAdrift = protocol.replace(
-    'value.action === "equip_tool" ||',
-    'value.action === "equip_tool_x" ||',
+  // The envelope's admitted set is the declaration's own keys (777bc797), so the probes break that construction rather
+  // than a `value.action === "…"` comparison that no longer exists in `validateExecutionRequestEnvelope`.
+  const emptyActionSet = protocol.replace(
+    "const EXECUTION_ACTIONS: ReadonlySet<string> = new Set(Object.keys(EXECUTION_REQUEST_ARGUMENT_RULES));",
+    "const EXECUTION_ACTIONS: ReadonlySet<string> = new Set<string>([]);",
   );
-  assert.notEqual(envelopeValidatorAdrift, protocol, "envelope validator anchor must match");
-  const envelopeProjection = deriveWith({ host_protocol: envelopeValidatorAdrift });
-  assert.ok(!envelopeProjection.mod.executableActionIds.includes("equip_tool"));
+  assert.notEqual(emptyActionSet, protocol, "envelope action set anchor must match");
+  expectRejection(
+    () => deriveWith({ host_protocol: emptyActionSet }),
+    "execution_request_envelope_action_set_not_declaration_derived",
+  );
+
+  const unknownActionRefusalRemoved = protocol.replace(
+    '  if (!isExecutionAction(value.action)) return "unknown_action";\n',
+    "",
+  );
+  assert.notEqual(unknownActionRefusalRemoved, protocol, "unknown_action anchor must match");
+  expectRejection(
+    () => deriveWith({ host_protocol: unknownActionRefusalRemoved }),
+    "execution_request_envelope_not_declaration_derived",
+  );
 
   const unionMemberRemoved = protocol.replace('    | "equip_tool"\n', "");
   assert.notEqual(unionMemberRemoved, protocol, "execution request union anchor must match");

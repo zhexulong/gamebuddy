@@ -20,24 +20,8 @@
       "path": "integrations/stardew/src/Core/Routing/FarmhandActionRouter.cs"
     },
     {
-      "category": "mod_handler_farming",
-      "path": "integrations/stardew/Handlers/FarmingActionHandler.cs"
-    },
-    {
-      "category": "mod_handler_gathering",
-      "path": "integrations/stardew/Handlers/GatheringActionHandler.cs"
-    },
-    {
-      "category": "mod_handler_movement",
-      "path": "integrations/stardew/Handlers/MovementActionHandler.cs"
-    },
-    {
-      "category": "mod_handler_machines_animals",
-      "path": "integrations/stardew/Handlers/MachineAndAnimalActionHandler.cs"
-    },
-    {
-      "category": "mod_handler_resource_tools",
-      "path": "integrations/stardew/Handlers/ResourceToolActionHandler.cs"
+      "category": "canonical_handler_groups",
+      "path": "integrations/stardew/action-development/contracts/generated/action-handler-groups.v1.json"
     },
     {
       "category": "host_registry",
@@ -502,6 +486,9 @@
             },
             "y": {
               "type": "integer"
+            },
+            "charge": {
+              "type": "integer"
             }
           },
           "outputFacts": {},
@@ -636,6 +623,9 @@
             },
             "expectedTargetId": {
               "type": "string"
+            },
+            "charge": {
+              "type": "integer"
             }
           },
           "outputFacts": {},
@@ -3336,6 +3326,47 @@
         "handlerGroup": null
       },
       {
+        "actionId": "sweep_scythe",
+        "identityVersion": 1,
+        "lifecycle": "published",
+        "kind": "execution",
+        "descriptor": {
+          "actionId": "sweep_scythe",
+          "identityVersion": 1,
+          "lifecycle": "published",
+          "kind": "execution",
+          "argumentSchema": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            }
+          },
+          "outputFacts": {},
+          "resourceTemplate": {
+            "claims": [
+              {
+                "key": "embodied_actor",
+                "value": "ScopePlayer"
+              },
+              {
+                "key": "tool:scythe",
+                "value": "AnyUpgrade"
+              }
+            ]
+          },
+          "effect": "write",
+          "postcondition": {
+            "name": "native_action_postcondition"
+          },
+          "approach": {
+            "relation": "self_walked"
+          }
+        },
+        "handlerGroup": null
+      },
+      {
         "actionId": "harvest_bush",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -4395,7 +4426,7 @@
           },
           "effect": "write",
           "postcondition": {
-            "name": "native_action_postcondition"
+            "name": "geode_opened"
           },
           "nativeBinding": "GeodeMenu.receiveLeftClick"
         },
@@ -4471,6 +4502,7 @@
       "load_building_chest",
       "collect_building_chest_output",
       "scythe_crop",
+      "sweep_scythe",
       "harvest_bush",
       "harvest_fruit_tree",
       "shake_tree",
@@ -5013,6 +5045,7 @@
       "ship_item",
       "shop_purchase",
       "sleep",
+      "sweep_scythe",
       "tailor_clothing",
       "take_pedestal_item",
       "talk_to_npc",
@@ -5117,6 +5150,7 @@
       "ship_item",
       "shop_purchase",
       "sleep",
+      "sweep_scythe",
       "tailor_clothing",
       "take_pedestal_item",
       "talk_to_npc",
@@ -5221,6 +5255,7 @@
       "ship_item",
       "shop_purchase",
       "sleep",
+      "sweep_scythe",
       "tailor_clothing",
       "take_pedestal_item",
       "talk_to_npc",

@@ -34,6 +34,8 @@ const ABSENT_ROUTE_TOKENS = Object.freeze([
   "read_repair",
   "withdrawn",
 ]);
+/** The Host declaration the execution-request envelope admits its action ids from. */
+const EXECUTION_REQUEST_DECLARATION = "EXECUTION_REQUEST_ARGUMENT_RULES";
 const ACTION_HANDLER_GROUPS_SCHEMA = "gamebuddy-action-handler-groups/v1";
 const ACTION_HANDLER_GROUPS_RELATIVE_PATH =
   "integrations/stardew/action-development/contracts/generated/action-handler-groups.v1.json";
@@ -238,14 +240,46 @@ function parseHostToolRoutes(source) {
   return assertUnique(routes, "tool_route_duplicates");
 }
 
-function parseLiteralChecks(source, functionName, operator) {
-  const body = source.match(
-    new RegExp(`function ${functionName}[\\s\\S]*?(?:^|\\n)\\}`),
-  )?.[0];
-  if (!body) fail(`${functionName}_unreadable`);
-  const ids = [...body.matchAll(new RegExp(`value\\.action ${operator} "([a-z0-9_]+)"`, "g"))].map((entry) => entry[1]);
-  if (ids.length === 0) fail(`${functionName}_empty`);
-  return assertUnique(ids, `${functionName}_duplicates`);
+/**
+ * The action ids the Host's execution-request declaration carries argument rows for.
+ *
+ * `validateExecutionRequest` used to be a chain of `value.action !== "<id>"` comparisons and this producer harvested the
+ * ids out of that text. 0dfea04b ("the execution-request ladder is a declaration, and protocol.ts shrinks") replaced the
+ * chain with `EXECUTION_REQUEST_ARGUMENT_RULES`, whose key set is held to `ExecutionRequest["action"]` by `satisfies`.
+ * The ladder stopped existing, so this reader reported `validateExecutionRequest_empty` and took the whole projection
+ * down with it: both drift tests have been red since that commit, and the checked-in artifact predates it.
+ */
+function parseExecutionRequestDeclaration(source) {
+  const at = source.indexOf(`export const ${EXECUTION_REQUEST_DECLARATION} = Object.freeze({`);
+  if (at < 0) fail("execution_request_declaration_unreadable");
+  const end = source.indexOf("\n} satisfies Record<", at);
+  if (end < 0) fail("execution_request_declaration_unterminated");
+  // A row list starts at exactly two spaces under the object literal, so `^ {2}<id>: ` is the key line and nothing a
+  // row contains can spell it.
+  const ids = [...source.slice(at, end).matchAll(/^ {2}([a-z0-9_]+): /gmu)].map((match) => match[1]);
+  if (ids.length === 0) fail("execution_request_declaration_empty");
+  return assertUnique(ids, "execution_request_declaration_duplicates");
+}
+
+/**
+ * The ids `validateExecutionRequestEnvelope` admits, read as the CONSTRUCTION that makes them the declaration's own.
+ *
+ * 777bc797 ("an execution envelope answers to one requirement set, whatever action it names") replaced the per-action
+ * comparisons with one requirement list whose `unknown_action` row asks `isExecutionAction`, over a set built from the
+ * argument-rules declaration. A set that stops being that declaration's keys - or an envelope that stops refusing an id
+ * it does not carry - is a different shape, and this reader fails closed instead of reading it as a narrower surface.
+ */
+function parseEnvelopeAdmission(source, declarationActionIds) {
+  const derivedSet = new RegExp(
+    `const EXECUTION_ACTIONS\\b[^=\\n]*=\\s*new Set\\(Object\\.keys\\(${EXECUTION_REQUEST_DECLARATION}\\)\\)`,
+    "u",
+  );
+  if (!derivedSet.test(source)) fail("execution_request_envelope_action_set_not_declaration_derived");
+  const body = source.match(/function validateExecutionRequestEnvelope[\s\S]*?\n\}\n/u)?.[0] ?? "";
+  if (body.length === 0) fail("execution_request_envelope_unreadable");
+  if (!body.includes("isExecutionAction(value.action)") || !body.includes('return "unknown_action";'))
+    fail("execution_request_envelope_not_declaration_derived");
+  return [...declarationActionIds];
 }
 
 function parseExecutionRequestUnion(source) {
@@ -521,14 +555,8 @@ export function deriveActionSourceProjection(sources) {
   const adapterActionIds = assertUnique(parseHostAdapters(sources.host_registry), "adapter_duplicates");
   const toolActionIds = assertUnique(parseHostToolNames(sources.host_registry), "tool_name_duplicates");
   const toolRouteActionIds = parseHostToolRoutes(sources.host_game_tools);
-  const requestValidatorActionIds = assertUnique(
-    parseLiteralChecks(sources.host_protocol, "validateExecutionRequest", "!=="),
-    "request_validator_duplicates",
-  );
-  const envelopeValidatorActionIds = assertUnique(
-    parseLiteralChecks(sources.host_protocol, "validateExecutionRequestEnvelope", "==="),
-    "envelope_validator_duplicates",
-  );
+  const requestValidatorActionIds = parseExecutionRequestDeclaration(sources.host_protocol);
+  const envelopeValidatorActionIds = parseEnvelopeAdmission(sources.host_protocol, requestValidatorActionIds);
   const executionRequestUnionActionIds = assertUnique(
     parseExecutionRequestUnion(sources.host_protocol),
     "execution_request_union_duplicates",
