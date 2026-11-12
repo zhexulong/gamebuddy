@@ -13,6 +13,7 @@ import {
   csrfToken,
   draft,
   game,
+  installedRoot,
   root,
   openGameDrawer,
   jsonOk,
@@ -24,7 +25,7 @@ test("a first run activates the lifecycle with a fieldless POST before launch is
   let activationBody: string | null | undefined;
   let stateReads = 0;
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(installedRoot) }),
   );
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
@@ -39,11 +40,11 @@ test("a first run activates the lifecycle with a fieldless POST before launch is
   });
   await page.route("**/api/composed-reference-game/v1/state", (route) => {
     stateReads += 1;
-    const projection = activationRequests === 0 ? root.game : stagedGame;
+    const projection = activationRequests === 0 ? installedRoot.game : stagedGame;
     return route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ ...root, game: projection }),
+      body: JSON.stringify({ ...installedRoot, game: projection }),
     });
   });
   await page.route("**/api/tavern/v1/draft", (route) =>
@@ -110,6 +111,11 @@ test("a launch refused as not staged names activation as the reason instead of a
  * registered installation, so with none bound the attempt can only be refused - the player has not set the
  * game up yet, and the installation panel on this same surface is where they do that.
  *
+ * The surface now withholds that press before it is made (`game-panel-forward-path.spec.ts`), so this journey
+ * mounts the one shape the sentence still covers: a projection read that said the installation was registered
+ * and an admission that found it gone. That is a real race - the read is a snapshot and the registration is
+ * Host state - and the player must read it as the prerequisite rather than as a fault.
+ *
  * The failure this catches: that refusal rendered as "companion play could not be enabled. The latest
  * authoritative game state is shown." - a dead-end fault over a state the player fixes on this very screen.
  * It now states the missing prerequisite and names the control that supplies it, the way the cabin handoff
@@ -117,7 +123,7 @@ test("a launch refused as not staged names activation as the reason instead of a
  */
 test("an activation refused for a missing installation reads as the prerequisite, and lays out as one status line", async ({ page }) => {
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(installedRoot) }),
   );
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
@@ -130,7 +136,7 @@ test("an activation refused for a missing installation reads as the prerequisite
     }),
   );
   await page.route("**/api/composed-reference-game/v1/state", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(installedRoot) }),
   );
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),
@@ -187,7 +193,7 @@ test("an activation refusal stays a drawer fact with its own reason, and an unmo
   ];
   let current = scenarios[0];
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(installedRoot) }),
   );
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
@@ -200,7 +206,7 @@ test("an activation refusal stays a drawer fact with its own reason, and an unmo
     }),
   );
   await page.route("**/api/composed-reference-game/v1/state", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(root) }),
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(installedRoot) }),
   );
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(draft) }),

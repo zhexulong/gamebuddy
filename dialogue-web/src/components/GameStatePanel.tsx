@@ -409,21 +409,30 @@ export function GameStatePanel({
                         actually take, so it is the only one drawn at full weight; setup answers
                         `gameActivationRequired` until activation has staged the attempt, which is
                         why it is offered to the player who says companion play is already enabled
-                        instead of standing beside the button that precedes it. */}
+                        instead of standing beside the button that precedes it.
+
+                        The press is withheld - not the control - while the Host holds no ready
+                        installation registration: activation reserves and stages the owned Player
+                        Host against that registration and would answer
+                        `stardew_bootstrap_registration_unavailable`, a refusal this surface can
+                        prevent instead of reporting. The sentence under it names the missing fact
+                        and the panel that supplies it, so the disabled control is a stated reason
+                        rather than a grey button. */}
                     <div className="game-actions">
-                      {stagingAction === "activate" ? (
+                      {stagingAction === "activate" && (
                         <button
                           type="button"
                           className="game-action primary"
                           data-testid="game-activate"
-                          disabled={lifecycle.activation.active}
+                          disabled={lifecycle.activation.active || session.controls.installationRequired}
                           aria-label={labels.gameActivation}
                           onClick={handlers.activate}
                         >
                           <Power size={16} aria-hidden="true" />
                           {labels.gameActivation}
                         </button>
-                      ) : (
+                      )}
+                      {stagingAction === "setup" && (
                         <button
                           type="button"
                           className="game-action primary"
@@ -439,6 +448,16 @@ export function GameStatePanel({
                     <p className="game-subpanel-note">
                       {stagingAction === "activate" ? labels.gameActivationHint : labels.gameSetupHint}
                     </p>
+                    {session.controls.installationRequired && (
+                      <p
+                        className="game-status"
+                        data-tone="info"
+                        role="status"
+                        data-testid="game-installation-required"
+                      >
+                        {labels.gameInstallationRequired}
+                      </p>
+                    )}
                     {stagingAction === "activate" && lifecycle.setup.available && (
                       <details className="custom-disclosure" data-testid="game-guide-step-one-alternate">
                         <summary>
@@ -871,6 +890,12 @@ function GameFact({ label, dotTone, children }: { label: string; dotTone?: Statu
  * cabin read that failed because no game session exists yet is the guide's own
  * next step ("here is what has to happen first"), while a read that failed with
  * a session in hand is a real failure and says so.
+ *
+ * The controls are not decided here: `deriveCabinHandoffActions`
+ * (`../game-lifecycle-controls`) names the one step each state offers, and the
+ * handoff's totality gate drives every kind through it. The panel renders that
+ * step, so a state cannot be reachable with nothing to press and no sentence
+ * saying what happens next.
  */
 function CabinHandoff({
   state,
@@ -878,6 +903,7 @@ function CabinHandoff({
   awaitsSession,
   onConfirm,
   onRefresh,
+  onReread,
 }: {
   state: CabinViewState;
   labels: Messages;
@@ -890,12 +916,6 @@ function CabinHandoff({
    * runs from one `useEffect` keyed on `ready` (`GameSurface.tsx:146-150`), so a player who started the game
    * and loaded the farm SAW `stardewCabinsUnavailable` forever - there is no poll, no game event stream, and
    * there was no control here to ask again. The only recovery was reloading the browser, which loses the
-   *
-   * The controls are not decided here: `deriveCabinHandoffActions`
-   * (`../game-lifecycle-controls`) names the one step each state offers, and the
-   * handoff's totality gate drives every kind through it. The panel renders that
-   * step, so a state cannot be reachable with nothing to press and no sentence
-   * saying what happens next.
    * Game surface's own attachment.
    */
   onRefresh(): void;
@@ -906,10 +926,10 @@ function CabinHandoff({
    */
   onReread(): void;
 }) {
+  const actions = deriveCabinHandoffActions(state);
   return (
     <section className="stardew-cabin-handoff game-subpanel" aria-label={labels.stardewCabinSelection}>
       <h4 className="section-subtitle">{labels.stardewCabinSelection}</h4>
-      onReread,
       {state.kind === "loading" && <p className="game-subpanel-note">{labels.stardewCabinsLoading}</p>}
       {state.kind === "missing" && (
         <p className="game-status" data-tone="action" role="status">
@@ -926,7 +946,6 @@ function CabinHandoff({
             {labels.stardewCabinsUnavailable}
           </p>
         ))}
-      const actions = deriveCabinHandoffActions(state);
       {/* What the refresh just found, stated where the control is: a player who has built
           a cabin and pressed again needs to know the click was read, and that the answer
           had not changed yet. It sits between the sentence and the control, so neither of
@@ -956,6 +975,21 @@ function CabinHandoff({
           {labels.stardewCabinConfirmationUncertain}
         </p>
       )}
+      {/* The one honest step out of an unconfirmed confirmation. It is not the cabin read:
+          that would re-offer a confirm button the Host refuses for the life of this attempt
+          (`stardew_cabin_confirmation_conflict`, because the confirmed choice is consumed).
+          This sends no handoff command at all, and the sentence beside it says what it can and
+          cannot change, so a press that finds the same answer is a stated outcome rather than
+          a control that quietly did nothing. */}
+      {actions.includes("read_game_again") && (
+        <>
+          <button type="button" className="game-secondary-action" onClick={onReread}>
+            <RefreshCw size={16} aria-hidden="true" />
+            {labels.stardewCabinCheckGame}
+          </button>
+          <p className="game-subpanel-note">{labels.stardewCabinCheckGameHint}</p>
+        </>
+      )}
       {state.kind === "admitted" && (
         <p className="game-status" data-tone="success" role="status">
           {labels.stardewManifestAdmitted}
@@ -975,21 +1009,6 @@ function CabinHandoff({
               >
                 <Check size={16} aria-hidden="true" />
                 {labels.stardewCabinConfirm}
-                {/* The one honest step out of an unconfirmed confirmation. It is not the cabin read:
-          that would re-offer a confirm button the Host refuses for the life of this attempt
-          (`stardew_cabin_confirmation_conflict`, because the confirmed choice is consumed).
-          This sends no handoff command at all, and the sentence beside it says what it can and
-          cannot change, so a press that finds the same answer is a stated outcome rather than
-          a control that quietly did nothing. */}
-                {actions.includes("read_game_again") && (
-                  <>
-                    <button type="button" className="game-secondary-action" onClick={onReread}>
-                      <RefreshCw size={16} aria-hidden="true" />
-                      {labels.stardewCabinCheckGame}
-                    </button>
-                    <p className="game-subpanel-note">{labels.stardewCabinCheckGameHint}</p>
-                  </>
-                )}
               </button>
             </li>
           ))}

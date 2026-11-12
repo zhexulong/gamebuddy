@@ -27,8 +27,25 @@ import type { GameBrowserStateV1, StardewCabinChoiceV1 } from "./composed-refere
  * exact moment a first-run player confirmed their installation, and the surface
  * offered no control at all.
  *
+ * One lower bound is not a client-side guess but the same registration the Host
+ * itself reads: activation cannot succeed before the session holds a ready Stardew
+ * installation registration. It reserves and stages the owned Player Host against
+ * that registration and answers `stardew_bootstrap_registration_unavailable`
+ * without it. The projection publishes that exact fact as `prerequisites: "met"`
+ * (`game-browser-state-provider.ts` reads the one `readInstallationView`
+ * registration the launch path also gates on), so gating on it is the Host's fact
+ * and not a second source of truth about installation state. Offering the control
+ * enabled without it is a control whose only possible answer is a refusal, which
+ * is what this bound removes.
+ *
+ * Setup is deliberately not gated the same way: it is offered behind the guide's
+ * "already enabled companion play?" disclosure, and the Host's answer there
+ * (`game_prerequisites_missing`) already reads as the prerequisite rather than as
+ * a fault. Gating it would remove the one escape a player who believes their
+ * attempt is already staged needs.
+ *
  * A client-side guard must not add a further condition of its own here: these
- * three flags are exactly what the Host's projection distinguishes, and the
+ * flags are exactly what the Host's projection distinguishes, and the
  * cross-boundary test in `tests/game-lifecycle-launch-gate.test.mjs` feeds a
  * real Host projection through this function.
  */
@@ -41,6 +58,13 @@ export type GameLifecycleControlAvailability = Readonly<{
    * bind, present exactly when `launchAvailable` is true.
    */
   launchGeneration: number | null;
+  /**
+   * The published fact that withholds the activation control, named rather than
+   * left to a second guess, or `null` when it is offered. `AGENTS.md`'s
+   * observable-state rule: the condition the surface can distinguish is a field
+   * its caller can act on, not an absence of flags.
+   */
+  activationBlockedBy: "installation_not_registered" | null;
 }>;
 
 const NO_CONTROLS: GameLifecycleControlAvailability = Object.freeze({
@@ -48,6 +72,9 @@ const NO_CONTROLS: GameLifecycleControlAvailability = Object.freeze({
   setupAvailable: false,
   launchAvailable: false,
   launchGeneration: null,
+  // No projection at all is not evidence about the installation: the session
+  // derivation answers that shape with `no_projection`.
+  activationBlockedBy: null,
 });
 
 export function deriveGameLifecycleControlAvailability(
@@ -60,12 +87,14 @@ export function deriveGameLifecycleControlAvailability(
   // derivation below, which is the state that says so.
   const nothingRunning = instance.status === "none";
   const launchable = nothingRunning && prerequisites.status === "met" && instance.generation >= 1;
+  const installationRegistered = prerequisites.status === "met";
   const preActivation = nothingRunning && !launchable;
   return Object.freeze({
-    activationAvailable: preActivation && instance.generation < 1,
+    activationAvailable: preActivation && instance.generation < 1 && installationRegistered,
     setupAvailable: preActivation,
     launchAvailable: launchable,
     launchGeneration: launchable ? instance.generation : null,
+    activationBlockedBy: preActivation && !installationRegistered ? "installation_not_registered" : null,
   });
 }
 
@@ -100,7 +129,9 @@ export type GameSessionPhase =
    * already established for `in_play`.
    */
   | "no_projection"
-  /** No attachment, nothing running, nothing staged: activation and setup belong here. */
+  /** No attachment, nothing running, nothing staged: the staging controls belong here once
+   * the Host holds a ready installation registration, and the installation step is the one
+   * offered instead of them while it does not. */
   | "pre_activation"
   /** No attachment, activated and ready: the launch control is what starts the Player Host. */
   | "activated_not_launched"
@@ -215,6 +246,12 @@ export type GameSessionControls = Readonly<{
    */
   restartRequired: boolean;
   /**
+   * Whether the surface must state that the player's game folder has to be
+   * registered before companion play can be enabled, and withhold the activation
+   * control's press. True exactly while `activationBlockedBy` names that fact.
+   */
+  installationRequired: boolean;
+  /**
    * Whether this state's step is the panel's own read of the game, in place of the
    * getting-going guide. True exactly in `game_not_read`.
    */
@@ -270,6 +307,7 @@ export function deriveGameSessionControls(
       cancelResumeAvailable: false,
       createAvailable: false,
       reopenAvailable: false,
+      installationRequired: false,
       ...flags,
       forwardActions: Object.freeze([...forwardActions]),
       waitingForGame: phase === "launching" || phase === "running_without_attachment",
@@ -346,7 +384,12 @@ export function deriveGameSessionControls(
   if (instance.status !== "none") return build("running_without_attachment", {}, ["wait_for_game"]);
   const lifecycle = deriveGameLifecycleControlAvailability(view);
   if (lifecycle.launchAvailable) return build("activated_not_launched", {}, ["launch"]);
-  return build("pre_activation", {}, lifecycle.activationAvailable ? ["activate", "setup"] : ["setup"]);
+  // Step 1 is still the activation step, and the reason it cannot be pressed yet is
+  // carried as a fact the panel states rather than left to the refusal a press earns.
+  return build("pre_activation", { installationRequired: lifecycle.activationBlockedBy !== null }, [
+    "activate",
+    "setup",
+  ]);
 }
 
 /** Every phase this derivation can produce, for the totality gate to enumerate. */
@@ -424,7 +467,15 @@ export const GAME_SESSION_INPUTS: Readonly<Record<GameSessionPhase, Parameters<t
       });
     return Object.freeze({
       no_projection: input(null),
-      pre_activation: input(unstarted()),
+      // The phase's control-bearing shape: a ready installation registration and nothing
+      // staged is where activation and setup are offered. The same phase with the
+      // registration absent answers with `installationRequired` and the installation step
+      // instead - the shape `tests/game-panel-forward-path.spec.ts` mounts.
+      pre_activation: input(
+        unstarted({
+          prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [] },
+        }),
+      ),
       activated_not_launched: input(
         game({
           instance: { status: "none", gameTitle: null, generation: 1 },

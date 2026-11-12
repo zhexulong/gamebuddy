@@ -67,6 +67,8 @@ const en = {
     "Companion play needs a Stardew Valley installation set up for this session, and none is yet. Choose your game folder in Game installation on this page, then enable companion play again.",
   gameActivationUnavailable: "This build cannot enable companion play. Update GameBuddy or reload the page.",
   gameActivationRequired: "Companion play is not ready yet. Enable companion play, then try again.",
+  gameInstallationRequired:
+    "Companion play needs a Stardew Valley installation first. Choose your game folder in Game installation on this page, and this step offers companion play once it is registered.",
   gameStop: "Stop game",
   gameStopFailed: "The game stop result is uncertain. The latest authoritative game state is shown.",
   gameDisconnect: "Disconnect game",
@@ -135,11 +137,11 @@ const en = {
   stardewManifestAdmitted: "Cabin request admitted. Waiting for the next game setup step.",
   stardewCabinConfirmationUncertain:
     "Confirmation is still awaiting verification. Do not confirm again. Wait for recovery or reload the page to recover manually.",
-
-  // Navigation & Drawers
   stardewCabinCheckGame: "Check the game again",
   stardewCabinCheckGameHint:
     "This only reads the game: the cabin confirmation is never sent a second time. If it had landed, the game shows up here as connected; if it had not, this step keeps waiting for recovery.",
+
+  // Navigation & Drawers
   chats: "Chats",
   characters: "Characters",
   worldInfo: "World Info",
@@ -1269,6 +1271,8 @@ const zh: Messages = {
     "伙伴陪玩需要先确定《星露谷物语》的安装位置，而现在还没有。请在本页的「游戏安装」里选择游戏文件夹，然后再次启用伙伴陪玩。",
   gameActivationUnavailable: "当前版本无法启用伙伴陪玩。请更新 GameBuddy 或重新加载页面。",
   gameActivationRequired: "伙伴陪玩尚未准备完成。请先启用伙伴陪玩，然后重试。",
+  gameInstallationRequired:
+    "伙伴陪玩需要先有一个《星露谷物语》安装。请在本页的「游戏安装」里选好游戏目录；登记完成后，这一步就会出现伙伴陪玩的按钮。",
   gameStop: "停止游戏",
   gameStopFailed: "游戏停止结果尚不确定；当前显示的是最新权威游戏状态。",
   gameDisconnect: "断开游戏连接",
@@ -1314,13 +1318,13 @@ const zh: Messages = {
   stardewCabinConfirm: "确认小屋",
   stardewManifestAdmitted: "小屋请求已接纳，正在等待下一步游戏设置。",
   stardewCabinConfirmationUncertain: "确认结果仍在等待验证。请勿再次确认；等待恢复，或重新加载页面进行手动恢复。",
+  stardewCabinCheckGame: "再查一次游戏状态",
+  stardewCabinCheckGameHint:
+    "这一步只重新读取游戏状态，不会再次发送小屋确认。如果确认已经生效，这里会显示游戏已连接；如果还没有，这一步会继续等待恢复。",
 
   // Navigation & Drawers
   chats: "会话",
   characters: "角色",
-  stardewCabinCheckGame: "再查一次游戏状态",
-  stardewCabinCheckGameHint:
-    "这一步只重新读取游戏状态，不会再次发送小屋确认。如果确认已经生效，这里会显示游戏已连接；如果还没有，这一步会继续等待恢复。",
   worldInfo: "世界书",
   persona: "用户设定",
   memory: "记忆",

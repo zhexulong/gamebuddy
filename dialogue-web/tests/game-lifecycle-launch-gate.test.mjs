@@ -143,6 +143,7 @@ test("an activated but not yet launched attempt offers the player the launch con
     setupAvailable: false,
     launchAvailable: true,
     launchGeneration: 1,
+    activationBlockedBy: null,
   });
 });
 
@@ -158,24 +159,41 @@ test("a launch actually in flight still projects launching and offers no launch 
     setupAvailable: false,
     launchAvailable: false,
     launchGeneration: null,
+    activationBlockedBy: null,
   });
 });
 
-test("before activation the coordinator defers to the facade and the client still offers activation", async () => {
+test("before the player's game folder is registered the activation control is withheld and its reason is named", async () => {
   const idleFacadeView = await facadeViewFor("idle");
   assert.deepEqual(idleFacadeView.playerHost, { state: "not_started", ownership: "none" });
   // An inactive lifecycle is not a state the coordinator owns.
   assert.equal(composeCoordinatorRoleLifecycleView("inactive", idleFacadeView), idleFacadeView);
 
+  // No installation reader is mounted, which is the same projection a session with no bound
+  // registration publishes: activation reserves and stages the owned Player Host *against that
+  // registration* and answers `stardew_bootstrap_registration_unavailable` without one.
   const gameState = await readState(idleFacadeView, { status: "none", generation: 0 });
   assert.equal(gameState.game.prerequisites.status, "unknown");
   assert.deepEqual(gameState.game.instance, { status: "none", gameTitle: null, generation: 0 });
+  // The client's own gate: the press is withheld, and the fact that withholds it is named
+  // rather than left to the refusal the press would earn.
   assert.deepEqual(clientControls(gameState), {
-    activationAvailable: true,
+    activationAvailable: false,
     setupAvailable: true,
     launchAvailable: false,
     launchGeneration: null,
+    activationBlockedBy: "installation_not_registered",
   });
+  // The step is still step 1 - the phase does not move - and the panel states why.
+  const controls = deriveGameSessionControls({
+    ready: true,
+    game: gameState,
+    resumeFailureSurface: false,
+    resumeAttemptFailed: false,
+  });
+  assert.equal(controls.phase, "pre_activation", "nothing is staged, so the phase is unchanged");
+  assert.deepEqual([...controls.forwardActions], ["activate", "setup"]);
+  assert.equal(controls.installationRequired, true, "the panel withholds the press and states the reason");
 });
 
 test("a running lifecycle stays running and is never a launch-from-idle candidate", async () => {
@@ -200,6 +218,7 @@ test("a running lifecycle stays running and is never a launch-from-idle candidat
     setupAvailable: false,
     launchAvailable: false,
     launchGeneration: null,
+    activationBlockedBy: null,
   });
 });
 
@@ -232,6 +251,7 @@ test("a confirmed installation with no staged attempt still offers the player ac
     setupAvailable: true,
     launchAvailable: false,
     launchGeneration: null,
+    activationBlockedBy: null,
   });
 });
 
@@ -514,6 +534,7 @@ test("a player game the Host has not read offers the read, not setup or activati
     setupAvailable: false,
     launchAvailable: false,
     launchGeneration: null,
+    activationBlockedBy: null,
   });
 
   const controls = deriveGameSessionControls({

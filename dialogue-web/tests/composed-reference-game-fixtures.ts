@@ -146,6 +146,28 @@ export const stagedGame = {
   },
 };
 
+/**
+ * The projection of a player who has chosen their game folder and not yet enabled companion
+ * play: the Host holds a ready installation registration (`prerequisites: "met"`, which
+ * `game-browser-state-provider.ts` derives from the same registration the activation path
+ * gates on) and nothing is staged (`instance.generation` 0).
+ *
+ * It is the only shape in which the staging controls can succeed at all: activation reserves
+ * and stages the owned Player Host against that registration and refuses without it, so a
+ * journey that means "press Enable companion play" has to mount this one rather than the
+ * fresh-product `root`.
+ */
+export const installedGame = {
+  ...game,
+  game: {
+    ...game.game,
+    prerequisites: { status: "met", detectedGame: "Stardew Valley", missingItems: [] },
+  },
+};
+
+/** The composed root around `installedGame`: the Chat half, then the installed Game projection. */
+export const installedRoot = { ...root, game: installedGame };
+
 export const jsonOk = (body: unknown) => ({
   status: 200,
   contentType: "application/json",
