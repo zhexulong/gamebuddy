@@ -58,6 +58,7 @@
     "use_raft",
     "mount_transport",
     "enter_mine",
+    "use_mine_ladder",
     "enter_exit",
     "till_soil",
     "pickup_forage",
@@ -308,8 +309,8 @@
           "kind": "native",
           "file": "StardewValley.Locations/MineShaft.cs",
           "signature": "public override bool checkAction(Location tileLocation, xTile.Dimensions.Rectangle viewport, Farmer who)",
-          "sensitivity": "mp-insensitive",
-          "modeNeutralReason": "opens the level own ExitMine question on the local player current tile; the question is per-actor UI and the body reads no multiplayer token"
+          "sensitivity": "mp-observational",
+          "observedEffect": "the whole switch sits inside `if (who.IsLocalPlayer)`, and this seam has one caller in the product: the Mod's own ladder dispatch, which passes `Game1.player` (`farmhandexecutioncontroller.transportactions.cs`, `ExecuteUseMineLadder`, `shaft.checkAction(ladder, Game1.viewport, Game1.player)`). `Game1.player` IS the local player on any client, so the guard is true on every dispatch this action makes and no branch can differ - the read observes which client is driving, it does not select an outcome."
         },
         {
           "kind": "native",
