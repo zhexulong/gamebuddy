@@ -7,13 +7,21 @@
  * contracts from the modules that declare themselves one. This suite measures that
  * population, proves every rule fires on a fixture, and holds the drift ledger.
  *
- * The proofs behind it, each seen red on a copy of the tree outside the repository and green
- * again once removed: a new module importing a surface is named by `no-module-to-surface`
- * (`zone-probe.ts -> components/ZoneProbeSurface.tsx`); a surface that declares a wire
- * contract is named as claimed by two zones; deleting both chat declarations stops the run
- * with "no module declares a chat wire contract"; and the fixture below loses the cycle
- * injection and names the rule it could no longer fire.
+ * Every proof below was seen red on a copy of the tree outside the repository and green again once
+ * the injection was removed.
  *
+ * red-proof: inject  a new module importing a surface -> `no-module-to-surface` names it and both
+ *   ends (`zone-probe.ts -> components/ZoneProbeSurface.tsx`), because the cruiser reads the whole
+ *   tree rather than the entry
+ * red-proof: inject  a surface that also declares a wire contract -> `module <name> is claimed by 2
+ *   zones (<zone>,<zone>): one module, one zone`, where the zones a module is claimed by are read
+ *   from the same declaration the contract list is
+ * red-proof: inject  both chat wire-contract declarations deleted -> the run stops with `no module
+ *   declares a chat wire contract: the contract zone is read from the declarations, so an empty one
+ *   is a blocked reading rather than a gate that agrees with itself`
+ * red-proof: inject  the fixture below loses its cycle pair -> `the fixture must fire every rule the
+ *   config declares` names the rule it could no longer fire, so a rule that stopped firing cannot
+ *   pass as one the fixture never needed
  * red-proof: inject  `import "./components/ChatSurface"` added to game-lifecycle-controls.ts ->
  *   `✖ current cross-surface drift is exactly the documented ledger`, found `no-module-to-surface`
  *   naming game-lifecycle-controls.ts and components/ChatSurface.tsx, exit 1

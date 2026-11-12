@@ -1952,3 +1952,25 @@ line is the partition or it is not a reading.
 
 `zero-population-pass`, `unlisted` and `untracked_not_counted` stay off the partition on purpose: each cuts across it (a
 proven gate can also name no population field), so adding one to the sum would make a correct line look wrong.
+
+### The two prose proofs: re-spelled, and the reader left alone
+
+The two files the fifteenth batch re-spelled carried their proofs twice: the marker form from that batch, and the prose
+above it that said the same thing in a grammar the reader ignores. Both prose blocks are gone, and every fact they stated
+is in a marker:
+
+| gate | markers | what they state |
+| --- | --- | --- |
+| `check:publint` | `tools/check-publint.test.mjs:10` (inject), `:13` (history) | the pre-fix tolerance branch excusing an exit no parsed message explains; and, with only npm's `bun` shims installed, the run that printed `publint exited null but every failure maps to a known vendor baseline gap` at exit 0 having read no message, now `publint_not_measured:executable_unresolvable:bun` at exit 2 |
+| `test:dialogue-web-boundaries` | `tools/check-dialogue-web-boundaries.test.mjs:13, :16, :19, :22` (inject) | a new module importing a surface named by `no-module-to-surface` (`zone-probe.ts -> components/ZoneProbeSurface.tsx`); a surface that declares a wire contract answering `module <name> is claimed by 2 zones`; both chat declarations deleted stopping the run with `no module declares a chat wire contract`; the fixture below losing its cycle pair and naming the rule it could no longer fire |
+
+The reader was **not** widened, and this is the finding to record: the documented convention in this file and in
+`tools/audit-gate-red-proofs.mjs`'s own header is `red-proof: <kind> <claim>` - keyword, colon, **space**, kind - and the
+anchor `^red-proof:\s+[A-Za-z][A-Za-z-]*\s` accepts exactly that, so the files were the side that disagreed. Two smaller
+constraints the transcription had to respect, both of them the reader's declared behaviour rather than accidents: a
+marker's claim may run at most three comment lines (`MARKER_WINDOW`), and a marker consumes its window outright, so
+consecutive markers are written three lines apart or the second one is read as the first one's tail.
+
+The prose that remains above the markers is a method note - each proof was seen red on a copy of the tree outside the
+repository and green again once the injection was removed - and states no claim of its own, so there is still one
+spelling per fact.

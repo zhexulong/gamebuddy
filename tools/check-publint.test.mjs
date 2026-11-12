@@ -7,19 +7,12 @@
  * `shell: false` starts no shim. These cases drive the gate's own decision function and its real PATH search, so
  * "the tool never ran" can never again be read as "the tool reported nothing".
  *
- * Measured red (inject): restoring the pre-fix tolerance branch (`blocked.length === 0 && activeGaps.length > 0` with no
- * requirement on the parsed message count) -> the case "an unexplained non-zero exit is a failure, not a tolerated gap"
- * fails on `passed !== failed` (tools/check-publint.test.mjs)
- * Measured red (history): the default run on a machine with only npm's `bun` shims -> exit 0 printing
- * `publint exited null but every failure maps to a known vendor baseline gap`; the run now prints
- * `publint_not_measured:executable_unresolvable:bun …` and exits 2 (tools/check-publint.mjs)
- *
  * red-proof: inject  the tolerance branch restored to `blocked.length === 0 && activeGaps.length > 0`, so an exit no
  *   parsed message explains is excused unseen -> `✖ an unexplained non-zero exit is a failure, not a tolerated gap`,
  *   `'passed' !== 'failed'`, exit 1 (tools/check-publint.test.mjs)
- * red-proof: history  the shipped `spawnSync("bun", …)` default run printed `publint exited null but every failure
- *   maps to a known vendor baseline gap` at exit 0 reading no publint message; the same machine now prints
- *   `publint_not_measured:executable_unresolvable:bun - no file this process can spawn` at exit 2
+ * red-proof: history  with only npm's `bun` shims installed, the shipped `spawnSync("bun", …)` default run printed
+ *   `publint exited null but every failure maps to a known vendor baseline gap` at exit 0 having read no message
+ *   (tools/check-publint.mjs); it now prints `publint_not_measured:executable_unresolvable:bun - no file this process can spawn` at exit 2
  */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
