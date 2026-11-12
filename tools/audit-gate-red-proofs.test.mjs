@@ -162,6 +162,46 @@ test("a marker whose kind is not one the ledger reads is reported, not skipped a
   }
 });
 
+test("a proof's pointer is executed when a runner names the file or the project directory it sits in", () => {
+  const files = {
+    "integrations/stardew/tests/Project/InjectedTests.cs": "// the injected fact\n",
+    "integrations/stardew/tests/Elsewhere/Unrun.cs": "// a project no command runs\n",
+  };
+  // The declaration lives in `gateRedProofs`, which is where a gate whose command runs a project keeps its proof:
+  // `dotnet test <project>` names no file of its own.
+  const tree = (pointer) =>
+    makeTree(files, {
+      scripts: { "check:a": "dotnet test integrations/stardew/tests/Project" },
+      gateRedProofs: {
+        "check:a": `inject a failing fact compiled beside the real sources -> \`Failed: 1, Passed: 1\` and exit 1 (${pointer})`,
+      },
+    });
+
+  // `dotnet test <project directory>` compiles every file beneath it, so the fact's own file is run.
+  const executed = tree("integrations/stardew/tests/Project/InjectedTests.cs");
+  try {
+    const reading = auditGateRedProofs({ root: executed });
+    assert.equal(statusOf(reading, "check:a"), "proven");
+    assert.deepEqual(reading.unexecutedProofs, []);
+  } finally {
+    rmSync(executed, { recursive: true, force: true });
+  }
+
+  // The injection: the same marker naming a project nothing runs. Proven still, but the census must say the
+  // proof points at a file no command reaches - which is the reading this derivation exists for.
+  const orphaned = tree("integrations/stardew/tests/Elsewhere/Unrun.cs");
+  try {
+    const reading = auditGateRedProofs({ root: orphaned });
+    assert.equal(statusOf(reading, "check:a"), "proven");
+    assert.deepEqual(
+      reading.unexecutedProofs.map((entry) => entry.pointer),
+      ["integrations/stardew/tests/Elsewhere/Unrun.cs"],
+    );
+  } finally {
+    rmSync(orphaned, { recursive: true, force: true });
+  }
+});
+
 test("the population is the declared gate scripts plus the gate files no script names", () => {
   const root = makeTree({
     "tools/check-a.mjs": gateSource(

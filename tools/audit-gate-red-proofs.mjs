@@ -241,8 +241,32 @@ function declaredRunnerText(root) {
   return `${Object.values(parsed.scripts ?? {}).join("\n")}\n${workflowText}`;
 }
 
+/**
+ * Whether something this repository runs reads this pointer.
+ *
+ * A runner names either the FILE (`node --test tools/x.test.mjs`) or the PROJECT DIRECTORY it compiles
+ * (`dotnet test integrations/stardew/tests/GameBuddy.Stardew.Core.Tests`), and the second kind runs every C# file
+ * beneath it. Matching the file alone reported the falsifiers behind `test:stardew:core` and
+ * `test:stardew:integration` as `proven_but_nothing_runs` while `dotnet test` had been compiling them on every run:
+ * a warning about the reader, not about the proof. The directory rule stays on the C# project runner rather than on
+ * every command that names a directory, because a tool that merely parses a tree (`depcruise ... tools`) is not what
+ * the claim `nothing runs this` is about.
+ */
+function isExecuted(pointer, runnerText, dotnetProjects) {
+  if (runnerText.includes(pointer)) return true;
+  if (!pointer.endsWith(".cs")) return false;
+  return dotnetProjects.some((directory) => pointer.startsWith(`${directory}/`));
+}
+
+/** The project directories every `dotnet test`/`dotnet build` command in a runner names. */
+function dotnetProjectDirectories(runnerText) {
+  return [...runnerText.matchAll(/dotnet\s+(?:test|build)\s+([\w./-]+)/gu)]
+    .map((match) => match[1].replace(/\/+$/u, ""))
+    .map((project) => (project.endsWith(".csproj") ? project.slice(0, project.lastIndexOf("/")) : project));
+}
+
 /** One gate's record: what it owns, what it claims, and whether those claims can be read. */
-function classify({ root, gate, scriptNames, runnerText, declarations }) {
+function classify({ root, gate, scriptNames, runnerText, dotnetProjects, declarations }) {
   const owned = [...new Set([...gate.entryFiles, ...siblingFalsifiers(root, gate.entryFiles)])]
     .filter((file) => existsSync(join(root, file)))
     .sort();
@@ -271,7 +295,7 @@ function classify({ root, gate, scriptNames, runnerText, declarations }) {
     unreadable: [...unreadable, ...runners.unreadable],
     unresolved: pointers.filter((pointer) => !existsSync(join(root, pointer))),
     // A proof nothing runs is a proof that has stopped holding; reported beside the verdict, not in it.
-    unexecuted: pointers.filter((pointer) => !runnerText.includes(pointer)),
+    unexecuted: pointers.filter((pointer) => !isExecuted(pointer, runnerText, dotnetProjects)),
   };
 }
 
@@ -339,8 +363,9 @@ export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
   const scripts = gates.filter((gate) => gate.kind === "script");
   const scriptNames = new Set(scripts.map((gate) => gate.id));
   const runnerText = declaredRunnerText(root);
+  const dotnetProjects = dotnetProjectDirectories(runnerText);
   const declarations = declaredRedProofMarkers(root);
-  const records = gates.map((gate) => classify({ root, gate, scriptNames, runnerText, declarations }));
+  const records = gates.map((gate) => classify({ root, gate, scriptNames, runnerText, dotnetProjects, declarations }));
   const status = assignStatus(records);
   const gaps = records
     .filter((record) => !["proven", "external"].includes(status.get(record.id)))
