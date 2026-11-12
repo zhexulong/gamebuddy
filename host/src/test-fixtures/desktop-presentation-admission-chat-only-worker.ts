@@ -253,7 +253,9 @@ async function main(): Promise<void> {
     Object.freeze({ active: null, connections: Object.freeze([]), revision: `${"G".repeat(42)}A` });
 
   // Each domain gets the shape its own `read` projects: the composed root reads the world-info library as well as the
-  // Chat snapshot, and one stub cannot answer both.
+  // Chat snapshot, and one stub cannot answer both. The mocked export set is NOT hand-maintained: every name the real
+  // module publishes is republished and only the one factory is replaced, so a module that grows an export cannot make
+  // the shell that imports it die on a SyntaxError that says nothing about this fixture.
   for (const [relativePath, builder, reader] of [
     [join("tavern", "chat-management", "chat-management-service.js"), "createChatManagementService", chatSnapshot],
     [join("tavern", "memory-management", "memory-management.js"), "createMemoryManagementService", memoryState],
@@ -264,8 +266,10 @@ async function main(): Promise<void> {
     ],
     [join("tavern", "connection-service.js"), "createTavernConnectionService", connectionState],
   ] as const) {
-    await mock.module(pathToFileURL(join(moduleDirectory, "..", relativePath)).href, {
-      namedExports: { [builder]: () => Object.freeze({ ...fakeDomainService, read: reader }) },
+    const moduleUrl = pathToFileURL(join(moduleDirectory, "..", relativePath)).href;
+    const real = await import(moduleUrl);
+    await mock.module(moduleUrl, {
+      namedExports: { ...real, [builder]: () => Object.freeze({ ...fakeDomainService, read: reader }) },
     });
   }
   await mock.module(

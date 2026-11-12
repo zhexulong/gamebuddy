@@ -270,6 +270,11 @@ async function main(): Promise<void> {
     pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-management", "chat-management-service.js")).href,
     {
       namedExports: {
+        // The export set is NOT hand-maintained: the real module's names are republished and only the one factory is
+        // replaced, so a name the module grows cannot turn every case here into a SyntaxError about an export.
+        ...(await import(
+          pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-management", "chat-management-service.js")).href
+        )),
         createChatManagementService: (options: { readonly profile?: { readonly profileId?: string } }) => {
           counts.managementCreated += 1;
           observedProfileIds.management = options?.profile?.profileId ?? null;

@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { composeGameProfile, GameBrowserFixtureV1 } from "../game-browser-contract/index.js";
 import type { GamePresentationProjection } from "../integration-catalog.js";
 import { TavernBrowserFixtureV1 } from "../tavern/browser-contract/index.js";
+import * as realChatManagementService from "../tavern/chat-management/chat-management-service.js";
 import { createChatEventStream } from "../tavern/chat-event-stream.js";
 import { createTestWindowsReparseInspector } from "../windows-reparse-inspector/index.test-support.js";
 
@@ -373,6 +374,11 @@ async function main(): Promise<void> {
     pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-management", "chat-management-service.js")).href,
     {
       namedExports: {
+        // The export set is NOT hand-maintained: every name the real module publishes is republished here and only
+        // the one factory is overridden. A hand-written list drifts the moment the module grows, and the shell that
+        // imports the new name (0482b6e2 added `ChatExportTooLargeError`) dies on a SyntaxError in eight tests that
+        // say nothing about it.
+        ...realChatManagementService,
         createChatManagementService: (options: { readonly profile?: { readonly profileId?: string } }) => {
           counts.managementCreated += 1;
           observedProfileIds.management = options?.profile?.profileId ?? null;
