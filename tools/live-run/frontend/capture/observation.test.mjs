@@ -426,11 +426,39 @@ test("the census names the identity block, the memory directory and the world bo
       ["session-history", Buffer.byteLength(MEMORY_INNER)],
       ["character-closing-direction", Buffer.byteLength(CLOSING)],
     ],
-    ["scenario", "dialogue_examples", "lorebook_constant", "project-memory"],
+    ["scenario", "dialogue_examples", "lorebook_constant", "project-memory", "new-memories"],
   );
   assert.ok(
     injectionLines(lines)[0].endsWith(wanted),
     `the INJECTION line must end with the sections this request carried and the declared ones it did not:\n  want …${wanted}\n  got  ${injectionLines(lines)[0]}`,
+  );
+});
+
+test("the delta a player's own write lands in is a census section, sized like the blocks beside it", async () => {
+  /*
+   * `<new-memories>` is where a row written through the Memory panel arrives in the Chat the player is
+   * already talking to, and the census has to name it for the same reason it names the baseline block: a
+   * carrier the census skips is a carrier nothing can read. Its name comes from the emitter
+   * (`renderMemoryBlockV2(deltaMemories, "<tag>")`), never from a list kept here.
+   */
+  const delta = "#7: the watering can lives behind the mill";
+  const head = [AUTHORED_BLOCK, `<new-memories>${delta}</new-memories>`].join("\n");
+  const injection = await injectionFacts(capture([request("key-1", censusRequest(head))]), ["key-1"]);
+  const carried = injection.turns[0].census.sections.find((section) => section.name === "new-memories");
+  assert.ok(
+    carried !== undefined,
+    `the delta block must be a section, not an unremarked size:\n  ${JSON.stringify(injection.turns[0].census)}`,
+  );
+  assert.equal(carried.bytes, Buffer.byteLength(delta), "sized by its content, like the baseline memory block");
+  assert.equal(
+    injection.turns[0].census.absent.includes("new-memories"),
+    false,
+    "carried is not absent: the two readings stay distinct for this block too",
+  );
+  assert.equal(
+    injection.sections.includes("new-memories"),
+    true,
+    "and it is in the declared population, so a request without it names it as absent rather than silent",
   );
 });
 

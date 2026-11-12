@@ -4,8 +4,9 @@
  * `observation.cjs`'s census answers "which declared section did this request carry, and how big was it".
  * It cannot answer "is the fact I put in the store the fact the model received": a section can arrive
  * with the right byte count and the wrong content, and a preset's sampling values are not in the
- * messages at all. These three readings close that gap for the three things the player authors - her
- * memory, her world book, her preset - and each one is read TWICE:
+ * messages at all. These four readings close that gap for the four things the player authors - her
+ * memory in the block a NEW session folds it into, her memory in the block the session she is ALREADY
+ * talking to receives it in, her world book, her preset - and each one is read TWICE:
  *
  *   carried   a turn taken while the fact WAS bound, where it must arrive
  *   absent    a turn taken while it was NOT bound, where it must not arrive
@@ -35,8 +36,8 @@ import { join } from "node:path";
 
 const { injectionFacts, readCapturedRequests } = observation;
 
-/** The three claims, in the order a run reads them: what she remembers, what she was told, how she speaks. */
-export const INJECTION_CLAIMS = Object.freeze(["memory", "worldBook", "preset"]);
+/** The claims, in the order a run reads them: what she remembers, what she just wrote, what she was told, how she speaks. */
+export const INJECTION_CLAIMS = Object.freeze(["memory", "playerMemory", "worldBook", "preset"]);
 
 /** A claim's verdict vocabulary. `proven` is the only member that says the context reached the provider. */
 export const CLAIM_VERDICTS = Object.freeze([
@@ -137,6 +138,47 @@ function memoryReading(turn, text, messages, sections, fact) {
       texts: messages.map((message) => wireMessageText(message)),
       roles: messages.map((message) => (typeof message?.role === "string" ? message.role : "")),
       isCarrier: (_label, _at, one) => sections.some((name) => sectionText(one, name).includes(fact)),
+    }),
+  };
+}
+
+/**
+ * The player-authored claim's readings: the row the PLAYER writes, in whichever memory block the Chat she is
+ * talking to receives it in.
+ *
+ * TWO CARRIERS, ONE QUESTION. The product has two declared memory blocks and the player has no say in which one
+ * a write reaches:
+ *
+ *   `<project-memory>`  the durable rows as a session's m[0] baseline MATERIALIZES. A write can invalidate that
+ *                       baseline, and the row then rides the very next turn's prefix.
+ *   `<new-memories>`    the m[1] delta, rendered from the rows whose id is above the baseline's watermark
+ *                       (`inject-compartments-pi.ts:2243-2275`) when the baseline was NOT re-materialized.
+ *
+ * This claim asserted `<new-memories>` first, from a probe that drove the CRUD facade directly, and the live run
+ * of 2026-11-12 read the marker in `<project-memory>` instead (turn ids in the driver's own report): the write
+ * re-materialized the baseline. Which carrier answers is the product's choice, so the reading names BOTH out of
+ * `injection-declaration.mjs` and reports the one that held the row - and a row that arrived outside all of them
+ * is `fact_outside_the_blocks`, never "carried" because a body-wide `includes` found it.
+ */
+function playerMemoryReading(turn, text, declared, entry, messages, roles) {
+  const blocks = declared.memoryRowBlocks;
+  const fact = entry.fact;
+  /* Present means the census holds the block at all: `0` bytes is a carried-but-empty block, `null` is absent. */
+  const carried = blocks
+    .map((name) => ({ name, bytes: sectionBytes(turn, name), inner: sectionText(text, name) }))
+    .filter((block) => typeof block.bytes === "number");
+  const factBlock = carried.find((block) => block.inner.includes(fact)) ?? null;
+  return {
+    blocks: carried.map((block) => `${block.name}:${block.bytes}`).join(","),
+    block: factBlock === null ? null : factBlock.name,
+    blockBytes: factBlock === null ? null : factBlock.bytes,
+    inBody: text.includes(fact),
+    inBlock: factBlock !== null,
+    leaks: messageLeaks({
+      evidence: [["playerMemory.fact", fact]],
+      texts: messages.map((message) => wireMessageText(message)),
+      roles,
+      isCarrier: (_label, _at, one) => blocks.some((name) => sectionText(one, name).includes(fact)),
     }),
   };
 }
@@ -355,6 +397,20 @@ function memoryOutcome(detail, wanted) {
   return detail.sectionBytes > 0 ? "section_without_the_fact" : "absent";
 }
 
+/**
+ * The player-authored claim's outcome: the row is carried only inside a declared memory block, and the control
+ * turn of the SAME Chat is where neither the row nor a block carrying it may be.
+ *
+ * `fact_outside_the_blocks` and `blocks_without_the_fact` are the two shapes "it arrived" would hide: the bytes
+ * came from somewhere that is not a memory block, or a memory block came and lost the row.
+ */
+function playerMemoryOutcome(detail, wanted) {
+  if (wanted === "absent") return detail.inBody ? "present" : "absent";
+  if (detail.inBlock) return "carried";
+  if (detail.inBody) return "fact_outside_the_blocks";
+  return detail.blocks !== "" ? "blocks_without_the_fact" : "absent";
+}
+
 /** A world-book reading's outcome: the entry is carried only inside the block that carries entries. */
 function worldBookOutcome(detail, wanted) {
   const carried = detail.inBody && detail.inAuthoredBlock;
@@ -390,22 +446,53 @@ function declarationSections() {
   if (declaration.ok !== true) throw new Error(declaration.reason);
   return {
     memoryBlocks: declaration.memoryBlocks,
+    /*
+     * The two blocks that carry ROWS - the m[0] baseline's and the m[1] delta's - named out of the emitter. The
+     * decayed-compartment directory is a memory block too, but it is not a row carrier, so a reading that asked
+     * "which block did this row arrive in" must not count it as one that lost its content.
+     */
+    memoryRowBlocks: declaration.memoryRowBlocks,
     /* The block the book's always-on entries ride, by its own declared tag - the same name the census
      * reports (`gamebuddy-authored-context`), so the claim is asserted against a section name rather than
      * against "somewhere in the body". */
     authoredTag: declaration.authored.tag,
+    /*
+     * The whole declared population, for the instrument's own reading (`instrumentFindings`): the probe's typed
+     * sentence has to be judged OUTSIDE the blocks the product fills, because the product may put a block on the
+     * same message as the player's own line.
+     */
+    blocks: declaration.sections,
   };
 }
 
 /** Every string a claim searches for as its own evidence, labelled, in the order the claims are read. */
 function claimEvidence(name, entry) {
   if (name === "memory") return [["memory.fact", entry?.fact]];
+  if (name === "playerMemory") return [["playerMemory.fact", entry?.fact]];
   if (name === "worldBook") return [["worldBook.text", entry?.text]];
   return [
     ["preset.before", entry?.markers?.before],
     ["preset.after", entry?.markers?.after],
     ["preset.depth", entry?.markers?.depth],
   ];
+}
+
+/**
+ * A message's text with every DECLARED block taken out, so the instrument judges only what a probe typed.
+ *
+ * The probe authors exactly one message - the player's turn - and the product may append an injected block to
+ * that same message (the m[1] delta rides beside the player's line). Without this subtraction, a turn that
+ * carried `<new-memories>` would make the instrument report "the probe turn carries its own evidence" for a
+ * marker the PRODUCT put there, which is a false red on a correct run. What survives is the incident the rule
+ * exists for: the probe's own sentence carrying a marker with no block around it.
+ */
+function stripDeclaredBlocks(text, blocks) {
+  let stripped = text;
+  for (const name of blocks) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    stripped = stripped.replace(new RegExp(`<${escaped}(?=[\\s>/])[^>]*>[\\s\\S]*?</${escaped}>`, "gu"), "\n");
+  }
+  return stripped;
 }
 
 /**
@@ -420,8 +507,11 @@ function claimEvidence(name, entry) {
  * next reader cannot act on. A finding is not a claim failure - the claims can still read `proven` - and that
  * is exactly why it has to be printed: a capture whose instrument wrote its own evidence has measured the
  * probe, not the product.
+ *
+ * `ownTurn` is the message with its DECLARED blocks subtracted (`stripDeclaredBlocks`): a block the product put
+ * on the probe's own message is the product's writing, and judging it as the probe's would fail a correct run.
  */
-function instrumentFindings({ captured, probe }) {
+function instrumentFindings({ captured, probe, blocks }) {
   const requests = Array.isArray(captured?.requests) ? captured.requests : [];
   const evidence = INJECTION_CLAIMS.flatMap((name) => claimEvidence(name, probe?.[name]));
   const said = typeof probe?.said === "string" && probe.said.length > 0 ? probe.said : null;
@@ -434,6 +524,7 @@ function instrumentFindings({ captured, probe }) {
     const messages = Array.isArray(request?.body?.messages) ? request.body.messages : [];
     for (let at = 0; at < messages.length; at += 1) {
       const text = wireMessageText(messages[at]);
+      const ownTurn = stripDeclaredBlocks(text, Array.isArray(blocks) ? blocks : []);
       const role = typeof messages[at]?.role === "string" ? messages[at].role : "unlabelled";
       const turn = typeof request?.idempotencyKey === "string" ? request.idempotencyKey : null;
       if (diagnostic !== null && text.includes(diagnostic)) {
@@ -446,9 +537,9 @@ function instrumentFindings({ captured, probe }) {
           reason: "the_probes_own_diagnostic_sentence",
         });
       }
-      if (said === null || !text.includes(said)) continue;
+      if (said === null || !ownTurn.includes(said)) continue;
       for (const [label, marker] of evidence) {
-        if (typeof marker === "string" && marker.length > 0 && text.includes(marker))
+        if (typeof marker === "string" && marker.length > 0 && ownTurn.includes(marker))
           findings.push({ label, marker, role, at, turn, reason: "the_probe_turn_carries_its_own_evidence" });
       }
     }
@@ -533,6 +624,13 @@ export async function readInjectionClaims({ captured, probe }) {
             detail: { turn: key, factLength: entry.fact.length, ...detail },
           };
         }
+        if (name === "playerMemory") {
+          const detail = playerMemoryReading(turn, text, declared, entry, messages, roles);
+          return {
+            state: state(detail, playerMemoryOutcome(detail, wanted)),
+            detail: { turn: key, factLength: entry.fact.length, ...detail },
+          };
+        }
         if (name === "worldBook") {
           const detail = worldBookReading(turn, text, declared, entry, messages, roles);
           return {
@@ -551,10 +649,10 @@ export async function readInjectionClaims({ captured, probe }) {
     ok: true,
     source: captured.source,
     claims,
-    sections: { memory: memorySections, worldBook: declared.authoredTag },
+    sections: { memory: memorySections, memoryRowBlocks: declared.memoryRowBlocks, worldBook: declared.authoredTag },
     /* The instrument's own reading, beside the claims: an instrument that manufactured its evidence makes
      * every claim above it a reading of the probe. */
-    instrument: instrumentFindings({ captured, probe, memorySections }),
+    instrument: instrumentFindings({ captured, probe, blocks: declared.blocks }),
     /* The census's own refusal, when it had one: the section halves of these readings are then blind and
      * the claim verdicts below are stated against the request text alone. */
     census: censusReason === null ? { ok: true } : { ok: false, reason: censusReason },
@@ -671,6 +769,8 @@ function describeReading(reading) {
   if (reading.state === "unobserved") return "unobserved";
   if (detail.factInBody !== undefined)
     return `${reading.state} section=${detail.section ?? "none"} bytes=${detail.sectionBytes}`;
+  if (detail.inBlock !== undefined)
+    return `${reading.state} block=${detail.block ?? "none"} bytes=${detail.blockBytes ?? "none"}`;
   if (detail.inBody !== undefined) return `${reading.state} bytes=${detail.sectionBytes ?? "none"}`;
   return `${reading.state} markers=${detail.markersInBody}/${detail.markersExpected} in-place=${detail.markersInPlace}/${detail.markersExpected} ${samplerText(detail.sampler)}`;
 }
@@ -691,6 +791,8 @@ function describeDetail(claim, detail) {
   const turn = `turn=${detail.turn}`;
   if (claim === "memory")
     return `${turn} section=${detail.section ?? "none"} bytes=${detail.sectionBytes} blocks=${detail.blocks === "" ? "none" : detail.blocks} factInBody=${detail.factInBody} factInSection=${detail.factInSection} factSection=${detail.factSection ?? "none"} factBytes=${detail.factLength}`;
+  if (claim === "playerMemory")
+    return `${turn} blocks=${detail.blocks === "" ? "none" : detail.blocks} block=${detail.block ?? "none"} bytes=${detail.blockBytes ?? "none"} inBody=${detail.inBody} inBlock=${detail.inBlock} factBytes=${detail.factLength}`;
   if (claim === "worldBook")
     return `${turn} bytes=${detail.sectionBytes ?? "none"} inBody=${detail.inBody} inAuthoredBlock=${detail.inAuthoredBlock} probeBytes=${detail.textLength}`;
   /* The preset reading names each block's own placement, because "3 markers in the body" and "3 markers in

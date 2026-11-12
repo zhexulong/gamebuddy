@@ -138,6 +138,20 @@ export function readInjectionDeclaration(read = (file) => readFileSync(join(REPO
     "player_memory_block_tag",
   );
   if (!memoryTag.ok) return memoryTag;
+  /*
+   * The m[1] delta's own block: the one a row written while a Chat is already mounted arrives in. It is
+   * declared exactly the way the baseline block is - by its emitter, `renderMemoryBlockV2(deltaMemories,
+   * "<tag>")` - so the reading that asserts "the player's write landed here" names a block the product
+   * declares, and a renamed emitter is a named unreadable declaration rather than a claim that silently
+   * stops finding anything.
+   */
+  const deltaMemoryTag = anchorOf(
+    compartments.value,
+    /renderMemoryBlockV2\(\s*deltaMemories,\s*"([a-z0-9-]+)"/u,
+    COMPARTMENT_INJECTION_SOURCE,
+    "delta_memory_block_tag",
+  );
+  if (!deltaMemoryTag.ok) return deltaMemoryTag;
   const memoryBlocks = [historyTag.value, memoryTag.value];
 
   const postHistory = textOf(POST_HISTORY_SOURCE);
@@ -158,12 +172,20 @@ export function readInjectionDeclaration(read = (file) => readFileSync(join(REPO
     volatile,
     stableKinds: unionKinds,
     memoryBlocks,
+    memoryDeltaBlock: deltaMemoryTag.value,
+    /**
+     * The blocks that carry ROWS, as opposed to the decayed-compartment directory: both are rendered by
+     * `renderMemoryBlockV2`, so a reading that asks "which block did this row arrive in" has exactly these two
+     * candidates and cannot report the directory as a row carrier that lost its content.
+     */
+    memoryRowBlocks: [memoryTag.value, deltaMemoryTag.value],
     closing: closingTag.value,
     /**
      * Every census section, in the order its own file declares it: the authored block, one section per
-     * authored kind, the world-book block, the memory blocks and the closing direction.
+     * authored kind, the world-book block, the memory blocks (the baseline pair, then the delta a row
+     * written inside a mounted Chat arrives in) and the closing direction.
      */
-    sections: [authored.tag, ...unionKinds, volatile.kind, ...memoryBlocks, closingTag.value],
+    sections: [authored.tag, ...unionKinds, volatile.kind, ...memoryBlocks, deltaMemoryTag.value, closingTag.value],
     /** The tags these emitters render. A `<gamebuddy-...>` tag outside this set is a section nobody counted. */
     tags: [authored.tag, authored.source, volatile.tag, volatile.source],
   };

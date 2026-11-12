@@ -626,7 +626,7 @@ function censusOf(text, declaration) {
 	).exec(text);
 	if (worldBook !== null) carried.push({ name: declaration.volatile.kind, bytes: byteLength(worldBook[0]) });
 
-	for (const block of declaration.memoryBlocks) {
+	for (const block of [...declaration.memoryBlocks, declaration.memoryDeltaBlock]) {
 		const memory = new RegExp(`<${block}(?=[\\s>])[^>]*>([\\s\\S]*?)</${block}>`, "u").exec(text);
 		if (memory !== null) carried.push({ name: block, bytes: byteLength(memory[1]) });
 	}

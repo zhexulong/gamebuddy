@@ -53,6 +53,8 @@ import { describeClaims, presetSamplingCallers, readClaimsFromCaptureFile } from
 
 /** The text a fact uses. Opaque and unique, so one `indexOf` decides presence. */
 const MEMORY_FACT = "gbw3-memory-fact: the spare key is under the third pot";
+/** The row a PLAYER writes through the Memory panel while the Chat is mounted: a different row, a different block. */
+const PLAYER_MEMORY_FACT = "gbw3-player-memory-fact: the watering can lives behind the mill";
 const WORLDBOOK_ENTRY = "gbw3-worldbook-entry: the lighthouse keeper is called Maren";
 const SAID = "gbw3-player-line";
 /** The three preset markers, one per placement bucket, and the sampler value the probe reads. */
@@ -138,6 +140,7 @@ function captureFile(records) {
 const probeFor = (carried, absent) => ({
   said: SAID,
   memory: { fact: MEMORY_FACT, turns: { carried, absent } },
+  playerMemory: { fact: PLAYER_MEMORY_FACT, turns: { carried, absent } },
   worldBook: { text: WORLDBOOK_ENTRY, turns: { carried, absent } },
   preset: {
     playerLine: SAID,
@@ -158,6 +161,7 @@ const boundRun = (overrides = {}) =>
         overrides.carried ??
         bodyOf({
           memory: MEMORY_FACT,
+          delta: PLAYER_MEMORY_FACT,
           entry: WORLDBOOK_ENTRY,
           temperature: PRESET_TEMPERATURE,
           preset: PRESET_MARKERS,
@@ -166,7 +170,7 @@ const boundRun = (overrides = {}) =>
     { key: "key-unbound", body: overrides.absent ?? bodyOf({}) },
   ]);
 
-test("all three claims are proven when the bound turn carries each fact and the unbound turn carries none", async () => {
+test("all four claims are proven when the bound turn carries each fact and the unbound turn carries none", async () => {
   const reading = await readClaimsFromCaptureFile({
     captureFile: boundRun(),
     probe: probeFor("key-bound", "key-unbound"),
@@ -174,8 +178,21 @@ test("all three claims are proven when the bound turn carries each fact and the 
   assert.equal(reading.ok, true, `capture must be readable: ${reading.reason}`);
   assert.deepEqual(
     reading.claims.map((claim) => `${claim.name}=${claim.verdict}`),
-    ["memory=proven", "worldBook=proven", "preset=proven"],
+    ["memory=proven", "playerMemory=proven", "worldBook=proven", "preset=proven"],
     `every claim needs both directions:\n${JSON.stringify(reading.claims, null, 1)}`,
+  );
+  /*
+   * The player-authored claim names its blocks out of the declaration rather than out of a hand-written string:
+   * the block that carried the row is reported, and it is one of the blocks the product declares.
+   */
+  const playerMemory = claimOf(reading, "playerMemory");
+  assert.equal(playerMemory.readings.carried.detail.block, "new-memories");
+  assert.equal(playerMemory.readings.carried.detail.inBlock, true);
+  assert.equal(playerMemory.readings.absent.detail.inBlock, false);
+  assert.equal(
+    playerMemory.readings.carried.detail.blockBytes > 0,
+    true,
+    "the census must size the block the row arrived in, so the reading and the census agree about the carrier",
   );
   const preset = claimOf(reading, "preset");
   assert.equal(preset.readings.carried.detail.markersInBody, 3);
@@ -496,6 +513,183 @@ test("a memory claim reads only the blocks it names: the m[1] delta cannot answe
     true,
     "the fact is in the request, in the delta block: not carried by the block this claim names, and not absent either",
   );
+});
+
+/* ---------- the fourth claim: the player's own write, read in the block a mounted Chat receives it in ---------- */
+
+test("the player's own memory row is carried in a declared memory block, and the block that carried it is named", async () => {
+  /*
+   * Two carriers, one question. A row written while a Chat is mounted reaches the next turn either in the m[1]
+   * delta (`<new-memories>`) or, when the write invalidated the m[0] baseline, in `<project-memory>` itself. The
+   * live run of 2026-11-12 read the second. The claim names both out of `injection-declaration.mjs` and reports
+   * which one held the row, so a product that changes carrier is a different READING rather than a failed claim.
+   */
+  const reading = await readClaimsFromCaptureFile({
+    captureFile: boundRun(),
+    probe: probeFor("key-bound", "key-unbound"),
+  });
+  const playerMemory = claimOf(reading, "playerMemory");
+  assert.equal(playerMemory.verdict, "proven", JSON.stringify(playerMemory, null, 1));
+  assert.equal(playerMemory.readings.carried.detail.block, "new-memories", "the delta carried it in this body");
+  assert.equal(
+    playerMemory.readings.carried.detail.blockBytes > 0,
+    true,
+    "the block the row arrived in is a declared census section, so its size is read from the census, not guessed",
+  );
+  assert.deepEqual(
+    playerMemory.readings.carried.detail.leaks,
+    [],
+    "the marker sits inside the block that carries it: a finding here would mean it arrived somewhere else",
+  );
+});
+
+test("a row that reached the baseline block instead of the delta is still carried, and says which block", async () => {
+  /*
+   * The shape the live run produced: the write invalidated the m[0] baseline, so the row rode the next turn's
+   * prefix in `<project-memory>` and no delta block was on the wire at all. Reading only `<new-memories>` would
+   * report this as `absent` - a passing-looking miss on a request that carried the row.
+   */
+  const reading = await readClaimsFromCaptureFile({
+    captureFile: boundRun({
+      carried: bodyOf({
+        memory: PLAYER_MEMORY_FACT,
+        entry: WORLDBOOK_ENTRY,
+        temperature: PRESET_TEMPERATURE,
+        preset: PRESET_MARKERS,
+      }),
+    }),
+    probe: probeFor("key-bound", "key-unbound"),
+  });
+  const playerMemory = claimOf(reading, "playerMemory");
+  assert.equal(playerMemory.verdict, "proven", JSON.stringify(playerMemory, null, 1));
+  assert.equal(playerMemory.readings.carried.detail.block, "project-memory");
+  assert.equal(playerMemory.readings.carried.detail.blockBytes > 0, true);
+});
+
+test("a player memory that arrived outside every memory block is named, not counted as carried", async () => {
+  const drifted = bodyOf({
+    memory: MEMORY_FACT,
+    entry: WORLDBOOK_ENTRY,
+    temperature: PRESET_TEMPERATURE,
+    preset: PRESET_MARKERS,
+  });
+  drifted.messages[0].content = `the Host floor, and also ${PLAYER_MEMORY_FACT}`;
+  const reading = await readClaimsFromCaptureFile({
+    captureFile: boundRun({ carried: drifted }),
+    probe: probeFor("key-bound", "key-unbound"),
+  });
+  const playerMemory = claimOf(reading, "playerMemory");
+  assert.equal(playerMemory.verdict, "carried_direction_failed");
+  assert.equal(
+    playerMemory.readings.carried.state,
+    "fact_outside_the_blocks",
+    "the bytes are on the wire and not in a block the product writes them into: that is a quote, not the injection",
+  );
+  assert.equal(playerMemory.readings.carried.detail.inBlock, false);
+  assert.equal(playerMemory.readings.carried.detail.inBody, true);
+});
+
+test("a turn that carried only the compartment directory is an absence, not a row block without its fact", async () => {
+  /*
+   * `<session-history>` is a declared memory block and it is on the wire on every turn, empty until a fold runs.
+   * Counting it as a row carrier would report `blocks_without_the_fact` on a request that carried no row block at
+   * all - a near-miss where the truth is an absence.
+   */
+  const onlyDirectory = await readClaimsFromCaptureFile({
+    captureFile: boundRun({
+      carried: bodyOf({ entry: WORLDBOOK_ENTRY, temperature: PRESET_TEMPERATURE, preset: PRESET_MARKERS }),
+    }),
+    probe: probeFor("key-bound", "key-unbound"),
+  });
+  const playerMemory = claimOf(onlyDirectory, "playerMemory");
+  assert.equal(playerMemory.readings.carried.detail.blocks, "", "no row carrier was on the wire");
+  assert.equal(playerMemory.readings.carried.state, "absent");
+  assert.equal(playerMemory.verdict, "carried_direction_failed");
+});
+
+test("a memory block that arrives without the player's row is not a carried reading", async () => {
+  const reading = await readClaimsFromCaptureFile({
+    captureFile: boundRun({
+      carried: bodyOf({
+        memory: MEMORY_FACT,
+        delta: "a different row the product rendered instead",
+        entry: WORLDBOOK_ENTRY,
+        temperature: PRESET_TEMPERATURE,
+        preset: PRESET_MARKERS,
+      }),
+    }),
+    probe: probeFor("key-bound", "key-unbound"),
+  });
+  const playerMemory = claimOf(reading, "playerMemory");
+  assert.equal(playerMemory.verdict, "carried_direction_failed");
+  assert.equal(playerMemory.readings.carried.state, "blocks_without_the_fact");
+  assert.equal(playerMemory.readings.carried.detail.block, null);
+});
+
+test("the player-memory claim's absent direction is the SAME session before the write, so a leak there is a real failure", async () => {
+  /*
+   * The pair is taken inside one mounted Chat: the control is the turn taken BEFORE the write, and a marker
+   * still on that wire means the row was already reaching the model before the player wrote it - the shape a
+   * mount-bound pair cannot see.
+   */
+  const absent = bodyOf({
+    memory: MEMORY_FACT,
+    entry: WORLDBOOK_ENTRY,
+    temperature: PRESET_TEMPERATURE,
+    preset: PRESET_MARKERS,
+    delta: PLAYER_MEMORY_FACT,
+  });
+  const reading = await readClaimsFromCaptureFile({
+    captureFile: boundRun({ absent }),
+    probe: probeFor("key-bound", "key-unbound"),
+  });
+  const playerMemory = claimOf(reading, "playerMemory");
+  assert.equal(playerMemory.verdict, "absent_direction_failed");
+  assert.equal(playerMemory.readings.absent.state, "present");
+});
+
+test("a player-memory marker in an assistant message is a leak named with its role", async () => {
+  const absent = bodyOf({
+    memory: MEMORY_FACT,
+    entry: WORLDBOOK_ENTRY,
+    temperature: PRESET_TEMPERATURE,
+    preset: PRESET_MARKERS,
+  });
+  absent.messages.push({ role: "assistant", content: `she repeated ${PLAYER_MEMORY_FACT} back` });
+  const reading = await readClaimsFromCaptureFile({
+    captureFile: boundRun({ absent }),
+    probe: probeFor("key-bound", "key-unbound"),
+  });
+  const playerMemory = claimOf(reading, "playerMemory");
+  assert.deepEqual(
+    playerMemory.readings.absent.detail.leaks.map((one) => `${one.label}:${one.role}:${one.reason}`),
+    ["playerMemory.fact:assistant:in_an_assistant_message"],
+  );
+  assert.ok(
+    describeClaims("v", reading).some(
+      (line) =>
+        line.includes("claim=playerMemory reading=absent leak:") && line.includes(`marker=${PLAYER_MEMORY_FACT}`),
+    ),
+    "the finding names the marker and the role it was found in",
+  );
+});
+
+test("a player-memory claim with no turn pair is unobserved, never a pass", async () => {
+  const noPair = await readClaimsFromCaptureFile({
+    captureFile: boundRun(),
+    probe: { ...probeFor("key-bound", "key-unbound"), playerMemory: { fact: PLAYER_MEMORY_FACT } },
+  });
+  assert.equal(claimOf(noPair, "playerMemory").verdict, "unobserved");
+  assert.equal(claimOf(noPair, "playerMemory").reason, "probe_names_no_turn_pair");
+
+  const noAbsent = await readClaimsFromCaptureFile({
+    captureFile: boundRun(),
+    probe: {
+      ...probeFor("key-bound", "key-unbound"),
+      playerMemory: { fact: PLAYER_MEMORY_FACT, turns: { carried: "key-bound", absent: null } },
+    },
+  });
+  assert.equal(claimOf(noAbsent, "playerMemory").reason, "unobserved:no_turn_key_for:absent");
 });
 
 test("a direction that produced no turn is a missing key, not an unrecorded request", async () => {

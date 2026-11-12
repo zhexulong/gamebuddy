@@ -1,4 +1,4 @@
-// Driver V: the three authored-context claims, each read in BOTH directions from this run's own wire.
+// Driver V: the four authored-context claims, each read in BOTH directions from this run's own wire.
 //
 // The census (`observation.cjs`) already says which declared section a request carried and how big it
 // was. It cannot say whether the fact the player put in the store is the fact the model received, and it
@@ -7,7 +7,7 @@
 // claim twice and reports `proven` only when the bound turn carried it and the unbound turn did not.
 // One direction alone passes on a broken instrument, which is why both are taken from one run.
 //
-// THE THREE CLAIMS, and what each one's two directions are:
+// THE FOUR CLAIMS, and what each one's two directions are:
 //
 //   memory     the player's own durable Memory row, written and archived through the product's own management
 //              route (`PUT /api/tavern/v1/memory`: `create`, then `archive`) and read in the block that carries
@@ -21,16 +21,37 @@
 //              (`.tmp/memory-attach-probe.ts` drives the real CRUD facade and the real per-turn assembly):
 //              `<project-memory>` is rendered when a session's m[0] baseline MATERIALIZES
 //              (`inject-compartments-pi.ts:1412` reads the rows; `materializeM0Pi` caches the bytes) and is
-//              replayed from that cache on every later turn. A row written after the baseline exists does not
-//              reach `<project-memory>` and does not even re-materialize it - `maxMemoryId` is deliberately
-//              not a materialization trigger (`inject-compartments-pi.ts:1351-1355`) - it arrives in that
-//              turn's m[1] delta as `<new-memories>` (`:2270`). Measured both ways: a fresh session's first
-//              turn carried the row in `<project-memory>`; a turn taken after a mid-chat write carried it in
-//              `<new-memories>` and in `<project-memory>` not at all.
+//              replayed from that cache on every later turn, so a row must be durable BEFORE the mount that is
+//              meant to carry it.
 //              So the pair is taken ACROSS MOUNTS from ONE row: created, then a Chat created after the write
 //              (whose fresh baseline contains it), then archived, then a second Chat created after the archive
 //              (whose baseline has no memory block at all). The row is the variable and the mount is the
 //              condition - the same shape as the world book's pair one claim over.
+//   playerMemory  the row the PLAYER writes in the Memory panel, read in the Chat she is ALREADY talking to.
+//              That is the half a player can actually touch: write a memory mid-conversation, and the next reply
+//              is composed from it. The `memory` claim above cannot see it - its pair is across mounts, so a
+//              write that lands inside a live session is invisible to it.
+//
+//              THE PAIR IS INSIDE ONE MOUNT: the control is the turn taken in this Chat BEFORE the write, the
+//              carried direction is the next turn of the SAME Chat AFTER it, and the write is the panel's own
+//              route (`PUT /api/tavern/v1/memory`, `create`, then `archive` to put the store back). One mount,
+//              two turns, one row - so the row is the only variable, and a marker on the control turn would say
+//              the row was reaching the model before the player wrote it.
+//
+//              WHICH BLOCK CARRIES IT IS THE PRODUCT'S CHOICE, and the driver does not assume one. The product
+//              has two declared memory carriers: the m[0] baseline's `<project-memory>` (`:1448`) and the m[1]
+//              delta's `<new-memories>` (`:2270`, rendered from the rows whose id is above the baseline's
+//              watermark). This claim was written expecting the delta, from a probe that drove the CRUD facade
+//              directly. The live run of 2026-11-12 measured the other one: on the turn after the panel's write,
+//              `<new-memories>` was ABSENT from the request and `<project-memory>` held the row (101 B, the
+//              marker inside it) - the write re-materialized the baseline. Both are legitimate; what would not
+//              be is a marker in the body with no block around it, which is `fact_outside_the_blocks` and a
+//              LEAK line rather than a carried reading.
+//
+//              THE BLOCKS ARE NAMED BY THE DECLARATION, not by this file: `injection-declaration.mjs` reads both
+//              tags out of the emitter (`renderMemoryBlockV2(memories, "<tag>")` and
+//              `renderMemoryBlockV2(deltaMemories, "<tag>")`), and both are census sections, so the claim asserts
+//              "inside a named block" with that block's own size beside it rather than a body-wide `includes`.
 //   worldBook  one fixture book, ONE field flipped. Two entries are added to her own world book through
 //              the product's own route: a control entry that is `enabled: true`, and a probe entry that is
 //              `enabled: false`. Both are the book's ALWAYS-ON kind (`constant: true`), so they ride the
@@ -94,20 +115,19 @@
 //                                   one into the vendor SQLite: the memory loop's own maintenance
 //                                   contract refuses a second connection to that database while the
 //                                   product holds it, and a fixture row would stand in for the fold.
-//   the m[1] memory delta         a row written inside an ALREADY MOUNTED Chat reaches the next turn as
-//                                   `<new-memories>`, not as `<project-memory>` (measured above). This
-//                                   claim's pair is the baseline block because that is the block it names,
-//                                   so a run with no mid-chat write has no delta reading to take - and this
-//                                   driver takes none: it is named here instead of being counted as absent.
+//   the m[1] memory delta         MEASURED, in the negative: the fourth claim (`playerMemory`) wrote a row while
+//                                   the Chat was mounted, and that turn carried the row in `<project-memory>` with
+//                                   `<new-memories>` absent. The census now names the delta block, so a future run
+//                                   that takes the other carrier reads as the other carrier instead of as a miss.
 //   a sampler that outlives its unbind  this run did not produce it: its absent turn was taken in a Chat
 //                                   mounted after the unbind, whose construction saw no binding. A turn in the
 //                                   already-mounted Chat would read `absent_direction_failed` with
 //                                   `markersInBody=0` and the sampler still matching, and the reader names
 //                                   that shape rather than rounding it.
 //
-// WHAT IT WRITES, AND THAT IT PUTS IT BACK: two entries added to her world book, six Chats created to
-// mount them, and one Memory row (created, then archived). The book is restored to the entries it had (by
-// the same route, CASing on the revision it reads at the end) and the Memory row is archived, so the
+// WHAT IT WRITES, AND THAT IT PUTS IT BACK: two entries added to her world book, seven Chats created to
+// mount them, and two Memory rows (each created, then archived). The book is restored to the entries it had
+// (by the same route, CASing on the revision it reads at the end) and each Memory row is archived, so the
 // conversation the player was reading is untouched. The created Chats stay: they are the mounts, they hold
 // nothing but the synthetic lines, and deleting them would be a second write this driver has no reading
 // for. Every restore is reported with its outcome; a failed restore is printed, never swallowed.
@@ -117,13 +137,15 @@
 // It is not the player's preset - a fresh root has none, and the harness imports this one under an id this
 // driver names.
 //
-// NO CONTENT IS PRINTED. The fact strings, the entry texts and the player's line stay in this process:
-// what travels is a reading, a section name, a byte count and whether the probe string was found. The ONE
-// exception is the preset fixture's three marker strings and its sampler value, which are this lane's own
-// opaque bytes rather than anything a player wrote - they are printed so the wire grep in a run's report can
-// be reproduced by hand. A LEAK reading prints the marker it found for the same reason: the marker is this
-// lane's own opaque bytes, and a leak that did not name it would cost the next reader the afternoon it cost
-// this one.
+// NO CONTENT IS PRINTED. The fact strings, the entry texts and the Chats this driver creates stay in this
+// process: what travels is a reading, a section name, a byte count and whether the probe string was found.
+// There are two deliberate exceptions. The preset fixture's three marker strings and its sampler value are this
+// lane's own opaque bytes - printed so the wire grep in a run's report can be reproduced by hand. And the
+// player-authored claim prints THE ONE SENTENCE IT TYPES (a constant of this driver, not anything a player
+// wrote) beside its marker, because a probe that types its own evidence is exactly the incident this claim was
+// added after: a reader has to be able to see that the sentence and the marker differ. A LEAK reading prints
+// the marker and the role for the same reason: a leak that did not name them would cost the next reader the
+// afternoon it cost this one.
 //
 // WHAT MAKES THIS PROBE'S OWN EVIDENCE UNCOUNTABLE, asserted rather than promised. Every claim's marker is
 // checked against EVERY message of the request it was read from: the marker must sit inside the block its own
@@ -147,6 +169,14 @@ const { join } = require("node:path");const {
 const TOKEN_ENABLED = "gbw3-enabled-entry-token";
 const TOKEN_DISABLED = "gbw3-disabled-entry-token";
 const MEMORY_FACT = "gbw3 memory fact: the spare key hangs inside the third pot";
+/**
+ * The row the PLAYER writes, through the Memory panel's own route, in the Chat she is already talking to.
+ *
+ * It is a second marker rather than the first one reused because the two claims measure two different
+ * carriers: `MEMORY_FACT` is read in the block a NEW session folds rows into, this one in the delta the
+ * mounted session receives. One marker travelling two paths would let either claim answer for the other.
+ */
+const PLAYER_MEMORY_FACT = "gbw3 player memory: the watering can lives behind the mill";
 /**
  * The one line every turn of this driver sends, and it is INNOCUOUS PLAYER PROSE.
  *
@@ -218,7 +248,17 @@ const API = 1;
 	 * line that never happened.
 	 */
 	const sendTurn = async (label, text) => {
-		const composed = await canStartTurn(page);
+		/*
+		 * A mount can hold the field closed for a moment after the previous turn settles (the composer's own
+		 * `disabled` is the Host saying it would not accept a submission NOW), so the question is asked again for a
+		 * few seconds before it is answered. The 2026-11-12 re-run of this driver lost its after-write turn to exactly
+		 * that window, and a turn refused by a one-second state overlap is not a product finding.
+		 */
+		let composed = await canStartTurn(page);
+		for (let attempt = 0; composed.ok !== true && attempt < 20; attempt += 1) {
+			await new Promise((resolve) => setTimeout(resolve, 500));
+			composed = await canStartTurn(page);
+		}
 		if (!composed.ok) return { label, sent: false, reason: composed.reason, turnKey: null };
 		const from = await page.evaluate(() => performance.now());
 		await page.fill("textarea.composer-textarea", text);
@@ -331,7 +371,7 @@ const API = 1;
 	const withoutFixture = (entries, titles) =>
 		JSON.stringify(entries.filter((entry) => !titles.includes(entry.title)).map(asEntry));
 
-	const claims = { memory: null, worldBook: null, preset: null };
+	const claims = { memory: null, playerMemory: null, worldBook: null, preset: null };
 	const steps = [];
 
 	/**
@@ -361,6 +401,31 @@ const API = 1;
 			.catch(() => undefined);
 		return true;
 	};
+
+	/**
+	 * The Memory panel's own route, read as the panel reads it: the rows and the projection revision a write
+	 * CASes on.
+	 *
+	 * The ROUTE decides, not `/api/tavern/v1/state`'s memory projection: that projection is served by the
+	 * reference Chat handler in this shell and is the literal
+	 * `{ readAvailable: false, mutationAvailable: false, projectionRevision: null }`
+	 * (`host/src/tavern/composed-reference-game-static-shell-composition.ts:441-445`) - a constant, not a reading
+	 * of the management routes the same shell mounts beside it. The 2026-11-10 run gated on that constant,
+	 * reported `memory_mutation_not_mounted`, wrote no row, and so had no turn pair to read.
+	 */
+	const readMemory = async () => {
+		const read = await get("/api/tavern/v1/memory");
+		const body = read.body ?? {};
+		return {
+			status: read.status,
+			code: typeof body.code === "string" ? body.code : null,
+			revision: typeof body.projectionRevision === "string" ? body.projectionRevision : null,
+			rows: Array.isArray(body.memories) ? body.memories : [],
+		};
+	};
+	/** The row whose content is this fact, or `null`: the readback a write must produce before a mount can carry it. */
+	const rowsNaming = (rows, fact) =>
+		rows.find((row) => typeof row.content === "string" && row.content.includes(fact)) ?? null;
 
 	const worldBookHalf = async () => {
 		const before = await currentBook();
@@ -465,28 +530,8 @@ const API = 1;
 	};
 
 	const memoryHalf = async () => {
-		/*
-		 * The memory ROUTE decides, not the state snapshot's projection of it.
-		 *
-		 * `/api/tavern/v1/state` is served by the reference Chat handler in this shell, and its memory projection
-		 * is the literal `{ readAvailable: false, mutationAvailable: false, projectionRevision: null }`
-		 * (`host/src/tavern/composed-reference-game-static-shell-composition.ts:441-445`) - a constant, not a
-		 * reading of the management routes the same shell mounts beside it. The 2026-11-10 run gated on that
-		 * constant, reported `memory_mutation_not_mounted`, wrote no row, and so had no turn pair to read: the
-		 * claim came back `probe_names_no_turn_pair`, which is a blocked reading, not a negative one.
-		 */
-		const readMemory = async () => {
-			const read = await get("/api/tavern/v1/memory");
-			const body = read.body ?? {};
-			return {
-				status: read.status,
-				code: typeof body.code === "string" ? body.code : null,
-				revision: typeof body.projectionRevision === "string" ? body.projectionRevision : null,
-				rows: Array.isArray(body.memories) ? body.memories : [],
-			};
-		};
-		const rowNamedTheFact = (rows) =>
-			rows.find((row) => typeof row.content === "string" && row.content.includes(MEMORY_FACT)) ?? null;
+		// The memory ROUTE decides, not the state snapshot's projection of it (see `readMemory`).
+		const rowNamedTheFact = (rows) => rowsNaming(rows, MEMORY_FACT);
 
 		const before = await readMemory();
 		say(
@@ -584,6 +629,136 @@ const API = 1;
 	};
 
 	/**
+	 * The memory blocks that carry ROWS, taken from the declaration rather than typed here.
+	 *
+	 * A driver that spelled either tag itself would keep "finding" nothing the day the product renames a block,
+	 * and the claim would read `absent` instead of refusing. A declaration that cannot be read is printed by name.
+	 */
+	const declaredMemoryBlocks = async () => {
+		try {
+			const { readInjectionDeclaration } = await import("./injection-declaration.mjs");
+			const declaration = readInjectionDeclaration();
+			return declaration.ok === true
+				? declaration.memoryRowBlocks.join(",")
+				: `unobserved:${declaration.reason}`;
+		} catch (error) {
+			return `unobserved:${String(error).slice(0, 120)}`;
+		}
+	};
+
+	/**
+	 * The row a PLAYER writes in the Memory panel, read in the Chat she is already talking to.
+	 *
+	 * The half a player can actually touch: she writes a memory mid-conversation and the next reply is composed
+	 * from it. THE PAIR IS INSIDE ONE MOUNT, which is what makes it a pair at all: the control is the turn taken in
+	 * this Chat BEFORE the write, the carried direction is the next turn of the SAME Chat AFTER it. The row is the
+	 * only variable, so a marker on the control turn would mean the row was reaching the model before the player
+	 * wrote it - the shape no mount-bound pair can see.
+	 *
+	 * WHICH BLOCK IT ARRIVES IN IS THE PRODUCT'S CHOICE, and this driver does not assume one. The product has two
+	 * declared memory carriers - the m[0] baseline's `<project-memory>` and the m[1] delta's `<new-memories>`
+	 * (`inject-compartments-pi.ts:1448` and `:2270`) - and the live run of 2026-11-12 read the row in
+	 * `<project-memory>` on the turn after the write: the write re-materialized the baseline. So the claim names
+	 * both, out of `injection-declaration.mjs`, and reports which one held the row; a body-wide `includes` would
+	 * have credited the write for a marker with no block around it, and the leak rule would then have had nothing
+	 * to say.
+	 */
+	const playerMemoryHalf = async () => {
+		if ((await mountFor("playerMemory", "control")) !== true) {
+			steps.push({ half: "playerMemory", reason: "control_mount_not_created" });
+			return;
+		}
+		// The control turn: this Chat's m[0] baseline materializes here, and the row does not exist yet.
+		const before = await sendTurn("playermemory-before-write", SAID);
+
+		const beforeWrite = await readMemory();
+		say(
+			`playerMemory: memory route read status=${beforeWrite.status} code=${beforeWrite.code ?? "none"} rows=${beforeWrite.rows.length} revision=${beforeWrite.revision === null ? "none" : "present"}`,
+		);
+		if (beforeWrite.status !== 200 || beforeWrite.revision === null) {
+			say(`playerMemory: unobserved:memory_route_unreadable:status=${beforeWrite.status}:code=${beforeWrite.code ?? "none"}`);
+			steps.push({ half: "playerMemory", reason: `memory_route_unreadable:${beforeWrite.status}:${beforeWrite.code ?? "none"}` });
+			claims.playerMemory = { fact: PLAYER_MEMORY_FACT, turns: { carried: null, absent: before.turnKey ?? null } };
+			return;
+		}
+
+		/*
+		 * The write is the Memory panel's own route - `PUT /api/tavern/v1/memory`, `operation: "create"`, CASing on
+		 * the projection revision just read - so nothing durable is hand-written: a player clicking "save" in that
+		 * panel sends exactly this.
+		 */
+		const created = await put("/api/tavern/v1/memory", {
+			apiVersion: API,
+			operation: "create",
+			expectedProjectionRevision: beforeWrite.revision,
+			content: PLAYER_MEMORY_FACT,
+		});
+		const createdRow = rowsNaming(created.status === 200 ? (created.body?.memories ?? []) : [], PLAYER_MEMORY_FACT);
+		say(
+			`playerMemory: create status=${created.status} code=${created.body?.code ?? "none"} readback=${createdRow === null ? "no_row_named_the_fact" : "row_named_the_fact"}`,
+		);
+		if (created.status !== 200 || createdRow === null) {
+			steps.push({ half: "playerMemory", reason: `memory_create_refused:${created.status}:${created.body?.code ?? "none"}` });
+			claims.playerMemory = { fact: PLAYER_MEMORY_FACT, turns: { carried: null, absent: before.turnKey ?? null } };
+			return;
+		}
+
+		// The carried turn: the NEXT turn of the same Chat, with the row durable before it is composed.
+		const after = await sendTurn("playermemory-after-write", SAID);
+
+		/*
+		 * Put the store back: the row is archived through the same route, so the conversation the player was reading
+		 * is left as it was found. Read fresh first - the handle and the revision are the mounted lane's.
+		 */
+		const settleRead = await readMemory();
+		const settleRow = settleRead.revision === null ? null : rowsNaming(settleRead.rows, PLAYER_MEMORY_FACT);
+		const archived =
+			settleRow === null
+				? { status: 0, body: { code: "row_not_found_after_the_write" } }
+				: await put("/api/tavern/v1/memory", {
+						apiVersion: API,
+						operation: "archive",
+						expectedProjectionRevision: settleRead.revision,
+						handle: settleRow.handle,
+					});
+		say(
+			`playerMemory: archive status=${archived.status} code=${archived.body?.code ?? "none"} rowReadback=${settleRow === null ? "none" : "present"}`,
+		);
+		if (archived.status !== 200)
+			steps.push({ half: "playerMemory", reason: `memory_archive_refused:${archived.status}:${archived.body?.code ?? "none"}` });
+
+		claims.playerMemory = {
+			fact: PLAYER_MEMORY_FACT,
+			turns: { carried: after.turnKey ?? null, absent: before.turnKey ?? null },
+		};
+		if (after.turnKey === null)
+			steps.push({ half: "playerMemory", reason: `after_write_turn_not_read:${after.reason ?? "submit_mark_carries_no_key"}` });
+		if (before.turnKey === null)
+			steps.push({ half: "playerMemory", reason: `before_write_turn_not_read:${before.reason ?? "submit_mark_carries_no_key"}` });
+
+		/*
+		 * THE PROBE'S OWN THREE NEGATIVE ASSERTIONS, printed with the values they assert about.
+		 *
+		 *   1. the marker is not in the line this driver types, and the line is PRINTED so a reader can see the two
+		 *      differ - a probe that typed its own evidence measured itself, which is the 2026-11-12 incident
+		 *      (`gbw3enabledkey and gbw3disabledkey are both in this line`);
+		 *   2. the same sentence is not the old diagnostic sentence either, checked against that constant;
+		 *   3. the blocks this claim asserts about are the DECLARATION's memory blocks, printed by name - never
+		 *      strings typed into this driver, and never a body-wide `includes` (the reader parses each block and
+		 *      reports the one that carried the row beside `inBody`).
+		 *
+		 * The fourth reading - that no USER or ASSISTANT message carries the marker outside those blocks - is the
+		 * reader's `detail.leaks`, printed with the role and the reason for every finding.
+		 */
+		say(
+			`INJECTION v claim=playerMemory probe: marker=${PLAYER_MEMORY_FACT} typed-turn="${SAID}" markerInTypedTurn=${SAID.includes(PLAYER_MEMORY_FACT)} markerInDiagnosticSentence=${PROBE_DIAGNOSTIC_SENTENCE.includes(PLAYER_MEMORY_FACT)}`,
+		);
+		say(
+			`INJECTION v claim=playerMemory probe: mounts=1 turns=before-write:${before.turnKey ?? "none"},after-write:${after.turnKey ?? "none"} blocks=${await declaredMemoryBlocks()} blockSource=declaration`,
+		);
+	};
+
+	/**
 	 * The preset fact the launch phase wrote, or a named reason it is absent.
 	 *
 	 * A launch state that names no preset and a seed that skipped are different silences, so they get different
@@ -668,11 +843,18 @@ const API = 1;
 		 */
 		say("worldBook: unobserved:no_csrf_token_in_state:a_book_edit_is_a_write");
 		say("memory: unobserved:no_csrf_token_in_state:a_memory_row_is_a_write");
-		steps.push({ half: "worldBook", reason: "no_csrf_token_in_state" }, { half: "memory", reason: "no_csrf_token_in_state" });
+		say("playerMemory: unobserved:no_csrf_token_in_state:a_memory_row_is_a_write");
+		steps.push(
+			{ half: "worldBook", reason: "no_csrf_token_in_state" },
+			{ half: "memory", reason: "no_csrf_token_in_state" },
+			{ half: "playerMemory", reason: "no_csrf_token_in_state" },
+		);
 	} else {
 		await worldBookHalf();
 		say(`=== ITEM: her memory, written and archived through the management route ===`);
 		await memoryHalf();
+		say(`=== ITEM: the row a player writes in the Memory panel, read in the Chat she is already in ===`);
+		await playerMemoryHalf();
 	}
 
 	say(`=== ITEM: the same preset, unbound, in a Chat mounted after the unbind ===`);
@@ -691,11 +873,12 @@ const API = 1;
 			steps.push({ half: "preset", reason: "the_unbound_turn_marked_no_submission_key" });
 	}
 
-	say(`=== ITEM: the three claims, read from this run's own capture ===`);
+	say(`=== ITEM: the four claims, read from this run's own capture ===`);
 	const { readClaimsFromCaptureFile, describeClaims, presetSamplingCallers } = await import("./injection-claims.mjs");
 	const captureFile = process.env.GB_SHOTS_WIRE_REQUESTS;
 	const probe = {
 		memory: claims.memory,
+		playerMemory: claims.playerMemory,
 		worldBook: claims.worldBook,
 		preset: claims.preset,
 		/*
@@ -708,6 +891,21 @@ const API = 1;
 	};
 	const reading = await readClaimsFromCaptureFile({ captureFile, probe });
 	for (const line of describeClaims("v", reading)) say(line);
+	/*
+	 * The player-authored claim's two readings, printed again beside the claim line because its negative
+	 * assertions have to be visible as VALUES: which turn was the control, which turn carried the row, and
+	 * whether the marker sat inside the named block on each one. `leaks` is the reader's count of messages that
+	 * carried the marker outside the block its placement names (an assistant message is always a leak).
+	 */
+	const playerClaim =
+		reading.ok === true ? (reading.claims.find((one) => one.name === "playerMemory") ?? null) : null;
+	for (const side of ["carried", "absent"]) {
+		const detail = playerClaim?.readings?.[side]?.detail ?? null;
+		if (detail === null) continue;
+		say(
+			`INJECTION v claim=playerMemory negative reading=${side}: turn=${detail.turn} block=${detail.block ?? "none"} inBlock=${detail.inBlock} inBody=${detail.inBody} blockBytes=${detail.blockBytes ?? "none"} blocks=${detail.blocks === "" ? "none" : detail.blocks} leaks=${(detail.leaks ?? []).length}`,
+		);
+	}
 	/*
 	 * The world-book control is the half a single pair cannot state: the control entry is enabled in BOTH
 	 * turns, so its presence in both is what says the flip changed one variable and not the block itself.
