@@ -1,3 +1,6 @@
+// red-proof: fixture  the legal synthetic ledger/report/review/scope/source set in
+//                    tools/fixtures/stardew-native-transition-ledger exits 0 (`transitionCount 4, rootBindingCount 1`);
+//                    one of transition:commit's two exit-inventory rows deleted -> `transition_ledger_exit_inventory_incomplete: Every explicit handoff needs exactly one source-anchored exit inventory row.`, exit 1
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";

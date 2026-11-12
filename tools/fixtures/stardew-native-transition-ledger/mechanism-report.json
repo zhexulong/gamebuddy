@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "native_interaction_mechanism_enumeration",
+  "target": {
+    "sha256": "0c1b37c7550278d35c62bb096d38514c6c0c9341cbe2275cda0d97048551f631"
+  },
+  "source": {
+    "sourceManifestSha256": "68f5a736a0d402311afd6675679de5af14b790783aa1cabb5a5ad03c1d3bf84b",
+    "files": [
+      {
+        "relativePath": "StardewValley/FixtureTransition.cs",
+        "sha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e",
+        "byteLength": 244
+      }
+    ]
+  },
+  "enumeration": {
+    "mechanisms": [
+      {
+        "mechanismId": "host:fixture-transition-router",
+        "sourcePath": "StardewValley/FixtureTransition.cs",
+        "sourceLocator": {
+          "relativePath": "StardewValley/FixtureTransition.cs",
+          "startByte": 97,
+          "endByte": 102,
+          "sliceSha256": "adc74704d65d5cc96612c15b073209d3de7e93c93b8fdc3362ee50596d18587f"
+        }
+      }
+    ]
+  }
+}

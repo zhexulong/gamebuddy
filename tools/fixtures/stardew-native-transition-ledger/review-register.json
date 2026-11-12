@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "native_interaction_mechanism_review_register",
+  "attestation": {
+    "targetAssemblySha256": "0c1b37c7550278d35c62bb096d38514c6c0c9341cbe2275cda0d97048551f631",
+    "sourceManifestSha256": "68f5a736a0d402311afd6675679de5af14b790783aa1cabb5a5ad03c1d3bf84b"
+  },
+  "records": [
+    {
+      "mechanismId": "host:fixture-transition-router",
+      "disposition": "in_scope_root",
+      "reason": "Exact source review shows one normal-player input router with an owned commit and a pending continuation.",
+      "possiblyGameplayBearing": true
+    }
+  ]
+}

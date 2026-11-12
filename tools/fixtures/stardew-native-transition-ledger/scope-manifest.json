@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "native_transition_scope_manifest",
+  "attestation": {
+    "targetAssemblySha256": "0c1b37c7550278d35c62bb096d38514c6c0c9341cbe2275cda0d97048551f631",
+    "sourceManifestSha256": "68f5a736a0d402311afd6675679de5af14b790783aa1cabb5a5ad03c1d3bf84b"
+  },
+  "scope": "normal_player_vanilla",
+  "exclusionBoundaries": [
+    {
+      "boundaryId": "scope:fixture-debug-input-host",
+      "boundaryKind": "debug_input_host",
+      "scopeReason": "Debug input hosts are outside normal_player_vanilla scope.",
+      "sourceAnchor": {
+        "sourcePath": "StardewValley/FixtureTransition.cs",
+        "member": "FixtureTransition.Gap",
+        "startByte": 226,
+        "endByte": 229,
+        "sourceSliceSha256": "cb129306bc6fd0985c13e1415e8850cc7f897f02c54d14ec1d7daf805236bd71",
+        "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+      }
+    }
+  ]
+}

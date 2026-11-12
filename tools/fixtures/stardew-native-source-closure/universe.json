@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 2,
+  "artifactKind": "native_transition_family_universe",
+  "attestation": {
+    "targetAssemblySha256": "0c1b37c7550278d35c62bb096d38514c6c0c9341cbe2275cda0d97048551f631",
+    "sourceManifestSha256": "634dd70e0e94c154e7245002599e1a835f5ddc5a4cce0013d76e8d4a4d1c8078",
+    "contentManifestSha256": "6ec54b600787c4d067fbc5fd481e8bfd268b0cf08eb617a87c34128480d2b489"
+  },
+  "families": [
+    {
+      "familyId": "source-family:fixture-input-lifecycle",
+      "familyKind": "input_lifecycle",
+      "regions": [
+        {
+          "regionId": "region:fixture-input-lifecycle",
+          "ownerAnchor": {
+            "relativePath": "StardewValley/FixtureInputLifecycle.cs",
+            "startByte": 24,
+            "endByte": 67,
+            "sliceSha256": "9e1ac41355d1d30a7aae3a7117a013ed07d10882a2ae7d6e3f0fd5461997107b",
+            "sourceFileSha256": "c2d6ca0a9925e540f10c4df5a7c52b2fa1a1214ceb6723b7d5e4514dd50b18e3"
+          },
+          "exits": [
+            {
+              "exitId": "exit:fixture-input-content-handoff",
+              "exitKind": "content_dispatch",
+              "anchor": {
+                "relativePath": "StardewValley/FixtureInputLifecycle.cs",
+                "startByte": 116,
+                "endByte": 134,
+                "sliceSha256": "b7bf7c9b8c96d53fe26d5d5346e17c0e783266813eabccd0be1e083511b61058",
+                "sourceFileSha256": "c2d6ca0a9925e540f10c4df5a7c52b2fa1a1214ceb6723b7d5e4514dd50b18e3"
+              }
+            }
+          ]
+        }
+      ],
+      "gaps": [
+        {
+          "gapId": "gap:fixture-input-content-interpreter",
+          "anchor": {
+            "relativePath": "StardewValley/FixtureInputLifecycle.cs",
+            "startByte": 145,
+            "endByte": 185,
+            "sliceSha256": "790a81b80d88d176dc81f748ca546a782c5bba385e90b949ddb8082ee29f48ee",
+            "sourceFileSha256": "c2d6ca0a9925e540f10c4df5a7c52b2fa1a1214ceb6723b7d5e4514dd50b18e3"
+          },
+          "possiblyGameplayBearing": true
+        }
+      ]
+    }
+  ]
+}

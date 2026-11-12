@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 2,
+  "artifactKind": "native_source_closure",
+  "attestation": {
+    "targetAssemblySha256": "0c1b37c7550278d35c62bb096d38514c6c0c9341cbe2275cda0d97048551f631",
+    "sourceManifestSha256": "634dd70e0e94c154e7245002599e1a835f5ddc5a4cce0013d76e8d4a4d1c8078",
+    "contentManifestSha256": "6ec54b600787c4d067fbc5fd481e8bfd268b0cf08eb617a87c34128480d2b489",
+    "boundaryModelSha256": "9c783018ecd3d10c3bc20d2baa6faca3d603a70ecdc10eb6e1717d630d5f7656"
+  },
+  "closureState": "partial_with_unknown_blocking",
+  "mechanisms": [
+    {
+      "mechanismId": "mechanism:fixture-input-lifecycle",
+      "terminal": "unknown_blocking",
+      "edges": [
+        {
+          "edgeId": "gap:fixture-input-content-interpreter",
+          "disposition": "unknown_blocking",
+          "sourceAnchor": {
+            "relativePath": "StardewValley/FixtureInputLifecycle.cs",
+            "startByte": 116,
+            "endByte": 134,
+            "sliceSha256": "b7bf7c9b8c96d53fe26d5d5346e17c0e783266813eabccd0be1e083511b61058",
+            "sourceFileSha256": "c2d6ca0a9925e540f10c4df5a7c52b2fa1a1214ceb6723b7d5e4514dd50b18e3"
+          }
+        }
+      ]
+    }
+  ]
+}

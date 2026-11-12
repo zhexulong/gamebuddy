@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "native_interaction_mechanism_enumeration",
+  "target": {
+    "sha256": "0c1b37c7550278d35c62bb096d38514c6c0c9341cbe2275cda0d97048551f631"
+  },
+  "source": {
+    "sourceManifestSha256": "d76d07d2066b81fb03a02e9b33ead922f70a1ae4945d29a39a947508ff01e695",
+    "files": [
+      {
+        "relativePath": "StardewValley/FixtureInputRouter.cs",
+        "sha256": "2dd3ec381b76531d6bdf6315730e137a5351c3bb087cf5e530eb606e3bf09da9",
+        "byteLength": 246
+      }
+    ]
+  },
+  "enumeration": {
+    "mechanisms": [
+      {
+        "mechanismId": "host:fixture-input-router",
+        "sourceLocator": {
+          "relativePath": "StardewValley/FixtureInputRouter.cs",
+          "startByte": 79,
+          "endByte": 120,
+          "sliceSha256": "1228096e93423e2e135a641d03f852866ffac7997bddaf46098fe7d40322a71a"
+        }
+      }
+    ]
+  }
+}

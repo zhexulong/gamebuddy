@@ -1,0 +1,276 @@
+{
+  "schemaVersion": 2,
+  "artifactKind": "native_transition_continuation_ledger",
+  "attestation": {
+    "targetAssemblySha256": "0c1b37c7550278d35c62bb096d38514c6c0c9341cbe2275cda0d97048551f631",
+    "sourceManifestSha256": "68f5a736a0d402311afd6675679de5af14b790783aa1cabb5a5ad03c1d3bf84b"
+  },
+  "closureState": "partial",
+  "scopedMechanismIds": [
+    "host:fixture-transition-router"
+  ],
+  "transitions": [
+    {
+      "transitionId": "transition:router",
+      "kind": "source_router",
+      "incomingMechanismIds": [
+        "host:fixture-transition-router"
+      ],
+      "handoffs": [
+        {
+          "toTransitionId": "transition:commit",
+          "kind": "direct_call",
+          "phase": "routing",
+          "sequence": 0,
+          "handoffAnchor": {
+            "sourcePath": "StardewValley/FixtureTransition.cs",
+            "member": "FixtureTransition.Commit",
+            "startByte": 107,
+            "endByte": 113,
+            "sourceSliceSha256": "82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd",
+            "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+          },
+          "condition": "always"
+        }
+      ],
+      "exitCoverage": "exhaustive",
+      "exitInventory": [
+        {
+          "exitId": "exit:fixture-0",
+          "kind": "handoff",
+          "handoffSequence": 0,
+          "anchor": {
+            "sourcePath": "StardewValley/FixtureTransition.cs",
+            "member": "FixtureTransition.Commit",
+            "startByte": 107,
+            "endByte": 113,
+            "sourceSliceSha256": "82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd",
+            "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+          }
+        }
+      ],
+      "ownerAnchor": {
+        "sourcePath": "StardewValley/FixtureTransition.cs",
+        "member": "FixtureTransition.Route",
+        "startByte": 97,
+        "endByte": 102,
+        "sourceSliceSha256": "adc74704d65d5cc96612c15b073209d3de7e93c93b8fdc3362ee50596d18587f",
+        "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+      },
+      "routerReason": "Forwards normal-player input to the owned commit.",
+      "possiblyGameplayBearing": true
+    },
+    {
+      "transitionId": "transition:commit",
+      "kind": "source_owned_transition",
+      "incomingMechanismIds": [],
+      "handoffs": [
+        {
+          "toTransitionId": "transition:resume",
+          "kind": "direct_call",
+          "phase": "continuation",
+          "sequence": 0,
+          "handoffAnchor": {
+            "sourcePath": "StardewValley/FixtureTransition.cs",
+            "member": "FixtureTransition.Resume",
+            "startByte": 186,
+            "endByte": 192,
+            "sourceSliceSha256": "d640c7421da066618a39daf4266da5f61f66a9b1afcd626481b831a17064965d",
+            "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+          },
+          "condition": "always"
+        },
+        {
+          "toTransitionId": "transition:out-of-scope",
+          "kind": "direct_call",
+          "phase": "after_commit",
+          "sequence": 1,
+          "handoffAnchor": {
+            "sourcePath": "StardewValley/FixtureTransition.cs",
+            "member": "FixtureTransition.Gap",
+            "startByte": 226,
+            "endByte": 229,
+            "sourceSliceSha256": "cb129306bc6fd0985c13e1415e8850cc7f897f02c54d14ec1d7daf805236bd71",
+            "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+          },
+          "condition": "always"
+        }
+      ],
+      "exitCoverage": "exhaustive",
+      "exitInventory": [
+        {
+          "exitId": "exit:fixture-0",
+          "kind": "handoff",
+          "handoffSequence": 0,
+          "anchor": {
+            "sourcePath": "StardewValley/FixtureTransition.cs",
+            "member": "FixtureTransition.Resume",
+            "startByte": 186,
+            "endByte": 192,
+            "sourceSliceSha256": "d640c7421da066618a39daf4266da5f61f66a9b1afcd626481b831a17064965d",
+            "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+          }
+        },
+        {
+          "exitId": "exit:fixture-1",
+          "kind": "handoff",
+          "handoffSequence": 1,
+          "anchor": {
+            "sourcePath": "StardewValley/FixtureTransition.cs",
+            "member": "FixtureTransition.Gap",
+            "startByte": 226,
+            "endByte": 229,
+            "sourceSliceSha256": "cb129306bc6fd0985c13e1415e8850cc7f897f02c54d14ec1d7daf805236bd71",
+            "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+          }
+        }
+      ],
+      "ownerAnchor": {
+        "sourcePath": "StardewValley/FixtureTransition.cs",
+        "member": "FixtureTransition.Commit",
+        "startByte": 107,
+        "endByte": 113,
+        "sourceSliceSha256": "82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd",
+        "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+      },
+      "commitAnchor": {
+        "sourcePath": "StardewValley/FixtureTransition.cs",
+        "member": "FixtureTransition.Commit",
+        "startByte": 107,
+        "endByte": 113,
+        "sourceSliceSha256": "82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd",
+        "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+      },
+      "postStateObservations": [
+        {
+          "ownerSyntax": "FixtureTransition",
+          "stateSyntax": "FixtureTransition.Commit marker",
+          "anchor": {
+            "sourcePath": "StardewValley/FixtureTransition.cs",
+            "member": "FixtureTransition.Commit",
+            "startByte": 107,
+            "endByte": 113,
+            "sourceSliceSha256": "82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd",
+            "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+          }
+        }
+      ],
+      "pendingNativeContinuationState": [],
+      "possiblyGameplayBearing": true
+    },
+    {
+      "transitionId": "transition:resume",
+      "kind": "owner_managed_continuation",
+      "incomingMechanismIds": [],
+      "handoffs": [
+        {
+          "toTransitionId": "transition:out-of-scope",
+          "kind": "direct_call",
+          "phase": "continuation",
+          "sequence": 0,
+          "handoffAnchor": {
+            "sourcePath": "StardewValley/FixtureTransition.cs",
+            "member": "FixtureTransition.Gap",
+            "startByte": 226,
+            "endByte": 229,
+            "sourceSliceSha256": "cb129306bc6fd0985c13e1415e8850cc7f897f02c54d14ec1d7daf805236bd71",
+            "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+          },
+          "condition": "always"
+        }
+      ],
+      "exitCoverage": "exhaustive",
+      "exitInventory": [
+        {
+          "exitId": "exit:fixture-0",
+          "kind": "handoff",
+          "handoffSequence": 0,
+          "anchor": {
+            "sourcePath": "StardewValley/FixtureTransition.cs",
+            "member": "FixtureTransition.Gap",
+            "startByte": 226,
+            "endByte": 229,
+            "sourceSliceSha256": "cb129306bc6fd0985c13e1415e8850cc7f897f02c54d14ec1d7daf805236bd71",
+            "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+          }
+        }
+      ],
+      "ownerAnchor": {
+        "sourcePath": "StardewValley/FixtureTransition.cs",
+        "member": "FixtureTransition.Resume",
+        "startByte": 186,
+        "endByte": 192,
+        "sourceSliceSha256": "d640c7421da066618a39daf4266da5f61f66a9b1afcd626481b831a17064965d",
+        "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+      },
+      "registrationAnchor": {
+        "sourcePath": "StardewValley/FixtureTransition.cs",
+        "member": "FixtureTransition.Commit",
+        "startByte": 107,
+        "endByte": 113,
+        "sourceSliceSha256": "82a9c46ffa4789945d9f2359d75891558ef6faa8dee09e4b25e4e0597704f5bd",
+        "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+      },
+      "terminalAnchor": {
+        "sourcePath": "StardewValley/FixtureTransition.cs",
+        "member": "FixtureTransition.Resume",
+        "startByte": 186,
+        "endByte": 192,
+        "sourceSliceSha256": "d640c7421da066618a39daf4266da5f61f66a9b1afcd626481b831a17064965d",
+        "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+      },
+      "postStateObservations": [],
+      "pendingNativeContinuationState": [
+        {
+          "ownerSyntax": "FixtureTransition",
+          "stateSyntax": "FixtureTransition.Resume pending phase",
+          "anchor": {
+            "sourcePath": "StardewValley/FixtureTransition.cs",
+            "member": "FixtureTransition.Resume",
+            "startByte": 186,
+            "endByte": 192,
+            "sourceSliceSha256": "d640c7421da066618a39daf4266da5f61f66a9b1afcd626481b831a17064965d",
+            "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+          }
+        }
+      ],
+      "possiblyGameplayBearing": true
+    },
+    {
+      "transitionId": "transition:out-of-scope",
+      "kind": "scope_exclusion_boundary",
+      "incomingMechanismIds": [],
+      "handoffs": [],
+      "exitCoverage": "exhaustive",
+      "exitInventory": [],
+      "boundaryAnchor": {
+        "sourcePath": "StardewValley/FixtureTransition.cs",
+        "member": "FixtureTransition.Gap",
+        "startByte": 226,
+        "endByte": 229,
+        "sourceSliceSha256": "cb129306bc6fd0985c13e1415e8850cc7f897f02c54d14ec1d7daf805236bd71",
+        "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+      },
+      "boundaryKind": "debug_input_host",
+      "scopeDisposition": "out_of_scope",
+      "scopeReason": "Debug input hosts are outside normal_player_vanilla scope.",
+      "scopeManifestBoundaryId": "scope:fixture-debug-input-host",
+      "possiblyGameplayBearing": false,
+      "nonGameplayReason": "Explicit debug-only host excluded by the approved scope manifest.",
+      "nonGameplayReasonAnchor": {
+        "sourcePath": "StardewValley/FixtureTransition.cs",
+        "member": "FixtureTransition.Gap",
+        "startByte": 226,
+        "endByte": 229,
+        "sourceSliceSha256": "cb129306bc6fd0985c13e1415e8850cc7f897f02c54d14ec1d7daf805236bd71",
+        "sourceFileSha256": "01e657a03bcf308b65b307ac6dd7287c3a99ab96beccc92c9be36f4351bec64e"
+      }
+    }
+  ],
+  "rootBindings": [
+    {
+      "mechanismId": "host:fixture-transition-router",
+      "transitionId": "transition:router"
+    }
+  ]
+}

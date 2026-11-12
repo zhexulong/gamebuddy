@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "artifactKind": "native_normal_player_ingress_and_caller_register",
+  "attestation": {
+    "targetAssemblySha256": "0c1b37c7550278d35c62bb096d38514c6c0c9341cbe2275cda0d97048551f631",
+    "sourceManifestSha256": "d76d07d2066b81fb03a02e9b33ead922f70a1ae4945d29a39a947508ff01e695",
+    "decompilerConfigurationDigest": "1fa5ed2ff1a50fb3979cb909ba508bb4346291cb4ad3c8ff3fd22427f1b3c467"
+  },
+  "scope": {
+    "actor": "current_normal_local_player",
+    "inputMode": "native_game_input",
+    "excludedModes": [
+      "test_or_debug_only",
+      "mod_or_console_injected"
+    ]
+  },
+  "entrypoints": [
+    {
+      "entrypointId": "entry:fixture-input",
+      "declaration": {
+        "relativePath": "StardewValley/FixtureInputRouter.cs",
+        "startByte": 79,
+        "endByte": 120,
+        "sliceSha256": "1228096e93423e2e135a641d03f852866ffac7997bddaf46098fe7d40322a71a",
+        "sourceFileSha256": "2dd3ec381b76531d6bdf6315730e137a5351c3bb087cf5e530eb606e3bf09da9"
+      },
+      "entrypointKind": "framework_override",
+      "callerFact": "external_runtime_invocation",
+      "inputWitnesses": [
+        {
+          "kind": "input_state_read",
+          "locator": {
+            "relativePath": "StardewValley/FixtureInputRouter.cs",
+            "startByte": 143,
+            "endByte": 153,
+            "sliceSha256": "ab0e0e0d9530e45f86f5448062114837781c8a2f09aedf05f72ec42009a87673",
+            "sourceFileSha256": "2dd3ec381b76531d6bdf6315730e137a5351c3bb087cf5e530eb606e3bf09da9"
+          }
+        }
+      ]
+    }
+  ],
+  "callerEdges": [
+    {
+      "edgeId": "edge:fixture-input-to-publish",
+      "callerDeclaration": {
+        "relativePath": "StardewValley/FixtureInputRouter.cs",
+        "startByte": 79,
+        "endByte": 120,
+        "sliceSha256": "1228096e93423e2e135a641d03f852866ffac7997bddaf46098fe7d40322a71a",
+        "sourceFileSha256": "2dd3ec381b76531d6bdf6315730e137a5351c3bb087cf5e530eb606e3bf09da9"
+      },
+      "callsite": {
+        "relativePath": "StardewValley/FixtureInputRouter.cs",
+        "startByte": 154,
+        "endByte": 173,
+        "sliceSha256": "ccdfaca43f1800cb3567979a90ea7e1aee95d9c8d4ad3717ffe5ed9cf835b1fd",
+        "sourceFileSha256": "2dd3ec381b76531d6bdf6315730e137a5351c3bb087cf5e530eb606e3bf09da9"
+      },
+      "dispatchKind": "direct",
+      "targetDeclaration": {
+        "relativePath": "StardewValley/FixtureInputRouter.cs",
+        "startByte": 194,
+        "endByte": 233,
+        "sliceSha256": "d23c84c6b8a1733fffb7a3b8113c5c84ee3fe20398f210eed2367208efcda15b",
+        "sourceFileSha256": "2dd3ec381b76531d6bdf6315730e137a5351c3bb087cf5e530eb606e3bf09da9"
+      },
+      "inputProvenance": "input_derived_branch",
+      "guardLocators": [
+        {
+          "relativePath": "StardewValley/FixtureInputRouter.cs",
+          "startByte": 143,
+          "endByte": 153,
+          "sliceSha256": "ab0e0e0d9530e45f86f5448062114837781c8a2f09aedf05f72ec42009a87673",
+          "sourceFileSha256": "2dd3ec381b76531d6bdf6315730e137a5351c3bb087cf5e530eb606e3bf09da9"
+        }
+      ],
+      "targetResolutionState": "resolved"
+    }
+  ],
+  "routerExitInventories": [
+    {
+      "routerId": "router:fixture-input",
+      "routerDeclaration": {
+        "relativePath": "StardewValley/FixtureInputRouter.cs",
+        "startByte": 79,
+        "endByte": 120,
+        "sliceSha256": "1228096e93423e2e135a641d03f852866ffac7997bddaf46098fe7d40322a71a",
+        "sourceFileSha256": "2dd3ec381b76531d6bdf6315730e137a5351c3bb087cf5e530eb606e3bf09da9"
+      },
+      "edgeIdsInSourceOrder": [
+        "edge:fixture-input-to-publish"
+      ],
+      "inventoryState": "exhaustive",
+      "gapIds": []
+    }
+  ],
+  "roots": [
+    {
+      "rootId": "root:fixture-publish",
+      "declaration": {
+        "relativePath": "StardewValley/FixtureInputRouter.cs",
+        "startByte": 194,
+        "endByte": 233,
+        "sliceSha256": "d23c84c6b8a1733fffb7a3b8113c5c84ee3fe20398f210eed2367208efcda15b",
+        "sourceFileSha256": "2dd3ec381b76531d6bdf6315730e137a5351c3bb087cf5e530eb606e3bf09da9"
+      },
+      "rootKind": "direct_input_dispatch_target",
+      "predecessorEdgeIds": [
+        "edge:fixture-input-to-publish"
+      ],
+      "ingressPath": {
+        "entrypointId": "entry:fixture-input",
+        "orderedEdgeIds": [
+          "edge:fixture-input-to-publish"
+        ]
+      },
+      "selectionWitness": {
+        "firstInputDispatchEdgeId": "edge:fixture-input-to-publish",
+        "dispatchGuardLocators": [
+          {
+            "relativePath": "StardewValley/FixtureInputRouter.cs",
+            "startByte": 143,
+            "endByte": 153,
+            "sliceSha256": "ab0e0e0d9530e45f86f5448062114837781c8a2f09aedf05f72ec42009a87673",
+            "sourceFileSha256": "2dd3ec381b76531d6bdf6315730e137a5351c3bb087cf5e530eb606e3bf09da9"
+          }
+        ]
+      },
+      "incomingCallerInventory": "complete_for_attested_ingress_region",
+      "disposition": "normal_player_root"
+    }
+  ],
+  "gaps": []
+}
