@@ -500,6 +500,7 @@ function nodeRows(entries) {
           actionId: value.actionId,
           state: value.state,
           nodeId: typeof value.nodeId === "string" ? value.nodeId : null,
+          ordinal: typeof value.index === "number" ? value.index : null,
           code: codeOf(value),
           hint: typeof value.hint === "string" ? value.hint : null,
           tile: tileOf(value),
@@ -521,32 +522,94 @@ function nodeRows(entries) {
  * 20 distinct names - the same `n01` is the first node of every one of 98 programmes, so a node id alone would merge 98
  * different nodes into one.
  *
- * A row with no nodeId has nothing to be counted by, so it is not folded into anything: `without_node_id` reports how
- * many there were, and a question that needs a node says what it was missing instead of counting rows as work.
+ * A SUBMIT ECHO HAS NO `nodeId` AND DOES NOT NEED ONE: `stardew_plan_work`'s accepted answer is
+ * `{ programId, nodes: [{ index, actionId, state, tile }] }`, so `programId#index` is the same identity from the only
+ * names that answer carries. Requiring `nodeId` there made every run's most common node source unreadable - measured
+ * `round46b`: 84 node rows, 0 with a nodeId, and `--question codes` correctly refused to print a number instead of
+ * printing a zero.
+ *
+ * The counters below are the ONE place the census's numbers are counted, because a reader must not have to guess how a
+ * node was told apart and two spellings of one count disagree the moment either moves. `withoutNodeId` is derived from
+ * them rather than counted a second time: every row an index or no spelling could name is a row with no `nodeId`.
  */
 function nodesByIdentity(rows) {
   const nodes = new Map();
-  let withoutNodeId = 0;
+  let fromNodeId = 0;
+  let fromIndex = 0;
+  let withoutIdentity = 0;
   for (const row of rows) {
-    if (row.nodeId === null) {
-      withoutNodeId += 1;
+    // A nodeId is the producer's own name for the node and stays usable when the payload did not say which programme
+    // owns it: `(no programme)` is the placeholder `shape` prints for a bundle node, and a text part carrying only
+    // `nodes[]` is a node row `codes` reads when the bundle published none. An index is a position inside ONE
+    // programme, so it names a node only once the programme is known - `#0` alone is the first node of every plan.
+    const programme = row.programId ?? "(no programme)";
+    let key = null;
+    if (row.nodeId !== null) key = `${programme}/${row.nodeId}`;
+    else if (row.programId !== null && row.ordinal !== null) key = `${row.programId}#${String(row.ordinal)}`;
+    if (key === null) {
+      withoutIdentity += 1;
       continue;
     }
-    const key = `${row.programId ?? "(no programme)"}/${row.nodeId}`;
+    if (row.nodeId !== null) fromNodeId += 1;
+    else fromIndex += 1;
     const prior = nodes.get(key);
     if (prior === undefined || row.index >= prior.index) nodes.set(key, { ...row, key });
   }
-  return { rows: rows.length, nodes: [...nodes.values()], withoutNodeId };
+  return {
+    rows: rows.length,
+    nodes: [...nodes.values()],
+    fromNodeId,
+    fromIndex,
+    withoutIdentity,
+    withoutNodeId: fromIndex + withoutIdentity,
+  };
 }
 
-/** The census every question taken over node rows prints first, so no row is read as a piece of work. */
+/**
+ * The census every question taken over node rows prints first, so no row is read as a piece of work.
+ *
+ * Four readings over ONE population, with the identity sources printed as their sum, so `distinct node ids` and
+ * `without_node_id` can be read against the rows they were counted from instead of trusted:
+ *
+ *   node rows            91 of 91 node rows
+ *   distinct node ids    91 of 91 node rows (one row per node: identity programId/nodeId, else programId#index)
+ *   without_node_id      91 of 91 node rows (no nodeId, so programId#index or nothing at all named the node)
+ *   identity sources     0 by nodeId + 91 by index + 0 with no identity = 91 of 91 node rows
+ *
+ * A session that published no node row prints `not measured` naming the record it needed: `0 of 0 node rows` is "we
+ * never looked" wearing a number.
+ */
 function printCensus(census, unit) {
-  out(`  node rows           ${count(census.rows, census.rows, unit)}`);
-  out(
-    `  distinct node ids   ${count(census.nodes.length, census.rows, `${unit} (identity programId/nodeId, one row per node)`)}`,
+  if (census.rows === 0) {
+    row(
+      "node rows",
+      notMeasured(unit, {
+        reason: "the session published no parsed node row",
+        missingField: "a message.content[] text part whose JSON carries {actionId, state}",
+      }),
+    );
+    return;
+  }
+  row("node rows", count(census.rows, census.rows, unit));
+  row(
+    "distinct node ids",
+    count(
+      census.nodes.length,
+      census.rows,
+      `${unit} (one row per node: identity programId/nodeId, else programId#index)`,
+    ),
   );
-  out(
-    `  without_node_id     ${count(census.withoutNodeId, census.rows, `${unit} (no nodeId, so no node to count them as)`)}`,
+  row(
+    "without_node_id",
+    count(
+      census.withoutNodeId,
+      census.rows,
+      `${unit} (no nodeId, so programId#index or nothing at all named the node)`,
+    ),
+  );
+  row(
+    "identity sources",
+    `${census.fromNodeId} by nodeId + ${census.fromIndex} by index + ${census.withoutIdentity} with no identity = ${census.fromNodeId + census.fromIndex + census.withoutIdentity} of ${census.rows} ${unit}`,
   );
 }
 
@@ -833,8 +896,8 @@ function questionTurns({ context }) {
 function censusClause(census, sessionName) {
   if (census.rows === 0) return `${sessionName} holds no parsed node row`;
   if (census.nodes.length === 0)
-    return `${sessionName}: ${count(census.withoutNodeId, census.rows, "node rows carry no nodeId")}`;
-  return `${sessionName}: ${count(census.nodes.length, census.rows, `node rows are distinct nodes, ${census.withoutNodeId} of them without a nodeId`)}`;
+    return `${sessionName}: ${count(census.withoutNodeId, census.rows, "node rows carry no nodeId, and no programId#index to name them by")}`;
+  return `${sessionName}: ${count(census.nodes.length, census.rows, "node rows are distinct nodes")}, ${census.withoutNodeId} of them without a nodeId`;
 }
 
 /** What the other source says about the same question, so two sources cannot disagree in silence. */
@@ -914,9 +977,12 @@ function codesFromSession({ census, sessionName, window, result, hasSession }) {
   });
   printCensus(census, "node rows");
   const terminal = census.nodes.filter((node) => NON_SUCCESS_STATES.has(node.state));
-  out(
-    `  examined            ${count(census.nodes.length, census.rows, "node rows are distinct nodes")}, of which ${terminal.length} ended in a non-success state`,
-  );
+  // No rows, no derived count: `0 of 0 node rows are distinct nodes` is the same "we never looked" the census refused
+  // one line up, so the refusal below is the only thing that line could add.
+  if (census.rows > 0)
+    out(
+      `  examined            ${count(census.nodes.length, census.rows, "node rows are distinct nodes")}, of which ${terminal.length} ended in a non-success state`,
+    );
   if (census.nodes.length === 0) {
     row(
       "terminal codes",
@@ -924,8 +990,9 @@ function codesFromSession({ census, sessionName, window, result, hasSession }) {
         reason:
           census.rows === 0
             ? "the session holds no parsed node row"
-            : `all ${census.rows} node row(s) were published without a nodeId`,
-        missingField: "message.content[] text part whose JSON carries {nodeId, actionId, state}",
+            : `all ${census.rows} node row(s) were published with no nodeId and no programId#index to name them by`,
+        missingField:
+          "message.content[] text part whose JSON carries {nodeId, actionId, state} or {programId, nodes[].index}",
       }),
     );
     return 2;
@@ -1296,7 +1363,8 @@ function shapeFromSession({ census, sessionName, window, argument, result, hasSe
   });
   printCensus(census, "node rows");
   const carriers = census.nodes.filter((node) => node.actionId === argument);
-  out(`  examined            ${count(carriers.length, census.rows, `node rows name ${argument}`)}`);
+  if (census.rows > 0)
+    out(`  examined            ${count(carriers.length, census.rows, `node rows name ${argument}`)}`);
   if (carriers.length === 0) {
     row(
       "tiles",

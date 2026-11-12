@@ -266,13 +266,17 @@ test("codes answers from the bundle when the session carries no node ending, and
   assert.match(lineFor(text, "coded terminals"), /1 of 1 non-success nodes/);
   assert.ok(text.includes("seed_not_owned_in_slot"), text);
   const cross = lineFor(text, "cross-check");
-  assert.match(cross, /1 of 1 node rows carry no nodeId/, cross);
-  assert.match(cross, /\[silent: the session named no node it could report an ending for\]/, cross);
+  // before this fix: /1 of 1 node rows carry no nodeId/ and `[silent: the session named no node it could report an
+  // ending for]`. A submit echo is a node now (identity programId#index), so the cross-check names it as one and the
+  // silence is the absence of an ENDING, not of a node - the bundle still decides.
+  assert.match(cross, /1 of 1 node rows are distinct nodes, 1 of them without a nodeId/, cross);
+  assert.match(cross, /\[silent: the session recorded no ending at all/, cross);
 });
 
 test("a node published once per snapshot is one node, and the row count is printed beside it", (t) => {
   // A node appears in every status snapshot. Counting its rows as work made `shape plant_seed` report 16 rows for 6
-  // seeds; the identity is `programId/nodeId`, and a row with no nodeId is counted as a row and never as a node.
+  // seeds; the identity is `programId/nodeId`, or `programId#index` for a row published without a nodeId, and a row
+  // neither spelling can name is counted as a row and never as a node.
   const directory = fixture({
     records: [
       snapshot("plan_1", [{ nodeId: "n01", actionId: "till_soil", state: "pending", tile: { x: 40, y: 9 } }]),
@@ -298,13 +302,90 @@ test("a node published once per snapshot is one node, and the row count is print
   const { status, text } = ask(directory, "shape", "till_soil");
   assert.equal(status, 0, text);
   assert.match(lineFor(text, "node rows"), /5 of 5 node rows/);
-  assert.match(lineFor(text, "distinct node ids"), /1 of 5 node rows/);
+  // three snapshots of n01 fold to one node, and the two submit-echo rows are nodes of their own - before this fix the
+  // line read /1 of 5 node rows/, because an echo could not be named.
+  assert.match(lineFor(text, "distinct node ids"), /3 of 5 node rows/);
   assert.match(lineFor(text, "without_node_id"), /2 of 5 node rows/);
-  assert.match(lineFor(text, "tiles reached"), /1 of 1 nodes naming till_soil/);
+  assert.match(lineFor(text, "identity sources"), /3 by nodeId \+ 2 by index \+ 0 with no identity = 5 of 5 node rows/);
+  assert.match(lineFor(text, "tiles reached"), /1 of 2 nodes naming till_soil/);
 
   const coded = ask(directory, "codes");
   assert.equal(coded.status, 0, coded.text);
   assert.match(lineFor(coded.text, "coded terminals"), /1 of 1 non-success nodes/, coded.text);
+});
+
+test("the census says not measured naming its record when the session published no node row", (t) => {
+  // `0 of 0 node rows` is "we never looked" wearing a number, so a census with no rows to count prints `not measured`
+  // and names the record it needed - and no field it does not carry can reach the line as `undefined`.
+  const directory = fixture({
+    records: [assistantMessage(START, [{ type: "toolCall", id: "call_a", name: "stardew_observe", arguments: {} }])],
+  });
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+
+  const { status, text } = ask(directory, "codes");
+  assert.equal(status, 2, text);
+  const census = lineFor(text, "node rows");
+  assert.match(census, /not measured: node rows - the session published no parsed node row/, census);
+  assert.match(census, /needs a message\.content\[\] text part/, census);
+  assert.ok(!text.includes("0 of 0 node rows"), `a census over nothing printed a number:\n${text}`);
+  assert.ok(!text.includes("undefined"), `a field the census does not carry reached the line:\n${text}`);
+});
+
+/**
+ * The census is counted once and printed in two places: the block `codes`/`shape` print when no bundle answered, and
+ * the clause `codes`/`nodes`/`shape` print beside a bundle that did. A counter renamed in the fold and missed in one
+ * of those prints the string `undefined` on a line a run is gated on - measured 2026-11-11, where
+ * `cross-check ... 91 of 91 node rows are distinct nodes, undefined of them without a nodeId` was printed for a run
+ * whose session held ninety-one submit-echo rows and no nodeId at all.
+ *
+ * The population is the reader's own `QUESTIONS` list, so a question kind added tomorrow is asked this too.
+ */
+test("no question prints undefined for a field its records do not carry", (t) => {
+  t.diagnostic(`population: ${QUESTIONS.length} question kinds - ${QUESTIONS.join(", ")}`);
+  const records = [
+    userBatch(START - 1_000, "<player-note>seed the row</player-note>"),
+    assistantMessage(START, [
+      { type: "thinking", thinking: "the seed row is ready" },
+      { type: "toolCall", id: "call_a", name: "stardew_plan_work", arguments: {} },
+      {
+        type: "text",
+        text: JSON.stringify({
+          programId: "plan_1",
+          nodes: [
+            { index: 0, actionId: "plant_seed", state: "pending", tile: { x: 60, y: 9 } },
+            { index: 1, actionId: "plant_seed", state: "pending", tile: { x: 61, y: 9 } },
+          ],
+        }),
+      },
+    ]),
+  ];
+  const bundle = {
+    ...window,
+    programSubmissions: [{ programId: "plan_1", nodes: [{ nodeId: "n01", actionId: "plant_seed", arguments: {} }] }],
+    programOutcomes: [
+      {
+        programId: "plan_1",
+        nodeOutcomes: [{ nodeId: "n01", actionId: "plant_seed", state: "failed", reasonCode: "soil_not_diggable" }],
+      },
+    ],
+  };
+  const withBundle = fixture({ result: bundle, records });
+  const fromSession = fixture({ records });
+  t.after(() => {
+    rmSync(withBundle, { recursive: true, force: true });
+    rmSync(fromSession, { recursive: true, force: true });
+  });
+
+  const ARGUMENT = { thinking: "seed", shape: "plant_seed" };
+  for (const kind of QUESTIONS) {
+    for (const [where, directory] of [
+      ["the bundle", withBundle],
+      ["the session", fromSession],
+    ]) {
+      const { text } = ask(directory, kind, ARGUMENT[kind] ?? null);
+      assert.ok(!text.includes("undefined"), `${kind} printed a field it does not carry, reading ${where}:\n${text}`);
+    }
+  }
 });
 
 test("both sources answer and the reader prints both, naming the one that decided", (t) => {
