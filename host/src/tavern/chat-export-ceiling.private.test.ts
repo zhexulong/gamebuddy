@@ -20,14 +20,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CHAT_EXPORT_JSONL_MAX_LENGTH } from "./browser-contract/index.js";
-import { exportSafeChat } from "./interchange.js";
+import { exportSafeChat, TAVERN_INTERCHANGE_LIMITS_V1 } from "./interchange.js";
 import type { ChatThreadMessage } from "./chat-thread-store.js";
 import { ChatExportTooLargeError, chatExportFitsWire } from "./chat-management/chat-management-service.js";
 
-/** The interchange's own per-bubble bound, as `CHAT_EXPORT_JSONL_MAX_LENGTH`'s declaration states it. */
-const BUBBLE_TEXT_MAX_BYTES = 4_000;
-/** ...and its own bubble ceiling, which is the most one export can carry. */
-const BUBBLE_MAX = 256;
+/**
+ * Both fixtures are built from the interchange's OWN declared bounds - the bubble ceiling and the
+ * per-bubble byte cap - so the maximal Chat this file exports is the one the interchange wrote, not a
+ * second spelling of 256 bubbles of 4 000 bytes that agrees only until one of them moves.
+ */
+const BUBBLE_TEXT_MAX_BYTES = TAVERN_INTERCHANGE_LIMITS_V1.textBytes;
+const BUBBLE_MAX = TAVERN_INTERCHANGE_LIMITS_V1.chatMessages;
 
 const THREAD_ID = `chat-${"1".repeat(16)}`;
 const NAMES = { userName: "A Player", characterName: "Mira" } as const;

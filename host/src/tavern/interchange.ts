@@ -3,7 +3,17 @@ import { MAX_WORLDBOOK_SCAN_DEPTH, type WorldBook } from "../worldbook.js";
 import type { ChatThreadMessage } from "./chat-thread-store.js";
 
 export const TAVERN_INTERCHANGE_VERSION = "tavern-interchange/v1" as const;
-const TAVERN_INTERCHANGE_LIMITS_V1 = Object.freeze({
+/**
+ * The bounds this interchange accepts and writes: one file's input size, the most bubbles one Chat
+ * export carries, the most world book entries one export carries, and the most bytes one bubble or
+ * entry body may hold.
+ *
+ * Published because the export's own ceiling (`CHAT_EXPORT_JSONL_MAX_LENGTH`, the wire's bound on
+ * the reply) is a DIFFERENT bound from these, and whether one can cross the other is arithmetic
+ * nobody can restate safely: the boundary test builds its maximal legal Chat from the numbers here
+ * rather than spelling 256 bubbles of 4 000 bytes a second time.
+ */
+export const TAVERN_INTERCHANGE_LIMITS_V1 = Object.freeze({
   inputBytes: 262_144,
   chatMessages: 256,
   worldBookEntries: 128,

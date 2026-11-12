@@ -29,7 +29,7 @@ import test from "node:test";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 
 const mountPreamble = `
-  const [contractUrl, coordinatorUrl, deploymentUrl, storeUrl, runtimeUrl, repoUrl, bindingUrl, chatUrl, dispatchUrl, root] = process.argv.slice(1);
+  const [contractUrl, coordinatorUrl, deploymentUrl, storeUrl, runtimeUrl, repoUrl, bindingUrl, chatUrl, interchangeUrl, dispatchUrl, root] = process.argv.slice(1);
   const { createHash } = await import("node:crypto");
   const { EventEmitter } = await import("node:events");
   const { Readable } = await import("node:stream");
@@ -152,6 +152,7 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
       url("./world-info-management/world-info-management.js"),
       url("./world-info-binding/world-info-binding-management-service.js"),
       url("./chat-management/chat-management-service.js"),
+      url("./interchange.js"),
       url("../tavern-management-dialogue-web.js"),
       root,
     ],
@@ -257,4 +258,114 @@ test("the chat-export route returns the interchange's own file for a Chat the li
   assert.ok(served.jsonl.includes("The parsnips took."));
   // A handle that names no Chat of this partition is a bounded 404, not a fabricated file.
   assert.equal(results.missingStatus, 404);
+});
+
+/**
+ * The export's ceiling, read end to end - and read on BOTH sides in one run.
+ *
+ * `ChatExportV1Schema.jsonl` is bounded by `CHAT_EXPORT_JSONL_MAX_LENGTH`, while the exporter that
+ * fills it is bounded separately by the interchange's own 256 bubbles of 4 000 UTF-8 bytes. The two
+ * look like they agree, and for plain prose they do; they do not agree for text the JSON encoding has
+ * to escape, because a bubble is bounded by its BYTES while the file is measured in the characters
+ * `JSON.stringify` produces. A Chat at the interchange's own maximum whose bubbles are quotation marks
+ * therefore exports past the ceiling, and before this refusal existed that reply failed the route's
+ * own schema check and reached the player as `chat_management_service_unavailable` -> HTTP 503
+ * `runtime_unavailable`: a permanent condition wearing a transient outage's name, which the player
+ * would retry forever.
+ *
+ * Both fixtures come from the interchange's declared limits, not from a hand-written megabyte, and
+ * both readings are taken from the SAME run: the plain maximum must export (so a refusal keyed on the
+ * Chat's size or bubble count would be wrong) and the escaped maximum must be refused by name, 409
+ * with `retryable: false` - a 503-shaped mapping here would reproduce the original defect under a new
+ * name, which is what the status and retryable assertions exist to stop.
+ */
+test("the export's own ceiling refuses a legal maximum of escaped text by name, and the same maximum of plain prose exports", async (t) => {
+  const results = await mounted(`
+    const { TAVERN_INTERCHANGE_LIMITS_V1 } = await import(interchangeUrl);
+    const { CHAT_EXPORT_JSONL_MAX_LENGTH } = await import(contractUrl);
+    // One bubble at the interchange's own byte cap. The fill decides nothing but its JSON encoding:
+    // "x" is one character, a quotation mark is two.
+    const bubble = (fill) => fill.repeat(TAVERN_INTERCHANGE_LIMITS_V1.textBytes / Buffer.byteLength(fill, "utf8"));
+    const readHeaders = { Origin: "http://127.0.0.1:7331", cookie, "sec-fetch-site": "same-origin" };
+    const fillChat = async (ids, fill) => {
+      await creation.createExplicit({ ...ids, companionId: "companion_01", continuityId: "continuity_01", opening: { messageId: "opening_" + ids.chatThreadId, text: bubble(fill), source: { greetingSetId: "greetings_01", sourceRevision: 1, canonicalHash: "a".repeat(64), variantId: "first", profileRevision: 1, scenarioRevision: null } } });
+      for (let index = 0; index < TAVERN_INTERCHANGE_LIMITS_V1.chatMessages; index += 1)
+        await store.appendPlayer(ids.chatThreadId, { messageId: "m_" + String(index).padStart(4, "0"), text: bubble(fill), occurredAtMs: 1_000 + index });
+      return lease.browserProjection.projectChatHandle(ids.chatThreadId, ids.chatSurfaceSessionId);
+    };
+    const plainHandle = await fillChat({ chatThreadId: "chat-" + "2".repeat(16), chatSurfaceSessionId: "surface-" + "2".repeat(16) }, "x");
+    const escapedHandle = await fillChat({ chatThreadId: "chat-" + "3".repeat(16), chatSurfaceSessionId: "surface-" + "3".repeat(16) }, '"');
+    const plain = await code(() => managementService.exportChat({ chatHandle: plainHandle }));
+    const escaped = await code(() => managementService.exportChat({ chatHandle: escapedHandle }));
+    const plainRoute = await dispatch(request("GET", "/api/tavern/v1/chat/export?chatHandle=" + plainHandle, readHeaders));
+    const escapedRoute = await dispatch(request("GET", "/api/tavern/v1/chat/export?chatHandle=" + escapedHandle, readHeaders));
+    process.stdout.write(JSON.stringify({
+      chatMessages: TAVERN_INTERCHANGE_LIMITS_V1.chatMessages,
+      textBytes: TAVERN_INTERCHANGE_LIMITS_V1.textBytes,
+      ceiling: CHAT_EXPORT_JSONL_MAX_LENGTH,
+      plainOk: plain.ok,
+      plainError: plain.ok ? null : plain.error,
+      plainLength: plain.ok ? plain.value.jsonl.length : null,
+      plainMessageCount: plain.ok ? plain.value.messageCount : null,
+      plainStatus: plainRoute.status,
+      plainRouteMessageCount: plainRoute.status === 200 ? JSON.parse(plainRoute.body).messageCount : null,
+      escapedOk: escaped.ok,
+      escapedError: escaped.ok ? null : escaped.error,
+      escapedStatus: escapedRoute.status,
+      escapedBody: escapedRoute.body,
+    }));
+    await managementService.close();
+    await handler.close();
+    await lease.close();
+    await authority.close();
+  `);
+  const ceiling = results.ceiling as number;
+  // The fixture is the interchange's own maximum, read from its declaration in the child.
+  assert.ok(
+    (results.chatMessages as number) > 1 && (results.textBytes as number) > 0,
+    "the fixture's bounds must come from the interchange's declared limits",
+  );
+  // The plain maximum exports, and it does so WITHOUT losing a bubble: a refusal keyed on the Chat's
+  // size or bubble count would take this reading away.
+  assert.equal(results.plainOk, true, String(results.plainError));
+  assert.equal(
+    (results.plainLength as number) <= ceiling,
+    true,
+    `the plain maximum produced ${results.plainLength} characters, past the ${ceiling} the wire carries - this fixture no longer proves the refusal is about escaping`,
+  );
+  assert.equal(
+    results.plainMessageCount,
+    results.chatMessages,
+    "the export carried fewer bubbles than the interchange allows",
+  );
+  assert.equal(results.plainStatus, 200, "the route refused a Chat the interchange's own limits allow");
+  assert.equal(results.plainRouteMessageCount, results.chatMessages);
+  // The same legal maximum, escaped, is refused by name - and the numbers a support path needs are in
+  // the message the caller logs, where a player never reads them.
+  assert.equal(results.escapedOk, false, "a reply past the wire ceiling must not be served");
+  const refusal = /^chat_export_too_large:(\d+):(\d+)$/u.exec(String(results.escapedError));
+  assert.notEqual(
+    refusal,
+    null,
+    `the refusal must name itself and both numbers, not report an outage: ${results.escapedError}`,
+  );
+  assert.equal(Number(refusal?.[2]), ceiling);
+  assert.equal(Number(refusal?.[1]) > ceiling, true);
+  // The wire's answer: its own code, a conflict rather than an outage, and never retryable. A 503
+  // `runtime_unavailable` here would reproduce the defect under a new name.
+  assert.equal(results.escapedStatus, 409);
+  const problem = JSON.parse(results.escapedBody as string) as {
+    code: string;
+    status: number;
+    retryable: boolean;
+    type: string;
+  };
+  assert.equal(problem.code, "chat_export_too_large");
+  assert.equal(problem.status, 409);
+  assert.equal(problem.retryable, false);
+  assert.equal(problem.type, "urn:gamebuddy:tavern:chat_export_too_large");
+  // The reading itself, so a later change to either bound is visible as a number rather than a verdict.
+  t.diagnostic(
+    `export ceiling: ${String(results.chatMessages)} bubbles of ${String(results.textBytes)} bytes - plain ${String(results.plainLength)} characters under the ${ceiling} the wire carries, escaped refused at ${String(results.escapedError)}`,
+  );
 });
