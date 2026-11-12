@@ -1,3 +1,5 @@
+# red-proof: inject  the shipping verdict rule's `$ok = ($product.Count -gt 0) -and ($failing.Count -eq 0)`
+#  replaced by `$ok = $true` in tools/sandbox/sandbox-verify.cmd -> `FAIL red transcript fails -> ok=True` plus two more FAIL lines, exit 3; restored -> verdict_rule_proven, exit 0
 # Verdict-rule proof for tools/sandbox/sandbox-verify.cmd.
 #
 # The gate's verdict is the only thing standing between "the install worked" and "the install looked like it

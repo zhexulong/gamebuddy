@@ -1,3 +1,5 @@
+// red-proof: inject  the actor.CanMove spelling dropped from the detector's own line filter in findSites
+//  -> `✖ the detector still finds a fork in all three spellings, and names the handler` (`two triple spellings plus the split one`), exit 1
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";

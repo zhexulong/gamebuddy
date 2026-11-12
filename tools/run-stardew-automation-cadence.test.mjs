@@ -1,3 +1,5 @@
+// red-proof: inject  classifyBlock's `timedOut === true` branch made unreachable, so a harness timeout falls through to the verdict
+//  -> `✖ a block is blocked on a timeout, a missing verdict, a non-passing verdict or a bad exit` (actual cadence_block_exit:none, expected cadence_block_timeout) and `✖ a harness timeout is a blocked block, never a product verdict`, exit 1
 // Offline suite for the automation cadence pass.
 //
 // It launches NO game, no SMAPI and no provider: the block child and the entry-existence check

@@ -1,14 +1,27 @@
 # Gate falsifier decisions
 
-`gates examined 344 · with a red proof 254 · external 4 · declared without 86 · undeclared 0 · zero-population-pass 0`
+`gates examined 346 · with a red proof 274 · external 4 · declared without 66 · undeclared 0 · zero-population-pass 0`
 
-The populations are a partition of the 344 gates, so they reconcile with the census line:
-`254 + 4 + 86 = 344`. Of the 86 gates still owing a proof, 71 are provable today (the fourth table; its first
-five rows need their own argument set supplied before the rule can be exercised at all), seven are named in the tables
-above — one that reads something other than it checks, four that wait on a machine or another lane, two that report
-`not measured` — and eight were moved out of the fourth table by this batch: three whose marker would have to live in a
-file this lane may not edit, two decided by the environment, and three suites red in this checkout for reasons that are
-not their own rules.
+**The arithmetic, stated rather than implied.** `274 + 4 + 66 = 344`, two short of the 346 the same line names.
+The two missing gates are the ones carrying an unreadable claim — `check:code-duplication` (a marker whose kind reads
+`facades`, which is not one of the five) and `test:format-ratchet` (a marker whose prose names a planted
+`tools/legacy.mjs` that deliberately is not on disk). `evaluate` reports both as findings on every run, and the census
+line's five buckets cannot place them: it partitions proven / external / declared / undeclared and leaves
+`unreadableClaims` out. This is not new — at HEAD, before this batch's twenty proofs, the same line read
+`253 + 4 + 86 = 343` of 345. It is written down here because a line that is two short cannot be quoted as a
+partition, and the next reader is owed the difference. Both gates belong to files another lane may not touch
+(`tools/check-code-duplication.mjs`, `tools/scripts/*ratchet*`), so they are recorded, not repaired.
+
+The 66 gates still recorded as owing a proof are not all provable today: 20 were closed by this batch (the sixth
+section below names each and the line that fired), and the rows the fourth table still carries are split between
+· arg-driven gates whose input set no commit produces (`check:stardew-native-normal-player-ingress-register`,
+`check:stardew-native-source-closure`, `check:stardew-native-transition-ledger`),
+· gates whose only marker file lives under `integrations/stardew/**` (`test:stardew-action-candidates`,
+`test:stardew-action-inventory-reconciliation`, `test:stardew-action-seam-terminals`, `test:stardew-branch-writeset`,
+`test:stardew-method-resolution`),
+· the five kept `proof owed` rows of the first table (a C# lane, a submodule lane, a live machine),
+· and 19 suites that are red at HEAD or wait on a machine (the fifth section lists the three found red this batch).
+
 
 `check-harness-conformance` prints the same numbers from the same reading (`tools/lib/harness-conformance.mjs` over
 `tools/audit-gate-red-proofs.mjs`).
@@ -22,7 +35,7 @@ How each class was decided: a gate is `cannot fire` when nothing in the reposito
 report with no failing path, a population no file produces, an environment that decides instead of a rule, or a rule
 that lives in another program's config. It is `reads the wrong thing` when its reader and its name disagree. It is
 `provable` when a violation exists that it would catch, and the table names what to inject. Proven gates are not
-listed: they are the 234, and their markers sit in the gate files themselves.
+listed: they are the 274, and their markers sit in the gate files themselves.
 
 ## The fifteen gates that could not fire: their dispositions
 
@@ -118,44 +131,23 @@ what was done with it). The two places history was genuinely the only honest pro
 
 ## Provable, not yet proven
 
-Seventy-one gates, each with the violation to inject. Where the target is the module the suite imports it is
+Forty-eight gates, each with the violation to inject. Twenty-three rows left this table in the fifth batch — twenty
+proved there, three moved down to the red-at-HEAD table — and they are not repeated here. Where the target is the
+module the suite imports it is
 named; where the injection is a fixture, a config or an environment, the artefact is named instead. Rows
 marked `(attempted; did not fire)` are cases where this lane tried an injection that the suite did not catch —
 they are still provable, but the first guess is recorded so nobody repeats it.
 
 | gate | the violation to inject |
 | --- | --- |
-| `check:host-production-import-boundary` | a production host import of a test/dev-only module — imports `./check-host-production-import-boundary.mjs` |
-| `check:stardew-companion-production-admission` | **the declared command supplies no flag** — `node tools/check-stardew-companion-production-admission.mjs` exits 2 with `admission_cli_required_flag_missing` before reading anything; a proof must invoke it with its flag set and an admission it must refuse — imports `./lib/stardew-companion-production-admission.mjs` |
-| `check:stardew-native-mechanism-review-register` | **the declared command supplies no arguments** — it exits 1 with `mechanism_review_register_arguments_required`; a proof must pass `--mechanism-report`, `--register` and `--source-root` and a register row with no review verdict — imports `./lib/stardew-native-mechanism-review-register.mjs` |
-| `check:stardew-native-multiplayer-sensitivity` | a sensitivity the register misses (register and decompile root are both present) — imports `./lib/stardew-native-multiplayer-sensitivity.mjs` |
 | `check:stardew-native-normal-player-ingress-register` | **the declared command supplies no arguments** — it exits 1 with `normal_player_ingress_arguments_required`; a proof must pass the register, report and source root and an ingress path its register does not carry — imports `./lib/stardew-native-mechanism-review-register.mjs` |
 | `check:stardew-native-source-closure` | **the declared command supplies no arguments** — it prints its usage and exits 2; a proof must pass the six flags and an unresolved source symbol — imports `./lib/stardew-native-source-attestation.mjs` |
 | `check:stardew-native-transition-ledger` | **the declared command supplies no arguments** — it exits 1 with `transition_ledger_arguments_required`; a proof must pass the five inputs and a ledger row with no mechanism — imports `./lib/stardew-native-mechanism-review-register.mjs` |
-| `test:csharp-compile` | a compile error in the Mod — **the caveat this row carried is stale**: measured this batch, the suite is green on a clean HEAD copy (13 passing), so an injected compile error can be seen red here — imports `./check-csharp-compile.mjs` |
-| `test:sandbox-configs` | a sandbox config the python validator must refuse |
-| `test:sandbox-verdict` | a verdict rule the PowerShell prover must refuse |
-| `test:sandbox-wiring` | a driver bound to the wrong gate path |
 | `test:stardew-action-candidates` | inject into `../src/stardew-source-analysis-vocabulary.mjs` |
-| `test:stardew-action-gate-descriptors` | inject into `./lib/stardew-published-action-registry.mjs` |
-| `test:stardew-action-gates-batch` | inject into `./stardew-action-gate-descriptors.mjs` |
 | `test:stardew-action-inventory-reconciliation` | inject into `../src/analysis/stardew-action-inventory-reconciliation.mjs` |
 | `test:stardew-action-seam-terminals` | the artefact it reads |
-| `test:stardew-admission-fork-delta` | the artefact it reads |
-| `test:stardew-admission-hold-codes` | inject into `./stardew-admission-hold-codes.mjs` |
 | `test:stardew-attachment-telemetry` | a telemetry shape the PowerShell prover must refuse |
-| `test:stardew-automation-cadence` | inject into `./run-stardew-action-gates-batch.mjs` |
 | `test:stardew-branch-writeset` | inject into `../src/analysis/stardew-branch-writeset.mjs` |
-| `test:stardew-clear-fish-pond-runner` | inject into `./run-stardew-native-local-player-clear-fish-pond-smoke.mjs` |
-| `test:stardew-dialogue-stream` | inject into `./check-stardew-dialogue-stream.mjs` |
-| `test:stardew-dialogue-stream-runner` | inject into `./run-stardew-native-local-player-dialogue-stream-smoke.mjs` |
-| `test:stardew-fixture-action-coverage` | inject into `./fixture-action-coverage.mjs` |
-| `test:stardew-fixture-profile` | inject into `./lib/stardew-fixture-profile.mjs` |
-| `test:stardew-fixture-scenario-resolution` | an action-keyed rule removed so a fallback claims it (attempted; did not fire) — imports `./lib/stardew-native-local-player-fixture.mjs` |
-| `test:stardew-fixture-scenario-wiring` | inject into `./check-stardew-fixture-scenario-wiring.mjs` |
-| `test:stardew-fixture-transaction-inspector` | inject into `./lib/stardew-fixture-profile.mjs` |
-| `test:stardew-formal-action-gate` | inject into `./lib/stardew-formal-action-gate.mjs` |
-| `test:stardew-gameplay-surface-rules` | inject into `./lib/stardew-gameplay-surface-rules.mjs` |
 | `test:stardew-gameplay-surface-selector` | inject into `./lib/stardew-gameplay-surface-selector.mjs` |
 | `test:stardew-lifecycle-cold-session` | inject into `./run-stardew-lifecycle-cold-session.mjs` |
 | `test:stardew-loop-closure-mutation` | a mutation the mutation runner must kill |
@@ -368,5 +360,91 @@ named (`test:gate-red-proofs` had the first).
 | `check:sandbox-acceptance` | its rule is `report.ok = summary.ok === true && !timedOut`, and the verdict comes from `sandbox-verify.cmd` under a 15-minute deadline | there is no `GameBuddy.Setup.exe` in this checkout and the run stages its share on the real account; the proof belongs on the machine that builds the installer |
 | `check:stardew-companion-production-admission`, `check:stardew-native-mechanism-review-register`, `check:stardew-native-normal-player-ingress-register`, `check:stardew-native-source-closure`, `check:stardew-native-transition-ledger` | each declared command, run as `package.json` invokes it | every one of the five exits 1 or 2 on a **missing argument** before reading a file, so the declared run cannot be told apart from a violation. Their rules are falsifiable once the argument set is supplied; the ledger now says so on each row instead of calling them plain `provable` |
 | `test:gameplay-capability-catalog` | the suite on a clean HEAD copy | `✖ catalog seed covers every published registry action without claiming completeness` — red for a reason that is not its rule, so no baseline exists to redden |
-| `test:csharp-compile` | the suite on a clean HEAD copy | green, 13 passing — the row's "red in this checkout today" caveat no longer holds, and the row now says that. The proof is one injected C# compile error away, left for the next batch |
+| `test:csharp-compile` | the suite on a clean HEAD copy | green, 13 passing — the row's "red in this checkout today" caveat no longer holds, and the row now says that. The proof was one injected C# compile error away, and the fifth batch made it |
 | `audit:stardew-action-seam-terminals`, `check:dialogue-web-boundaries`, `check:host-module-graph` | their entry files | the marker would have to live under `integrations/stardew/**`, `dialogue-web/src/**` or `host/src/**`, which this lane may not edit; the injections themselves were never in question |
+
+## The fifth batch: twenty gates, twenty markers, and three gates that are red at HEAD
+
+Every injection ran in a copy of HEAD **outside** the repository: `git archive HEAD` extracted to
+`E:/tmp/gateproof/b5`, with `node_modules`, `host/node_modules`, `dialogue-web/node_modules`, `ref/`, `vendor/` and
+`design/` junctioned in and its own `git init`/commit so the gates that read `git` had a tree to read. Two readings were
+taken for every gate in the same pair of runs: the copy file was rewritten from the repository's own HEAD blob
+(`git cat-file blob HEAD:<path>`) and the gate re-run green. At the end of the batch
+`git -C E:/tmp/gateproof/b5 status --porcelain` is empty and the one file whose line endings the copy's index
+normalises (`tools/sandbox/sandbox-verify.cmd`) is byte-identical to the live worktree's copy (9532 bytes). The live
+worktree was never the injection site: `git status --porcelain` on it names no file this batch wrote other than the
+twenty markers and this document.
+
+| gate closed | marker lives in | the line that fired |
+| --- | --- | --- |
+| `check:host-production-import-boundary` | `tools/check-host-production-import-boundary.mjs` | `"verdict": "blocked"` with `{"kind":"production_reaches_test_only_module","importer":"host/src/action-registry.ts","specifier":"./companion-control-server.test.js","line":1396}`, exit 2 |
+| `check:stardew-companion-production-admission` | `tools/check-stardew-companion-production-admission.mjs` | the declared flag set plus a dev-only `--fixture-adapter` → `{"state":"blocked","evidenceClass":"production_admission_preflight","reasonCode":"admission_cli_forbidden_override"}`, exit 2 |
+| `check:stardew-native-mechanism-review-register` | `tools/check-stardew-native-mechanism-review-register.mjs` | `mechanism_review_register_unreviewed: Every discovered mechanism must receive exactly one explicit review disposition.`, exit 1 (fixture: an exact report whose one mechanism has no review row; its reviewed twin prints `{"status":"valid","mechanismCount":1,...}` and exits 0) |
+| `test:csharp-compile` | `tools/check-csharp-compile.test.mjs` | `csharp_compile_compile_error:Probe.csproj:… error CS0103` + `csharp_compile_failed: 1 of 1 tracked C# projects do not build`, exit 1; the control tree reports `projects=1 compiled=1 excluded=0 failed=0`, exit 0 |
+| `test:sandbox-verdict` | `tools/sandbox/prove-verdict-rule.ps1` | `FAIL red transcript fails -> ok=True` plus `FAIL empty transcript does not pass vacuously` and `FAIL a transcript containing a stale failure still fails`, exit 3; restored → `verdict_rule_proven`, exit 0 |
+| `test:sandbox-wiring` | `tools/sandbox/prove-driver-gate-paths.py` | `FAIL the driver stages into the mapped HOST folder -> driver=C:\Users\long\gamebuddy-sandbox-drifted mapped=C:\Users\long\gamebuddy-sandbox`, exit 1 |
+| `test:stardew-action-gate-descriptors` | `tools/stardew-action-gate-descriptors.test.mjs` | `✖ published action descriptors are complete, unique, and point to declared runner contracts` — the deep-equal prints `- travel`, exit 1 |
+| `test:stardew-action-gates-batch` | `tools/run-stardew-action-gates-batch.test.mjs` | `✖ a gate missing either half of its evidence is missing, never a pass` (actual `{ state: 'passed', reasonCode: 'gate_passed' }`), exit 1 |
+| `test:stardew-admission-fork-delta` | `tools/audit-stardew-admission-fork-delta.test.mjs` | `✖ the detector still finds a fork in all three spellings, and names the handler` (`two triple spellings plus the split one`), exit 1 |
+| `test:stardew-admission-hold-codes` | `tools/lib/stardew-admission-hold-codes.test.mjs` | `✖ the list carries nothing the Mod cannot return` + `the list claims actor_held_by_non_existent_state, which the Mod's source does not mint`, exit 1 |
+| `test:stardew-automation-cadence` | `tools/run-stardew-automation-cadence.test.mjs` | `✖ a block is blocked on a timeout, …` (actual `cadence_block_exit:none`, expected `cadence_block_timeout`) and `✖ a harness timeout is a blocked block, never a product verdict`, exit 1 |
+| `test:stardew-clear-fish-pond-runner` | `tools/run-stardew-native-local-player-clear-fish-pond-smoke.test.mjs` | `✖ a pond still advertised after the clear fails: the published fact must change`, exit 1 |
+| `test:stardew-dialogue-stream` | `tools/check-stardew-dialogue-stream.test.mjs` | `✖ a pager that only read the current page is caught` (actual `passed`, expected `blocked`), exit 1 |
+| `test:stardew-dialogue-stream-runner` | `tools/run-stardew-native-local-player-dialogue-stream-smoke.test.mjs` | `✖ one page is BLOCKED, not passed: the claim is that the pager advanced`, exit 1 |
+| `test:stardew-fixture-action-coverage` | `tools/lib/fixture-action-coverage.test.mjs` | `✖ a lane that grants an unpublished action is a named violation`, exit 1 |
+| `test:stardew-fixture-profile` | `tools/stardew-fixture-profile.test.mjs` | `✖ every managed fixture target has a distinct backup identity` (`target names must be unique`: 28 against 40), exit 1 |
+| `test:stardew-fixture-scenario-resolution` | `tools/stardew-fixture-scenario-resolution.test.mjs` | `✖ every action-keyed fixture scenario is reachable through its action set`, naming all 23 hijacked keys, exit 1 |
+| `test:stardew-fixture-transaction-inspector` | `tools/stardew-fixture-transaction-inspector.test.mjs` | `✖ transaction inspector is read-only and reports ambiguous recoverable backups` (actual `idle`, expected `ambiguous_backups`), exit 1 |
+| `test:stardew-formal-action-gate` | `tools/stardew-formal-action-gate.test.mjs` | `✖ nonterminal states are not terminal` and `✖ does not mistake accepted initial response for a terminal receipt`, exit 1 |
+| `test:stardew-gameplay-surface-rules` | `tools/stardew-gameplay-surface-rules.test.mjs` | `✖ content classification collapses localized copies and preserves logical operation domains` (actual `Data/Events/Town.zh-CN.xnb`), exit 1 |
+
+The census moved from 254 to 274 and the baseline's diff is `2 20` — twenty entries deleted by `--update`, plus the two
+entries it recorded for the gates whose claims are unreadable (see the arithmetic note at the top: they are `gaps` and
+no other bucket can hold them). `--update` was used rather than a hand edit, so the file was rewritten by the same
+reading that prints the census.
+
+Two of the twenty needed a decision about what their proof establishes:
+
+- `test:stardew-action-gate-descriptors` and `test:stardew-fixture-scenario-resolution` both **derive their population**
+  and both defend a shrunken one — the first against the Mod's own action registry (`Set(95)` in the deep-equal), the
+  second with `assert.ok(declared.size >= 10)` beside a regex over the module it checks. That is why the fourth table's
+  question about name-drifted populations has no new member from this batch: the two candidates that could drift are
+  the two that refuse to pass when they shrink.
+- `check:host-production-import-boundary` is a **whole-tree** reading: the injected import raised `examined` from 186 to
+  189, because the test module it named pulled its own imports into the closure. The restoration reading is the one
+  quoted (`passed`, `examined 186`, `violations 0`), so the two numbers are from two different populations and the
+  marker says so.
+
+## Three gates red at HEAD, found this batch
+
+These are the mirror of the debt this document was built for: gates that fire, name a real finding, and are read by
+nobody. Each was measured twice — on the clean HEAD copy and in the live worktree — and each printed the same line. No
+workflow invokes any of the three (`grep` over `.github/workflows/*.yml` names none of them), which is why they have
+been red without anybody noticing.
+
+| gate | the reading at HEAD | where the fix belongs |
+| --- | --- | --- |
+| `check:stardew-native-multiplayer-sensitivity` | exit 2: `mp_sensitivity_classification_drift: use_mine_ladder declares StardewValley.Locations/MineShaft.cs mp-insensitive but the exact source reads the decisive token(s) IsLocalPlayer.` + `{"actionId":"use_mine_ladder","sensitivity":"mp-insensitive","decisiveTokens":["IsLocalPlayer"]}` | the register under `integrations/stardew/action-development/contracts/generated/`, or the decompile the register was authored against — either way a file this lane may not edit. Its row left the fourth table because a proof needs a green baseline and there is none |
+| `test:stardew-fixture-scenario-wiring` | exit 1: `✖ the real repository wiring is consistent` (`actual: 'failed', expected: 'passed'`), `✖ the real allowlist contains the scenarios whose runners exist`, `✖ the real config gate accepts navigation_read_only_v1` | the scenario wiring/allowlist it reads; the gate is doing its job, the tree is not |
+| `test:sandbox-configs` | exit 1: `FAIL gamebuddy-sandbox.wsb: not valid XML: not well-formed (invalid token): line 1, column 1` — the file is a `#`-comment document, and the validator globs `*.wsb` | `tools/sandbox/gamebuddy-sandbox.wsb`, committed in `3f319596` ("the Windows Sandbox harness joins the repository"). The gate has been red since the day that file landed |
+
+## Message defects met this batch
+
+The third thing this batch was asked to watch for: a proof is worth less when the failure line cannot name the member.
+
+| gate | the failure line | what it does not say |
+| --- | --- | --- |
+| `check:stardew-native-mechanism-review-register` | `mechanism_review_register_unreviewed: Every discovered mechanism must receive exactly one explicit review disposition.` | `fail()` computed `{ missingMechanismIds }` and the CLI's catch prints only `${code}: ${message}`, so the one fact a reader needs — which mechanism — is dropped. Its sibling `check-stardew-native-multiplayer-sensitivity` prints `error.details` as JSON on the next line, so the shape exists in the tree and this gate does not use it |
+| `test:stardew-admission-fork-delta` | `AssertionError [ERR_ASSERTION]: two triple spellings plus the split one` | the count disagrees and the member does not: the dropped spelling (`actor.CanMove`) is not named, so a reader learns a spelling went missing but not which |
+
+The other eighteen name their member: a gate id, an action id, a file:line, a code string, an expected-against-actual
+value, or — in `test:stardew-fixture-scenario-resolution` — all 23 hijacked keys with their expected and resolved
+scenarios side by side.
+
+## What the batch examined and deliberately did not prove
+
+| gate | what was measured | why no marker |
+| --- | --- | --- |
+| `check:stardew-native-normal-player-ingress-register`, `check:stardew-native-source-closure`, `check:stardew-native-transition-ledger` | each declared command, run as `package.json` invokes it | they exit 1 or 2 on the argument list alone (`normal_player_ingress_arguments_required`, the source-closure usage line, `transition_ledger_arguments_required`). Their inputs are not in this repository: an exact mechanism report, a certificate/universe/boundary-model triple, and a ledger plus scope manifest. The mechanism-register row above shows a fixture can stand in for the report; building three more synthetic schemas was not attempted, and the rows stay marked as needing their own argument set |
+| `test:stardew-action-candidates`, `test:stardew-action-inventory-reconciliation`, `test:stardew-action-seam-terminals`, `test:stardew-branch-writeset`, `test:stardew-method-resolution` | their entry files | each entry file lives under `integrations/stardew/action-development/tests/`, and the audit reads a marker only from a file the gate owns, so the marker would have to live in a file this lane may not edit — the same bound as `audit:stardew-action-seam-terminals` in the first table |
+| `test:sandbox-configs`, `test:stardew-fixture-scenario-wiring`, `check:stardew-native-multiplayer-sensitivity` | their default runs, twice | red at HEAD (the section above), so there is no green baseline to redden |

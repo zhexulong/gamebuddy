@@ -1,3 +1,5 @@
+// red-proof: inject  `pondNoLongerAdvertised: survivors.length === 0` replaced by `true` in the postcondition assertion
+//  -> `✖ a pond still advertised after the clear fails: the published fact must change` (actual true, expected false), exit 1
 import assert from "node:assert/strict";
 import test from "node:test";
 

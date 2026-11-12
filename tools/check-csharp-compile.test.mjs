@@ -1,3 +1,5 @@
+// red-proof: inject  a tracked C# project with a real type error (a scratch git tree, built by dotnet)
+//  -> `csharp_compile_compile_error:Probe.csproj:... error CS0103` and `csharp_compile_failed: 1 of 1 tracked C# projects do not build`, exit 1; the same tree with the error removed reports `projects=1 compiled=1 excluded=0 failed=0`, exit 0
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";

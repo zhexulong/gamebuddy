@@ -1,3 +1,5 @@
+// red-proof: inject  classifyGate's `lifecycle === null` branch made unreachable, so a gate with no lifecycle record passes
+//  -> `✖ a gate missing either half of its evidence is missing, never a pass` (actual `{ state: 'passed', reasonCode: 'gate_passed' }`), exit 1
 // Offline suite for the published-action gate batch.
 //
 // It launches NO game, no SMAPI and no provider: the per-action gate is the one

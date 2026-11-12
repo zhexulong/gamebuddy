@@ -1,3 +1,5 @@
+// red-proof: inject  a code the Mod cannot mint (`actor_held_by_non_existent_state`) added to ADMISSION_HOLD_CODES
+//  -> `✖ the list carries nothing the Mod cannot return` + `the list claims actor_held_by_non_existent_state, which the Mod's source does not mint`, exit 1
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";

@@ -1,3 +1,5 @@
+// red-proof: inject  the `travel` gate row deleted from STARDEW_PUBLISHED_ACTION_GATES
+//  -> `✖ published action descriptors are complete, unique, and point to declared runner contracts` with a deep-equal listing `- travel`, exit 1
 import assert from "node:assert/strict";
 import { constants } from "node:fs";
 import { access, readdir, readFile } from "node:fs/promises";

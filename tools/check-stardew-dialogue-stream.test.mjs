@@ -1,3 +1,5 @@
+// red-proof: inject  `const g2 = maxPages >= 2 || chain >= 2` replaced by `const g2 = true` in judgeDialogueStream
+//  -> `✖ a pager that only read the current page is caught` (actual 'passed', expected 'blocked'), exit 1
 import assert from "node:assert/strict";
 import test from "node:test";
 

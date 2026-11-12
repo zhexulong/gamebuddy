@@ -16,6 +16,10 @@ previous version of this file failed for exactly that reason. It is:
 both read from the files rather than restated, so changing either side without the other fails here.
 """
 
+# red-proof: inject  the driver's staged host folder renamed (`gamebuddy-sandbox` -> `gamebuddy-sandbox-drifted`)
+#   while blackbox.wsb still maps the original -> `FAIL the driver stages into the mapped HOST folder` naming the
+#   driver and mapped value, exit 1; restored -> driver_gate_paths_agree, exit 0
+
 import pathlib
 import re
 import xml.etree.ElementTree as ElementTree

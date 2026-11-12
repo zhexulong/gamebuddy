@@ -1,3 +1,5 @@
+// red-proof: inject  the sidecar bundle concatenated twice in MANAGED_PROFILE_TARGETS, so two targets share one backup name
+//  -> `✖ every managed fixture target has a distinct backup identity` (`target names must be unique`: actual 28, expected 40), exit 1
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

@@ -1,3 +1,5 @@
+// red-proof: inject  `const paged = maxPages >= 2 || dialogueFacts.length >= 2` replaced by `const paged = true`
+//  -> `✖ one page is BLOCKED, not passed: the claim is that the pager advanced` (actual 'passed', expected 'blocked'), exit 1
 import assert from "node:assert/strict";
 import test from "node:test";
 

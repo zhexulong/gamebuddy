@@ -1,3 +1,5 @@
+// red-proof: inject  `logicalContentAssetPath` stops stripping the locale suffix (`return normalized`)
+//  -> `✖ content classification collapses localized copies and preserves logical operation domains` (actual 'Data/Events/Town.zh-CN.xnb', expected 'Data/Events/Town.xnb'), exit 1
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

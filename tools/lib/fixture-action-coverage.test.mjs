@@ -1,3 +1,5 @@
+// red-proof: inject  the unpublished-action check inverted (`!published.has(id)` -> `published.has(id)`)
+//  -> `✖ a lane that grants an unpublished action is a named violation`, exit 1
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";

@@ -1,3 +1,5 @@
+// red-proof: inject  `isTerminalExecutionState` taught to accept `accepted` as a terminal state
+//  -> `✖ nonterminal states are not terminal` and `✖ does not mistake accepted initial response for a terminal receipt`, exit 1
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

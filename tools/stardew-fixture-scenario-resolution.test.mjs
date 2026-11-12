@@ -1,3 +1,5 @@
+// red-proof: inject  an action-set fallback (`actions.includes("move_to_tile")`) inserted ahead of the action-keyed group
+//  -> `✖ every action-keyed fixture scenario is reachable through its action set`, naming all 23 hijacked keys, exit 1
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";

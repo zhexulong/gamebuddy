@@ -1,3 +1,5 @@
+// red-proof: fixture  an exact mechanism report whose one discovered mechanism has no review row
+//  -> `mechanism_review_register_unreviewed: Every discovered mechanism must receive exactly one explicit review disposition.`, exit 1; the reviewed twin prints `{"status":"valid","mechanismCount":1,...}` and exits 0
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";

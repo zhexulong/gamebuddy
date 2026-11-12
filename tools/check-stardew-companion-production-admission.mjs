@@ -1,3 +1,5 @@
+// red-proof: inject  the full flag set plus a dev-only override (`--fixture-adapter`), which the P7 CLI must refuse
+//  -> `{"state":"blocked","evidenceClass":"production_admission_preflight","reasonCode":"admission_cli_forbidden_override"}`, exit 2; the same flag set without the override exits 0
 import {
   parseProductionAdmissionInvocation,
   runProductionAdmissionPreflight,
