@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 
 namespace GameBuddy.Stardew.Integration.Tests;
 
@@ -34,6 +35,28 @@ namespace GameBuddy.Stardew.Integration.Tests;
 internal static class HeadlessGameWorld
 {
     internal const string Collection = "stardew-headless-game-world";
+
+    /// <summary>
+    /// The fade surface a headless world has to supply, installed once for the assembly.
+    ///
+    /// <para>
+    /// <c>WorldModel.ReadFacts</c> reads <c>Game1.globalFade</c>, a property over <c>Game1.screenFade</c> - a private
+    /// static that only <c>Game1</c>'s own constructor assigns (<c>Game1.cs:2706</c>; the static constructor at
+    /// <c>:2137</c> does not). Every fixture here builds its world with <c>FormatterServices.GetUninitializedObject</c>,
+    /// which skips that constructor, so without this the read throws instead of answering "no fade is running" - the
+    /// same completeness a probe <c>Farmer</c> supplies for the NetFields <c>ReadFacts</c> dereferences.
+    /// </para>
+    /// <para>
+    /// Once for the assembly rather than per fixture, because the read sits in the per-tick disposition every
+    /// admission takes: a fixture that forgot it would fail somewhere inside the engine rather than in the test that
+    /// forgot. <c>EnterExitAdjacentExitRefusalTests</c> seeds the same field where it needs the WRITE side to work.
+    /// </para>
+    /// </summary>
+    [ModuleInitializer]
+    internal static void InstallFadeSurface() =>
+        typeof(StardewValley.Game1)
+            .GetField("screenFade", BindingFlags.NonPublic | BindingFlags.Static)!
+            .SetValue(null, new StardewValley.BellsAndWhistles.ScreenFade(() => false, () => { }));
 
     /// <summary>
     /// Every process-wide <c>Game1</c> static a headless world assigns. Measured 2026-11-10: a fixture that captured

@@ -74,7 +74,13 @@ internal readonly record struct ActorWorldFacts(
     // engaged in any action and shouldn't be interrupted" lists it FIRST (`Farmer.cs:7936`, ahead of the menu `:7940`
     // and the warp `:7944`), and it is unloaded only when its own `tick` returns true (`Game1.cs:4165-4171`). At least
     // 11.1 s on the fishing results screen (`FishingGame.cs:169`). Boundary: .tmp/boundary-minigame.md.
-    bool Minigame);
+    bool Minigame,
+    // The engine's screen fade, appended last for the same reason. It is the OTHER half of the engine's control-input
+    // gate (`!globalFade && !freezeControls`, `Game1.cs:4286`), raised by `GlobalFadeToBlack` (`ScreenFade.cs:107`) and
+    // by `GlobalFadeToClear` (`:121`), cleared at BOTH ends by `UpdateGlobalFade` (`:134`, `:154`). It is NOT the warp's
+    // fade: `FadeScreenToBlack` clears this flag and raises `fadeToBlack` (`:82-83`), and that window is `Warping`.
+    // Boundary: .tmp/boundary-screen-fade.md.
+    bool ScreenFade);
 
 /// <summary>
 /// Read-only per-tick disposition payload (readonly record struct on the game
@@ -320,9 +326,13 @@ internal static class WorldModel
         // reports it. The engine counts it as a hold of the actor in its own right and lists it first (`Farmer.cs:7936`),
         // and clears it only when the mounted minigame's own `tick` returns true (`Game1.cs:4170-4171`).
         bool minigame = Game1.currentMinigame is not null;
+        // The engine's global fade: `globalFade` is a Game1 static, so a null player still reports it. Read from the
+        // property rather than from `screenFade.globalFade` because the flag is what the engine's own control-input
+        // gate reads (`:4286`).
+        bool screenFade = Game1.globalFade;
 
         if (player is null)
-            return new ActorWorldFacts(eventUp, menuType, dialogueUp, timeOfDay, 0f, false, false, false, false, false, warping, dayTransition, controlsFrozen, minigame);
+            return new ActorWorldFacts(eventUp, menuType, dialogueUp, timeOfDay, 0f, false, false, false, false, false, warping, dayTransition, controlsFrozen, minigame, screenFade);
 
         return new ActorWorldFacts(
             eventUp,
@@ -342,7 +352,8 @@ internal static class WorldModel
             warping,
             dayTransition,
             controlsFrozen,
-            minigame);
+            minigame,
+            screenFade);
     }
 
     private static bool OwnedByAction() => ModalActionOwnedCheck?.Invoke() ?? false;

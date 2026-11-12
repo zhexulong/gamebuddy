@@ -31,7 +31,8 @@ public sealed class BodyHoldAttributionTests
         bool warping = false,
         bool dayTransition = false,
         bool controlsFrozen = false,
-        bool minigame = false) =>
+        bool minigame = false,
+        bool screenFade = false) =>
         new(
             EventUp: eventUp,
             MenuType: menuType,
@@ -46,7 +47,8 @@ public sealed class BodyHoldAttributionTests
             Warping: warping,
             DayTransition: dayTransition,
             ControlsFrozen: controlsFrozen,
-            Minigame: minigame);
+            Minigame: minigame,
+            ScreenFade: screenFade);
 
     [Fact]
     public void EveryHoldingKindHasItsOwnCode()

@@ -35,7 +35,8 @@ public sealed class WorldModelTests
         bool warping = false,
         bool dayTransition = false,
         bool controlsFrozen = false,
-        bool minigame = false)
+        bool minigame = false,
+        bool screenFade = false)
         => new(
             eventUp,
             menuType,
@@ -50,7 +51,8 @@ public sealed class WorldModelTests
             warping,
             dayTransition,
             controlsFrozen,
-            minigame);
+            minigame,
+            screenFade);
 
     private static ActorDispositionKind Kind(in ActorWorldFacts facts) => WorldModel.Classify(facts).Kind;
 

@@ -50,7 +50,8 @@ public sealed class WorldInterruptionTests
                 Warping: false,
                 DayTransition: false,
                 ControlsFrozen: false,
-                Minigame: false)).Kind;
+                Minigame: false,
+                ScreenFade: false)).Kind;
     }
     // ---- disposition classification (WIA §4.1; ≈ Lane A ComputeDisposition) ----
 
