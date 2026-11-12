@@ -182,6 +182,9 @@ test("my_work answers the totals, the byAction order and the tiles of one journa
   });
   assert.deepEqual(answer.totals.nodes, {
     succeeded: 2,
+    // A for_each program's verdict is its own state, so it is its own bucket: a node whose action ran and whose
+    // successors did not is neither `succeeded` nor `failed`, and folding it into either would misreport both.
+    partiallySucceeded: 0,
     failed: 0,
     cancelled: 0,
     rejected: 2,
