@@ -94,7 +94,11 @@ internal sealed partial class ExecutionManager
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (!Utility.tileWithinRadiusOfPlayer(targetX, targetY, 1, Game1.player))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_target_out_of_range", $"target={targetX},{targetY}");
+            // Where the actor IS and how far the tool reaches, beside the tile she named: `target=..` alone is the tile the
+            // caller already had, so "out of range" arrived as a bare echo (`refusal_names_nothing_actionable`, gate
+            // `refusal_informativeness/v1`). The two fields are the sibling `*_out_of_range` refusals' own spelling.
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_target_out_of_range",
+                $"target={targetX},{targetY};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1");
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);

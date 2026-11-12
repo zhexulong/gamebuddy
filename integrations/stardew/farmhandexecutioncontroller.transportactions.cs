@@ -629,7 +629,11 @@ internal sealed partial class ExecutionManager
         if (ResolveDeclaredTool(player.Items, "use_raft").RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, $"slot={slot}");
         if (!location.isWaterTile(targetX, targetY))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "raft_target_not_water", $"tile={targetX},{targetY}");
+            // What the tile actually IS, beside the tile the caller named: `tile=..` alone repeats the request, so "that is
+            // not water" arrived with nothing to act on (`refusal_names_nothing_actionable`, gate
+            // `refusal_informativeness/v1`). The fields are the sibling `pan_site_not_water` refusal's own spelling.
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "raft_target_not_water",
+                $"tile={targetX},{targetY};location={location.NameOrUniqueName};is_water=false;actor_tile={player.TilePoint.X},{player.TilePoint.Y}");
         // 5.2: the water tile is on the map the actor is standing on and the shore beside it is walkable, so out of the
         // native radius means walk to the shore and launch, rather than refuse.
         if (!IsTileWithinChebyshevRadius(player, targetX, targetY, 1))
@@ -657,7 +661,8 @@ internal sealed partial class ExecutionManager
             if (selection.Tool is not Raft raft)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
             if (!location.isWaterTile(targetX, targetY))
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "raft_target_not_water", $"tile={targetX},{targetY}");
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "raft_target_not_water",
+                    $"tile={targetX},{targetY};location={location.NameOrUniqueName};is_water=false;actor_tile={player.TilePoint.X},{player.TilePoint.Y}");
             if (!IsTileWithinChebyshevRadius(player, targetX, targetY, 1))
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "raft_target_out_of_range",
                     $"tile={targetX},{targetY};actor_tile={player.TilePoint.X},{player.TilePoint.Y};reach=1;approach=did_not_arrive");

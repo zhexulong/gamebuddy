@@ -45,9 +45,16 @@
  *     matches no family is a finding, not a default: a new kind of refusal needs a decision.
  *   - Remediation is checked at the seam that OWNS it for each class, so a class whose seam is
  *     silent reports it by name (`*_remediation_missing`, `target_remediation_absent`).
+ *   - A tile-kind refusal that makes a VERDICT about a place must carry a fact beside the tile the
+ *     caller named (`refusal_names_nothing_actionable`), and the kind of every family's target is
+ *     declared rather than exempted by code (`refusal_target_kind_undeclared`).
  * red-proof: inject  a Mod price refusal whose evidence drops `held=` ->
  * *                    `price_comparison_missing <file>:868 - ... names price= but not held=`, exit 1
  * *                    (tools/check-refusal-informativeness.mjs, the price rule this marker names)
+ * red-proof: history  the shipped `soil_not_diggable` evidence before the soil-guidance commit, replayed by
+ * *                    removing `{DescribeSoilGuidance(...)}` from its line ->
+ * *                    `refusal_names_nothing_actionable soil_not_diggable:<file>:<line>`, exit 1
+ * *                    (tools/check-refusal-informativeness.test.mjs, "FALSIFIER: the measured soil verdict")
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
@@ -425,10 +432,19 @@ export function extractModReceiptSites(sources) {
   const unattributed = [];
   const outParamMethods = outParamCodeCarriers(sources);
   const methodLiterals = methodCodeLiterals(sources);
+  const tokenized = new Map();
+  for (const [relativePath, source] of Object.entries(sources)) tokenized.set(relativePath, tokenize(source));
+  // ONE evidence-literal map for the whole Mod, not one per file. A helper that renders a code or an evidence string may
+  // be declared in a sibling file - `DescribeSoilRefusalCode` lives in `farmhandexecutioncontroller.cs` and is called from
+  // `.resourcetoolactions.cs` - and a per-file map made such a site invisible to both readers that follow a helper. The
+  // family the located-refusal rule exists for was exactly the family the gate could not see.
+  const memberLiterals = new Map();
+  for (const tokens of tokenized.values())
+    for (const [name, literals] of methodStringLiterals(tokens))
+      if (!memberLiterals.has(name)) memberLiterals.set(name, literals);
   for (const [relativePath, source] of Object.entries(sources)) {
-    const tokens = tokenize(source);
+    const tokens = tokenized.get(relativePath) ?? tokenize(source);
     const perFile = [];
-    const memberLiterals = methodStringLiterals(tokens);
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index];
       if (token.type !== "word" || token.value !== "ExecutionState") continue;
@@ -494,7 +510,7 @@ export function extractModReceiptSites(sources) {
         });
     }
   }
-  return { sites, unattributed };
+  return { sites, unattributed, helperCodes: helperCodeFamilies(memberLiterals) };
 }
 
 /**
@@ -540,6 +556,37 @@ function methodCodeLiterals(sources) {
 function carriedLiterals(name, outParamMethods, methodLiterals) {
   const callee = outParamMethods.get(name);
   return callee === undefined ? undefined : methodLiterals.get(callee);
+}
+
+/**
+ * The reason-code families a helper CALL renders, keyed by helper name, for the callers that need one.
+ *
+ * A site that hands its reason code to a shared renderer holds a string the caller receives, and this file's resolver stops
+ * at the call: `DescribeSoilRefusalCode(soilRefusal)` is `unattributed`, so the family the located-refusal rule exists for
+ * was exactly the family the gate could not see. The helper is read rather than trusted - the families come from its OWN
+ * literals - and a helper naming more than one family is left out rather than guessed at.
+ */
+function helperCodeFamilies(memberLiterals) {
+  const families = new Map();
+  for (const [name, rendered] of memberLiterals) {
+    // A literal token's value arrives WITHOUT its quotes, and an interpolated one carries `{...}` places: the family is the
+    // part before the first `:`, and a candidate carrying `=` is a field rather than a code.
+    const found = new Set(
+      rendered
+        .split(/[\s;]+/u)
+        .filter((candidate) => candidate.length > 0 && !candidate.includes("="))
+        .map((candidate) => candidate.split(":", 1)[0])
+        .filter((family) => /^[a-z][a-z0-9_]*$/u.test(family) && classifyReasonCode(family) !== null),
+    );
+    if (found.size === 1) families.set(name, [...found][0]);
+  }
+  return families;
+}
+
+/** The helper a code expression CALLS, or `null` when the expression is not a single call. */
+function calledHelper(expression) {
+  const call = /^([A-Za-z_][A-Za-z0-9_]*)\s*\(/u.exec(expression ?? "");
+  return call === null ? null : call[1];
 }
 
 /** `null` / absent / `default` are the three ways a site says nothing about the world. */
@@ -635,13 +682,30 @@ function codeLiteralsInUnit(tokens, nameIndex) {
  * renders. A declaration is recognised by `declaredReturnsString`, so a CALL of the same shape cannot
  * lend its neighbouring block's literals to an unrelated site.
  */
+/**
+ * The token run of an EXPRESSION-bodied member (`string X(...) => $"..."`), or null when the member has a block body.
+ *
+ * The one spelling several refusal families are built with is an arrow body - `DescribeSoilRefusalCode` renders
+ * `$"soil_not_diggable:{refusal}"` - and reading only block bodies made every such family invisible to the two readers that
+ * follow a helper: the evidence expansion and the code resolver. Bounded by the statement's own `;`.
+ */
+function expressionBody(tokens, nameIndex) {
+  const collected = [];
+  for (let index = nameIndex + 1; index < tokens.length && collected.length < 400; index += 1) {
+    if (tokens[index].value === ";") return collected;
+    if (tokens[index].value === "{") return null;
+    collected.push(tokens[index]);
+  }
+  return null;
+}
+
 function methodStringLiterals(tokens) {
   const byName = new Map();
   for (let index = 0; index < tokens.length; index += 1) {
     if (tokens[index].type !== "word" || tokens[index + 1]?.value !== "(") continue;
     if (tokens[index - 1]?.value === "." || tokens[index - 1]?.value === "new") continue;
     if (!declaredReturnsString(tokens, index)) continue;
-    const unit = unitBody(tokens, index);
+    const unit = unitBody(tokens, index) ?? expressionBody(tokens, index);
     if (unit === null) continue;
     const literals = unit
       .filter((token) => token.type === "string" || token.type === "interpolated" || token.type === "template")
@@ -873,6 +937,11 @@ export function checkRefusalInformativeness({ root = REPOSITORY_ROOT, overrides 
   const classOf = (code) => codes.get(reasonFamilyOf(code))?.class ?? classifyReasonCode(reasonFamilyOf(code));
   const classNeeds = new Map(REFUSAL_CLASSES.map((entry) => [entry.id, entry.needs]));
   const bareRefusals = checkBareRefusals(receiptSites);
+  const located = checkLocatedRefusals({
+    sites: receiptSites.sites,
+    unattributed: receiptSites.unattributed,
+    helperCodes: receiptSites.helperCodes,
+  });
 
   const findings = [
     ...checkClosedVocabulary(codes),
@@ -896,6 +965,7 @@ export function checkRefusalInformativeness({ root = REPOSITORY_ROOT, overrides 
     }),
     ...checkPriceComparison(priceSites),
     ...bareRefusals.findings,
+    ...located.findings,
   ];
 
   const classStatus = new Map();
@@ -931,6 +1001,13 @@ export function checkRefusalInformativeness({ root = REPOSITORY_ROOT, overrides 
         `${left.path}:${left.line}`.localeCompare(`${right.path}:${right.line}`),
       ),
     ),
+    located: Object.freeze({
+      examined: located.counts.examined,
+      unreadable: located.counts.unreadable,
+      observationShaped: located.counts.observationShaped,
+      undeclared: located.counts.undeclared,
+      kinds: located.counts.kinds,
+    }),
     counts: Object.freeze({
       actions: actions.length,
       receiptSites: receiptSites.sites.length,
@@ -942,6 +1019,8 @@ export function checkRefusalInformativeness({ root = REPOSITORY_ROOT, overrides 
       bareRefusals: bareRefusals.counts.sites,
       bareAllowed: bareRefusals.counts.allowed,
       bareUnaccounted: bareRefusals.counts.unaccounted,
+      locatedRefusals: located.counts.examined,
+      locatedUnreadable: located.counts.unreadable,
     }),
     findings: Object.freeze(
       dedupe(findings).sort((left, right) =>
@@ -1337,6 +1416,212 @@ function checkRemediation({ codes, classOf, classNeeds, planSites, remedy, planL
   return findings;
 }
 
+/**
+ * 7. A refusal about a PLACE says where the caller can act - and the KIND of its target decides whether that demand
+ * applies, so the rule is a property of the target rather than twenty exemptions.
+ *
+ * THE DEFECT. Measured 2026-11-10 (run A6): `soil_not_diggable:not_map_diggable` reached the companion with
+ * `target=13,10` - the tile she had just named - and nothing else. So "this ground is dead" and "aim somewhere else"
+ * were the same token, she hand-wrote 33 coordinates outside the strip, and 27 of them came back the same way: the
+ * evidence echoed the request, so every field it carried was a field she already had.
+ *
+ * THE PROPERTY, per tile-kind refusal that makes a VERDICT about the tile: the evidence must carry at least one fact
+ * beside the requested tile - which tile the action WOULD take, how many it would take, or what the tile actually holds.
+ * A verdict that only repeats the question teaches nothing.
+ *
+ * THE EXEMPTIONS ARE SHAPES AND KINDS, NOT CODES. A `*_changed` / `*_gone` / `*_not_found` refusal is an OBSERVATION:
+ * the world moved, and the remedy is a fresh read, which `checkRemediation` already demands for this class
+ * (`target_reobservation`). The `entity`, `destination` and `none` kinds are exempt as KINDS with the reason attached to
+ * the kind: an NPC, a mine floor and a warp destination are not places, so no position exists to publish.
+ *
+ * POPULATION, from the authority: every rejected-receipt site the same extraction reads, filtered by the declared kind of
+ * its family, so a refusal written tomorrow is judged by what its own code says about its target and nothing here needs an
+ * edit. A family whose words declare no kind is a finding of its own (`refusal_target_kind_undeclared`): the taxonomy
+ * has to stay total, and a new kind of target needs a decision rather than a default.
+ *
+ * LIMIT, stated rather than hidden: a site whose evidence is rendered by a helper call or is a bare member chain is not
+ * judged, because the fields the caller receives live in another function. The count is printed as `unreadable`, so a
+ * handled site cannot hide inside it silently.
+ */
+export const TARGET_KINDS = Object.freeze([
+  Object.freeze({
+    id: "tile",
+    rationale: "a place on a map: a tile, the ground on it, or the crop, object or container standing there",
+  }),
+  Object.freeze({
+    id: "entity",
+    rationale: "a named thing rather than a place - an NPC, a farm animal, a pack item, a machine's own identity",
+  }),
+  Object.freeze({
+    id: "destination",
+    rationale: "a place named by a transition rather than by coordinates - a warp target, a mine floor, a door",
+  }),
+  Object.freeze({
+    id: "none",
+    rationale: "the refusal is about the pack, the body or the world state, so it has no target to locate",
+  }),
+]);
+
+/** Decision order: a travel word wins over a creature word, and a tile is what a target-class refusal is about by default. */
+const TARGET_KIND_MATCHERS = Object.freeze([
+  [
+    "destination",
+    [/(?:destination|warp|door|mine_(?:elevator|entrance|exit|ladder)|obelisk|route|selector|transition)/u],
+  ],
+  [
+    "entity",
+    [
+      /(?:npc|animal|pet_|_pet|horse|shop|tailoring|machine|wearable|name_entity|level_up|pedestal|prize|item|watering_can|_rod)/u,
+    ],
+  ],
+  [
+    "tile",
+    [
+      /(?:tile|soil|ground|grass|weed|crop|plant|seed|sapling|fertil|harvest|forage|rock|stone|tree|stump|debris|clump|bush|pan_site|raft|refill|fence|crab_pot|bait|container|artifact_spot|place_owned|remove_placed|furniture|cask|sign|silo|shipping_bin|mannequin|trough|bowl|target|sweep|color|door_gate)/u,
+    ],
+  ],
+]);
+
+/**
+ * The declared kind of a family's target, or `null` when its words declare none. A family outside the target class has
+ * no target to locate, which is the `none` kind rather than an absence of an answer.
+ */
+export function declaredTargetKind(family) {
+  if (classifyReasonCode(family) !== "target") return "none";
+  for (const [id, matchers] of TARGET_KIND_MATCHERS) if (matchers.some((matcher) => matcher.test(family))) return id;
+  return null;
+}
+
+/** The kind of target a reason code is about, or `null` when its family declares none. */
+export function targetKindOf(code) {
+  return declaredTargetKind(reasonFamilyOf(code));
+}
+
+/**
+ * A refusal whose whole subject is the world MOVING: its remedy is a fresh observation, which `checkRemediation` owns for
+ * this class, so demanding a replacement position here would answer a question the code has already answered.
+ */
+const OBSERVATION_SHAPED_TARGET =
+  /_(?:changed|changed_under_us|moved|gone|missing|not_found|unavailable|not_available|not_bound)$/u;
+
+/** The keys that carry back the tile the CALLER named - a refusal made only of these has said nothing new. */
+const REQUEST_ECHO_KEYS = Object.freeze(
+  new Set(["target", "targets", "tile", "published", "expected", "expected_target_id", "actual", "live", "identity"]),
+);
+
+/** One `key=` in a Mod evidence expression, C# interpolation and literals alike. */
+const EVIDENCE_FIELD = /(?:^|[;|,{(\s])([A-Za-z_][A-Za-z0-9_]*)\s*=/gu;
+
+/**
+ * The keys whose value is a place or a population: a position (`k=x,y`), a reach or a distance, a count of tiles. Both
+ * spellings are what the Mod's own refusals already publish (`target=58,9`, `standable_tiles=0`, `closest=49,14`,
+ * `diggable_nearest=58,9`).
+ */
+const POSITION_OR_COUNT =
+  /(?:tiles|_count|rows|_found|in_area|nearest|closest|distance|stand_at|standable|radius|reach|_tile|actor|owner)/u;
+
+/**
+ * A refusal evidence expression this gate can read: a helper call is read through that helper's own literals (the fields
+ * the caller receives ARE the helper's tokens), so a call is only unreadable when nothing could be followed. A bare member
+ * chain (`this . revision`) is another function's value and is not judged.
+ */
+function readableEvidence(evidence) {
+  const text = evidence?.expanded ?? evidence?.text;
+  if (typeof text !== "string" || text.length === 0) return false;
+  if (text.includes("(") && evidence?.expanded === undefined) return false;
+  return !/^[A-Za-z_][A-Za-z0-9_]*(\s*\.\s*[A-Za-z_][A-Za-z0-9_]*)+$/u.test(text.trim());
+}
+
+/** The evidence text this rule judges: the helper-expanded form when one was read, the site's own expression otherwise. */
+function judgeableEvidence(evidence) {
+  return evidence?.expanded ?? evidence?.text ?? "";
+}
+
+/** The facts one evidence expression publishes besides the tile the request already named. */
+function factsBeyondRequest(text) {
+  const facts = [];
+  for (const match of text.matchAll(EVIDENCE_FIELD)) {
+    const key = match[1];
+    if (REQUEST_ECHO_KEYS.has(key)) continue;
+    facts.push(POSITION_OR_COUNT.test(key) ? `${key} (position/count)` : key);
+  }
+  return facts;
+}
+
+/**
+ * Every tile-kind VERDICT refusal must carry a fact beyond the tile it was asked about.
+ *
+ * Population: the rejected-receipt sites, filtered by the declared kind of their family and then by the observation shape
+ * of their code - both derived, neither a list. An empty population is reported as a blocked reading instead of a pass,
+ * because a rule that examined nothing has proved nothing.
+ */
+export function checkLocatedRefusals({ sites, unattributed = [], helperCodes = new Map() }) {
+  const findings = [];
+  const kinds = new Map();
+  const counts = { examined: 0, unreadable: 0, observationShaped: 0, undeclared: 0 };
+  // TWO WAYS A SITE NAMES ITS FAMILY: the resolved code it carries, and the helper whose single family the resolver could
+  // not follow (`DescribeSoilRefusalCode`). Both are read from the sources; neither is a list.
+  const judged = [
+    ...sites.map((site) => ({ ...site, family: reasonFamilyOf(site.code) })),
+    ...unattributed.flatMap((entry) => {
+      const helper = calledHelper(entry.expression);
+      const family = helper === null ? undefined : helperCodes.get(helper);
+      return family === undefined
+        ? []
+        : [{ ...entry, code: family, family, resolvedBy: `helper:${helper}`, codeExpression: entry.expression }];
+    }),
+  ];
+  for (const site of judged) {
+    const family = site.family;
+    const kind = declaredTargetKind(family);
+    if (kind === null) {
+      counts.undeclared += 1;
+      findings.push(
+        finding(
+          "refusal_target_kind_undeclared",
+          family,
+          `${family} is a target refusal whose words declare no target kind ` +
+            `(${TARGET_KINDS.map((entry) => entry.id).join("/")}): decide what its target IS, so the position rule knows ` +
+            "whether it applies",
+        ),
+      );
+      continue;
+    }
+    kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
+    if (kind !== "tile") continue;
+    if (OBSERVATION_SHAPED_TARGET.test(family)) {
+      counts.observationShaped += 1;
+      continue;
+    }
+    if (site.evidence?.kind === "absent") continue;
+    if (!readableEvidence(site.evidence)) {
+      counts.unreadable += 1;
+      continue;
+    }
+    counts.examined += 1;
+    if (factsBeyondRequest(judgeableEvidence(site.evidence)).length > 0) continue;
+    findings.push(
+      finding(
+        "refusal_names_nothing_actionable",
+        `${site.code}:${site.path}:${site.line}`,
+        `${site.code} is a verdict on ground and its evidence repeats only the tile the caller named: publish where the ` +
+          "action WOULD work, how many tiles it would work, or what the tile actually holds",
+        "target",
+      ),
+    );
+  }
+  if (counts.examined + counts.unreadable === 0)
+    findings.push(
+      finding(
+        "located_refusal_population_empty",
+        SOURCES.modRoot,
+        "no tile-kind verdict refusal was found to judge, so the position rule examined nothing: zero population is a " +
+          "blocked reading, not a pass",
+      ),
+    );
+  return { findings, counts: Object.freeze({ ...counts, kinds: Object.freeze(Object.fromEntries(kinds)) }) };
+}
+
 /** Which classes can reach each published action, and how each class reads. */
 function buildMatrix(actions, classStatus) {
   return actions.map((action) => {
@@ -1378,7 +1663,13 @@ function classVerdict(classId, findings) {
 
 /** Findings that are about the contract as a whole rather than one class. */
 const GLOBAL_FINDINGS = Object.freeze(
-  new Set(["free_form_reason_code", "unclassified_reason_code", "action_id_projection"]),
+  new Set([
+    "free_form_reason_code",
+    "unclassified_reason_code",
+    "action_id_projection",
+    "refusal_target_kind_undeclared",
+    "located_refusal_population_empty",
+  ]),
 );
 
 /**
@@ -1412,6 +1703,13 @@ export function renderReport(report) {
   );
   lines.push(
     `bareRefusals=${report.counts.bareRefusals} allowed=${report.counts.bareAllowed} unaccounted=${report.counts.bareUnaccounted}`,
+  );
+  lines.push(
+    `locatedRefusals=${report.counts.locatedRefusals} unreadable=${report.counts.locatedUnreadable} observationShaped=${report.located.observationShaped} kinds=${Object.entries(
+      report.located.kinds,
+    )
+      .map(([kind, count]) => `${kind}:${count}`)
+      .join(",")}`,
   );
   for (const entry of report.bareAllowed) lines.push(`  allowed ${entry.code} x${entry.sites} - ${entry.why}`);
   for (const site of report.bareUnaccounted)

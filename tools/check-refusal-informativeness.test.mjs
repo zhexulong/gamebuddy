@@ -19,6 +19,7 @@ import {
   checkBareRefusals,
   checkRefusalInformativeness,
   classifyReasonCode,
+  declaredTargetKind,
   extractModReceiptSites,
   GATE,
   namesSurfaceArgument,
@@ -27,6 +28,8 @@ import {
   readActionSurface,
   renderReport,
   SOURCES,
+  TARGET_KINDS,
+  targetKindOf,
   toSnakeCase,
 } from "./check-refusal-informativeness.mjs";
 import { cleanOutputLines } from "./lib/subprocess-output.mjs";
@@ -421,6 +424,80 @@ test("FALSIFIER: a refusal that read the location and refused with null is named
   assert.equal(report.counts.bareUnaccounted, 1);
   // And the same site, restored, is the baseline again: the gate is about the fact, not about the file.
   assert.equal(findingsOf(checkRefusalInformativeness(), "refusal_drops_a_fact_it_read").length, 0);
+});
+
+test("the located-refusal rule examines a real population and nothing in the shipped tree is a bare echo", () => {
+  // Population, printed: the tile-kind verdict sites the gate can read whole. Zero would mean the derivation stopped
+  // matching, so it is asserted rather than assumed.
+  const report = checkRefusalInformativeness();
+  assert.equal(
+    report.located.examined > 0,
+    true,
+    `no tile-kind verdict refusal was read, so the position rule examined nothing: ${JSON.stringify(report.located)}`,
+  );
+  assert.equal(
+    report.located.observationShaped > 0,
+    true,
+    "and the observation-shaped class is a real exemption, not a guess",
+  );
+  assert.deepEqual(findingsOf(report, "refusal_names_nothing_actionable"), []);
+  assert.deepEqual(findingsOf(report, "refusal_target_kind_undeclared"), []);
+  // The kinds are the declaration's own vocabulary: a target-class family answers one of the four, never a fifth word.
+  const declared = new Set(TARGET_KINDS.map((entry) => entry.id));
+  for (const kind of Object.keys(report.located.kinds))
+    assert.equal(declared.has(kind), true, `undeclared kind ${kind}`);
+});
+
+test("FALSIFIER: the measured soil verdict - evidence that repeats only the tile - is named at its own site", () => {
+  // The defect this rule exists for, replayed on the REAL line: `soil_not_diggable` used to answer `target=13,10`, the
+  // tile the companion had just named, and 27 live refusals followed from that one missing half (run A6).
+  const relativePath = "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs";
+  const source = read(relativePath);
+  const published = "{DescribeSoilGuidance(distantLocation, targetX, targetY)}";
+  assert.equal(source.includes(published), true, "the shipped site must publish where farmable ground is");
+  const mutated = source.replace(published, "");
+  assert.notEqual(mutated, source);
+
+  const findings = findingsOf(run({ [relativePath]: mutated }), "refusal_names_nothing_actionable");
+  assert.equal(findings.length, 1, "the one de-published site is the one finding");
+  assert.match(findings[0].subject, new RegExp(`^soil_not_diggable:${relativePath}:\\d+$`, "u"));
+  assert.match(findings[0].detail, /repeats only the tile the caller named/u);
+  // And the same site, restored, is the baseline again: the rule is about the fact, not about the file.
+  assert.deepEqual(findingsOf(checkRefusalInformativeness(), "refusal_names_nothing_actionable"), []);
+});
+
+test("FALSIFIER: a range verdict that loses where the actor stands is named at its own line", () => {
+  const relativePath = "integrations/stardew/farmhandexecutioncontroller.gatheringactions.cs";
+  const source = read(relativePath);
+  const published = ";actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1";
+  assert.equal(source.includes(published), true, "the shipped site must say where the actor is");
+  const mutated = source.replace(published, "");
+  assert.notEqual(mutated, source);
+
+  const findings = findingsOf(run({ [relativePath]: mutated }), "refusal_names_nothing_actionable");
+  assert.equal(findings.length, 1, "the one de-published site is the one finding");
+  assert.match(findings[0].subject, new RegExp(`^forage_target_out_of_range:${relativePath}:\\d+$`, "u"));
+});
+
+test("a family whose target kind is undeclared is a finding, not a default", () => {
+  // The taxonomy has to stay total: a target-class family whose words name no declared kind gets an answer demanded,
+  // rather than falling silently into the kind that happens to have no rule attached.
+  assert.equal(targetKindOf("soil_not_diggable"), "tile");
+  assert.equal(targetKindOf("pet_target_gone"), "entity");
+  assert.equal(targetKindOf("mine_elevator_out_of_service"), "destination");
+  assert.equal(targetKindOf("world_not_ready"), "none");
+  // A target-class code whose words the matchers cannot place is the case this finding exists for: `location_changed` is a
+  // target by the class matcher and names no kind at all.
+  assert.equal(classifyReasonCode("location_changed"), "target");
+  assert.equal(declaredTargetKind("location_changed"), null);
+  const relativePath = "integrations/stardew/farmhandexecutioncontroller.facilityactions.cs";
+  const source = read(relativePath);
+  const line = lineOf(source, '"cask_target_changed", $"target={targetX},{targetY}"');
+  const mutated = mutateLine(relativePath, line, (text) => text.replace('"cask_target_changed"', '"location_changed"'));
+  const report = run({ [relativePath]: mutated });
+  const findings = findingsOf(report, "refusal_target_kind_undeclared");
+  assert.equal(findings.length, 1, JSON.stringify(report.findings.map((item) => item.id)));
+  assert.equal(findings[0].subject, "location_changed");
 });
 
 test("FALSIFIER: an exemption with no bare site left expires instead of granting blanket permission", () => {
