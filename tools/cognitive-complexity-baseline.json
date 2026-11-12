@@ -1,6 +1,6 @@
 {
   "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`.",
-  "revision": "b047bb19",
+  "revision": "72582adf",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -85,7 +85,7 @@
       "language": "cs",
       "name": "ExecutionManager.Cancel(string,string,string)",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 1379,
+      "line": 917,
       "value": 40
     },
     {
@@ -93,7 +93,7 @@
       "language": "cs",
       "name": "ExecutionManager.CompleteTravelAfterWarp()",
       "file": "integrations/stardew/farmhandexecutioncontroller.movementactions.cs",
-      "line": 1322,
+      "line": 1395,
       "value": 93
     },
     {
@@ -101,7 +101,7 @@
       "language": "cs",
       "name": "ExecutionManager.CreateBridgeSnapshot()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 2286,
+      "line": 1862,
       "value": 107
     },
     {
@@ -109,7 +109,7 @@
       "language": "cs",
       "name": "ExecutionManager.CreateSnapshot()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 2180,
+      "line": 1756,
       "value": 34
     },
     {
@@ -117,7 +117,7 @@
       "language": "cs",
       "name": "ExecutionManager.DescribeActiveExecution()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 2556,
+      "line": 2132,
       "value": 99
     },
     {
@@ -125,7 +125,7 @@
       "language": "cs",
       "name": "ExecutionManager.DescribeFrontierClearance(GameLocation,Farmer,(int X, int Y),(int X, int Y),Func<Vector2, bool>)",
       "file": "integrations/stardew/farmhandexecutioncontroller.movementactions.cs",
-      "line": 589,
+      "line": 655,
       "value": 31
     },
     {
@@ -149,7 +149,7 @@
       "language": "cs",
       "name": "ExecutionManager.ExecuteClearDebris(string,string,int,int,int,string,long)",
       "file": "integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs",
-      "line": 1025,
+      "line": 1044,
       "value": 36
     },
     {
@@ -165,7 +165,7 @@
       "language": "cs",
       "name": "ExecutionManager.RequestLocalDoorTransition(string,int,int,long,bool)",
       "file": "integrations/stardew/farmhandexecutioncontroller.movementactions.cs",
-      "line": 901,
+      "line": 974,
       "value": 35
     },
     {
@@ -181,7 +181,7 @@
       "language": "cs",
       "name": "ExecutionManager.RequestLocalShopPurchase(BridgeExecutionRequest,IExecutionLedger)",
       "file": "integrations/stardew/farmhandexecutioncontroller.shopactions.cs",
-      "line": 581,
+      "line": 620,
       "value": 91
     },
     {
@@ -215,7 +215,7 @@
       "language": "cs",
       "name": "FarmhandForEachArguments.TryReadPredicate(JsonElement,FarmhandForEachPredicate?,string)",
       "file": "integrations/stardew/src/Core/Policy/FarmhandForEachArguments.cs",
-      "line": 309,
+      "line": 313,
       "value": 31
     },
     {
@@ -256,7 +256,7 @@
       "name": "FarmingActionHandler.Execute(BridgeExecutionRequest,IExecutionLedger)",
       "file": "integrations/stardew/Handlers/FarmingActionHandler.cs",
       "line": 17,
-      "value": 56,
+      "value": 43,
       "reason": "recorded at 604844a6: 54 -> 56, and `line` -> 17. `ecf18222` (one charged tool use covers the engine's own footprint) is the only commit touching this file in b047bb19..604844a6, and the two points are the charged-use branches it added to the per-action dispatch. 56 is the ceiling now."
     },
     {
@@ -273,14 +273,14 @@
       "name": "MachineAndAnimalActionHandler.Execute(BridgeExecutionRequest,IExecutionLedger)",
       "file": "integrations/stardew/Handlers/MachineAndAnimalActionHandler.cs",
       "line": 16,
-      "value": 88
+      "value": 58
     },
     {
       "id": "cs:ModEntry.DrainLocalPipeBridge(ScreenEmbodimentState)",
       "language": "cs",
       "name": "ModEntry.DrainLocalPipeBridge(ScreenEmbodimentState)",
       "file": "integrations/stardew/ModEntry.cs",
-      "line": 1954,
+      "line": 1953,
       "value": 70
     },
     {
@@ -352,7 +352,7 @@
       "language": "cs",
       "name": "ModEntry.OnWarped(object?,WarpedEventArgs)",
       "file": "integrations/stardew/ModEntry.cs",
-      "line": 1491,
+      "line": 1490,
       "value": 71
     },
     {
@@ -360,7 +360,7 @@
       "language": "cs",
       "name": "ModEntry.TryCreateSceneObservationInput()",
       "file": "integrations/stardew/ModEntry.cs",
-      "line": 2705,
+      "line": 2704,
       "value": 60
     },
     {
@@ -370,14 +370,6 @@
       "file": "integrations/stardew/ModEntry.cs",
       "line": 864,
       "value": 58
-    },
-    {
-      "id": "cs:MovementActionHandler.Execute(BridgeExecutionRequest,IExecutionLedger)",
-      "language": "cs",
-      "name": "MovementActionHandler.Execute(BridgeExecutionRequest,IExecutionLedger)",
-      "file": "integrations/stardew/Handlers/MovementActionHandler.cs",
-      "line": 18,
-      "value": 37
     },
     {
       "id": "cs:OpenBodyProgramJournalAuthority.TryComplete(HostAdmissionGrant,BodyProgramTerminalResult)",
@@ -418,7 +410,7 @@
       "language": "cs",
       "name": "RouteReenteringBodyProgramExecutor.TryBuildRowArguments(IFarmhandForEachWorld,FarmhandForEachTarget,string,FarmhandActionDescriptor?,IReadOnlyDictionary<string, BodyProgramCanonicalValue>?,string)",
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
-      "line": 650,
+      "line": 658,
       "value": 40
     },
     {
@@ -443,7 +435,7 @@
       "language": "cs",
       "name": "StardewBodyController.AssessReachability(Point,Point,Func<Point, bool>,int,bool)",
       "file": "integrations/stardew/StardewBodyController.cs",
-      "line": 2127,
+      "line": 2143,
       "value": 38
     },
     {
@@ -451,7 +443,7 @@
       "language": "cs",
       "name": "StardewBodyController.OccupantAt(StardewValley.GameLocation,Farmer,Vector2)",
       "file": "integrations/stardew/StardewBodyController.cs",
-      "line": 1847,
+      "line": 1863,
       "value": 39
     },
     {
@@ -467,7 +459,7 @@
       "language": "cs",
       "name": "StardewBodyController.Update(int)",
       "file": "integrations/stardew/StardewBodyController.cs",
-      "line": 982,
+      "line": 983,
       "value": 45
     },
     {
@@ -484,7 +476,7 @@
       "language": "ts",
       "name": "host/src/body-program-for-each.ts#readPredicate",
       "file": "host/src/body-program-for-each.ts",
-      "line": 411,
+      "line": 413,
       "value": 34
     },
     {
@@ -549,7 +541,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts#execute",
       "file": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
-      "line": 338,
+      "line": 345,
       "value": 41
     },
     {
@@ -557,7 +549,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts#materializeEnter#lambda11",
       "file": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
-      "line": 1472,
+      "line": 1514,
       "value": 48
     },
     {
@@ -677,7 +669,7 @@
       "language": "ts",
       "name": "host/src/fact-brief.ts#worldFactLine",
       "file": "host/src/fact-brief.ts",
-      "line": 611,
+      "line": 623,
       "value": 40
     },
     {
@@ -694,7 +686,7 @@
       "language": "ts",
       "name": "host/src/game-tools.ts#execute",
       "file": "host/src/game-tools.ts",
-      "line": 186,
+      "line": 187,
       "value": 54
     },
     {
@@ -702,7 +694,7 @@
       "language": "ts",
       "name": "host/src/game-tools.ts#execute#2",
       "file": "host/src/game-tools.ts",
-      "line": 342,
+      "line": 343,
       "value": 44
     },
     {
@@ -726,7 +718,7 @@
       "language": "ts",
       "name": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts#launchWithGeneration",
       "file": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts",
-      "line": 3525,
+      "line": 3694,
       "value": 31
     },
     {
@@ -734,7 +726,7 @@
       "language": "ts",
       "name": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts#reserveOwnedPlayerHostBootstrap",
       "file": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts",
-      "line": 992,
+      "line": 1035,
       "value": 34
     },
     {
@@ -766,7 +758,7 @@
       "language": "ts",
       "name": "host/src/protocol.ts#diagnoseSnapshot",
       "file": "host/src/protocol.ts",
-      "line": 4533,
+      "line": 4590,
       "value": 63
     },
     {
@@ -774,7 +766,7 @@
       "language": "ts",
       "name": "host/src/protocol.ts#isValidActionDescriptor",
       "file": "host/src/protocol.ts",
-      "line": 5521,
+      "line": 5578,
       "value": 174
     },
     {
@@ -782,7 +774,7 @@
       "language": "ts",
       "name": "host/src/protocol.ts#validateBridgeMessage",
       "file": "host/src/protocol.ts",
-      "line": 2419,
+      "line": 2420,
       "value": 66
     },
     {
@@ -935,7 +927,7 @@
       "language": "ts",
       "name": "host/src/tavern-management-dialogue-web.ts#createTavernManagementDialogueWebRequestHandler",
       "file": "host/src/tavern-management-dialogue-web.ts",
-      "line": 865,
+      "line": 868,
       "value": 123
     },
     {
@@ -943,7 +935,7 @@
       "language": "ts",
       "name": "host/src/tavern-management-dialogue-web.ts#dispatch",
       "file": "host/src/tavern-management-dialogue-web.ts",
-      "line": 1124,
+      "line": 1127,
       "value": 255,
       "saturated": true
     },
@@ -961,7 +953,7 @@
       "language": "ts",
       "name": "host/src/tavern/browser-contract/index.ts#composeTavernProfile",
       "file": "host/src/tavern/browser-contract/index.ts",
-      "line": 4258,
+      "line": 4264,
       "value": 39
     },
     {
@@ -1205,7 +1197,7 @@
       "parts": 47,
       "file": "integrations/stardew/farmhandexecutioncontroller.actorstateactions.cs",
       "line": 143,
-      "value": 4648
+      "value": 4622
     },
     {
       "id": "cs:ModEntry",
@@ -1280,7 +1272,7 @@
       "parts": 1,
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BridgeProtocolSerializationTests.cs",
-      "line": 980,
+      "line": 981,
       "lines": 809,
       "methods": 55
     },
@@ -1323,8 +1315,8 @@
       "files": 46,
       "file": "integrations/stardew/farmhandexecutioncontroller.actorstateactions.cs",
       "line": 143,
-      "lines": 27469,
-      "methods": 809,
+      "lines": 27295,
+      "methods": 806,
       "reason": "methods 804 -> 809 and lines 27239 -> 27469 at 604844a6, over the same 47 parts and 46 files. This is the seam work's residue and the gate's own `class_size_record_stale` reading: `ef4f82ae` (one admission for the identity preamble), `cd9af513` (a row per action for the resource/tool family) and `ecf18222` (charged tool use) landed after this record was taken, so five member declarations arrived and the class grew 230 lines while its COMPLEXITY FELL 4648 -> 4642. The three fields are re-taken from one measurement; the fall in complexity is what says the seam moved work out rather than in."
     },
     {
@@ -1428,7 +1420,7 @@
       "files": 1,
       "file": "integrations/stardew/StardewBodyController.cs",
       "line": 39,
-      "lines": 2641,
+      "lines": 2642,
       "methods": 91,
       "reason": "lines 2626 -> 2641 at 604844a6 over the same 91 methods and 1 part; the same branches the class-complexity row records as 418 -> 420."
     },
