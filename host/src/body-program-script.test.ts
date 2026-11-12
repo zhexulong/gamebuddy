@@ -879,27 +879,33 @@ test("the dismissal is inserted for exactly the actions the declaration calls bo
       `${action.actionId}: yielding=${yielding}, insertions=${JSON.stringify(insertions)} ` +
         `(examined ${insertedFor.length + 1} of ${ACTIONS.length} actions; ${insertedFor.length} of the ones before it inserted)`,
     );
-    if (!yielding) {
-      assert.deepEqual(
-        insertedNodeIdsOf(result),
-        [],
-        `${action.actionId}: nothing was written, so no node id may be claimed as the compiler's`,
-      );
-      continue;
-    }
+    // THE POPULATION A RUN'S READING JOINS ON: exactly the nodes the compiler wrote, and only those - read from the
+    // program the answer published, not from a list of insertion kinds. An author's node carries its own 1-based
+    // position as its id (`planNodeId`), so any other id belongs to a node the compiler wrote: `talk_to_npc` writes a
+    // dismissal and `travel` writes a walk. A transition yields no body and still has a node written for it, so "nothing
+    // was inserted" is NOT what a non-yielding action means, and asserting it would have made the walk an author's node.
+    const program = nodesOf(result);
+    const claimed = insertedNodeIdsOf(result);
+    assert.deepEqual(
+      claimed,
+      program.map((node) => node.nodeId).filter((nodeId, index) => nodeId !== `n${String(index + 1).padStart(2, "0")}`),
+      `${action.actionId}: the ids the compiler claims are exactly the nodes it wrote`,
+    );
+    assert.equal(
+      claimed.length,
+      insertionsOf(result).count,
+      `${action.actionId}: every insertion the answer states is one node id it names`,
+    );
+    if (!yielding) continue;
     insertedFor.push(action.actionId);
     assert.deepEqual(
-      nodesOf(result)
-        .map((node) => node.actionId)
-        .slice(0, 2),
+      program.map((node) => node.actionId).slice(0, 2),
       [action.actionId, MODAL_CLEARING_PLAN_ACTION_IDS[0]],
       `${action.actionId} holds the body, so the dismissal stands between it and the next step`,
     );
-    // THE POPULATION A RUN'S READING JOINS ON: exactly the node the compiler wrote, and only that node.
-    const insertedNodeIds = insertedNodeIdsOf(result);
-    assert.equal(insertedNodeIds.length, 1, `${action.actionId}: one dismissal, one inserted node id`);
+    assert.equal(claimed.length, 1, `${action.actionId}: one dismissal, one inserted node id`);
     assert.equal(
-      nodesOf(result).find((node) => node.nodeId === insertedNodeIds[0])?.actionId,
+      program.find((node) => node.nodeId === claimed[0])?.actionId,
       MODAL_CLEARING_PLAN_ACTION_IDS[0],
       `${action.actionId}: the id the compiler claims is the node the compiler wrote`,
     );
@@ -2319,13 +2325,14 @@ test("the description's example uses a published action and that action's own de
 });
 
 /**
- * The two program tools' descriptions as the model is handed them: `stardew_plan_work` is compiled here, and
- * `stardew_action_program_status` is written inline beside the tool that mounts it, so it is read off that source.
+ * The three program tools' descriptions as the model is handed them: `stardew_plan_work` is compiled here, and the two
+ * readers are written inline beside the tools that mount them, so they are read off that source.
  *
- * One reader for both, because the defect this pins is a CONVERSATION between them: `plan_work` returns as soon as the
- * plan is accepted, so a status description that advertises waiting is the instruction that fills the gap.
+ * One reader for all three, because the defect this pins is a CONVERSATION between them: `plan_work` returns as soon as the
+ * plan is accepted, so a description that advertises watching the plan is the instruction that fills the gap - whichever
+ * of the three states it.
  */
-function programToolDescriptions(): Readonly<Record<"planWork" | "programStatus", string>> {
+function programToolDescriptions(): Readonly<Record<"planWork" | "programStatus" | "programEvents", string>> {
   const source = readFileSync(
     resolve(
       hostRoot,
@@ -2333,15 +2340,27 @@ function programToolDescriptions(): Readonly<Record<"planWork" | "programStatus"
     ),
     "utf8",
   );
-  const toolAt = source.indexOf('name: "stardew_action_program_status"');
-  assert.notEqual(toolAt, -1, "the status tool is gone, so where its description is written is no longer checkable");
-  const literal = /description:\s*\n?\s*"((?:[^"\\]|\\.)*)"/u.exec(source.slice(toolAt));
-  const descriptionSource = literal?.[1];
-  assert.ok(descriptionSource !== undefined, "the status tool still carries its description as one string literal");
   return Object.freeze({
     planWork: planWorkDescription(CATALOG_ACTIONS),
-    programStatus: JSON.parse(`"${descriptionSource}"`) as string,
+    programStatus: descriptionOfToolAfter(source, 'name: "stardew_action_program_status"'),
+    programEvents: descriptionOfToolAfter(source, 'name: "stardew_action_program_events"'),
   });
+}
+
+/**
+ * The description literal of the tool declared at `marker`, quoted either way.
+ *
+ * The status tool's description is SINGLE-quoted (its own sentences are full of apostrophes) and the events tool's is
+ * double-quoted, so a reader that understood only one quoting silently read the NEXT tool's description instead: this
+ * gate asserted the status contract against the events text from the commit that wrote it, and could not have passed.
+ */
+function descriptionOfToolAfter(source: string, marker: string): string {
+  const at = source.indexOf(marker);
+  assert.notEqual(at, -1, `${marker} is gone, so where its description is written is no longer checkable`);
+  const literal = /description:\s*\n?\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/u.exec(source.slice(at));
+  const body = literal?.[1] ?? literal?.[2];
+  assert.ok(body !== undefined, `${marker} still carries its description as one string literal`);
+  return body.replace(/\\([\s\S])/gu, "$1");
 }
 
 test("stardew_plan_work teaches submit-then-end-the-turn, and names what wakes the companion", () => {
@@ -2375,23 +2394,24 @@ test("stardew_action_program_status is described as a diagnostic with a rare opt
   assert.match(programStatus, /`waitMs` is a rare opt-in/u, "waitMs is documented as the exception, not the default");
   assert.match(
     programStatus,
-    /while it holds the turn you cannot stop, append or steer/u,
+    /while it holds the turn you cannot stop, append or steer/iu,
     "with the cost that makes it rare: a held turn cannot be interrupted",
   );
 });
 
 /**
- * Neither description may tell the model to poll.
+ * No program tool description may tell the model to poll.
  *
  * <p>
  * The failure is measurable: `stardew_action_program_status` was called 48-89 times per run for 248-452 s of blocked
  * turns (`round29`, `round7`), because one description said "Use it after submitting a plan to see which node ran" and the
- * other said "Pass waitMs to wait for the plan to finish". Both are read here sentence by sentence, since that is the
- * unit a model acts on, and a sentence that carries a prohibition ("do NOT poll", "not after every submission") is the
- * contract rather than the defect.
+ * other said "Pass waitMs to wait for the plan to finish". The same invitation sat in the event log's description, which
+ * sold the page as the way "a running plan can be followed". All three are read here sentence by sentence, since that is
+ * the unit a model acts on, and a sentence that carries a prohibition ("do NOT poll", "not after every submission") is
+ * the contract rather than the defect.
  * </p>
  */
-test("neither program tool description tells the model to poll", () => {
+test("no program tool description tells the model to poll", () => {
   const descriptions = programToolDescriptions();
   for (const [tool, text] of Object.entries(descriptions))
     assert.match(

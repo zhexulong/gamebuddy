@@ -652,9 +652,10 @@ function createBodyProgramTools(
       defineTool({
         name: "stardew_action_program_events",
         label: "stardew_action_program_events",
-        // Same defect as `_status`, and this one is the plan's own event log.
+        // Same defect as `_status`, and this one is the plan's own event log: the old text sold it as the way "a
+        // running plan can be followed", which is a progress bar by another name - the receipts already do that.
         description:
-          "Read one page of a submitted plan's event log: a bounded record per node transition, so a running plan can be followed without resubmitting or re-planning it. Page with cursor + pageSize; the returned cursor continues the read.",
+          "One page of a submitted plan's event log: a bounded record per node transition, in order - the detail behind an outcome, not the outcome itself. It is a log to read when something needs explaining (a step that failed, a skip, a settlement you expected and never got), not a progress bar: do NOT poll it - the plan's steps reach you as receipts on their own. Page with cursor + pageSize; the returned cursor continues the read.",
         // Same disclosure rule as `_status`: no program, no event log.
         defaultActive: false,
         parameters: bodyProgramToolParameters("stardew_action_program_events"),
