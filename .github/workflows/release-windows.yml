@@ -224,7 +224,8 @@ jobs:
       # conflicts, zh-CN at 375x667, connection create/test/activate/model,
       # Characters CRUD, lifecycle retention, the reviewed card import, the Chat
       # Stop journey) run through the suites that own them now
-      # (management-surface-panels.spec.ts, composed-reference-game-browser.spec.ts),
+      # (management-surface-panels.spec.ts, character-card-import.spec.ts,
+      # chat-selection.spec.ts, sending-and-composer.spec.ts),
       # and a renamed or re-added spec joins this gate instead of leaving a
       # hand-written file list naming suites that no longer exist. The two provider
       # journeys from the removed companion-turn suite have no home yet; they are

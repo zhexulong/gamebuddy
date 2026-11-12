@@ -7,7 +7,7 @@
       "title": "the copy control is offered on every settled message"
     },
     {
-      "file": "dialogue-web/tests/composed-reference-game-browser.spec.ts",
+      "file": "dialogue-web/tests/game-lifecycle-controls.spec.ts",
       "title": "Game endgame control is absent when no live session can be ended"
     },
     {

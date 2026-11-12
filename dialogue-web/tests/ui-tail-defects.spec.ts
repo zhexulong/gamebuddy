@@ -525,7 +525,7 @@ test("item 8: one long opening does not fill the whole Chats card", async ({ pag
  * `reference-pipeline-state.ts` `projectOperations`) - and there the field must
  * stay usable: a client-side lock keyed to the turn would outlive the poll's own
  * budget and keep the player out of the conversation for good, which is exactly
- * what `composed-reference-game-browser.spec.ts` ("a turn that never settles")
+ * what `turn-settling.spec.ts` ("a turn that never settles")
  * measures after the budget expires.
  */
 test("item 4: the field's lock is the Host's submit availability, not the turn", async ({ page }) => {

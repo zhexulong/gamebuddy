@@ -92,7 +92,7 @@ const GAME_CREATE_FORM_ID = "game-create-form";
  * enum, a code, a revision or a handle is never shown (design/104 §10).
  *
  * Presentation contract (frozen by
- * `tests/composed-reference-game-browser.spec.ts` and
+ * `tests/composed-profile-bootstrap.spec.ts` and
  * `design/architecture/frontend-slot-and-theme-decoupling.md` §5.3):
  * - the panel is the `role="region"` named by `labels.gameState`, and carries
  *   `data-testid="game-state-panel"` + `data-game-state="available" | "null"`;

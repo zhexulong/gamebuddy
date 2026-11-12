@@ -99,8 +99,6 @@
     "check:stardew-tool-family-stamina-evidence": "node tools/check-stardew-tool-family-stamina-evidence.mjs",
     "check:tavern-references": "node tools/verify-tavern-semantic-references.mjs",
     "check:tavern-release-prerequisites": "node tools/check-tavern-release-prerequisites.mjs",
-    "check:terminal-commit-single-entry": "node tools/check-terminal-commit-single-entry.mjs",
-    "check:terminal-idle-publication": "node tools/check-terminal-idle-publication.mjs",
     "check:test-store-teardown": "node tools/check-test-store-teardown.mjs",
     "check:text-hygiene": "node tools/check-text-hygiene.mjs",
     "check:tools-boundaries": "depcruise --config .dependency-cruiser.tools.cjs tools",

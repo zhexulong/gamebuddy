@@ -24,7 +24,7 @@ import { expect, test, type Page } from "./frontend-coverage";
  *
  * A refusal reaching the player is the fifth property and it is NOT measured here: the sentence for a
  * named code is `composed-problem-view.ts`'s, and the shell's own wiring of it into the surface notice is
- * what `composed-reference-game-browser.spec.ts` drives. What this file can prove is that the arm sends
+ * what `composed-profile-bootstrap.spec.ts` drives. What this file can prove is that the arm sends
  * the press that a refusal would answer, which it does.
  */
 
