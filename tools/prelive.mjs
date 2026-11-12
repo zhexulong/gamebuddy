@@ -9,6 +9,13 @@
  * cross-file linkage, so no single gate owned it. This one does, and it fails loudly here instead of in the game.
  *
  * RUNGS (each stops the ladder on red, so the first line of a failure is the cause):
+ *   prep Mod export build  - `dotnet build <the export project> -c Release`, the one preparation the rungs below need:
+ *                             the producer `tools/check-generated-artifact-reproducibility.mjs` runs is a build output,
+ *                             and a checkout nobody has built has none, so that gate blocks (exit 2) and a reader has to
+ *                             build the project by hand before the ladder can say anything about three artefacts.
+ *                             MSBuild's own up-to-date check is the skip, so a warm run costs 0.7 s (measured
+ *                             2026-11-12) and compiles nothing; `dotnet` absent is UNAVAILABLE here and the gate names
+ *                             what it could not run.
  *   L0  contract triad      - measured 5.3 s. The static gates that cost milliseconds, one child process each, every
  *                             exit code reported by name. It ends with `tools/check-prelive-gate-registry.mjs`, which
  *                             derives the population of every gate in the tree and fails when one of them neither runs
@@ -328,6 +335,62 @@ function readScripts() {
   } catch {
     return {};
   }
+}
+
+/**
+ * The Mod export project: the build output the reproducibility gate runs as its producer. Spelled here as well as in
+ * `tools/check-generated-artifact-reproducibility.mjs` (its `MOD_EXPORT_PROJECT`), the same way `HOST_TEST_ARTIFACT_BUILD`
+ * is spelled here as well as in `host/package.json`.
+ */
+const MOD_EXPORT_PROJECT =
+  "integrations/stardew/tests/actiondevelopmentactionsurfaceexport/actiondevelopmentactionsurfaceexport.csproj";
+const MOD_EXPORT_BUILD_TIMEOUT_MS = 5 * 60_000;
+
+/** The first MSBuild diagnostic in a build's output, verbatim: the summary line names a count, not a cause. */
+function firstBuildError(output) {
+  const lines = output.split("\n").map((line) => line.trimEnd());
+  return (
+    lines.find((line) => /:\s*error\s/u.test(line)) ??
+    lines.find((line) => line.trim() !== "") ??
+    "(the build printed nothing)"
+  );
+}
+
+/**
+ * The Mod export build, as the gate's own `build` field spells it: `dotnet build <project> -c Release`.
+ *
+ * Unconditional, because the skip belongs to the layer that owns the inputs: MSBuild compiles nothing when its outputs
+ * are newer than every source, and a mtime rule here would be a second spelling of the list
+ * `tools/check-generated-artifact-reproducibility.mjs` already declares. An absent `dotnet` is `unavailable`, not a
+ * failure - the gate below states what it could not run, so the verdict keeps one owner.
+ */
+export function buildModExportAssembly({
+  run = (executable, args, options) => spawnSync(executable, args, options),
+  timeoutMs = MOD_EXPORT_BUILD_TIMEOUT_MS,
+} = {}) {
+  const startedAt = Date.now();
+  const outcome = run("dotnet", ["build", MOD_EXPORT_PROJECT, "-c", "Release", "--nologo", "-v", "quiet"], {
+    cwd: REPO,
+    encoding: "utf8",
+    timeout: timeoutMs,
+    env: containedChildEnvironment(),
+  });
+  const ms = Date.now() - startedAt;
+  if (outcome.error?.code === "ENOENT")
+    return { status: "unavailable", ms, reason: "`dotnet` is not on PATH in this shell" };
+  if (outcome.error?.code === "ETIMEDOUT")
+    return { status: "failed", ms, firstError: `mod_export_build_timeout:${timeoutMs}ms` };
+  if (outcome.status === 0) return { status: "passed", ms };
+  return { status: "failed", ms, firstError: firstBuildError(`${outcome.stdout ?? ""}${outcome.stderr ?? ""}`) };
+}
+
+/**
+ * The preparation as a rung: a red build stops the ladder here, because a Mod that does not compile is a cause no gate
+ * below can state better. `unavailable` passes with its reason printed, and the artefact gate says the rest.
+ */
+export function modExportBuildRung({ build = buildModExportAssembly } = {}) {
+  const outcome = build();
+  return { id: "prep", status: outcome.status === "failed" ? "failed" : "passed", build: outcome };
 }
 
 /**
@@ -1140,6 +1203,7 @@ function main(argv) {
   const deploy = deployRung(options);
   const ladder = runLadder({
     rungs: [
+      () => modExportBuildRung(),
       ...PRELUDE_RUNGS.map((rung) => () => runGateRung({ id: rung.id, gates: rung.gates })),
       () => linkageRung(),
       () => deploy,
@@ -1200,7 +1264,20 @@ export function format(ladder, { elapsedMs, options, notice }) {
   const lines = [`prelive: static ladder${options.noGame ? " (--no-game)" : ""}`];
   let unavailable = 0;
   for (const rung of ladder.rungs) {
-    if (rung.id === "l0" || rung.id === "l0b") {
+    if (rung.id === "prep") {
+      const build = rung.build;
+      if (build.status === "passed") lines.push(`  prep: Mod export build passed (dotnet -c Release) in ${build.ms}ms`);
+      else if (build.status === "unavailable")
+        lines.push(
+          `  prep: Mod export build UNAVAILABLE: ${build.reason} - the artefact gate in L0 names what it could not run`,
+        );
+      else {
+        lines.push(
+          `  prep: Mod export build failed in ${build.ms}ms - a Mod that does not compile is the cause, not a symptom`,
+        );
+        lines.push(`      | ${build.firstError}`);
+      }
+    } else if (rung.id === "l0" || rung.id === "l0b") {
       for (const gate of rung.gates) {
         const where = gate.discovered ? " (discovered, not at the expected path)" : "";
         const outcome = gate.missing ? "missing" : `exit=${gate.exitCode}`;
