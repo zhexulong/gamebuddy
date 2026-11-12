@@ -287,9 +287,7 @@ public sealed class FishingActionTests
             CaughtFishSize: 12,
             CaughtFishQuality: 1,
             CaughtCountBefore: 0);
-        typeof(ExecutionManager)
-            .GetField("activeFishing", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .SetValue(executions, spec);
+        BodySlotSeeding.Seed(executions, "activeFishing", spec);
 
         typeof(ExecutionManager)
             .GetMethod("UpdateFishingCast", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -302,9 +300,7 @@ public sealed class FishingActionTests
         // Same code, same record, named with both of its readings: the negative answer is an observation too.
         receipt.Evidence.Should().Contain("credit=fishCaught:0->0",
             "the credit record is named with the reading before and after, so `not credited` can be told from `not read`");
-        typeof(ExecutionManager)
-            .GetField("activeFishing", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .GetValue(executions).Should().BeNull("the cast's slot is released on every exit");
+        BodySlotSeeding.Peek(executions, "activeFishing").Should().BeNull("the cast's slot is released on every exit");
     }
 
     /// <summary>
@@ -584,9 +580,7 @@ public sealed class FishingActionTests
             StartedAtMs: now,
             DeadlineMs: now + 30_000,
             LocalFishingPhase.WaitingForBite);
-        typeof(ExecutionManager)
-            .GetField("activeFishing", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .SetValue(executions, spec);
+        BodySlotSeeding.Seed(executions, "activeFishing", spec);
 
         typeof(ExecutionManager)
             .GetMethod("UpdateFishingCast", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -594,9 +588,7 @@ public sealed class FishingActionTests
 
         executions.TryGetReceipt("req_unbitten", out _).Should().BeFalse(
             "a cast the world has not bitten is still a cast, not a catch");
-        ((LocalFishingCastSpec)typeof(ExecutionManager)
-                .GetField("activeFishing", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .GetValue(executions)!).Phase.Should().Be(LocalFishingPhase.WaitingForBite,
+        ((LocalFishingCastSpec)BodySlotSeeding.Peek(executions, "activeFishing")!).Phase.Should().Be(LocalFishingPhase.WaitingForBite,
             "the phase advances on the engine's own hook and on nothing else");
     }
 

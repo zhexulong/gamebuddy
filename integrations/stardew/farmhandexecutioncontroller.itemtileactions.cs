@@ -408,7 +408,7 @@ internal sealed partial class ExecutionManager
             destinationY,
             this.revision,
             requestedDeadlineMs);
-        this.activeTravel = specification;
+        this.slots.Travel.Assign(specification);
 
         return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted", evidence);
     }

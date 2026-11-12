@@ -265,7 +265,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 $"target={targetId};floor={floorToSelect};native_exception={nativeException.GetType().Name}");
         }
 
-        this.activeTravel = specification;
+        this.slots.Travel.Assign(specification);
         return this.RememberTerminal(
             request.RequestId,
             executionId,

@@ -447,8 +447,7 @@ public sealed class ShipItemApproachWiringTests
         internal LocalApproachSpec ArmedApproach()
         {
             ExecutionManager manager = this.managers.Last();
-            return (LocalApproachSpec?)Field(typeof(ExecutionManager), "activeToolApproach")
-                    .GetValue(manager)
+            return (LocalApproachSpec?)BodySlotSeeding.Peek(manager, "activeToolApproach")
                 ?? throw new InvalidOperationException("no approach is armed");
         }
 

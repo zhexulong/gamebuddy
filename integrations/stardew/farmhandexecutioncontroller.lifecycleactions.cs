@@ -1,4 +1,4 @@
-﻿using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using StardewModdingAPI;
 using StardewValley;
@@ -27,9 +27,7 @@ namespace GameBuddy.Stardew;
 internal sealed partial class ExecutionManager
 {
     /// <summary>One owned night. The dispatch identity is stored with the mechanism.</summary>
-    private sealed record ActiveDayAdvance(string ExecutionId, string RequestId, SleepAndAdvanceDayLifecycle Lifecycle);
-
-    private ActiveDayAdvance? activeDayAdvance;
+    private ActiveDayAdvance? activeDayAdvance => this.slots.DayAdvance.Peek();
 
     /// <summary>
     /// Farmers that must be online before an <c>advance_day</c> execution may
@@ -108,7 +106,7 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "lifecycle_configuration_invalid",
                 $"enable={config.Enable};timeout_seconds={config.TimeoutSeconds};settle_frames={config.SettleFrameBudget};minimum_online_farmers={config.MinimumOnlineFarmers}");
 
-        this.activeDayAdvance = new ActiveDayAdvance(executionId, requestId, lifecycle);
+        this.slots.DayAdvance.Assign(new ActiveDayAdvance(executionId, requestId, lifecycle));
         return this.RememberTerminal(
             requestId,
             executionId,
@@ -130,7 +128,7 @@ internal sealed partial class ExecutionManager
         if (!active.Lifecycle.Update())
             return;
 
-        this.activeDayAdvance = null;
+        this.slots.DayAdvance.Clear();
         this.revision++;
         ExecutionState state = active.Lifecycle.TerminalState switch
         {
@@ -175,3 +173,6 @@ internal sealed partial class ExecutionManager
         this.activeDayAdvance?.Lifecycle.ObserveDayStarted();
     }
 }
+
+/// <summary>One accepted night this Mod owns until its lifecycle settles: the only state <c>advance_day</c> keeps.</summary>
+internal sealed record ActiveDayAdvance(string ExecutionId, string RequestId, SleepAndAdvanceDayLifecycle Lifecycle);

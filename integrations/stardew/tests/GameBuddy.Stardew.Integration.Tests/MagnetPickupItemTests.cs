@@ -783,7 +783,7 @@ public sealed class MagnetPickupItemTests
 
         /// <summary>The walk the request armed, read from the one slot the body is owned through.</summary>
         internal LocalMoveSpec? ArmedMove(ExecutionManager manager) =>
-            (LocalMoveSpec?)Field(typeof(ExecutionManager), "active").GetValue(manager);
+            (LocalMoveSpec?)BodySlotSeeding.Peek(manager, "active");
 
         /// <summary>
         /// The completion pass, run as production runs it: one <see cref="ExecutionManager.Update"/> per tick, with the

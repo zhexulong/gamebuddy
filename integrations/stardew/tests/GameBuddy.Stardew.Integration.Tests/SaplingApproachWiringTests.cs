@@ -539,7 +539,7 @@ public sealed class SaplingApproachWiringTests
         }
 
         internal LocalApproachSpec? ArmedApproach(ExecutionManager manager) =>
-            (LocalApproachSpec?)InstanceFieldValue(manager, "activeToolApproach");
+            (LocalApproachSpec?)BodySlotSeeding.Peek(manager, "activeToolApproach");
 
         /// <summary>
         /// The completion pass's own last step: the armed approach's arrival closure, run against the world as

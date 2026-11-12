@@ -232,11 +232,11 @@ internal sealed partial class ExecutionManager
                 $"target={expectedTargetId};horse={horseTileX},{horseTileY};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1;approach=target_moved");
 
         LocalMountTransportSpec specification = new(executionId, requestId, location.NameOrUniqueName, horseTileX, horseTileY, expectedTargetId, horse.HorseId, requestedDeadlineMs);
-        this.activeMountTransport = specification;
+        this.slots.MountTransport.Assign(specification);
         bool handled = horse.checkAction(Game1.player, location);
         if (!handled)
         {
-            this.activeMountTransport = null;
+            this.slots.MountTransport.Clear();
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "horse_action_not_handled", $"target={expectedTargetId}");
         }
         return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "horse_mount_pending", $"target={expectedTargetId};tile={horseTileX},{horseTileY};horse_id={horse.HorseId}");
@@ -309,7 +309,7 @@ internal sealed partial class ExecutionManager
         if (Game1.player.currentLocation is MineShaft descended && descended.mineLevel == descentLevel)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "mine_entered", $"level={descended.mineLevel};tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};from_level={shaft.mineLevel}");
         LocalTravelSpec descentSpecification = new(executionId, requestId, "enter_mine", shaft.NameOrUniqueName, ladder.TileX, ladder.TileY, MineShaft.GetLevelName(descentLevel), 6, 6, this.revision, requestedDeadlineMs);
-        this.activeTravel = descentSpecification;
+        this.slots.Travel.Assign(descentSpecification);
         return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "mine_entry_pending", $"source={shaft.NameOrUniqueName}:{ladder.TileX},{ladder.TileY};target={descentSpecification.TargetLocation}:6,6;level={descentLevel}");
     }
 
@@ -342,7 +342,7 @@ internal sealed partial class ExecutionManager
         if (Game1.player.currentLocation is MineShaft mine && mine.mineLevel == declaredLevel)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "mine_entered", $"level={mine.mineLevel};tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}");
         LocalTravelSpec specification = new(executionId, requestId, "enter_mine", location.NameOrUniqueName, entrance.TileX, entrance.TileY, MineShaft.GetLevelName(declaredLevel), 6, 6, this.revision, requestedDeadlineMs);
-        this.activeTravel = specification;
+        this.slots.Travel.Assign(specification);
         return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "mine_entry_pending", $"source={location.NameOrUniqueName}:{entrance.TileX},{entrance.TileY};target={specification.TargetLocation}:6,6;level={declaredLevel}");
     }
 
@@ -518,7 +518,7 @@ internal sealed partial class ExecutionManager
                 $"from={origin}:{originLevel};question={MineExitQuestionKey};response={MineExitResponseKey};ladder={exit.TileX},{exit.TileY};actual={Game1.player.currentLocation?.NameOrUniqueName ?? "none"}:{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}");
 
         LocalTravelSpec exitSpecification = new(executionId, requestId, "use_mine_ladder", origin, exit.TileX, exit.TileY, destinationLocation, destinationX, destinationY, this.revision, requestedDeadlineMs);
-        this.activeTravel = exitSpecification;
+        this.slots.Travel.Assign(exitSpecification);
         return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "mine_exit_pending",
             $"from={origin}:{originLevel};question={MineExitQuestionKey};response={MineExitResponseKey};ladder={exit.TileX},{exit.TileY};target={destinationLocation}:{destinationX},{destinationY};still_in={stillInside.NameOrUniqueName}");
     }

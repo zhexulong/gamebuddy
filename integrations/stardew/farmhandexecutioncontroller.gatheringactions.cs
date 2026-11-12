@@ -208,18 +208,18 @@ internal sealed partial class ExecutionManager
         string magnetFacts = $"within_magnet=true;radius={magnetRadius};stand_at={standTile.Value.X},{standTile.Value.Y}";
         // The body controller drives the walk. `Debris.updateChunks` owns magnetic delivery and `Debris.collect` on
         // following game updates; the bridge never calls collect or touches chunks/inventory directly.
-        this.activeItemPickup = new LocalItemPickupSpec(executionId, requestId, location.NameOrUniqueName, liveTargetTile.X, liveTargetTile.Y, expectedTargetId, expectedQualifiedItemId, target.Value.Stack, beforeCount, this.revision, requestedDeadlineMs);
+        this.slots.ItemPickup.Assign(new LocalItemPickupSpec(executionId, requestId, location.NameOrUniqueName, liveTargetTile.X, liveTargetTile.Y, expectedTargetId, expectedQualifiedItemId, target.Value.Stack, beforeCount, this.revision, requestedDeadlineMs));
         if (standTile.Value != actorTile)
         {
             // Exact arrival on the chosen tile, not adjacency to it: the tile is standable and reachable by
             // construction, so a plan to it exists, and finishing a step short could leave the body outside the very
             // rectangle this walk exists to enter.
             LocalMoveSpec approach = new(executionId, requestId, new Vector2(standTile.Value.X, standTile.Value.Y), false, this.revision, this.tick + deadlineTicks, requestedDeadlineMs);
-            this.active = approach;
+            this.slots.Active.Assign(approach);
             if (!this.controller.TryStart(approach, Game1.player, this.tick, out string reasonCode, out string? approachEvidence))
             {
-                this.active = null;
-                this.activeItemPickup = null;
+                this.slots.Active.Clear();
+                this.slots.ItemPickup.Clear();
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, approachEvidence ?? $"target={expectedTargetId};{magnetFacts}");
             }
         }

@@ -123,7 +123,7 @@ public sealed class ItemTileActionTests
 
         // The arrival is the terminal, not this frame: the action hands the destination to
         // the shared travel slot and never mints a success itself.
-        body.Should().Contain("this.activeTravel = specification;");
+        body.Should().Contain("this.slots.Travel.Assign(specification);");
         body.Should().Contain("ExecutionState.Accepted");
         body.Should().NotContain("warp_item_arrived");
         // It must not reproduce the warp the game's own delayed callback performs.

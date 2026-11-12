@@ -148,7 +148,7 @@ public sealed class HollowRingStepOutTests
         body.Should().Contain("SelectToolApproachTile(");
         body.Should().Contain("this.controller.TryStart(approach, Game1.player",
             "the step-out is dispatched through the one body owner, never written into the position");
-        body.Should().Contain("this.activeToolApproach = new LocalApproachSpec(",
+        body.Should().Contain("this.slots.ToolApproach.Assign(new LocalApproachSpec(",
             "the step-out holds body ownership exactly like any other approach");
 
         // And it is ADVERTISED: the accepted receipt names both ends of the move, or a reader cannot tell

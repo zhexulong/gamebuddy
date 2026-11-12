@@ -445,7 +445,7 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, state, consumed ? "item_use_started_without_animation" : "item_use_not_started", $"slot={slot};started=false;consumed={consumed.ToString().ToLowerInvariant()}");
         }
 
-        this.activeItemUse = specification;
+        this.slots.ItemUse.Assign(specification);
         return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted",
             $"slot={slot};item={expectedQualifiedItemId};stack_before={stackBefore};edibility={food.Edibility};drink={isDrink.ToString().ToLowerInvariant()}");
     }
@@ -652,7 +652,7 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "animal_product_native_target_not_bound",
                 $"tool={toolKind};expected_animal={animal.myID.Value};bound_animal={boundAnimal?.myID.Value.ToString() ?? "none"};tool_tile={(int)(nativeToolLocation.X / 64f)},{(int)(nativeToolLocation.Y / 64f)}");
         }
-        this.activeAnimalProduct = specification;
+        this.slots.AnimalProduct.Assign(specification);
         return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted",
             $"location={specification.Location};target={expectedTargetId};animal={animal.myID.Value};bound_animal={boundAnimal.myID.Value};tool={toolKind};tool_tile={(int)(nativeToolLocation.X / 64f)},{(int)(nativeToolLocation.Y / 64f)};produce={produce.QualifiedItemId};produce_stack={produceStack}");
     }
@@ -771,11 +771,11 @@ internal sealed partial class ExecutionManager
 
         int friendshipBefore = pet.friendshipTowardFarmer.Value;
         LocalPettingSpec specification = new(executionId, requestId, location.NameOrUniqueName, petTileX, petTileY, expectedTargetId, pet.petId.Value.ToString("N"), friendshipBefore, Math.Min(1000, friendshipBefore + 12), Game1.Date.TotalDays, this.revision, requestedDeadlineMs);
-        this.activePet = specification;
+        this.slots.Pet.Assign(specification);
         bool handled = pet.checkAction(Game1.player, location);
         if (!handled)
         {
-            this.activePet = null;
+            this.slots.Pet.Clear();
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pet_action_not_handled", $"target={expectedTargetId}");
         }
 

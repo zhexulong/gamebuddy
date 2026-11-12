@@ -509,9 +509,7 @@ public sealed class ModalAdmissionTests
     /// <summary>Occupies the manager's primary body lease without running any gameplay.</summary>
     private static void OccupyBodyLease(ExecutionManager manager)
     {
-        FieldInfo active = typeof(ExecutionManager).GetField("active", BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("ExecutionManager.active field unavailable.");
-        active.SetValue(manager, RuntimeHelpers.GetUninitializedObject(active.FieldType));
+        BodySlotSeeding.Seed(manager, "active", RuntimeHelpers.GetUninitializedObject(BodySlotSeeding.SlotType(manager, "active")));
     }
 
     /// <summary>

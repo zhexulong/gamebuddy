@@ -303,10 +303,7 @@ public sealed class MailboxDiscoveryAndApproachTests
         internal LocalApproachSpec? ArmedApproach()
         {
             ExecutionManager manager = this.managers.Last();
-            return (LocalApproachSpec?)Field(
-                typeof(ExecutionManager),
-                "activeToolApproach",
-                BindingFlags.NonPublic | BindingFlags.Instance).GetValue(manager);
+            return (LocalApproachSpec?)BodySlotSeeding.Peek(manager, "activeToolApproach");
         }
 
         /// <summary>
@@ -319,10 +316,7 @@ public sealed class MailboxDiscoveryAndApproachTests
         {
             LocalApproachSpec approach = manager is null
                 ? throw new ArgumentNullException(nameof(manager))
-                : (LocalApproachSpec?)Field(
-                    typeof(ExecutionManager),
-                    "activeToolApproach",
-                    BindingFlags.NonPublic | BindingFlags.Instance).GetValue(manager)
+                : (LocalApproachSpec?)BodySlotSeeding.Peek(manager, "activeToolApproach")
                     ?? throw new InvalidOperationException($"no approach is armed for {requestId}");
             return approach.Execute($"{approach.ExecutionId}_arrival", $"{approach.RequestId}_arrival");
         }

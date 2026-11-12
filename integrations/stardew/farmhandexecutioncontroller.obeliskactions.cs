@@ -595,7 +595,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             resolution.DestinationY,
             this.revision,
             request.DeadlineMs);
-        this.activeTravel = specification;
+        this.slots.Travel.Assign(specification);
 
         return this.RememberTerminal(
             request.RequestId,

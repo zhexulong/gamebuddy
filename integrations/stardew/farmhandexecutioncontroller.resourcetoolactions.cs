@@ -1570,7 +1570,7 @@ internal sealed partial class ExecutionManager
             this.revision,
             this.tick + deadlineTicks,
             requestedDeadlineMs);
-        this.activeToolApproach = new LocalApproachSpec(
+        this.slots.ToolApproach.Assign(new LocalApproachSpec(
             executionId,
             requestId,
             actionId,
@@ -1580,12 +1580,12 @@ internal sealed partial class ExecutionManager
             expectedTargetId,
             onArrival,
             this.revision,
-            requestedDeadlineMs);
-        this.active = approach;
+            requestedDeadlineMs));
+        this.slots.Active.Assign(approach);
         if (!this.controller.TryStart(approach, Game1.player, this.tick, out string reasonCode, out string? approachEvidence))
         {
-            this.active = null;
-            this.activeToolApproach = null;
+            this.slots.Active.Clear();
+            this.slots.ToolApproach.Clear();
             // A target the native planner cannot even approach keeps the same
             // honest refusal the in-range path would produce: the tile exists but
             // the actor cannot get to it. `target_out_of_reach` is already the
@@ -1690,7 +1690,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private void CompleteToolApproach(LocalApproachSpec specification)
     {
-        this.activeToolApproach = null;
+        this.slots.ToolApproach.Clear();
 
         GameLocation? location = Game1.player.currentLocation;
         bool sameLocation = location is not null

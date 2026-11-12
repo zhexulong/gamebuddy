@@ -278,20 +278,11 @@ public sealed class HeldRequestAbsorptionTests
         /// Seats one in-flight execution on the manager's private slot, the technique <see cref="BodyOwnerNamingTests"/>
         /// already uses: those slots are otherwise only populated by live gameplay.
         /// </summary>
-        internal void OwnTheBody(string slot, object specification)
-        {
-            FieldInfo field = typeof(ExecutionManager).GetField(slot, BindingFlags.NonPublic | BindingFlags.Instance)
-                ?? throw new InvalidOperationException($"ExecutionManager.{slot} field unavailable.");
-            field.SetValue(this.Executions, specification);
-        }
+        internal void OwnTheBody(string slot, object specification) =>
+            BodySlotSeeding.Seed(this.Executions, slot, specification);
 
         /// <summary>That execution reaching its terminal receipt: the slot clears and the body is free.</summary>
-        internal void ReleaseTheBody(string slot)
-        {
-            FieldInfo field = typeof(ExecutionManager).GetField(slot, BindingFlags.NonPublic | BindingFlags.Instance)
-                ?? throw new InvalidOperationException($"ExecutionManager.{slot} field unavailable.");
-            field.SetValue(this.Executions, null);
-        }
+        internal void ReleaseTheBody(string slot) => BodySlotSeeding.Seed(this.Executions, slot, null);
 
         internal BridgeEnvelope<BridgeReceipt> TakeAnswer()
         {

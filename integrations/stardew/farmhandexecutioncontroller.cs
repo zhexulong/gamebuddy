@@ -51,6 +51,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     // arrives, and this is the only baseline that can prove the delivery was the actor's own (GroundItemPickups.cs).
     private readonly GroundItemPickupLedger groundItemTargets = new();
     private readonly StardewBodyController controller;
+    // The body state, and the only writer of it: the slots, the modal lease and the deferred warp replan.
+    private readonly ActiveBodySlots slots;
     private readonly Func<FarmhandCapabilityPublication> capabilityPublicationProvider;
     private readonly Action<LocalExecutionReceipt>? receiptPublished;
     private readonly Action<ExecutionTrace>? tracePublished;
@@ -62,15 +64,18 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     // WorldModel.TransientRetryWindowMs; keyed by requestId, holding the request as the admission saw it.
     private readonly Dictionary<string, HeldRequest> heldRequestsByRequestId = new(StringComparer.Ordinal);
     private HeldRequestResolver? heldRequestResolver;
-    private LocalMoveSpec? active;
-    private LocalTravelSpec? activeTravel;
-    private LocalPettingSpec? activePet;
-    private LocalMountTransportSpec? activeMountTransport;
-    private LocalAnimalProductCollectionSpec? activeAnimalProduct;
-    private LocalItemUseSpec? activeItemUse;
-    private LocalItemPickupSpec? activeItemPickup;
-    private LocalPedestalTakingSpec? activePedestalTaking;
-    private LocalApproachSpec? activeToolApproach;
+    // The actor's in-flight body state lives in one type (ActiveBodySlots), which is also the only writer of it. These
+    // are read-only projections under the names every family already reads: a write has no setter, so it cannot be
+    // forgotten - it does not compile.
+    private LocalMoveSpec? active => this.slots.Active.Peek();
+    private LocalTravelSpec? activeTravel => this.slots.Travel.Peek();
+    private LocalPettingSpec? activePet => this.slots.Pet.Peek();
+    private LocalMountTransportSpec? activeMountTransport => this.slots.MountTransport.Peek();
+    private LocalAnimalProductCollectionSpec? activeAnimalProduct => this.slots.AnimalProduct.Peek();
+    private LocalItemUseSpec? activeItemUse => this.slots.ItemUse.Peek();
+    private LocalItemPickupSpec? activeItemPickup => this.slots.ItemPickup.Peek();
+    private LocalPedestalTakingSpec? activePedestalTaking => this.slots.PedestalTaking.Peek();
+    private LocalApproachSpec? activeToolApproach => this.slots.ToolApproach.Peek();
     private BridgeWoodFenceResultTarget? woodFenceResultTarget;
     private string? woodFenceResultExecutionId;
     private string? woodFenceResultRequestId;
@@ -94,8 +99,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private long revision;
     private int tick;
     private Func<NavigationRuntimeSnapshot?>? navigationRuntimeFactory;
-    private LocalNavigateSpec? activeNavigate;
-    private AcceptedNavigationExecution? activeNavigationCoordinator;
+    private LocalNavigateSpec? activeNavigate => this.slots.Navigate.Peek();
+    private AcceptedNavigationExecution? activeNavigationCoordinator => this.slots.NavigationCoordinator.Peek();
     private Func<string?, string?>? navigationShopPreflight;
     private Func<ObserveSceneResultPayload?>? navigationPiggybackedSceneProvider;
     private Func<bool>? navigationLifecycleTestAuthorization;
@@ -108,8 +113,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     // CanMove=false during the warp transition; treating that instant as a locked
     // destination would fail a healthy multi-hop navigation. The deferred replan
     // is bounded by the grace window and the navigation deadline pass in Update().
-    private bool navigationWarpReplanDeferred;
-    private int navigationWarpDeferredAtTick = -1;
+    private bool navigationWarpReplanDeferred => this.slots.WarpReplanDeferred;
+    private int navigationWarpDeferredAtTick => this.slots.WarpReplanDeferredAtTick;
 
     /// <summary>
     /// Test-only probe for the player-actionable check that gates the deferred
@@ -293,12 +298,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             throw new ArgumentException("Durable execution journal and scope must be supplied together.");
         this.executionJournal = executionJournal;
         this.executionScope = executionScope;
+        this.controller = new StardewBodyController(this.RecordControllerTransition, PublishedBlockerTargetId);
+        this.slots = new ActiveBodySlots(this.controller);
         // The idle transition is the one ledger publication this class still writes: it carries this class's tick and
         // revision and lands in the same bounded trace, so the store calls out for it instead of owning a second one.
+        // The store asks the slots who still owns the body and releases the modal lease there, so this class is not
+        // between the two facts any more.
         this.ledger = new ExecutionReceiptStore(
-            this,
+            this.slots,
             publishBodyIdleTrace: (executionId, requestId) => this.AddPublicTrace("body_idle", executionId, requestId));
-        this.controller = new StardewBodyController(this.RecordControllerTransition, PublishedBlockerTargetId);
         // WIA §4.2 owner arbitration (review #3, 2026-10-02): the L0 binary
         // "is the current modal the current action's own modal" is answered by
         // THIS ledger's single-field lease. Production is single-ExecutionManager
@@ -308,7 +316,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // The lease alone is not enough: it names an execution, and the modal is that execution's own only while the
         // execution is still active (see WorldModel.OwnsCurrentModal).
         WorldModel.ModalActionOwnedCheck = () =>
-            WorldModel.OwnsCurrentModal(this.activeModalOwnerExecutionId, this.IsExecutionActive);
+            WorldModel.OwnsCurrentModal(this.slots.ModalOwnerExecutionId, this.IsExecutionActive);
     }
 
     /// <summary>
@@ -318,12 +326,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// asynchronous modal that appears without an explicit registration is
     /// deterministically worldOwned.
     /// </summary>
-    internal string? ActiveModalOwnerExecutionId => this.activeModalOwnerExecutionId;
+    internal string? ActiveModalOwnerExecutionId => this.slots.ModalOwnerExecutionId;
 
-    internal void RegisterModalOwner(string executionId)
-    {
-        this.activeModalOwnerExecutionId = executionId;
-    }
+    internal void RegisterModalOwner(string executionId) => this.slots.RegisterModalOwner(executionId);
 
     /// <summary>
     /// Whether the named execution still holds work, asked of the stored receipt record: <see cref="ExecutionReceiptStore.Remember"/>
@@ -342,36 +347,19 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>Releases the owner lease; only the owning execution may clear it.</summary>
-    internal void ReleaseModalOwner(string executionId)
-    {
-        if (string.Equals(this.activeModalOwnerExecutionId, executionId, StringComparison.Ordinal))
-            this.activeModalOwnerExecutionId = null;
-    }
+    internal void ReleaseModalOwner(string executionId) => this.slots.ReleaseModalOwner(executionId);
 
     public long Revision => this.revision;
 
     /// <summary>Game-thread truth used only for typed post-STOP observation publication.</summary>
     /// <summary>
-    /// Whether one embodied actor is free. This is the same ownership set the admission path refuses
-    /// on (see the body_owned chain below), because a body the admission path calls busy must never
-    /// be reported as settled: ModEntry.cs:1970 uses this to decide whether a STOP "body settled"
-    /// event may be published, and claiming settled during a mount, a bus ride or an owned overnight
-    /// would tell the Host the actor is idle while an execution still owns it.
+    /// Whether one embodied actor is free. The slot population and its consequences live in
+    /// <see cref="ActiveBodySlots.IsSettled"/>: this is the same set the admission path refuses on, because a body the
+    /// admission path calls busy must never be reported as settled. ModEntry.cs:1970 uses this to decide whether a
+    /// STOP "body settled" event may be published, and claiming settled during a mount, a bus ride or an owned
+    /// overnight would tell the Host the actor is idle while an execution still owns it.
     /// </summary>
-    public bool IsBodySettled => this.active is null
-        && this.activeTravel is null
-        && this.activePet is null
-        && this.activeAnimalProduct is null
-        && this.activeItemUse is null
-        && this.activeItemPickup is null
-        && this.activeToolApproach is null
-        && this.activeNavigate is null
-        && this.activeMountTransport is null
-        && this.activeBusRide is null
-        && this.activeDayAdvance is null
-        && this.activePedestalTaking is null
-        && this.activeFishing is null
-        && !this.controller.HasActiveExecution;
+    public bool IsBodySettled => this.slots.IsSettled;
 
     public long CurrentRevision => this.revision;
     public bool IsBodyBusy => !this.IsBodySettled;
@@ -479,7 +467,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private Func<Farmer?>? testActorResolver;
 
-    private string? activeModalOwnerExecutionId;
 
     /// <summary>
     /// The per-tick world/body projection (WIA §1.2.1). Refreshed once at the
@@ -758,41 +745,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal const string ActionPastCancelPoint = "action_past_cancel_point";
 
     /// <summary>
-    /// The occupant kind, interruptibility and PHASE of the current holder, plus the evidence string a refusal
-    /// carries. The phase belongs to the owner, not to an action id: an approach leg is motion - the body is held
-    /// in the same KIND as <c>move_to_tile</c> and can be stopped and braked - while everything from the native
-    /// release onwards is a committed step whose only exit is its terminal receipt. Declaring cancel safety per
-    /// ACTION would be too coarse and would be wrong about the entity involved.
-    /// </summary>
-    private readonly record struct BodyOwner(
-        string ReasonCode,
-        string Evidence,
-        bool Interruptible,
-        string Phase,
-        bool CancelSafe);
-
-    /// <summary>
     /// The SINGLE describer of who owns the body. Every body-exclusivity refusal (the shared admission path and
     /// each action's own guard) mints its receipt through <see cref="RejectBodyOwned"/>, and the snapshot's
     /// occupant projection reads the same result, so no site can carry its own judgement of who is in the way.
-    ///
-    /// <para>
-    /// The table is the precedence, top to bottom: navigation, travel, local movement, tool approach, ride
-    /// (mount/bus), owned day advance, then the generic in-flight activity family. A slot whose occupant is a
-    /// local move (the manager's <c>active</c> or the body controller's own lease) is interruptible — a newer
-    /// movement directive supersedes it; every other owner ends on its own.
-    /// </para>
-    ///
-    /// <para>
-    /// The two trailing columns are the PHASE and the cancel safety derived from it, read off the same slot state
-    /// that names the owner, so a projection and a refusal can never disagree about whether the hold is still
-    /// releasable. Only slots with a provable walking phase are marked <c>approaching</c>; the rest are declared
-    /// <c>committed</c>, which is the conservative reading rather than a claim that nothing can happen to them.
-    /// </para>
     /// </summary>
     private BodyOwner DescribeBodyOwner() =>
         this.PeekBodyOwner() ?? new BodyOwner("body_owned", "owner_execution_id=unknown;owner_action=unknown;interruptible=false;phase=unknown;cancel_safe=false", false, "unknown", false);
-
     /// <summary>
     /// The owner of the body right now, or <see langword="null"/> when nothing of this actor's own is in flight.
     ///
@@ -803,83 +761,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// vocabulary and the snapshot's occupant projection read.
     /// </para>
     /// </summary>
-    private BodyOwner? PeekBodyOwner()
-    {
-        var owners = new List<(string ReasonCode, string ExecutionId, string Action, bool Interruptible, string Phase, bool CancelSafe)>();
-        if (this.activeNavigate is not null || this.activeNavigationCoordinator is not null)
-        {
-            // Navigation names its own phase (`LocalNavigatePhase`, ExecutionModels.cs:309); only the walking part
-            // is releasable.
-            bool navigating = this.activeNavigate is { Phase: LocalNavigatePhase.Approaching };
-            owners.Add((
-                BodyOwnedByNavigation,
-                this.activeNavigate?.ExecutionId ?? "unknown",
-                "navigate_to_destination",
-                false,
-                navigating ? "approaching" : "committed",
-                navigating));
-        }
-        if (this.activeTravel is not null)
-            owners.Add((BodyOwnedByTravel, this.activeTravel.ExecutionId, this.activeTravel.Action, false, "committed", false));
-        if (this.active is not null || this.controller.HasActiveExecution)
-            // Movement is motion for its whole life: a newer directive may supersede it and a stop may brake it.
-            owners.Add((BodyOwnedByMovement, this.active?.ExecutionId ?? this.controller.ActiveExecutionId ?? "unknown", "move_to_tile", true, "approaching", true));
-        if (this.activeToolApproach is not null)
-            // A tool approach is a MOTION STATE for as long as the slot exists: the slot IS the walk, and
-            // `CompleteToolApproach` (resourcetoolactions.cs:928) is what clears it and hands over to the native
-            // call. So an occupied approach slot is approaching, and the body is held in the same KIND as
-            // `move_to_tile` - which is precisely the owner's point: this hold can be braked, that one cannot.
-            owners.Add((BodyOwnedByApproach, this.activeToolApproach.ExecutionId, this.activeToolApproach.ActionId, false, "approaching", true));
-        if (this.activeMountTransport is not null)
-            owners.Add((BodyOwnedByRide, this.activeMountTransport.ExecutionId, "mount_transport", false, "committed", false));
-        if (this.activeBusRide is not null)
-            owners.Add((BodyOwnedByRide, this.activeBusRide.ExecutionId, "ride_bus", false, "committed", false));
-        if (this.activeDayAdvance is not null && !this.NightAcceptedButNotBegun)
-        {
-            // The night owns the body only once it can actually begin, and from then on it is COMMITTED.
-            //
-            // Measured 2026-10-20 (run 01-44-58): the companion dispatched advance_day outdoors, acceptance claimed the
-            // body as committed and uninterruptible, the lifecycle then reported not_home for four minutes, and the one
-            // action that could fix it - enter_exit, to walk home - was refused as body_owned_by_day_advance. The
-            // engine's own 2:00 AM pass-out was what ended the run. A later commit published `interruptible=true` for
-            // that waiting state, but nothing in the product read the flag: the admission refused every action against
-            // it just the same, so the label described a capability the gate denied. The fix belongs at the gate, not in
-            // the wording - see NightAcceptedButNotBegun.
-            // A slot whose lifecycle is unavailable is treated as COMMITTED: releasing the body on a guess is the one
-            // thing this must never do, and the uninitialised-slot case is what the owner-naming test pins.
-            owners.Add((BodyOwnedByDayAdvance, this.activeDayAdvance.ExecutionId, "sleep", false, "committed", false));
-        }
-        if (this.activePet is not null)
-            owners.Add((BodyOwnedByActivity, this.activePet.ExecutionId, "pet_animal", false, "committed", false));
-        if (this.activeAnimalProduct is not null)
-            owners.Add((BodyOwnedByActivity, this.activeAnimalProduct.ExecutionId, "collect_animal_product", false, "committed", false));
-        if (this.activeItemUse is not null)
-            owners.Add((BodyOwnedByActivity, this.activeItemUse.ExecutionId, "use_item", false, "committed", false));
-        if (this.activeFishing is not null)
-            // A cast is committed from the moment the line is in the water: the engine's rod state machine has already
-            // spent the stamina, so a superseding directive may not take the body away mid-cast.
-            owners.Add((BodyOwnedByActivity, this.activeFishing.ExecutionId, "fish_here", false, "committed", false));
-        if (this.activeItemPickup is not null)
-            owners.Add((BodyOwnedByActivity, this.activeItemPickup.ExecutionId, "pickup_item", false, "committed", false));
-        if (this.activePedestalTaking is not null)
-            owners.Add((BodyOwnedByActivity, this.activePedestalTaking.ExecutionId, "take_pedestal_item", false, "committed", false));
-
-        // The guards make this unreachable; the caller decides what an unnameable hold reads as.
-        if (owners.Count == 0)
-            return null;
-
-        (string ReasonCode, string ExecutionId, string Action, bool Interruptible, string Phase, bool CancelSafe) owner = owners[0];
-        string evidence = $"owner_execution_id={OwnerToken(owner.ExecutionId)};owner_action={OwnerToken(owner.Action)};interruptible={(owner.Interruptible ? "true" : "false")};phase={owner.Phase};cancel_safe={(owner.CancelSafe ? "true" : "false")}";
-        var alsoOwned = new List<string>();
-        for (int index = 1; index < owners.Count; index++)
-            if (!alsoOwned.Contains(owners[index].ReasonCode))
-                alsoOwned.Add(owners[index].ReasonCode);
-        if (alsoOwned.Count > 0)
-            evidence += $";also_owned={string.Join(",", alsoOwned)}";
-        return new BodyOwner(owner.ReasonCode, evidence, owner.Interruptible, owner.Phase, owner.CancelSafe);
-    }
-
-    private static string OwnerToken(string? value) => string.IsNullOrEmpty(value) ? "unknown" : value;
+    /// <summary>
+    /// The occupant kind, interruptibility and PHASE of the current holder, plus the evidence string a refusal carries;
+    /// <see cref="ActiveBodySlots.PeekOwner"/> is its one describer.
+    /// </summary>
+    private BodyOwner? PeekBodyOwner() => this.slots.PeekOwner();
 
     /// <summary>
     /// The hold a request waits out when the actor's OWN in-flight execution owns the body, named after that owner and
@@ -940,7 +826,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// action and the interruptible verdict keep the single definition the owner table gives them.
     /// </summary>
     internal static (string ReasonCode, string Evidence) LocalMoveOwner(string? executionId) =>
-        (BodyOwnedByMovement, $"owner_execution_id={OwnerToken(executionId)};owner_action=move_to_tile;interruptible=true");
+        (BodyOwnedByMovement, $"owner_execution_id={ActiveBodySlots.OwnerToken(executionId)};owner_action=move_to_tile;interruptible=true");
 
     /// <summary>
     /// Whether the accepted night has not begun: it has dispatched nothing native - no walk, no answer, no save - and
@@ -959,7 +845,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// that nothing was dispatched, and releasing the body on a guess is the one thing this must never do.
     /// </para>
     /// </summary>
-    private bool NightAcceptedButNotBegun => this.activeDayAdvance?.Lifecycle is { IsAwaitingEligibility: true };
+    private bool NightAcceptedButNotBegun => this.slots.NightAcceptedButNotBegun;
 
     /// <summary>
     /// Retires the accepted night that has not begun, so the request taking over the slot is the only owner of it.
@@ -982,14 +868,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         if (this.activeDayAdvance is not { } pending || !this.NightAcceptedButNotBegun)
             return;
-        this.activeDayAdvance = null;
+        this.slots.DayAdvance.Clear();
         this.revision++;
         this.RememberTerminal(
             pending.RequestId,
             pending.ExecutionId,
             ExecutionState.Cancelled,
             SupersededNightThatHasNotBegun,
-            $"owner_action=sleep;phase=approaching;superseded_by_execution_id={OwnerToken(incomingExecutionId)}");
+            $"owner_action=sleep;phase=approaching;superseded_by_execution_id={ActiveBodySlots.OwnerToken(incomingExecutionId)}");
     }
 
     /// <summary>
@@ -1478,15 +1364,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     {
         this.CloseHeldRequests();
         this.controller.Halt();
-        this.active = null;
-        this.activeTravel = null;
-        this.activePet = null;
-        this.activeAnimalProduct = null;
-        this.activeItemUse = null;
-        this.activeItemPickup = null;
+        this.slots.Active.Clear();
+        this.slots.Travel.Clear();
+        this.slots.Pet.Clear();
+        this.slots.AnimalProduct.Clear();
+        this.slots.ItemUse.Clear();
+        this.slots.ItemPickup.Clear();
         if (this.activePedestalTaking is not null)
             this.SettlePedestalTakingUncertain("pedestal_take_halted_after_native_start");
-        this.activeToolApproach = null;
+        this.slots.ToolApproach.Clear();
     }
 
     public LocalExecutionReceipt Cancel(string requestId, string executionId, string reasonCode)
@@ -1525,22 +1411,22 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         {
             LocalNavigateSpec navigateSpec = this.activeNavigate;            if (navigateSpec.Phase == LocalNavigatePhase.AwaitingWarp)
             {
-                this.navigationWarpReplanDeferred = false;
+                this.slots.ClearWarpReplan();
                 // A cancellation/deadline/unexpected lifecycle after the native warp
                 // has already been signalled is only ever an uncertain terminal: the
                 // destination may have been reached or a delivery left open. It is
                 // never retried and late callbacks cannot overwrite it.
-                this.activeNavigate = null;
+                this.slots.Navigate.Clear();
                 if (this.active is not null)
-                    this.active = null;
+                    this.slots.Active.Clear();
                 this.revision++;
                 LocalExecutionReceipt cancelledAfterWarpReceipt = this.RememberTerminal(navigateSpec.RequestId, navigateSpec.ExecutionId, ExecutionState.Uncertain, "navigation_cancelled_after_warp_child", $"destination={navigateSpec.CanonicalDestinationIdentity};phase=awaiting_warp;never_retry=true");
                 return cancelledAfterWarpReceipt;
             }
 
-            this.activeNavigate = null;
+            this.slots.Navigate.Clear();
             if (this.active is not null)
-                this.active = null;
+                this.slots.Active.Clear();
             this.revision++;
             LocalExecutionReceipt navigateReceipt = this.RememberTerminal(navigateSpec.RequestId, navigateSpec.ExecutionId, ExecutionState.Cancelled, reasonCode, $"destination={navigateSpec.CanonicalDestinationIdentity};phase=approaching");
             return navigateReceipt;
@@ -1549,7 +1435,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.activeTravel is not null)
         {
             LocalTravelSpec travelSpec = this.activeTravel;
-            this.activeTravel = null;
+            this.slots.Travel.Clear();
             this.revision++;
             LocalExecutionReceipt travelReceipt = this.RememberTerminal(travelSpec.RequestId, travelSpec.ExecutionId, ExecutionState.Cancelled, reasonCode, $"source={travelSpec.SourceLocation}:{travelSpec.SourceX},{travelSpec.SourceY};target={travelSpec.TargetLocation}:{travelSpec.TargetX},{travelSpec.TargetY}");
             return travelReceipt;
@@ -1563,14 +1449,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 return deferredReceipt;
             this.revision++;
             LocalExecutionReceipt animalProductReceipt = this.RememberTerminal(animalProductSpec.RequestId, animalProductSpec.ExecutionId, ExecutionState.Uncertain, "animal_product_cancelled_after_native_start", $"target={animalProductSpec.TargetId};animal={animalProductSpec.AnimalId};native_animation_pending=true");
-            this.activeAnimalProduct = animalProductSpec with { DeferredTerminalState = ExecutionState.Uncertain, DeferredTerminalReason = "animal_product_cancelled_after_native_start" };
+            this.slots.AnimalProduct.Assign(animalProductSpec with { DeferredTerminalState = ExecutionState.Uncertain, DeferredTerminalReason = "animal_product_cancelled_after_native_start" });
             return animalProductReceipt;
         }
 
         if (this.activePet is not null)
         {
             LocalPettingSpec petSpec = this.activePet;
-            this.activePet = null;
+            this.slots.Pet.Clear();
             this.revision++;
             LocalExecutionReceipt petReceipt = this.RememberTerminal(petSpec.RequestId, petSpec.ExecutionId, ExecutionState.Cancelled, reasonCode, $"target={petSpec.TargetId};tile={petSpec.TargetX},{petSpec.TargetY}");
             return petReceipt;
@@ -1579,7 +1465,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.activeMountTransport is not null)
         {
             LocalMountTransportSpec mountSpec = this.activeMountTransport;
-            this.activeMountTransport = null;
+            this.slots.MountTransport.Clear();
             this.revision++;
             LocalExecutionReceipt mountReceipt = this.RememberTerminal(mountSpec.RequestId, mountSpec.ExecutionId, ExecutionState.Uncertain, "horse_mount_cancelled_after_native_start", $"target={mountSpec.TargetId};mounting_or_mounted=true");
             return mountReceipt;
@@ -1592,9 +1478,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // target it was walking toward, so the caller knows nothing changed in
             // the world.
             LocalApproachSpec toolApproachSpec = this.activeToolApproach;
-            this.activeToolApproach = null;
+            this.slots.ToolApproach.Clear();
             if (this.active is not null)
-                this.active = null;
+                this.slots.Active.Clear();
             this.revision++;
             LocalExecutionReceipt toolApproachCancelled = this.RememberTerminal(toolApproachSpec.RequestId, toolApproachSpec.ExecutionId, ExecutionState.Cancelled, reasonCode,
                 $"location={toolApproachSpec.Location};target={toolApproachSpec.ExpectedTargetId};tile={toolApproachSpec.TargetX},{toolApproachSpec.TargetY};reach=1;approach=cancelled");
@@ -1620,7 +1506,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     : this.RememberTerminal(itemPickupSpec.RequestId, itemPickupSpec.ExecutionId, ExecutionState.Uncertain, "cancellation_receipt_missing", null);
             }
 
-            this.activeItemPickup = null;
+            this.slots.ItemPickup.Clear();
             this.revision++;
             LocalExecutionReceipt itemPickupReceipt = this.RememberTerminal(itemPickupSpec.RequestId, itemPickupSpec.ExecutionId, ExecutionState.Cancelled, reasonCode,
                 $"location={itemPickupSpec.Location};target={itemPickupSpec.TargetId};native_auto_collect_pending=true");
@@ -1635,7 +1521,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 return deferredReceipt;
             this.revision++;
             LocalExecutionReceipt itemReceipt = this.RememberTerminal(itemSpec.RequestId, itemSpec.ExecutionId, ExecutionState.Uncertain, "item_use_cancelled_after_native_start", $"slot={itemSpec.Slot};item={itemSpec.QualifiedItemId};native_animation_pending=true");
-            this.activeItemUse = itemSpec with { DeferredTerminalState = ExecutionState.Uncertain, DeferredTerminalReason = "item_use_cancelled_after_native_start" };
+            this.slots.ItemUse.Assign(itemSpec with { DeferredTerminalState = ExecutionState.Uncertain, DeferredTerminalReason = "item_use_cancelled_after_native_start" });
             return itemReceipt;
         }
 
@@ -1751,7 +1637,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 && this.IsPlayerActionableNow()
                 && !graceExpired)
             {
-                this.navigationWarpReplanDeferred = false;
+                this.slots.ClearWarpReplan();
                 // Log through a local so this diagnostic cannot seed method-level
                 // Game1.player null-state for the later native postconditions.
                 Farmer? diagnosticPlayer = Game1.player;
@@ -1765,7 +1651,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             }
             else if (graceExpired && !this.IsPlayerActionableNow())
             {
-                this.navigationWarpReplanDeferred = false;
+                this.slots.ClearWarpReplan();
                 this.LogNavigationWarpDiagnostic("warp_replan_grace_expired", $"destination={deferredNavigation.CanonicalDestinationIdentity}");
                 this.SettleNavigationTerminal(deferredNavigation, ExecutionState.Rejected, "destination_locked",
                     $"destination={deferredNavigation.CanonicalDestinationIdentity};phase=awaiting_warp;grace_expired=true;never_retry=true");
@@ -1774,18 +1660,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.activeTravel is not null && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > this.activeTravel.DeadlineMs)
         {
             LocalTravelSpec specification = this.activeTravel;
-            this.activeTravel = null;
+            this.slots.Travel.Clear();
             this.revision++;
             this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Expired, "travel_deadline_expired", null);
         }
         if (this.activeNavigate is not null && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > this.activeNavigate.DeadlineMs)
         {
             LocalNavigateSpec specification = this.activeNavigate;
-            this.navigationWarpReplanDeferred = false;
+            this.slots.ClearWarpReplan();
             this.LogNavigationWarpDiagnostic("deadline_reached", $"phase={specification.Phase};destination={specification.CanonicalDestinationIdentity}");
-            this.activeNavigate = null;
+            this.slots.Navigate.Clear();
             if (this.active is not null)
-                this.active = null;
+                this.slots.Active.Clear();
             this.revision++;
             ExecutionState deadlineState = specification.Phase == LocalNavigatePhase.AwaitingWarp ? ExecutionState.Uncertain : ExecutionState.Expired;
             string reasonCode = specification.Phase == LocalNavigatePhase.AwaitingWarp ? "navigation_deadline_expired_after_warp" : "navigation_deadline_expired";
@@ -1803,7 +1689,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 long approachNowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 if (approachNowMs > settledToolApproach.DeadlineMs)
                 {
-                    this.activeToolApproach = null;
+                    this.slots.ToolApproach.Clear();
                     this.revision++;
                     this.RememberTerminal(settledToolApproach.RequestId, settledToolApproach.ExecutionId, ExecutionState.Expired, "tool_approach_deadline_expired",
                         $"target={settledToolApproach.ExpectedTargetId};tile={settledToolApproach.TargetX},{settledToolApproach.TargetY};approach=adjacent");
@@ -1835,14 +1721,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             bool mutexWindowExhausted = this.tick > specification.StartedTick + 30;
             if (laterTick && pedestalEmpty && inventoryAfter >= specification.InventoryBefore + specification.StackBefore)
             {
-                this.activePedestalTaking = null;
+                this.slots.PedestalTaking.Clear();
                 this.revision++;
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "pedestal_item_taken",
                     $"location={specification.Location};target={specification.TargetId};item={specification.QualifiedItemId};stack={specification.StackBefore};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};held_object_empty=true");
             }
             else if (mutexWindowExhausted)
             {
-                this.activePedestalTaking = null;
+                this.slots.PedestalTaking.Clear();
                 this.revision++;
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "pedestal_take_postcondition_unavailable",
                     $"location={specification.Location};target={specification.TargetId};held_object_empty={pedestalEmpty.ToString().ToLowerInvariant()};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}");
@@ -1880,13 +1766,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             string pickupEvidence = $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};native_auto_collect=true;chunk_removed={chunkRemoved}{chunkReason};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}";
             if (approachSettled && targetGone && inventoryGained)
             {
-                this.activeItemPickup = null;
+                this.slots.ItemPickup.Clear();
                 this.revision++;
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "item_picked_up", pickupEvidence);
             }
             else if ((!sameLocation || nowMs > specification.DeadlineMs) && approachSettled)
             {
-                this.activeItemPickup = null;
+                this.slots.ItemPickup.Clear();
                 this.revision++;
                 // An inventory that grew IS the pickup, whatever the ground still shows.
                 //
@@ -1926,13 +1812,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // every later action would be refused as body-owned.
             if (animationComplete || nowMs > specification.DeadlineMs)
             {
-                this.activeItemUse = null;
+                this.slots.ItemUse.Clear();
                 this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
             else if (animationComplete && consumed)
             {
-                this.activeItemUse = null;
+                this.slots.ItemUse.Clear();
                 this.revision++;
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "item_used",
                     $"slot={specification.Slot};item={specification.QualifiedItemId};stack_before={specification.StackBefore};stack_after={remaining?.Stack ?? 0};edibility={specification.Edibility};drink={specification.IsDrink.ToString().ToLowerInvariant()};stamina_before={specification.StaminaBefore.ToString("0.##", CultureInfo.InvariantCulture)};stamina_after={Game1.player.Stamina.ToString("0.##", CultureInfo.InvariantCulture)};health_before={specification.HealthBefore};health_after={Game1.player.health};animation_complete=true");
@@ -1944,11 +1830,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                     $"slot={specification.Slot};item={specification.QualifiedItemId};consumed={consumed.ToString().ToLowerInvariant()};animation_complete={animationComplete.ToString().ToLowerInvariant()}");
                 if (animationComplete)
                 {
-                    this.activeItemUse = null;
+                    this.slots.ItemUse.Clear();
                     this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
                 }
                 else
-                    this.activeItemUse = specification with { DeferredTerminalState = ExecutionState.Uncertain, DeferredTerminalReason = "item_use_postcondition_unavailable" };
+                    this.slots.ItemUse.Assign(specification with { DeferredTerminalState = ExecutionState.Uncertain, DeferredTerminalReason = "item_use_postcondition_unavailable" });
             }
         }
         if (this.activeAnimalProduct is not null)
@@ -1971,14 +1857,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             if (animationComplete || nowMs > specification.DeadlineMs)
             {
                 Game1.player.CurrentToolIndex = specification.PreviousSlot;
-                this.activeAnimalProduct = null;
+                this.slots.AnimalProduct.Clear();
                 this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
             else if (animationComplete && produceCleared && inventoryGained)
             {
                 Game1.player.CurrentToolIndex = specification.PreviousSlot;
-                this.activeAnimalProduct = null;
+                this.slots.AnimalProduct.Clear();
                 this.revision++;
                 float staminaAfter = Game1.player.Stamina;
                 float staminaDelta = staminaAfter - specification.StaminaBefore;
@@ -1996,11 +1882,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 if (animationComplete)
                 {
                     Game1.player.CurrentToolIndex = specification.PreviousSlot;
-                    this.activeAnimalProduct = null;
+                    this.slots.AnimalProduct.Clear();
                     this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
                 }
                 else
-                    this.activeAnimalProduct = specification with { DeferredTerminalState = ExecutionState.Uncertain, DeferredTerminalReason = "animal_product_postcondition_unavailable" };
+                    this.slots.AnimalProduct.Assign(specification with { DeferredTerminalState = ExecutionState.Uncertain, DeferredTerminalReason = "animal_product_postcondition_unavailable" });
             }
         }
         if (this.activeMountTransport is not null)
@@ -2013,13 +1899,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             Horse? horse = Game1.player.mount as Horse;
             if (horse is not null && horse.HorseId == specification.HorseId && !horse.mounting.Value)
             {
-                this.activeMountTransport = null;
+                this.slots.MountTransport.Clear();
                 this.revision++;
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "horse_mounted", $"target={specification.TargetId};horse_id={specification.HorseId};mounted=true;mounting=false");
             }
             else if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > specification.DeadlineMs)
             {
-                this.activeMountTransport = null;
+                this.slots.MountTransport.Clear();
                 this.revision++;
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "horse_mount_postcondition_unavailable", $"target={specification.TargetId};mounted={(Game1.player.mount is not null).ToString().ToLowerInvariant()};mounting={horse?.mounting.Value.ToString().ToLowerInvariant() ?? "unknown"}");
             }
@@ -2033,14 +1919,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             if (dayRecorded && friendshipApplied)
             {
-                this.activePet = null;
+                this.slots.Pet.Clear();
                 this.revision++;
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "pet_completed",
                     $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};pet_day={specification.PetDay};friendship_before={specification.FriendshipBefore};friendship_after={pet!.friendshipTowardFarmer.Value};day_recorded=true;friendship_callback=true");
             }
             else if (nowMs > specification.DeadlineMs)
             {
-                this.activePet = null;
+                this.slots.Pet.Clear();
                 this.revision++;
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "pet_postcondition_unavailable",
                     $"location={specification.Location};target={specification.TargetId};day_recorded={dayRecorded.ToString().ToLowerInvariant()};friendship_applied={friendshipApplied.ToString().ToLowerInvariant()}");
@@ -2180,24 +2066,24 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.activeMountTransport is not null)
         {
             LocalMountTransportSpec specification = this.activeMountTransport;
-            this.activeMountTransport = null;
+            this.slots.MountTransport.Clear();
             this.revision++;
             this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, "horse_mount_invalidated_after_native_start", $"target={specification.TargetId};mounting_or_mounted=true");
         }
         if (this.activeTravel is not null)
         {
             LocalTravelSpec specification = this.activeTravel;
-            this.activeTravel = null;
+            this.slots.Travel.Clear();
             this.revision++;
             this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, null);
         }
         if (this.activeNavigate is not null)
         {
             LocalNavigateSpec specification = this.activeNavigate;
-            this.navigationWarpReplanDeferred = false;
-            this.activeNavigate = null;
+            this.slots.ClearWarpReplan();
+            this.slots.Navigate.Clear();
             if (this.active is not null)
-                this.active = null;
+                this.slots.Active.Clear();
             if (specification.Phase == LocalNavigatePhase.AwaitingWarp)
             {
                 // The warp was already committed natively; an unexpected lifecycle
@@ -2225,7 +2111,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 // deadline. Restoring the held slot is safe here — the running animation already
                 // captured its own tool reference.
                 Game1.player.CurrentToolIndex = specification.PreviousSlot;
-                this.activeAnimalProduct = null;
+                this.slots.AnimalProduct.Clear();
                 this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
@@ -2237,7 +2123,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.activePet is not null)
         {
             LocalPettingSpec specification = this.activePet;
-            this.activePet = null;
+            this.slots.Pet.Clear();
             this.revision++;
             this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, null);
         }
@@ -2249,9 +2135,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // A tool-family approach invalidated before executing anything native:
             // no world mutation happened, so this is an honest Invalidated terminal.
             LocalApproachSpec specification = this.activeToolApproach;
-            this.activeToolApproach = null;
+            this.slots.ToolApproach.Clear();
             if (this.active is not null)
-                this.active = null;
+                this.slots.Active.Clear();
             this.revision++;
             this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode,
                 $"target={specification.ExpectedTargetId};tile={specification.TargetX},{specification.TargetY};reach=1;approach=invalidated");
@@ -2261,7 +2147,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         if (this.activeItemPickup is not null)
         {
             LocalItemPickupSpec specification = this.activeItemPickup;
-            this.activeItemPickup = null;
+            this.slots.ItemPickup.Clear();
             this.revision++;
             this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, "native_auto_collect_pending=true");
         }
@@ -2284,7 +2170,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Invalidated, reasonCode, "native_animation_pending=true");
                 // Same immediate release as the animal-product slot: the interrupted eating
                 // animation is not a reason to keep owning the body.
-                this.activeItemUse = null;
+                this.slots.ItemUse.Clear();
                 this.ledger.PublishIdleAfterRelease(specification.ExecutionId, specification.RequestId);
             }
         }
@@ -5548,7 +5434,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 return;
             }
 
-            this.active = null;
+            this.slots.Active.Clear();
             if (state == ExecutionState.Succeeded)
             {
                 // The controller reached the bounded adjacent arrival. Keep
@@ -5559,7 +5445,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 return;
             }
 
-            this.activeItemPickup = null;
+            this.slots.ItemPickup.Clear();
             this.revision++;
             this.RememberTerminal(pickup.RequestId, pickup.ExecutionId, state, reasonCode,
                 $"location={pickup.Location};target={pickup.TargetId};tile={pickup.TargetX},{pickup.TargetY};native_auto_collect_pending=false;body_evidence={evidence ?? "none"}");
@@ -5579,7 +5465,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 return;
             }
 
-            this.active = null;
+            this.slots.Active.Clear();
             if (state == ExecutionState.Succeeded)
             {
                 this.revision++;
@@ -5599,7 +5485,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // Invalidated receipt would contradict the state one field away and tell
             // the Agent the walk failed when the world actually moved.
             string approachOutcome = state == ExecutionState.Invalidated ? "invalidated" : "failed";
-            this.activeToolApproach = null;
+            this.slots.ToolApproach.Clear();
             this.revision++;
             this.RememberTerminal(toolApproach.RequestId, toolApproach.ExecutionId, state, reasonCode,
                 $"location={toolApproach.Location};target={toolApproach.ExpectedTargetId};tile={toolApproach.TargetX},{toolApproach.TargetY};reach=1;approach={approachOutcome};body_evidence={evidence ?? "none"}");
@@ -5609,7 +5495,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.revision++;
         bool terminal = state is ExecutionState.Succeeded or ExecutionState.Failed or ExecutionState.Cancelled or ExecutionState.Invalidated or ExecutionState.Expired or ExecutionState.Uncertain;
         if (terminal)
-            this.active = null;
+            this.slots.Active.Clear();
         // The one sentence a refusal computed has to travel in the one field a settled node keeps: ADR-006 withholds a
         // settled failure's evidence, and this receipt used to carry no hint at all. Measured `round41`,
         // 19:04:10-19:05:26: a `clear_step_blocked` whose evidence held
@@ -5654,15 +5540,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             }
 
             this.LogNavigationWarpDiagnostic("approach_succeeded", "deferred commit to next tick");
-            this.active = null;
-            this.activeNavigate = activeNavigation with { Phase = LocalNavigatePhase.ApproachReleased };
+            this.slots.Active.Clear();
+            this.slots.Navigate.Assign(activeNavigation with { Phase = LocalNavigatePhase.ApproachReleased });
             return;
         }
 
         // Any approach terminal (Failed/Expired/Cancelled/Invalidated/Uncertain)
         // settles the navigation exactly once.
         this.LogNavigationWarpDiagnostic("approach_terminal", $"state={state};reason={reasonCode};evidence={evidence ?? "none"}");
-        this.active = null;
+        this.slots.Active.Clear();
         this.SettleNavigationTerminal(navigation, state, reasonCode,
             $"approach_pre_release={evidence ?? "none"};phase=approaching;controller_traversal=true");
     }
@@ -5746,7 +5632,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return;
         }
 
-        this.activeNavigate = this.activeNavigate with { Phase = LocalNavigatePhase.AwaitingWarp };
+        this.slots.Navigate.Assign(this.activeNavigate with { Phase = LocalNavigatePhase.AwaitingWarp });
         try
         {
             this.CommitApproachWarp(navigation, warp);
@@ -5803,14 +5689,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private void SettleNavigationTerminal(LocalNavigateSpec navigation, ExecutionState state, string reasonCode, string? evidence)
     {
-        this.navigationWarpReplanDeferred = false;
+        this.slots.ClearWarpReplan();
         // Unthrottled settle marker; the bounded warp throttle may swallow a
         // transition log that occurs in the same window as another warp event.
         this.monitor.Log($"[nav-settle-marker] request={navigation.RequestId};state={state};reason={reasonCode};evidence={evidence ?? "none"}", LogLevel.Trace);
         this.LogNavigationWarpDiagnostic("settle", $"state={state};reason={reasonCode};evidence={evidence ?? "none"}");
-        this.active = null;
-        this.activeNavigate = null;
-        this.activeNavigationCoordinator = null;
+        this.slots.Active.Clear();
+        this.slots.Navigate.Clear();
+        this.slots.NavigationCoordinator.Clear();
         this.revision++;
         ObserveSceneResultPayload? piggybackedScene =
             state == ExecutionState.Succeeded && reasonCode == "navigation_completed"
@@ -5871,7 +5757,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // frame), defer to the next Update tick instead of misreading that frame
         // as a locked destination. The Update retry only re-enters after the
         // player is actionable again; the deadline pass settles it otherwise.
-        this.navigationWarpReplanDeferred = false;
+        this.slots.ClearWarpReplan();
         this.LogNavigationWarpDiagnostic("warp_confirmed", $"old={oldLocation};new={newLocation}:{newTileX},{newTileY}");
         this.TryContinueNavigationAfterWarp(navigation);
     }
@@ -5922,8 +5808,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // once.
         if (nextPlan.IsTerminal && nextPlan.Outcome.TerminalReasonCode == "destination_locked")
         {
-            this.navigationWarpReplanDeferred = true;
-            this.navigationWarpDeferredAtTick = this.tick;
+            this.slots.DeferWarpReplan(this.tick);
             this.LogNavigationWarpDiagnostic("warp_replan_deferred", "destination_locked;waiting_for_actionable_frame");
             return;
         }
@@ -5980,13 +5865,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             this.revision,
             this.tick + deadlineTicks,
             navigation.DeadlineMs);
-        this.activeNavigate = nextNavigation;
-        this.active = approach;
+        this.slots.Navigate.Assign(nextNavigation);
+        this.slots.Active.Assign(approach);
         if (!this.TryStartApproach(approach, out string reasonCode, out string? approachEvidence, out string? approachHint))
         {
-            this.active = null;
-            this.activeNavigate = null;
-            this.activeNavigationCoordinator = null;
+            this.slots.Active.Clear();
+            this.slots.Navigate.Clear();
+            this.slots.NavigationCoordinator.Clear();
             this.revision++;
             this.RememberTerminal(navigation.RequestId, navigation.ExecutionId, ExecutionState.Uncertain, "navigation_multi_hop_arm_failed",
                 $"phase=multi_hop;reason={reasonCode};{(approachEvidence is null ? "" : approachEvidence + ";")}never_retry=true",
@@ -6217,17 +6102,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return published;
     }
 
-    private bool HasOwnership(string executionId) =>
-        this.active?.ExecutionId == executionId
-        || this.activeTravel?.ExecutionId == executionId
-        || this.activePet?.ExecutionId == executionId
-        || this.activeAnimalProduct?.ExecutionId == executionId
-        || this.activeItemUse?.ExecutionId == executionId
-        || this.activeItemPickup?.ExecutionId == executionId
-        || this.activePedestalTaking?.ExecutionId == executionId
-        || this.activeFishing?.ExecutionId == executionId
-        || this.activeNavigate?.ExecutionId == executionId
-        || this.controller.ActiveExecutionId == executionId;
+    private bool HasOwnership(string executionId) => this.slots.OwnsAny(executionId);
 
     private void AddPublicTrace(string category, string executionId, string requestId)
     {

@@ -58,7 +58,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private const int MaximumWaterTargets = 32;
 
-    private LocalFishingCastSpec? activeFishing;
+    private LocalFishingCastSpec? activeFishing => this.slots.Fishing.Peek();
 
     /// <summary>
     /// The tiles a rod may be cast at here, WHOLE MAP, nearest first.
@@ -288,7 +288,7 @@ internal sealed partial class ExecutionManager
             }
 
             castStarted = true;
-            this.activeFishing = new LocalFishingCastSpec(
+            this.slots.Fishing.Assign(new LocalFishingCastSpec(
                 executionId,
                 requestId,
                 location.NameOrUniqueName,
@@ -301,7 +301,7 @@ internal sealed partial class ExecutionManager
                 baitBefore,
                 nowMs,
                 requestedDeadlineMs,
-                LocalFishingPhase.WaitingForBite);
+                LocalFishingPhase.WaitingForBite));
             return this.RememberTerminal(
                 requestId,
                 executionId,
@@ -344,7 +344,7 @@ internal sealed partial class ExecutionManager
                     // (`FishingRod.cs:2130-2137`): `DoFunction` while `isNibbling` is what picks the fish out of the engine's
                     // own tables and opens the catch window. Nothing about the fish is read or chosen here.
                     rod.DoFunction(location, spec.TargetX, spec.TargetY, 1, Game1.player);
-                    this.activeFishing = spec with { Phase = LocalFishingPhase.AwaitingCatchWindow };
+                    this.slots.Fishing.Assign(spec with { Phase = LocalFishingPhase.AwaitingCatchWindow });
                     return;
                 }
                 if (nowMs > spec.DeadlineMs)
@@ -386,14 +386,14 @@ internal sealed partial class ExecutionManager
                     // (`:423`) and `readyToClose` is false (`:635`), so the menu would block the actor forever. Closing it
                     // unplayed is exactly why the pull outcome is reported `not_verified`, with the unobserved field named.
                     Game1.exitActiveMenu();
-                    this.activeFishing = spec with
+                    this.slots.Fishing.Assign(spec with
                     {
                         Phase = LocalFishingPhase.AwaitingCredit,
                         CaughtQualifiedItemId = fishQualifiedItemId,
                         CaughtFishSize = bar.fishSize,
                         CaughtFishQuality = bar.fishQuality,
                         CaughtCountBefore = countBefore,
-                    };
+                    });
                     return;
                 }
                 if (nowMs > spec.DeadlineMs)
@@ -506,7 +506,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private void SettleFishingCast(LocalFishingCastSpec spec, ExecutionState state, string reasonCode, string evidence)
     {
-        this.activeFishing = null;
+        this.slots.Fishing.Clear();
         if (spec.PreviousSlot >= 0 && spec.PreviousSlot < Game1.player.Items.Count)
             Game1.player.CurrentToolIndex = spec.PreviousSlot;
         // A cast that never reached the engine's win path is reeled in with `doneFishing(who)` - the overload that consumes

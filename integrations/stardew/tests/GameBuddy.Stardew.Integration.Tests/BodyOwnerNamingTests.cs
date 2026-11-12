@@ -129,11 +129,9 @@ public sealed class BodyOwnerNamingTests
             TimeoutSeconds = 540,
             ReadyBarrierFrameBudget = 18000,
         })!;
-        // `ActiveDayAdvance` is private, so it is built the way this file already builds private slots: an
-        // uninitialised instance of the real nested type, with its Lifecycle backing field pointed at the real
-        // lifecycle above.
-        Type advanceType = typeof(ExecutionManager).GetNestedType("ActiveDayAdvance", BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("ExecutionManager.ActiveDayAdvance unavailable.");
+        // A night is built the way any headless probe builds one: an uninitialised instance of the real record, with its
+        // Lifecycle backing field pointed at the real lifecycle above.
+        Type advanceType = typeof(ActiveDayAdvance);
         object advance = RuntimeHelpers.GetUninitializedObject(advanceType);
         advanceType.GetField("<Lifecycle>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance)!
             .SetValue(advance, lifecycle);
@@ -307,12 +305,11 @@ public sealed class BodyOwnerNamingTests
         return receipt!;
     }
 
-    private static void OccupySlot(ExecutionManager manager, string fieldName, object? owner)
-    {
-        FieldInfo field = typeof(ExecutionManager).GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException($"ExecutionManager.{fieldName} field unavailable.");
-        field.SetValue(manager, owner ?? RuntimeHelpers.GetUninitializedObject(field.FieldType));
-    }
+    private static void OccupySlot(ExecutionManager manager, string fieldName, object? owner) =>
+        BodySlotSeeding.Seed(
+            manager,
+            fieldName,
+            owner ?? RuntimeHelpers.GetUninitializedObject(BodySlotSeeding.SlotType(manager, fieldName)));
 
     private static LocalExecutionReceipt? AdmitForBodyCheck(ExecutionManager manager)
     {

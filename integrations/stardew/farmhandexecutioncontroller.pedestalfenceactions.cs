@@ -28,7 +28,7 @@ internal sealed partial class ExecutionManager
         int inventoryBefore = CountQualifiedItem(Game1.player, item!.QualifiedItemId);
         LocalPedestalTakingSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId,
             item!.QualifiedItemId, item.Stack, inventoryBefore, this.tick, deadlineMs);
-        this.activePedestalTaking = specification;
+        this.slots.PedestalTaking.Assign(specification);
         // Published BEFORE the native take, and the receipt the caller receives is the one that was published:
         // the funnel below annotates a held-body wait and can bump the revision, so the minted copy is not what the
         // world saw. The native call then runs in order, and its own branches settle through the same funnel.
@@ -40,14 +40,14 @@ internal sealed partial class ExecutionManager
             // terminal move directly (locked pedestals refuse exactly as in game).
             if (pedestal!.locked.Value)
             {
-                this.activePedestalTaking = null;
+                this.slots.PedestalTaking.Clear();
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "pedestal_locked", $"target={expectedTargetId}");
             }
             _ = pedestal!.DropObject(Game1.player);
         }
         catch
         {
-            this.activePedestalTaking = null;
+            this.slots.PedestalTaking.Clear();
             return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "pedestal_take_native_outcome_unknown",
                 $"location={specification.Location};target={expectedTargetId};native_call_threw=true;never_retry=true");
         }
@@ -166,7 +166,7 @@ internal sealed partial class ExecutionManager
     private void SettlePedestalTakingUncertain(string reasonCode, string? lifecycleReason = null)
     {
         if (this.activePedestalTaking is not LocalPedestalTakingSpec specification) return;
-        this.activePedestalTaking = null;
+        this.slots.PedestalTaking.Clear();
         this.revision++;
         this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain, reasonCode,
             $"location={specification.Location};target={specification.TargetId};native_mutex_pending=true;never_retry=true;lifecycle_reason={lifecycleReason ?? "none"}");

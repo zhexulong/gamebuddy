@@ -148,7 +148,7 @@ public sealed class NightOwnershipCycleTests
             manager.TryGetExistingReceipt(PendingRequestId, out LocalExecutionReceipt settled).Should().BeTrue(
                 "the night that was replaced has a receipt; a request that is taken over must not vanish");
             replaced = settled;
-            slotCleared = Slot(manager, "activeDayAdvance").GetValue(manager) is null;
+            slotCleared = BodySlotSeeding.Peek(manager, "activeDayAdvance") is null;
         });
 
         admitted.Should().BeNull("`sleep` is the remedy `answer_dialogue` names, so it is admissible in that state");
@@ -237,8 +237,7 @@ public sealed class NightOwnershipCycleTests
         string executionId,
         string? phase)
     {
-        Type nightType = typeof(ExecutionManager).GetNestedType("ActiveDayAdvance", BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("ExecutionManager.ActiveDayAdvance unavailable.");
+        Type nightType = typeof(ActiveDayAdvance);
         object night = RuntimeHelpers.GetUninitializedObject(nightType);
         nightType.GetField("<ExecutionId>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance)!
             .SetValue(night, executionId);
@@ -246,7 +245,7 @@ public sealed class NightOwnershipCycleTests
             .SetValue(night, requestId);
         nightType.GetField("<Lifecycle>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance)!
             .SetValue(night, lifecycle);
-        Slot(manager, "activeDayAdvance").SetValue(manager, night);
+        BodySlotSeeding.Seed(manager, "activeDayAdvance", night);
 
         if (phase is null)
             return;
@@ -255,10 +254,6 @@ public sealed class NightOwnershipCycleTests
             ?? throw new InvalidOperationException("SleepAndAdvanceDayLifecycle.phase unavailable.");
         lifecyclePhase.SetValue(lifecycle, Enum.Parse(lifecyclePhase.FieldType, phase));
     }
-
-    private static FieldInfo Slot(ExecutionManager manager, string fieldName) =>
-        typeof(ExecutionManager).GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance)
-        ?? throw new InvalidOperationException($"ExecutionManager.{fieldName} field unavailable.");
 
     /// <summary>
     /// Drives the shared admission, which is deliberately private: the same reflection entry point the body-owner and

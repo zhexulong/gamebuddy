@@ -216,7 +216,7 @@ public sealed class ToolApproachContractSourceShapeTests
 
         // Halt clears it.
         string halt = MethodBody(controller, "public void Halt(");
-        halt.Should().Contain("this.activeToolApproach = null");
+        halt.Should().Contain("this.slots.ToolApproach.Clear();", "the halt clears the slot through the one type that owns it");
 
         // Cancel mints an honest Cancelled terminal and drops body ownership: the body
         // controller must be released, not merely forgotten. Located by its receipt
@@ -224,7 +224,7 @@ public sealed class ToolApproachContractSourceShapeTests
         // the same guard text.
         string cancel = BlockContaining(controller, "toolApproachCancelled", "if (this.activeToolApproach is not null)");
         cancel.Should().Contain("ExecutionState.Cancelled");
-        cancel.Should().Contain("this.active = null", "forgetting the spec without releasing the walk leaves the body owned");
+        cancel.Should().Contain("this.slots.Active.Clear();", "forgetting the spec without releasing the walk leaves the body owned");
         (cancel.Contains("PublishIdleAfterRelease", StringComparison.Ordinal)
             || cancel.Contains("this.RememberTerminal(", StringComparison.Ordinal)).Should().BeTrue(
             "the cancellation must free the body, directly or through the terminal seam");
@@ -267,7 +267,12 @@ public sealed class ToolApproachContractSourceShapeTests
         int settledEnd = controller.IndexOf(';', settledStart);
         settledEnd.Should().BeGreaterThan(settledStart);
         controller.Substring(settledStart, settledEnd - settledStart)
-            .Should().Contain("this.activeToolApproach is null");
+            .Should().Contain("this.slots.IsSettled", "the STOP observation reads the same settled answer as everything else");
+        Read("integrations/stardew/ActiveBodySlots.cs")
+            .Should()
+            .MatchRegex(
+                @"new SlotRow\(\s*nameof\(this\.ToolApproach\),[\s\S]*?Settled: true,",
+                "an in-flight approach is unsettled work: the row that names it must ask the settled question about it");
     }
 
     [Fact]
@@ -280,7 +285,7 @@ public sealed class ToolApproachContractSourceShapeTests
         body.Should().Contain("ExecutionState.Expired");
         // Clearing the spec before minting is what makes the terminal single: the
         // next Update pass finds no pending approach.
-        int clear = body.IndexOf("this.activeToolApproach = null;", StringComparison.Ordinal);
+        int clear = body.IndexOf("this.slots.ToolApproach.Clear();", StringComparison.Ordinal);
         int receipt = body.IndexOf("tool_approach_deadline_expired", StringComparison.Ordinal);
         clear.Should().BeGreaterThanOrEqualTo(0);
         clear.Should().BeLessThan(receipt, "the spec must be cleared before the terminal is minted");

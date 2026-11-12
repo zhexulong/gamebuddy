@@ -59,19 +59,38 @@ public sealed class BodySettledOwnershipSourceShapeTests
         return slots;
     }
 
-    /// <summary>The slot names in the IsBodySettled expression.</summary>
+    /// <summary>
+    /// The slot names the settled question is asked of, read off ONE declaration: the slots table. The expression itself
+    /// is <see cref="ActiveBodySlots.IsSettled"/>, which walks the table, so this extraction cannot drift from it.
+    /// </summary>
     private static List<string> SettledSlots()
     {
-        string source = Source("integrations/stardew/farmhandexecutioncontroller.cs");
-        int start = source.IndexOf("public bool IsBodySettled", StringComparison.Ordinal);
-        start.Should().BeGreaterThan(0, "IsBodySettled must exist");
-        int end = source.IndexOf(";", start, StringComparison.Ordinal);
-        string expression = source.Substring(start, end - start);
+        string source = Source("integrations/stardew/ActiveBodySlots.cs");
         var slots = new List<string>();
-        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(expression, @"this\.(active[A-Za-z]*)\s+is null"))
-            if (!slots.Contains(match.Groups[1].Value))
-                slots.Add(match.Groups[1].Value);
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+                     source,
+                     @"new SlotRow\(\s*nameof\(this\.(\w+)\),[\s\S]*?Settled: (true|false),"))
+        {
+            if (match.Groups[2].Value != "true")
+                continue;
+            string slot = FieldName(match.Groups[1].Value);
+            if (!slots.Contains(slot))
+                slots.Add(slot);
+        }
+
         return slots;
+    }
+
+    /// <summary>
+    /// The slot property a row names, spelled the way the admission chain and the read projections spell it:
+    /// <c>Navigate</c> -&gt; <c>activeNavigate</c>, <c>Active</c> -&gt; <c>active</c>.
+    /// </summary>
+    private static string FieldName(string slot)
+    {
+        if (slot == "Active")
+            return "active";
+        slot.Should().NotStartWith("active", "the table names the slot property, not the field: {0}", slot);
+        return "active" + slot;
     }
 
     [Fact]
@@ -142,8 +161,8 @@ public sealed class BodySettledOwnershipSourceShapeTests
             .ToList();
 
         conditionals.Should().BeEquivalentTo(new[] { "NightAcceptedButNotBegun" });
-        source.Should().Contain(
-            "private bool NightAcceptedButNotBegun => this.activeDayAdvance?.Lifecycle is { IsAwaitingEligibility: true };",
+        Source("integrations/stardew/ActiveBodySlots.cs").Should().Contain(
+            "internal bool NightAcceptedButNotBegun => this.DayAdvance.Peek()?.Lifecycle is { IsAwaitingEligibility: true };",
             "the exemption must be the lifecycle's own eligibility phase, not a flag that outlives it");
     }
 }

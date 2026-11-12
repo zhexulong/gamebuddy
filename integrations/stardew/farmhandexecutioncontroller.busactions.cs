@@ -42,15 +42,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private const int BusDriverTileY = 10;
     private const string BusDestinationLocation = "Desert";
 
-    private sealed record LocalBusRideSpec(
-        string ExecutionId,
-        string RequestId,
-        string OriginLocation,
-        int MoneyBefore,
-        int TicketPrice,
-        long DeadlineMs);
-
-    private LocalBusRideSpec? activeBusRide;
+    private LocalBusRideSpec? activeBusRide => this.slots.BusRide.Peek();
 
     public LocalExecutionReceipt RequestLocalRideBus(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
@@ -172,7 +164,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 "bus_ticket_answer_not_consumed",
                 $"money_before={moneyBefore}");
 
-        this.activeBusRide = new LocalBusRideSpec(executionId, request.RequestId, origin, moneyBefore, ticketPrice, deadlineMs);
+        this.slots.BusRide.Assign(new LocalBusRideSpec(executionId, request.RequestId, origin, moneyBefore, ticketPrice, deadlineMs));
         this.revision++;
         return this.RememberTerminal(
             request.RequestId,
@@ -197,7 +189,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         if (string.Equals(arrival, BusDestinationLocation, StringComparison.Ordinal))
         {
-            this.activeBusRide = null;
+            this.slots.BusRide.Clear();
             this.revision++;
             this.RememberTerminal(
                 ride.RequestId,
@@ -210,7 +202,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         if (nowMs > ride.DeadlineMs)
         {
-            this.activeBusRide = null;
+            this.slots.BusRide.Clear();
             this.revision++;
             this.RememberTerminal(
                 ride.RequestId,
@@ -230,7 +222,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     {
         if (this.activeBusRide is not { } ride)
             return;
-        this.activeBusRide = null;
+        this.slots.BusRide.Clear();
         this.revision++;
         this.RememberTerminal(
             ride.RequestId,
@@ -284,3 +276,11 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         return false;
     }
 }
+/// <summary>One bus ride this Mod started and has not settled: the only state <c>ride_bus</c> keeps between ticks.</summary>
+internal sealed record LocalBusRideSpec(
+    string ExecutionId,
+    string RequestId,
+    string OriginLocation,
+    int MoneyBefore,
+    int TicketPrice,
+    long DeadlineMs);

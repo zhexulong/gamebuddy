@@ -212,7 +212,7 @@ public sealed class UseObeliskActionTests
 
         // The arrival owns the terminal: the specification goes to activeTravel and
         // this file must never mint Succeeded itself.
-        text.Should().Contain("this.activeTravel = specification;");
+        text.Should().Contain("this.slots.Travel.Assign(specification);");
         text.Should().NotContain("ExecutionState.Succeeded");
     }
 

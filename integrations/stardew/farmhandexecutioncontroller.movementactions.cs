@@ -216,7 +216,7 @@ internal sealed partial class ExecutionManager
         LocalMoveSpec specification = new(executionId, requestId, effectiveTarget, adjacentArrival, this.revision, this.tick + deadlineTicks, deadlineMs);
         // The controller emits its initial Running transition synchronously;
         // establish ownership first so its authoritative receipt is retained.
-        this.active = specification;
+        this.slots.Active.Assign(specification);
         if (!this.controller.TryStart(specification, Game1.player, this.tick, out string reasonCode, out string? startEvidence, out string? startHint))
         {
             // 3. The native finder has no route, but the Mod's own clearing search can name the FIRST step that
@@ -239,7 +239,7 @@ internal sealed partial class ExecutionManager
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted", clearAcceptedEvidence);
             }
 
-            this.active = null;
+            this.slots.Active.Clear();
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, startEvidence, hint: startHint);
         }
 
@@ -873,7 +873,7 @@ internal sealed partial class ExecutionManager
             requestedDeadlineMs,
             resolution.NetworkId,
             destination.Id);
-        this.activeTravel = specification;
+        this.slots.Travel.Assign(specification);
         return this.RememberTerminal(
             requestId,
             executionId,
@@ -1051,7 +1051,7 @@ internal sealed partial class ExecutionManager
                 default:
                     // No native click entry owns this tile, so the resolved warp
                     // remains the authority (FarmHouse/Cabin exits).
-                    this.activeTravel = specification;
+                    this.slots.Travel.Assign(specification);
                     // Published first, then the native warp - in that order, because the receipt is what a
                     // caller reads when the warp throws. The value returned is the one the funnel published, so the
                     // answer and the fact cannot disagree on the held-body path.
@@ -1066,7 +1066,7 @@ internal sealed partial class ExecutionManager
             }
         }
 
-        this.activeTravel = specification;
+        this.slots.Travel.Assign(specification);
         LocalExecutionReceipt accepted = this.RememberTerminal(
             requestId,
             executionId,
@@ -1402,7 +1402,7 @@ internal sealed partial class ExecutionManager
         string mineExitDecisionEvidence = specification.Action == "use_mine_ladder"
             ? $";question={MineExitQuestionKey};response={MineExitResponseKey}"
             : string.Empty;
-        this.activeTravel = null;
+        this.slots.Travel.Clear();
         this.RememberTerminal(specification.RequestId, specification.ExecutionId, state, reasonCode,
             $"expected={specification.TargetLocation}:{specification.TargetX},{specification.TargetY};actual={Game1.player.currentLocation.NameOrUniqueName}:{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}{(specification.Action is "enter_mine" or "select_mine_elevator_floor" && Game1.player.currentLocation is StardewValley.Locations.MineShaft shaft2 ? $";level={shaft2.mineLevel}" : string.Empty)}{(specification.Action == "ride_minecart" ? minecartEvidence : string.Empty)}{mineExitDecisionEvidence}");
     }
@@ -1519,14 +1519,14 @@ internal sealed partial class ExecutionManager
             this.tick + deadlineTicks,
             deadlineMs);
 
-        this.activeNavigationCoordinator = coordinator;
-        this.activeNavigate = navigation;
-        this.active = approach;
+        this.slots.NavigationCoordinator.Assign(coordinator);
+        this.slots.Navigate.Assign(navigation);
+        this.slots.Active.Assign(approach);
         if (!this.TryStartApproach(approach, out string reasonCode, out string? approachEvidence, out string? approachHint))
         {
-            this.active = null;
-            this.activeNavigate = null;
-            this.activeNavigationCoordinator = null;
+            this.slots.Active.Clear();
+            this.slots.Navigate.Clear();
+            this.slots.NavigationCoordinator.Clear();
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode ?? "approach_unavailable", approachEvidence ?? "phase=approaching;arm=failed", hint: approachHint);
         }
 
