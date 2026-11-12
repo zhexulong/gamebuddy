@@ -553,4 +553,59 @@ public sealed class FarmhandForEachExpansionTests
             Enumerable.Range(0, FarmhandForEachLoop.MaximumRules).Select(_ => second).ToArray());
         tooMany.IsValid.Should().BeFalse("a pass with more rules than the bound is refused, not truncated");
     }
+
+    /// <summary>
+    /// THE WALK ORDER IS NOT AN ANSWER: the same 60 rows in the other order decide identically, tile for tile.
+    ///
+    /// <para>
+    /// The order exists so the actor stops crossing her own row at every break, and nothing else may move with it: the
+    /// same tiles are claimed, each row mints the same request identity from its own position, and the same outcome and
+    /// reason come back. The typewriter order is DERIVED from the emitted rows rather than written again, so this compares
+    /// two orders of one enumeration and cannot pass by agreeing with a second copy of the walk.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheSnakeOrderChangesTheSequenceAndNotOneRowAnswer()
+    {
+        var loop = new FarmhandForEachLoop(Rect(60, 18, 3, 20), null, new FarmhandForEachEffect(new FarmhandForEachStep("till_soil")));
+        FarmhandForEachRow[] snake = FarmhandForEachRules.AreaRows(loop.Source)
+            .Select(row => new FarmhandForEachRow(row.X, row.Y, row.LocalColumn, row.LocalRow, Row()))
+            .ToArray();
+        FarmhandForEachRow[] typewriter = snake.OrderBy(row => row.LocalRow).ThenBy(row => row.LocalColumn).ToArray();
+
+        (FarmhandForEachPassResult snakePass, List<BridgeExecutionRequest> snakeRequests) = Run(snake);
+        (FarmhandForEachPassResult typewriterPass, List<BridgeExecutionRequest> typewriterRequests) = Run(typewriter);
+
+        string[] snakeWalk = snake.Select(Position).ToArray();
+        snakeWalk.SequenceEqual(typewriter.Select(Position)).Should().BeFalse("the two orders really are different sequences");
+        snakeWalk.OrderBy(position => position, StringComparer.Ordinal).Should().Equal(
+            typewriter.Select(Position).OrderBy(position => position, StringComparer.Ordinal),
+            "and they are the same set of tiles, each exactly once");
+
+        Answers(snakePass).Should().Equal(Answers(typewriterPass), "a row's answer is decided by its own tile and not by when it is visited");
+        snakeRequests.Select(request => request.RequestId).OrderBy(id => id, StringComparer.Ordinal).Should().Equal(
+            typewriterRequests.Select(request => request.RequestId).OrderBy(id => id, StringComparer.Ordinal),
+            "every request identity is minted from the row's own position, so the ledger replays the same rows in either order");
+
+        (FarmhandForEachPassResult Pass, List<BridgeExecutionRequest> Requests) Run(IReadOnlyList<FarmhandForEachRow> rows)
+        {
+            var handler = new RecordingHandler();
+            (FarmhandActionRouter router, Ledger ledger) = Table(handler, "till_soil");
+            FarmhandForEachPassResult pass = FarmhandForEachExpansion.Expand(
+                loop, "pass_snake", rows, DispatchTo(router, ledger), () => false, _ => true, _ => null);
+            return (pass, handler.Requests);
+        }
+    }
+
+    /// <summary>A row's position inside its source, which is what a request identity and a predicate are minted from.</summary>
+    private static string Position(FarmhandForEachRow row) => $"{row.LocalRow},{row.LocalColumn}";
+
+    /// <summary>Every row's answer, keyed by position, so two passes are compared as ANSWERS and not as sequences.</summary>
+    private static IEnumerable<string> Answers(FarmhandForEachPassResult pass) =>
+        pass.Targets
+            .OrderBy(target => target.LocalRow)
+            .ThenBy(target => target.LocalColumn)
+            .Select(target => string.Create(
+                CultureInfo.InvariantCulture,
+                $"{target.LocalRow},{target.LocalColumn}={target.Outcome}:{target.ReasonCode}:{target.Target?.ActionId}:{target.Tile}"));
 }

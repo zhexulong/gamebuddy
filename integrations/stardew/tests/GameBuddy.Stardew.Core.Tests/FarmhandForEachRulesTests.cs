@@ -49,6 +49,22 @@ public sealed class FarmhandForEachRulesTests
     private static FarmhandForEachSource Rect(int x, int y, int w, int h) =>
         new(FarmhandForEachSource.AreaKind, x, y, w, h);
 
+    /// <summary>Every tile of a rectangle, written as the rectangle and not as a second copy of the walk's order.</summary>
+    private static IEnumerable<(int X, int Y)> EveryTile(int x, int y, int w, int h) =>
+        from row in Enumerable.Range(0, h)
+        from column in Enumerable.Range(0, w)
+        select (x + column, y + row);
+
+    /// <summary>Every position inside a source, in the same shape: the indices a predicate tests, not the order it sees.</summary>
+    private static IEnumerable<(int LocalColumn, int LocalRow)> EveryLocalIndex(int w, int h) =>
+        from row in Enumerable.Range(0, h)
+        from column in Enumerable.Range(0, w)
+        select (column, row);
+
+    /// <summary>Distance walked between consecutive tiles, in the map's own grid.</summary>
+    private static int Walked(IReadOnlyList<(int X, int Y, int LocalColumn, int LocalRow)> rows) =>
+        rows.Zip(rows.Skip(1), (from, to) => Math.Abs(to.X - from.X) + Math.Abs(to.Y - from.Y)).Sum();
+
     [Fact]
     public void TheSameRuleSetHasTheSameMeaningOverAOneByOneAreaAndOverAFamily()
     {
@@ -146,13 +162,77 @@ public sealed class FarmhandForEachRulesTests
         FarmhandForEachRules.NoRuleMatchedReasonCode("rock", 61, 18).Should().Be("no_rule_matched:rock@61,18");
     }
 
-    /// <summary>Determinism: one order, row by row then column by column, so two answers can be diffed.</summary>
-    [Fact]
-    public void RowsAreEnumeratedRowByRowThenColumnSoTwoAnswersCanBeDiffed()
+    /// <summary>
+    /// THE WALK AND NOT THE ANSWER: a rectangle is swept in snake order, so every row starts on the column the previous
+    /// one ended on.
+    ///
+    /// <para>
+    /// A typewriter sweep crosses the whole row width again at every break, and that distance produces nothing: the
+    /// measured harvest node spent 2,235 ms of its 2,232 ms walking, so a per-break constant is paid on every pass. The
+    /// order is the rectangle's WALK: each row keeps its own columns, so a position guard and a row identity read the
+    /// same two numbers they always did, and only the moment a tile is visited moves.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(1, 1)]
+    [InlineData(3, 2)]
+    [InlineData(3, 20)]
+    [InlineData(20, 3)]
+    public void AreaRowsSweepsARectangleInSnakeOrder(int width, int height)
     {
-        FarmhandForEachRules.AreaRows(Rect(5, 7, 3, 2))
-            .Should()
-            .Equal((5, 7, 0, 0), (6, 7, 1, 0), (7, 7, 2, 0), (5, 8, 0, 1), (6, 8, 1, 1), (7, 8, 2, 1));
+        var rows = FarmhandForEachRules.AreaRows(Rect(5, 7, width, height)).ToArray();
+
+        rows.Should().HaveCount(width * height, "a rectangle addresses each of its tiles once");
+        rows.Select(row => (row.X, row.Y)).Should().BeEquivalentTo(
+            EveryTile(5, 7, width, height),
+            "the walk is a reordering of the rectangle, never a different set of tiles");
+        rows.Select(row => (row.LocalColumn, row.LocalRow)).Should().BeEquivalentTo(
+            EveryLocalIndex(width, height),
+            "a row's position inside the source is what a position guard tests, and it is unchanged");
+        for (int localRow = 0; localRow < height; localRow++)
+        {
+            int[] columns = rows.Where(row => row.LocalRow == localRow).Select(row => row.LocalColumn).ToArray();
+            // EVEN ROWS RUN LEFT TO RIGHT AND ODD ROWS RUN BACK, which is the whole of the change: the columns of a row
+            // are the same set either way, and only their order differs.
+            int[] expected = localRow % 2 == 0
+                ? Enumerable.Range(0, width).ToArray()
+                : Enumerable.Range(0, width).Reverse().ToArray();
+            columns.Should().Equal(expected, "row {0} is walked {1}", localRow, localRow % 2 == 0 ? "forwards" : "back");
+        }
+        var walk = rows.Select(row => (row.LocalRow, row.LocalColumn)).ToArray();
+        for (int localRow = 1; localRow < height; localRow++)
+        {
+            int endedOn = walk.Last(position => position.LocalRow == localRow - 1).LocalColumn;
+            int startsOn = walk.First(position => position.LocalRow == localRow).LocalColumn;
+            startsOn.Should().Be(endedOn, "row {0} starts on the column row {1} ended on, so the break costs one step", localRow, localRow - 1);
+        }
+    }
+
+    /// <summary>
+    /// THE MEASURE THE ORDER EXISTS FOR, on the measured patch: distance walked between consecutive tiles, snake against
+    /// the typewriter sweep it replaces.
+    ///
+    /// <para>
+    /// Both numbers are asserted so the saving is a reading rather than a claim, and the third assertion is what keeps it
+    /// honest: the difference is exactly one column width per row break, so nothing was dropped to buy the distance.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ASnakeSweepSavesOneColumnWidthAtEveryRowBreak()
+    {
+        const int width = 3;
+        const int height = 20;
+        var rows = FarmhandForEachRules.AreaRows(Rect(0, 0, width, height)).ToArray();
+
+        int snake = Walked(rows);
+        // A typewriter sweep walks a row's columns once per row and then crosses the same width back to column 0.
+        int typewriter = height * (width - 1) + (height - 1) * width;
+
+        snake.Should().Be(59, "20 rows of 2 steps, then 19 breaks of 1: the break is spent going DOWN and never back");
+        typewriter.Should().Be(97, "the same 40 steps inside the rows, then 19 breaks of 3 across the full width");
+        snake.Should().Be(
+            typewriter - (width - 1) * (height - 1),
+            "the distance saved is one column per break and no tile is skipped to save it");
     }
 
     /// <summary>The bound is 64 rows per intent, and over it the answer carries the count rather than a shorter table.</summary>

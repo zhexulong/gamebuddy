@@ -422,14 +422,37 @@ public static class FarmhandForEachRules
             : new FarmhandForEachRowDecision(x, y, localColumn, localRow, FarmhandForEachRowOutcome.Dispatched, loop.Do);
     }
 
-    /// <summary>The row's position, in the order every answer uses: row by row, then column by column.</summary>
+    /// <summary>
+    /// The tiles of a rectangle in the order the actor WALKS them: row 0 left to right, row 1 right to left, and so on.
+    ///
+    /// <para>
+    /// THE ORDER IS A WALK, NOT AN ANSWER. A pass dispatches one row per tile and the actor walks between them, so a
+    /// typewriter sweep pays the whole row width again at every break for nothing: measured on the 3x20 patch, 97 steps
+    /// walked against 59, and the 38 saved are exactly one column per break. Walking is what a harvest node spends nearly
+    /// all of its time on (2,235 ms of 2,232 ms), and it is paid whenever the model is not thinking.
+    /// </para>
+    /// <para>
+    /// WHAT THE ORDER CANNOT MOVE. Each row keeps its own <c>LocalColumn</c>/<c>LocalRow</c>, which is what a position
+    /// guard tests and what a row's dispatch identity is minted from; the tile set, the per-row decision and every reason
+    /// code are the same in either order; and the answer's table is sorted by position before it is written
+    /// (<c>RouteReenteringBodyProgramExecutor.Aggregate</c>), so no caller reads the walk. The family and query sources are
+    /// untouched, and not because their order is semantic: the Mod's own wire reader refuses both by name
+    /// (<c>for_each_source_unavailable:&lt;kind&gt;</c>, <c>FarmhandForEachArguments.TryReadSource</c>), so the area is
+    /// the only source whose rows exist and the only walk there is to change.
+    /// </para>
+    /// </summary>
     public static IEnumerable<(int X, int Y, int LocalColumn, int LocalRow)> AreaRows(FarmhandForEachSource source)
     {
         ArgumentNullException.ThrowIfNull(source);
         if (source.Kind != FarmhandForEachSource.AreaKind) yield break;
         for (int localRow = 0; localRow < source.Height; localRow++)
-        for (int localColumn = 0; localColumn < source.Width; localColumn++)
+        for (int step = 0; step < source.Width; step++)
+        {
+            // EVEN ROWS RUN FORWARDS AND ODD ROWS RUN BACK along the row the previous one finished, so a break costs the
+            // one step down and never the width. The column the guard tests is still the tile's own.
+            int localColumn = localRow % 2 == 0 ? step : source.Width - 1 - step;
             yield return (source.X + localColumn, source.Y + localRow, localColumn, localRow);
+        }
     }
 
     /// <summary>
