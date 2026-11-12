@@ -247,8 +247,11 @@ async function admit(
  * must admit it as a form - the same answer the preflight gives (`body-program-preflight.test.ts`).
  */
 test("a loop is admitted at node admission the same way it is admitted at preflight", async () => {
+  // The step names the action's own caller-supplied argument: the compiler refuses a row that leaves one out
+  // (`plan_script_loop_do_argument_missing`), because the tile and identity come from the family and the
+  // charge can only come from the step.
   const node = compiledNode(
-    'builder.for_each({ source: { area: { x: 60, y: 9, w: 1, h: 2 } }, do: { action: "water_crop" } });',
+    'builder.for_each({ source: { area: { x: 60, y: 9, w: 1, h: 2 } }, do: { action: "water_crop", charge: 0 } });',
   );
   assert.equal(node.actionId, FOR_EACH_PLAN_ACTION_ID);
   assert.ok(PLAN_FORM_ACTION_IDS.includes(FOR_EACH_PLAN_ACTION_ID));
@@ -264,7 +267,7 @@ test("a loop is admitted at node admission the same way it is admitted at prefli
 /** The rows are what the live policy governs, and the refusal names the row rather than the form or the policy at large. */
 test("a loop whose row names an action this connection does not offer is refused by name", async () => {
   const node = compiledNode(
-    'builder.for_each({ source: { area: { x: 60, y: 9, w: 1, h: 2 } }, do: { action: "till_soil" } });',
+    'builder.for_each({ source: { area: { x: 60, y: 9, w: 1, h: 2 } }, do: { action: "till_soil", charge: 0 } });',
   );
   assert.deepEqual(await admit(node, ["water_crop"]), {
     result: "rejected",

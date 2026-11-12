@@ -1944,8 +1944,12 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     ),
     null,
   );
-  const tillSoil = { ...valid, action: "till_soil", args: { x: 10, y: 12 } };
-  const waterCrop = { ...valid, action: "water_crop", args: { x: 10, y: 12, expectedTargetId: "crop_deadbeef" } };
+  const tillSoil = { ...valid, action: "till_soil", args: { x: 10, y: 12, charge: 0 } };
+  const waterCrop = {
+    ...valid,
+    action: "water_crop",
+    args: { x: 10, y: 12, expectedTargetId: "crop_deadbeef", charge: 0 },
+  };
   const refillWateringCan = {
     ...valid,
     action: "refill_watering_can",
@@ -2854,7 +2858,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   );
   assert.equal(
     validateExecutionRequest(
-      { ...tillSoil, args: { x: 10.5, y: 12 } },
+      { ...tillSoil, args: { x: 10.5, y: 12, charge: 0 } },
       { ...snapshot, capabilities: [...snapshot.capabilities, "till_soil"] },
       now,
     ),
@@ -2882,7 +2886,7 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
   );
   assert.equal(
     validateExecutionRequest(
-      { ...waterCrop, args: { x: 10, y: 12 } },
+      { ...waterCrop, args: { x: 10, y: 12, charge: 0 } },
       { ...snapshot, capabilities: [...snapshot.capabilities, "water_crop"] },
       now,
     ),

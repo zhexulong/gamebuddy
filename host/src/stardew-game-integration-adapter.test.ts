@@ -135,7 +135,7 @@ test("every accepted semantic evidence field rejects protocol scalar sentinels",
     [
       "till_soil",
       "soil_tilled",
-      "location=Farm;target=37,18;before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_selected=hoe;slot=3;tool_before=none;slot_before=0;tool_restored=none",
+      "location=Farm;target=37,18;before=none;after=HoeDirt;charge_requested=0;charge_applied=0;window=32,13:42,23;tiles_changed=1;changed=37:18;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_selected=hoe;slot=3;tool_before=none;slot_before=0;tool_restored=none",
       ["location", "target"],
     ],
     ["move_to_tile", "target_reached", "tile=37,18;target=37,18;arrival=exact;path=stardew_native", ["tile", "target"]],
@@ -275,7 +275,7 @@ test("move_to_tile completion evidence accepts exact native arrival after :0.## 
 
 test("till_soil completion evidence requires exact location, coordinates, and soil transition", () => {
   const valid =
-    "location=Farm;target=37,18;before=none;after=HoeDirt;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_selected=hoe;slot=3;tool_before=none;slot_before=0;tool_restored=none";
+    "location=Farm;target=37,18;before=none;after=HoeDirt;charge_requested=0;charge_applied=0;window=32,13:42,23;tiles_changed=1;changed=37:18;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_selected=hoe;slot=3;tool_before=none;slot_before=0;tool_restored=none";
   const receipt = {
     state: "succeeded",
     reasonCode: "soil_tilled",
@@ -374,8 +374,11 @@ test("water_crop completion evidence accepts both Mod water relations and reject
     "location=Farm;target=crop_abcdef0123456789;tile=38,18;tool_selected=watering_can;slot=2;tool_before=axe;slot_before=0;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;water_expected_cost=1;charge_requested=0;charge_applied=0;window=33,13:43,23;tiles_changed=1;changed=38:18;stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe";
   // FarmhandExecutionController emits no bottomless/enchantment discriminator.
   // Its producer-defined waterConsumed=true branch can leave WaterLeft
-  // unchanged.
-  const noDecrement = normal.replace("water_before=40;water_after=39", "water_before=40;water_after=40");
+  // unchanged - and when it does, the engine's own cost is 0 (`charge_applied + 1` is what a can that SPENDS
+  // water reports), so the expected cost moves with the measured drop instead of staying at the uncharged tap's 1.
+  const noDecrement = normal
+    .replace("water_before=40;water_after=39", "water_before=40;water_after=40")
+    .replace("water_expected_cost=1", "water_expected_cost=0");
   const receipt = {
     state: "succeeded",
     reasonCode: "crop_watered",
