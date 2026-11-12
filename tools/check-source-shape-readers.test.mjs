@@ -1,3 +1,6 @@
+// red-proof: history  the raw-text signature match as it shipped at 1c38ab9d in
+//   `host/src/containment/runtime/contained-game-runtime.internal.test.ts` replayed -> `source_shape_read_from_raw_text:
+//   ...:205:5` and `:209:3`, status `failed` (tools/check-source-shape-readers.test.mjs)
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";

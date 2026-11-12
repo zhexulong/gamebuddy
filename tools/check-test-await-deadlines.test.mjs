@@ -1,3 +1,6 @@
+// red-proof: history  the duplicate-key test as it shipped at 39588596 (`host/src/local-stardew-bridge.test.ts:864`)
+//   replayed through `auditTestAwaitDeadlines` -> `await_without_deadline:...:864:disconnected` and status `failed`
+//   (tools/check-test-await-deadlines.test.mjs)
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
