@@ -1,57 +1,43 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
-
+import { fileURLToPath } from "node:url";
+import { FarmhandBridgeConnectionNotAvailableError } from "../../../containment/runtime/contract/game-runtime.js";
+import { bindWindowsStaleLockReclaimer, pathLockPath, withPathLock } from "../../../path-lock.js";
+import { PlayerPreferenceStore, playerPreferencePath } from "../../../settings/player-preference-store.js";
 import type {
   StardewAiClientLaunchReservation,
   StardewAiClientProcessProbe,
   StardewAiClientProcessSpawn,
 } from "../../../stardew-ai-client-process-owner.js";
 import { StardewAttachmentFlow } from "../../../stardew-attachment.js";
-import { bindWindowsStaleLockReclaimer, pathLockPath, withPathLock } from "../../../path-lock.js";
-import type { StardewPlayerHostBootstrapClaim } from "../../../stardew-player-host-bootstrap.js";
-import type { StardewPlayerHostLaunchReservation } from "../../../stardew-player-host-process-owner.js";
-import * as productionComposer from "./stardew-private-bootstrap-composer.js";
-import type {
-  StardewOwnedPlayerHostBootstrap,
-  StardewPrivateBootstrapComposition,
-} from "./stardew-private-bootstrap-composer.js";
-import * as internalComposer from "./stardew-private-bootstrap-composer.internal.js";
-import * as productionCore from "./stardew-private-bootstrap-composer.core.js";
-import { consumeOwnedPlayerHostBootstrap } from "./stardew-private-bootstrap-composer.internal.js";
-import * as composerTestSupport from "./stardew-private-bootstrap-composer.test-support.js";
-import { StardewPlayerSettingsStore } from "../stardew-player-settings.js";
-import { PlayerPreferenceStore, playerPreferencePath } from "../../../settings/player-preference-store.js";
-import { projectStardewModActionPolicy } from "../stardew-mod-action-policy-projection.js";
-import {
-  bindStardewPrivateBootstrapOwnerTestSupport,
-  consumeStagedOwnedPlayerHostProfileForTesting,
-  createStardewPrivateBootstrapComposerTestSupport,
-  launchStagedPlayerHostForTesting,
-} from "./stardew-private-bootstrap-composer.test-support.js";
-import * as composerTestSupportInternal from "./stardew-private-bootstrap-composer.test-support-internal.js";
-import {
-  consumeOwnedFarmhandBridgeConnectionForTesting,
-  createStardewPrivateBootstrapCompositionForTesting,
-  launchMaterializedAiClientForTesting,
-  materializeAiClientProfileAfterManifestAdmissionForTesting,
-} from "./stardew-private-bootstrap-composer.test-support-internal.js";
-import { createTestWindowsStaleLockReclaimer } from "../../../windows-stale-lock-reclaimer/index.test-support.js";
-import { FarmhandBridgeConnectionNotAvailableError } from "../../../containment/runtime/contract/game-runtime.js";
+import { type AdmittedStardewInstallation, admitStardewInstallation } from "../../../stardew-installation-admission.js";
 import {
   publishStardewInstallationRegistration,
   readStardewInstallationRegistration,
 } from "../../../stardew-installation-registration.internal.js";
-import { admitStardewInstallation, type AdmittedStardewInstallation } from "../../../stardew-installation-admission.js";
+import type { StardewPlayerHostBootstrapClaim } from "../../../stardew-player-host-bootstrap.js";
+import type { StardewPlayerHostLaunchReservation } from "../../../stardew-player-host-process-owner.js";
+import { readSourceShape } from "../../../test-support/source-shape.test-support.js";
+import { createTestWindowsStaleLockReclaimer } from "../../../windows-stale-lock-reclaimer/index.test-support.js";
+import { projectStardewModActionPolicy } from "../stardew-mod-action-policy-projection.js";
+import { StardewPlayerSettingsStore } from "../stardew-player-settings.js";
+import * as productionCore from "./stardew-private-bootstrap-composer.core.js";
+import * as internalComposer from "./stardew-private-bootstrap-composer.internal.js";
+import { consumeOwnedPlayerHostBootstrap } from "./stardew-private-bootstrap-composer.internal.js";
+import type {
+  StardewOwnedPlayerHostBootstrap,
+  StardewPrivateBootstrapComposition,
+} from "./stardew-private-bootstrap-composer.js";
+import * as productionComposer from "./stardew-private-bootstrap-composer.js";
+import type { CapturedLaunch, SpawnCall } from "./stardew-private-bootstrap-composer.test-fixtures.js";
 import {
-  OWNER_FILE,
   admissionCandidate,
-  admissionExecutable,
-  admitForStageC,
   admissionChain,
+  admissionExecutable,
   admissionInspector,
+  admitForStageC,
   assertAttemptFixtureUnchanged,
   assertFieldlessFrozen,
   changedAdmissionAt,
@@ -59,8 +45,8 @@ import {
   createHarness,
   createOwnerTransitions,
   createRoot,
-  createStageBTestHarness,
   createStageBPackage,
+  createStageBTestHarness,
   expectedGuardianBinding,
   expectedOwnedRecord,
   expectedRecord,
@@ -69,6 +55,7 @@ import {
   manifestForAttachment,
   mintOwnedTriple,
   mintPair,
+  OWNER_FILE,
   ownerPath,
   ownerTestView,
   prepareLaunchedAiClientFixture,
@@ -87,7 +74,21 @@ import {
   waitForPublishedAttachmentRequest,
   writeRegistrationAttemptFixture,
 } from "./stardew-private-bootstrap-composer.test-fixtures.js";
-import type { CapturedLaunch, SpawnCall } from "./stardew-private-bootstrap-composer.test-fixtures.js";
+import * as composerTestSupport from "./stardew-private-bootstrap-composer.test-support.js";
+import {
+  bindStardewPrivateBootstrapOwnerTestSupport,
+  consumeStagedOwnedPlayerHostProfileForTesting,
+  createStardewPrivateBootstrapComposerTestSupport,
+  launchStagedPlayerHostForTesting,
+} from "./stardew-private-bootstrap-composer.test-support.js";
+import * as composerTestSupportInternal from "./stardew-private-bootstrap-composer.test-support-internal.js";
+import {
+  consumeOwnedFarmhandBridgeConnectionForTesting,
+  createStardewPrivateBootstrapCompositionForTesting,
+  launchMaterializedAiClientForTesting,
+  materializeAiClientProfileAfterManifestAdmissionForTesting,
+} from "./stardew-private-bootstrap-composer.test-support-internal.js";
+
 // StardewOwnedPlayerHostStageCResult is the return type of
 // launchStagedPlayerHostForTesting, derived from the test-support import.
 type Assert<T extends true> = T;
@@ -1863,7 +1864,7 @@ test("only the production internal and dedicated test-only adapter import the co
       testInternalImporters.push(leaf);
     }
   }
-  const publicComposerSource = await readFile(join(sourceRoot, "stardew-private-bootstrap-composer.ts"), "utf8");
+  const { shape: publicComposerSource } = readSourceShape(join(sourceRoot, "stardew-private-bootstrap-composer.ts"));
   assert.match(publicComposerSource, /return Object\.freeze\(\{/);
   for (const member of [
     "broker: composition.broker",

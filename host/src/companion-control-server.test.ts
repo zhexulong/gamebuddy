@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { readProductControlLaunch, startCompanionControlServer } from "./companion-control-server.js";
+import { collapseWhitespace, readSourceShape } from "./test-support/source-shape.test-support.js";
 
 const launch = Object.freeze({ pipeName: "control_pipe_01", launchToken: "A123456789012345678901234567890" });
 
@@ -19,15 +19,20 @@ test("control-pipe helper bounds each frame and gives trickle bytes one monotoni
   // source-level transport invariants that prevent an unbounded ReadLineAsync
   // allocation and prove that every byte wait consumes one frame-wide monotonic
   // budget instead of renewing FrameTimeoutMs for a trickle client.
-  const source = readFileSync(
+  const controlPipe = readSourceShape(
     resolve(dirname(fileURLToPath(import.meta.url)), "..", "resources", "windows-current-user-control-pipe.ps1"),
-    "utf8",
   );
-  assert.doesNotMatch(source, /ReadLineAsync/);
-  assert.match(source, /function Read-BoundedUtf8Frame/);
-  assert.match(source, /New-Object byte\[\] 16384/);
-  const reader = source.match(/function Read-BoundedUtf8Frame[\s\S]*?\n\}/)?.[0];
-  assert.ok(reader, "bounded reader function was not found");
+  assert.doesNotMatch(controlPipe.shape, /ReadLineAsync/);
+  assert.match(controlPipe.shape, /function Read-BoundedUtf8Frame/);
+  assert.match(controlPipe.shape, /New-Object byte\[\] 16384/);
+  // The body is sliced between two markers whose POSITION is the claim - the declaration's first mention and the `}`
+  // that closes it in column 0 - so both markers are sought in the committed bytes. Each is one token wide, and what is
+  // asserted about the body that slice yields is matched against its normalised shape.
+  const declared = controlPipe.raw.indexOf("function Read-BoundedUtf8Frame");
+  assert.ok(declared >= 0, "bounded reader function was not found");
+  const closeBrace = controlPipe.raw.indexOf("\n}", declared);
+  assert.ok(closeBrace > declared, "bounded reader function is not closed at the start of a line");
+  const reader = collapseWhitespace(controlPipe.raw.slice(declared, closeBrace + 2));
   assert.match(reader, /\$frameStopwatch = \[System\.Diagnostics\.Stopwatch\]::StartNew\(\)/);
   assert.equal(
     (reader.match(/Stopwatch\]::StartNew\(\)/g) ?? []).length,
@@ -39,17 +44,17 @@ test("control-pipe helper bounds each frame and gives trickle bytes one monotoni
     /\$remainingMs = \[int\]\[Math\]::Floor\(\$TimeoutMs - \$frameStopwatch\.Elapsed\.TotalMilliseconds\)\s+if \(\$remainingMs -le 0\) \{ throw 'control_client_frame_timeout' \}\s+\$read = \$Pipe\.ReadAsync\(\$oneByte,0,1\)\s+if \(-not \$read\.Wait\(\$remainingMs\)\) \{ throw 'control_client_frame_timeout' \}/,
   );
   assert.doesNotMatch(reader, /\$read\.Wait\(\$TimeoutMs\)/);
-  assert.match(source, /if \(\$count -eq 0 -and -not \$sawCr\) \{ return \$null \}/);
-  assert.match(source, /if \(\$count -ge \$payload\.Length\) \{ throw 'control_client_frame_invalid' \}/);
-  assert.match(source, /UTF8Encoding\]::new\(\$false,\$true\)\.GetString/);
-  assert.match(source, /if \(\$null -eq \$line\) \{ break \}/);
-  assert.match(source, /\$line = Read-BoundedUtf8Frame \$pipe \$FrameTimeoutMs/);
-  assert.match(source, /if \(\$null -eq \$response\) \{ throw 'control_broker_exit' \}/);
+  assert.match(controlPipe.shape, /if \(\$count -eq 0 -and -not \$sawCr\) \{ return \$null \}/);
+  assert.match(controlPipe.shape, /if \(\$count -ge \$payload\.Length\) \{ throw 'control_client_frame_invalid' \}/);
+  assert.match(controlPipe.shape, /UTF8Encoding\]::new\(\$false,\$true\)\.GetString/);
+  assert.match(controlPipe.shape, /if \(\$null -eq \$line\) \{ break \}/);
+  assert.match(controlPipe.shape, /\$line = Read-BoundedUtf8Frame \$pipe \$FrameTimeoutMs/);
+  assert.match(controlPipe.shape, /if \(\$null -eq \$response\) \{ throw 'control_broker_exit' \}/);
   assert.match(
-    source,
+    controlPipe.shape,
     /if \(\$null -eq \$remoteSid -or \$remoteSid -ne \$sid\.Value\) \{ throw 'client_sid_revalidation_failed' \}/,
   );
-  assert.match(source, /foreach \(\$resource in @\(\$writer,\$pipe\)\) \{/);
+  assert.match(controlPipe.shape, /foreach \(\$resource in @\(\$writer,\$pipe\)\) \{/);
 });
 
 class FakeHelper extends EventEmitter {

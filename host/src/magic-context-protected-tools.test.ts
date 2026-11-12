@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
@@ -8,6 +7,7 @@ import { createStardewObservationTools } from "./game-tools.js";
 import { createStardewKnowledgeTools } from "./knowledge.js";
 import { GAMEBUDDY_PROTECTED_TOOLS, protectedToolsForRun } from "./magic-context-protected-tools.js";
 import { createCompanionStatusTool } from "./runtime-core.internal.js";
+import { readSourceShape } from "./test-support/source-shape.test-support.js";
 import { createWorldBookTools, validateWorldBook, worldBookMetadata } from "./worldbook.js";
 
 const scope = {
@@ -139,9 +139,9 @@ test("the runtime writes the policy into the config Magic Context reads", () => 
   // accepts the key and its own suite (protection-window.test.ts, config/protected-tools.test.ts) covers the
   // reclaim that honours it, so this pins the one seam between them - if a future edit stops passing the table
   // to the config writer, nothing else would notice.
-  const source = readFileSync(new URL("../src/runtime-core.internal.ts", import.meta.url), "utf8");
-  assert.match(source, /protected_tools: protectedToolsForRun\(/u);
-  assert.match(source, /from "\.\/magic-context-protected-tools\.js"/u);
+  const { shape } = readSourceShape(new URL("../src/runtime-core.internal.ts", import.meta.url));
+  assert.match(shape, /protected_tools: protectedToolsForRun\(/u);
+  assert.match(shape, /from "\.\/magic-context-protected-tools\.js"/u);
 });
 
 test("the control arm protects nothing while keeping the key's shape", () => {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,7 @@ import {
 } from "./game-surface-prompt-floor.test-support.js";
 import { buildChatCompanionSystemPrompt } from "./identity-profile.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
+import { readSourceShape } from "./test-support/source-shape.test-support.js";
 
 /**
  * THE GAME SURFACE'S FIXED PROMPT FLOOR, RECORDED AND RE-DERIVED.
@@ -149,23 +150,22 @@ test("the reading's premise about the plan builder still holds: the flat per-act
   // cannot quietly become false while its token totals stay plausible.
   assert.equal(READING.planBuilder.flatPerActionToolsMounted, false);
 
-  const materializerSource = readFileSync(
+  const { shape: materializerShape } = readSourceShape(
     join(
       HOST_SOURCE,
       "continuity-semantic-game-runtime-materializer",
       "continuity-semantic-game-runtime-materializer.ts",
     ),
-    "utf8",
   );
   assert.match(
-    materializerSource,
+    materializerShape,
     /planActionSurface: true as const/u,
     "the live Game materializer no longer declares the plan action surface, so the adapter's per-action tools would be mounted again",
   );
 
-  const runtimeSource = readFileSync(join(HOST_SOURCE, "runtime-core.internal.ts"), "utf8");
+  const { shape: runtimeShape } = readSourceShape(join(HOST_SOURCE, "runtime-core.internal.ts"));
   assert.match(
-    runtimeSource,
+    runtimeShape,
     /planActionSurface\s*\n?\s*\?[\s\S]{0,200}?actionIdForToolName\(tool\.name\) === null/u,
     "runtime-core no longer filters adapter action tools out of a plan-builder surface, so the flat per-action tools are back in the request",
   );
