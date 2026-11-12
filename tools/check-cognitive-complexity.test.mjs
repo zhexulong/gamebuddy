@@ -12,6 +12,8 @@
  *   Fixture.Big:2:240`, one class with `parts 2` and no per-file finding (this file)
  * red-proof: inject  a recorded member and then delete it from the source -> `stale_complexity_baseline:<member>`
  *   (this file)
+ * red-proof: inject  a size record whose `parts`/`methods` predate the tree -> `class_size_record_stale` naming both
+ *   disagreeing fields, while 30 more lines on the same shape stays `class_size_grew` (this file)
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -214,7 +216,13 @@ test("ratchet: a class over its complexity bound names the class, its parts and 
   const verdict = evaluate({
     members: [],
     types: [type],
-    baseline: { members: [], classes: [], sizes: [{ id: type.id, lines: 10, methods: 2 }] },
+    // The size record is the shape `--update` writes: `parts` and `methods` beside the lines, so it agrees with
+    // the tree here and only the complexity binding is being read.
+    baseline: {
+      members: [],
+      classes: [],
+      sizes: [{ id: type.id, parts: type.parts, lines: type.lines, methods: type.methods }],
+    },
     bounds: BOUNDS,
   });
   assert.deepEqual(
@@ -268,7 +276,7 @@ test("ratchet: class size names the ceiling, the value and the part count", () =
   );
 });
 
-test("ratchet: a recorded class size may only shrink, and a gone type is stale", () => {
+test("ratchet: a class size whose structure held still may only shrink in lines, and a gone type is stale", () => {
   const type = {
     id: "cs:Fixture.Long",
     name: "Fixture.Long",
@@ -280,16 +288,104 @@ test("ratchet: a recorded class size may only shrink, and a gone type is stale",
     lines: 1200,
     methods: 20,
   };
-  const baseline = { members: [], classes: [], sizes: [{ id: type.id, lines: 1200, methods: 20 }] };
-  const grown = evaluate({ members: [], types: [{ ...type, methods: 21 }], baseline, bounds: BOUNDS });
+  const record = { id: type.id, parts: 2, lines: 1200, methods: 20 };
+  const baseline = { members: [], classes: [], sizes: [record] };
+  const shrunk = evaluate({ members: [], types: [{ ...type, lines: 1100 }], baseline, bounds: BOUNDS });
+  assert.deepEqual(shrunk.findings, []);
+  const grown = evaluate({ members: [], types: [{ ...type, lines: 1230 }], baseline, bounds: BOUNDS });
   assert.deepEqual(
-    grown.findings.map((finding) => finding.code),
-    ["class_size_grew"],
+    grown.findings.map((finding) => [finding.code, finding.detail]),
+    [["class_size_grew", `${type.id} 1200 lines/20 methods -> 1230 lines/20 methods`]],
   );
   const gone = evaluate({ members: [], types: [], baseline, bounds: BOUNDS });
   assert.deepEqual(
     gone.findings.map((finding) => [finding.code, finding.detail]),
     [["stale_class_ceiling", type.id]],
+  );
+});
+
+/**
+ * The incident, replayed as one reading: a `ModEntry`-shaped record against a tree measured after the class changed
+ * shape. `parts` and `methods` only move when the class's structure does, so their disagreement is what tells a stale
+ * record (`class_size_record_stale`) from a class that grew (`class_size_grew`).
+ */
+const MOD_ENTRY_SHAPE = {
+  id: "cs:ModEntry",
+  name: "ModEntry",
+  parts: 58,
+  files: new Set(),
+  file: "ModEntry.cs",
+  line: 10,
+  value: 0,
+  lines: 15426,
+  methods: 335,
+};
+
+/** One size record for `MOD_ENTRY_SHAPE`, with the fields the caller wants stale or current. */
+const recordedSize = (fields) => ({
+  members: [],
+  classes: [],
+  sizes: [{ id: MOD_ENTRY_SHAPE.id, name: "ModEntry", parts: 58, lines: 15426, methods: 335, ...fields }],
+  revision: "21bd3a46",
+});
+
+test("ratchet: a size record whose partials or methods disagree with the tree is stale, not grown", () => {
+  // The incident itself: the record's METHODS had been corrected (335), its PARTIALS had not (56 against 58), and
+  // the line count came from before the class changed shape. `class_size_grew` called a 76-line shrink growth here.
+  const stalePartials = evaluate({
+    members: [],
+    types: [{ ...MOD_ENTRY_SHAPE, lines: 15363 }],
+    baseline: recordedSize({ parts: 56, lines: 15356 }),
+    bounds: BOUNDS,
+  });
+  assert.deepEqual(
+    stalePartials.findings.map((finding) => finding.code),
+    ["class_size_record_stale"],
+    "a record taken at another shape of the class is stale, and must not be read as growth",
+  );
+  const [finding] = stalePartials.findings;
+  assert.match(finding.detail, /^cs:ModEntry parts 56 -> 58 /u, "the disagreeing field is named, with both numbers");
+  assert.match(finding.detail, /record taken at 21bd3a46/u, "the revision is the reader's only cheap check");
+  assert.match(finding.detail, /--update/u, "the instruction is to re-record, not to shrink the class");
+
+  // The other direction: the record predates the 68 initialisers being inlined, so the tree has MORE methods than it
+  // says. Today that reads as growth; it is the same untrustworthy record seen from the other side.
+  const staleMethods = evaluate({
+    members: [],
+    types: [MOD_ENTRY_SHAPE],
+    baseline: recordedSize({ parts: 55, methods: 267, lines: 15502 }),
+    bounds: BOUNDS,
+  });
+  assert.deepEqual(
+    staleMethods.findings.map((item) => item.code),
+    ["class_size_record_stale"],
+  );
+  assert.match(staleMethods.findings[0].detail, /parts 55 -> 58, methods 267 -> 335 /u);
+
+  // A record LARGER than the tree in every field used to pass in silence: nothing had grown, so nothing was said,
+  // while the numbers compared against were from a class that no longer exists. Stale says so - it buys no silence.
+  const recordAheadOfTheTree = evaluate({
+    members: [],
+    types: [MOD_ENTRY_SHAPE],
+    baseline: recordedSize({ parts: 60, methods: 400, lines: 16000 }),
+    bounds: BOUNDS,
+  });
+  assert.deepEqual(
+    recordAheadOfTheTree.findings.map((item) => [item.code, /parts 60 -> 58/u.test(item.detail)]),
+    [["class_size_record_stale", true]],
+  );
+});
+
+test("ratchet: the same shape with 30 more lines is growth, so the assertion keeps its teeth", () => {
+  const verdict = evaluate({
+    members: [],
+    types: [{ ...MOD_ENTRY_SHAPE, lines: MOD_ENTRY_SHAPE.lines + 30 }],
+    baseline: recordedSize({}),
+    bounds: BOUNDS,
+  });
+  assert.deepEqual(
+    verdict.findings.map((finding) => [finding.code, finding.detail]),
+    [["class_size_grew", "cs:ModEntry 15426 lines/335 methods -> 15456 lines/335 methods"]],
   );
 });
 
@@ -560,6 +656,61 @@ test("cli: a class over the line ceiling is red and recorded", () => {
       new RegExp(`class_lines_over_ceiling: Fixture\\.Long:${CLASS_LINE_CEILING + 3}:${CLASS_LINE_CEILING}:1`, "u"),
     );
     assert.match(result.stdout, new RegExp(`largest Fixture\\.Long @ ${CLASS_LINE_CEILING + 3} lines`, "u"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cli: a class that changed shape is a stale size record, while one that only got longer grew", () => {
+  const root = fixtureRoot();
+  const baselinePath = join(root, "tools", "cognitive-complexity-baseline.json");
+  const padding = (count) => Array.from({ length: count }, (_, index) => `    // line ${index}`).join("\n");
+  const writeLong = (lines) =>
+    writeFileSync(
+      join(root, "integrations", "stardew", "Long.cs"),
+      `namespace Fixture\n{\n  public class Long\n  {\n${padding(lines)}\n  }\n}\n`,
+    );
+  try {
+    writeBiomeConfig(root);
+    writeTypeScriptSource(root, 0);
+    writeLong(CLASS_LINE_CEILING);
+    assert.equal(run(root, ["--update"]).status, 0);
+    const recorded = JSON.parse(readFileSync(baselinePath, "utf8")).sizes[0];
+    assert.deepEqual([recorded.parts, recorded.lines, recorded.methods], [1, CLASS_LINE_CEILING + 3, 0]);
+
+    // 30 more lines, no structural change: the class grew, and the finding says so.
+    writeLong(CLASS_LINE_CEILING + 30);
+    const grown = run(root);
+    assert.equal(grown.status, 1);
+    assert.match(
+      grown.stderr,
+      new RegExp(
+        `class_size_grew: cs:Fixture\\.Long ${CLASS_LINE_CEILING + 3} lines/0 methods -> ${CLASS_LINE_CEILING + 33} lines/0 methods`,
+        "u",
+      ),
+    );
+
+    // A SECOND partial: the class changed shape, so the recorded line count describes a class that no longer
+    // exists in that form. The finding is `class_size_record_stale` naming both disagreeing fields, and it is
+    // still a failure - stale is not a way to pass - with `--update` as the remedy rather than a smaller class.
+    assert.equal(run(root, ["--update"]).status, 0);
+    writeFileSync(
+      join(root, "integrations", "stardew", "Long.Second.cs"),
+      "namespace Fixture\n{\n  public partial class Long\n  {\n    public void Alpha(int a)\n    {\n      if (a > 0) { a -= 1; }\n    }\n  }\n}\n",
+    );
+    const stale = run(root);
+    assert.equal(stale.status, 1, "a record nobody can trust is still a failing reading");
+    assert.match(stale.stderr, /class_size_record_stale: cs:Fixture\.Long parts 1 -> 2, methods 0 -> 1/u);
+    assert.doesNotMatch(stale.stderr, /class_size_grew/u);
+    assert.match(stale.stderr, /--update/u);
+    assert.match(stale.stdout, /"status":"failed"/u);
+    assert.match(stale.stdout, /class_size_ceiling/u);
+
+    // Re-recording is the whole remedy: the arithmetic goes in the entry, the gate goes green again.
+    assert.equal(run(root, ["--update"]).status, 0);
+    const green = run(root);
+    assert.equal(green.status, 0);
+    assert.doesNotMatch(green.stderr, /class_size_record_stale|class_size_grew/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

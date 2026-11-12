@@ -87,12 +87,22 @@
  *   - a measured member/class is over its bound and not recorded          `function_over_bound` / `class_complexity_over_bound`
  *   - a recorded member/class GREW past its recorded value                 `function_grew` / `class_grew`
  *   - a recorded member/class is no longer measured                        `stale_complexity_baseline`
+ *   - a recorded CLASS SIZE predates a structural change                   `class_size_record_stale` (see below)
  * Member identity is the qualified signature (`cs:<Namespace.Type>.<Member>(<param types>)`,
  * `ts:<file>#<Class>.<name>`), NOT `file:line`: moving a method between the 46 partials of its class is the
  * expected edit in this tree and must not read as a new offender. The parameter types are part of it because
  * overloads share a name (`BridgeSession` declares four `ToWire(x)`), and an explicit interface implementation
  * carries its specifier. `file` and `line` travel in the baseline for the reader and are refreshed by
  * `--update`, which is its own commit.
+ *
+ * THE FUNCTION HALF HAS NO SUCH AMBIGUITY, said out loud rather than assumed: a member's record is ONE scalar taken
+ * from one measurement of one body, so `measured > recorded` for the same identity can only mean that member gained
+ * branches - there is no second field the record and the tree could have got from different commits. Its other fact
+ * already has its own name and is a different fact: `stale_complexity_baseline` means the recorded member is not in
+ * the tree at all (renamed, deleted, or moved under a new identity). The two never compete for one name. The SIZE
+ * record is the exception, because `lines` moves with every edit while `parts`/`methods` move only when the class's
+ * structure does, so one size entry can describe two different trees at once - which is what
+ * `class_size_record_stale` names.
  *
  * WHAT THE RATCHET CAN AND CANNOT DISTINGUISH AT THE CEILING. A ts member whose value is at Biome's ceiling is
  * stored with `saturated: true` beside its value, so a reader of the baseline sees a floor where the gate sees one
@@ -107,11 +117,22 @@
  *
  * CLASS SIZE, over the same stitched type index: total lines (the line span of every declaration merged) and member
  * declarations, against `class_lines_over_ceiling:<type>:<lines>:<ceiling>:<parts>` and
- * `class_methods_over_ceiling:<type>:<methods>:<ceiling>`. Same ratchet shape: a recorded type fails when it
- * grows (`class_size_grew`), an unrecorded type fails when it is over a ceiling, and a recorded type the tree no
- * longer has is `stale_class_ceiling:<type>`. This is how the gate says "`ExecutionManager` is 28,097 lines over 47
- * parts" out loud instead of being red on day one and switched off. Ceilings: 1,000 lines / 40 member
- * declarations, with the distribution that chose them in the constant's own comment.
+ * `class_methods_over_ceiling:<type>:<methods>:<ceiling>`. Same ratchet shape - an unrecorded type fails when it is
+ * over a ceiling, a recorded type the tree no longer has is `stale_class_ceiling:<type>` - with one reading split in
+ * two because it had one name for two facts:
+ *   `class_size_grew`          the record's `parts` and `methods` still match the tree and the line count went up.
+ *   `class_size_record_stale`  those fields disagree with the tree, so the record predates a structural change and
+ *                              its line count describes a class that no longer exists in that shape. Still a finding
+ *                              (a number nobody can trust is still being compared), but the message asks for
+ *                              `--update` with the arithmetic instead of a smaller class.
+ * Measured 2026-11-12, before the split: a commit that SHRANK `ModEntry` by 76 lines was reported as growth, because
+ * the record's 15,356 lines/335 methods/56 partials predated the commit that inlined 68 initialisers (its parent
+ * measured 15,502 lines/267 methods/55 partials). `parts` is the field that catches it: the record's methods had been
+ * corrected by then, its partials had not. What the split cannot see is a stale record whose `parts` and `methods`
+ * happen to still match - then only `lines` witnesses it, and the recorded `revision` in the finding is the reader's
+ * only cheap check. This is how the gate says "`ExecutionManager` is 28,097 lines over 47 parts" out loud instead of
+ * being red on day one and switched off. Ceilings: 1,000 lines / 40 member declarations, with the distribution that
+ * chose them in the constant's own comment.
  *
  * USAGE:
  *   node tools/check-cognitive-complexity.mjs              # the verdict; exit 1 on any finding
@@ -127,6 +148,10 @@
  *   never `= 255` as a measurement; growing a recorded 40 into the ceiling is `function_grew: <id> 40 -> >=255`
  *   (tools/check-cognitive-complexity.test.mjs)
  * red-proof: inject  a baseline entry for a member the tree no longer has -> `stale_complexity_baseline:<member>`
+ *   (tools/check-cognitive-complexity.test.mjs)
+ * red-proof: inject  a class-size record whose `parts`/`methods` predate the tree (recorded 56 partials against its
+ *   58, or 267 methods against its 335) -> `class_size_record_stale` naming the disagreeing fields, never
+ *   `class_size_grew`; equal structure and 30 more lines is `class_size_grew`
  *   (tools/check-cognitive-complexity.test.mjs)
  */
 import { spawnSync } from "node:child_process";
@@ -772,6 +797,7 @@ export function evaluate({ members, types, baseline, bounds }) {
     types,
     recordedTypes,
     recordedSizes: new Map((baseline.sizes ?? []).map((entry) => [entry.id, entry])),
+    revision: baseline.revision,
     findings,
   });
   for (const id of recordedTypes.keys()) {
@@ -825,12 +851,12 @@ function judgeMembers({ members, recorded, bounds, findings }) {
 }
 
 /** The type half: the summed complexity against its bound, and the summed size against both ceilings. */
-function judgeTypes({ types, recordedTypes, recordedSizes, findings }) {
+function judgeTypes({ types, recordedTypes, recordedSizes, revision, findings }) {
   const measured = new Set();
   for (const type of types) {
     measured.add(type.id);
     judgeTypeComplexity(type, recordedTypes.get(type.id), findings);
-    judgeTypeSize(type, recordedSizes.get(type.id), findings);
+    judgeTypeSize(type, recordedSizes.get(type.id), revision, findings);
   }
   return measured;
 }
@@ -843,7 +869,38 @@ function judgeTypeComplexity(type, recorded, findings) {
   }
 }
 
-function judgeTypeSize(type, recorded, findings) {
+/**
+ * One recorded size against the tree: is the RECORD stale, or did the CLASS grow? Two facts, two names.
+ *
+ * WHY THE SPLIT. Measured 2026-11-12: a commit that shrank `ModEntry` by 76 lines was reported as
+ * `class_size_grew: cs:ModEntry 15356 lines/335 methods -> 15426 lines/335 methods`, while the commit's parent
+ * measured 15,502 lines / 267 methods / 55 partials. The recorded 15,356 lines came from before 68 initialisers were
+ * inlined and its 335 methods did not match that parent either: the record was taken at a tree that no longer existed,
+ * and the gate called it growth. One name for two facts, so a correct commit was accused of the thing it had fixed.
+ *
+ * THE DISCRIMINATOR IS ALREADY IN THE RECORD, and costs no second measurement (re-parsing the tree at `HEAD~1` is
+ * minutes on 564 C# files, per type, per run). A size record holds three coupled fields from ONE tree: `parts` (the
+ * partial declarations merged), `methods` (the member declarations) and `lines` (the merged line span). `lines` moves
+ * with any edit, so on its own it cannot say which tree the record describes; `parts` and `methods` only move when the
+ * class's STRUCTURE moves - a partial added or removed, a member added or removed. So:
+ *   - `parts` or `methods` disagree with the tree's own count  -> the record predates a structural change: stale.
+ *     This holds in both directions. Recorded 335 methods against a tree of 267 is the incident above; recorded 267
+ *     against a tree of 335 is the same untrustworthy record seen from the other side, and today it passes in
+ *     silence whenever the recorded line count happens to be the larger one.
+ *   - both agree and `lines` went up                            -> the class grew: `class_size_grew`, no excuse.
+ * `parts` is the field that catches the incident: its methods (335) had already been corrected by the time its lines
+ * were read, while its 56 partials had not (the tree has 58).
+ *
+ * WHAT THIS CANNOT SEE, stated rather than hidden: a stale record whose `parts` and `methods` happen to still match the
+ * tree. `lines` is the only witness then, and a record 146 lines low with the same shape reads exactly like 146 lines
+ * of growth. The recorded `revision` is printed in the finding so the reader can `git diff` from the commit the record
+ * was taken at - which is the only cheap check left - and the arithmetic belongs in the re-recorded entry's `reason`.
+ *
+ * A STALE RECORD IS STILL A FINDING, not a pass: it says the number nobody can trust is being compared against, so the
+ * run fails and the message asks for `--update` with the arithmetic rather than for a smaller class. Only the label
+ * and the instruction change; the exit code does not.
+ */
+function judgeTypeSize(type, recorded, revision, findings) {
   if (recorded === undefined) {
     if (type.lines > CLASS_LINE_CEILING) {
       findings.push({
@@ -859,13 +916,28 @@ function judgeTypeSize(type, recorded, findings) {
     }
     return;
   }
-  if (type.lines > recorded.lines || type.methods > recorded.methods) {
+  const drifted = [
+    recorded.parts === type.parts ? null : `parts ${recorded.parts} -> ${type.parts}`,
+    recorded.methods === type.methods ? null : `methods ${recorded.methods} -> ${type.methods}`,
+  ].filter((field) => field !== null);
+  if (drifted.length > 0) {
+    findings.push({
+      code: "class_size_record_stale",
+      detail:
+        `${type.id} ${drifted.join(", ")} (record taken at ${revisionOf(revision)}): the record's partials and ` +
+        "methods no longer match this type, so it predates a structural change and is stale, not grown - re-record it " +
+        "with --update and state the arithmetic in its reason; shrinking the class would not make this number true",
+    });
+  } else if (type.lines > recorded.lines) {
     findings.push({
       code: "class_size_grew",
       detail: `${type.id} ${recorded.lines} lines/${recorded.methods} methods -> ${type.lines} lines/${type.methods} methods`,
     });
   }
 }
+
+/** The revision a record was taken at, as the finding prints it; `--root` fixtures record none. */
+const revisionOf = (revision) => (typeof revision === "string" && revision !== "" ? revision : "an unstated revision");
 
 /** The population lines: what was examined, how many are over the bound, and the worst of each. */
 function describe(members, types, bounds) {
@@ -1150,9 +1222,13 @@ async function main(argv) {
         (finding.code === "function_over_bound" || finding.code === "function_grew") && finding.language === language,
     ).length;
   const sizeFindings = verdict.findings.filter((finding) =>
-    ["class_lines_over_ceiling", "class_methods_over_ceiling", "class_size_grew", "stale_class_ceiling"].includes(
-      finding.code,
-    ),
+    [
+      "class_lines_over_ceiling",
+      "class_methods_over_ceiling",
+      "class_size_grew",
+      "class_size_record_stale",
+      "stale_class_ceiling",
+    ].includes(finding.code),
   );
   const classFindings = verdict.findings.filter((finding) =>
     ["class_complexity_over_bound", "class_grew"].includes(finding.code),
@@ -1176,12 +1252,16 @@ async function main(argv) {
     {
       id: "class_size_ceiling",
       status: sizeFindings.length === 0 ? "passed" : "failed",
-      detail: `${verdict.counts.sizes.examined} types, ${verdict.counts.sizes.over} over ${CLASS_LINE_CEILING} lines / ${CLASS_METHOD_CEILING} methods, ${sizeFindings.length} unrecorded or grown`,
+      detail: `${verdict.counts.sizes.examined} types, ${verdict.counts.sizes.over} over ${CLASS_LINE_CEILING} lines / ${CLASS_METHOD_CEILING} methods, ${sizeFindings.length} unrecorded, grown or stale`,
     },
     {
       id: "baseline_ratchet",
       status: verdict.findings.length === 0 ? "passed" : "failed",
-      detail: `${verdict.findings.length} finding(s), ${unrecorded("stale_complexity_baseline") + unrecorded("stale_class_ceiling")} stale`,
+      detail: `${verdict.findings.length} finding(s), ${
+        unrecorded("stale_complexity_baseline") +
+        unrecorded("stale_class_ceiling") +
+        unrecorded("class_size_record_stale")
+      } stale`,
     },
   ];
   for (const finding of verdict.findings) console.error(`${finding.code}: ${finding.detail}`);
@@ -1190,7 +1270,9 @@ async function main(argv) {
   const failed = verdict.findings.length > 0 || measured.drift.length > 0;
   if (failed) {
     console.error(
-      "\ncomplexity failed: over-bound members and oversized classes must be recorded (or fixed), a recorded value may only shrink, and a gone member leaves the baseline",
+      "\ncomplexity failed: over-bound members and oversized classes must be recorded (or fixed), a recorded value " +
+        "may only shrink, a gone member leaves the baseline, and a class-size record whose parts/methods disagree with " +
+        "the tree is stale - re-record it with the arithmetic rather than shrinking the class",
     );
   } else {
     const debt = `recorded: members=${(baseline.members ?? []).length} classes=${(baseline.classes ?? []).length} sizes=${(baseline.sizes ?? []).length}`;
