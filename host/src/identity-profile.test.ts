@@ -191,8 +191,9 @@ test("the Game conduct names how a day ends, so going to bed is an act rather th
   assert.doesNotMatch(game, /you must (go to bed|sleep)/iu);
   // The mechanism is NOT named as an id either. That arm is already held elsewhere rather than
   // restated here: `dialogue-web/tests/prompt-tool-name-gate.test.mjs` (prompt-tool.2) reads the
-  // registry's ids and fails a bare `advance_day` in any prompt text, and prompt-tool.1 fails a
-  // `stardew_*` name no module declares - both derived from the authorities, so neither goes stale.
+  // registry's ids and fails a bare `advance_day` on any line that names no mounted tool carrying
+  // it, and prompt-tool.1 fails a `stardew_*` name no module declares - both derived from the
+  // authorities, so neither goes stale.
   // Chat has no day to end, so it carries none of this.
   assert.doesNotMatch(buildChatCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE), /The day ends by going to bed/u);
 });

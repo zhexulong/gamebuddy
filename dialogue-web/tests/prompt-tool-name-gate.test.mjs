@@ -3,34 +3,43 @@
  *
  * The measured defect: `identity-profile.ts` told the companion its body language
  * goes through `express_emote` / `face_direction` - the Mod's own action ids -
- * while every Agent-visible tool carries the `stardew_` prefix
- * (`STARDEW_ACTION_TOOL_NAMES`, action-registry.ts, a closed projection of all 89
- * mounted actions). A companion that follows that instruction calls nothing, so
- * the gesture never happens, and the test that pinned the name was pinning the
- * falsehood. One lane repaired those two names and made *its own* test read
- * `STARDEW_ACTION_TOOL_NAMES`; the rule itself was still unheld, so the next
- * prompt that names a tool could name it wrongly again - and the rule now has a
- * second registration: `game-tools.ts`'s own descriptions send the Agent after
- * `clear_debris`, `answer_dialogue`, `deposit_silo_hay` and eleven more ids that
- * are not mounted names either.
+ * while every Agent-visible tool carried the `stardew_` prefix
+ * (`STARDEW_ACTION_TOOL_NAMES`, action-registry.ts). A companion that follows that
+ * instruction calls nothing, so the gesture never happens, and the test that pinned
+ * the name was pinning the falsehood. One lane repaired those two names and made
+ * *its own* test read `STARDEW_ACTION_TOOL_NAMES`; the rule itself was still unheld,
+ * so the next prompt that names a tool could name it wrongly again - and the rule
+ * now has a second registration: `game-tools.ts`'s own descriptions sent the Agent
+ * after `clear_debris`, `answer_dialogue`, `deposit_silo_hay` and eleven more ids
+ * that are not mounted names either.
  *
- * This gate holds the rule for every piece of prompt text the Agent reads, in
- * both directions:
+ * That repair was measured wrong one revision later (c1214b97, 2026-11-12): the live
+ * Game materializer declares `planActionSurface`, and `runtime-core.internal.ts` then
+ * drops every tool the adapter publishes as an action - so `stardew_express_emote` is
+ * a name the Agent is never handed either. Body language is a step in the plan that
+ * `stardew_plan_work` submits, c1214b97 rewrote the conduct to say exactly that, and
+ * the ids came back unprefixed because that is what the plan builder takes. This arm
+ * read them as the original defect and reported the corrected sentence, which is what
+ * makes the mounted set - not the registry's own values - its authority.
+ *
+ * This gate holds the rule for every piece of prompt text the Agent reads, in both
+ * directions:
  *
  *   1. every `stardew_*` token must be a name some production module actually
  *      declares as a tool (`name: "stardew_..."`), so a renamed, misspelled or
  *      invented tool name is a finding;
- *   2. no registry action id may appear as a *bare word*. The registry's keys are
- *      the Mod's ids (`express_emote`), its values the callable names
- *      (`stardew_express_emote`); a prompt naming the key sends the Agent after a
- *      tool that does not exist. This is the arm that would have caught the
- *      original defect instead of pinning it, and it is the arm that finds the
- *      fourteen live mentions above.
+ *   2. a bare registry action id (`express_emote`, `advance_day`) is a finding unless
+ *      the SAME LINE names the mounted tool that carries it: the per-action tool
+ *      `stardew_<id>` when that name is mounted, or `stardew_plan_work` when the id is
+ *      in the plan builder's own vocabulary. A line that names neither leaves the id
+ *      standing there as if it were a tool, which is the original defect; a line that
+ *      names the plan builder is the route a plan surface actually mounts.
  *
- * Both directions are enumerated from the authorities - the registry's keys and
- * values, and every `name:` a Host module declares - so a tool added, renamed or
- * removed tomorrow is covered by today's rule. No tool-name list and no line
- * number lives in this file; findings are located by reading the source.
+ * Both directions are enumerated from the authorities - the registry's keys and values,
+ * the mounted Game set, the plan builder's vocabulary derived from the Mod's emitted
+ * surface, and every `name:` a Host module declares - so a tool added, renamed or
+ * removed tomorrow is covered by today's rule. Findings are located by reading the
+ * source, never by a line number written here.
  *
  * What "prompt text" means here, and how each source is obtained without reading
  * comments or code:
@@ -38,7 +47,7 @@
  *    (`buildChatCompanionSystemPrompt` / `buildGameCompanionSystemPrompt`) - the
  *    chat prompt and the companion-play conduct text. What is scanned is the text
  *    the model is handed, not a literal near it. The module's own comments discuss
- *    the unprefixed ids by name (they explain why they are wrong) and comments are
+ *    the unprefixed ids by name (they explain why they are there) and comments are
  *    not literals, so no comment is a finding;
  *  - `gameplay-task-subagent.ts` contributes the string literals of its
  *    `systemPrompt` array - its private worker prompt;
@@ -52,11 +61,13 @@
  * exactly those sources - so no source can be strict under one arm and blind under
  * the other, and each finding names the file and line it was found on.
  *
- * What this cannot express honestly, and therefore does not claim: it resolves
- * names against the *Host's* declarations, not against a live Mod capability
- * snapshot, so a prompt naming a tool that is declared in a production module but
- * revoked in game is clean here - that is a policy or runtime fact, not a prompt
- * fact. It also reads `name:` declarations under host/src only.
+ * What this cannot express honestly, and therefore does not claim: arm 1 resolves
+ * names against the *Host's* declarations, not against mounted state, so a prompt
+ * naming a tool that a production module declares but a Game session does not mount
+ * is arm 1's blind spot - `identity-profile.test.ts` and
+ * `action-registry-consistency.test.ts` hold the rendered Game floor against the
+ * mounted set. A name revoked in game at runtime is a policy fact, not a prompt fact.
+ * It also reads `name:` declarations under host/src only.
  */
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -64,7 +75,12 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { planActionsFromRegistrations } from "../../host/src/body-program-script.ts";
 import { buildGameCompanionSystemPrompt } from "../../host/src/game-surface-prompt-floor.ts";
+import {
+  ADVERTISED,
+  MOUNTED_GAME_SURFACE_TOOL_NAMES,
+} from "../../host/src/game-surface-prompt-floor.test-support.ts";
 import {
   DEFAULT_IDENTITY_PROFILE,
   buildChatCompanionSystemPrompt,
@@ -249,15 +265,66 @@ export function unresolvedFindings(entries = promptTextSources(), authority = de
   return findings;
 }
 
-/** A Mod action id used where the mounted name belongs, as a finding. */
-export function bareActionFindings(entries = promptTextSources(), ids = registryActionIds()) {
+/**
+ * The tool names a live Game session mounts, read from the recorded materialized
+ * session's own `agent.state.tools` (held fresh by `game-surface-prompt-floor.test.ts`).
+ * Not `STARDEW_ACTION_TOOL_NAMES`: a plan surface drops every tool the adapter
+ * publishes as an action, so that projection is a list the Agent is never handed.
+ */
+export function mountedGameToolNames() {
+  return new Set(MOUNTED_GAME_SURFACE_TOOL_NAMES);
+}
+
+/**
+ * The tool whose description carries the plan vocabulary. Named here because the
+ * prompt must name it at the id; `prompt-tool.2` refuses to pass if the mounted set
+ * does not contain it, so a surface that stopped mounting the plan builder fails by
+ * that name instead of silently reporting every plan step as a bare id.
+ */
+const PLAN_BUILDER_TOOL = "stardew_plan_work";
+
+/**
+ * The action ids the plan builder admits, through the product's own plan admission
+ * over the Mod's emitted surface. The registry also carries ids the plan form does
+ * not admit, and those have no route at all on a plan surface.
+ */
+export function planBuilderVocabulary() {
+  return new Set(planActionsFromRegistrations(ADVERTISED).map((action) => action.actionId));
+}
+
+/**
+ * One bare action id on one line, as a finding unless the line names the mounted
+ * tool that carries it. Returns null when the line establishes the route.
+ */
+function bareActionFinding(actionId, line, mounted, vocabulary) {
+  const registry = registryProjection();
+  const perActionTool = registry.names[registry.ids.indexOf(actionId)];
+  if (mounted.has(perActionTool))
+    return `prompt names the Mod action id ${actionId}; the mounted tool is ${perActionTool}`;
+  if (!mounted.has(PLAN_BUILDER_TOOL))
+    return `prompt names the Mod action id ${actionId}, and ${PLAN_BUILDER_TOOL} is not mounted, so no tool carries that id`;
+  if (!vocabulary.has(actionId))
+    return `prompt names the Mod action id ${actionId}, which no mounted tool carries: ${PLAN_BUILDER_TOOL} admits no such step`;
+  if (!line.includes(PLAN_BUILDER_TOOL))
+    return `prompt names the Mod action id ${actionId} on a line that does not name ${PLAN_BUILDER_TOOL}, so the Agent goes looking for a tool by that name`;
+  return null;
+}
+
+/** A bare action id that the line it appears on gives no mounted route to, as a finding. */
+export function bareActionFindings(entries = promptTextSources(), mounted = mountedGameToolNames()) {
+  const vocabulary = planBuilderVocabulary();
+  const registry = registryProjection();
   const findings = [];
-  for (const entry of entries)
-    for (const id of ids) {
-      const match = new RegExp(`(?<![A-Za-z0-9_])${id}(?![A-Za-z0-9_])`, "u").exec(entry.text);
-      if (match !== null)
-        findings.push(`${at(entry, match.index)}: prompt names the Mod action id ${id}; the mounted tool is stardew_${id}`);
+  for (const entry of entries) {
+    let offset = 0;
+    for (const line of entry.text.split("\n")) {
+      for (const actionId of bareActionIds(line, registry.ids)) {
+        const finding = bareActionFinding(actionId, line, mounted, vocabulary);
+        if (finding !== null) findings.push(`${at(entry, offset)}: ${finding}`);
+      }
+      offset += line.length + 1;
     }
+  }
   return findings;
 }
 
@@ -273,13 +340,26 @@ test("prompt-tool.1: every tool name in prompt text resolves in the Host's own d
   assert.deepEqual(failures, [], "a prompt naming a tool the Agent cannot call sends the instruction nowhere");
 });
 
-test("prompt-tool.2: no prompt sends the Agent after a Mod action id instead of the mounted name", (t) => {
+test("prompt-tool.2: a bare Mod action id is a finding unless its line names the mounted tool that carries it", (t) => {
+  const mounted = mountedGameToolNames();
+  assert.ok(mounted.size > 0, "blocked: the recorded mounted Game tool set is empty, so every bare id would pass");
+  assert.ok(
+    mounted.has(PLAN_BUILDER_TOOL),
+    `blocked: ${PLAN_BUILDER_TOOL} is not in the mounted set, so no bare action id has a route and this arm reads the wrong surface`,
+  );
+  const vocabulary = planBuilderVocabulary();
+  assert.ok(
+    vocabulary.size > 0,
+    `blocked: ${PLAN_BUILDER_TOOL} admits no action, so a plan-step id could never be carried`,
+  );
   const failures = bareActionFindings();
-  t.diagnostic(`prompt-tool.2: ${registryActionIds().length} registry action id(s) checked, ${failures.length} bare`);
-  assert.deepEqual(failures, [], "the registry's keys are the Mod's ids; only its values are callable");
+  t.diagnostic(
+    `prompt-tool.2: ${registryActionIds().length} registry action id(s) held against ${mounted.size} mounted name(s) and ${vocabulary.size} plan-builder method(s); ${failures.length} bare`,
+  );
+  assert.deepEqual(failures, [], "a bare action id the line gives no mounted route to sends the instruction nowhere");
 });
 
-test("prompt-tool.3: the registry projection is the mounted set, not a second list", (t) => {
+test("prompt-tool.3: the registry's keys and values are declared, and only its values are callable names", (t) => {
   const authority = declaredToolNames();
   const registry = registryProjection().names;
   assert.ok(registry.length > 0, "the registry projection must be readable from action-registry.ts");
@@ -296,31 +376,50 @@ test("prompt-tool.3: the registry projection is the mounted set, not a second li
     "a Mod action id must not also be a declared tool name, or the two directions would agree on the wrong name",
   );
   t.diagnostic(
-    `prompt-tool.3: ${registry.length} mounted action name(s) read from STARDEW_ACTION_TOOL_NAMES; ${registry.slice(0, 3).join(", ")}, ...`,
+    `prompt-tool.3: ${registry.length} per-action name(s) read from STARDEW_ACTION_TOOL_NAMES; ${registry.slice(0, 3).join(", ")}, ...`,
   );
 });
 
-test("prompt-tool.4 (mutation): a renamed tool and a bare action id are both located findings", (t) => {
+test("prompt-tool.4 (mutation): a renamed tool, a bare id, a plan step and a per-action mount each read as their own shape", (t) => {
   const authority = declaredToolNames();
-  const planted = [
-    {
+  const mounted = mountedGameToolNames();
+  const planted = {
+    renamed: {
       file: "host/src/planted-prompt.ts",
       line: 12,
-      text: "Show a feeling through the game: use stardew_express_emotions, and walk there with move_to_tile.",
+      text: "Show a feeling through the game: use stardew_express_emotions.",
     },
-    {
+    bareAlone: { file: "host/src/planted-prompt.ts", line: 18, text: "Show a feeling with express_emote." },
+    planStep: {
       file: "host/src/planted-prompt.ts",
-      line: 20,
+      line: 24,
+      text: "Body language is an action in the plan you submit with stardew_plan_work: express_emote raises an overhead emote balloon.",
+    },
+    mountedNames: {
+      file: "host/src/planted-prompt.ts",
+      line: 30,
       text: "The mounted names are stardew_express_emote and stardew_move_to_tile.",
     },
-  ];
-  assert.deepEqual(unresolvedFindings([planted[0]], authority), [
+  };
+  assert.deepEqual(unresolvedFindings([planted.renamed], authority), [
     "host/src/planted-prompt.ts:12: prompt names stardew_express_emotions, which no Host module declares as a tool",
   ]);
-  assert.deepEqual(bareActionFindings([planted[0]], registryActionIds()), [
-    "host/src/planted-prompt.ts:12: prompt names the Mod action id move_to_tile; the mounted tool is stardew_move_to_tile",
+  assert.deepEqual(bareActionFindings([planted.bareAlone], mounted), [
+    "host/src/planted-prompt.ts:18: prompt names the Mod action id express_emote on a line that does not name stardew_plan_work, so the Agent goes looking for a tool by that name",
   ]);
-  assert.deepEqual(bareActionFindings([planted[1]], registryActionIds()), [], "the mounted names are clean");
-  assert.deepEqual(unresolvedFindings([planted[1]], authority), [], "a correctly prefixed name is clean");
-  t.diagnostic("prompt-tool.4: the planted rename and the planted bare id are reported with their location; the correct names are not");
+  assert.deepEqual(
+    bareActionFindings([planted.planStep], mounted),
+    [],
+    "the shipped shape - the id beside the plan tool that carries it - is clean",
+  );
+  assert.deepEqual(
+    bareActionFindings([planted.bareAlone], new Set(["stardew_express_emote"])),
+    ["host/src/planted-prompt.ts:18: prompt names the Mod action id express_emote; the mounted tool is stardew_express_emote"],
+    "where the flat tool is mounted, the prefixed name is the only callable spelling",
+  );
+  assert.deepEqual(bareActionFindings([planted.mountedNames], mounted), [], "prefixed names are clean");
+  assert.deepEqual(unresolvedFindings([planted.mountedNames], authority), [], "a correctly prefixed name is clean");
+  t.diagnostic(
+    "prompt-tool.4: the planted rename, the bare id, the plan step and the per-action mount each read as their own shape",
+  );
 });
