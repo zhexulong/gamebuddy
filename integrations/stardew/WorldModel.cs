@@ -69,7 +69,12 @@ internal readonly record struct ActorWorldFacts(
     // `Desert.cs:116`) and by `pauseThenDoFunction` (`Game1.cs:3927`); released only by the engine, through its own
     // `Farmer.forceCanMove()` (`Farmer.cs:7090-7105`). Seconds, not milliseconds: the bus holds it for the walk to the
     // door, the fade and the whole drive. Boundary: .tmp/boundary-controls-frozen.md.
-    bool ControlsFrozen);
+    bool ControlsFrozen,
+    // The engine's mounted minigame. Appended last for the same reason. The engine's own enumeration of "the player is
+    // engaged in any action and shouldn't be interrupted" lists it FIRST (`Farmer.cs:7936`, ahead of the menu `:7940`
+    // and the warp `:7944`), and it is unloaded only when its own `tick` returns true (`Game1.cs:4165-4171`). At least
+    // 11.1 s on the fishing results screen (`FishingGame.cs:169`). Boundary: .tmp/boundary-minigame.md.
+    bool Minigame);
 
 /// <summary>
 /// Read-only per-tick disposition payload (readonly record struct on the game
@@ -311,9 +316,13 @@ internal static class WorldModel
         // player's controls are not polled at all - the body is held even with CanMove still true. The release is the
         // engine's universal body release, `Farmer.forceCanMove()` (Farmer.cs:7096).
         bool controlsFrozen = Game1.freezeControls;
+        // The same shape as `Warping`: a Game1 static (a property over `_currentMinigame`), so a null player still
+        // reports it. The engine counts it as a hold of the actor in its own right and lists it first (`Farmer.cs:7936`),
+        // and clears it only when the mounted minigame's own `tick` returns true (`Game1.cs:4170-4171`).
+        bool minigame = Game1.currentMinigame is not null;
 
         if (player is null)
-            return new ActorWorldFacts(eventUp, menuType, dialogueUp, timeOfDay, 0f, false, false, false, false, false, warping, dayTransition, controlsFrozen);
+            return new ActorWorldFacts(eventUp, menuType, dialogueUp, timeOfDay, 0f, false, false, false, false, false, warping, dayTransition, controlsFrozen, minigame);
 
         return new ActorWorldFacts(
             eventUp,
@@ -332,7 +341,8 @@ internal static class WorldModel
             player.FarmerSprite.PauseForSingleAnimation,
             warping,
             dayTransition,
-            controlsFrozen);
+            controlsFrozen,
+            minigame);
     }
 
     private static bool OwnedByAction() => ModalActionOwnedCheck?.Invoke() ?? false;

@@ -35,7 +35,8 @@ public sealed class NavigationHoldEvidenceTests
         bool selfAnimation = false,
         bool warping = false,
         bool dayTransition = false,
-        bool controlsFrozen = false) =>
+        bool controlsFrozen = false,
+        bool minigame = false) =>
         new(
             EventUp: eventUp,
             MenuType: menuType,
@@ -49,7 +50,8 @@ public sealed class NavigationHoldEvidenceTests
             SelfAnimation: selfAnimation,
             Warping: warping,
             DayTransition: dayTransition,
-            ControlsFrozen: controlsFrozen);
+            ControlsFrozen: controlsFrozen,
+            Minigame: minigame);
 
     [Fact]
     public void ACutsceneHold_NamesTheCutsceneAndWhatEndsItsDialogueBox()

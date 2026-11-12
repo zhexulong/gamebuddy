@@ -190,7 +190,8 @@ public sealed class AdmissionForkReconciliationTests
         bool selfAnimation = false,
         bool warping = false,
         bool dayTransition = false,
-        bool controlsFrozen = false) =>
+        bool controlsFrozen = false,
+        bool minigame = false) =>
         new(
             EventUp: eventUp,
             MenuType: menuType,
@@ -204,7 +205,8 @@ public sealed class AdmissionForkReconciliationTests
             SelfAnimation: selfAnimation,
             Warping: warping,
             DayTransition: dayTransition,
-            ControlsFrozen: controlsFrozen);
+            ControlsFrozen: controlsFrozen,
+            Minigame: minigame);
 
     private static int CountOccurrences(string haystack, string needle)
     {
