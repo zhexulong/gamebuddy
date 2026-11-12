@@ -183,6 +183,46 @@ export function nightCause({
 }
 
 /**
+ * THE LIFECYCLE'S OWN OUTCOME, NAMED WHEN THE WORLD SAYS THE NIGHT CROSSED ANYWAY.
+ *
+ * `<reading>:<lifecycle reason>:<world word>`. Measured 2026-11-05 (`2026-11-05T15-02-34-974Z-multiday_routine`, night 1):
+ * her `sleep` was accepted at 23:14:37, the lifecycle walked her to bed and answered the native Sleep prompt, the day
+ * crossed 5 -> 6 at 23:15:49, and its terminal arrived `state=blocked;reason=lifecycle_deadline_exceeded` -
+ * `wait_frames=31988/32400` without the `day_started` edge it was waiting for - while the same evidence carried
+ * `day_before=4;days_before=5;day_after=5;days_after=6`. Both halves of that receipt describe a crossed night, and its
+ * outcome code describes a failed wait; only one of them can be reported as the night's own answer.
+ */
+export const LIFECYCLE_DISAGREES_WITH_WORLD = "lifecycle_disagrees_with_world";
+
+/** The Mod's own word for a lifecycle that carried its night across (`succeeded/day_advanced`). */
+const CROSSING_OUTCOME = Object.freeze({ state: "succeeded", reasonCode: "day_advanced" });
+
+/** The calendar's answer to "did this night cross": the day it started on versus the day watched afterwards. */
+function calendarCrossed(after) {
+  const observed = after?.dayOfMonth;
+  const before = after?.dayBefore;
+  if (!isFiniteNumber(observed) || !isFiniteNumber(before)) return null;
+  return observed !== before;
+}
+
+/**
+ * The named disagreement between a lifecycle's own outcome and the world's, or `null` when there is none.
+ *
+ * <p>
+ * `worldCrossed` is the world's answer for the SAME night, and it is asked only where the world attributed the crossing
+ * to her own sleep: a lifecycle that waited for a shared-world partner, or one the engine superseded at 26:00, reports a
+ * failure that is true and not a disagreement. `null` is "both agree", never "nobody could tell" - a night whose
+ * crossing nobody measured reaches `classifyNight`'s other answers and never this one.
+ * </p>
+ */
+export function lifecycleDisagreement({ lifecycle, worldCrossed } = {}) {
+  if (!isPlainObject(lifecycle) || worldCrossed !== true) return null;
+  if (lifecycle.state === CROSSING_OUTCOME.state && lifecycle.reasonCode === CROSSING_OUTCOME.reasonCode) return null;
+  if (typeof lifecycle.state !== "string" || typeof lifecycle.reasonCode !== "string") return null;
+  return `${LIFECYCLE_DISAGREES_WITH_WORLD}:${lifecycle.reasonCode}:${CROSSING_OUTCOME.reasonCode}`;
+}
+
+/**
  * Did this night cross, and what says so?
  *
  * TWO witnesses, and the receipt is not always available. `actionTrace` records only FLAT dispatches, so a night
@@ -194,22 +234,38 @@ export function nightCause({
  * watch began on and the day observed afterwards, and a different `dayOfMonth` IS the crossing. The receipt, when it
  * exists, is the STRONGER witness - it carries the engine's own totals - so it is still preferred and still
  * cross-checked. Absent a receipt, the calendar alone is enough, and `witness` says which one answered.
+ *
+ * ANY WORLD-OBSERVED CROSSING SETTLES THE LIFECYCLE. A receipt whose outcome is a failure is a statement about its own
+ * WAIT, and the deadline it names only means something while the night's outcome is unobserved. The measured night above
+ * is the shape: `blocked/lifecycle_deadline_exceeded` beside a calendar that moved 5 -> 6. Answering
+ * `night_not_advanced` there declares the night uncrossed on the word of the one witness that had already lost the
+ * event, so the crossing is kept - with the lifecycle's word published beside it as `lifecycleDisagreement` - and the
+ * failure stays the night's answer only when the calendar agrees that nothing crossed.
  */
 export function classifyNight({ terminal, after }) {
+  const crossed = calendarCrossed(after);
   if (!isPlainObject(terminal)) {
-    const observed = after?.dayOfMonth;
-    const before = after?.dayBefore;
-    if (isFiniteNumber(observed) && isFiniteNumber(before) && observed !== before) {
+    if (crossed === true) {
       return Object.freeze({
         advanced: true,
         witness: "calendar",
         reasonCode: null,
-        facts: Object.freeze({ day_before: String(before), day_of_month: String(observed) }),
+        facts: Object.freeze({ day_before: String(after.dayBefore), day_of_month: String(after.dayOfMonth) }),
       });
     }
     return Object.freeze({ advanced: false, reasonCode: "night_terminal_missing", facts: Object.freeze({}) });
   }
-  if (terminal.state !== "succeeded" || terminal.reasonCode !== "day_advanced") {
+  if (terminal.state !== CROSSING_OUTCOME.state || terminal.reasonCode !== CROSSING_OUTCOME.reasonCode) {
+    if (crossed === true) {
+      return Object.freeze({
+        advanced: true,
+        witness: "calendar",
+        reasonCode: null,
+        lifecycle: Object.freeze({ state: terminal.state, reasonCode: terminal.reasonCode }),
+        disagreement: lifecycleDisagreement({ lifecycle: terminal, worldCrossed: true }),
+        facts: Object.freeze({ day_before: String(after.dayBefore), day_of_month: String(after.dayOfMonth) }),
+      });
+    }
     return Object.freeze({
       advanced: false,
       reasonCode: `night_not_advanced:${String(terminal.state)}/${String(terminal.reasonCode)}`,
@@ -420,6 +476,10 @@ export function assessMultiDayBaseline({
   // observed. This one is a verdict: a calendar witness says the day changed and cannot say how, and "nobody knows how"
   // must not read as a pass.
   let unobservedNights = 0;
+  // Nights whose lifecycle word contradicts the world's: REPORTED beside the verdict, never instead of it. A night the
+  // world crossed is a crossed night, and the failure its lifecycle reported is a finding about that lifecycle's own
+  // observation - not about the night. Collected here so a reader sees both halves at once.
+  const lifecycleDisagreements = [];
   for (const [index, record] of dayRecords.entries()) {
     const where = `dayRecords[${String(index)}]`;
     if (!isPlainObject(record)) {
@@ -480,6 +540,25 @@ export function assessMultiDayBaseline({
     if (worldEnding !== undefined && claimed !== NIGHT_CAUSE_ENGINE && claimed !== worldEnding.cause) {
       violations.push(
         violation(`night_cause_disagrees_with_the_world:${claimed}:${worldEnding.cause}`, `${where}.cause`),
+      );
+    }
+    // THE LIFECYCLE'S OUTCOME AND THE WORLD'S CROSSING, when they contradict each other.
+    //
+    // TWO carriers, one reading. The record's own `terminal` carries it when the record published the failed lifecycle
+    // AS the night's terminal (`classifyNight` names it in `disagreement`), and the record's `sleepReceipt` carries it in
+    // the shape the runner actually writes - where a night her own sleep ended has `terminal: null` and her blocked
+    // receipt travels beside it. `NIGHT_CAUSE_SLEEP_UNSETTLED` is the only cause under which the block IS a
+    // contradiction: it is derived from that receipt plus a calendar that crossed, so SHE ended the night and her own
+    // lifecycle says it could not. A pass-out the engine took is not this disagreement, and neither is a shared-world
+    // wait.
+    const disagreement =
+      night.disagreement ??
+      (cause === NIGHT_CAUSE_SLEEP_UNSETTLED
+        ? lifecycleDisagreement({ lifecycle: sleepReceipt, worldCrossed: true })
+        : null);
+    if (disagreement !== null) {
+      lifecycleDisagreements.push(
+        Object.freeze({ night: index + 1, day: Number.isInteger(record.day) ? record.day : null, code: disagreement }),
       );
     }
     if (cause === NIGHT_CAUSE_PASS_OUT) passOutNights += 1;
@@ -686,6 +765,9 @@ export function assessMultiDayBaseline({
     shoppingMenuDismissals,
     passOutNights,
     unobservedNights,
+    // The nights whose lifecycle reported a failure while the world crossed them. A reading, not a violation: the night
+    // crossed, and naming it red would say the opposite. `[]` means every lifecycle agreed with the world.
+    lifecycleDisagreements: Object.freeze(lifecycleDisagreements),
     worldDaysCrossed,
     dayCountWitness,
     // The attribution the judgement actually used, per night: the world's own endings when the caller could read them,
@@ -698,6 +780,14 @@ export function assessMultiDayBaseline({
   });
 }
 
+/**
+ * Every rule this assessment can report a run BLOCKED for, by name.
+ *
+ * The population is the violation codes, so a rule that fails a run appears here or nowhere. The lifecycle disagreement
+ * (`LIFECYCLE_DISAGREES_WITH_WORLD`) is deliberately NOT in it: it reports the nights a lifecycle lost its own crossing
+ * while the world kept it, which does not un-cross a night and so is published as a reading (`lifecycleDisagreements`)
+ * rather than as a reason to fail the run.
+ */
 const CHECKED_RULES = Object.freeze([
   "day_records_missing",
   "baseline_window_out_of_range",

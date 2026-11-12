@@ -52,8 +52,9 @@ import { dayScopeFrom, nightCrossedInScope } from "../../lib/multiday-day-scope.
 import { judgeUncrossedNight, sleepReceiptOf, sleepVerdictCase, summarizeCrossings } from "./night-verdict.mjs";
 import {
   countPriorMultidayRuns,
-  dailyTaskFor,
+  dayTaskSchedule,
   overriddenFirstDayTask,
+  readTaskDelivery,
   runOffsetFor,
   overriddenTaskForDay,
   sweepTaskPrompts,
@@ -608,6 +609,9 @@ const sessionTurns = [];
 // entry per day the run actually delivered, built where the day's receipts are still addressable; the session
 // verdict reads it, and the result publishes it, so a run cannot be green on an unachieved task and cannot hide one.
 const taskPurposes = [];
+// Every day whose loop body started, in order, so what was SCHEDULED can be compared with what was DELIVERED:
+// `taskPurposes` holds only the days whose first turn ran, and a scheduled day missing from it left no other trace.
+const dayTasksScheduled = [];
 // What the run TOLD the companion about a seed shortage, per day, in the words it was handed (see
 // `seed-shortage.mjs`). One entry per day whose task declared a patch, computed once on that day's first turn from the
 // world as it stood then. It is recorded because "she was handed the supply and still did not go" and "nothing ever
@@ -4379,10 +4383,9 @@ try {
   const pinnedTaskForDay = overriddenTaskForDay(process.env.GAMEBUDDY_TASK_FOR_DAY);
   // Which task a day was ASKED for. Named once, because two readers need the same answer: the prompt that states the
   // task, and the criterion that decides whether it was accomplished. Two call sites would let the run be judged
-  // against a task it was never asked to do.
-  const taskForDay = (day) =>
-    pinnedTaskForDay?.(day) ??
-    (day === 1 && firstDayTask !== undefined ? firstDayTask : dailyTaskFor(dailyRunOffset, day));
+  // against a task it was never asked to do. The three sources (pin, first-day override, rotation) are composed in
+  // `dayTaskSchedule`, which is also what the delivery reading below is driven through.
+  const taskForDay = dayTaskSchedule({ runOffset: dailyRunOffset, firstDayTask, pinnedTaskForDay });
   const promptForDay = (day) => {
     const entry = SCENARIO_PROMPTS[SCENARIO][localeKey];
     if (typeof entry !== "function") return entry;
@@ -4530,6 +4533,7 @@ try {
           // the day's own verdict asks the same question of the same task. Two calls would let the run be woken for a
           // task it was not asked to do.
           const dayTask = taskForDay(day);
+          dayTasksScheduled.push(Object.freeze({ day, task: dayTask }));
           // Whether this day's day-end offer has been made. ONE per day: an offer repeated until answered is the ping
           // this change exists to remove.
           let dayEndOffered = false;
@@ -4715,6 +4719,9 @@ try {
       nights: crossing.dayRecords,
     });
     console.error("MULTIDAY_CROSSINGS", crossingSummary);
+    // What each day was asked for versus what was delivered, and the tasks it never asked for, in one line.
+    const taskDelivery = readTaskDelivery({ scheduled: dayTasksScheduled, delivered: taskPurposes });
+    console.error("MULTIDAY_TASKS", taskDelivery.reading, taskDelivery.notDelivered.join(","));
     // THE WAKE ACCOUNT, in one line, because it is the run's answer to "why did the harness think 109 times for four
     // days": what it issued and by which reason, and every settlement it deliberately did not turn into a prompt.
     const wakeByReason = Object.fromEntries(WAKE_REASONS.map((reason) => [reason, wakeAccount.issued[reason] ?? 0]));
@@ -4733,6 +4740,20 @@ try {
         quietBoundMs: QUIET_BOUND_MS,
       }),
     );
+    // Judged by the ONE baseline module, so the gate and the runner cannot disagree about what a crossing is.
+    // The day COUNT is reconciled against the world's own `day_started` facts, not against the loop's own iterations:
+    // measured 2026-11-06 (`round38`), two watched nights sat beside five world day starts and the assessment read a
+    // clean `crossings: 2`.
+    const assessment = assessMultiDayBaseline({
+      dayRecords: crossing.dayRecords,
+      daysRequested: MULTIDAY_CROSSINGS,
+      worldDayStarts: worldDayStartsFromFacts(factLog),
+      // The world's own night endings, from the same fact log: `night_ended_pass_out` is the only witness that can
+      // say the ENGINE took a night, and a night it took is attributed from here rather than from the loop's records.
+      worldNightEndings: worldNightEndingsFromFacts(factLog),
+    });
+    // A lifecycle that reported a failure for a night the world crossed is stated on the run's own log, beside them.
+    for (const entry of assessment.lifecycleDisagreements) console.error("MULTIDAY_LIFECYCLE", entry.code);
     multidayOutcome = Object.freeze({
       crossings: crossing.daysCrossed,
       // A day scope captured while the world was still arriving makes every later reading of that day suspect, so it
@@ -4745,6 +4766,7 @@ try {
       completed: crossing.completed,
       reasonCode: crossing.reasonCode,
       crossingSummary,
+      tasks: taskDelivery,
       // Why the model was woken at all, by reason, and every settlement that deliberately did not become a prompt. The
       // verdict reads this for `continuation_prompts_issued`/`_suppressed`; neither can be reconstructed from a session,
       // because a prompt that was never issued leaves no record there.
@@ -4762,17 +4784,7 @@ try {
         quietBoundMs: QUIET_BOUND_MS,
       }),
       // Judged by the ONE baseline module, so the gate and the runner cannot disagree about what a crossing is.
-      // The day COUNT is reconciled against the world's own `day_started` facts, not against the loop's own iterations:
-      // measured 2026-11-06 (`round38`), two watched nights sat beside five world day starts and the assessment read a
-      // clean `crossings: 2`.
-      assessment: assessMultiDayBaseline({
-        dayRecords: crossing.dayRecords,
-        daysRequested: MULTIDAY_CROSSINGS,
-        worldDayStarts: worldDayStartsFromFacts(factLog),
-        // The world's own night endings, from the same fact log: `night_ended_pass_out` is the only witness that can
-        // say the ENGINE took a night, and a night it took is attributed from here rather than from the loop's records.
-        worldNightEndings: worldNightEndingsFromFacts(factLog),
-      }),
+      assessment,
       dayRecords: crossing.dayRecords,
     });
   } else {

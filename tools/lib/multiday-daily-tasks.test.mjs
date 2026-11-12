@@ -5,9 +5,28 @@ import {
   DAILY_TASK_ACTION_HINTS,
   DAILY_TASK_ROTATION,
   dailyTaskFor,
-  runOffsetFor,
+  dayTaskSchedule,
+  describeTaskDelivery,
   overriddenTaskForDay,
+  readTaskDelivery,
+  runOffsetFor,
 } from "./multiday-daily-tasks.mjs";
+
+/**
+ * A fake multi-day session: the loop starts a day, which SCHEDULES its task, and then that day's first turn either reaches
+ * the companion (DELIVERED) or the run stops before it - the `turn_unsettled` shape a real run can end on.
+ */
+const fakeSession = ({ schedule, daysEntered, askedFor = (_day, task) => task }) => {
+  const scheduled = [];
+  const delivered = [];
+  for (let day = 1; day <= daysEntered; day += 1) {
+    const task = schedule(day);
+    scheduled.push({ day, task });
+    const asked = askedFor(day, task);
+    if (asked !== null) delivered.push({ day, task: asked });
+  }
+  return readTaskDelivery({ scheduled, delivered });
+};
 
 /**
  * The rotation has two independent jobs, and a test that only checked one would let the other regress.
@@ -118,4 +137,78 @@ test("a day can be pinned to its own task, and the pin names what it cannot appl
     /twice/u,
     "the same day pinned twice is refused: one of the two would be silently ignored",
   );
+});
+
+/**
+ * A CAPABILITY THAT NEEDS A LATER DAY IS SCHEDULED **AND DELIVERED** ON THAT DAY.
+ *
+ * `GAMEBUDDY_TASK_FOR_DAY="2:a_fish_from_the_water"` on a two-night run: day 1 keeps the rotation, day 2 is the fishing
+ * day. The pin was added on 2026-11-09 because `GAMEBUDDY_FIRST_DAY_TASK` can only move the FIRST day, and this is the
+ * regression that keeps the later day reachable - the scheduling path is driven here against a fake session instead of
+ * being read off the runner's source, so a composition that drops a day fails a test rather than a 34-minute run.
+ */
+test("a task pinned to a later day is scheduled and delivered on that day (2026-11-09)", () => {
+  const schedule = dayTaskSchedule({
+    runOffset: 0,
+    firstDayTask: "clear_and_plant_long_patch",
+    pinnedTaskForDay: overriddenTaskForDay("2:a_fish_from_the_water"),
+  });
+  const session = fakeSession({ schedule, daysEntered: 2 });
+  const day1 = dailyTaskFor(0, 1);
+  // The three sources say which day each one owns: `firstDayTask` moved day 1, the pin moved day 2, and both are the
+  // task the RUN decided rather than the rotation's answer.
+  assert.deepEqual(session.scheduled, { day1: "clear_and_plant_long_patch", day2: "a_fish_from_the_water" });
+  assert.deepEqual(
+    session.delivered,
+    { day1: "clear_and_plant_long_patch", day2: "a_fish_from_the_water" },
+    "both days' tasks reach the companion, in day order",
+  );
+  assert.deepEqual(session.notDelivered, []);
+  assert.deepEqual(session.mismatched, []);
+  // ONE SPELLING: the line travels with the reading, so a log and an artifact cannot state it two ways.
+  assert.equal(session.reading, describeTaskDelivery(session));
+  assert.equal(
+    describeTaskDelivery(session),
+    "tasks_scheduled: day1=clear_and_plant_long_patch, day2=a_fish_from_the_water; " +
+      "tasks_delivered: day1=clear_and_plant_long_patch, day2=a_fish_from_the_water",
+    "the line states both halves side by side",
+  );
+  // With no pin and no first-day override, day 1 is the rotation's and day 2 is not the pinned task - the pin is not a
+  // rotation change, which is what keeps a series of runs covering different days.
+  const rotationOnly = dayTaskSchedule({ runOffset: 0 });
+  assert.equal(rotationOnly(1), day1);
+  assert.notEqual(rotationOnly(2), "a_fish_from_the_water");
+});
+
+/**
+ * A TASK THE RUN DECIDED ON AND NEVER DELIVERED IS NAMED, NOT ASSUMED.
+ *
+ * Measured 2026-11-11 (`round46`): the run was asked for two nights, delivered day 1's task, and its bundle said nothing
+ * about day 2's task having been scheduled and dropped - so "the fishing day was asked for" and "it never was" read the
+ * same. The reading is the difference, and it has to be able to fire.
+ */
+test("a scheduled day whose first turn never ran is named (round46)", () => {
+  const schedule = dayTaskSchedule({ runOffset: 0, pinnedTaskForDay: overriddenTaskForDay("2:a_fish_from_the_water") });
+  // The loop started day 2, so its task was scheduled; the run ended before that day's first turn reached her.
+  const stopped = fakeSession({ schedule, daysEntered: 2, askedFor: (day, task) => (day === 1 ? task : null) });
+  assert.deepEqual(
+    stopped.notDelivered,
+    ["task_not_delivered:2:a_fish_from_the_water"],
+    `a pin nobody was asked is named by day and task; got ${JSON.stringify(stopped.notDelivered)}`,
+  );
+  assert.deepEqual(stopped.delivered, { day1: dailyTaskFor(0, 1) }, "the day that WAS delivered is still reported");
+  // A day asked for a DIFFERENT task than the one scheduled is named too: the run would otherwise be judged against a
+  // task it was never given.
+  const substituted = fakeSession({
+    schedule,
+    daysEntered: 2,
+    askedFor: (day, task) => (day === 2 ? "mine_delve" : task),
+  });
+  assert.deepEqual(
+    substituted.mismatched,
+    ["task_delivered_differs_from_scheduled:2:a_fish_from_the_water:mine_delve"],
+    `a substituted task is named by both its values; got ${JSON.stringify(substituted.mismatched)}`,
+  );
+  // And a run that delivered every scheduled day has nothing to report - the reading is not a permanent red.
+  assert.deepEqual(fakeSession({ schedule, daysEntered: 2 }).notDelivered, []);
 });

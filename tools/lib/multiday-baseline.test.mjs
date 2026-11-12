@@ -510,6 +510,72 @@ test("two nights she slept through pass, and a day with no farm work after them 
   assert.deepEqual(codes(idle), ["next_day_produced_no_farm_work"]);
 });
 
+/**
+ * THE NIGHT CROSSED WHILE ITS OWN LIFECYCLE REPORTED A DEADLINE (2026-11-05, night 1).
+ *
+ * The same night as `SLEEP_LIFECYCLE_RECEIPT` above, judged with that receipt attached as the record's `terminal` - the
+ * shape a re-judged artifact or another harness hands this module. `classifyNight` answered
+ * `night_not_advanced:blocked/lifecycle_deadline_exceeded` for it: it declared the night uncrossed on the word of the
+ * one witness that had already missed the crossing, while the calendar had moved 5 -> 6. The deadline only says
+ * something about the night while the outcome is unobserved, so any world-observed crossing settles the lifecycle.
+ */
+test("a world-observed crossing settles a lifecycle that reported a deadline (2026-11-05)", () => {
+  const crossed = classifyNight({ terminal: SLEEP_LIFECYCLE_RECEIPT, after: { dayBefore: 5, dayOfMonth: 6 } });
+  assert.equal(crossed.advanced, true, `the world crossed this night; got ${String(crossed.reasonCode)}`);
+  assert.equal(crossed.witness, "calendar", "the calendar is the witness that observed the crossing");
+  assert.equal(
+    crossed.disagreement,
+    "lifecycle_disagrees_with_world:lifecycle_deadline_exceeded:day_advanced",
+    "the lifecycle's own word is named beside the crossing instead of preferred over it",
+  );
+  assert.equal(crossed.facts.day_before, "5", "the crossing's facts are the world's, as on the calendar witness");
+  assert.equal(
+    crossed.facts.entered_via,
+    undefined,
+    "the receipt's `entered_via` is read from the record, not smuggled in",
+  );
+
+  // WHERE THE OUTCOME IS UNOBSERVED THE DEADLINE STILL STANDS: the same receipt beside a calendar that did not move is
+  // a night that did not cross, and its failure is the night's own answer.
+  const uncrossed = classifyNight({ terminal: SLEEP_LIFECYCLE_RECEIPT, after: { dayBefore: 5, dayOfMonth: 5 } });
+  assert.equal(uncrossed.advanced, false, "a night nobody watched cross is not a crossing because a receipt exists");
+  assert.equal(uncrossed.reasonCode, "night_not_advanced:blocked/lifecycle_deadline_exceeded");
+
+  // THE SHAPE THE RUNNER ACTUALLY WRITES is `terminal: null` beside the same receipt on `sleepReceipt`. That record
+  // must publish the disagreement, which is the reading that would have caught the night in the first place.
+  const shipped = assessMultiDayBaseline({
+    dayRecords: [SLEEPING_CALENDAR_NIGHT(), { ...SLEEP_RECEIPT_NIGHT }],
+    daysRequested: 2,
+  });
+  assert.deepEqual(
+    shipped.lifecycleDisagreements.map((entry) => entry.code),
+    ["lifecycle_disagrees_with_world:lifecycle_deadline_exceeded:day_advanced"],
+    `the blocked receipt beside a crossed calendar must be named; got ${JSON.stringify(codes(shipped))}`,
+  );
+  assert.equal(shipped.lifecycleDisagreements[0].night, 1, "the finding names the night it belongs to");
+  assert.equal(shipped.daysCrossed, 2, "and the night still counts as crossed");
+  assert.equal(shipped.ok, true, `a crossed night is not a failed night; got ${JSON.stringify(codes(shipped))}`);
+
+  // THE SAME NIGHT WITH THE RECEIPT AS ITS TERMINAL reaches the same verdict, and never `night_not_advanced`.
+  const attached = assessMultiDayBaseline({
+    dayRecords: [{ ...SLEEPING_CALENDAR_NIGHT(), terminal: SLEEP_LIFECYCLE_RECEIPT }, { ...SLEEP_RECEIPT_NIGHT }],
+    daysRequested: 2,
+  });
+  assert.equal(
+    attached.daysCrossed,
+    2,
+    `the crossing survives the failed terminal; got ${JSON.stringify(codes(attached))}`,
+  );
+  assert.ok(
+    !codes(attached).some((entry) => entry.startsWith("night_not_advanced")),
+    `a crossed night must not be answered with its lifecycle's failure; got ${JSON.stringify(codes(attached))}`,
+  );
+  assert.deepEqual(
+    attached.lifecycleDisagreements.map((entry) => entry.code),
+    ["lifecycle_disagrees_with_world:lifecycle_deadline_exceeded:day_advanced"],
+  );
+});
+
 test("the Mod's own night edges are required, not inferred", () => {
   const noSaved = assessMultiDayBaseline({
     dayRecords: [

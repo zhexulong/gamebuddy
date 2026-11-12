@@ -419,6 +419,84 @@ export function runOffsetFor(completedRuns) {
   return normalise(completedRuns) % DAILY_TASK_ROTATION.length;
 }
 
+/**
+ * THE ONE SCHEDULING PATH a multi-day run's days take, composed from the three ways a task is named.
+ *
+ * <p>
+ * Precedence is the whole rule: an explicit `day:task` pin first (`GAMEBUDDY_TASK_FOR_DAY`), then
+ * `GAMEBUDDY_FIRST_DAY_TASK` for day 1 only, then the rotation. Measured 2026-11-09 (round42): day 1 was forced to
+ * `clear_and_plant_long_patch`, day 2 came out as `mine_delve`, and the fishing day that had just entered the rotation
+ * could not appear in a two-night run at all - which is why the pin exists, and why every reader of "which task is day
+ * N" goes through this function. A prompt that asks for day 2's task and a purpose check that judges a different one is
+ * one composition written twice.
+ * </p>
+ */
+export function dayTaskSchedule({ runOffset = 0, firstDayTask = undefined, pinnedTaskForDay = undefined } = {}) {
+  return (day) =>
+    pinnedTaskForDay?.(day) ?? (day === 1 && firstDayTask !== undefined ? firstDayTask : dailyTaskFor(runOffset, day));
+}
+
+/**
+ * WHAT WAS SCHEDULED FOR EACH DAY VERSUS WHAT WAS ACTUALLY DELIVERED.
+ *
+ * <p>
+ * A day's task is decided the moment its loop body starts; whether the day's first turn ever reached the companion is a
+ * separate fact. Without this reading the two are indistinguishable in an artifact: measured 2026-11-11 (`round46`), a
+ * run asked for two nights delivered day 1's task and nothing in its bundle said day 2's task had been decided and
+ * dropped, so "the fishing day was asked for" and "it never was" read the same.
+ * </p>
+ * <p>
+ * `scheduled` and `delivered` are `{day, task}` entries in delivery order. A day that was scheduled and never delivered
+ * yields `task_not_delivered:<day>:<taskId>`; a day asked for a different task than the one scheduled yields
+ * `task_delivered_differs_from_scheduled:<day>:<scheduled>:<delivered>`. Both name the day and the task, because a run
+ * judged against a task it was never given is the defect they exist for.
+ * </p>
+ */
+export function readTaskDelivery({ scheduled = [], delivered = [] } = {}) {
+  const byDay = (entries) => {
+    const out = {};
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      if (!Number.isInteger(entry?.day) || typeof entry?.task !== "string") continue;
+      out[`day${String(entry.day)}`] = entry.task;
+    }
+    return out;
+  };
+  const scheduledByDay = byDay(scheduled);
+  const deliveredByDay = byDay(delivered);
+  const notDelivered = [];
+  const mismatched = [];
+  for (const [dayKey, task] of Object.entries(scheduledByDay)) {
+    const day = Number(dayKey.slice("day".length));
+    const asked = deliveredByDay[dayKey];
+    if (asked === undefined) {
+      notDelivered.push(`task_not_delivered:${String(day)}:${task}`);
+      continue;
+    }
+    if (asked !== task) mismatched.push(`task_delivered_differs_from_scheduled:${String(day)}:${task}:${asked}`);
+  }
+  return Object.freeze({
+    scheduled: Object.freeze(scheduledByDay),
+    delivered: Object.freeze(deliveredByDay),
+    notDelivered: Object.freeze(notDelivered),
+    mismatched: Object.freeze(mismatched),
+    // The one-line spelling travels WITH the reading, so a run's log and its artifact state the same sentence rather
+    // than two call sites composing it.
+    reading: describeTaskDelivery({ scheduled: scheduledByDay, delivered: deliveredByDay }),
+  });
+}
+
+/**
+ * The reading as ONE line, in the spelling the run's log and its artifact both use: the two halves side by side, so a
+ * missing task is visible rather than assumed.
+ */
+export function describeTaskDelivery(reading) {
+  const pairs = (byDay) => {
+    const entries = Object.entries(byDay ?? {});
+    return entries.length === 0 ? "(none)" : entries.map(([day, task]) => `${day}=${task}`).join(", ");
+  };
+  return `tasks_scheduled: ${pairs(reading?.scheduled)}; tasks_delivered: ${pairs(reading?.delivered)}`;
+}
+
 function normalise(value) {
   const number = Number.isFinite(value) ? Math.trunc(value) : 0;
   return ((number % DAILY_TASK_ROTATION.length) + DAILY_TASK_ROTATION.length) % DAILY_TASK_ROTATION.length;

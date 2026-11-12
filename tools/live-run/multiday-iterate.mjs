@@ -283,6 +283,26 @@ console.log(`state        ${String(parsed.state)}`);
 // round38: `state blocked`, the assessment `passed`, and a 124-character companion line the interaction gate refused).
 console.log(`reason       ${String(parsed.failure?.reasonCode ?? "(none)")}`);
 console.log(`crossings    ${String(multiday.crossings ?? "(none)")} of 2`);
+// WHAT WAS SCHEDULED VERSUS WHAT WAS DELIVERED, and whether a night's lifecycle contradicted the world's crossing. Both
+// are READINGS the artifact carries, and the two defects they answer had none: a task decided and never delivered read
+// the same as one never scheduled (`round46`), and a lifecycle that reported a deadline for a night the world crossed
+// was reported as a night that had not crossed (2026-11-05).
+console.log(`tasks        ${multiday.tasks === undefined ? "(not published by this run)" : multiday.tasks.reading}`);
+for (const code of [...(multiday.tasks?.notDelivered ?? []), ...(multiday.tasks?.mismatched ?? [])]) {
+  console.log(`  ${code}`);
+}
+// An artifact recorded before this reading existed cannot say the two agreed: `undefined` and `[]` are different facts,
+// and only the second one is a statement about the run.
+const disagreements = multiday.assessment?.lifecycleDisagreements;
+console.log(
+  `lifecycle    ${
+    disagreements === undefined
+      ? "(not published by this run)"
+      : disagreements.length === 0
+        ? "agrees with the world on every night"
+        : disagreements.map((entry) => entry.code).join(", ")
+  }`,
+);
 console.log(`submissions  ${String((parsed.programSubmissions ?? []).length)}`);
 console.log(
   `observed     ${String(outcomes.filter((entry) => entry.observed === true).length)} of ${String(outcomes.length)}`,
