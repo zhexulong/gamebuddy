@@ -19,7 +19,6 @@
     "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BodyProgramAuthorityTests.cs": 2025,
     "tools/audit-totality.mjs": 2642,
     "tools/check-host-production-import-boundary.mjs": 1761,
-    "tools/lib/stardew-player-command-graph.mjs": 1786,
     "tools/live-action.mjs": 1718,
     "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs": 6433,
     "tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs": 4613,
