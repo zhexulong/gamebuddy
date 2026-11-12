@@ -11,6 +11,13 @@
  *                    that still fails is not a finding`, `✖ planted.2: a recorded mis-formatted file is legacy debt,
  *                    not a finding`, exit 1; the unmodified predicate passes, exit 0
  *                    (tools/scripts/check-format-ratchet.test.mjs)
+ * red-proof: inject  the `unstaged` subtraction dropped from the verdict population in `main`, so files whose worktree
+ *                    bytes differ from the index count -> `✖ planted.7: a tracked file's uncommitted edit is published
+ *                    and inert, and counts the moment it is staged`, exit 1; unmodified, exit 0
+ *                    (tools/scripts/check-format-ratchet.test.mjs)
+ * red-proof: inject  the `carried` filter emptied in `--update`, so an entry whose bytes are in flight is dropped ->
+ *                    `✖ planted.8: an entry whose bytes are in flight is kept, and is not reported as fixed`, exit 1;
+ *                    unmodified, exit 0 (tools/scripts/check-format-ratchet.test.mjs)
  */
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -157,6 +164,49 @@ test("planted.6: an untracked file is published and inert, and counts the moment
     assert.match(tracked.stdout, /format_ratchet_failed new=1/);
     assert.doesNotMatch(tracked.stdout, /untracked_not_counted/);
     process.stdout.write(`planted.6: staged tools/inflight.mjs -> ${cleanOutputLines(tracked.stdout)[0]}\n`);
+  });
+});
+
+test("planted.7: a tracked file's uncommitted edit is published and inert, and counts the moment it is staged", () => {
+  withFixture({ "tools/edited.mjs": "const edited = 1;\n" }, (root) => {
+    // A shared checkout: the index holds bytes that format, the worktree holds a neighbour's edit that does not.
+    writeFileSync(join(root, "tools", "edited.mjs"), "const  edited  =  1\n");
+
+    const unstaged = runGate(root);
+    assert.equal(unstaged.status, 0, unstaged.stdout);
+    assert.match(unstaged.stdout, /format_ratchet_ok debt: files=0 .* · unstaged_not_counted 1: tools\/edited\.mjs/);
+
+    stage(root, "tools/edited.mjs");
+    const indexed = runGate(root);
+    assert.equal(indexed.status, 1, indexed.stdout);
+    assert.match(indexed.stdout, /format_ratchet_failed new=1/);
+    assert.match(indexed.stdout, /tools\/edited\.mjs/);
+    assert.doesNotMatch(indexed.stdout, /unstaged_not_counted/);
+    process.stdout.write(`planted.7: staged the edit to tools/edited.mjs -> ${cleanOutputLines(indexed.stdout)[0]}\n`);
+  });
+});
+
+test("planted.8: an entry whose bytes are in flight is kept, and is not reported as fixed", () => {
+  withFixture({ "tools/legacy.mjs": "const  legacy  =  1\n" }, (root) => {
+    record(root, ["tools/legacy.mjs"]);
+    // The reformat that would retire this entry exists only in the worktree, so the index still owes it.
+    writeFileSync(join(root, "tools", "legacy.mjs"), "const legacy = 1;\n");
+
+    const held = runGate(root);
+    assert.equal(held.status, 0, held.stdout);
+    assert.doesNotMatch(held.stdout, /recorded file\(s\) now format/);
+    assert.match(held.stdout, /format only in uncommitted edits, so the entry is kept: tools\/legacy\.mjs/);
+
+    const updated = spawnSync(process.execPath, [GATE, "--root", root, "--update"], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    assert.equal(updated.status, 0, updated.stdout);
+    assert.match(updated.stdout, /format_ratchet_recorded files=1 checked=\d+ carried=1/);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, "tools", "scripts", "format-baseline.json"), "utf8")).files, [
+      "tools/legacy.mjs",
+    ]);
+    process.stdout.write(`planted.8: edit in flight over tools/legacy.mjs -> ${cleanOutputLines(held.stdout)[0]}\n`);
   });
 });
 

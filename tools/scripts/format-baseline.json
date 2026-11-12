@@ -1,5 +1,5 @@
 {
-  "note": "Repo-relative paths biome's formatter reports as unformatted, recorded from the committed tree. Recorded so the format gate can ratchet: it fails on a file that newly joins this set and never on the set itself. Update deliberately, in its own commit, when a change removes files from it.",
+  "note": "Repo-relative paths biome's formatter reports as unformatted, recorded from the index - the bytes a commit would carry. Recorded so the format gate can ratchet: it fails on a file that newly joins this set and never on the set itself. Update deliberately, in its own commit, when a change removes files from it. An entry whose bytes are edited without being staged is kept, because no measurement of the worktree describes the index.",
   "revision": "b530a8ef",
   "files": [
     "dialogue-web/src/components/ComposedReferenceGameApp.tsx",

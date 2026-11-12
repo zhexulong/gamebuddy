@@ -26,11 +26,19 @@
  * measured bases are either absent (depth-1 checkout) or already red (merge base). The honest
  * reading of this gate is "no file newly joins the red set", not "every touched file is formatted".
  *
- * The population is the index, not the directory: a baseline can only be recorded against a tree
- * state that exists in history, and a file that is not in the index is not yet anyone's. An
- * untracked violation is published as `untracked_not_counted N: <paths>` and does not count, so one
- * lane's half-written file cannot move another lane's baseline; the cost is that a brand-new file
- * is invisible here until it is staged. See `tools/lib/indexed-sources.mjs`.
+ * The population is the index, in both directions: what the index holds is measured, and what is in flight is
+ * published instead of counted. A baseline can only be recorded against a tree state that exists in history, and a file
+ * that is not in the index is not yet anyone's - so an untracked violation is published as
+ * `untracked_not_counted N: <paths>` and does not count, and one lane's half-written file cannot move another lane's
+ * baseline. The same reason carries one step further in: a tracked file whose worktree bytes differ from the index (an
+ * edit nobody staged) is published as `unstaged_not_counted N: <paths>` and does not count either, because biome reads
+ * the worktree and the worktree of this shared checkout is several lanes' work in flight. Measured 2026-11-12: both
+ * findings were tracked files that format at HEAD and were unformatted only in another lane's uncommitted edit, and the
+ * local chain was red for work no commit contained. In CI the worktree IS the commit, so the verdict there is the same
+ * as before. A new file counts from the moment it is staged, and `tools/scripts/pre-commit.mjs` formats the staged set
+ * before the commit exists, so nothing reaches history uncounted. A recorded file whose bytes are edited without being
+ * staged is kept rather than reported as fixed, because no measurement of the worktree describes the index. See
+ * `tools/lib/indexed-sources.mjs`.
  *
  * Usage:
  *   node tools/scripts/check-format-ratchet.mjs                  # ratchet, publishing the total
@@ -38,7 +46,7 @@
  *   node tools/scripts/check-format-ratchet.mjs --root <dir>     # the gate's own fixture
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describeUntracked, untrackedSources } from "../lib/indexed-sources.mjs";
@@ -51,6 +59,10 @@ export const SCOPE = ["tools", "host/src", "dialogue-web/src", "vendor/pi-koe/sr
 const biomeBinary = join(repositoryRoot, "node_modules", "@biomejs", "biome", "bin", "biome");
 
 const baselineFor = (root) => join(root, "tools", "scripts", "format-baseline.json");
+
+/** What a recording means, so the file says how it was measured without a second hand-written copy of the rule. */
+export const RECORDED_NOTE =
+  "Repo-relative paths biome's formatter reports as unformatted, recorded from the index - the bytes a commit would carry. Recorded so the format gate can ratchet: it fails on a file that newly joins this set and never on the set itself. Update deliberately, in its own commit, when a change removes files from it. An entry whose bytes are edited without being staged is kept, because no measurement of the worktree describes the index.";
 
 /** Biome prints one `<path> format ━━━ …` header per file it would reformat. */
 const violationHeader = /^(?<file>.+?) format ━+/u;
@@ -127,6 +139,33 @@ export function nonIgnored({ files, root = repositoryRoot }) {
   return files.filter((file) => !ignored.has(file));
 }
 
+/**
+ * The tracked files whose worktree bytes differ from the index: an edit nobody staged, which is usually a neighbour's
+ * work in a shared checkout. `git diff` compares content rather than stat information, so a file that was touched but
+ * not changed is not listed. A `throw` when git cannot answer, for the same reason `untrackedSources` throws: an
+ * unreadable index would otherwise read as "nothing in flight" and silently widen the population back to the worktree.
+ */
+export function unstagedSources({ files, root = repositoryRoot }) {
+  if (files.length === 0) return new Set();
+  let output = "";
+  try {
+    output = execFileSync("git", ["diff", "--name-only", "-z", "--", ...files], {
+      cwd: root,
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch (error) {
+    throw new Error(`could not ask git what ${root} has not staged: ${error.message}`);
+  }
+  return new Set(
+    output
+      .split("\0")
+      .filter(Boolean)
+      .map((file) => file.replace(/\\/gu, "/")),
+  );
+}
+
 /** The files that joined the red set, and the recorded files that left it. */
 export function ratchet({ baselineFiles, files }) {
   const recorded = new Set(baselineFiles);
@@ -143,49 +182,67 @@ const valueOf = (argv, name) => {
 };
 
 function main(argv) {
-  const root = valueOf(argv, "--root") ?? repositoryRoot;
+  const root = resolve(valueOf(argv, "--root") ?? repositoryRoot);
   const update = argv.includes("--update");
-  const baselinePath = baselineFor(resolve(root));
-  const scanned = scan({ root: resolve(root) });
+  const baselinePath = baselineFor(root);
+  const scanned = scan({ root });
   const { checked } = scanned;
-  const ignored = nonIgnored({ files: scanned.files, root: resolve(root) });
-  const untracked = untrackedSources({ roots: SCOPE, root: resolve(root) });
+  const ignored = nonIgnored({ files: scanned.files, root });
+  const untracked = untrackedSources({ roots: SCOPE, root });
+  const tracked = ignored.filter((file) => !untracked.has(file));
+  // A recorded file is read too: an entry whose bytes are in flight must be kept, not reported as fixed.
+  const recordedBefore = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, "utf8")).files : [];
+  const unstaged = unstagedSources({ files: [...new Set([...tracked, ...recordedBefore])], root });
   const outside = ignored.filter((file) => untracked.has(file));
-  const files = ignored.filter((file) => !untracked.has(file));
-  const unseen = outside.length === 0 ? "" : ` · untracked_not_counted ${describeUntracked(outside)}`;
+  const inFlight = tracked.filter((file) => unstaged.has(file));
+  const files = tracked.filter((file) => !unstaged.has(file));
+  const unseen = [
+    outside.length === 0 ? undefined : `untracked_not_counted ${describeUntracked(outside)}`,
+    inFlight.length === 0 ? undefined : `unstaged_not_counted ${describeUntracked(inFlight)}`,
+  ]
+    .filter((clause) => clause !== undefined)
+    .map((clause) => ` · ${clause}`)
+    .join("");
 
   if (update) {
+    const carried = recordedBefore.filter((file) => unstaged.has(file));
+    const recorded = [...new Set([...files, ...carried])].sort();
     const baseline = {
-      note: "Repo-relative paths biome's formatter reports as unformatted, recorded from the committed tree. Recorded so the format gate can ratchet: it fails on a file that newly joins this set and never on the set itself. Update deliberately, in its own commit, when a change removes files from it.",
+      note: RECORDED_NOTE,
       revision: execFileSync("git", ["rev-parse", "--short", "HEAD"], {
-        cwd: resolve(root),
+        cwd: root,
         encoding: "utf8",
         windowsHide: true,
       }).trim(),
-      files,
+      files: recorded,
     };
     writeFileSync(baselinePath, `${JSON.stringify(baseline, null, 2)}\n`);
     process.stdout.write(
-      `format_ratchet_recorded files=${files.length} checked=${checked} revision=${baseline.revision}${unseen}\n`,
+      `format_ratchet_recorded files=${recorded.length} checked=${checked} carried=${carried.length} revision=${baseline.revision}${unseen}\n`,
     );
     return 0;
   }
 
-  const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
-  const result = ratchet({ baselineFiles: baseline.files, files });
-  const debt = `files=${files.length} checked=${checked} recorded=${baseline.files.length}${unseen}`;
+  const result = ratchet({ baselineFiles: recordedBefore, files });
+  const held = result.fixed.filter((file) => unstaged.has(file));
+  const fixed = result.fixed.filter((file) => !unstaged.has(file));
+  const debt = `files=${files.length} checked=${checked} recorded=${recordedBefore.length}${unseen}`;
   if (result.grown.length === 0) {
     process.stdout.write(`format_ratchet_ok debt: ${debt}\n`);
-    if (result.fixed.length > 0)
+    if (fixed.length > 0)
       process.stdout.write(
-        `  ${result.fixed.length} recorded file(s) now format; re-record tighter with: node tools/scripts/check-format-ratchet.mjs --update\n`,
+        `  ${fixed.length} recorded file(s) now format; re-record tighter with: node tools/scripts/check-format-ratchet.mjs --update\n`,
+      );
+    if (held.length > 0)
+      process.stdout.write(
+        `  ${held.length} recorded file(s) format only in uncommitted edits, so the entry is kept: ${held.join(", ")}\n`,
       );
     return 0;
   }
   process.stdout.write(`format_ratchet_failed new=${result.grown.length} debt: ${debt}\n`);
   for (const file of result.grown) process.stdout.write(`  ${file}\n`);
   process.stdout.write(
-    "a file that was not in the recorded red set does not format; fix it, or if it is deliberate debt, re-record with: node tools/scripts/check-format-ratchet.mjs --update\n",
+    "a file the index newly carries does not format; fix it, or if it is deliberate debt, re-record with: node tools/scripts/check-format-ratchet.mjs --update\n",
   );
   return 1;
 }
