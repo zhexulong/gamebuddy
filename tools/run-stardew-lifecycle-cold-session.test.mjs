@@ -1,3 +1,6 @@
+// red-proof: inject  the boolean guard dropped from `classifyStageResult` in tools/run-stardew-lifecycle-cold-session.mjs
+//                    -> `✖ a stage that produced no evidence is never a pass`, actual `{ state: 'blocked', reasonCode:
+//                    'admission_refused' }` where `lifecycle_stage_evidence_missing:admission` was expected, exit 1
 // Offline suite for the cold-session lifecycle gate.
 //
 // It launches NO game, no SMAPI and no provider: every stage is the injection seam, so a

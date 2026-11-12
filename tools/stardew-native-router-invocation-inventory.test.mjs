@@ -1,3 +1,6 @@
+// red-proof: inject  the second-occurrence refusal removed from the router-invocation inventory module ->
+//                    `✖ fails closed for a non-unique source router signature`, `Missing expected rejection` against
+//                    `{ code: 'router_inventory_method_anchor_missing' }`, exit 1; restored -> green
 import assert from "node:assert/strict";
 import test from "node:test";
 import { deriveNativeRouterInvocationInventory } from "./lib/stardew-native-router-invocation-inventory.mjs";

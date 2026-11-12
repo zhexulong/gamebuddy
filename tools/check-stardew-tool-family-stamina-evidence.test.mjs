@@ -1,3 +1,6 @@
+// red-proof: inject  `lastClick = Vector2.Zero` dropped from SEAM_REQUIRED_STEPS in
+//                    tools/check-stardew-tool-family-stamina-evidence.mjs -> `✖ a seam that drops the lastClick reset is
+//                    reported`, `expected a lastClick failure, got []`, exit 1; restored -> green
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";

@@ -1,3 +1,6 @@
+// red-proof: inject  the partial-family gap rule removed from the state-machine family register module ->
+//                    `✖ fails closed for omitted partial-family gap, stale anchor, and missing owner`,
+//                    `Missing expected exception`, exit 1; restored -> green
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

@@ -1,3 +1,6 @@
+// red-proof: inject  the local-Poll requirement removed from the completion-event register module ->
+//                    `✖ fails closed for missing local Poll`, `Missing expected exception` against
+//                    `{ code: 'completion_event_register_wiring_missing' }`, exit 1; restored -> green
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

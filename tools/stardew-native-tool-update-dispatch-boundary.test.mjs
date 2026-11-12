@@ -1,3 +1,6 @@
+// red-proof: inject  the router-parse-gap rule removed from the Tool.Update dispatch boundary module ->
+//                    `✖ fails closed for source parsing gaps inside the exact Tool.Update body`, `Missing expected
+//                    exception`, exit 1; restored -> green
 import assert from "node:assert/strict";
 import test from "node:test";
 import { summarizeNativeToolUpdateDispatchBoundary } from "./lib/stardew-native-tool-update-dispatch-boundary.mjs";

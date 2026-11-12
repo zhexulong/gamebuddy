@@ -1,3 +1,6 @@
+// red-proof: inject  the registration rule in the event-continuation-trace module reduced to the event
+//                    field alone, dropping the handler/onEvent binding -> `✖ fails closed for a registration that does not
+//                    bind the event to its handler`, `Missing expected exception`, exit 1; restored -> green
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

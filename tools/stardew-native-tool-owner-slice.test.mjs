@@ -1,3 +1,6 @@
+// red-proof: inject  the unclassified-invocation rule removed from the tool owner slice module ->
+//                    `✖ fails closed for omitted invocation or an unanchored dynamic gap`, `Missing expected exception`
+//                    against `{ code: 'tool_owner_slice_unclassified' }`, exit 1; restored -> green
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

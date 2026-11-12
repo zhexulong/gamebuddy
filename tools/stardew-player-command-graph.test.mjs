@@ -1,3 +1,6 @@
+// red-proof: inject  `classifyIngressReachableCall` in the player-command classification module answering
+//                    `supporting_path` for an unrecognised call -> `✖ classifies only known continuous helpers as
+//                    supporting and retains unknown calls unresolved`, plus two graph cases, exit 1; restored -> green
 import assert from "node:assert/strict";
 import test from "node:test";
 import {

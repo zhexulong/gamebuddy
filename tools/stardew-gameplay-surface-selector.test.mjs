@@ -1,3 +1,6 @@
+// red-proof: inject  comments not stripped from the method body the selector parser reads ->
+//                    `commented_out` extracted as a case selector; `✖ extracts nested literal case and comparison
+//                    selectors without treating strings in comments as operations`, exit 1; restored -> green, exit 0
 import assert from "node:assert/strict";
 import test from "node:test";
 import { extractLiteralOperationSelectors } from "./lib/stardew-gameplay-surface-selector.mjs";

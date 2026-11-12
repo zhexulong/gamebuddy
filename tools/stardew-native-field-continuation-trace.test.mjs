@@ -1,3 +1,6 @@
+// red-proof: inject  the field-reference rule deleted from the field-continuation-trace module ->
+//                    `✖ fails closed if a supposed consumer does not reference field`, `Missing expected exception`
+//                    against `{ code: 'field_continuation_callsite_invalid' }`, exit 1; restored -> green
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

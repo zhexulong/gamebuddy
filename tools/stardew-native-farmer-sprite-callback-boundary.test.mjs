@@ -1,3 +1,5 @@
+// red-proof: inject  the stale-slice comparison deleted from the farmer-sprite callback boundary module's `exact()` -> `✖ fails closed for stale callback locator`, actual `Error: Callback store must assign
+//                    endOfAnimationFunction.` where `farmer_sprite_callback_locator_stale` was expected, exit 1
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

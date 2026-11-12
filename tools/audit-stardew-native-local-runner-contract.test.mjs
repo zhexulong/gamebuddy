@@ -1,3 +1,6 @@
+// red-proof: inject  `conforming` in tools/audit-stardew-native-local-runner-contract.mjs narrowed to
+//                    `!assertsExactCapabilities` -> `✖ regressing a baseline-conforming runner back to the retired shape
+//                    is a finding` (`audit must report the regression`, actual 0 expected 1), exit 1; restored -> green
 // Regression gate for the native-local runner contract audit.
 //
 // The audit exists because a runner can be structurally incapable of passing live

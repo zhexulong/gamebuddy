@@ -1,3 +1,6 @@
+// red-proof: inject  the implementations half of the staleness comparison dropped from the virtual-member
+//                    invocation register -> `✖ fails closed when an exact
+//                    implementation inventory becomes stale`, `Missing expected rejection`, exit 1; restored -> green
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

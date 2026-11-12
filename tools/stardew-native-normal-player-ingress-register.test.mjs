@@ -1,3 +1,6 @@
+// red-proof: inject  the exhaustive-inventory gap rule disabled in the normal-player ingress register module ->
+//                    `✖ requires the partial inventory gap to be exactly router-anchored and rejects a gap on exhaustive
+//                    inventory`, `Missing expected exception` against `normal_player_ingress_exhaustive_inventory_has_gap`
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

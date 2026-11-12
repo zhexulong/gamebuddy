@@ -1,3 +1,6 @@
+// red-proof: inject  `if (import.meta.main)` disabled in
+//                    the body-owner-hold runner -> `✖ every registered gate runner declares a CLI entry point`, actual
+//                    `[ 'run-stardew-native-local-player-body-owner-hold-smoke.mjs' ]` against `[]`, exit 1
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";

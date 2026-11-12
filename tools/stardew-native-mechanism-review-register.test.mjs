@@ -1,3 +1,6 @@
+// red-proof: inject  the unreviewed-mechanism rule deleted from the mechanism review register module ->
+//                    `✖ requires exactly one non-semantic disposition for every exact discovered mechanism`,
+//                    `Missing expected exception`, exit 1; restored -> green
 import assert from "node:assert/strict";
 import test from "node:test";
 import { validateNativeMechanismReviewRegister } from "./lib/stardew-native-mechanism-review-register.mjs";

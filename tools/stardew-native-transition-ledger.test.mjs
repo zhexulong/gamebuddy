@@ -1,3 +1,6 @@
+// red-proof: inject  the partial-exit rule removed from the transition-ledger module ->
+//                    `✖ rejects empty routers, missing continuation registration/resume, and partial exits without a gap`,
+//                    `Missing expected exception`, exit 1; restored -> green
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";

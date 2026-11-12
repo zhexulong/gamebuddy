@@ -1,3 +1,6 @@
+// red-proof: inject  the guard fragments flattened per rule in the bridge-equivalence audit ->
+//                    `✖ reports a bridge equivalence gap when a required human-path guard is absent`, actual
+//                    `source_guard_equivalence_candidate` against `bridge_equivalence_gap`, exit 1; restored -> green
 import assert from "node:assert/strict";
 import test from "node:test";
 import { auditBridgeRouteEquivalence } from "./lib/stardew-player-command-equivalence-audit.mjs";

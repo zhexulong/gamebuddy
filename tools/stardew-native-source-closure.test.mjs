@@ -1,3 +1,6 @@
+// red-proof: inject  the completion refusal removed from the source-closure module ->
+//                    `✖ fails closed for unknown completion, unmodeled runtime edges, and post-source vocabulary`,
+//                    `Missing expected exception` against `/unknown blocking edges/`, exit 1; restored -> green
 import assert from "node:assert/strict";
 import test from "node:test";
 import { validateNativeSourceClosure } from "./lib/stardew-native-source-closure.mjs";
