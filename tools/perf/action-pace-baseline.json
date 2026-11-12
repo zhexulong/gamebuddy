@@ -1,0 +1,126 @@
+{
+  "note": "Per-action pace ratios recorded from the game-side durations in this checkout's own .live-runs bundles. The ratio is the action's measured p50 game-side milliseconds over the engine floor tools/lib/action-pace.mjs derives from the decompiled tree (one tool swing, or one tile of walking). tools/check-perf-budget.mjs re-measures from whatever bundles exist and fails when an action's ratio grows past its recorded ratio plus tolerance; re-record deliberately, in its own commit, when a change makes an action faster. Actions whose work has no engine constant are absent here on purpose and are printed as `action_pace_unpriced` instead. The ratio is compared across revisions, not across machines: it is a property of the game-side path, not of the box.",
+  "recordedFrom": {
+    "actionTraceFiles": 151,
+    "resultFiles": 275,
+    "timedInstances": 2965,
+    "examinedInstances": 1479
+  },
+  "tolerance": 0.5,
+  "actions": {
+    "break_rock": {
+      "ratio": 1.28,
+      "oursMs": 616,
+      "floorMs": 480,
+      "instances": 177
+    },
+    "break_rock_source": {
+      "ratio": 0.07,
+      "oursMs": 35,
+      "floorMs": 480,
+      "instances": 216
+    },
+    "chop_stump": {
+      "ratio": 2.69,
+      "oursMs": 1289,
+      "floorMs": 480,
+      "instances": 8
+    },
+    "chop_tree": {
+      "ratio": 1.29,
+      "oursMs": 619,
+      "floorMs": 480,
+      "instances": 10
+    },
+    "claim_mail_attachment": {
+      "ratio": 3.36,
+      "oursMs": 56,
+      "floorMs": 16.67,
+      "instances": 13
+    },
+    "color_placed_object": {
+      "ratio": 8.88,
+      "oursMs": 148,
+      "floorMs": 16.67,
+      "instances": 3
+    },
+    "cut_grass": {
+      "ratio": 0.32,
+      "oursMs": 152,
+      "floorMs": 480,
+      "instances": 140
+    },
+    "cut_weeds": {
+      "ratio": 1.24,
+      "oursMs": 597,
+      "floorMs": 480,
+      "instances": 210
+    },
+    "equip_tool": {
+      "ratio": 1.38,
+      "oursMs": 23,
+      "floorMs": 16.67,
+      "instances": 61
+    },
+    "express_emote": {
+      "ratio": 4.2,
+      "oursMs": 70,
+      "floorMs": 16.67,
+      "instances": 1
+    },
+    "harvest_crop": {
+      "ratio": 135.42,
+      "oursMs": 2257,
+      "floorMs": 16.67,
+      "instances": 30
+    },
+    "move_placed_furniture": {
+      "ratio": 2.52,
+      "oursMs": 42,
+      "floorMs": 16.67,
+      "instances": 4
+    },
+    "move_to_tile": {
+      "ratio": 3.05,
+      "oursMs": 1538,
+      "floorMs": 505.05,
+      "instances": 172
+    },
+    "pickup_item": {
+      "ratio": 1.68,
+      "oursMs": 28,
+      "floorMs": 16.67,
+      "instances": 86
+    },
+    "place_owned_object": {
+      "ratio": 27.9,
+      "oursMs": 465,
+      "floorMs": 16.67,
+      "instances": 4
+    },
+    "plant_seed": {
+      "ratio": 2.64,
+      "oursMs": 44,
+      "floorMs": 16.67,
+      "instances": 31
+    },
+    "remove_placed_item": {
+      "ratio": 1.15,
+      "oursMs": 551,
+      "floorMs": 480,
+      "instances": 3
+    },
+    "till_soil": {
+      "ratio": 0.29,
+      "oursMs": 138,
+      "floorMs": 480,
+      "instances": 103
+    },
+    "water_crop": {
+      "ratio": 0.09,
+      "oursMs": 32,
+      "floorMs": 375,
+      "instances": 47
+    }
+  }
+}

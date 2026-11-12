@@ -51,15 +51,26 @@
  *   node tools/check-perf-budget.mjs --results <file>        # compare a saved suite output
  *   node tools/check-perf-budget.mjs --root <dir>            # the gate's own fixture
  *
+ * ACTION PACE. The same entry point also holds the game-action performance standard
+ * (`tools/lib/action-pace.mjs`): one action's measured game-side milliseconds against what the
+ * engine itself forces a player to spend on the same work. It reads run artifacts, not this box,
+ * so it runs on a machine the microbenchmark baseline belongs to somebody else.
+ *
+ *   node tools/check-perf-budget.mjs --action-pace-only       # just the pace verdict
+ *   node tools/check-perf-budget.mjs --bundles <dir>           # pace population (default <root>/.live-runs)
+ *   node tools/check-perf-budget.mjs --record-action-pace      # re-record the pace ratchet
+ *
  * red-proof: fixture  a saved suite reading with `admission.action/large` at 215.72 µs/op against the recorded 107.86
  *                     -> `perf_budget_failed slow=1 ... +100.0%`, exit 1 (tools/perf/budget.test.mjs)
+ * red-proof: fixture  a bundle whose `harvest_crop` duration is doubled -> `action_pace_above_native_floor:harvest_crop:`
+ *                     naming the action, its ratio, ours and the floor, exit 1 (tools/perf/action-pace.test.mjs)
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { arch, cpus, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
+import { actionPaceRecord, compareActionPace, measureActionPace, renderActionPace } from "./lib/action-pace.mjs";
 import { caseResults, runSuite } from "./perf/run-benchmarks.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -78,6 +89,7 @@ export const BUDGET_TOLERANCE = 0.5;
 const RECORDING_PROCESSES = 3;
 
 const baselineFor = (root) => join(root, "tools", "perf", "baseline.json");
+const actionPaceBaselineFor = (root) => join(root, "tools", "perf", "action-pace-baseline.json");
 
 /** What one case may cost per op: its recorded cost plus the tolerance. */
 export function budgetMicros(recorded) {
@@ -309,8 +321,57 @@ function recordWorst({ root, machine, argv }) {
   }
 }
 
+/**
+ * The action-pace section: one action's measured game-side milliseconds against what the
+ * engine itself forces a player to spend on the same work.
+ *
+ * WHY IT LIVES IN THIS SCRIPT AND NOT IN ITS OWN: "one perf entry" is the point. A
+ * second perf script is a second thing a lane has to remember to run, and a gate nobody
+ * runs is indistinguishable from a passing one. This section runs before the
+ * microbenchmark comparison and on a machine the microbenchmark baseline belongs to
+ * somebody else, because it measures artifacts rather than the box.
+ */
+function actionPaceSection({ root, argv }) {
+  const bundles = resolve(valueOf(argv, "--bundles") ?? join(root, ".live-runs"));
+  const baselinePath = actionPaceBaselineFor(root);
+  const measurement = measureActionPace({ bundleRoot: bundles });
+  if (argv.includes("--record-action-pace")) {
+    if (measurement.status !== "measured")
+      throw new Error(`action_pace_record_needs_a_measurement:${measurement.status}:${bundles}`);
+    const record = actionPaceRecord({ measurement });
+    writeFileSync(baselinePath, `${JSON.stringify(record, null, 2)}\n`);
+    process.stdout.write(
+      `action_pace_recorded actions=${Object.keys(record.actions).length} examined=${measurement.timedInstances} ` +
+        `actionTraceFiles=${measurement.actionTraceFiles} resultFiles=${measurement.resultFiles}\n`,
+    );
+    return false;
+  }
+  const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, "utf8")) : { actions: {} };
+  const rendered = renderActionPace({
+    measurement,
+    verdict: compareActionPace({ measurement, baseline }),
+    bundleRoot: bundles,
+  });
+  for (const line of rendered.lines) process.stdout.write(`${line}\n`);
+  return rendered.failed;
+}
+
 function main(argv) {
   const root = resolve(valueOf(argv, "--root") ?? repositoryRoot);
+  // A recording is not a check: it writes what this checkout's bundles measured and stops, so it
+  // never depends on a microbenchmark suite run or on this box's baseline.
+  const recording = argv.includes("--record-action-pace");
+  // The action-pace section is NOT behind the machine skip inside `checkMicrobenchmarks`: it reads
+  // game-side durations out of run artifacts, not ops/sec out of this box, so another machine's
+  // microbenchmark baseline has nothing to say about it.
+  const paceFailed = actionPaceSection({ root, argv });
+  // The section also stands alone, for a lane that wants the pace verdict without paying for a
+  // microbenchmark suite: the same script, one mode, never a second perf entry point.
+  if (recording || argv.includes("--action-pace-only")) return paceFailed ? 1 : 0;
+  return checkMicrobenchmarks({ root, argv, paceFailed });
+}
+
+function checkMicrobenchmarks({ root, argv, paceFailed }) {
   const update = argv.includes("--update");
   const machine = machineIdentity();
   const baseline = update ? undefined : JSON.parse(readFileSync(baselineFor(root), "utf8"));
@@ -320,7 +381,7 @@ function main(argv) {
       // Not measured: this machine's numbers are not this baseline's numbers, and measuring them
       // would only produce a red that says "another box" in the shape of a regression.
       process.stdout.write(`${skip}\n`);
-      return 0;
+      return paceFailed ? 1 : 0;
     }
     // Before the measurement, because it describes the numbers that follow rather than the verdict.
     process.stdout.write(`${revisionLine(baseline.revision, revisionDistance(baseline.revision, root))}\n`);
@@ -328,7 +389,7 @@ function main(argv) {
   }
   if (update) {
     recordWorst({ root, machine, argv });
-    return 0;
+    return paceFailed ? 1 : 0;
   }
 
   const results = measureCases(argv).sort((left, right) =>
@@ -357,7 +418,7 @@ function main(argv) {
   if (slow.length === 0 && unrecorded.length === 0 && missing.length === 0 && duplicates.length === 0) {
     const slowest = [...measuredByKey.entries()].sort((left, right) => right[1].perOpMicros - left[1].perOpMicros)[0];
     process.stdout.write(`perf_budget_ok slowest=${slowest[0]} ${slowest[1].perOpMicros} µs/op debt: ${debt}\n`);
-    return 0;
+    return paceFailed ? 1 : 0;
   }
 
   process.stdout.write(

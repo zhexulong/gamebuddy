@@ -210,7 +210,7 @@
     "test:multiday-tasks": "node --test tools/lib/multiday-daily-tasks.test.mjs tools/lib/multiday-task-families.test.mjs tools/lib/task-purpose.test.mjs",
     "test:parser-agreement": "node --test tools/lib/parser-agreement.test.mjs",
     "test:persona-prose": "node --test tools/check-persona-prose.test.mjs",
-    "test:perf-budget": "node --test tools/perf/budget.test.mjs",
+    "test:perf-budget": "node --test tools/perf/budget.test.mjs tools/perf/action-pace.test.mjs",
     "test:perf-scaling": "node --test tools/check-perf-scaling.test.mjs",
     "test:planner-guidance-observation-tools": "node --test tools/check-planner-guidance-observation-tools.test.mjs",
     "test:post-history-live": "node --test tools/live-run/chat/run-post-history-live.test.mjs",
