@@ -205,7 +205,8 @@ defs.advisory.properties.status.enum].sort());
 ``
 
 `DISPOSITION_STATUSES` is the gate's own constant — what the checker treats as a disposition it must validate.
-`$defs.advisory.properties.status.enum` is the schema the advisory snapshot is written against. Sorted deep
+`
+defs.advisory.properties.status.enum` is the schema the advisory snapshot is written against. Sorted deep
 equality fails in both directions, so a status added to either side alone is a red gate: the engine cannot
 learn a disposition the schema does not publish, and the schema cannot publish one the engine silently ignores.
 The red proof for it is a one-word edit — dropping `mitigated` from the constant — which is exactly why the
@@ -940,3 +941,100 @@ Neither tool exits 0 before or after, and the reasons are other lanes' and are n
 - `spec_reachability_unreached_suite:tools/check-terminal-commit-single-entry.test.mjs` — a tracked suite no command
   names, and it is `real-and-red`, so wiring it would turn the corpus red. It is the eighty-fifth file and the only one
   of the eighty-five that was never in the baseline.
+
+## The tenth batch: the sixty fakes publish what a real session publishes, and the derivation is read from the catalog
+
+The ninth batch proved by experiment that sixty of the unreached suites were blocked on one fact and left the fix
+unmade. This batch made it, and the shape of the fix is the interesting part.
+
+### The cause, restated as the thing that had to change
+
+`publishedActionWatchdogMs` reads `client.state.catalogRegistrations`, and that is **correct**: the Mod publishes each
+action's own `WatchdogMs` on `hello_ack`, `BridgeSession.IsFreshExecutionRequest` admits a deadline at most that number,
+and the docblock records the defect it caught (`fish_here` publishes 60 s, a runner wrote 120 s, the first live slice
+came back `bridge_rejected:invalid_deadline` thirteen seconds after a game launch). Sixty fake clients never published
+it. So the throw stays, and the **fakes** moved.
+
+### The first derivation was wrong, and the suites said so
+
+The instruction was to derive the advertisement from "the actions that fake advertises". The first attempt read
+`snapshot.capabilities`. That is a different fact: capabilities are the GRANTED subset, and a runner equips a tool
+while performing an action the grant does not name. Measured: `break_rock`'s fixture grants
+`[cancel_active_execution, inspect_self, move_to_tile, travel, break_rock]`, its runner dispatches `equip_tool`, and the
+suite came back `native_action_watchdog_unpublished:equip_tool` — a refusal about the fake, not about the product.
+Twelve suites failed that way.
+
+What a real session publishes is its whole registration surface: `hello_ack` carries every action the Mod enforces, with
+the window each declares, and the per-action grant is a separate fact. `publishedActionRegistrations()` is that, and the
+fakes now call it.
+
+### Where the numbers come from
+
+`readStardewActionWatchdogs()` in `tools/lib/stardew-published-action-registry.mjs` — the module that already reads this
+one file for action ids, families and lifecycles — parses `FarmhandActionDefinitions.cs` for:
+
+- the catalog's three declared constants (`DefaultWatchdogMs`, `NavigationWatchdogMs`, `LifecycleWatchdogMs`);
+- a row's own `WatchdogMs:` named argument (`navigate_to_destination`);
+- a row whose descriptor is a factory whose `with { WatchdogMs = … }` block declares it (`sleep` through `Lifecycle()`);
+- a read-only `R(...)` row, which is not dispatchable and therefore publishes **nothing**.
+
+Measured on the real catalog: 103 enforced actions, `navigate_to_destination` and `sleep` at 600 000 ms,
+`fish_here` and `till_soil` at 60 000 ms. Nothing is hand-listed and no constant is written in JavaScript.
+
+### The two red proofs, and what they establish
+
+Both ran in the copy at `E:/tmp/gateproof/b9`, never in the live worktree; each was restored from the copy's own commit
+and re-run green, proved twice (`git status --porcelain -- <path>` empty and `git hash-object` equal to
+`git rev-parse HEAD:<path>`).
+
+| the injected violation | the line that fired | exit |
+| --- | --- | --- |
+| the derivation returns the default for every row instead of resolving the row's own window | `✖ the watchdog is each registration's own declared window, never one constant` + `✖ the real catalog publishes the window the live defect was measured against` + `✖ one action declaring two different windows is refused rather than last-wins` | 1 |
+| `catalogRegistrationsFor` supplies `descriptor: { watchdogMs: 60_000 }` for an action the catalog declares no window for | `✖ an advertised action the catalog declares no window for is still refused by name` + `AssertionError … Expected values to be strictly deep-equal` | 1 |
+
+The second is the one that matters most: it is the gate against the fix being satisfied by publishing junk. A read-only
+action stays advertised and stays without a window, so `publishedActionWatchdogMs` refuses it by name — the
+`native_action_watchdog_unpublished:<action>` path is still reachable through a fake.
+
+### What the tree reads now
+
+| reading | ninth batch | tenth batch |
+| --- | --- | --- |
+| `node tools/check-spec-reachability.mjs` | `tools_suites: 85 of 402 unreached · held 84` | `tools_suites: 21 of 402 unreached · held 20` |
+| the sixty suites, one command | 60 red on `native_catalog_registrations_missing` | `node --test` over `suite:stardew-native-local-smoke`: 410 tests, 410 pass, 0 fail, exit 0 |
+| `tools/gate-red-proof-baseline.json` | 24 entries | 23 entries (`--update`, which removed `test:tool-corpus` and nothing else) |
+
+Sixty of the eighty-five are wired and green, plus the four the ninth batch wired: **64 of 85**. The twenty-one that
+remain are named, and nineteen of them are the ones the ninth batch left:
+
+- **seventeen `real-and-red`** — their own assertion still fails: `audit-stardew-nogame-subset`,
+  `check-refusal-informativeness`, `check-stardew-snapshot-family-bounds`, `derive-stardew-action-cancellation`,
+  `replay-stardew-navigation-read-only-gate`, `run-tavern-management-operation-evidence`,
+  `run-tavern-narrative-gate`, `stardew-native-local-player-fixture`, and the nine smoke suites whose second assertion
+  survives a supplied watchdog (`craft-partial-recovery-chain`, `enter-mine-ladder`, `navigation-mutation`,
+  `place-crab-pot`, `place-crab-pot-fixture`, `place-wood-fence`, `stamina-recovery-chain`, `talk-to-npc`,
+  `water-crop`) — plus `tools/check-terminal-commit-single-entry.test.mjs`, which no command has ever named;
+- **two `stale` by spelling** — `stardew-policy-isolation` asserts `result.EnabledActions`, a policy field the fixture
+  writer retired, and `verify-stardew-action-projection` asserts a runner imports `assertExactCapabilities` where the
+  reader now sees `assertRequiredCapabilities`. Neither is the watchdog, and neither is repaired here;
+- **one `cannot-run`** — `prepare-tavern-live-fixture` bootstraps a live Tavern fixture through Host artifact envelopes
+  and does not finish offline.
+
+### Two things this batch did not do, and one it could not control
+
+- The `test:tool-corpus` entry left the baseline through `tools/audit-gate-red-proofs.mjs --update`, which rewrote the
+  file from its own reading and removed exactly that one entry. **What that costs:** the gate is proven in this worktree
+  by `tools/run-tool-test-corpus.test.mjs`, which is still untracked. At a commit without that file the gate is
+  unproven, so the deletion is correct only once that suite lands; the census reads `declared without 21` and not the
+  20 the request expected, because `--update` recorded the 23 remaining gaps and `held` excludes the two unreadable
+  claims — `23 − 2 = 21`.
+- The suites were converted in one sweep because the conversion was uniform once the derivation was right
+  (`publishedActionRegistrations()` needs nothing from the file it lands in). The sweep still needed three hand edits
+  for fakes whose state is a local (`crop-runner-harness`, `body-owner-hold`, `pickup-forage`), two import merges, and
+  one first attempt that was wrong for a reason worth keeping: a first version read `snapshot.capabilities` and broke
+  twelve suites, which is the measurement quoted above.
+- **`package.json`'s new `suite:stardew-native-local-smoke` line landed inside another lane's commit** (`35c6fb0b`,
+  "a crash report inside the tree, or holding a credential, fails the ladder"), not in this batch's. The wiring is in
+  HEAD and the reachability reading above depends on it, but its attribution is wrong and a whole-tree commit is how
+  that happened. Nothing is repaired by rewriting history; it is recorded so the next reader of that commit's diff is
+  not surprised by sixty suite names it does not explain.
