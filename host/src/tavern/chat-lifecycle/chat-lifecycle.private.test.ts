@@ -1,0 +1,330 @@
+import assert from "node:assert/strict";
+import { rm } from "node:fs/promises";
+import test from "node:test";
+import { canonicalTestRoot } from "../../test-support/canonical-test-root.test-support.js";
+import { createChatThreadStore, createProfileAwareChatThreadCreationCapability } from "../chat-thread-store.js";
+import {
+  type ChatLifecycleAtomicGuard,
+  type ChatLifecycleMutationReader,
+  createChatLifecycleService,
+  createInternalChatLifecycleService,
+} from "./chat-lifecycle-service.js";
+
+const continuityKey = "a".repeat(64);
+const openStores: Array<ReturnType<typeof createChatThreadStore>> = [];
+
+/** Opens a store on `root` and remembers it, so this file always closes what it opened. */
+function openStore(root: string, now?: () => number): ReturnType<typeof createChatThreadStore> {
+  const store =
+    now === undefined ? createChatThreadStore(root, continuityKey) : createChatThreadStore(root, continuityKey, now);
+  openStores.push(store);
+  return store;
+}
+
+/**
+ * Closes every store this file opened before its root is removed. An open store
+ * holds the continuity SQLite file (`tavern.sqlite`, its `-wal` and `-shm`)
+ * against deletion, and on Windows `fs.rm` on that root neither fails nor
+ * resolves: the test then hangs forever in its own `finally`.
+ */
+async function removeTestRoot(root: string): Promise<void> {
+  for (const store of openStores.splice(0)) store.close?.();
+  await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+}
+
+async function fixture() {
+  const root = await canonicalTestRoot("gamebuddy-chat-lifecycle-");
+  let time = 10;
+  const store = openStore(root, () => time++);
+  const creation = createProfileAwareChatThreadCreationCapability(store, {
+    async readExact() {
+      return { profileId: "profile_01", revision: 1, canonicalHash: "a".repeat(64) };
+    },
+  });
+  const create = async (id: string, title?: string) => {
+    await creation.createExplicit({
+      chatThreadId: id,
+      companionId: "companion_01",
+      continuityId: "continuity_01",
+      chatSurfaceSessionId: `${id}_surface`,
+      opening: "blank",
+    });
+    if (title !== undefined)
+      await store.renameThreadTitle!({
+        chatThreadId: id,
+        chatSurfaceSessionId: `${id}_surface`,
+        expectedManagementRevision: 1,
+        title,
+      });
+  };
+  return {
+    store,
+    create,
+    root,
+    dispose: () => removeTestRoot(root),
+  };
+}
+const passGuard: ChatLifecycleAtomicGuard = {
+  async withExactThreadManagementLock(_binding, operation) {
+    return operation();
+  },
+};
+const passMutationReader: ChatLifecycleMutationReader = {
+  async assertChatLifecycleMutationAllowed() {},
+};
+function service(
+  store: ReturnType<typeof createChatThreadStore>,
+  atomicGuard: ChatLifecycleAtomicGuard = passGuard,
+  mutationReader: ChatLifecycleMutationReader = passMutationReader,
+) {
+  return createChatLifecycleService(
+    store,
+    { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" },
+    atomicGuard,
+    mutationReader,
+  );
+}
+
+test("trash persists the exact pre-trash restore target and transition readback", async () => {
+  const f = await fixture();
+  try {
+    await f.create("thread_01", "Morning plans");
+    const lifecycle = service(f.store);
+    const archived = await lifecycle.archive({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "thread_01_surface",
+      expectedManagementRevision: 2,
+    });
+    const trashed = await lifecycle.trash({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "thread_01_surface",
+      expectedManagementRevision: archived.managementRevision,
+    });
+    assert.deepEqual(trashed, { status: "trashed", managementRevision: 4, title: "Morning plans" });
+    assert.equal((await f.store.resumeThread("thread_01", "thread_01_surface")).thread.trashRestoreStatus, "archived");
+    assert.deepEqual(
+      await lifecycle.restore({
+        chatThreadId: "thread_01",
+        chatSurfaceSessionId: "thread_01_surface",
+        expectedManagementRevision: 4,
+      }),
+      { status: "archived", managementRevision: 5, title: "Morning plans" },
+    );
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("lifecycle mutation reader receives the exact identity and thread binding", async () => {
+  const f = await fixture();
+  try {
+    await f.create("thread_01");
+    const calls: Array<readonly [unknown, unknown]> = [];
+    const mutationReader: ChatLifecycleMutationReader = {
+      async assertChatLifecycleMutationAllowed(identity, threadBinding) {
+        calls.push([identity, threadBinding]);
+      },
+    };
+    await service(f.store, passGuard, mutationReader).archive({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "thread_01_surface",
+      expectedManagementRevision: 1,
+    });
+    assert.deepEqual(calls, [
+      [
+        { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" },
+        { chatThreadId: "thread_01", chatSurfaceSessionId: "thread_01_surface" },
+      ],
+    ]);
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("title and lifecycle share one management CAS and reject stale writes", async () => {
+  const f = await fixture();
+  try {
+    await f.create("thread_01");
+    const lifecycle = service(f.store);
+    await lifecycle.archive({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "thread_01_surface",
+      expectedManagementRevision: 1,
+    });
+    await assert.rejects(
+      () =>
+        f.store.renameThreadTitle!({
+          chatThreadId: "thread_01",
+          chatSurfaceSessionId: "thread_01_surface",
+          expectedManagementRevision: 1,
+          title: "stale",
+        }),
+      /management_revision_conflict/,
+    );
+    const renamed = await f.store.renameThreadTitle!({
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "thread_01_surface",
+      expectedManagementRevision: 2,
+      title: "Fresh",
+    });
+    await assert.rejects(
+      () =>
+        lifecycle.restore({
+          chatThreadId: "thread_01",
+          chatSurfaceSessionId: "thread_01_surface",
+          expectedManagementRevision: 2,
+        }),
+      /management_revision_conflict/,
+    );
+    assert.equal(renamed.managementRevision, 3);
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("internal list/search retains exact opaque bindings while public results do not", async () => {
+  const f = await fixture();
+  try {
+    await f.create("thread_01", "A QUIET morning");
+    await f.create("thread_02", "A quiet morning");
+    await f.store.appendPlayer("thread_02", {
+      messageId: "message_01",
+      text: "hidden transcript text",
+      occurredAtMs: 50,
+    });
+    const internal = createInternalChatLifecycleService(
+      f.store,
+      { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" },
+      passGuard,
+      passMutationReader,
+    );
+    const results = await internal.searchTitlesInternal({ literal: "quiet", status: "active" });
+    assert.deepEqual(
+      results.map((result) => result.binding.chatThreadId),
+      ["thread_01", "thread_02"],
+    );
+    assert.deepEqual(
+      await service(f.store).searchTitles({ literal: "QUIET", status: "active" }),
+      results.map((result) => result.metadata),
+    );
+    assert.deepEqual(await internal.listInternal("archived"), []);
+    assert.deepEqual(await internal.searchTitlesInternal({ literal: "hidden", status: "active" }), []);
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("separate lifecycle services serialize concurrent archive and produce one CAS winner", async () => {
+  const f = await fixture();
+  try {
+    await f.create("thread_01");
+    const firstStore = openStore(f.root);
+    const secondStore = openStore(f.root);
+    const requests = {
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "thread_01_surface",
+      expectedManagementRevision: 1,
+    } as const;
+    const [first, second] = await Promise.allSettled([
+      service(firstStore).archive(requests),
+      service(secondStore).archive(requests),
+    ]);
+    assert.equal([first, second].filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(
+      [first, second].filter(
+        (result) => result.status === "rejected" && /management_revision_conflict/.test(String(result.reason)),
+      ).length,
+      1,
+    );
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("archive and title mutations share the durable management CAS under a concurrent race", async () => {
+  const f = await fixture();
+  try {
+    await f.create("thread_01");
+    const requests = {
+      chatThreadId: "thread_01",
+      chatSurfaceSessionId: "thread_01_surface",
+      expectedManagementRevision: 1,
+    } as const;
+    const [archive, rename] = await Promise.allSettled([
+      service(f.store).archive(requests),
+      f.store.renameThreadTitle!({ ...requests, title: "Concurrent" }),
+    ]);
+    assert.equal([archive, rename].filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(
+      [archive, rename].filter(
+        (result) => result.status === "rejected" && /management_revision_conflict/.test(String(result.reason)),
+      ).length,
+      1,
+    );
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("a lifecycle request using a listed revision is rejected after another mutation", async () => {
+  const f = await fixture();
+  try {
+    await f.create("thread_01", "Before");
+    const listed = (await f.store.listThreads!()).find((thread) => thread.chatThreadId === "thread_01")!;
+    await f.store.renameThreadTitle!({
+      chatThreadId: listed.chatThreadId,
+      chatSurfaceSessionId: listed.chatSurfaceSessionId,
+      expectedManagementRevision: listed.managementRevision!,
+      title: "After",
+    });
+    await assert.rejects(
+      () =>
+        service(f.store).archive({
+          chatThreadId: listed.chatThreadId,
+          chatSurfaceSessionId: listed.chatSurfaceSessionId,
+          expectedManagementRevision: listed.managementRevision!,
+        }),
+      /management_revision_conflict/,
+    );
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("missing mutation reader fails closed without a legacy guard fallback", async () => {
+  const f = await fixture();
+  try {
+    await f.create("thread_01");
+    assert.throws(
+      () =>
+        createChatLifecycleService(
+          f.store,
+          { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" },
+          passGuard,
+          undefined,
+        ),
+      /mutation_reader_unavailable/,
+    );
+  } finally {
+    await f.dispose();
+  }
+});
+
+test("missing atomic guard fails closed rather than claiming cross-system serialization", async () => {
+  const f = await fixture();
+  try {
+    await f.create("thread_01");
+    assert.throws(
+      () =>
+        createChatLifecycleService(
+          f.store,
+          { playerId: "player_01", companionId: "companion_01", continuityId: "continuity_01" },
+          undefined,
+          passMutationReader,
+        ),
+      /atomic_guard_unavailable/,
+    );
+  } finally {
+    await f.dispose();
+  }
+});

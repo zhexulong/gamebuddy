@@ -1,0 +1,97 @@
+import assert from "node:assert/strict";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
+
+import test from "node:test";
+import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
+import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
+import { createContinuitySurfaceCoordinator } from "./continuity-surface-coordinator.js";
+
+test.before(async () => {
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+});
+
+test.after(() => {
+  bindWindowsStaleLockReclaimer(undefined);
+});
+
+async function runtimeRoot(prefix: string): Promise<string> {
+  return await canonicalTestRoot(prefix);
+}
+
+test("coordinator runs callbacks only while held, rejects same-partition reentry, and permits another partition", async () => {
+  const coordinator = createContinuitySurfaceCoordinator(await runtimeRoot("coordinator-"));
+  let called = false;
+  await coordinator.withTransition("continuity_01", async () => {
+    called = true;
+    await assert.rejects(
+      coordinator.withTransition("continuity_01", async () => undefined),
+      /reentrant/,
+    );
+    await coordinator.withTransition("continuity_02", async () => undefined);
+  });
+  assert.equal(called, true);
+});
+
+test("separate durable coordinator instances serialize one continuity partition", async () => {
+  const root = await runtimeRoot("coordinator-shared-");
+  const first = createContinuitySurfaceCoordinator(root);
+  const second = createContinuitySurfaceCoordinator(root);
+  let entered = 0;
+  let releaseFirst!: () => void;
+  const firstReleased = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const firstRun = first.withTransition("continuity_shared", async () => {
+    entered++;
+    await firstReleased;
+  });
+  while (entered !== 1) await new Promise((resolve) => setImmediate(resolve));
+  let secondEntered = false;
+  const secondRun = second.withTransition("continuity_shared", async () => {
+    secondEntered = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(secondEntered, false);
+  releaseFirst();
+  await Promise.all([firstRun, secondRun]);
+  assert.equal(secondEntered, true);
+});
+
+test("coordinator permits independent durable continuity partitions concurrently", async () => {
+  const root = await runtimeRoot("coordinator-independent-");
+  const first = createContinuitySurfaceCoordinator(root);
+  const second = createContinuitySurfaceCoordinator(root);
+  let entered = 0;
+  const barrier = new Promise<void>((resolve) => {
+    const timer = setInterval(() => {
+      if (entered === 2) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, 1);
+  });
+  const runs = Promise.all([
+    first.withTransition("continuity_a", async () => {
+      entered++;
+      await barrier;
+    }),
+    second.withTransition("continuity_b", async () => {
+      entered++;
+      await barrier;
+    }),
+  ]);
+  await runs;
+  assert.equal(entered, 2);
+});
+
+test("coordinator never invokes callback when lock acquisition fails", async () => {
+  const coordinator = createContinuitySurfaceCoordinator("\0invalid");
+  let called = false;
+  await assert.rejects(
+    coordinator.withTransition("continuity_01", async () => {
+      called = true;
+    }),
+    /invalid_continuity_transition_runtime_root/,
+  );
+  assert.equal(called, false);
+});
