@@ -4,8 +4,9 @@ import { visibleActionsFromModCatalog } from "./action-registry.js";
 import type { GameConnection } from "./game-connection.js";
 import type { IntegrationActionRegistration } from "./game-integration-adapter.js";
 import type { ActionRegistration, ExecutionReceipt } from "./protocol.js";
-import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
+import { isQualifiedItemId } from "./protocol-target-facts.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
+import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
 
 test("pickup_forage completion requires targetIdentity evidence", () => {
   const receipt = {
@@ -956,6 +957,18 @@ test("machine inspection, load, and collect completion evidence prove the machin
     true,
     "a machine's output is collected when the pack gains exactly the held stack, whatever the machine is",
   );
+  // The output item id is unwitnessed by any other term here (a collect names no input to compare against), so an id
+  // the shipped qualified-item-id grammar refuses must fail. The sample comes FROM that grammar, and is checked
+  // against it below, so a future widening cannot leave this case green for a reason it no longer has: `(O)395extra`
+  // was the sample until the grammar was widened to the engine's item-KEY alphabet (`f243e772` - a numeric-only body
+  // refused the engine's own `(O)CarrotSeeds`, the whole snapshot came back `invalid_snapshot`, and the bridge CLOSES
+  // on a refused frame; Item.cs:165 documents alphanumeric, underscore and dot).
+  const malformedOutputItemId = "(O)395 extra";
+  assert.equal(
+    isQualifiedItemId(malformedOutputItemId),
+    false,
+    "this malformed sample must be one the shared qualified-item-id grammar refuses",
+  );
   for (const malformed of [
     kegCollect.replace("ready_before=true", "ready_before=false"),
     // The pack must gain exactly the held stack, not \"one item\".
@@ -963,7 +976,7 @@ test("machine inspection, load, and collect completion evidence prove the machin
     collectDetail("(BC)12", "(O)395", 1, "(O)433", 0, 2),
     kegCollect.replace("held_after=none", "held_after=(O)395"),
     kegCollect.replace("ready_after=false", "ready_after=true"),
-    collectDetail("(BC)12", "(O)395extra", 1, "(O)433", 0, 1),
+    collectDetail("(BC)12", malformedOutputItemId, 1, "(O)433", 0, 1),
     kegCollect.replace("output_stack=1", "output_stack=0"),
     kegCollect.replace("minutes_until_ready_before=0", "minutes_until_ready_before=0.0"),
     `${kegCollect};native_check_action=true`,
