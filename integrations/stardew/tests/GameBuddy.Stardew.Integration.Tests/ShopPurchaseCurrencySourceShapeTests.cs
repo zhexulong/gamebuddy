@@ -48,7 +48,14 @@ public sealed class ShopPurchaseCurrencySourceShapeTests
         // the purchase uses.
         request.Should().Contain("int shopCurrency = ShopCurrencyFor(target.ShopId);");
         request.Should().Contain("long currencyHeld = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);");
-        request.Should().Contain("long affordable = currencyHeld / Math.Max(1, unitPrice);");
+        request.Should().Contain(
+            "ShopPurchaseCapacity(charged, currencyHeld, quantity)",
+            "the affordability gate divides the shop's own currency, through the one producer of that count");
+        MethodBody(code, "internal static (long Affordable, int Purchasable) ShopPurchaseCapacity(")
+            .Should()
+            .Contain(
+                "currencyHeld / Math.Max(1, charged.Price)",
+                "and that producer divides the amount the native reader returned, never the purse");
         request.Should().Contain("long currencyBefore = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);");
         request.Should().Contain("long currencyAfter = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);");
         request.Should().Contain("currencyAfter < currencyBefore && gained > 0");

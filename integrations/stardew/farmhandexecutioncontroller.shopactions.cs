@@ -591,6 +591,31 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             + PriceShortfallToken(unitPrice, currencyHeld);
     }
 
+    /// <summary>
+    /// How many units the purse can pay for at the price the shop charges, and the arithmetic behind it.
+    ///
+    /// <para>
+    /// ONE producer, because two refusal branches read it: <c>Affordable &lt; 1</c> is <c>insufficient_money</c> and
+    /// <c>Purchasable &lt; 1</c> beside it is <c>out_of_stock</c>, so a second copy of "held divided by price" is how
+    /// one refusal ends up naming a number the other branch never used. The price arrives as the stock ENTRY rather
+    /// than as a bare integer: the entry is the object the menu charges (<c>ShopMenu.cs:1337</c>), so a caller cannot
+    /// hand this function the item's sale value by mistake.
+    /// </para>
+    /// <para>
+    /// <c>Math.Max(1, ...)</c> is not a price: a row that trades an item instead of gold carries <c>Price = 0</c>
+    /// (the engine writes it, ShopBuilder.cs:226), so it keeps that row from dividing by zero and leaves it affordable
+    /// for any non-empty purse. The trade itself is enforced by the engine's own purchase, not by this count.
+    /// </para>
+    /// </summary>
+    internal static (long Affordable, int Purchasable) ShopPurchaseCapacity(
+        ItemStockInformation charged,
+        long currencyHeld,
+        int requestedQuantity)
+    {
+        long affordable = currencyHeld / Math.Max(1, charged.Price);
+        return (affordable, (int)Math.Min(Math.Min(requestedQuantity, charged.Stock), affordable));
+    }
+
     public LocalExecutionReceipt RequestLocalShopPurchase(BridgeExecutionRequest request, IExecutionLedger ledger)
     {
         if (ledger.TryGetExistingReceipt(request.RequestId, out LocalExecutionReceipt existing))
@@ -785,7 +810,19 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 $"shop={target.ShopId};item={expectedItemId};stock={stock.Count}");
         }
 
-        int unitPrice = offer.salePrice();
+        // The price the menu charges, read from the SAME stock entry this purchase is made from. ShopMenu
+        // multiplies `ItemStockInformation.Price` by the units it charges (ShopMenu.cs:1337), and
+        // `ShopBuilder.GetBasePrice` produced that number from the shop's own row (ShopBuilder.cs:221-237); the
+        // `seedSupplyTargets` row publishes the same field through `ReadShopStock`, so a price she is told and a
+        // price she is judged by are one fact.
+        //
+        // `offer.salePrice()` is NOT that number. It is the item's own value - what selling it would fetch - and
+        // for a seed it differs from the shop's asking price: measured 2026-11-12, an item whose Data/Objects price
+        // is 100 has `salePrice(ignoreProfitMargins: true)` 200, while a Data/Shops row may charge 20 for it. Judging
+        // the purse by the value refused a purchase the purse could pay for (`insufficient_money` at 50g against a
+        // 20g seed), and it made the receipt's `unit_price` a number the charge never moved.
+        ItemStockInformation charged = stock[offer];
+        int unitPrice = charged.Price;
         // A ShopMenu prices every entry in the currency its own ShopData declares: Utility.TryOpenShopMenu
         // builds the menu from that ShopData and Initialize stores shopData.Currency (ShopMenu.cs:304, :371),
         // and ShopMenu.getPlayerCurrencyAmount (ShopMenu.cs:881-891) is the native map from that value to the
@@ -794,8 +831,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         // then read the real one as having spent nothing.
         int shopCurrency = ShopCurrencyFor(target.ShopId);
         long currencyHeld = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
-        long affordable = currencyHeld / Math.Max(1, unitPrice);
-        int purchasable = (int)Math.Min(Math.Min(quantity, stock[offer].Stock), affordable);
+        (long affordable, int purchasable) = ShopPurchaseCapacity(charged, currencyHeld, quantity);
         if (affordable < 1)
         {
             return this.RememberTerminal(
