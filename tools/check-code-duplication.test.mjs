@@ -45,6 +45,7 @@ import {
   normaliseSitePath,
   runJscpd,
   serialiseBaseline,
+  tokenCountLine,
   untrackedSources,
 } from "./check-code-duplication.mjs";
 
@@ -220,17 +221,53 @@ test("a baselined group that gained a site is red, naming the site that arrived"
   assert.match(reading.findings[0].detail, /host\/src\/d\.ts:1/);
 });
 
-test("a baseline written under another rule and recording fewer tokens is red, not silently trusted", () => {
+test("a baseline written under another rule and recording fewer tokens is named, not silently trusted", () => {
   const groups = threeCopies();
   const baseline = {
     groups: baselinePayload(groups).groups.map((entry) => ({ ...entry, tokens: entry.tokens - 1 })),
   };
   const reading = evaluateGroups({ groups, baseline });
+  assert.deepEqual(reading.findings, []);
   assert.deepEqual(
-    reading.findings.map((entry) => entry.code),
-    ["clone_group_grew"],
+    reading.tokenCountUnstable.map((entry) => `${entry.hash}:${entry.recorded}->${entry.measured}`),
+    [`${groupHash(FRAGMENT)}:49->50`],
   );
-  assert.match(reading.findings[0].detail, /now 3 sites at 50 tokens, the baseline recorded 3 sites at 49 tokens/);
+});
+
+test("a recorded token count the tree does not reproduce is named, because the fragment is the same bytes", () => {
+  // The measurement itself is the defect: `tokens` is the run each PAIR matched inside the fragment, and grouping keeps
+  // the maximum, so a group whose text is identical can read 91 in the record and 97 in the tree. On this tree 100 of
+  // 2191 fragment groups carry more than one pair count. A monotone ratchet cannot hold a number like that.
+  const groups = threeCopies();
+  const baseline = {
+    groups: baselinePayload(groups).groups.map((entry) => ({ ...entry, tokens: entry.tokens - 6 })),
+  };
+  const reading = evaluateGroups({ groups, baseline });
+  assert.deepEqual(reading.findings, []);
+  assert.equal(reading.grown, 0);
+  assert.deepEqual(reading.tokenCountUnstable, [{ hash: groupHash(FRAGMENT), recorded: 44, measured: 50, sites: 3 }]);
+  assert.match(censusLine(reading), / · token_count_unstable 1$/);
+  assert.match(
+    tokenCountLine(reading.tokenCountUnstable[0]),
+    /^ {2}token_count_unstable:[0-9a-f]{12}: 44 -> 50 tokens at 3 sites/,
+  );
+  assert.deepEqual(baselineWriteRefusal({ reading, creating: false }), []);
+});
+
+test("a longer block at the same sites is a new group, so nothing longer can ride an old record", () => {
+  // What the token count used to stand guard over, and what the hash already does: more copied text moves the fragment's
+  // end line, so it arrives as an unrecorded group beside a stale entry - never as a moved number on the old one.
+  const longer = `${FRAGMENT}\nline six\nline seven`;
+  const groups = groupClones(
+    [
+      pair({ fragment: longer, first: "host/src/a.ts", second: "host/src/b.ts" }),
+      pair({ fragment: longer, first: "host/src/a.ts", second: "host/src/c.ts" }),
+    ],
+    REPO,
+  );
+  const reading = evaluateGroups({ groups, baseline: baselinePayload(threeCopies()) });
+  assert.deepEqual(reading.findings.map((entry) => entry.code).sort(), ["clone_group", "stale_clone_baseline"]);
+  assert.equal(reading.tokenCountUnstable.length, 0);
 });
 
 test("a baselined group that lost a site is red as stale, so the baseline can only shrink", () => {

@@ -85,13 +85,29 @@
  *      group's first line of code, so the reader recognises the block without opening the report;
  *   2. a group recorded in `tools/duplicate-code-baseline.json` at the same or a smaller size passes, because that
  *      duplication already existed when the baseline was written;
- *   3. a baselined group that gained sites or tokens is a finding (`clone_group_grew`), and one that lost them is a
- *      finding too (`stale_clone_baseline`): the baseline can only shrink, so a fix has to be recorded rather than
- *      silently leaving an entry behind;
+ *   3. a baselined group that gained a SITE is a finding (`clone_group_grew`), and one that lost one is a finding too
+ *      (`stale_clone_baseline`): the baseline can only shrink, so a fix has to be recorded rather than silently
+ *      leaving an entry behind;
  *   4. a FACADE group is counted and printed (`facade-only:<hash>: ...`) and is not a finding, because there is no
  *      change a reader could make in response; a baseline entry that records one is `facade_only_clone_baselined`,
  *      which is a different fact from `stale_clone_baseline` and says so - an entry for a group the tree still has,
  *      under a name that no longer claims it is duplication.
+ *
+ * THE TOKEN COUNT IS PUBLISHED, NOT RATCHETED, BECAUSE IT CANNOT HOLD STILL. A group's identity is `groupHash` of
+ * `fragment`, which is the FIRST site's source slice from the match's start line to its end line; the `tokens` jscpd
+ * reports is per PAIR, and grouping keeps `max` over the pairs. Those are two different granularities of one match, so
+ * the number can move while the text cannot: at a hash that matches a recorded entry, the fragment is the same bytes by
+ * construction, and what changed is how far the run matched WITHIN that slice against the other sites. Measured on one
+ * run of this tree: of 2191 fragment groups, 100 carry more than one pair token count (`269d6807cfe7` reads 45 and 40
+ * over its three pairs). Measured on real history: `9b99db60ab88` is recorded at 91 tokens and measures 97 today while
+ * its fragment hashes to the recorded hash, so the record and the tree describe the same text and disagree about it.
+ * A monotone ratchet cannot hold a quantity that moves in both directions without the thing it measures moving, and
+ * recording 91 -> 97 would be growing a record in the face of no new copy - so growth is decided by the site count, and
+ * a token reading that differs from the record is published as `token_count_unstable:<hash>: <a> -> <b> tokens at N
+ * sites` and does not fail the gate. Nothing is lost by that: a LONGER copied block moves the fragment's end line, so it
+ * arrives as a different hash, which is an unrecorded `clone_group` and fails; a block copied MORE times arrives as a
+ * site, which is `clone_group_grew` and fails. The token count stays in the baseline as the reading `--write-baseline`
+ * refreshes, so a reader can still see how much of a window actually matched.
  *
  * THE POPULATION IS THE INDEX, NOT THE DIRECTORY. jscpd walks the working tree, so a file a lane has written but not
  * staged is measured as if it were repository content - and on 2026-11-12 one was: `tools/check-test-await-deadlines.mjs`
@@ -111,8 +127,8 @@
  * THE BASELINE IS A RATCHET, NOT AN ACCEPT LIST. `--write-baseline` records today's duplication groups when the file
  * does not exist yet, and after that REFUSES to write while any group is new or grew - a green run therefore never
  * becomes the way to accept new duplication, only the way to record a shrink. Line numbers in the baseline are
- * documentation; the comparisons are the site COUNT and the token count, because a line inserted above a site must not
- * turn the gate red.
+ * documentation; the comparisons are the site COUNT and, for growth, nothing else - a line inserted above a site must
+ * not turn the gate red, and the token count is published rather than compared (above).
  *
  * THE POPULATION is this file's `SOURCE_TREES`, and `jscpd.json` must declare the same paths, formats, ignore list and
  * thresholds or `jscpd_config_disagrees:<field>` fails: two spellings of "what is examined" drift apart the first time
@@ -340,6 +356,10 @@ function violation(code, prefix, group) {
  * The rule, as one reading of one report: which groups are duplication and break it, which of those the baseline
  * already recorded, whether the baseline still describes the tree, and which groups the rule read as a facade instead.
  * `groups` is `groupClones(...)`; `baseline.groups` is the file.
+ *
+ * Growth and staleness are decided by the SITE COUNT. The token count is published as `tokenCountUnstable` instead: at a
+ * hash the baseline already records, the fragment is the same bytes by construction, so a different `tokens` there says
+ * how far the run matched within that slice, not that more text was copied (THE TOKEN COUNT IS PUBLISHED, above).
  */
 export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSites = MIN_SITES }) {
   const counted = groups.filter((group) => group.tokens >= minTokens && group.sites.length >= minSites);
@@ -347,6 +367,7 @@ export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSi
   const duplication = counted.filter((group) => group.kind !== "facade");
   const recorded = new Map((baseline?.groups ?? []).map((entry) => [entry.hash, entry]));
   const findings = [];
+  const tokenCountUnstable = [];
   let baselined = 0;
   for (const group of duplication) {
     const entry = recorded.get(group.hash);
@@ -355,7 +376,7 @@ export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSi
       continue;
     }
     baselined += 1;
-    if (group.tokens > entry.tokens || group.sites.length > entry.sites.length) {
+    if (group.sites.length > entry.sites.length) {
       findings.push(
         violation(
           "clone_group_grew",
@@ -366,7 +387,7 @@ export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSi
       );
       continue;
     }
-    if (group.tokens < entry.tokens || group.sites.length < entry.sites.length) {
+    if (group.sites.length < entry.sites.length) {
       findings.push(
         violation(
           "stale_clone_baseline",
@@ -376,7 +397,15 @@ export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSi
           group,
         ),
       );
+      continue;
     }
+    if (group.tokens !== entry.tokens)
+      tokenCountUnstable.push({
+        hash: group.hash,
+        recorded: entry.tokens,
+        measured: group.tokens,
+        sites: group.sites.length,
+      });
   }
   const live = new Set(duplication.map((group) => group.hash));
   const facades = new Set(facade.map((group) => group.hash));
@@ -411,6 +440,7 @@ export function evaluateGroups({ groups, baseline, minTokens = MIN_TOKENS, minSi
     grown: findings.filter((entry) => entry.code === "clone_group_grew").length,
     stale: findings.filter((entry) => entry.code === "stale_clone_baseline").length,
     reclassified: findings.filter((entry) => entry.code === "facade_only_clone_baselined").length,
+    tokenCountUnstable,
     findings,
   };
 }
@@ -662,6 +692,14 @@ export function facadeLine(group) {
   );
 }
 
+/** One recorded token count the tree does not reproduce, named with both numbers and the site count that did not move. */
+export function tokenCountLine(entry) {
+  return (
+    `  token_count_unstable:${entry.hash}: ${entry.recorded} -> ${entry.measured} tokens at ${entry.sites} sites - the ` +
+    "fragment is unchanged, so this is the matched run over the same text, not a new copy"
+  );
+}
+
 export function censusLine(reading) {
   if (reading.status === "blocked")
     return `files examined ${reading.examined} · clone groups 0 · BLOCKED ${reading.reason}`;
@@ -671,6 +709,7 @@ export function censusLine(reading) {
     `grown ${reading.grown} · baselined ${reading.baselined}` +
     `${reading.stale === 0 ? "" : ` · stale ${reading.stale}`}` +
     `${reading.reclassified === 0 ? "" : ` · reclassified ${reading.reclassified}`}` +
+    `${reading.tokenCountUnstable === undefined || reading.tokenCountUnstable.length === 0 ? "" : ` · token_count_unstable ${reading.tokenCountUnstable.length}`}` +
     `${reading.untrackedNotCounted === undefined || reading.untrackedNotCounted === 0 ? "" : ` · untracked_not_counted ${reading.untrackedNotCounted}`}`
   );
 }
@@ -698,6 +737,7 @@ function main(argv) {
   }
   const lines = [censusLine(reading)];
   for (const group of reading.facade ?? []) lines.push(facadeLine(group));
+  for (const entry of reading.tokenCountUnstable ?? []) lines.push(tokenCountLine(entry));
   for (const entry of reading.findings ?? []) lines.push(`  ${entry.detail}`);
   if (writeBaseline) {
     if (reading.counted === undefined) {
