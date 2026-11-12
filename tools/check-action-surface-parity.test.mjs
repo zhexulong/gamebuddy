@@ -1,3 +1,26 @@
+/**
+ * The falsifier suite for `tools/check-action-surface-parity.mjs`: the matrix between the surfaces an action must cross.
+ *
+ * TWO KINDS OF PROOF, because the gate's own red proofs are worthless if the suite that replays them cannot fail.
+ *
+ * History first, replayed out of this repository's own commits into a copy under the OS temporary directory - never
+ * synthesized, because a synthetic tree proves only that the gate can be turned red on a defect its author already had in
+ * mind. Both trees are real, and both were found by a human noticing a live run that had already failed:
+ *
+ * red-proof: history  the pre-0d4ce1b2 tree, where the tool schema and the projector omitted `charge` on `till_soil` and
+ *   `water_crop` while the wire required it -> `surface_refuses_what_another_accepts:till_soil:charge:tool-schema:catalog`
+ *   and `...:till_soil:charge:tool-args:catalog`
+ * red-proof: history  the pre-8c53105e tree, where the catalog carried `sweep_scythe` and no tool mounted it ->
+ *   `surface_silently_omits_action:sweep_scythe:tool-schema` and `:tool-args`
+ * red-proof: inject  a `charge` deleted from a mount's `parameters`, one deleted from its `toArgs`, the `sleep` key
+ *   deleted from `EXECUTION_REQUEST_ARGUMENT_RULES`, its arm deleted from the Mod's `ExecutionArgumentProperties`, a
+ *   `continue` added beside the grammar's two declared filters, a `toArgs` spread, and an empty source tree ->
+ *   `surface_refuses_what_another_accepts:till_soil:charge:tool-schema:*`,
+ *   `surface_refuses_what_another_accepts:till_soil:charge:tool-args:*`,
+ *   `surface_silently_omits_action:sleep:wire`, `surface_silently_omits_action:sleep:mod`,
+ *   `plan_grammar_vocabulary_not_descriptor_derived:undeclared_skip:*`, `tool_args_unreadable:till_soil`, and
+ *   `action_surface_population_empty`
+ */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
