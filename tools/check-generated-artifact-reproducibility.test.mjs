@@ -7,8 +7,14 @@
  * Nothing here runs a real producer. The producers' invocations are injected, because the question each case asks is
  * what the gate DECIDES from a reading, not whether `dotnet` is installed.
  *
+ * The build-output cases are the unpinning of one configuration: a producer that lives in `bin/<configuration>/` is
+ * resolved from whatever the tree carries, so a Release-only tree reproduces, the newest build wins over an older one,
+ * a Debug build is named rather than silently preferred, a junctioned configuration is still the build the tree has,
+ * and a tree with no build at all is blocked naming the project and the command.
+ *
  * red-proof: inject  the `inputs/` exclusion removed -> the pinned copy becomes a claimant: `examined 9 · undeclared 3` with `generated_artifact_without_producer:` naming `inputs/action-projection-source/.../action-surface.v1.json`, exit 1 (measured 2026-11-13)
  * red-proof: inject  `describeMismatch` answering with two byte counts -> `✖ the mismatch reading names the artefact's own line and the members on each side`, actual `(bytes)` where `$.a` was expected, exit 1 (measured 2026-11-13)
+ * red-proof: inject  this suite run against the pre-fix gate, which pinned the export assembly to a Debug build -> the release-only, the newest-wins and the no-build cases red (`actual ['--deadline-windows']` against `['…/bin/Release/net6.0/…', '--deadline-windows']`, `actual 0` where exit 2 was expected), measured 2026-11-12 over a tree whose export project carries only `bin/Release`
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -66,6 +72,24 @@ function runFor(producers) {
       return { status: 0, stdout: Buffer.from(entry.bytes ?? ""), stderr: Buffer.alloc(0), error: null };
     }
     return { status: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), error: null };
+  };
+}
+
+/** A producer that lives in a build output, the shape the Mod export has: no argument is pinned, the gate finds it. */
+function buildProducerFor(artefact, { bytes, directory = "c/export", name = "Export.dll" }) {
+  return {
+    artefact,
+    producer: `fake ${directory}/bin/<configuration>/<framework>/${name}`,
+    resolve: {
+      directory,
+      name,
+      project: `${directory}/export.csproj`,
+      build: `dotnet build ${directory}/export.csproj -c Release`,
+    },
+    run: { kind: "stdout", command: "fake", args: ["--deadline-windows"] },
+    requires: { commands: [], paths: [] },
+    inputs: [],
+    bytes,
   };
 }
 
@@ -321,4 +345,121 @@ test("an artefact with no declared input is re-derived rather than skipped", () 
   const reading = inputsMovedSince({ root, entry, artefact: path.join(root, artefact) });
   assert.equal(reading.moved, true, "a producer whose inputs nobody declared cannot be skipped on staleness");
   assert.equal(reading.reason, "no_declared_input_resolved");
+});
+
+test("a build output is found in the configuration the tree carries, and the artefact says which one", () => {
+  const artefact = "c/generated/surface.v1.json";
+  const bytes = '{"actions":["a"]}\n';
+  const root = tree({ [artefact]: bytes, "c/export/bin/Release/net6.0/Export.dll": "release build" });
+  const producers = [buildProducerFor(artefact, { bytes })];
+  const calls = [];
+  const outcome = runGate(root, {
+    tracked: [artefact],
+    producers,
+    run: (command, args) => {
+      calls.push({ command, args });
+      return { status: 0, stdout: Buffer.from(bytes), stderr: Buffer.alloc(0), error: null };
+    },
+  });
+  assert.equal(outcome.code, 0, "a Release-only tree reproduces: no configuration is pinned");
+  assert.deepEqual(calls[0].args, ["c/export/bin/Release/net6.0/Export.dll", "--deadline-windows"]);
+  assert.match(
+    outcome.stdout,
+    /producer assembly: c\/export\/bin\/Release\/net6\.0\/Export\.dll \(c\/generated\/surface\.v1\.json; 1 build\(s\) present, newest wins\)/u,
+  );
+  assert.match(
+    outcome.stdout,
+    /reproduced:c\/generated\/surface\.v1\.json \(\d+ bytes from fake c\/export\/bin\/Release\/net6\.0\/Export\.dll --deadline-windows\)/u,
+  );
+  assert.equal(
+    JSON.parse(outcome.stdout.trim().split("\n").pop()).producerAssemblies[artefact],
+    "c/export/bin/Release/net6.0/Export.dll",
+  );
+});
+
+test("the newest build wins, and a Debug build is named rather than silently preferred", () => {
+  const artefact = "c/generated/surface.v1.json";
+  const bytes = "same bytes\n";
+  const producers = [buildProducerFor(artefact, { bytes })];
+  const choose = (root) => {
+    const calls = [];
+    runGate(root, {
+      tracked: [artefact],
+      producers,
+      run: (_command, args) => {
+        calls.push(args[0]);
+        return { status: 0, stdout: Buffer.from(bytes), stderr: Buffer.alloc(0), error: null };
+      },
+    });
+    return calls[0];
+  };
+
+  const releaseNewest = tree({
+    [artefact]: bytes,
+    "c/export/bin/Debug/net6.0/Export.dll": "debug build",
+    "c/export/bin/Release/net6.0/Export.dll": "release build",
+  });
+  age(releaseNewest, "c/export/bin/Debug/net6.0/Export.dll", 3);
+  age(releaseNewest, "c/export/bin/Release/net6.0/Export.dll", 1);
+  assert.equal(choose(releaseNewest), "c/export/bin/Release/net6.0/Export.dll");
+
+  const debugNewest = tree({
+    [artefact]: bytes,
+    "c/export/bin/Debug/net6.0/Export.dll": "debug build",
+    "c/export/bin/Release/net6.0/Export.dll": "release build",
+  });
+  age(debugNewest, "c/export/bin/Debug/net6.0/Export.dll", 1);
+  age(debugNewest, "c/export/bin/Release/net6.0/Export.dll", 3);
+  assert.equal(
+    choose(debugNewest),
+    "c/export/bin/Debug/net6.0/Export.dll",
+    "a Debug build may win, but only as the newest and only by being reported",
+  );
+});
+
+test("a build-output producer with no build is blocked, naming the project and the command that builds it", () => {
+  const artefact = "c/generated/surface.v1.json";
+  const producers = [buildProducerFor(artefact, { bytes: "{}\n" })];
+
+  const neverBuilt = tree({ [artefact]: "{}\n" });
+  const blocked = runGate(neverBuilt, { tracked: [artefact], producers, run: runFor(producers) });
+  assert.equal(blocked.code, 2, "a producer that cannot run is not measured, never green");
+  assert.match(
+    blocked.stderr,
+    /generated_artifact_producer_unavailable:c\/generated\/surface\.v1\.json:missing_built_assembly:c\/export\/export\.csproj/u,
+  );
+  assert.match(blocked.stderr, /\(searched: no configuration\)/u);
+  assert.match(blocked.stderr, /build it with: dotnet build c\/export\/export\.csproj -c Release/u);
+  const report = JSON.parse(blocked.stdout.trim().split("\n").pop());
+  assert.match(report.blockedBy, /^missing_built_assembly:/u);
+  assert.equal(report.reproduced, 0);
+
+  const emptyConfiguration = tree({
+    [artefact]: "{}\n",
+    "c/export/bin/Debug/netstandard2.0/notes.txt": "a configured framework without the assembly\n",
+  });
+  const searched = runGate(emptyConfiguration, { tracked: [artefact], producers, run: runFor(producers) });
+  assert.equal(searched.code, 2);
+  assert.match(searched.stderr, /\(searched: Debug\)/u, "the configurations it looked in are named");
+});
+
+test("a build configuration junctioned into place is still a build the tree has", () => {
+  const artefact = "c/generated/surface.v1.json";
+  const bytes = "same bytes\n";
+  const real = tree({ "elsewhere/Release/net6.0/Export.dll": "release build" });
+  const root = tree({ [artefact]: bytes });
+  fs.mkdirSync(path.join(root, "c/export/bin"), { recursive: true });
+  fs.symlinkSync(path.join(real, "elsewhere/Release"), path.join(root, "c/export/bin/Release"), "junction");
+  const producers = [buildProducerFor(artefact, { bytes })];
+  const calls = [];
+  const outcome = runGate(root, {
+    tracked: [artefact],
+    producers,
+    run: (_command, args) => {
+      calls.push(args[0]);
+      return { status: 0, stdout: Buffer.from(bytes), stderr: Buffer.alloc(0), error: null };
+    },
+  });
+  assert.equal(outcome.code, 0);
+  assert.equal(calls[0], "c/export/bin/Release/net6.0/Export.dll");
 });

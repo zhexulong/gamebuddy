@@ -1974,3 +1974,82 @@ consecutive markers are written three lines apart or the second one is read as t
 The prose that remains above the markers is a method note - each proof was seen red on a copy of the tree outside the
 repository and green again once the injection was removed - and states no claim of its own, so there is still one
 spelling per fact.
+
+## The pinned configuration: a gate that blocked a tree built `Release`
+
+`tools/check-generated-artifact-reproducibility.mjs` (L0, `check:`/`test:` pair). The gate's first witness recorded the
+Mod export producer as `bin/Debug/net6.0/…`; the Mod build this repository makes (`build:stardew`, and the ladder) is
+`-c Release`. On a tree that carried only the Release build the gate answered `reproduced 2 · not re-derived 1 · blocked`
+and exited 2: a tree holding the assembly all along read as "not measured". The rule - a producer that cannot run is
+blocked, never green - was right. The resolution was wrong.
+
+### What changed
+
+- `ARTEFACT_PRODUCERS` no longer spells the assembly's path. The three surface artefacts carry a `resolve` descriptor
+  (`directory`, `name`, `project`, `build`); `resolveProducer` finds every `bin/<configuration>/<framework>/<name>` the
+  tree holds, takes the newest mtime (the path breaks a tie, so two readings of one tree cannot disagree), and runs that
+  one. No configuration is preferred, and a Debug build can only win by being the newest AND by being named.
+- The report says which assembly each artefact's bytes came from, three ways: `producer assembly: <path> (<artefact>;
+  N build(s) present, newest wins)`, the same path inside the `reproduced:` line, and `producerAssemblies` in the JSON.
+- No build at all still blocks, now naming the project and the command:
+  `generated_artifact_producer_unavailable:<artefact>:missing_built_assembly:<project>`, its detail listing the
+  configurations searched and `build it with: dotnet build <project> -c Release`. Exit 2, never green.
+- The resolver stats through a link. `withFileTypes` reports a junctioned `bin/Release` as a symlink and not a directory,
+  so the first version of this change read `searched: no configuration` over a tree that had the build. Found by running
+  the gate over a tree built for the purpose, not by reading the resolver, and pinned by a falsifier case.
+
+### The four readings
+
+| tree | gate | reading |
+| --- | --- | --- |
+| export project carrying only `bin/Release` | pre-fix (`HEAD`) | `reproduced 2 · not re-derived 1 (declared_by_test 1)`, and for all three surface artefacts `missing_input:` the pinned Debug assembly, exit 2 |
+| the same tree | this file | `reproduced 5 · not re-derived 1 (declared_by_test 1)`, each surface artefact from `bin/Release/net6.0/…`, exit 0 |
+| this checkout, default run | this file | `reproduced 2 · not re-derived 4 (inputs_unchanged 3, declared_by_test 1)`, exit 0 - the surface artefacts' inputs have not moved, so their cost is not spent |
+| this checkout, `--re-derive-all` after `dotnet build … -c Release` | this file | `reproduced 5 · not re-derived 1 (declared_by_test 1)`, `producer assembly: …/bin/Release/net6.0/…`, exit 0 |
+
+**6 of 6 accounted** in both `--re-derive-all` readings: five reproduced, one `declared_by_test` - the bucket the
+default path must keep printing and not measuring, which is why `--with-test-producers` stays off it.
+
+The Release-only tree was built for the reading rather than inferred: a scratch root under `.tmp/` whose real paths
+(`tools`, `host`, `protocol`, `integrations/stardew/src`, `…/Handlers`, `…/Sensory`, `…/action-development/src`) are
+hard-linked so a script's own path is its own path, whose bulk inputs (`ref/`, the contracts, `node_modules`) are
+junctions, and whose export project holds `bin/Release` alone. Hard links rather than junctions for the two scripts the
+gate spawns, because a junction makes `process.argv[1]` and `fileURLToPath(import.meta.url)` disagree and the projection
+producer's main guard then answers nothing at exit 0 - a scratch-tree artefact, not a product defect, but it cost a
+reading to notice.
+
+### The stale Release build this unpinning found
+
+The Release assembly standing in this worktree (built 2026-11-06, 6 144 bytes) did **not** reproduce the surface:
+`generated_artifact_not_reproducible:…action-surface.v1.json:1:$.actions by actionId`, naming the two members the
+artefact carries that the producer does not emit (`fish_here`, `sweep_scythe`) and three `nativeBinding`/`approach`
+members the producer emits that the artefact does not. A real finding, reported as a mismatch and not as a block - the
+difference this change bought, since the same staleness was previously invisible (a newer Debug build shadowed it) or
+unreadable (no Debug build = blocked). `dotnet build … -c Release` (6 656 bytes) reproduced all three byte for byte.
+The mismatch check was not touched: `describeMismatch` is the same function, and the member it named is the one a reader
+needs.
+
+### What this still does not verify
+
+- "Newest wins" is an mtime rule, not a provenance rule. A build that is newest but compiled from older sources is
+  chosen, and the gate answers with the mismatch above rather than diagnosing staleness: nothing here reads MSBuild's
+  inputs or runs `--no-incremental`.
+- The default run still skips an artefact whose declared inputs have not moved, and resolves the assembly only when it is
+  about to run one. A tree with no build at all is green in the default run and blocked under `--re-derive-all`. The skip
+  is the gate's cost rule and this unit did not change it: "I could not measure this" is stated whenever the producer
+  would run, not about a producer the run did not need.
+- `packages/game-action-program/tests/mod-projection.test.mjs`, `integrations/stardew/action-development/src/action-surface-export-check.mjs`
+  and `integrations/stardew/tests/actiondevelopmentactionsurfaceexport/action-surface-export-drift.test.mjs` each still
+  spell `bin/Debug/net6.0/…` for the same assembly. They are outside this unit's pathspec, and a lane that builds Release
+  alone will meet the same blocked reading there. The fix is the resolver above, not a second spelling.
+
+### The census, after this unit
+
+`tools/audit-gate-red-proofs.mjs` over this worktree: `gates examined 357 · with a red proof 341 · external 7 · declared
+without 7 · unreadable 2 · undeclared 0 · zero-population-pass 0`, with `proven:check:generated-artifact-reproducibility
+kind=history` and `proven:test:generated-artifact-reproducibility kind=inject`. `tools/check-harness-conformance.mjs`
+exits 0 and names neither the gate nor its falsifier. The suite grew from 17 cases to 21: a Release-only tree resolving
+and reproducing, the newest of two builds winning (in both directions, Debug named when it wins), a tree with no build
+blocked with the project and the command printed, and a junctioned configuration still found. All four were seen red
+against `HEAD`'s gate file before they were green - `actual ['--deadline-windows']` where
+`['…/bin/Release/net6.0/…', '--deadline-windows']` was expected, and `actual 0` where exit 2 was expected.

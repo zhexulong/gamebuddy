@@ -51,9 +51,16 @@
  *     (`snapshot-sample.v1.json`). It is counted in its own bucket - never reproduced, never a failure - and
  *     `--with-test-producers` runs that test, compares, and restores the artefact's original bytes either way.
  *
- * A producer that cannot run - the Mod export DLL is not built, `dotnet` is absent, the producer exits non-zero - is
- * BLOCKED (exit 2) with the reason, never green: "I could not measure this" and "the artefact is correct" are
- * different statements. `examined 0` is blocked for the same reason.
+ * WHERE THE PRODUCER LIVES IS READ FROM THE TREE. The Mod export producer is a BUILD OUTPUT, and which configuration it
+ * was built in depends on the tool that built it: the witness that wrote this gate saw `bin/Debug/net6.0/...`, while the
+ * Mod build this repository makes (`build:stardew`, and the ladder) is `-c Release` and leaves only
+ * `bin/Release/net6.0/...`. Pinning one configuration turned a tree that carried the assembly all along into
+ * `missing_input`. Every `bin/<configuration>/<framework>/<assembly>` the tree holds is a candidate, the newest mtime
+ * wins, and the report names the one it used - a Debug build never wins silently.
+ *
+ * A producer that cannot run - no build of the Mod export project, `dotnet` is absent, the producer exits non-zero - is
+ * BLOCKED (exit 2) naming the project and the command that builds it, never green: "I could not measure this" and "the
+ * artefact is correct" are different statements. `examined 0` is blocked for the same reason.
  *
  * USAGE:
  *   node tools/check-generated-artifact-reproducibility.mjs                    # the ladder's run
@@ -63,6 +70,7 @@
  * red-proof: history  `230775c7^`'s register laid over a copy of the tree outside the repo -> at its line 61, `$.declaredActionIds` and `$.actions by actionId`: the four retired ids it carries and the fifteen members the producer emits that it does not, exit 1
  * red-proof: history  the three-line projection drift put back (`sweep_scythe` dropped from the host lists) -> its line 4642, `$.mod.experimentalActionIds` and each host list, naming `sweep_scythe` rather than two byte counts, exit 1
  * red-proof: inject   an empty file at a `generated/` path in the same copy -> `generated_artifact_without_producer:<that path>`, exit 1
+ * red-proof: inject   the assembly resolution pinned back to a Debug build (the pre-fix file replayed on a tree whose export project carries only a Release build) -> `generated_artifact_producer_unavailable:<each surface artefact>:missing_input`, `reproduced 2`, exit 2; this file reads `reproduced 5 · declared_by_test 1`, exit 0 (measured 2026-11-12)
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -96,10 +104,17 @@ const HANDLER_GROUPS = `${CONTRACTS}/generated/action-handler-groups.v1.json`;
 const REGISTER = `${CONTRACTS}/generated/native-multiplayer-sensitivity.v1.json`;
 const SNAPSHOT_SAMPLE = `${CONTRACTS}/generated/snapshot-sample.v1.json`;
 const PROJECTION = `${CONTRACTS}/projection/action-source-projection.v1.json`;
-const MOD_EXPORT_PROJECT =
-  "integrations/stardew/tests/actiondevelopmentactionsurfaceexport/actiondevelopmentactionsurfaceexport.csproj";
-const MOD_EXPORT_DLL =
-  "integrations/stardew/tests/actiondevelopmentactionsurfaceexport/bin/Debug/net6.0/GameBuddy.Stardew.ActionDevelopmentActionSurfaceExport.dll";
+const MOD_EXPORT_DIRECTORY = "integrations/stardew/tests/actiondevelopmentactionsurfaceexport";
+const MOD_EXPORT_PROJECT = `${MOD_EXPORT_DIRECTORY}/actiondevelopmentactionsurfaceexport.csproj`;
+const MOD_EXPORT_ASSEMBLY = "GameBuddy.Stardew.ActionDevelopmentActionSurfaceExport.dll";
+
+/** How a build-output producer is found: any configuration the tree carries, newest first (see `resolveBuildOutput`). */
+const MOD_EXPORT_RESOLUTION = Object.freeze({
+  directory: MOD_EXPORT_DIRECTORY,
+  name: MOD_EXPORT_ASSEMBLY,
+  project: MOD_EXPORT_PROJECT,
+  build: `dotnet build ${MOD_EXPORT_PROJECT} -c Release`,
+});
 const REGISTER_PRODUCER = "tools/derive-stardew-native-multiplayer-sensitivity-register.mjs";
 const PROJECTION_PRODUCER = "integrations/stardew/action-development/src/action-source-projection-producer.mjs";
 const SNAPSHOT_SAMPLE_PROJECT =
@@ -125,6 +140,10 @@ const SURFACE_INPUTS = Object.freeze([
  *   in_place_test             - the producer is a test that writes the tracked file itself; only `--with-test-producers`
  *                               runs it, and the artefact's original bytes are restored either way.
  *
+ * `resolve` marks a producer that lives in a build output rather than at a fixed path: the gate finds the newest
+ * `bin/<configuration>/<framework>/<name>` under `directory` and runs that one, so building `-c Release` is not a
+ * missing prerequisite. A tree with no build at all is blocked with `project` and `build` named.
+ *
  * `inputs` is what decides whether the producer's cost is spent: a file or a directory, compared by mtime against the
  * artefact. The projection's list is the producer's own `ACTION_SOURCE_PATHS` read at the coarsest grain that stays
  * true (`tools/` because `runner_sources` reads that whole directory), so a stale artefact is re-derived rather than
@@ -133,23 +152,26 @@ const SURFACE_INPUTS = Object.freeze([
 export const ARTEFACT_PRODUCERS = Object.freeze([
   {
     artefact: SURFACE,
-    producer: `dotnet ${MOD_EXPORT_DLL}`,
-    run: { kind: "stdout", command: "dotnet", args: [MOD_EXPORT_DLL] },
-    requires: { commands: ["dotnet"], paths: [MOD_EXPORT_DLL] },
+    producer: `dotnet ${MOD_EXPORT_DIRECTORY}/bin/<configuration>/<framework>/${MOD_EXPORT_ASSEMBLY}`,
+    resolve: MOD_EXPORT_RESOLUTION,
+    run: { kind: "stdout", command: "dotnet", args: [] },
+    requires: { commands: ["dotnet"], paths: [MOD_EXPORT_PROJECT] },
     inputs: SURFACE_INPUTS,
   },
   {
     artefact: DEADLINE_WINDOWS,
-    producer: `dotnet ${MOD_EXPORT_DLL} --deadline-windows`,
-    run: { kind: "stdout", command: "dotnet", args: [MOD_EXPORT_DLL, "--deadline-windows"] },
-    requires: { commands: ["dotnet"], paths: [MOD_EXPORT_DLL] },
+    producer: `dotnet ${MOD_EXPORT_DIRECTORY}/bin/<configuration>/<framework>/${MOD_EXPORT_ASSEMBLY} --deadline-windows`,
+    resolve: MOD_EXPORT_RESOLUTION,
+    run: { kind: "stdout", command: "dotnet", args: ["--deadline-windows"] },
+    requires: { commands: ["dotnet"], paths: [MOD_EXPORT_PROJECT] },
     inputs: SURFACE_INPUTS,
   },
   {
     artefact: HANDLER_GROUPS,
-    producer: `dotnet ${MOD_EXPORT_DLL} --handler-groups`,
-    run: { kind: "stdout", command: "dotnet", args: [MOD_EXPORT_DLL, "--handler-groups"] },
-    requires: { commands: ["dotnet"], paths: [MOD_EXPORT_DLL] },
+    producer: `dotnet ${MOD_EXPORT_DIRECTORY}/bin/<configuration>/<framework>/${MOD_EXPORT_ASSEMBLY} --handler-groups`,
+    resolve: MOD_EXPORT_RESOLUTION,
+    run: { kind: "stdout", command: "dotnet", args: ["--handler-groups"] },
+    requires: { commands: ["dotnet"], paths: [MOD_EXPORT_PROJECT] },
     inputs: SURFACE_INPUTS,
   },
   {
@@ -574,6 +596,95 @@ function missingPrerequisites(root, entry) {
   return null;
 }
 
+/** A tree-relative, forward-slashed path: one spelling for the report and for a command a reader could type. */
+function toTreePath(root, absolute) {
+  return path.relative(root, absolute).split(path.sep).join("/");
+}
+
+function directoriesIn(absolute) {
+  let names;
+  try {
+    names = fs.readdirSync(absolute);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((name) => {
+      try {
+        // Through the link: a lane may have junctioned `bin/Release` into place, and that is still the build the tree has.
+        return fs.statSync(path.join(absolute, name)).isDirectory();
+      } catch {
+        return false;
+      }
+    })
+    .sort();
+}
+
+/**
+ * The build output the tree actually has, in whichever configuration it was built.
+ *
+ * The configuration is not a property of this gate. A lane's witness recorded `bin/Debug/net6.0/...` and every build
+ * on the ladder is `-c Release`, so a pinned configuration turned a tree that carried the assembly all along into
+ * `missing_input` - a blocked gate reading as a defect in the artefact. Every `bin/<configuration>/<framework>/<name>`
+ * the tree holds is a candidate; the newest mtime wins, the path breaks a tie so two readings of one tree cannot
+ * disagree, and the caller prints the one it used.
+ */
+function resolveBuildOutput({ root, directory, name }) {
+  const bin = path.join(root, directory, "bin");
+  const configurations = directoriesIn(bin);
+  const candidates = [];
+  for (const configuration of configurations) {
+    for (const framework of directoriesIn(path.join(bin, configuration))) {
+      const assembly = path.join(bin, configuration, framework, name);
+      let stat;
+      try {
+        stat = fs.statSync(assembly);
+      } catch {
+        continue;
+      }
+      if (!stat.isFile()) continue;
+      candidates.push({ configuration, path: toTreePath(root, assembly), mtimeMs: stat.mtimeMs });
+    }
+  }
+  candidates.sort((left, right) => right.mtimeMs - left.mtimeMs || left.path.localeCompare(right.path));
+  return { searched: configurations, candidates, chosen: candidates[0] ?? null };
+}
+
+/**
+ * The entry as it will run: prerequisites checked, and a producer that lives in a build output resolved to the assembly
+ * the tree carries. No build is a stated reason naming the project and the command, never a silent skip.
+ */
+function resolveProducer(root, entry) {
+  const missing = missingPrerequisites(root, entry);
+  if (missing !== null) return { status: "blocked", reason: missing, detail: entry.producer };
+  if (entry.resolve === undefined) return { status: "ready", entry };
+  const resolution = resolveBuildOutput({ root, directory: entry.resolve.directory, name: entry.resolve.name });
+  if (resolution.chosen === null) {
+    const searched = resolution.searched.length === 0 ? "no configuration" : resolution.searched.join(", ");
+    return {
+      status: "blocked",
+      reason: `missing_built_assembly:${entry.resolve.project}`,
+      detail:
+        `no bin/<configuration>/<framework>/${entry.resolve.name} under ${entry.resolve.directory} carries it ` +
+        `(searched: ${searched}); build it with: ${entry.resolve.build}`,
+    };
+  }
+  const args = [resolution.chosen.path, ...entry.run.args];
+  return {
+    status: "ready",
+    entry: {
+      ...entry,
+      producer: `${entry.run.command} ${args.join(" ")}`,
+      assembly: {
+        path: resolution.chosen.path,
+        configuration: resolution.chosen.configuration,
+        builds: resolution.candidates.length,
+      },
+      run: { ...entry.run, args },
+    },
+  };
+}
+
 /**
  * Run one producer into a temp path. The sandboxed writer gets a root whose read paths are junctions/hard links into
  * the real tree and whose output path is a real empty directory, so the tracked artefact is never opened for writing.
@@ -725,6 +836,8 @@ function decide(root, options, out, err) {
 
   const index = producerIndex(producers);
   const counts = { reproduced: 0, inputsUnchanged: 0, declaredByTest: 0, mismatched: 0 };
+  /** artefact path -> the build output its bytes came from, for the artefacts whose producer was resolved from a build. */
+  const producerAssemblies = {};
   let blocked = null;
   const sandboxRoot = path.join(root, SANDBOX_ROOT);
   for (const claimant of discovered.claimants) {
@@ -754,29 +867,42 @@ function decide(root, options, out, err) {
       }
     }
 
-    const missing = missingPrerequisites(root, entry);
-    if (missing !== null) {
-      blocked = { path: entry.artefact, reason: missing, producer: entry.producer };
+    const prepared = resolveProducer(root, entry);
+    if (prepared.status === "blocked") {
+      blocked = { path: entry.artefact, reason: prepared.reason, producer: prepared.detail };
       findings.push({
-        code: `generated_artifact_producer_unavailable:${entry.artefact}:${missing}`,
-        detail: entry.producer,
+        code: `generated_artifact_producer_unavailable:${entry.artefact}:${prepared.reason}`,
+        detail: prepared.detail,
       });
       continue;
     }
+    const resolved = prepared.entry;
+    if (resolved.assembly !== undefined) {
+      producerAssemblies[entry.artefact] = resolved.assembly.path;
+      out(
+        `producer assembly: ${resolved.assembly.path} (${entry.artefact}; ${resolved.assembly.builds} build(s) ` +
+          `present, newest wins)\n`,
+      );
+    }
 
     let derived;
-    if (entry.run.kind === "sandboxed_relative_writer") {
-      derived = deriveInSandbox({ root, entry, sandboxPath: path.join(sandboxRoot, slug(entry.artefact)), run });
-    } else if (entry.run.kind === "in_place_test") {
-      derived = deriveWithInPlaceTest({ root, entry, run });
+    if (resolved.run.kind === "sandboxed_relative_writer") {
+      derived = deriveInSandbox({
+        root,
+        entry: resolved,
+        sandboxPath: path.join(sandboxRoot, slug(entry.artefact)),
+        run,
+      });
+    } else if (resolved.run.kind === "in_place_test") {
+      derived = deriveWithInPlaceTest({ root, entry: resolved, run });
     } else {
-      derived = deriveToStdout({ root, entry, run });
+      derived = deriveToStdout({ root, entry: resolved, run });
     }
     if (derived.status !== "measured") {
-      blocked = { path: entry.artefact, reason: derived.reason, producer: entry.producer };
+      blocked = { path: entry.artefact, reason: derived.reason, producer: resolved.producer };
       findings.push({
         code: `generated_artifact_producer_unavailable:${entry.artefact}:${derived.reason}`,
-        detail: entry.producer,
+        detail: resolved.producer,
       });
       continue;
     }
@@ -785,13 +911,13 @@ function decide(root, options, out, err) {
     const mismatch = describeMismatch({ producedBytes: derived.bytes, artefactBytes });
     if (mismatch === null) {
       counts.reproduced += 1;
-      out(`reproduced:${entry.artefact} (${artefactBytes.length} bytes from ${entry.producer})\n`);
+      out(`reproduced:${entry.artefact} (${artefactBytes.length} bytes from ${resolved.producer})\n`);
       continue;
     }
     counts.mismatched += 1;
     findings.push({
       code: `generated_artifact_not_reproducible:${entry.artefact}:${mismatch.line}:${mismatch.member}`,
-      detail: `${mismatch.detail} [producer: ${entry.producer}]`,
+      detail: `${mismatch.detail} [producer: ${resolved.producer}]`,
     });
   }
 
@@ -810,7 +936,15 @@ function decide(root, options, out, err) {
     return 2;
   }
   const status = findings.length === 0 ? "passed" : "failed";
-  report(out, { status, examined: classification.examined, findings, blocked, counts, classification });
+  report(out, {
+    status,
+    examined: classification.examined,
+    findings,
+    blocked,
+    counts,
+    classification,
+    producerAssemblies,
+  });
   if (blocked !== null) return 2;
   return findings.length === 0 ? 0 : 1;
 }
@@ -819,7 +953,10 @@ function slug(artefactPath) {
   return artefactPath.replace(/[^a-zA-Z0-9]+/gu, "-").replace(/^-|-$/gu, "");
 }
 
-function report(out, { status, examined, findings, blocked, counts = null, classification = null }) {
+function report(
+  out,
+  { status, examined, findings, blocked, counts = null, classification = null, producerAssemblies = {} },
+) {
   out(
     `${JSON.stringify({
       gate: GATE_ID,
@@ -831,6 +968,7 @@ function report(out, { status, examined, findings, blocked, counts = null, class
       reproduced: counts?.reproduced ?? 0,
       inputsUnchanged: counts?.inputsUnchanged ?? 0,
       mismatched: counts?.mismatched ?? 0,
+      producerAssemblies,
       blockedBy: blocked === null || blocked === undefined ? null : blocked.reason,
       findings: findings.length,
       checks: RULE_CODES.map((id) => ({ id, ...ruleOutcome(id, { status, findings }) })),
