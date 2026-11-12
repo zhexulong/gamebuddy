@@ -208,6 +208,9 @@ test("both settings surfaces read and write ONE record under ONE revision", asyn
     assert.deepEqual(language0, { revision: 0, locale: null });
     assert.deepEqual(Object.keys(language0).sort(), ["locale", "revision"]);
     const voice0 = await (await read(origin, "/api/tavern/v1/settings/voice-preference", session)).json();
+    // Six keys, and `paced` is not one of them: the record's delivery field group has its own surface
+    // (`/api/tavern/v1/settings/delivery-preference`) and its own projection, so a Voice read that carried `paced`
+    // would be two spellings of one fact on two routes.
     assert.deepEqual(voice0, {
       revision: 0,
       disclosureVersion: null,
@@ -215,7 +218,6 @@ test("both settings surfaces read and write ONE record under ONE revision", asyn
       decidedAtMs: null,
       outputDevice: null,
       persona: null,
-      paced: false,
     });
     assert.deepEqual(Object.keys(voice0).sort(), [
       "consent",
