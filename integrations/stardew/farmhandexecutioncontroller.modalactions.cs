@@ -133,8 +133,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         // exitThisMenu override; every effect it owns is on its own commit path), but a DialogueBox is not:
         // closeDialogue also advances native dialogue state (it pops the speaker's CurrentDialogue, dequeues
         // an object dialogue and can re-open the next queued box -- DialogueBox.cs:198-216 -- and runs
-        // Game1.afterDialogues, :243-248). Both terminals below state which of the two ran rather than
-        // repeating a claim that is only true of one of them.
+        // Game1.afterDialogues, :243-248), and the settlement sheet's close is the engine's own commit. Every
+        // terminal below names which of the three ran rather than repeating a claim that is only true of one.
         // WHAT THE BOX SAID, read BEFORE the close consumes it.
         //
         // `closeDialogue` pops the speaker's `CurrentDialogue` and dequeues the next queued box (DialogueBox.cs:198-216),
