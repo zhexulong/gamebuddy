@@ -22,7 +22,6 @@
     "tools/live-action.mjs": 1718,
     "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs": 6433,
     "tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs": 4613,
-    "tools/live-run/memory/run-memory-live-loop.mjs": 1761,
     "tools/stardew-native-local-player-fixture.test.mjs": 2531
   }
 }

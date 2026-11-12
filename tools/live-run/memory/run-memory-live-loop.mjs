@@ -38,15 +38,24 @@
  * design/handbook/live-run-patterns.md.
  */
 import { spawn } from "node:child_process";
-import { randomBytes, createHash } from "node:crypto";
-import { mkdtemp, mkdir, rm, writeFile, readFile, copyFile, readdir } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve, dirname } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
+import { checkHistorianRubric, identifyHistorianPrompt, readCompartments } from "../../lib/historian-rubric.mjs";
+import {
+  attributeMemoryFunnel,
+  foldCommittedRenderedIdsFromMarkers,
+  m0DigestsFromMarkers,
+  m0SourcesFromMarkers,
+  renderedChaptersFromMarkers,
+  renderedMemoryIdsFromMarkers,
+} from "../../lib/memory-funnel.mjs";
 import {
   evaluateProbeReply,
   loadProbeManifest,
@@ -54,22 +63,10 @@ import {
   probeTurnCommittedGate,
   probeVerdict,
 } from "../chat/run-chat-live-audit.mjs";
-import {
-  attributeMemoryFunnel,
-  foldCommittedRenderedIdsFromMarkers,
-  m0DigestsFromMarkers,
-  m0SourcesFromMarkers,
-  renderedMemoryIdsFromMarkers,
-  renderedChaptersFromMarkers,
-} from "../../lib/memory-funnel.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
 import { buildMemoryRunVerdict, narrateRunVerdict } from "../core/run-verdict.mjs";
-import { checkHistorianRubric, identifyHistorianPrompt, readCompartments } from "../../lib/historian-rubric.mjs";
-
-// The same bounded BCP-47 shape the Host stores for the companion language
-// (settings/player-preference-store.ts). Spelled here for the same reason the browser
-// contract spells it: the shape is bounded, the language set is the player's choice.
-const COMPANION_LOCALE_PATTERN = /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,16}){0,3}$/;
+import { stopChildGracefully } from "./child-shutdown.mjs";
+import { createIdentity, parseArguments, usage } from "./loop-arguments.mjs";
 
 // Live-run evidence root (repo-local, git-ignored): every memory loop run keeps
 // its own directory with the runtime root's evidence and the child stderr, so a
@@ -124,97 +121,6 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const START_TIMEOUT_MS = 60_000;
 
 /** Unique per run so each loop gets its own Memory partition, never a stale one. */
-/**
- * Unique per run so each loop gets its own Memory partition, never a stale one - unless the caller names a
- * continuity, which is how a run is pointed at history that already exists under a known partition.
- */
-function createIdentity(requestedContinuityId) {
-  const suffix = randomBytes(6).toString("hex");
-  return Object.freeze({
-    playerId: `memory_loop_player_${suffix}`,
-    companionId: `memory_loop_companion_${suffix}`,
-    continuityId: requestedContinuityId ?? `memory_loop_continuity_${suffix}`,
-  });
-}
-
-function usage() {
-  return "usage: node tools/live-run/memory/run-memory-live-loop.mjs --report <path> [--manifest <probe-fixture.json>] [--seed <text>] [--question <text>] [--card <character-card.json|worldbook.json-dir>] [--language <bcp47>] [--fixture-fold-threshold <tokens>] [--require-chapter] [--reflect]";
-}
-
-function parseArguments(argv) {
-  // Flags that stand alone. Everything else takes exactly one value; treating a boolean as
-  // value-taking made `--require-chapter` demand an argument it never has.
-  const booleanFlags = new Set(["--require-chapter", "--require-historian-rubric", "--reflect"]);
-  const flags = new Map([
-    ["--report", undefined],
-    ["--root", undefined],
-    ["--continuity", undefined],
-    ["--seed", undefined],
-    ["--question", undefined],
-    ["--manifest", undefined],
-    ["--card", undefined],
-    ["--language", undefined],
-    // Compress the fold's window-derived trigger for this run, so a fold (and therefore a chapter)
-    // happens inside a CI-sized conversation. This sets the Host's TEST-ONLY channel, which the runtime
-    // writes into its OWN user-scope config inside the run's root - the only scope Magic Context accepts
-    // a lowered trigger from (a project file may only raise it). Never an operator surface.
-    ["--fixture-fold-threshold", undefined],
-    // Refuse to pass when no chapter appeared, so a fold fixture cannot silently stop folding.
-    ["--require-chapter", undefined],
-    // Same idea for the historian output obligations: a run may only be cited as evidence when the
-    // mechanical obligations in historian-prompt-rubric.md held.
-    ["--require-historian-rubric", undefined],
-    // The candidate arm of reflect-outcome-plan.md: one reflection between the seeded turns and the
-    // probe, so the ONLY difference between two otherwise identical runs is whether that reflection ran.
-    ["--reflect", undefined],
-  ]);
-  for (let index = 0; index < argv.length; index += 1) {
-    const flag = argv[index];
-    if (flag === "--help") return Object.freeze({ help: true });
-    if (!flags.has(flag)) throw new Error(`${usage()} (unknown flag: ${flag})`);
-    if (booleanFlags.has(flag)) {
-      flags.set(flag, "true");
-      continue;
-    }
-    const value = argv[index + 1];
-    // A value that is itself a known flag means the caller forgot it; refusing is
-    // better than silently consuming the next flag as text.
-    if (value === undefined || flags.has(value)) throw new Error(usage());
-    flags.set(flag, value);
-    index += 1;
-  }
-  const language = flags.get("--language");
-  if (language !== undefined && !COMPANION_LOCALE_PATTERN.test(language))
-    throw new Error(`${usage()} (--language must be a bounded BCP-47 tag, for example zh-CN or ja-JP)`);
-  const requireChapter = flags.get("--require-chapter");
-  if (requireChapter !== undefined && requireChapter !== "true")
-    throw new Error(`${usage()} (--require-chapter takes no value)`);
-  const requireHistorianRubric = flags.get("--require-historian-rubric");
-  if (requireHistorianRubric !== undefined && requireHistorianRubric !== "true")
-    throw new Error(`${usage()} (--require-historian-rubric takes no value)`);
-  const reflect = flags.get("--reflect");
-  if (reflect !== undefined && reflect !== "true") throw new Error(`${usage()} (--reflect takes no value)`);
-  const foldThreshold = flags.get("--fixture-fold-threshold");
-  if (foldThreshold !== undefined && !/^[1-9][0-9]{2,6}$/u.test(foldThreshold))
-    throw new Error(`${usage()} (--fixture-fold-threshold is a token count, for example 6000)`);
-  const reportPath = flags.get("--report");
-  if (typeof reportPath !== "string" || reportPath.length === 0) throw new Error(usage());
-  return Object.freeze({
-    help: false,
-    reportPath: resolve(reportPath),
-    manifestPath: flags.get("--manifest"),
-    cardPath: flags.get("--card"),
-    language,
-    foldThreshold: foldThreshold === undefined ? undefined : Number.parseInt(foldThreshold, 10),
-    requireChapter: requireChapter === "true",
-    requireHistorianRubric: requireHistorianRubric === "true",
-    reflect: reflect === "true",
-    root: flags.get("--root"),
-    continuityId: flags.get("--continuity"),
-    seed: flags.get("--seed"),
-    question: flags.get("--question"),
-  });
-}
 
 /**
  * Resolve the seeded fact and the probe question.
@@ -950,48 +856,6 @@ async function withSurface({ surface, run, root, deploymentManifestPath, gameSes
     launch.dispose?.();
     await stopChildGracefully(launch.child);
   }
-}
-
-/**
- * Ask a composed child to close itself, and wait for it to actually exit.
- *
- * This is the whole reason the memory loop can have a second phase. The product
- * admits a `known` mount as a terminal SUCCESSOR, which requires the predecessor
- * chat-runtime teardown to have COMMITTED, and that commit happens only inside the
- * child's own close path (desktop-runtime-bootstrap finally -> composition.close()).
- *
- * On Windows there is no way to make that path run from outside: `child.kill("SIGTERM")`
- * is TerminateProcess and the handler never executes (probe: exit reported
- * `signal SIGTERM`, handler not invoked), and disposing the guardian peer leaves the
- * child running. So the child now accepts a cooperative request on the IPC channel the
- * gate already opens for readiness, and this asks politely before ever escalating.
- */
-export const SHUTDOWN_REQUEST_SCHEMA = "gamebuddy-desktop-shutdown-request/v1";
-
-async function stopChildGracefully(child, timeoutMs = 30_000) {
-  if (child === undefined || child === null || child.exitCode !== null) return;
-  const exited = new Promise((resolveExit) => child.once("exit", () => resolveExit(true)));
-  // The request only reaches a child that was spawned with an IPC channel and has
-  // not disconnected. `connected` is the product's own gate: a child without the
-  // channel (production Desktop) simply never gets asked, which is correct - it is
-  // stopped by its supervisor.
-  const canRequest = typeof child.send === "function" && child.connected === true;
-  if (canRequest) {
-    try {
-      child.send(Object.freeze({ schema: SHUTDOWN_REQUEST_SCHEMA, protocolVersion: 1 }));
-    } catch {
-      // A send failure is not fatal: the escalation below still guarantees exit.
-    }
-  }
-  const closed = await Promise.race([
-    exited,
-    new Promise((resolveTimeout) => setTimeout(() => resolveTimeout(false), timeoutMs)),
-  ]);
-  if (closed === true) return;
-  // Escalate. `kill` without a signal is the portable hard stop; SIGTERM is
-  // equivalent on Windows and unreliable elsewhere, so it is not used as a fallback.
-  child.kill();
-  await Promise.race([exited, new Promise((resolveTimeout) => setTimeout(() => resolveTimeout(false), 5_000))]);
 }
 
 /**
