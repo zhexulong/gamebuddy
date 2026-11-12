@@ -1,5 +1,6 @@
 import { type Locator, type Page, expect, test } from "./frontend-coverage";
 import { characterLabels } from "../src/components/character-domain-labels";
+import { hostWorldBookReply } from "./host-world-book-reply";
 
 /**
  * A save her own world book refuses must leave the editor able to save again, with her words
@@ -26,7 +27,10 @@ import { characterLabels } from "../src/components/character-domain-labels";
  *
  * The stubs serve the book in the exact shape the client mirror validates (`isCompanionWorldBook`
  * in `management-pipeline-api.ts`): a projection with a field too many or too few is rejected
- * whole, the block then renders as absent, and the journey would be measuring the fixture.
+ * whole, the block then renders as `failed` rather than as a book, and the journey would be
+ * measuring the fixture. `hostWorldBookReply()` is what makes that shape a checked claim instead of
+ * a hope - it runs every stubbed book through the product's own validator, so a fixture the mirror
+ * would refuse fails at its own line.
  */
 
 const token = "A".repeat(43);
@@ -163,14 +167,14 @@ test("a world book conflict moves the save onto the revision the re-read found, 
     apiVersion: 1,
     present: true,
     revision: 7,
-    entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, content: "Her greenhouse." }],
+    entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, enabled: true, content: "Her greenhouse." }],
   };
   // What another writer left behind while the editor was open: the same entry, rewritten.
   const theirs = {
     apiVersion: 1,
     present: true,
     revision: 8,
-    entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, content: "Rewritten elsewhere." }],
+    entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, enabled: true, content: "Rewritten elsewhere." }],
   };
   let durable: Record<string, unknown> = opened;
   const saves: Save[] = [];
@@ -178,7 +182,7 @@ test("a world book conflict moves the save onto the revision the re-read found, 
   await stubSurface(page);
   await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, async (route) => {
     if (route.request().method() !== "PUT") {
-      await route.fulfill(jsonOk(durable));
+      await route.fulfill(jsonOk(hostWorldBookReply(durable)));
       return;
     }
     const body = route.request().postDataJSON() as Save;
@@ -191,7 +195,7 @@ test("a world book conflict moves the save onto the revision the re-read found, 
       return;
     }
     durable = { apiVersion: 1, present: true, revision: 9, entries: body.entries };
-    await route.fulfill(jsonOk(durable));
+    await route.fulfill(jsonOk(hostWorldBookReply(durable)));
   });
 
   const { body, save, notice, editor } = await openEditor(page);
@@ -224,13 +228,13 @@ test("a non-conflict refusal keeps the editor and its text, and does not move th
     apiVersion: 1,
     present: true,
     revision: 4,
-    entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, content: "Her greenhouse." }],
+    entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, enabled: true, content: "Her greenhouse." }],
   };
   const saves: Save[] = [];
   await stubSurface(page);
   await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, async (route) => {
     if (route.request().method() !== "PUT") {
-      await route.fulfill(jsonOk(book));
+      await route.fulfill(jsonOk(hostWorldBookReply(book)));
       return;
     }
     saves.push(route.request().postDataJSON() as Save);
@@ -257,7 +261,7 @@ test("an unreachable Host keeps the editor and the text instead of unmounting th
     apiVersion: 1,
     present: true,
     revision: 6,
-    entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, content: "Her greenhouse." }],
+    entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, enabled: true, content: "Her greenhouse." }],
   };
   let reachable = true;
   await stubSurface(page);
@@ -267,7 +271,7 @@ test("an unreachable Host keeps the editor and the text instead of unmounting th
       return;
     }
     if (route.request().method() !== "PUT") {
-      await route.fulfill(jsonOk(book));
+      await route.fulfill(jsonOk(hostWorldBookReply(book)));
       return;
     }
     // The save itself kills the connection, and the re-read that follows cannot reach the Host either.
@@ -297,22 +301,22 @@ test("a row the book no longer has stays in the editor, and the notice names it"
     present: true,
     revision: 2,
     entries: [
-      { title: "Greenhouse", keys: ["greenhouse"], constant: false, content: "Her greenhouse." },
-      { title: "Sprinkler", keys: ["sprinkler"], constant: false, content: "The one she fixed." },
+      { title: "Greenhouse", keys: ["greenhouse"], constant: false, enabled: true, content: "Her greenhouse." },
+      { title: "Sprinkler", keys: ["sprinkler"], constant: false, enabled: true, content: "The one she fixed." },
     ],
   };
   const afterTheirEdit = {
     apiVersion: 1,
     present: true,
     revision: 3,
-    entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, content: "Her greenhouse." }],
+    entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, enabled: true, content: "Her greenhouse." }],
   };
   let durable: Record<string, unknown> = book;
   const saves: Save[] = [];
   await stubSurface(page);
   await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, async (route) => {
     if (route.request().method() !== "PUT") {
-      await route.fulfill(jsonOk(durable));
+      await route.fulfill(jsonOk(hostWorldBookReply(durable)));
       return;
     }
     const body = route.request().postDataJSON() as Save;
@@ -323,7 +327,7 @@ test("a row the book no longer has stays in the editor, and the notice names it"
       return;
     }
     durable = { apiVersion: 1, present: true, revision: 4, entries: body.entries };
-    await route.fulfill(jsonOk(durable));
+    await route.fulfill(jsonOk(hostWorldBookReply(durable)));
   });
 
   const { block, editor, save, notice } = await openEditor(page);
@@ -359,12 +363,16 @@ test("the conflict sentence is the product's, with no code-shaped token in it", 
   await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, async (route) => {
     if (route.request().method() !== "PUT") {
       await route.fulfill(
-        jsonOk({
-          apiVersion: 1,
-          present: true,
-          revision: 5,
-          entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, content: "Her greenhouse." }],
-        }),
+        jsonOk(
+          hostWorldBookReply({
+            apiVersion: 1,
+            present: true,
+            revision: 5,
+            entries: [
+              { title: "Greenhouse", keys: ["greenhouse"], constant: false, enabled: true, content: "Her greenhouse." },
+            ],
+          }),
+        ),
       );
       return;
     }

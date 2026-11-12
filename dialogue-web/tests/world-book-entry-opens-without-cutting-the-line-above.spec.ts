@@ -1,4 +1,5 @@
 import { type Page, expect, test } from "./frontend-coverage";
+import { hostWorldBookReply } from "./host-world-book-reply";
 
 /**
  * Expanding a world-book entry moves no line above it out of the scroller.
@@ -91,6 +92,7 @@ const worldBookEntries = Array.from({ length: 7 }, (_, index) => ({
   title: `词条 ${index}`,
   keys: ["料理", "做饭"],
   constant: false,
+  enabled: true,
   content: `第 ${index} 条正文。这一条写得长一点，展开之后它自己要有好几行，才能看出上下两条各自是否完整。`,
 }));
 
@@ -108,7 +110,9 @@ async function stubCharacters(page: Page): Promise<void> {
     ),
   );
   await page.route(/\/api\/tavern\/v1\/companions\/[^/]+\/worldbook/u, (route) =>
-    route.fulfill(jsonOk({ apiVersion: 1, present: true, revision: 1, entries: worldBookEntries })),
+    route.fulfill(
+      jsonOk(hostWorldBookReply({ apiVersion: 1, present: true, revision: 1, entries: worldBookEntries })),
+    ),
   );
   await page.route("**/api/tavern/v1/persona", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, present: true, revision: 1, name: "拓荒者", description: "刚下车的农场主。" })),

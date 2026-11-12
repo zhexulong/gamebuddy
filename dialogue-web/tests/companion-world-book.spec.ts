@@ -1,5 +1,6 @@
 import { expect, test } from "./frontend-coverage";
 import { characterLabels } from "../src/components/character-domain-labels";
+import { hostWorldBookReply } from "./host-world-book-reply";
 
 /**
  * The companion's OWN world book on the Characters surface.
@@ -112,7 +113,7 @@ async function stubCharacters(
   );
   await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, (route) =>
     route.fulfill(
-      jsonOk(worldBook ?? { apiVersion: 1, present: false, revision: null, entries: [] }),
+      jsonOk(hostWorldBookReply(worldBook ?? { apiVersion: 1, present: false, revision: null, entries: [] })),
     ),
   );
   await page.route("**/api/tavern/v1/persona", (route) =>
@@ -148,8 +149,20 @@ test("a companion who has a world book shows its count and its trigger words", a
     present: true,
     revision: 7,
     entries: [
-      { title: "温室", keys: ["温室", "玻璃房"], constant: false, content: "温室的玻璃是她去年冬天换的,她说这样开春就能提前育苗。" },
-      { title: "洒水器", keys: ["洒水器", "灌溉"], constant: false, content: "洒水器是她修好的,管子接在井边。" },
+      {
+        title: "温室",
+        keys: ["温室", "玻璃房"],
+        constant: false,
+        enabled: true,
+        content: "温室的玻璃是她去年冬天换的,她说这样开春就能提前育苗。",
+      },
+      {
+        title: "洒水器",
+        keys: ["洒水器", "灌溉"],
+        constant: false,
+        enabled: true,
+        content: "洒水器是她修好的,管子接在井边。",
+      },
     ],
   });
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
@@ -239,6 +252,7 @@ test("the companion's trigger list folds into a disclosure at 400x800", async ({
       title: `词条 ${index}`,
       keys: ["料理", "做饭", "黑莓脆皮乐", "土豆饼", "绿茶", "防风草", "清晨", "拓荒"],
       constant: false,
+      enabled: true,
       content: `第 ${index} 条正文。`,
     }));
   await stubCharacters(page, { apiVersion: 1, present: true, revision: 7, entries });
@@ -293,8 +307,20 @@ test("the companion's own trigger list draws the same card rows as the bindable 
     present: true,
     revision: 7,
     entries: [
-      { title: "温室", keys: ["温室", "玻璃房"], constant: false, content: "温室的玻璃是她去年冬天换的,她说这样开春就能提前育苗。" },
-      { title: "洒水器", keys: ["洒水器", "灌溉"], constant: false, content: "洒水器是她修好的,管子接在井边。" },
+      {
+        title: "温室",
+        keys: ["温室", "玻璃房"],
+        constant: false,
+        enabled: true,
+        content: "温室的玻璃是她去年冬天换的,她说这样开春就能提前育苗。",
+      },
+      {
+        title: "洒水器",
+        keys: ["洒水器", "灌溉"],
+        constant: false,
+        enabled: true,
+        content: "洒水器是她修好的,管子接在井边。",
+      },
     ],
   });
   // The attachable library is non-empty here, so its own row is the comparison.
@@ -417,8 +443,8 @@ test("editing an entry's text and trigger words sends the revision it read, and 
     present: true,
     revision: 7,
     entries: [
-      { title: "温室", keys: ["温室", "玻璃房"], constant: false, content: "温室的玻璃是她去年冬天换的。" },
-      { title: "洒水器", keys: ["洒水器"], constant: false, content: "洒水器是她修好的。" },
+      { title: "温室", keys: ["温室", "玻璃房"], constant: false, enabled: true, content: "温室的玻璃是她去年冬天换的。" },
+      { title: "洒水器", keys: ["洒水器"], constant: false, enabled: true, content: "洒水器是她修好的。" },
     ],
   };
   await stubCharacters(page, book);
@@ -437,12 +463,14 @@ test("editing an entry's text and trigger words sends the revision it read, and 
     sent[0]!.keys = body.entries[0]!.keys;
     // The Host's own reply: the same list at the next revision, already rendered.
     await route.fulfill(
-      jsonOk({
-        apiVersion: 1,
-        present: true,
-        revision: 8,
-        entries: body.entries.map((entry) => ({ ...entry, content: entry.content })),
-      }),
+      jsonOk(
+        hostWorldBookReply({
+          apiVersion: 1,
+          present: true,
+          revision: 8,
+          entries: body.entries.map((entry) => ({ ...entry, content: entry.content })),
+        }),
+      ),
     );
   });
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
@@ -493,8 +521,8 @@ test("an entry marked always with her keeps that fact through the Host round tri
     present: true,
     revision: 3,
     entries: [
-      { title: "温室", keys: ["温室"], constant: false, content: "温室的玻璃是她去年冬天换的。" },
-      { title: "洒水器", keys: ["洒水器"], constant: false, content: "洒水器是她修好的。" },
+      { title: "温室", keys: ["温室"], constant: false, enabled: true, content: "温室的玻璃是她去年冬天换的。" },
+      { title: "洒水器", keys: ["洒水器"], constant: false, enabled: true, content: "洒水器是她修好的。" },
     ],
   };
   await stubCharacters(page, book);
@@ -510,7 +538,7 @@ test("an entry marked always with her keeps that fact through the Host round tri
     };
     sent.push({ expectedRevision: body.expectedRevision, constant: body.entries[0]!.constant, keys: body.entries[0]!.keys });
     // The Host's own reply: what it kept, at the next revision.
-    await route.fulfill(jsonOk({ apiVersion: 1, present: true, revision: 4, entries: body.entries }));
+    await route.fulfill(jsonOk(hostWorldBookReply({ apiVersion: 1, present: true, revision: 4, entries: body.entries })));
   });
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
   const surface = await openCharacters(page, "角色");
@@ -570,7 +598,7 @@ test("the editor says when an edit reaches a conversation, because a running one
     apiVersion: 1,
     present: true,
     revision: 7,
-    entries: [{ title: "温室", keys: ["温室"], constant: false, content: "温室的玻璃。" }],
+    entries: [{ title: "温室", keys: ["温室"], constant: false, enabled: true, content: "温室的玻璃。" }],
   });
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
   const surface = await openCharacters(page, "角色");
@@ -591,7 +619,7 @@ test("a save refused because the book changed says the book changed, not that it
     apiVersion: 1,
     present: true,
     revision: 7,
-    entries: [{ title: "温室", keys: ["温室"], constant: false, content: "温室的玻璃是她去年冬天换的。" }],
+    entries: [{ title: "温室", keys: ["温室"], constant: false, enabled: true, content: "温室的玻璃是她去年冬天换的。" }],
   };
   await stubCharacters(page, book);
   let attempts = 0;
@@ -667,6 +695,7 @@ test("the editor fits its column at 1440x900 and at 400x800, and removing a row 
     title: `词条 ${index}`,
     keys: ["料理", "做饭"],
     constant: false,
+    enabled: true,
     content: `第 ${index} 条正文。`,
   }));
   const book = { apiVersion: 1, present: true, revision: 7, entries };
@@ -681,7 +710,7 @@ test("the editor fits its column at 1440x900 and at 400x800, and removing a row 
       entries: readonly { title: string; content: string }[];
     };
     sentEntries = body.entries;
-    await route.fulfill(jsonOk({ apiVersion: 1, present: true, revision: 8, entries: body.entries }));
+    await route.fulfill(jsonOk(hostWorldBookReply({ apiVersion: 1, present: true, revision: 8, entries: body.entries })));
   });
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
 
@@ -718,11 +747,12 @@ test("the editor fits its column at 1440x900 and at 400x800, and removing a row 
   ] as const) {
     expect(measured.width, `${label}: the editor has a width`).toBeGreaterThan(0);
     expect(measured.right, `${label}: the editor stays inside its viewport`).toBeLessThanOrEqual(viewport);
-    // The editor gives each entry four fields - a title, the trigger words, the always-with-her switch
-    // and the text - so its field count is the fixture's entry count times four. `12` pinned that
-    // product at today's three entries, so a fixture of a different size would have measured a
-    // different editor and read as a layout defect.
-    expect(measured.fields, `${label}: four fields per entry`).toBe(entries.length * 4);
+    // The editor gives each entry five fields - a title, the trigger words, the always-with-her switch,
+    // the switch that decides whether the entry takes part at all, and the text - so its field count is
+    // the fixture's entry count times five. `12` pinned that product at the four fields an entry had
+    // before `efbff381` added its own on/off switch, so a fixture of a different size would have
+    // measured a different editor and read as a layout defect.
+    expect(measured.fields, `${label}: five fields per entry`).toBe(entries.length * 5);
     expect(measured.widest, `${label}: no field is collapsed to nothing`).toBeGreaterThan(40);
   }
 
@@ -788,7 +818,7 @@ test("the trigger-words sentence sits under the field it describes, not under th
     apiVersion: 1,
     present: true,
     revision: 5,
-    entries: [{ title: "温室", keys: ["温室", "玻璃房"], constant: false, content: "温室的玻璃是她去年冬天换的。" }],
+    entries: [{ title: "温室", keys: ["温室", "玻璃房"], constant: false, enabled: true, content: "温室的玻璃是她去年冬天换的。" }],
   };
   await stubCharacters(page, book);
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
@@ -861,7 +891,7 @@ test("her own world book that could not be read says so, and offers the read aga
     apiVersion: 1,
     present: true,
     revision: 3,
-    entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, content: "Her greenhouse." }],
+    entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, enabled: true, content: "Her greenhouse." }],
   };
   await stubCharacters(page, book);
   let failing = true;

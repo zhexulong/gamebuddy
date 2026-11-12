@@ -1130,6 +1130,12 @@ export const SetWorldInfoBindingCommandV1Schema = strictObject({
  * One authored entry of a managed World Info item. `scope`, the entry's own trigger words and the
  * always-on flag are the entry's facts; nothing durable about the library (storage handle, path,
  * canonical hash) is expressible here.
+ *
+ * `enabled` is optional for the same reason `constant` is: the library stores the flag only when it is
+ * `false` (absent means enabled), and both the authored command and the `world-info.detail` reply carry
+ * the stored entry whole. Declaring it here is what makes a switched-off entry readable at all - an
+ * undeclared key on a `strictObject` refuses the reply of any item that holds one, and refuses every
+ * create and edit the panel sends, because the panel names the switch on every entry.
  */
 export const WorldInfoEntryV1Schema = strictObject({
   scope: Type.Union([Type.Literal("companion"), Type.Literal("setting")]),
@@ -1141,6 +1147,7 @@ export const WorldInfoEntryV1Schema = strictObject({
   ),
   selectiveLogic: Type.Optional(Type.Union([Type.Literal(0), Type.Literal(1), Type.Literal(2), Type.Literal(3)])),
   constant: Type.Optional(Type.Boolean()),
+  enabled: Type.Optional(Type.Boolean()),
 });
 /**
  * One library item's own content at one exact revision: what `world-info.detail` returns and what
