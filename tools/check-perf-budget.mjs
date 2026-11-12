@@ -23,14 +23,23 @@
  * the worst of K readings by half again before it fails, so the noise must be large AND land outside
  * the recorded sample, while a real regression (an O(n) change, an order of magnitude) still crosses it.
  *
- * THE BASELINE BELONGS TO THE MACHINE THAT RECORDED IT: the tolerance is 50%, and two boxes differ
- * by more than that on the same code (measured 2026-10-22: every large case 57-126% over a baseline
- * recorded elsewhere, with nothing changed). So the baseline records `os.platform()`, `os.arch()`,
- * the processor count and the CPU model, and a run on a different machine states
- * `perf_budget_skipped: baseline recorded on <recorded>, measured on <current>` and passes - named,
- * with both identities, so a green check there reads as a skip and not as a measurement. On the
- * recording machine nothing changes, and a baseline written before this field existed is a skip too:
- * its machine is unknown, so it cannot be compared against.
+ * THE BASELINE BELONGS TO THE MACHINE THAT RECORDED IT, AND A MACHINE THAT CANNOT COMPARE IS NOT A PASS: the
+ * tolerance is 50%, and two boxes differ by more than that on the same code (measured 2026-10-22: every
+ * large case 57-126% over a baseline recorded elsewhere, with nothing changed). So the baseline records
+ * `os.platform()`, `os.arch()`, the processor count and the CPU model, and a run on another machine has
+ * compared NOTHING - which it says with `perf_budget_not_measured:machine_identity_changed:<recorded>:<actual>
+ * compared=0 recorded=<n>` and exit 1. It used to say `perf_budget_skipped: ...` and exit 0, and that reading
+ * was the defect: a box that never compared a number read exactly like one that compared every number. A
+ * baseline written before this field existed is the same non-comparison with `machine_identity_unrecorded`,
+ * because a machine that is unknown is not this one either.
+ *
+ * `--accept-machine-skip` IS THE ONLY WAY THIS SKIP EXITS 0, and it is a decision somebody writes down. CI's
+ * derived gates job runs `pnpm check:perf-budget`, whose command in package.json passes the flag: its runners
+ * are not the machine that recorded the baseline, so a non-comparison there is the intended outcome, and that
+ * job's aggregate reads the `perf_budget_skipped:` marker and counts this gate `not_measured` rather than
+ * `passed` (tools/check-ci-coverage.mjs). The line still states `compared=0`, so the skip is a flag in a
+ * command line and never a silence. A lane that needs the numbers runs the gate without the flag, and a machine
+ * that cannot compare then fails closed instead of reading green.
  *
  * THE OTHER DIRECTION IS GATED TOO: a case that is measured but not recorded fails (a new path
  * cannot be added without a budget), and a recorded case that is no longer measured fails (a
@@ -45,11 +54,28 @@
  * never changes the exit code - and a revision this clone does not know (a shallow checkout, a
  * baseline from a branch since squashed away) is a named line rather than a crash or silence.
  *
+ * THE RECORDED `revision` IS METADATA, NOT A COMPARISON KEY: `compare` reads `cases` and nothing else, so a
+ * baseline recorded 854 commits ago compares exactly as strictly as one recorded at HEAD - the revision only
+ * tells the reader whose headroom is printed under each case. That is said here because a stale revision looks
+ * like a reason to distrust the numbers (measured 2026-11-12: a lane read `perf_budget_baseline_behind` as part
+ * of why the half was unreadable) when it is the ratchet's normal state, so it is maintained by re-recording
+ * deliberately when a path gets faster, never by treating the distance as a key.
+ *
  * Usage:
- *   node tools/check-perf-budget.mjs                        # re-measure the suite and ratchet
- *   node tools/check-perf-budget.mjs --update                # re-record the worst of K processes
- *   node tools/check-perf-budget.mjs --results <file>        # compare a saved suite output
- *   node tools/check-perf-budget.mjs --root <dir>            # the gate's own fixture
+ *   node tools/check-perf-budget.mjs                           # re-measure the suite and ratchet
+ *   node tools/check-perf-budget.mjs --update                  # re-record the worst of K processes
+ *   node tools/check-perf-budget.mjs --results <file>          # compare a saved suite output
+ *   node tools/check-perf-budget.mjs --root <dir>              # the gate's own fixture
+ *   node tools/check-perf-budget.mjs --accept-machine-skip     # exit 0 where not comparing is the intent (CI)
+ *
+ * THE HALF THAT CANNOT MEASURE AT ALL SAYS WHICH BYTES ARE STALE: the bench files measure the Host's emitted test
+ * artifact, and that artifact refuses to load when its sources have changed (`live_run_artifact_stale`). The refusal
+ * is right, and as `perf_suite_failed:exits=1` under six stack traces it was unreadable - no file, no modification
+ * time, no build stamp, no worktree state. So the gate asks `tools/perf/artifact-readiness.mjs` before it measures and
+ * prints `perf_budget_not_measured:artifact_stale:<reason> compared=0 benchFiles=<n>` with the input, its mtime, the
+ * stamp the artifact was built at and whether that input is dirty in this checkout: the four facts that separate
+ * "rebuild" from "another lane is mid-flight". It does not rebuild - an artifact this gate rebuilt itself would be
+ * compared against itself - and it does not measure a partial suite either.
  *
  * ACTION PACE. The same entry point also holds the game-action performance standard
  * (`tools/lib/action-pace.mjs`): one action's measured game-side milliseconds against what the
@@ -69,6 +95,12 @@
  *                     -> `perf_budget_failed slow=1 ... +100.0%`, exit 1 (tools/perf/budget.test.mjs)
  * red-proof: fixture  a bundle whose `harvest_crop` duration is doubled -> `action_pace_above_native_floor:harvest_crop:`
  *                     naming the action, its ratio, ours and the floor, exit 1 (tools/perf/action-pace.test.mjs)
+ * red-proof: fixture  a baseline carrying another machine's `machine` -> `perf_budget_not_measured:machine_identity_changed:`
+ *                     with both identities and `compared=0`, exit 1, where it used to exit 0; the same fixture with
+ *                     `--accept-machine-skip` -> `perf_budget_skipped: ... compared=0`, exit 0 (tools/perf/budget.test.mjs)
+ * red-proof: fixture  one byte changed in an input the artifact's manifest records ->
+ *                     `perf_budget_not_measured:artifact_stale:artifact_content_mismatch:<the input>` naming its mtime,
+ *                     the artifact's build stamp and `worktree=modified`, exit 1 (tools/perf/artifact-readiness.test.mjs)
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -76,7 +108,8 @@ import { arch, cpus, platform } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { actionPaceRecord, compareActionPace, measureActionPace, renderActionPace } from "./lib/action-pace.mjs";
-import { caseResults, runSuite } from "./perf/run-benchmarks.mjs";
+import { assessBenchmarkArtifact } from "./perf/artifact-readiness.mjs";
+import { benchFiles, caseResults, runSuite } from "./perf/run-benchmarks.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -119,23 +152,43 @@ export function machineLabel(machine) {
 }
 
 /**
- * The line that says why this run does not compare, or undefined when it does.
+ * Why this run cannot compare, or undefined when it can.
  *
- * A missing identity is the older baseline, which recorded nothing about its machine: unknown is not
- * the current one, so it cannot be compared either, and saying that is what lets this field be added
- * without pretending the numbers were portable all along.
+ * A missing identity is the older baseline, which recorded nothing about its machine: unknown is not the
+ * current one, so it cannot be compared either, and saying that is what lets this field be added without
+ * pretending the numbers were portable all along. What this returns is the comparison's identity, not a
+ * verdict: the two lines below are the two verdicts a caller may intend, and neither of them is green.
  */
-export function machineSkipLine(recorded, current) {
-  if (recorded === undefined) {
-    return `perf_budget_skipped: baseline predates the machine identity, measured on ${machineLabel(current)}`;
-  }
+export function machineComparison(recorded, current) {
+  if (recorded === undefined)
+    return { code: "machine_identity_unrecorded", recorded: "unrecorded", current: machineLabel(current) };
   const same =
     recorded.platform === current.platform &&
     recorded.arch === current.arch &&
     recorded.processors === current.processors &&
     recorded.cpuModel === current.cpuModel;
   if (same) return undefined;
-  return `perf_budget_skipped: baseline recorded on ${machineLabel(recorded)}, measured on ${machineLabel(current)}`;
+  return { code: "machine_identity_changed", recorded: machineLabel(recorded), current: machineLabel(current) };
+}
+
+/**
+ * A run that did not compare, and the population it never touched: `compared=0` is the number the reading rests on,
+ * and `recorded` is how many cases the baseline holds. `not_measured` is a blocked reading here, so it exits 1.
+ */
+export function machineNotMeasuredLine({ comparison, recordedCases }) {
+  return `perf_budget_not_measured:${comparison.code}:${comparison.recorded}:${comparison.current} compared=0 recorded=${recordedCases}`;
+}
+
+/**
+ * The same non-comparison under `--accept-machine-skip`: the marker the CI aggregate reads, still stating `compared=0`
+ * so accepting the skip never renames it a comparison.
+ */
+export function machineAcceptedSkipLine({ comparison, recordedCases }) {
+  const basis =
+    comparison.code === "machine_identity_unrecorded"
+      ? `baseline predates the machine identity, measured on ${comparison.current}`
+      : `baseline recorded on ${comparison.recorded}, measured on ${comparison.current}`;
+  return `perf_budget_skipped: ${basis}, compared=0 recorded=${recordedCases}`;
 }
 
 /**
@@ -362,7 +415,7 @@ function actionPaceSection({ root, argv }) {
   return rendered.failed;
 }
 
-function main(argv) {
+async function main(argv) {
   const root = resolve(valueOf(argv, "--root") ?? repositoryRoot);
   // A recording is not a check: it writes what this checkout's bundles measured and stops, so it
   // never depends on a microbenchmark suite run or on this box's baseline.
@@ -374,24 +427,43 @@ function main(argv) {
   // The section also stands alone, for a lane that wants the pace verdict without paying for a
   // microbenchmark suite: the same script, one mode, never a second perf entry point.
   if (recording || argv.includes("--action-pace-only")) return paceFailed ? 1 : 0;
-  return checkMicrobenchmarks({ root, argv, paceFailed });
+  return await checkMicrobenchmarks({ root, argv, paceFailed });
 }
 
-function checkMicrobenchmarks({ root, argv, paceFailed }) {
+async function checkMicrobenchmarks({ root, argv, paceFailed }) {
   const update = argv.includes("--update");
   const machine = machineIdentity();
   const baseline = update ? undefined : JSON.parse(readFileSync(baselineFor(root), "utf8"));
   if (baseline !== undefined) {
-    const skip = machineSkipLine(baseline.machine, machine);
-    if (skip !== undefined) {
-      // Not measured: this machine's numbers are not this baseline's numbers, and measuring them
-      // would only produce a red that says "another box" in the shape of a regression.
-      process.stdout.write(`${skip}\n`);
-      return paceFailed ? 1 : 0;
+    const comparison = machineComparison(baseline.machine, machine);
+    if (comparison !== undefined) {
+      // Not measured: this machine's numbers are not this baseline's numbers, and measuring them would
+      // only produce a red that says "another box" in the shape of a regression. The default reading says
+      // exactly that and stops; `--accept-machine-skip` says the same thing and exits 0, because a caller
+      // such as CI's derived gates job intended the non-comparison and records that decision in its command.
+      const recordedCases = Object.keys(baseline.cases).length;
+      if (argv.includes("--accept-machine-skip")) {
+        process.stdout.write(`${machineAcceptedSkipLine({ comparison, recordedCases })}\n`);
+        return paceFailed ? 1 : 0;
+      }
+      process.stdout.write(`${machineNotMeasuredLine({ comparison, recordedCases })}\n`);
+      process.stdout.write(
+        `  this is not the machine that recorded tools/perf/baseline.json, so nothing was compared; pass --accept-machine-skip\n` +
+          "  only where that non-comparison is the intended outcome (CI does), never to make a reading green\n",
+      );
+      return 1;
     }
     // Before the measurement, because it describes the numbers that follow rather than the verdict.
     process.stdout.write(`${revisionLine(baseline.revision, revisionDistance(baseline.revision, root))}\n`);
     process.stdout.write(`${recordingLine(baseline.recording)}\n`);
+  }
+  // A saved suite output needs no artifact, and no number of bench files: only a re-measurement does.
+  if (valueOf(argv, "--results") === undefined) {
+    const readiness = await assessBenchmarkArtifact({ root, benchFiles: benchFiles().length });
+    if (!readiness.ready) {
+      for (const line of readiness.lines) process.stdout.write(`${line}\n`);
+      return 1;
+    }
   }
   if (update) {
     recordWorst({ root, machine, argv });
@@ -423,12 +495,16 @@ function checkMicrobenchmarks({ root, argv, paceFailed }) {
   const debt = `cases=${keys.length} recorded=${Object.keys(baseline.cases).length} revision=${baseline.revision}`;
   if (slow.length === 0 && unrecorded.length === 0 && missing.length === 0 && duplicates.length === 0) {
     const slowest = [...measuredByKey.entries()].sort((left, right) => right[1].perOpMicros - left[1].perOpMicros)[0];
-    process.stdout.write(`perf_budget_ok slowest=${slowest[0]} ${slowest[1].perOpMicros} µs/op debt: ${debt}\n`);
+    // `compared` first, because `0 findings` means nothing without the population the verdict rests on.
+    process.stdout.write(
+      `perf_budget_ok compared=${results.length} slowest=${slowest[0]} ${slowest[1].perOpMicros} µs/op debt: ${debt}\n`,
+    );
     return paceFailed ? 1 : 0;
   }
 
   process.stdout.write(
-    `perf_budget_failed slow=${slow.length} unrecorded=${unrecorded.length} missing=${missing.length} debt: ${debt}\n`,
+    `perf_budget_failed compared=${results.length} slow=${slow.length} unrecorded=${unrecorded.length} ` +
+      `missing=${missing.length} debt: ${debt}\n`,
   );
   for (const { key, result, recorded, budget } of slow) {
     const growth = ((result.perOpMicros / recorded.perOpMicros - 1) * 100).toFixed(1);
@@ -448,7 +524,7 @@ function checkMicrobenchmarks({ root, argv, paceFailed }) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    process.exitCode = main(process.argv.slice(2));
+    process.exitCode = await main(process.argv.slice(2));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 2;

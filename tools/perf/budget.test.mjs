@@ -20,8 +20,10 @@ import {
   BUDGET_TOLERANCE,
   budgetMicros,
   compare,
+  machineAcceptedSkipLine,
+  machineComparison,
   machineIdentity,
-  machineSkipLine,
+  machineNotMeasuredLine,
   recordingLine,
   revisionLine,
   worstOfProcesses,
@@ -93,7 +95,7 @@ test("the CLI prints the measured cost and the budget it broke", async () => {
       failure = error;
     }
     assert.equal(failure?.status, 1, "a case past its budget must fail the gate");
-    assert.match(failure.stdout, /perf_budget_failed slow=1/u);
+    assert.match(failure.stdout, /perf_budget_failed compared=1 slow=1/u);
     assert.match(failure.stdout, /journal\.write\/large measured 200 ops\/s 5 µs\/op, budget 3\.00 µs\/op/u);
     // The budget in front of the case is a worst-of-3 one, and the run says so before it measures.
     assert.match(
@@ -198,22 +200,39 @@ test("the gate names how far the baseline is from HEAD, and that distance never 
 
 const elsewhere = { platform: "linux", arch: "arm64", processors: 8, cpuModel: "Some Other CPU @ 2.00GHz" };
 
-test("a baseline from another machine is a stated skip, not a comparison", () => {
-  assert.equal(machineSkipLine(machineIdentity(), machineIdentity()), undefined, "the recording machine compares");
+test("a baseline from another machine is a named non-comparison, not a comparison", () => {
+  assert.equal(machineComparison(machineIdentity(), machineIdentity()), undefined, "the recording machine compares");
 
-  const line = machineSkipLine(elsewhere, machineIdentity());
+  const comparison = machineComparison(elsewhere, machineIdentity());
+  assert.equal(comparison.code, "machine_identity_changed");
+  // The population the run never touched is in the line: `compared=0` beside the cases the baseline holds.
   assert.match(
-    line,
+    machineNotMeasuredLine({ comparison, recordedCases: 12 }),
+    /^perf_budget_not_measured:machine_identity_changed:linux\/arm64\/8 cpus\/Some Other CPU @ 2\.00GHz:win32\//u,
+  );
+  assert.match(machineNotMeasuredLine({ comparison, recordedCases: 12 }), / compared=0 recorded=12$/u);
+  // The accepted skip states the same population, so a decision never renames itself a comparison.
+  assert.match(
+    machineAcceptedSkipLine({ comparison, recordedCases: 12 }),
     /^perf_budget_skipped: baseline recorded on linux\/arm64\/8 cpus\/Some Other CPU @ 2\.00GHz, measured on /u,
   );
+  assert.match(machineAcceptedSkipLine({ comparison, recordedCases: 12 }), /, compared=0 recorded=12$/u);
 });
 
 test("a baseline recorded before machines were recorded cannot be compared either", () => {
-  const line = machineSkipLine(undefined, machineIdentity());
-  assert.match(line, /^perf_budget_skipped: baseline predates the machine identity, measured on /u);
+  const comparison = machineComparison(undefined, machineIdentity());
+  assert.equal(comparison.code, "machine_identity_unrecorded");
+  assert.match(
+    machineNotMeasuredLine({ comparison, recordedCases: 12 }),
+    /^perf_budget_not_measured:machine_identity_unrecorded:unrecorded:/u,
+  );
+  assert.match(
+    machineAcceptedSkipLine({ comparison, recordedCases: 12 }),
+    /^perf_budget_skipped: baseline predates the machine identity, measured on /u,
+  );
 });
 
-test("the CLI skips with both identities instead of failing on another machine's numbers", async () => {
+test("the CLI fails on another machine's baseline, and exits 0 only when the skip is asked for", async () => {
   const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-perf-skip-"));
   try {
     await mkdir(join(root, "tools", "perf"), { recursive: true });
@@ -225,23 +244,44 @@ test("the CLI skips with both identities instead of failing on another machine's
       cases: { "journal.write/large": recorded },
     };
     await writeFile(join(root, "tools", "perf", "baseline.json"), `${JSON.stringify(baseline, null, 2)}\n`);
-    // Over budget by any reading: if the gate compared this, it would exit 1.
+    // Over budget by any reading: if the gate compared this, it would exit 1 for the regression instead.
     const resultsPath = join(root, "results.txt");
     await writeFile(
       resultsPath,
       `PERF_RESULT ${JSON.stringify({ id: "journal.write", size: "large", opsPerSecond: 20, perOpMicros: 50 })}\n`,
     );
+    const run = (...args) => {
+      try {
+        return {
+          status: 0,
+          stdout: execFileSync(process.execPath, [gatePath, "--root", root, "--results", resultsPath, ...args], {
+            encoding: "utf8",
+            windowsHide: true,
+            stdio: ["ignore", "pipe", "pipe"],
+          }),
+        };
+      } catch (error) {
+        return { status: error.status, stdout: error.stdout ?? "" };
+      }
+    };
 
-    const stdout = execFileSync(process.execPath, [gatePath, "--root", root, "--results", resultsPath], {
-      encoding: "utf8",
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    // The default reading of a machine that cannot compare: blocked, named, and nothing compared.
+    const blocked = run();
+    assert.equal(blocked.status, 1, "a run that compared nothing must not exit 0");
     assert.match(
-      stdout,
-      /^perf_budget_skipped: baseline recorded on linux\/arm64\/8 cpus\/Some Other CPU @ 2\.00GHz, measured on /mu,
+      blocked.stdout,
+      /^perf_budget_not_measured:machine_identity_changed:linux\/arm64\/8 cpus\/Some Other CPU @ 2\.00GHz:win32\/.* compared=0 recorded=1$/mu,
     );
-    assert.doesNotMatch(stdout, /perf_budget_(failed|ok)/u);
+    assert.doesNotMatch(blocked.stdout, /perf_budget_(failed|ok)/u);
+
+    // The explicit opt-in states the same non-comparison and exits 0, which is what CI's gates job asks for.
+    const accepted = run("--accept-machine-skip");
+    assert.equal(accepted.status, 0);
+    assert.match(
+      accepted.stdout,
+      /^perf_budget_skipped: baseline recorded on linux\/arm64\/8 cpus\/Some Other CPU @ 2\.00GHz, measured on .* compared=0 recorded=1$/mu,
+    );
+    assert.doesNotMatch(accepted.stdout, /perf_budget_(failed|ok)/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
