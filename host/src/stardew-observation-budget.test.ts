@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MAX_PLAN_NODES } from "./body-program-script.js";
+import { TARGETS_NAMED_PER_PLAN } from "./body-program-script.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
 import { createStardewObservationTools } from "./game-tools.js";
 import type { Snapshot } from "./protocol.js";
@@ -14,7 +14,8 @@ import { boundObservedSnapshot } from "./stardew-observation-budget.js";
  * The same measurement on 2026-10-29 (`round7`, 33 calls, 1,720 KB, 90.6% of every tool result) added
  * two plantable CATALOGUES: `seedTargets` and `treeSaplingTargets` published 64 rows for a single held
  * stack. A row there is addressable, so the bound is sized by what a plan can actually name - one plan
- * holds MAX_PLAN_NODES nodes - rather than by an arbitrary cap.
+ * can name `TARGETS_NAMED_PER_PLAN` distinct targets - rather than by an arbitrary cap. It is NOT sized by
+ * `MAX_PLAN_NODES`, which is the journal's read-back corruption bound and answers a different question.
  *
  * Everything a dispatched action needs to be issued - target ids, tiles, tool slots, inventory,
  * clock and calendar - must survive the bound unchanged. An EMPTY family stays present, because a
@@ -296,7 +297,8 @@ function catalogue(
 
 test("a plantable catalogue is published nearest-first and no plan can name a row it withheld", async () => {
   // Measured 2026-10-29 `round7`: 64 rows in ONE stack on 22 of 33 observations (7.2 KB of the 32.8 KB
-  // largest), while one plan holds MAX_PLAN_NODES nodes and so can plant at most that many times.
+  // largest), while one plan can name TARGETS_NAMED_PER_PLAN distinct targets and so can plant at most that many
+  // times.
   const rows = catalogue(64, { slot: 13, item: "(O)309" });
   const { published, budget } = await observe({
     ...snapshot,
@@ -307,20 +309,20 @@ test("a plantable catalogue is published nearest-first and no plan can name a ro
   const distance = (row: Readonly<{ x: number; y: number }>) =>
     Math.max(Math.abs(row.x - snapshot.tile.x), Math.abs(row.y - snapshot.tile.y));
 
-  assert.equal(kept.length, MAX_PLAN_NODES, "one stack keeps exactly one plan's worth of choices");
-  assert.equal(budget.withheldDistantSaplingTargets, rows.length - MAX_PLAN_NODES);
+  assert.equal(kept.length, TARGETS_NAMED_PER_PLAN, "one stack keeps exactly one plan's worth of choices");
+  assert.equal(budget.withheldDistantSaplingTargets, rows.length - TARGETS_NAMED_PER_PLAN);
 
   // The window is the NEAREST rows, in that order: a script that slices the list (`slice(0, 6)`) gets the tiles
   // it can reach soonest, and `[0]` is the nearest of all rather than whatever the Mod's scan happened to hit first.
   const ranked = [...rows].sort((left, right) => distance(left) - distance(right));
   assert.deepEqual(
     kept.map((row) => row.targetId),
-    ranked.slice(0, MAX_PLAN_NODES).map((row) => row.targetId),
+    ranked.slice(0, TARGETS_NAMED_PER_PLAN).map((row) => row.targetId),
     "the published prefix is exactly the nearest rows a plan can name",
   );
   assert.equal(
-    distance(kept[MAX_PLAN_NODES - 1]!),
-    distance(ranked[MAX_PLAN_NODES - 1]!),
+    distance(kept[TARGETS_NAMED_PER_PLAN - 1]!),
+    distance(ranked[TARGETS_NAMED_PER_PLAN - 1]!),
     "the last published row is on the window's edge - nothing farther survived",
   );
   assert.ok(
@@ -342,15 +344,15 @@ test("each held stack keeps its own window, so a plan that mixes two seeds still
   });
   const kept = published.seedTargets as readonly Readonly<{ slot: number }>[];
 
-  assert.equal(kept.filter((row) => row.slot === 7).length, MAX_PLAN_NODES);
-  assert.equal(kept.filter((row) => row.slot === 14).length, MAX_PLAN_NODES);
-  assert.equal(budget.withheldDistantSeedTargets, 60 - 2 * MAX_PLAN_NODES);
+  assert.equal(kept.filter((row) => row.slot === 7).length, TARGETS_NAMED_PER_PLAN);
+  assert.equal(kept.filter((row) => row.slot === 14).length, TARGETS_NAMED_PER_PLAN);
+  assert.equal(budget.withheldDistantSeedTargets, 60 - 2 * TARGETS_NAMED_PER_PLAN);
 });
 
 test("a plantable family that already fits a plan's reach is published untouched", async () => {
   // The bound must not touch the ordinary case: a family with no more rows than one plan can name is
   // copied through, so its byte count and its order are exactly what the Mod published.
-  const rows = catalogue(MAX_PLAN_NODES, { slot: 13, item: "(O)309" });
+  const rows = catalogue(TARGETS_NAMED_PER_PLAN, { slot: 13, item: "(O)309" });
   const { published, budget } = await observe({ ...snapshot, seedTargets: [], treeSaplingTargets: rows });
 
   assert.deepEqual(published.treeSaplingTargets, rows);
@@ -371,7 +373,7 @@ test("a withheld plantable tile is counted in the payload, not silently missing"
     withheldDistantSeedTargets: number;
   }>;
 
-  assert.equal(disclosed.withheldDistantSaplingTargets, 40 - MAX_PLAN_NODES);
+  assert.equal(disclosed.withheldDistantSaplingTargets, 40 - TARGETS_NAMED_PER_PLAN);
   assert.equal(disclosed.withheldDistantSeedTargets, 0, "a family that fit did not withhold anything");
 });
 
