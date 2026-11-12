@@ -230,8 +230,15 @@ test("the Mod's evidence is read in both the shapes it arrives in", () => {
   assert.equal(evidenceField("modal_type=DialogueBox;x=a=b", "x"), "a=b");
 });
 
-/** The remedy table's own source: the population the reachability test below reads. */
-const REMEDY_SOURCE = join(dirname(fileURLToPath(import.meta.url)), "stardew-action-remedy.ts");
+/**
+ * The remedy table's own source: the population the reachability test below reads.
+ *
+ * Resolved through `../src` rather than beside this file, because the test is compiled into `host/dist-test`, one level
+ * below `host`: the same expression names the module from `host/src` (run from source) and from `host/dist-test` (run
+ * compiled). Beside this file it read `dist-test/stardew-action-remedy.ts`, which only exists in the source layout, so
+ * the gate answered ENOENT in every compiled run.
+ */
+const REMEDY_SOURCE = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "stardew-action-remedy.ts");
 
 /** The module's own string constants, so a route it names through one is resolved rather than guessed. */
 function moduleStringConstants(sourceFile: ts.SourceFile): Map<string, string> {
