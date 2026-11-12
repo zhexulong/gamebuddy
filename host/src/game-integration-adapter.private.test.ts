@@ -293,6 +293,9 @@ test("module tools require their owning module and scope identity", () => {
   } as const;
   const connection = {
     scope: stardewScope,
+    // The one fact the launch still owns: `disconnect()` clears this gate before the bridge closes, so a dead
+    // connection is refused while the same frozen wrapper stays reachable on the handle.
+    executionGate: { executable: true },
     state: {
       connected: true,
       sessionId: "session_01",
@@ -328,21 +331,34 @@ test("module tools require their owning module and scope identity", () => {
       }),
     /integration_adapter_scope_mismatch/,
   );
-  // Identity binding is reachable only through the connection the authenticated
-  // Stardew launch minted: a caller-built connection is refused before any scope
-  // is compared, so a hand-built object can no longer claim a matching (or
-  // mismatching) save/world identity here. The owning suite asserts that exact
-  // match/mismatch set on a real launch connection —
-  // local-stardew-bridge-attestation.test.ts, "enforces the exact
-  // save/world/companion identity binding".
+  // The identity binding is the connection's OWN scope and nothing else: this object was built here and never by a
+  // launch, and a matching binding still answers, because which objects the adapter has seen is not a second fact it
+  // keeps. A binding that disagrees is refused by name, and the refusal that does remain - a closed launcher gate - is
+  // proven on the same object below, so the positive above cannot be satisfied by an adapter that answers everything.
+  // local-stardew-bridge-attestation.test.ts drives the same binding from a real launch.
+  assert.doesNotThrow(() =>
+    module.assertIdentityBinding(connection, {
+      companionId: "companion_01",
+      saveId: "save_01",
+      worldId: "world_01",
+    }),
+  );
   assert.throws(
     () =>
       module.assertIdentityBinding(connection, {
         companionId: "companion_01",
         saveId: "save_01",
-        worldId: "world_01",
+        worldId: "world_other",
       }),
-    /stardew_connection_not_authenticated_or_not_live/,
+    /integration_identity_binding_mismatch/,
+  );
+  assert.throws(
+    () =>
+      module.assertIdentityBinding(
+        { ...connection, executionGate: { executable: false } },
+        { companionId: "companion_01", saveId: "save_01", worldId: "world_01" },
+      ),
+    /stardew_connection_not_live/,
   );
 });
 
