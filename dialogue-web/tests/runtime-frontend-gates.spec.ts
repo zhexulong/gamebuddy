@@ -35,6 +35,7 @@
  * press - because the two are different commits and only the second one unmounts
  * the conversation that has to name where focus goes.
  */
+import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "./frontend-coverage";
 
 const token = "A".repeat(43);
@@ -1445,3 +1446,315 @@ test("gate 15: the viewport meta resizes the visual viewport for the on-screen k
     "interactive-widget=resizes-content",
   );
 });
+
+
+/**
+ * Gate 16: a beat and the speech beside it are two voices, in both appearances
+ * and both languages.
+ *
+ * The owner's report: "浅色情况下动作和后面的话不大容易区分(粗细不明显)" - in the
+ * light appearance the bracketed stage direction and the sentence after it did
+ * not read as two things.
+ *
+ * The readings that made that possible are in the commit that added this gate, and
+ * they correct a natural guess: the collapse is not a light-theme defect. `style.css`
+ * retires the CJK slant (`.message-bubble em.message-action:lang(zh)`), correctly -
+ * a slanted CJK face is a smeared one - so the italic is a channel Latin has and
+ * Chinese does not. What Chinese had left was tracking alone, and its ink differs
+ * from the speech's by 1.59:1 (dark) and 1.69:1 (light), which a contrast ratio can
+ * see and a reader cannot. One channel, in both appearances.
+ *
+ * WHY THE INK IS NOT THE SECOND CHANNEL, in either appearance: a beat is drawn on
+ * the player's own bubble too, and the dark burgundy plate under AA caps the ink
+ * separation at 2.21:1; the light plate is free of that cap, but the only rung under
+ * `--text-secondary` that clears AA there is the ink the product reserves for things
+ * the player cannot use (`ui-polish-defects.spec.ts`'s defect 1, a stage direction
+ * that read as a dead placeholder). Both walls are in the stylesheet's comment. The
+ * size step is the axis that remains.
+ *
+ * The failure this catches:
+ *
+ *   * a beat that differs from its speech in fewer than two visible channels - the
+ *     Chinese case above, in any appearance. Every combination is measured, and the
+ *     count is not relaxed per appearance: a gate that exempts the case that reds is
+ *     not a gate.
+ *   * a beat whose quieter ink has been pushed off the AA floor on the plate it is
+ *     actually drawn on (the player's own `--selection` bubble is the tight one).
+ *   * a beat's size that reflows the paragraph it sits in. A quieter stage direction
+ *     is a typographic change; a reflowed body copy is a different change.
+ *
+ * WHY THE READINGS ARE THE BROWSER'S: the sheet authors tokens, `:lang()` and six
+ * cascade layers decide which of them the beat wears, and only the engine computes
+ * the result. Each channel counts only when the difference is one a reader sees (the
+ * floors below), so two inks one step apart are not two tones.
+ */
+
+/**
+ * Floors a channel must clear to count as a signal a reader can see.
+ *
+ * `BEAT_SIZE_RATIO`: a size step under 8% is under 1.2 px at the 14 px body size,
+ * which lands in the glyph raster's own rounding; the beat ships at 10% (`0.9em`).
+ */
+const BEAT_INK_STEP = 3;
+const BEAT_TRACKING_EM = 0.02;
+const BEAT_SIZE_RATIO = 0.08;
+const BEAT_WEIGHT_STEP = 100;
+
+/** What one element's typography computed to. */
+type BeatTypography = Readonly<{
+  fontStyle: string;
+  fontSizePx: number;
+  fontWeight: number;
+  /** Letter-spacing in em, so a reading does not depend on the body size. */
+  trackingEm: number;
+  color: string;
+}>;
+
+/** One bubble's pair: the beat, the speech block it stands ahead of, and the plate behind both. */
+type BeatReading = Readonly<{ beat: BeatTypography; speech: BeatTypography; bubble: string }>;
+
+/** Both sides of the conversation, because a beat is the same format on both. */
+type TranscriptReading = Readonly<{ companion: BeatReading | null; player: BeatReading | null }>;
+
+/** One line box's height, so a reflow can be read as a count and not only as a total. */
+type BlockGeometry = Readonly<{ height: number; lines: number }>;
+
+/**
+ * Reads the rendered beat and the speech block beside it out of both bubbles.
+ *
+ * The speech is the bubble's last block whose text is not the beat - the reply
+ * shape is one stage direction on its own line, then what she says - so the two
+ * readings come from two elements rather than one element and its own text node.
+ */
+async function readBeats(page: Page, beatWord: string): Promise<TranscriptReading> {
+  return page.evaluate((word): TranscriptReading => {
+    const typography = (element: Element): BeatTypography => {
+      const style = getComputedStyle(element);
+      const size = Number.parseFloat(style.fontSize);
+      return {
+        fontStyle: style.fontStyle,
+        fontSizePx: size,
+        fontWeight: Number.parseInt(style.fontWeight, 10),
+        trackingEm: (Number.parseFloat(style.letterSpacing) || 0) / size,
+        color: style.color,
+      };
+    };
+    const bubbleOf = (selector: string): BeatReading | null => {
+      const bubble = document.querySelector<HTMLElement>(selector);
+      if (bubble === null) return null;
+      const beat = bubble.querySelector<HTMLElement>("em.message-action");
+      if (beat === null) return null;
+      const blocks = [...bubble.querySelectorAll<HTMLElement>("p")];
+      const speech = blocks.filter((block) => !(block.textContent ?? "").includes(word)).at(-1);
+      if (speech === undefined) return null;
+      return { beat: typography(beat), speech: typography(speech), bubble: getComputedStyle(bubble).backgroundColor };
+    };
+    return {
+      companion: bubbleOf("li.message.companion .message-bubble"),
+      player: bubbleOf("li.message.player .message-bubble"),
+    };
+  }, beatWord);
+}
+
+/**
+ * The line geometry of every block a body carries: `lines` counts the line boxes the
+ * paragraph's text actually painted, so a paragraph that grew one more line is
+ * visible as a count and not only as a height.
+ */
+async function readReflow(page: Page): Promise<readonly (readonly BlockGeometry[])[]> {
+  return page.evaluate(() => {
+    const linesOf = (block: HTMLElement) => {
+      const range = document.createRange();
+      range.selectNodeContents(block);
+      const tops = new Set([...range.getClientRects()].map((rect) => Math.round(rect.top * 10) / 10));
+      return Math.max(1, tops.size);
+    };
+    return [...document.querySelectorAll("li.message.companion .message-bubble")].map((bubble) =>
+      [...bubble.querySelectorAll<HTMLElement>("p")].map((block) => ({
+        height: block.getBoundingClientRect().height,
+        lines: linesOf(block),
+      })),
+    );
+  });
+}
+
+/** WCAG 2.1 relative luminance of a painted `rgb()`/`rgba()` colour. */
+function paintedLuminance(color: string): number {
+  const [r = 0, g = 0, b = 0] = (color.match(/[\d.]+/gu) ?? [])
+    .slice(0, 3)
+    .map(Number)
+    .map((value) => {
+      const channel = value / 255;
+      return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** WCAG 2.1 contrast ratio between two painted colours. */
+function paintedContrast(foreground: string, background: string): number {
+  const lit = paintedLuminance(foreground);
+  const dark = paintedLuminance(background);
+  return (Math.max(lit, dark) + 0.05) / (Math.min(lit, dark) + 0.05);
+}
+
+/** The channels a reader can actually see between one beat and its speech, by name. */
+function visibleBeatChannels(reading: BeatReading): readonly string[] {
+  const channels: string[] = [];
+  if (paintedContrast(reading.beat.color, reading.speech.color) >= BEAT_INK_STEP) channels.push("colour");
+  if (Math.abs(reading.beat.trackingEm - reading.speech.trackingEm) >= BEAT_TRACKING_EM) channels.push("tracking");
+  if (Math.abs(reading.beat.fontWeight - reading.speech.fontWeight) >= BEAT_WEIGHT_STEP) channels.push("weight");
+  if (Math.abs(reading.beat.fontSizePx / reading.speech.fontSizePx - 1) >= BEAT_SIZE_RATIO) channels.push("size");
+  if (reading.beat.fontStyle !== reading.speech.fontStyle) channels.push("style");
+  return channels;
+}
+
+/** `beat` and `speech` typography, one string, so every row of the table reads alike. */
+function beatVoice(typography: BeatTypography): string {
+  return (
+    `${typography.fontStyle} ${typography.fontSizePx.toFixed(2)}px ${typography.fontWeight} ` +
+    `tracking ${typography.trackingEm.toFixed(3)}em ${typography.color}`
+  );
+}
+
+/** One line per combination and side, so a failure prints the whole table and not only its own row. */
+function beatTable(
+  rows: readonly Readonly<{ appearance: string; locale: string; companion: BeatReading; player: BeatReading }>[],
+): string {
+  return rows
+    .map(({ appearance, locale, companion, player }) => {
+      const channels = visibleBeatChannels(companion);
+      const playerChannels = visibleBeatChannels(player);
+      return (
+        `${appearance}/${locale}: beat{${beatVoice(companion.beat)}} speech{${beatVoice(companion.speech)}} ` +
+        `card{${companion.bubble}} beat-on-card ${paintedContrast(companion.beat.color, companion.bubble).toFixed(2)}:1 ` +
+        `plate{${player.bubble}} beat-on-plate ${paintedContrast(player.beat.color, player.bubble).toFixed(2)}:1 ` +
+        `ink-separation ${paintedContrast(companion.beat.color, companion.speech.color).toFixed(2)}:1 ` +
+        `channels [${channels.join(", ")}] = ${channels.length}` +
+        (playerChannels.join() === channels.join() ? "" : ` player [${playerChannels.join(", ")}]`)
+      );
+    })
+    .join("\n");
+}
+
+/**
+ * The two replies this gate reads, per language, the way a companion writes them: a
+ * stage direction on its own line and the sentence after it. The second reply is the
+ * same words with no beat markup at all, and it is the control for the reflow check -
+ * the line boxes of the two must be the same height and the same count.
+ */
+const BEAT_REPLY = {
+  en: { beat: "nods slowly", withBeat: "*nods slowly*\n\nShe looks up.", plain: "nods slowly\n\nShe looks up." },
+  "zh-CN": { beat: "轻轻点头", withBeat: "*轻轻点头*\n\n她抬起头。", plain: "轻轻点头\n\n她抬起头。" },
+} as const;
+
+/**
+ * The two appearances the stylesheet paints. A third token root joins this gate by
+ * being written into `style.css`: the population is read off the sheet below, so a
+ * new appearance fails loudly instead of going unmeasured.
+ */
+const BEAT_APPEARANCES = ["dark", "light"] as const;
+
+for (const locale of ["en", "zh-CN"] as const) {
+  test(`gate 16: a beat is told from its speech by more than one visible channel (${locale})`, async ({ page }) => {
+    const reply = BEAT_REPLY[locale];
+    if (locale === "zh-CN") await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
+    await mountShell(page, {
+      root: composedRoot({
+        transcript: [
+          { role: "companion", text: reply.withBeat },
+          { role: "player", text: reply.withBeat },
+          { role: "companion", text: reply.plain },
+        ],
+      }),
+    });
+    // One companion beat (the reply the table reads), one player beat (the other plate),
+    // and the same words twice without a beat for the reflow control.
+    await expect(page.locator("li.message.companion em.message-action")).toHaveCount(1);
+    if (locale === "zh-CN") await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+
+    const rows: { appearance: string; locale: string; companion: BeatReading; player: BeatReading }[] = [];
+    for (const appearance of BEAT_APPEARANCES) {
+      // The appearance is the attribute the stylesheet's second token root selects on:
+      // `appearance.ts` writes exactly this, and the token roots are what decide every
+      // colour below. Writing it here reads one mounted conversation in both
+      // appearances; that the attribute lands is `appearance-theme.spec.ts`'s gate.
+      await page.evaluate((value) => document.documentElement.setAttribute("data-theme", value), appearance);
+      const reading = await readBeats(page, reply.beat);
+      expect(reading.companion, `${appearance}/${locale}: the companion's beat and its speech both rendered`).not.toBeNull();
+      expect(reading.player, `${appearance}/${locale}: the player's beat and its speech both rendered`).not.toBeNull();
+      rows.push({ appearance, locale, companion: reading.companion!, player: reading.player! });
+    }
+
+    // The population is the stylesheet's, not this file's: a third appearance joins the
+    // gate by being painted, and the drift below fails loudly instead of leaving it
+    // unmeasured.
+    const stylesheet = readFileSync(new URL("../src/style.css", import.meta.url), "utf8").replace(
+      /\/\*[\s\S]*?\*\//gu,
+      " ",
+    );
+    const painted = [...new Set([...stylesheet.matchAll(/:root\[data-theme="([^"]+)"\]/gu)].map((match) => match[1]))];
+    expect(painted.sort(), "this gate measures every appearance the stylesheet paints").toEqual(
+      [...BEAT_APPEARANCES].sort(),
+    );
+
+    const table = beatTable(rows);
+    record("gate-16", `\n${table}`);
+
+    // The attribute really switched the appearance: two identical readings would let an
+    // unstyled page pass every assertion below.
+    expect(rows[0]!.companion.bubble, "the two appearances paint different plates").not.toBe(
+      rows[1]!.companion.bubble,
+    );
+
+    for (const row of rows) {
+      // The quieter ink is still body text the player reads: AA on both plates it is drawn on.
+      for (const [side, reading] of [
+        ["card", row.companion],
+        ["plate", row.player],
+      ] as const) {
+        expect(
+          paintedContrast(reading.beat.color, reading.bubble),
+          `${row.appearance}/${row.locale}: the beat's ink clears AA on the ${side} bubble\n${table}`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+
+      // Two visible channels, on both sides of the conversation, in every appearance
+      // and every language. No appearance is exempt.
+      for (const [side, reading] of [
+        ["companion", row.companion],
+        ["player", row.player],
+      ] as const) {
+        expect(
+          visibleBeatChannels(reading).length,
+          `${row.appearance}/${row.locale}: the ${side} beat and its speech collapse into one visible channel\n${table}`,
+        ).toBeGreaterThanOrEqual(2);
+      }
+
+      // The slant the product retires is retired for Chinese only, and it is still
+      // there in Latin: a fix that re-introduced a faux oblique would pass the channel
+      // count and fail here.
+      expect(row.companion.beat.fontStyle, `${row.appearance}/${locale}: the beat's slant`).toBe(
+        locale === "zh-CN" ? "normal" : "italic",
+      );
+      expect(row.companion.speech.fontStyle, `${row.appearance}/${locale}: the speech is never slanted`).toBe("normal");
+    }
+
+    // The size step is the beat's alone: the paragraph keeps its line boxes, so a reply
+    // with a beat and the same words without one are the same shape. Both replies are
+    // mounted in this transcript as two companion messages.
+    const [withBeat, plain] = await readReflow(page);
+    const geometry = `${locale}: with a beat [${withBeat!.map((block) => `${block.height.toFixed(2)}px/${block.lines} lines`).join(", ")}] ` +
+      `without [${plain!.map((block) => `${block.height.toFixed(2)}px/${block.lines} lines`).join(", ")}]`;
+    record("gate-16-reflow", geometry);
+    expect(withBeat!.length, `${locale}: both replies render the same blocks - ${geometry}`).toBe(plain!.length);
+    for (const [index, block] of withBeat!.entries()) {
+      expect(
+        Math.abs(block.height - plain![index]!.height),
+        `${locale}: block ${index} keeps its height with a beat in it - ${geometry}`,
+      ).toBeLessThanOrEqual(0.5);
+      expect(block.lines, `${locale}: block ${index} keeps its line count with a beat in it - ${geometry}`).toBe(
+        plain![index]!.lines,
+      );
+    }
+  });
+}

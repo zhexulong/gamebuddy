@@ -4173,25 +4173,43 @@
    Narration and Markdown rhythm
 
    `*beat*` is the companion's stage direction, so it reads as narration rather
-   than as emphasised speech: the secondary tone, italic, on its own line rhythm.
-   The tone is deliberately neither the dialogue's `--text-primary` nor the
-   disabled grey a field's placeholder carries (`--palette-gray-400`): a stage
-   direction is a quieter voice, not an unavailable control, and that grey is
-   under the 4.5:1 floor the moment the same beat is drawn on the player's own
-   burgundy bubble (measured 3.20:1 there, 4.74:1 on the companion card) instead
-   of on the card. `--text-secondary` measures 9.30:1 on the companion card and
-   6.27:1 on the player's bubble, so the beat is both quieter than the speech
-   (14.75:1) and clear of the floor. The colour is a de-emphasis, never the only
-   carrier - the text and its `<em>` and the beat's own tracking are.
+   than as emphasised speech: a quieter ink, italic where the script has one, set
+   a step smaller, on its own line rhythm.
 
-   That tone is a brightness step of 1.58:1 between the two text colours, and a
-   brightness step alone is not a shape: with the CJK slant retired below, a
-   Chinese action beat and the dialogue beside it read as one grey mass. So the
-   beat also carries the narration's own typography - `--beat-tracking`, opened
-   well past the dialogue's own spacing - and the distinction becomes a shape a
-   reader sees in the glyph rhythm rather than a step in luminance. It states no
-   colour, so every ratio here is unchanged (measured 9.30:1 and 14.75:1 before
-   and after).
+   THE INK is `--text-secondary` in both appearances - 9.30:1 on the companion
+   card, 6.27:1 on the player's own burgundy bubble, against the speech's 14.75:1
+   - and it is deliberately neither the dialogue's `--text-primary` nor the grey
+   the product reserves for things the player cannot use. That reservation is not
+   a taste: a stage direction wearing the placeholder's own ink read as a dead
+   field, which is `dialogue-web/tests/ui-polish-defects.spec.ts`'s defect 1.
+
+   THE SHAPE. `em` gives a Latin beat its slant, and a CJK beat cannot take one: a
+   slanted CJK face is a mechanically smeared face, so the slant is retired for
+   Chinese below, correctly. What is left is the beat's tracking - one channel -
+   and one channel is one property away from no difference at all. Colour cannot
+   be a second one, and both walls are worth stating because together they leave
+   exactly one axis:
+
+     * the same beat is drawn on the player's own bubble, and the dark burgundy
+       plate under AA caps the quietest permitted ink at a 2.21:1 separation
+       from the speech (the speech sits at relative luminance 0.876, AA on
+       `#533137` demands 0.369, and the ratio between these two is the whole
+       budget). No colour choice, and no opacity, can be a second channel
+       there;
+     * the light appearance is free of that constraint but bound by the other:
+       the only rung below `--text-secondary` that stays above AA on the pale
+       plate is the ink reserved for unavailable things, which the paragraph
+       above forbids. `--palette-gray-500` measures 3.66:1 there, under the
+       floor. So the light beat keeps `--text-secondary` too, and its separation
+       from the speech stays 1.69:1.
+
+   With colour out, the beat takes the size step a stage direction takes in
+   print: `0.9em`. It renders in every script and every appearance, it needs no
+   colour, and it costs no line: the bubble's `line-height` is the unitless
+   `1.72`, so the beat's own leading shrinks with its type while the paragraph's
+   strut still sets the line box, and the paragraph keeps its height and its line
+   count (the mounted gate compares a reply with a beat against the same words
+   without one: 24.08 px and one line each).
 
    The bubble's `pre-wrap` is neutralised for rendered Markdown: with `pre-wrap`
    the newlines between `<p>`/`<blockquote>`/`<li>` are preserved *as well as*
@@ -4209,14 +4227,15 @@
 
   .message-bubble em.message-action {
     color: var(--text-secondary);
+    font-size: 0.9em;
     letter-spacing: var(--beat-tracking);
   }
 
   /* CJK type has no true italic: a slanted CJK beat renders as a mechanically
    smeared face, so this rule retires the slant. It retires the slant *only*:
    the weight stays the dialogue's own, because a bolder beat is not a quieter
-   one, and the tracking above is what tells the beat from the speech once the
-   slant is gone. Latin keeps the italic the base rule leaves in place. */
+   one, and the beat's ink, tracking and size are what tell it from the speech
+   once the slant is gone. Latin keeps the italic the base rule leaves in place. */
   .message-bubble em.message-action:lang(zh) {
     font-style: normal;
   }
