@@ -22,7 +22,6 @@
     "test:stardew-soil-itm-canary",
     "test:stardew:core",
     "test:stardew:integration",
-    "test:tool-corpus",
     "test:voice-protocol",
     "tools/check-stardew-actor-admissibility.mjs",
     "tools/check-stardew-hold-sufficiency.mjs"
