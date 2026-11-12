@@ -3352,13 +3352,22 @@ async function listenLoopback(server: Server): Promise<number> {
     throw new Error("dialogue_loopback_bind_failed");
   return address.port;
 }
+/**
+ * The request body, or `payload_too_large` once it exceeds `maxBytes`.
+ *
+ * This function never closes the connection. It used to destroy the socket from a `setImmediate` scheduled here,
+ * beside the throw, and that destroy raced the refusal it was meant to accompany: the 413 is written after the
+ * throw unwinds, so on any run where the response write was still queued in the socket the `setImmediate` fired
+ * first and the client saw a bare connection reset instead of `payload_too_large`. A refusal has to reach the
+ * caller with its status and body, so the close belongs to the one place that writes the refusal - the dispatcher's
+ * 413 branch, which destroys the socket only after the response has finished.
+ */
 async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown> {
   if (!/^application\/json(?:;|$)/i.test(request.headers["content-type"] ?? "")) throw new Error("invalid_request");
   const contentLength = request.headers["content-length"];
   if (contentLength !== undefined && !/^\d+$/u.test(contentLength)) throw new Error("invalid_request");
   if (contentLength !== undefined && Number(contentLength) > maxBytes) {
     request.resume();
-    setImmediate(() => request.socket?.destroy());
     throw new Error("payload_too_large");
   }
   const parts: Buffer[] = [];
@@ -3367,7 +3376,6 @@ async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise
     const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     if ((bytes += part.length) > maxBytes) {
       request.resume();
-      setImmediate(() => request.socket?.destroy());
       throw new Error("payload_too_large");
     }
     parts.push(part);

@@ -1563,6 +1563,47 @@ test("management dispatcher destroys request socket and returns 413 payload_too_
   }
 });
 
+test("management dispatcher keeps the connection open until the 413 refusal has been flushed", async () => {
+  const recorder = { lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 };
+  const handler = createTavernManagementDialogueWebRequestHandler({
+    managementStateFacade: facade,
+    managementService: service(recorder),
+    worldInfoService: worldInfoService(),
+    profile,
+    playerPreferenceStore: voicePreferenceStore,
+    bootstrapToken: token,
+  });
+  try {
+    let socketDestroyed = false;
+    const mockSocket = {
+      get destroyed() {
+        return socketDestroyed;
+      },
+      destroy() {
+        socketDestroyed = true;
+      },
+    };
+    const oversizedBody = JSON.stringify({ apiVersion: 1, bootstrapToken: token }) + " ".repeat(MAX_BODY_BYTES + 1024);
+    const req = request("POST", "/api/tavern/v1/bootstrap", { origin: "http://127.0.0.1:7331" }, oversizedBody);
+    Object.defineProperty(req, "socket", { value: mockSocket, configurable: true });
+
+    // `deferred_finish` is the ordinary case the wire actually produces: the response is written to a socket whose
+    // write has not completed yet. Closing the connection here would take the 413 with it, and the client would see
+    // a reset with no status at all - which is what an oversized body used to look like.
+    const output = new ControlledResponse("deferred_finish");
+    await dispatch(handler, req, output);
+
+    assert.equal(output.status, 413);
+    assert.equal(output.writableEnded, true);
+    assert.equal(socketDestroyed, false, "the connection must outlive the refusal it is closing");
+
+    output.flush();
+    assert.equal(socketDestroyed, true, "the connection still closes once the refusal has been flushed");
+  } finally {
+    await handler.close();
+  }
+});
+
 class ControlledResponse extends EventEmitter {
   writableEnded = false;
   writableFinished = false;
@@ -1574,8 +1615,8 @@ class ControlledResponse extends EventEmitter {
   })();
   status = 0;
   body = "";
-  private readonly outcome: "finish" | "premature_close";
-  constructor(outcome: "finish" | "premature_close") {
+  private readonly outcome: "finish" | "deferred_finish" | "premature_close";
+  constructor(outcome: "finish" | "deferred_finish" | "premature_close") {
     super();
     this.outcome = outcome;
   }
@@ -1595,12 +1636,18 @@ class ControlledResponse extends EventEmitter {
   end(body = ""): void {
     this.body = body;
     this.writableEnded = true;
+    if (this.outcome === "deferred_finish") return;
     if (this.outcome === "finish") {
       this.writableFinished = true;
       this.emit("finish");
       return;
     }
     this.emit("close");
+  }
+  /** The flush a real response performs once the socket has accepted the queued response bytes. */
+  flush(): void {
+    this.writableFinished = true;
+    this.emit("finish");
   }
 }
 
