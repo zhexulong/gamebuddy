@@ -695,6 +695,8 @@ const en = {
   problemCardTooLargeTitle: "Her records do not fit a card",
   problemCardTooLargeDetail:
     "A Tavern card GameBuddy can import will not hold everything saved for her, and trying again will not make it fit.",
+  problemExportTooLargeTitle: "This chat is too large to export",
+  problemExportTooLargeDetail: "This chat is too large to export as one file.",
   problemCardImageAbsentTitle: "She has no picture to put in it",
   problemCardImageAbsentDetail:
     "A PNG card has to carry a picture, and she has none. Export the JSON card instead - it carries her records without one.",
@@ -1701,6 +1703,8 @@ const zh: Messages = {
   problemCardImportRejectedDetail: "GameBuddy 无法把它读成 Tavern 角色卡。请确认文件是否正确，然后重新选择。",
   problemCardTooLargeTitle: "她的资料装不进一张卡",
   problemCardTooLargeDetail: "一张 GameBuddy 能导入的 Tavern 角色卡放不下她的全部资料，再试一次也不会让它装得下。",
+  problemExportTooLargeTitle: "这段对话太大，无法导出",
+  problemExportTooLargeDetail: "这段对话太大，无法导出成一个文件。",
   problemCardImageAbsentTitle: "她没有可以放进去的图片",
   problemCardImageAbsentDetail:
     "PNG 角色卡必须带一张图片，而她没有。请改导出 JSON 角色卡，它不需要图片就能带她的资料。",

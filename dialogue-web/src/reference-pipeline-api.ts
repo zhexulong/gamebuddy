@@ -462,6 +462,9 @@ export const PROBLEM_CODES = [
   // in play, or a Game session owns the companion it was bound to.
   "companion_switch_already_in_play",
   "companion_switch_requires_no_session",
+  // `chat.export` hands the player one file and the wire carries it whole or not at all: a Chat whose
+  // own file is over the ceiling is a bounded fact about the conversation, not a runtime fault.
+  "chat_export_too_large",
   // Transport: the over-ceiling request body the router refuses before any route runs.
   "payload_too_large",
 ] as const;

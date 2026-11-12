@@ -7,6 +7,7 @@ import { readIdentityProfile } from "../../identity-profile.js";
 import { identityKey, resolveRuntimePaths } from "../../runtime.js";
 import {
   type BrowserDraftV1,
+  CHAT_EXPORT_JSONL_MAX_LENGTH,
   type ChatExportCommandV1,
   type ChatExportV1,
   type ChatListEntryV1,
@@ -379,6 +380,11 @@ export function createChatManagementService(options: ChatManagementServiceOption
       const state = await store.resumeThread(target.chatThreadId, target.chatSurfaceSessionId);
       assertLeaseAfterDurableRead();
       const exported = exportSafeChat(target.chatThreadId, state.messages, await exportNames());
+      // The reply carries one file, and the wire carries it whole or not at all: an export over the
+      // contract's own ceiling cannot be served, and the reply's validation below would report it as a
+      // service failure - the one answer that invites a retry which can never succeed.
+      if (!chatExportFitsWire(exported.jsonl.length))
+        throw new ChatExportTooLargeError(exported.jsonl.length, CHAT_EXPORT_JSONL_MAX_LENGTH);
       const result: ChatExportV1 = Object.freeze({
         apiVersion: TAVERN_BROWSER_API_VERSION,
         format: exported.format,
@@ -518,8 +524,34 @@ function rethrowDraftError(error: unknown): Error {
   return unavailable();
 }
 
+/**
+ * Whether one Chat's exported file fits the ceiling the wire carries.
+ *
+ * The comparison is named because it is the whole decision: `CHAT_EXPORT_JSONL_MAX_LENGTH` bounds the
+ * reply's own schema, and a reply that fails that check reads to the player as a service outage.
+ */
+export function chatExportFitsWire(jsonlLength: number): boolean {
+  return jsonlLength <= CHAT_EXPORT_JSONL_MAX_LENGTH;
+}
+
+/**
+ * A Chat whose own exported file is over the ceiling the wire carries.
+ *
+ * Both numbers travel in the message, because that is the only place a support path can read them:
+ * the player reads the sentence the code earns, never a byte count, and a log line that says how far
+ * over the conversation is has to name the length and the ceiling together.
+ */
+export class ChatExportTooLargeError extends Error {
+  constructor(jsonlLength: number, maxLength: number) {
+    super(`chat_export_too_large:${jsonlLength}:${maxLength}`);
+  }
+}
+
 function rethrowExportError(error: unknown): Error {
   if (!(error instanceof Error)) return unavailable();
+  // The Chat's own size is already the answer, with both numbers in the message: the caller logs it,
+  // and the player reads the sentence the code earns instead of a byte count.
+  if (error instanceof ChatExportTooLargeError) return error;
   // A handle that names no Chat of this partition is the same bounded 404 the retention routes
   // answer, rather than a conflict about a selection the request never made.
   if (error.message === "chat_not_found") return error;

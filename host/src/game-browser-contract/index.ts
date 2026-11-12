@@ -330,6 +330,15 @@ export const GameDiscoveryMutationResultV1Schema = Type.Union([
 ]);
 export type GameDiscoveryMutationResultV1 = Static<typeof GameDiscoveryMutationResultV1Schema>;
 
+/**
+ * How many choices one cabin prompt may offer.
+ *
+ * Stated here, beside the schema that publishes it, because the client that validates the broker's
+ * answer (`composed-reference-game-browser-client.ts`) has to stop at the same number: two copies of
+ * `64` agree only until one of them moves.
+ */
+export const STARDEW_CABIN_CHOICES_MAX = 64;
+
 export const StardewCabinChoicesV1Schema = strictObject({
   apiVersion: ApiVersion,
   choices: Type.Array(
@@ -339,7 +348,7 @@ export const StardewCabinChoicesV1Schema = strictObject({
       choiceHandle: Type.String({ minLength: 43, maxLength: 43, format: "game-browser-canonical-base64url-v1" }),
       expiresAtMs: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
     }),
-    { maxItems: 64 },
+    { maxItems: STARDEW_CABIN_CHOICES_MAX },
   ),
 });
 

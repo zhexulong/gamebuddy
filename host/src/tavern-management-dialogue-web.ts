@@ -96,7 +96,10 @@ import type { PresetAssemblyRead } from "./tavern/preset-assembly-read.js";
 import type { GameBrowserStateV1 } from "./game-browser-contract/index.js";
 import { TavernConnectionRevisionConflict } from "./tavern/connection-store.js";
 import { playerOfferedProviders } from "./tavern/provider-catalog.js";
-import type { ChatManagementService } from "./tavern/chat-management/chat-management-service.js";
+import {
+  ChatExportTooLargeError,
+  type ChatManagementService,
+} from "./tavern/chat-management/chat-management-service.js";
 import type { MemoryManagementService } from "./tavern/memory-management/memory-management.js";
 import type { TavernConnectionService } from "./tavern/connection-service.js";
 import type { TavernManagementStateFacade } from "./tavern/tavern-management-state.js";
@@ -3181,6 +3184,11 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   // a bounded, non-retryable fact about her data, with its own code so the surface
   // says the export was refused rather than that something failed.
   if (message === "companion_card_too_large") return { status: 409, code: "companion_card_too_large" };
+  // A Chat whose own file is over the export's ceiling is the same kind of bounded fact: the same
+  // Chat exports to the same size however many times it is asked, so it is refused by name rather
+  // than reported as `runtime_unavailable` - the one answer that tells the player to retry a request
+  // that can never succeed.
+  if (error instanceof ChatExportTooLargeError) return { status: 409, code: "chat_export_too_large" };
   // The PNG form needs an image, and this Host will not invent one. A companion
   // with no picture gets her own bounded, non-retryable refusal rather than a
   // fabricated placeholder; the JSON card carries her records without a picture.

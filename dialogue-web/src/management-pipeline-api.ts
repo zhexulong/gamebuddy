@@ -1452,6 +1452,10 @@ const PROBLEM_CODES = [
   // system fault, so neither may reach the player as one.
   "companion_switch_already_in_play",
   "companion_switch_requires_no_session",
+  // `chat.export` hands the player one file and the wire carries it whole or not at all. A Chat whose
+  // own file is over the ceiling is a bounded fact about the conversation, not a runtime fault: the
+  // same Chat exports to the same size however many times it is asked.
+  "chat_export_too_large",
   // Transport: the over-ceiling request body the management dispatcher refuses before any route
   // runs (`tavern-management-dialogue-web.ts:538`), sent outside its own schema check. It must be
   // named here or the typed 413 arrives as an opaque `TavernProtocolError` with no code to show;

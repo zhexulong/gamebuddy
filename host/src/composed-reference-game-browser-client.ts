@@ -17,6 +17,9 @@ import {
   ComposedReferenceGameBrowserValidatorsV1,
   type ComposedReferenceGameBrowserRootV1,
 } from "./composed-browser-contract/index.js";
+// The one number this client may not spell a second time: the ceiling the contract publishes for the
+// same array. `composed-browser-contract` already reaches this module, so this adds a name, not an edge.
+import { STARDEW_CABIN_CHOICES_MAX } from "./game-browser-contract/index.js";
 
 // ─── API identity ───────────────────────────────────────────────────────────
 
@@ -172,7 +175,7 @@ export function createComposedReferenceGameBrowserClient(): ComposedReferenceGam
       !hasExactKeys(value, ["apiVersion", "choices"]) ||
       value.apiVersion !== 1 ||
       !Array.isArray(value.choices) ||
-      value.choices.length > 64
+      value.choices.length > STARDEW_CABIN_CHOICES_MAX
     ) {
       throw new ComposedReferenceGameProtocolError("invalid_stardew_cabin_choices");
     }

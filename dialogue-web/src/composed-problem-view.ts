@@ -316,6 +316,13 @@ const cardImportRejected: ProblemSentence = (labels) =>
 
 // --- Her own records: a card, a picture ---------------------------------------------------------
 
+/** The Chat's own file is over the ceiling the export carries, and asking again cannot shrink it. */
+const exportTooLarge: ProblemSentence = (labels) =>
+  sentence(labels.problemExportTooLargeTitle, labels.problemExportTooLargeDetail, {
+    kind: "no_step",
+    because: "over_a_ceiling",
+  });
+
 /** Her records do not fit a card the import accepts, and retrying cannot shrink them. */
 const cardTooLarge: ProblemSentence = (labels) =>
   sentence(labels.problemCardTooLargeTitle, labels.problemCardTooLargeDetail, {
@@ -530,6 +537,7 @@ const PROBLEM_SENTENCES: Readonly<Record<TavernProblemCode, ProblemSentence>> = 
   chat_delete_opening_retained: chatDeleteOpeningRetained,
   chat_delete_turn_active: chatDeleteTurnActive,
   chat_delete_binding_unavailable: chatDeleteBindingUnavailable,
+  chat_export_too_large: exportTooLarge,
 
   companion_world_book_absent: worldBookAbsent,
   companion_world_book_binding_partial: worldBookBindingPartial,
