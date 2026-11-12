@@ -77,7 +77,11 @@ const fixture = (build) => {
   );
   writeFileSync(join(root, "tools", "clean.mjs"), "const value = 1;\n");
   for (const [relativePath, contents] of Object.entries(build)) writeFileSync(join(root, relativePath), contents);
+  // The ignore rule has to exist before the index does, or a scratch file would be staged by the fixture itself.
+  writeFileSync(join(root, ".gitignore"), "/tools/_*\n");
   execFileSync("git", ["init", "--initial-branch=main"], { cwd: root, windowsHide: true, stdio: "ignore" });
+  // The gate's population is the index, so a fixture has to have one: `build` is what the tree already carries.
+  execFileSync("git", ["add", "-A"], { cwd: root, windowsHide: true, stdio: "ignore" });
   execFileSync(
     "git",
     [
@@ -92,7 +96,6 @@ const fixture = (build) => {
     ],
     { cwd: root, windowsHide: true, stdio: "ignore" },
   );
-  writeFileSync(join(root, ".gitignore"), "/tools/_*\n");
   writeFileSync(
     join(root, "tools", "scripts", "format-baseline.json"),
     `${JSON.stringify({ note: "fixture", revision: "0000000", files: [] }, null, 2)}\n`,
@@ -117,10 +120,14 @@ const withFixture = (build, run) => {
   }
 };
 
-test("planted.1: a file the tree does not record that fails to format fails the gate", () => {
+const stage = (root, relativePath) =>
+  execFileSync("git", ["add", "--", relativePath], { cwd: root, windowsHide: true, stdio: "ignore" });
+
+test("planted.1: a tracked file the baseline does not record that fails to format fails the gate", () => {
   withFixture({}, (root) => {
     assert.equal(runGate(root).status, 0, "a clean fixture with an empty baseline is green");
     writeFileSync(join(root, "tools", "planted.mjs"), "const  planted  =  1\n");
+    stage(root, "tools/planted.mjs");
     const result = runGate(root);
     assert.equal(result.status, 1);
     assert.match(result.stdout, /format_ratchet_failed new=1/);
@@ -128,6 +135,28 @@ test("planted.1: a file the tree does not record that fails to format fails the 
     process.stdout.write(
       `planted.1: planted a mis-formatted tools/planted.mjs -> ${cleanOutputLines(result.stdout)[0]}\n`,
     );
+  });
+});
+
+test("planted.6: an untracked file is published and inert, and counts the moment it is staged", () => {
+  withFixture({}, (root) => {
+    writeFileSync(join(root, "tools", "inflight.mjs"), "const  inflight  =  1\n");
+
+    // The defect this pins: another lane writing a file used to move this gate's baseline. It is neither counted nor
+    // hidden - the reading names it, so a reader can see what the verdict could not see.
+    const untracked = runGate(root);
+    assert.equal(untracked.status, 0, untracked.stdout);
+    assert.match(
+      untracked.stdout,
+      /format_ratchet_ok debt: files=0 .* · untracked_not_counted 1: tools\/inflight\.mjs/,
+    );
+
+    stage(root, "tools/inflight.mjs");
+    const tracked = runGate(root);
+    assert.equal(tracked.status, 1, tracked.stdout);
+    assert.match(tracked.stdout, /format_ratchet_failed new=1/);
+    assert.doesNotMatch(tracked.stdout, /untracked_not_counted/);
+    process.stdout.write(`planted.6: staged tools/inflight.mjs -> ${cleanOutputLines(tracked.stdout)[0]}\n`);
   });
 });
 

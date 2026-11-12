@@ -26,6 +26,12 @@
  * measured bases are either absent (depth-1 checkout) or already red (merge base). The honest
  * reading of this gate is "no file newly joins the red set", not "every touched file is formatted".
  *
+ * The population is the index, not the directory: a baseline can only be recorded against a tree
+ * state that exists in history, and a file that is not in the index is not yet anyone's. An
+ * untracked violation is published as `untracked_not_counted N: <paths>` and does not count, so one
+ * lane's half-written file cannot move another lane's baseline; the cost is that a brand-new file
+ * is invisible here until it is staged. See `tools/lib/indexed-sources.mjs`.
+ *
  * Usage:
  *   node tools/scripts/check-format-ratchet.mjs                  # ratchet, publishing the total
  *   node tools/scripts/check-format-ratchet.mjs --update         # re-record, in its own commit
@@ -35,6 +41,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { describeUntracked, untrackedSources } from "../lib/indexed-sources.mjs";
 import { cleanOutputLines } from "../lib/subprocess-output.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -141,7 +148,11 @@ function main(argv) {
   const baselinePath = baselineFor(resolve(root));
   const scanned = scan({ root: resolve(root) });
   const { checked } = scanned;
-  const files = nonIgnored({ files: scanned.files, root: resolve(root) });
+  const ignored = nonIgnored({ files: scanned.files, root: resolve(root) });
+  const untracked = untrackedSources({ roots: SCOPE, root: resolve(root) });
+  const outside = ignored.filter((file) => untracked.has(file));
+  const files = ignored.filter((file) => !untracked.has(file));
+  const unseen = outside.length === 0 ? "" : ` · untracked_not_counted ${describeUntracked(outside)}`;
 
   if (update) {
     const baseline = {
@@ -155,14 +166,14 @@ function main(argv) {
     };
     writeFileSync(baselinePath, `${JSON.stringify(baseline, null, 2)}\n`);
     process.stdout.write(
-      `format_ratchet_recorded files=${files.length} checked=${checked} revision=${baseline.revision}\n`,
+      `format_ratchet_recorded files=${files.length} checked=${checked} revision=${baseline.revision}${unseen}\n`,
     );
     return 0;
   }
 
   const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
   const result = ratchet({ baselineFiles: baseline.files, files });
-  const debt = `files=${files.length} checked=${checked} recorded=${baseline.files.length}`;
+  const debt = `files=${files.length} checked=${checked} recorded=${baseline.files.length}${unseen}`;
   if (result.grown.length === 0) {
     process.stdout.write(`format_ratchet_ok debt: ${debt}\n`);
     if (result.fixed.length > 0)

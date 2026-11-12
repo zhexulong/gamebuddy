@@ -188,7 +188,7 @@
     "test:evidence-bundle": "node --test tools/lib/evidence-bundle.test.mjs",
     "test:fail-closed-forward-path": "node --test tools/check-fail-closed-forward-path.test.mjs",
     "test:first-viewport-forward-path": "cd dialogue-web && pnpm exec playwright test tests/first-viewport-forward-path.spec.ts --project=chromium --workers=1",
-    "test:format-ratchet": "node --test tools/scripts/check-format-ratchet.test.mjs",
+    "test:format-ratchet": "node --test tools/scripts/check-format-ratchet.test.mjs tools/scripts/check-lint-ratchet.test.mjs",
     "test:gate-red-proofs": "node --test tools/audit-gate-red-proofs.test.mjs",
     "test:switch-exhaustiveness": "node --test tools/check-switch-exhaustiveness.test.mjs",
     "test:refusal-detail-state-parity": "node --test tools/check-refusal-detail-state-parity.test.mjs",

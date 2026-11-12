@@ -26,6 +26,12 @@
  * committed bytes at a base, and CI checks out depth 1. The honest reading of this gate is "no file
  * newly joins the red set and no recorded file's error count grows", not "every new error fails".
  *
+ * The population is the index, not the directory: a baseline can only be recorded against a tree
+ * state that exists in history, and a file that is not in the index is not yet anyone's. An
+ * untracked violation is published as `untracked_not_counted N: <paths>` and does not count, so one
+ * lane's half-written file cannot move another lane's baseline; the cost is that a brand-new file
+ * is invisible here until it is staged. See `tools/lib/indexed-sources.mjs`.
+ *
  * Usage:
  *   node tools/scripts/check-lint-ratchet.mjs                  # ratchet, publishing the totals
  *   node tools/scripts/check-lint-ratchet.mjs --update         # re-record, in its own commit
@@ -35,6 +41,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { describeUntracked, untrackedSources } from "../lib/indexed-sources.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -149,8 +156,13 @@ function main(argv) {
   const report = scan({ root });
   const { errors, warnings, checked } = report;
   const kept = new Set(nonIgnored({ files: Object.keys(report.counts), root }));
-  const counts = Object.fromEntries(Object.entries(report.counts).filter(([file]) => kept.has(file)));
+  const untracked = untrackedSources({ roots: SCOPE, root });
+  const outside = [...kept].filter((file) => untracked.has(file));
+  const counts = Object.fromEntries(
+    Object.entries(report.counts).filter(([file]) => kept.has(file) && !untracked.has(file)),
+  );
   const files = Object.keys(counts);
+  const unseen = outside.length === 0 ? "" : ` · untracked_not_counted ${describeUntracked(outside)}`;
 
   if (update) {
     const baseline = {
@@ -166,7 +178,7 @@ function main(argv) {
     };
     writeFileSync(baselinePath, `${JSON.stringify(baseline, null, 2)}\n`);
     process.stdout.write(
-      `lint_ratchet_recorded errors=${errors} warnings=${warnings} files=${files.length} checked=${checked} revision=${baseline.revision}\n`,
+      `lint_ratchet_recorded errors=${errors} warnings=${warnings} files=${files.length} checked=${checked} revision=${baseline.revision}${unseen}\n`,
     );
     return 0;
   }
@@ -174,7 +186,7 @@ function main(argv) {
   const baseline = JSON.parse(readFileSync(baselinePath, "utf8"));
   const recorded = Object.keys(baseline.files).length;
   const result = ratchet({ baselineCounts: baseline.files, counts });
-  const debt = `errors=${errors} warnings=${warnings} files=${files.length} recorded=${recorded} checked=${checked}`;
+  const debt = `errors=${errors} warnings=${warnings} files=${files.length} recorded=${recorded} checked=${checked}${unseen}`;
   if (result.grown.length === 0) {
     process.stdout.write(`lint_ratchet_ok debt: ${debt}\n`);
     if (result.fixed.length > 0)
