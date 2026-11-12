@@ -1,6 +1,6 @@
 {
   "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`.",
-  "revision": "889b9630",
+  "revision": "e1ca02df",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -75,7 +75,7 @@
       "language": "cs",
       "name": "ExecutionManager.Cancel(string,string,string)",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 1520,
+      "line": 1559,
       "value": 40
     },
     {
@@ -83,7 +83,7 @@
       "language": "cs",
       "name": "ExecutionManager.CompleteTravelAfterWarp()",
       "file": "integrations/stardew/farmhandexecutioncontroller.movementactions.cs",
-      "line": 1329,
+      "line": 1322,
       "value": 93
     },
     {
@@ -91,7 +91,7 @@
       "language": "cs",
       "name": "ExecutionManager.CreateBridgeSnapshot()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 2427,
+      "line": 2466,
       "value": 107
     },
     {
@@ -99,7 +99,7 @@
       "language": "cs",
       "name": "ExecutionManager.CreateSnapshot()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 2321,
+      "line": 2360,
       "value": 34
     },
     {
@@ -107,7 +107,7 @@
       "language": "cs",
       "name": "ExecutionManager.DescribeActiveExecution()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 2697,
+      "line": 2736,
       "value": 99
     },
     {
@@ -123,7 +123,7 @@
       "language": "cs",
       "name": "ExecutionManager.DiscoverBuildingChestTargets(Farmer,DiscoveryExclusionRecorder)",
       "file": "integrations/stardew/farmhandexecutioncontroller.buildingchestactions.cs",
-      "line": 518,
+      "line": 510,
       "value": 33
     },
     {
@@ -131,7 +131,7 @@
       "language": "cs",
       "name": "ExecutionManager.DiscoverWorldObjectTargets(Farmer)",
       "file": "integrations/stardew/farmhandexecutioncontroller.worldobjectactions.cs",
-      "line": 980,
+      "line": 964,
       "value": 89
     },
     {
@@ -139,7 +139,7 @@
       "language": "cs",
       "name": "ExecutionManager.ExecuteClearDebris(string,string,int,int,int,string,long)",
       "file": "integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs",
-      "line": 1057,
+      "line": 1025,
       "value": 36
     },
     {
@@ -147,15 +147,15 @@
       "language": "cs",
       "name": "ExecutionManager.ExecuteInteractNpcWithItem(string,string,int,int,int,string,string,long)",
       "file": "integrations/stardew/farmhandexecutioncontroller.machinesanimalsitemsactions.cs",
-      "line": 1133,
-      "value": 62
+      "line": 1090,
+      "value": 61
     },
     {
       "id": "cs:ExecutionManager.RequestLocalDoorTransition(string,int,int,long,bool)",
       "language": "cs",
       "name": "ExecutionManager.RequestLocalDoorTransition(string,int,int,long,bool)",
       "file": "integrations/stardew/farmhandexecutioncontroller.movementactions.cs",
-      "line": 906,
+      "line": 901,
       "value": 35
     },
     {
@@ -179,7 +179,7 @@
       "language": "cs",
       "name": "ExecutionManager.Update()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 1722,
+      "line": 1761,
       "value": 97
     },
     {
@@ -532,7 +532,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts#materializeEnter#lambda11",
       "file": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
-      "line": 1414,
+      "line": 1415,
       "value": 48
     },
     {
@@ -1177,12 +1177,12 @@
       "parts": 47,
       "file": "integrations/stardew/farmhandexecutioncontroller.actorstateactions.cs",
       "line": 143,
-      "value": 4770
+      "value": 4708
     },
     {
       "id": "cs:ModEntry",
       "name": "ModEntry",
-      "parts": 56,
+      "parts": 58,
       "file": "integrations/stardew/ModEntry.Fixtures.AcceptDailyQuest.cs",
       "line": 10,
       "value": 2713
@@ -1290,9 +1290,9 @@
       "files": 46,
       "file": "integrations/stardew/farmhandexecutioncontroller.actorstateactions.cs",
       "line": 143,
-      "lines": 27825,
-      "methods": 789,
-      "reason": "28,097 -> 28,104 lines: commit 4da075af fixed a live defect - an execution body was never released after tilling, watering, harvesting or feeding - by making sixteen terminal paths announce the body idle through PublishIdleAfterRelease, across the farmingconstruction, machinesanimalsitems, petbowl, resourcetool and slimehutchtrough partials. The growth is bought and paid for; 28,104 is the frozen ceiling now, not a new allowance."
+      "lines": 27509,
+      "methods": 792,
+      "reason": "27,825 -> 27,509 lines and 789 -> 792 methods across the same 47 parts, measured at each revision with this gate's own measureCSharp so the arithmetic is re-runnable. 889b9630, the revision this record was taken at: 27,825 lines / 789 methods. 053614d7 added one method, FindVillagerByTargetId - the single reader of the identity-bound villager lookup four NPC actions each spelled - reaching 27,828 / 790: +3 lines for the extract, and one copy of the body removed. ef4f82ae added two more, BeginLocalExecution and AdmitLocalExecution - the replay lookup, the revision advance, the execution identity and the admission clock that 62 actions repeated - reaching 27,509 / 792: -319 lines, +2 methods. Net across the two: -316 lines and +3 methods, and the class's summed member complexity fell 4,770 -> 4,708 over the same 47 parts. The direction is a shrink with three seam methods added, not an allowance; 27,509 / 792 is the frozen ceiling now. This supersedes the 4da075af note, whose 28,104 describes no field this record holds."
     },
     {
       "id": "cs:FarmhandActionCatalog",
