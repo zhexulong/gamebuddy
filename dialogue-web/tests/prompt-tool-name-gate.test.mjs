@@ -35,6 +35,18 @@
  *      standing there as if it were a tool, which is the original defect; a line that
  *      names the plan builder is the route a plan surface actually mounts.
  *
+ * That exemption is a STRUCTURAL APPROXIMATION of the sentence, not a reading of it: the
+ * arm asks whether the line names a carrier, so it cannot tell "names the carrier while
+ * describing the vocabulary" ("express_emote raises an overhead emote balloon", beside
+ * `stardew_plan_work`) from "names the carrier while telling her to call the bare id".
+ * What it does check is that the carrier exists, not that a string matched: an id whose
+ * `stardew_<id>` is unmounted, on a line that names that unmounted name, is a finding,
+ * and so is an id the plan builder does not admit even when its line names
+ * `stardew_plan_work`. The edge it cannot see is a line naming a real carrier AND an
+ * unmounted `stardew_<id>`: that reads clean here, because arm 1 only knows the name is
+ * declared. `identity-profile.test.ts` and `action-registry-consistency.test.ts` hold the
+ * rendered Game floor against the mounted set for exactly that shape.
+ *
  * Both directions are enumerated from the authorities - the registry's keys and values,
  * the mounted Game set, the plan builder's vocabulary derived from the Mod's emitted
  * surface, and every `name:` a Host module declares - so a tool added, renamed or
