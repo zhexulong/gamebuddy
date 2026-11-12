@@ -55,6 +55,24 @@
  *    consumer must be one function those consumers consult rather than several
  *    places that each decide it again.
  *
+ * The three survey readings (`read-path`, `bounds`, `refusal`) ask questions the tree can answer, and the answer for
+ * each site is one of three things rather than a silence:
+ *
+ *  - `decided` - the evidence is already in the tree and this run computes the answer, so the site is no longer a
+ *    quantity nobody proved. A decided site that disagrees with its contract is a violation, with the semantics the
+ *    class already had; a decided site that agrees says which fact decided it.
+ *  - `needs-declaration` - the product could state the fact once and the audit would read it: a constant shared by the
+ *    contract and the writer instead of a literal in two places, an `omitted` count beside a trimmed list. The site's
+ *    own line names the declaration and where it belongs.
+ *  - `cannot-prove` - no static reader decides it, and the site's line names the evidence that would (a run that fills
+ *    the collection to its ceiling, a producer constant the cap could name). This is a legitimate outcome, not a
+ *    clean one: the count stays in the report and the verdict line, and the population it came from is printed beside
+ *    it, so a reading that walked 19 sites and decided 1 cannot be mistaken for a reading with nothing to say.
+ *
+ * A declaration is added to the product only where it is the single authority for the fact. Two copies that agree
+ * today are a disagreement scheduled for later, so a shape whose declaration would be a second spelling is classified
+ * `cannot-prove` and says why, rather than growing the tree another number.
+ *
  * Reporting shape: one summary line, then violations grouped by class and
  * ranked by "a player reaches it and it fails badly". Every violation carries
  * `path:line`. A class that reports by *kind* (today only `hygiene`, whose
@@ -106,7 +124,8 @@ const GAME_CONTRACT = ["host", "src", "game-browser-contract", "index.ts"];
  * report.
  */
 const TEST_FILE_PATH = /\.test\.(?:ts|tsx)$/u;
-const TEST_SCAFFOLDING_PATH = /[-.]test-(?:support|fixtures)(?:-internal)?\.ts$|[\\/](?:test-support|test-fixtures|__tests__)[\\/]/u;
+const TEST_SCAFFOLDING_PATH =
+  /[-.]test-(?:support|fixtures)(?:-internal)?\.ts$|[\\/](?:test-support|test-fixtures|__tests__)[\\/]/u;
 const TEST_PATH = new RegExp(`${TEST_FILE_PATH.source}|${TEST_SCAFFOLDING_PATH.source}`, "u");
 
 /**
@@ -336,6 +355,137 @@ const GENERIC_WORDS = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
+// Evidence the three survey readings share
+// ---------------------------------------------------------------------------
+
+/**
+ * Every numeric module constant `host/src` declares, whatever its name says.
+ *
+ * `hostCapConstants` reads only the names shaped like a cap, because that is what its own rule compares. A
+ * survey reading needs the other half: a contract that writes `maxLength: CHAT_EXPORT_JSONL_MAX_LENGTH` publishes
+ * the number once, as a name, and the question "which number governs this field" has an answer that is that
+ * name. Resolving it here is what lets a reading say *the wire publishes the writer's constant* instead of
+ * reporting the cap as unpaired for want of a literal to pair it with.
+ */
+function numericHostConstants(sources) {
+  const found = new Map();
+  for (const file of sources.files(sources.path(...HOST))) {
+    const sourceFile = sources.source(file);
+    for (const statement of sourceFile.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name) || declaration.initializer === undefined) continue;
+        const name = declaration.name.text;
+        if (found.has(name)) continue;
+        const limit = resolveNumber(declaration.initializer, sourceFile);
+        if (limit === null) continue;
+        found.set(name, { name, limit, where: at(sources.root, declaration, sourceFile, file) });
+      }
+    }
+  }
+  return found;
+}
+
+/** The identifiers Host code compares something against: the names a gate is actually spelled with. */
+function comparedIdentifiers(sources) {
+  const names = new Set();
+  for (const file of sources.files(sources.path(...HOST))) {
+    const sourceFile = sources.source(file);
+    walk(sourceFile, (node) => {
+      if (!ts.isBinaryExpression(node)) return;
+      for (const side of [node.left, node.right]) if (ts.isIdentifier(side)) names.add(side.text);
+    });
+  }
+  return names;
+}
+
+/** `X.<property>.length` compared against a resolvable number, anywhere in Host source. */
+function propertyBounds(sources) {
+  const found = new Map();
+  for (const file of sources.files(sources.path(...HOST))) {
+    const sourceFile = sources.source(file);
+    walk(sourceFile, (node) => {
+      if (!ts.isBinaryExpression(node)) return;
+      for (const [side, other] of [
+        [node.left, node.right],
+        [node.right, node.left],
+      ]) {
+        if (!ts.isPropertyAccessExpression(side) || side.name.text !== "length") continue;
+        const receiver = side.expression;
+        if (!ts.isPropertyAccessExpression(receiver)) continue;
+        const limit = resolveNumber(other, sourceFile);
+        if (limit === null) continue;
+        const property = receiver.name.text;
+        found.set(property, [
+          ...(found.get(property) ?? []),
+          { limit, where: at(sources.root, node, sourceFile, file) },
+        ]);
+      }
+    });
+  }
+  return found;
+}
+
+/** The last name in an expression chain: `devices.filter(...)` names `devices`. */
+function collectionName(expression) {
+  if (ts.isIdentifier(expression)) return expression.text;
+  if (ts.isPropertyAccessExpression(expression)) return collectionName(expression.expression);
+  if (ts.isCallExpression(expression)) return collectionName(expression.expression);
+  if (ts.isNonNullExpression(expression) || ts.isParenthesizedExpression(expression))
+    return collectionName(expression.expression);
+  return null;
+}
+
+/**
+ * The collections a scope clamps before a value leaves it, keyed by the name of the collection.
+ *
+ * A read path that slices `devices` to 32 rows and then validates the result against a schema capped at 32
+ * cannot exceed that cap, and a writer that breaks its loop at `rows.length >= MAX_CARRYING` states its own
+ * ceiling. Both are the same fact — *this function stops at N* — written two ways, and neither needs a
+ * declaration outside the function to be readable.
+ */
+function clampedCollections(sources, file, scope) {
+  const sourceFile = sources.source(file);
+  const clamps = new Map();
+  const record = (name, limit, node) => {
+    if (name === null || limit === null) return;
+    const known = clamps.get(name);
+    if (known !== undefined && known.limit <= limit) return;
+    clamps.set(name, { name, limit, where: at(sources.root, node, sourceFile, file) });
+  };
+  walk(scope, (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "slice"
+    ) {
+      const [from, to] = node.arguments;
+      const start = from === undefined ? 0 : resolveNumber(from, sourceFile);
+      const limit = to === undefined ? null : resolveNumber(to, sourceFile);
+      if (start === 0 && limit !== null) record(collectionName(node.expression.expression), limit, node);
+    }
+    if (!ts.isBreakStatement(node)) return;
+    for (let current = node.parent; current !== undefined; current = current.parent) {
+      if (ts.isIfStatement(current)) {
+        const guard = current.expression;
+        if (ts.isBinaryExpression(guard)) {
+          for (const [side, other] of [
+            [guard.left, guard.right],
+            [guard.right, guard.left],
+          ]) {
+            if (!ts.isPropertyAccessExpression(side) || side.name.text !== "length") continue;
+            record(collectionName(side.expression), resolveNumber(other, sourceFile), node);
+          }
+        }
+        break;
+      }
+      if (ts.isFunctionLike(current) || ts.isSourceFile(current)) break;
+    }
+  });
+  return clamps;
+}
+
+// ---------------------------------------------------------------------------
 // Class: bounds
 // ---------------------------------------------------------------------------
 
@@ -380,6 +530,13 @@ function contractSchemas(sources, file) {
           kind: cap,
           limit,
           expression: capNode.initializer.getText(sourceFile),
+          /**
+           * The name the cap is published as, when the contract states a constant rather than a literal.
+           *
+           * A `maxLength: CHAT_EXPORT_JSONL_MAX_LENGTH` is the product saying the number once; the literal
+           * `maxLength: 1048576` is it saying the number twice, and the second copy is the one a writer drifts from.
+           */
+          identifier: ts.isIdentifier(capNode.initializer) ? capNode.initializer.text : null,
           where: at(sources.root, capNode, sourceFile, file),
           elementSchema: arrayElementSchema(property.initializer, sourceFile),
         });
@@ -566,15 +723,27 @@ function runBounds(sources) {
   }
 
   const unresolved = caps.filter((entry) => entry.limit === null);
-  const unpairedRows = unpaired.length;
+  // The survey: an unpaired cap is a question this class asked and could not answer by pairing. Each site is
+  // classified by the strongest evidence the tree already carries, and the ones the evidence *does* answer stop
+  // being counted as unproven - they are decisions, not silences.
+  const evidence = {
+    constants: numericHostConstants(sources),
+    compared: comparedIdentifiers(sources),
+    checked: new Set(failClosedSites(sources).map((site) => site.schema)),
+    propertyBounds: propertyBounds(sources),
+  };
+  const sites = unpaired.map((entry) => classifyCap(entry, evidence));
+  const unpairedRows = sites.filter((site) => site.category !== "decided").length;
+  const decidedRows = sites.length - unpairedRows;
   notes.push(
-    `bounds: ${caps.length} declared cap(s), ${pairs.length} paired with a writer constant (${compared} compared, ${pairs.length - compared} of a different measure), ${unpairedRows} unpaired, ${unresolved.length} whose limit is not a resolvable number`,
+    `bounds: ${caps.length} declared cap(s), ${pairs.length} paired with a writer constant (${compared} compared, ${pairs.length - compared} of a different measure), ${sites.length} unpaired of which ${decidedRows} are decided below, ${unresolved.length} whose limit is not a resolvable number`,
   );
   if (unpairedRows > 0)
     notes.push(
-      `bounds: an unpaired cap is NOT clean - it means no Host constant names it, so nothing proves the writer stops where the contract says: ${unpaired
+      `bounds: an unpaired cap is NOT clean - it means no Host constant names it, so nothing proves the writer stops where the contract says: ${sites
+        .filter((site) => site.category !== "decided")
         .slice(0, 8)
-        .map((entry) => `${entry.schema}.${entry.property}=${entry.limit ?? entry.expression}@${entry.where}`)
+        .map((site) => `${site.label}@${site.where}`)
         .join(", ")}${unpairedRows > 8 ? `, +${unpairedRows - 8} more` : ""}`,
     );
   return {
@@ -582,9 +751,117 @@ function runBounds(sources) {
     violations,
     notes,
     unproven:
-      unpairedRows === 0
+      sites.length === 0
         ? []
-        : [{ count: unpairedRows, reading: "declared cap(s) with no writer constant paired to them" }],
+        : [
+            {
+              count: unpairedRows,
+              reading: "declared cap(s) with no writer constant paired to them",
+              walked: sites.length,
+              decided: decidedRows,
+              sites,
+            },
+          ],
+  };
+}
+
+/**
+ * Property names so widely shared that a same-named bound elsewhere is not evidence about this field.
+ *
+ * `label` is a field of a connection, an opening variant, a greeting and a game candidate; a Host module that bounds
+ * its own `label` at the same number has said nothing about the contract's. The name is what the audit matched on, so
+ * where the name cannot identify the field, the reading says so instead of proposing a shared constant.
+ */
+const SHARED_FIELD_NAMES = new Set([
+  "label",
+  "name",
+  "title",
+  "hint",
+  "reason",
+  "field",
+  "type",
+  "text",
+  "content",
+  "key",
+  "value",
+  "preview",
+  "summary",
+  "description",
+  "location",
+]);
+
+/**
+ * What the tree already says about one unpaired cap, strongest evidence first.
+ *
+ * The class pairs a cap with a writer's constant *by name*, so a cap the writer states under another name is
+ * reported unpaired and nothing is proved about it. Four things settle that without a second spelling of the
+ * number, and one does not:
+ *
+ *  - the cap publishes a constant, and Host code compares against that same constant: the wire and the writer
+ *    state one number, so there are not two to drift;
+ *  - a Host module validates a value against the schema that declares the cap: the published declaration *is* the
+ *    enforcement point, and there is no second number at all;
+ *  - a Host module bounds the property by a number of its own, under a different name: that is a second spelling,
+ *    and one constant shared with the contract would remove it - a declaration, not a defect;
+ *  - nothing in Host source bounds the property: no static reader can decide whether the producer stays under the
+ *    cap, and the evidence that would is named in the site's own line.
+ */
+function classifyCap(entry, evidence) {
+  const label = `${entry.schema}.${entry.property} ${entry.kind}=${entry.limit ?? entry.expression}`;
+  const where = entry.where;
+  const published = entry.identifier === null ? undefined : evidence.constants.get(entry.identifier);
+  if (published !== undefined) {
+    if (evidence.compared.has(published.name))
+      return {
+        label,
+        where,
+        category: "decided",
+        why: `the cap IS ${published.name} (${published.where}), the constant Host code compares against`,
+      };
+    return {
+      label,
+      where,
+      category: "needs-declaration",
+      why: `the number is published as ${published.name} (${published.where}) and nothing compares against it`,
+    };
+  }
+  if (evidence.checked.has(entry.schema))
+    return {
+      label,
+      where,
+      category: "cannot-prove",
+      why: `a Host module validates values against ${entry.schema}, which proves the wire never carries more than ${entry.limit ?? entry.expression} but not where the writer stops: a producer constant named by this cap, or a run that fills it to ${entry.limit ?? entry.expression}, would decide it`,
+    };
+  const writer = evidence.propertyBounds.get(entry.property);
+  // Naming the property is not enough on its own: two fields called `label` in two features are two fields. A
+  // bound whose number the contract also states is the writer spelling the same ceiling a second way; a same-named
+  // bound at a different number is a different field or a disagreeing one, and this reading cannot tell which.
+  const matching = (writer ?? []).filter((bound) => bound.limit === entry.limit);
+  if (SHARED_FIELD_NAMES.has(entry.property) && matching.length > 0)
+    return {
+      label,
+      where,
+      category: "cannot-prove",
+      why: `Host code states ${entry.property} at ${entry.limit} in ${[...new Set(matching.map((bound) => bound.where.split(":").slice(0, -1).join(":")))].slice(0, 3).join(", ")}, but \`${entry.property}\` names many fields: a producer constant named by this cap, or a run that fills it to ${entry.limit} and validates the result against ${entry.schema}, would decide it`,
+    };
+  if (matching.length > 0)
+    return {
+      label,
+      where,
+      category: "needs-declaration",
+      why: `a Host module states ${entry.property} at the same ${entry.limit} (${matching
+        .slice(0, 3)
+        .map((bound) => bound.where)
+        .join(", ")}); one constant shared with the contract would state it once`,
+    };
+  return {
+    label,
+    where,
+    category: "cannot-prove",
+    why:
+      writer === undefined
+        ? `nothing in Host source bounds ${entry.property}: a producer constant named by this cap, or a run that fills it to ${entry.limit ?? entry.expression} and validates the result against ${entry.schema}, would decide it`
+        : `Host code bounds other ${entry.property} fields at ${[...new Set(writer.map((bound) => bound.limit))].slice(0, 4).join("/")} and none at ${entry.limit ?? entry.expression}; a producer constant named by this cap, or a run that fills it to ${entry.limit ?? entry.expression} and validates the result against ${entry.schema}, would decide it`,
   };
 }
 
@@ -816,6 +1093,10 @@ function runRefusal(sources) {
           constant: constantEntry.name,
           limit: constantEntry.limit,
           lengthSide: lengthSide.trim(),
+          node,
+          deciding,
+          fn: declaredFunction(node),
+          sourceFile,
         });
         return;
       }
@@ -830,22 +1111,161 @@ function runRefusal(sources) {
     `refusal: ${comparisons} capacity comparison(s) across ${constants.length} cap constant(s), ${named} name their code, ${delegated} answered by a predicate (named by its caller), ${bounds.length} bound the value instead of refusing it, ${scopeless} outside any function`,
   );
   const unproven = [];
+  const publishedCaps = new Set(
+    [
+      ...contractSchemas(sources, sources.path(...TAVERN_CONTRACT)),
+      ...contractSchemas(sources, sources.path(...GAME_CONTRACT)),
+    ]
+      .flatMap((schema) => schema.properties)
+      .map((entry) => entry.identifier)
+      .filter((name) => name !== null),
+  );
   for (const kind of ["narrows", "discards"]) {
     const ofKind = bounds.filter((bound) => bound.kind === kind);
     if (ofKind.length === 0) continue;
+    const sites = ofKind.map((bound) => classifyBound(bound, publishedCaps));
+    const stillOpen = sites.filter((site) => site.category !== "decided");
     const reading =
       kind === "narrows"
         ? "capacity comparison(s) that trim the collection (break/slice/filter) instead of refusing"
         : "capacity comparison(s) that discard the value (return null/undefined) instead of refusing";
-    unproven.push({ count: ofKind.length, reading });
+    unproven.push({
+      count: stillOpen.length,
+      reading,
+      walked: sites.length,
+      decided: sites.length - stillOpen.length,
+      sites,
+    });
     notes.push(
-      `refusal: NOT audited here - ${ofKind.length} comparison(s) ${kind === "narrows" ? "trim the collection (break/slice/filter)" : "discard the value (return null/undefined)"} instead of refusing the operation: ${ofKind
+      `refusal: ${kind} - ${sites.length} comparison(s), ${sites.length - stillOpen.length} decided by what their branch states, ${stillOpen.length} still open: ${stillOpen
         .slice(0, 6)
-        .map((bound) => `${bound.constant}@${bound.where}`)
-        .join(", ")}${ofKind.length > 6 ? `, +${ofKind.length - 6} more` : ""}`,
+        .map((site) => `${site.label}@${site.where}`)
+        .join(", ")}${stillOpen.length > 6 ? `, +${stillOpen.length - 6} more` : ""}`,
     );
   }
   return { declared: constants.length, violations, notes, unproven };
+}
+
+/**
+ * What one non-refusing capacity comparison is, read from the branch that carries it.
+ *
+ * The class asks whether a player who meets a ceiling gets a sentence. A comparison that does not refuse may be
+ * outside that question entirely, and each of those shapes is visible where it happens:
+ *
+ *  - the comparison is the value its caller receives (the body of an arrow, the expression of a `return`): there is
+ *    no branch to name, and the caller is the one place the answer becomes a sentence;
+ *  - the branch answers absence (`return null`/`undefined`): the value is not usable at all, so the caller's own
+ *    absence path applies rather than a refusal of an operation;
+ *  - the clamp cuts to the same constant the wire publishes: the ceiling is the published one, and the wire schema's
+ *    own cap is what says it;
+ *  - the clamp states what it dropped - an ellipsis, an `omitted`/`dropped` field, a loss record: the result cannot
+ *    be read as complete, which is the property this class exists to check.
+ *
+ * What is left is a clamp that drops rows silently, and that is a declaration the branch owes: a count or an
+ * `omitted` field beside the trimmed value.
+ */
+function classifyBound(bound, publishedCaps) {
+  const label = `${bound.constant} (${bound.lengthSide})`;
+  const where = bound.where;
+  if (isAnswerExpression(bound.node))
+    return {
+      label,
+      where,
+      category: "decided",
+      why: "the comparison is the value its caller receives, so no branch here decides anything and the caller names the answer",
+    };
+  if (bound.kind === "discards" && answersAbsence(bound.deciding))
+    return {
+      label,
+      where,
+      category: "decided",
+      why: "the branch answers absence (null/undefined): the value is not usable, so there is no operation to refuse",
+    };
+  if (publishedCaps.has(bound.constant))
+    return {
+      label,
+      where,
+      category: "decided",
+      why: `the clamp cuts to ${bound.constant}, the same constant the wire publishes`,
+    };
+  const marker = announcement(bound.deciding, bound.fn, bound.sourceFile);
+  if (marker !== null)
+    return {
+      label,
+      where,
+      category: "decided",
+      why: `the branch states what it dropped (${marker}), so a trimmed result cannot be read as complete`,
+    };
+  return {
+    label,
+    where,
+    category: "needs-declaration",
+    why: "the branch drops rows without saying so: a count, an `omitted` field or an ellipsis beside the trimmed value is the declaration that closes it",
+  };
+}
+
+/** Whether a comparison is itself an answer: an arrow body, or the expression of a `return`. */
+function isAnswerExpression(node) {
+  const parent = node.parent;
+  if (parent === undefined) return false;
+  if (ts.isReturnStatement(parent)) return true;
+  return ts.isArrowFunction(parent) && parent.body === node;
+}
+
+/** Whether a branch returns nothing to the caller: `return null`, `return undefined`, `return;`. */
+function answersAbsence(deciding) {
+  let absent = false;
+  walk(deciding, (node) => {
+    if (absent || !ts.isReturnStatement(node)) return;
+    const expression = node.expression;
+    if (expression === undefined) absent = true;
+    else if (expression.kind === ts.SyntaxKind.NullKeyword) absent = true;
+    // `return undefined` is an identifier, not the `undefined` keyword token.
+    else if (ts.isIdentifier(expression) && expression.text === "undefined") absent = true;
+  });
+  return absent;
+}
+
+/**
+ * What a clamp's own text says it dropped, or null when it says nothing.
+ *
+ * The marker is looked for where the clamp happens and, failing that, in the values the enclosing function returns: a
+ * `break` inside a row loop carries no marker of its own, and the `omitted` field beside the rows it produced is where
+ * that function states the cost.
+ */
+function announcement(deciding, fn, sourceFile) {
+  const MARKER = /…|omitted|dropped|over[_-]?ceiling|truncated|ceiling/iu;
+  let marker = null;
+  const scan = (node) =>
+    walk(node, (inner) => {
+      if (marker !== null) return;
+      if (ts.isStringLiteral(inner) || ts.isNoSubstitutionTemplateLiteral(inner)) {
+        if (MARKER.test(inner.text)) marker = JSON.stringify(inner.text.slice(0, 40));
+        return;
+      }
+      // A clamp written `\`${value.slice(0, N)}…\`` puts the marker in the template's tail, not its head.
+      if (ts.isTemplateExpression(inner) && MARKER.test(inner.head.text))
+        marker = JSON.stringify(inner.head.text.slice(0, 40));
+      if (ts.isTemplateMiddleOrTemplateTail(inner) && MARKER.test(inner.text))
+        marker = JSON.stringify(inner.text.slice(0, 40));
+      if (ts.isIdentifier(inner) && /^(?:omitted|dropped|truncated)/iu.test(inner.text)) marker = inner.text;
+      if (ts.isPropertyAssignment(inner) && MARKER.test(inner.name.getText(sourceFile)))
+        marker = inner.name.getText(sourceFile);
+      if (
+        ts.isCallExpression(inner) &&
+        ts.isPropertyAccessExpression(inner.expression) &&
+        inner.expression.name.text === "record" &&
+        /loss/iu.test(inner.expression.expression.getText(sourceFile))
+      )
+        marker = "a loss record";
+    });
+  if (deciding !== null) scan(deciding);
+  if (marker === null && fn !== null)
+    walk(fn, (node) => {
+      if (marker !== null || !ts.isReturnStatement(node) || node.expression === undefined) return;
+      scan(node.expression);
+    });
+  return marker;
 }
 
 // ---------------------------------------------------------------------------
@@ -905,6 +1325,8 @@ function failClosedSites(sources) {
         where: at(sources.root, node, sourceFile, file),
         shape,
         blanking: shape !== null,
+        scope,
+        sourceFile,
       });
     });
   }
@@ -956,9 +1378,11 @@ function runReadPath(sources) {
   const constants = hostCapConstants(sources);
   const violations = [];
   const notes = [];
+  const survey = [];
   let blanking = 0;
   let exceeded = 0;
   let within = 0;
+  let clamped = 0;
   let unbound = 0;
   for (const site of sites) {
     if (!site.blanking) continue;
@@ -971,7 +1395,34 @@ function runReadPath(sources) {
     for (const property of capped) {
       const naming = reachable.filter((constant) => capAffinity(property, constant) > 0);
       if (naming.length === 0) {
+        const label = `${site.schema}.${property.property} maxItems=${property.limit}`;
+        const clamp = projectionClamp(sources, site, property);
+        if (clamp !== null && clamp.limit <= property.limit) {
+          clamped += 1;
+          survey.push({
+            label,
+            where: site.where,
+            category: "decided",
+            why: `the validating function clamps ${clamp.name} to ${clamp.limit} (${clamp.where}), at or below the cap`,
+          });
+          continue;
+        }
+        if (clamp !== null) {
+          exceeded += 1;
+          violations.push({
+            rank: 1,
+            where: `${site.where} vs ${clamp.where}`,
+            message: `${site.schema}.${property.property} is capped at ${property.limit} (${property.where}) but this read path clamps ${clamp.name} to ${clamp.limit}; one row over the cap and ${site.shape} removes the whole surface`,
+          });
+          continue;
+        }
         unbound += 1;
+        survey.push({
+          label,
+          where: site.where,
+          category: "cannot-prove",
+          why: `the projection copies the producer's collection unchanged: a run that feeds ${property.limit + 1} rows through this read path would decide it`,
+        });
         continue;
       }
       const larger = naming.filter((constant) => constant.limit > property.limit);
@@ -989,14 +1440,48 @@ function runReadPath(sources) {
     }
   }
   notes.push(
-    `read-path: ${sites.length} schema self-validation site(s), ${blanking} remove the surface on mismatch, ${exceeded} cap(s) that the projection can exceed, ${within} bounded by a constant that names it, ${unbound} capped field(s) no reachable constant names (NOT clean: the producer is bounded outside the read path's dependency tree)`,
+    `read-path: ${sites.length} schema self-validation site(s), ${blanking} remove the surface on mismatch, ${exceeded} cap(s) that the projection can exceed, ${within} bounded by a constant that names it, ${clamped} bounded by a clamp in the validating function, ${unbound} capped field(s) nothing visible bounds`,
   );
   return {
     declared: sites.length,
     violations,
     notes,
-    unproven: unbound === 0 ? [] : [{ count: unbound, reading: "capped field(s) no reachable constant names" }],
+    unproven:
+      survey.length === 0
+        ? []
+        : [
+            {
+              count: unbound,
+              reading: "capped field(s) no reachable constant names",
+              walked: survey.length,
+              decided: clamped,
+              sites: survey,
+            },
+          ],
   };
+}
+
+/**
+ * The clamp the read path itself puts on a capped collection, if it applies one before validating.
+ *
+ * A projection that copies `result.candidates` straight into a schema capped at 64 rows can exceed that cap, and the
+ * audit cannot follow the value back to the producer to find out. It can read the other half: when the validating
+ * function (or a helper the same module declares and it calls) slices the collection to a number at or below the
+ * cap, the fail-closed branch cannot fire on that field, and that is a fact about the code in front of it rather
+ * than an inference about a producer three modules away.
+ */
+function projectionClamp(sources, site, property) {
+  const own = clampedCollections(sources, site.file, site.scope).get(property.property);
+  if (own !== undefined) return own;
+  let found = null;
+  walk(site.scope, (node) => {
+    if (found !== null || !ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) return;
+    const helper = localFunction(site.sourceFile, node.expression.text);
+    if (helper === null) return;
+    const clamp = clampedCollections(sources, site.file, helper).get(property.property);
+    if (clamp !== undefined) found = clamp;
+  });
+  return found;
 }
 
 /** The capacity constants whose declaring module is in a read path's own dependency tree. */
@@ -1070,23 +1555,46 @@ export function totals(results) {
     violations: violations.length,
     blocking: blocking.length,
     advisory: violations.length - blocking.length,
-    /** Every reading this run walked without proving clean, advisory findings included: the section's own count. */
-    unproven: unprovenReadings(results).length,
+    /**
+     * Every reading this run walked without proving clean, advisory findings included: the section's own count.
+     *
+     * A survey entry whose sites were all decided by this run is not one of them - that reading is measured, not
+     * unproven - so the count follows `count`, never the number of entries the run happens to produce.
+     */
+    unproven: unprovenReadings(results).filter((row) => row.count > 0).length,
   };
 }
 
 /**
- * The readings this run cannot call clean, as `[class, count, reading]` rows.
+ * The readings this run cannot call clean, as `[class, count, reading, classification]` rows.
  *
  * Two different things share this list on purpose, because a reader who has to tell them apart is a reader who can
  * mistake one for clean: findings an owner has not ruled on (they print as violations and here) and quantities a class
  * walked without being able to prove (they print only here).
+ *
+ * A survey row carries the population it walked and how that population was classified, because a bare count is what
+ * let the next reader assume the sites were fine: `count` is what is still open, `walked` is what the reading
+ * examined, and the three categories sum to `walked`.
  */
 export function unprovenReadings(results) {
   const rows = [];
   for (const result of results) {
-    for (const entry of result.unproven)
-      rows.push({ className: result.id, count: entry.count, reading: entry.reading });
+    for (const entry of result.unproven) {
+      const sites = entry.sites ?? [];
+      const categories = (category) => sites.filter((site) => site.category === category).length;
+      rows.push({
+        className: result.id,
+        count: entry.count,
+        reading: entry.reading,
+        walked: entry.walked ?? entry.count,
+        classification: {
+          decided: entry.decided ?? 0,
+          needsDeclaration: categories("needs-declaration"),
+          cannotProve: categories("cannot-prove"),
+        },
+        sites,
+      });
+    }
     const advisory = result.violations.filter((violation) => violation.advisory === true);
     if (advisory.length === 0) continue;
     const kinds = [...new Set(advisory.map((violation) => violation.kind).filter((kind) => kind !== undefined))];
@@ -1094,9 +1602,17 @@ export function unprovenReadings(results) {
       className: result.id,
       count: advisory.length,
       reading: `advisory finding(s)${kinds.length === 0 ? "" : ` of ${kinds.join(", ")}`} - an owner ruling is pending, so these do not decide the run`,
+      walked: advisory.length,
+      classification: { decided: 0, needsDeclaration: advisory.length, cannotProve: 0 },
+      sites: [],
     });
   }
   return rows;
+}
+
+/** `19 walked (10 decided, 0 need a declaration, 9 cannot be proved statically)` - the four numbers, named. */
+function classificationLine(row) {
+  return `${row.walked} walked (${row.classification.decided} decided by this run, ${row.classification.needsDeclaration} need a declaration, ${row.classification.cannotProve} cannot be proved statically)`;
 }
 
 export function formatReport(results, { all = false } = {}) {
@@ -1109,15 +1625,52 @@ export function formatReport(results, { all = false } = {}) {
     lines.push(
       `  ${result.id.padEnd(width)}  ${String(result.declared).padStart(5)} declared  ${String(result.violations.length).padStart(4)} violation(s)  ${result.title}`,
     );
+  // The survey line. Every reading below prints the population it walked and how it split, so a reader sees the
+  // measurement and not only what is left over - a reading that decided all of its sites is not a reading that found
+  // nothing, and the two must not print the same way.
+  const unproven = unprovenReadings(results);
+  if (unproven.length > 0)
+    lines.push(
+      "",
+      `survey: ${unproven.length} reading(s) walked sites this run had to classify - ${unproven
+        .filter((row) => row.sites.length > 0)
+        .map(
+          (row) =>
+            `${row.className} ${row.walked} (${row.classification.decided} decided, ${row.classification.needsDeclaration} need a declaration, ${row.classification.cannotProve} cannot be proved)`,
+        )
+        .join(" · ")}`,
+    );
   // The section that exists because a note among thirty other notes reads as clean. Every quantity this run walked
   // without proving prints here, one line per class and reading, with its count - so "0 blocking" can never be the
-  // only thing a reader takes away. It prints even when it is empty, and then says so in words.
+  // only thing a reader takes away. It prints even when it is empty, and then says so in words. A reading whose sites
+  // were all decided prints below the open ones under its own heading: it is still evidence, and it is no longer a
+  // count in the header.
+  const stillOpen = unproven.filter((row) => row.count > 0 || row.sites.length === 0);
+  const decidedRows = unproven.filter((row) => row.count === 0 && row.sites.length > 0);
+  const pushSites = (row) => {
+    lines.push(`  ${row.className.padEnd(width)}  ${String(row.count).padStart(5)}  ${row.reading}`);
+    lines.push(`    ${classificationLine(row)}`);
+    // One line per site category, with the sites themselves bounded the way a violation kind is: the count is the
+    // count that was found, the sample is what fits, and `--verbose` prints every site.
+    for (const category of ["cannot-prove", "needs-declaration", "decided"]) {
+      const ofCategory = row.sites.filter((site) => site.category === category);
+      if (ofCategory.length === 0) continue;
+      lines.push(`    ${category}  ${ofCategory.length} site(s)`);
+      for (const site of all ? ofCategory : ofCategory.slice(0, SAMPLE_LIMIT))
+        lines.push(`        ${site.label}  ${site.where}`, `          ${site.why}`);
+      if (!all && ofCategory.length > SAMPLE_LIMIT)
+        lines.push(
+          `        … ${ofCategory.length - SAMPLE_LIMIT} more site(s); --verbose prints every one, --json carries them all`,
+        );
+    }
+  };
   lines.push("", "NOT CLEAN - readings this run walked but cannot prove:");
-  const unproven = unprovenReadings(results);
-  if (unproven.length === 0) lines.push("  (none: every reading this run walked was proved clean)");
-  else
-    for (const row of unproven)
-      lines.push(`  ${row.className.padEnd(width)}  ${String(row.count).padStart(5)}  ${row.reading}`);
+  if (stillOpen.length === 0) lines.push("  (none: every reading this run walked was proved clean)");
+  else for (const row of stillOpen) pushSites(row);
+  if (decidedRows.length > 0) {
+    lines.push("", "walked and decided by this run (not counted above, and not counted as clean either):");
+    for (const row of decidedRows) pushSites(row);
+  }
   for (const note of results.flatMap((result) => result.notes)) lines.push(`  note  ${note}`);
   const ranked = [...results.flatMap((result) => result.violations)].sort((left, right) => left.rank - right.rank);
   if (ranked.length === 0) return lines.join("\n");
@@ -1171,7 +1724,10 @@ function main() {
   else process.stdout.write(`${formatReport(results, { all: options.all })}\n`);
   process.exitCode = summary.blocking > 0 ? 1 : 0;
   // A reading this run cannot call clean is not a pass. The audit reports it and still exits 0 only because every such
-  // reading has a named reason above - it is not silent, which was the complaint that produced this section.
+  // site now carries one of the two reasons above it - `needs-declaration` (the product could state the fact once) or
+  // `cannot-prove` (the evidence that would decide it is named) - and neither is a silence. A site this run could
+  // decide stopped being a reading and became a decision, which is why the number can fall without the measurement
+  // getting smaller.
 }
 
 // ---------------------------------------------------------------------------

@@ -25,6 +25,13 @@
  *                    property capped two ways is the drift the element type cannot name`, `✖ bounds: two properties
  *                    over one element type are two collections, not one cap`, exit 1; the unmodified audit passes,
  *                    exit 0 (tools/audit-totality.test.mjs)
+ * red-proof: inject  a capacity clamp that drops its tail and states nothing, and a read path that copies its
+ *                    producer, beside an announced clamp and a clamped projection -> the announced pair is reported
+ *                    `decided` and the silent pair stays open as `needs-declaration` / `cannot-prove`, in one run
+ *                    (tools/audit-totality.test.mjs)
+ * red-proof: inject  a contract cap published as a constant that no Host code compares -> `needs-declaration`; add
+ *                    the comparison -> the same site is `decided`, with no literal in either place
+ *                    (tools/audit-totality.test.mjs)
  */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -775,7 +782,6 @@ test("hygiene: a test-support module declares an internal, but only in a module 
     'test("x", () => {});',
     "",
   ].join("\n");
-  const pinning = 'import test from "node:test";\nimport { modelPlan } from "./pinned-plan.private.js";\nvoid modelPlan;\ntest("x", () => {});\n';
   try {
     // The module that calls itself `internal` has said what its own name means: scaffolding may reach into it.
     write(root, "host/src/declared.internal.ts", "export function mintSession(): unknown {\n  return 1;\n}\n");
@@ -802,7 +808,11 @@ test("hygiene: a test-support module declares an internal, but only in a module 
     );
 
     // The declaration is per export and never per file: one plain test reaching the same export withdraws it.
-    write(root, "host/src/declared.test.ts", 'import test from "node:test";\nimport { mintSession } from "./declared.internal.js";\nvoid mintSession;\ntest("x", () => {});\n');
+    write(
+      root,
+      "host/src/declared.test.ts",
+      'import test from "node:test";\nimport { mintSession } from "./declared.internal.js";\nvoid mintSession;\ntest("x", () => {});\n',
+    );
     const witnessed = violationsOf(root, "hygiene");
     assert.deepEqual(
       witnessed.violations.map((violation) => violation.where).sort(),
@@ -902,6 +912,176 @@ test("the audit says out loud what it cannot call clean, so its output cannot be
       [],
       "the section empties again once the writer constant is restored, so it is a reading and not a permanent line",
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("refusal: a clamp that states what it dropped is decided, and a silent one is reported as a declaration", (t) => {
+  const root = fixture();
+  try {
+    // Both comparisons are capacity clamps rather than refusals, and the reading used to print both as "not audited".
+    // The first states its cost with an ellipsis in the template's tail, the second drops the tail and says nothing:
+    // one of them is answerable from the code in front of the audit, the other is a declaration the branch owes.
+    write(
+      root,
+      "host/src/bounded-text.ts",
+      [
+        "const MAX_EXCERPT_CHARS = 40;",
+        "const MAX_LABEL_CHARS = 8;",
+        "export function excerpt(value: string): string {",
+        "  return value.length <= MAX_EXCERPT_CHARS ? value : `${value.slice(0, MAX_EXCERPT_CHARS)}…`;",
+        "}",
+        "export function labelOf(value: string): string {",
+        "  return value.length <= MAX_LABEL_CHARS ? value : value.slice(0, MAX_LABEL_CHARS);",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    const results = runAudit({ root, only: ["refusal"] });
+    assert.deepEqual(results[0].violations, [], "a clamp is not a missing code");
+    const row = unprovenReadings(results).find(
+      (entry) => entry.className === "refusal" && entry.reading.includes("trim"),
+    );
+    assert.notEqual(row, undefined, "the trim reading remains a reading");
+    assert.equal(row.walked, 2, "both clamps are walked");
+    assert.equal(row.classification.decided, 1, "the announced clamp is decided");
+    assert.equal(row.count, 1, "the silent clamp is what is still open");
+    const open = row.sites.filter((site) => site.category !== "decided");
+    assert.equal(open.length, 1);
+    assert.ok(open[0].label.includes("MAX_LABEL_CHARS"), `the open site names its clamp: ${open[0].label}`);
+    assert.match(open[0].why, /without saying so/u, "and says what declaration closes it");
+    const decided = row.sites.find((site) => site.category === "decided");
+    assert.match(decided.why, /states what it dropped/u, "the decided site names the fact that decided it");
+    // The report prints the population and the split, so the two clamps cannot read as one number.
+    const report = formatReport(results);
+    assert.match(report, /2 walked \(1 decided by this run, 1 need a declaration, 0 cannot be proved statically\)/u);
+    t.diagnostic(report.slice(report.indexOf("NOT CLEAN")));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("read-path: a projection clamped where it validates is decided, and one that copies its producer is not", (t) => {
+  const root = fixture();
+  const contract = "host/src/tavern/browser-contract/index.ts";
+  const original = read(root, contract);
+  try {
+    // No Host constant names `rows`, so nothing pairs with the cap by name. One read path slices its own projection to
+    // the cap before validating it and cannot exceed it; the other copies whatever its producer handed over, and only
+    // a run that feeds 13 rows through it decides that one.
+    write(
+      root,
+      contract,
+      `${original}\nconst NotePageV1Schema = strictObject({\n  rows: Type.Array(NoteV1Schema, { maxItems: 12 }),\n});\nexport const PageValidators = Object.freeze({ NotePageV1Schema });\n`,
+    );
+    write(
+      root,
+      "host/src/page-route.ts",
+      [
+        'import { PageValidators } from "./tavern/browser-contract/index.js";',
+        "export function readPage(rows: unknown[]): unknown {",
+        "  const projected = { rows: rows.slice(0, 12) };",
+        '  if (!PageValidators.NotePageV1Schema.Check(projected)) throw new Error("page_invalid");',
+        "  return projected;",
+        "}",
+        "export function readPageCopied(rows: unknown[]): unknown {",
+        "  const projected = { rows };",
+        '  if (!PageValidators.NotePageV1Schema.Check(projected)) throw new Error("page_invalid");',
+        "  return projected;",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    const results = runAudit({ root, only: ["read-path"] });
+    assert.deepEqual(results[0].violations, [], "a clamp at or below the cap is not a finding");
+    const row = unprovenReadings(results).find((entry) => entry.className === "read-path");
+    assert.notEqual(row, undefined);
+    assert.equal(row.walked, 2);
+    assert.equal(row.classification.decided, 1, "the clamped projection is decided");
+    const decided = row.sites.find((site) => site.category === "decided");
+    assert.match(decided.why, /clamps rows to 12/u, "the decided site names the clamp that decided it");
+    const open = row.sites.find((site) => site.category !== "decided");
+    assert.match(open.why, /a run that feeds 13 rows/u, "the open site names the evidence that would decide it");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bounds: a cap the contract publishes as a constant is decided once a writer compares it", (t) => {
+  const root = fixture();
+  const contract = "host/src/tavern/browser-contract/index.ts";
+  const store = "host/src/note-store.ts";
+  const originalContract = read(root, contract);
+  try {
+    // The contract states the ceiling as a constant, so there is one number rather than two. Nothing compares it yet,
+    // which is a declaration the writer owes; the moment a Host comparison names that constant, the reading decides the
+    // site and stops counting it as unproven - without a literal in either place to pair.
+    write(
+      root,
+      contract,
+      `${originalContract}const PUBLISHED_ENTRY_CEILING = 10;\nconst NoteFeedV1Schema = strictObject({\n  entries: Type.Array(NoteV1Schema, { maxItems: PUBLISHED_ENTRY_CEILING }),\n});\nexport const FeedValidators = Object.freeze({ NoteFeedV1Schema });\n`,
+    );
+    const site = () =>
+      unprovenReadings([violationsOf(root, "bounds")])
+        .flatMap((row) => row.sites)
+        .find((entry) => entry.label.startsWith("NoteFeedV1Schema.entries"));
+    const before = site();
+    assert.notEqual(before, undefined, "the cap must be walked as unpaired");
+    assert.equal(before.category, "needs-declaration");
+    assert.match(before.why, /nothing compares against it/u);
+    write(
+      root,
+      store,
+      `${read(root, store)}\nexport function acceptFeed(entries: readonly unknown[]): void {\n  if (entries.length > PUBLISHED_ENTRY_CEILING) throw new Error("entries_too_many");\n}\n`,
+    );
+    const after = site();
+    assert.equal(after.category, "decided", "the published constant compared by its writer decides the cap");
+    assert.match(after.why, /the cap IS PUBLISHED_ENTRY_CEILING/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the verdict names every survey reading's walk, not only what is left over", () => {
+  const root = fixture();
+  try {
+    // A reading that decided all of its sites and a reading that decided none are the same number if the report prints
+    // only what is left over. The survey line and each row's own line carry walked, decided and the two open categories.
+    write(
+      root,
+      "host/src/bounded-text.ts",
+      [
+        "const MAX_EXCERPT_CHARS = 40;",
+        "export function excerpt(value: string): string {",
+        "  return value.length <= MAX_EXCERPT_CHARS ? value : `${value.slice(0, MAX_EXCERPT_CHARS)}…`;",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    const results = runAudit({ root, only: ["refusal"] });
+    const report = formatReport(results);
+    assert.match(
+      report,
+      /^survey: \d+ reading\(s\) walked sites this run had to classify - refusal 1 \(1 decided, 0 need a declaration, 0 cannot be proved\)$/mu,
+      `the survey line names the population and its split:\n${report}`,
+    );
+    assert.match(
+      report,
+      /^\s+1 walked \(1 decided by this run, 0 need a declaration, 0 cannot be proved statically\)$/mu,
+      "and the row repeats it in words, so a decided reading cannot read as an empty one",
+    );
+    assert.match(
+      report,
+      /^walked and decided by this run \(not counted above, and not counted as clean either\):$/mu,
+      "a fully decided reading prints under its own heading, never as part of what is still open",
+    );
+    assert.match(
+      report,
+      /^\s+decided  1 site\(s\)$/mu,
+      "a fully decided reading still prints the site that decided it",
+    );
+    assert.equal(totals(results).unproven, 0, "nothing is left open, and the header says zero rather than two");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
