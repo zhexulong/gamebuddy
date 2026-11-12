@@ -17,7 +17,12 @@ import {
   withForEachRule,
 } from "./body-program-for-each.js";
 import { heldToolChargeCeiling, packAreaSteps, packingKindOf } from "./body-program-packing.js";
-import type { ActionRegistration, BodyProgramCandidateRequest, Snapshot } from "./protocol.js";
+import {
+  type ActionRegistration,
+  type BodyProgramCandidateRequest,
+  type Snapshot,
+  executionRequestIntegerBounds,
+} from "./protocol.js";
 import { isNonNegativeSafeInteger, isOpaqueId, isRecord, isTileCoordinate } from "./protocol-target-facts.js";
 
 /**
@@ -863,6 +868,20 @@ export function planSettlementNote(nodeCount: number): string {
 }
 
 /**
+ * The `charge` a plan EXAMPLE prints, read from the wire declaration rather than written beside it.
+ *
+ * `till_soil` and `water_crop` pin it on the wire (`EXECUTION_REQUEST_ARGUMENT_RULES`: their exact argument set carries
+ * `charge`), so an example that leaves it out is a call the compiler refuses as `loop_do_argument_missing:charge` and the
+ * wire refuses as `invalid_args` - and the batch example had already drifted that way, printing a `water_crop` call a
+ * caller could not copy. Reading the value from the declaration means the example moves with the range.
+ */
+function planExampleCharge(action: "till_soil" | "water_crop"): string {
+  const bound = executionRequestIntegerBounds(action).find((candidate) => candidate.argument === "charge");
+  if (bound === undefined) throw new Error(`execution_request_integer_bound_missing:${action}:charge`);
+  return `charge: ${String(bound.minimum)}`;
+}
+
+/**
  * The `stardew_plan_work` description: what the tool does, and the builder methods it exposes, named.
  *
  * The names belong HERE, in the description the companion already holds, rather than one tool call away behind
@@ -900,16 +919,22 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     "builder.for_each({\n" +
     "  source: { area: { x: 60, y: 18, w: 20, h: 3 } },\n" +
     "  where: [{ col: { every: 3, offset: 0 } }],\n" +
-    '  do: { action: "till_soil", charge: 0 }\n' +
+    '  do: { action: "till_soil", ' +
+    planExampleCharge("till_soil") +
+    " }\n" +
     "});\n" +
     "// A tile's work is a CHAIN when one action does not finish it - till, then sow, in this order:\n" +
     "builder.for_each({\n" +
     "  source: { area: { x: 60, y: 18, w: 20, h: 3 } },\n" +
-    '  do: [{ action: "till_soil", charge: 0 }, { action: "plant_seed", seed: "hops" }]\n' +
+    '  do: [{ action: "till_soil", ' +
+    planExampleCharge("till_soil") +
+    ' }, { action: "plant_seed", seed: "hops" }]\n' +
     "});\n" +
     "// Or a batch over a snapshot family:\n" +
     "for (const crop of snapshot.cropTargets) {\n" +
-    "  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId });\n" +
+    "  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId, " +
+    planExampleCharge("water_crop") +
+    " });\n" +
     "}\n" +
     'builder.for_each({ source, where, do }) is ONE loop over a collection of live world rows, expanded by the Mod on the game thread: `source` names the live tiles whose rows the pass reads; `where` is a list of tests on ONE row - a field test ({ field: "kind", in: ["weed"] }, { field: "health", gt: 0 }), what stands on the tile ({ occupant: "weed" }, in the engine\'s own words: weed, stone, crop, tree, tree_stump, grass, object, terrain, none), and/or a position guard ({ col: { every: 3, offset: 0 } }, { row: { every: 2, offset: 1 } }), one spelling per test - a word the grammar does not have is refused as for_each_where_unrecognised:<given>;allowed=<the words it does have>; `do` is an ORDERED CHAIN of steps worked on ONE tile - each step an action from the list above with its own arguments, at most ' +
     String(MAX_FOR_EACH_STEPS) +
@@ -917,7 +942,9 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     forEachRowIdentityText() +
     "A row no predicate claims is reported rather than skipped: ONE code for the whole patch when NO row matched it (no_row_matched_where:<field>_<test>_<value>:<the occupants the tiles carry>), and one per tile (no_rule_matched:<kind>@<x>,<y>) when some rows did. One loop addresses at most " +
     String(MAX_FOR_EACH_ROWS) +
-    " rows, and a loop inside a loop is refused by name. The Mod EXECUTES the loop: each row is decided against the world as it is at that moment and dispatched through the same action path a single step takes, so the node's answer carries `succeeded`/`failed`/`refused`/`left_alone`/`not_matched`/`deferred` counts and ONE ROW PER TILE with its own action, state and reasonCode - and a row worked as a chain also carries its `steps` in the order it took them, plus `stopped_at=<step>:<reasonCode>` when it stopped before its last step, so a tile that stopped half-done says where. A tile that is not on the farm (not_on_farm), a kind `by_kind` cannot resolve (no_action_for_kind:<kind>), an action the live policy disables (row_action_not_enabled:<actionId>) and an argument the action declares that the loop cannot supply (row_argument_missing:<name>) are each NAMED PER ROW rather than skipped - a skipped row reads as a cleared patch. THE ARGUMENTS A STEP MAY CARRY ARE THAT ACTION'S OWN (its `argumentSchema`): row_argument_missing:<name> means the action declares `name` and your step left it out, and a name the action does NOT declare is row_argument_unknown:<name> - `slot` belongs to `cut_weeds`, not to `till_soil`, so one action's argument list is never another's. A STEP THAT LEAVES OUT AN ARGUMENT ONLY THE CALLER CAN SUPPLY IS REFUSED AT COMPILE TIME (loop_do_argument_missing:<name>:declared=[<the action's arguments>]) rather than per row, so one wrong step costs one repair and not a whole pass: fresh ground is tilled with `{ action: \"till_soil\", charge: 0 }` - charge 0 is the one named tile, and a charge the held tool cannot reach is refused by name instead of being quietly reduced - while `by_kind` covers only the kinds whose work needs no per-action argument. " +
+    " rows, and a loop inside a loop is refused by name. The Mod EXECUTES the loop: each row is decided against the world as it is at that moment and dispatched through the same action path a single step takes, so the node's answer carries `succeeded`/`failed`/`refused`/`left_alone`/`not_matched`/`deferred` counts and ONE ROW PER TILE with its own action, state and reasonCode - and a row worked as a chain also carries its `steps` in the order it took them, plus `stopped_at=<step>:<reasonCode>` when it stopped before its last step, so a tile that stopped half-done says where. A tile that is not on the farm (not_on_farm), a kind `by_kind` cannot resolve (no_action_for_kind:<kind>), an action the live policy disables (row_action_not_enabled:<actionId>) and an argument the action declares that the loop cannot supply (row_argument_missing:<name>) are each NAMED PER ROW rather than skipped - a skipped row reads as a cleared patch. THE ARGUMENTS A STEP MAY CARRY ARE THAT ACTION'S OWN (its `argumentSchema`): row_argument_missing:<name> means the action declares `name` and your step left it out, and a name the action does NOT declare is row_argument_unknown:<name> - `slot` belongs to `cut_weeds`, not to `till_soil`, so one action's argument list is never another's. A STEP THAT LEAVES OUT AN ARGUMENT ONLY THE CALLER CAN SUPPLY IS REFUSED AT COMPILE TIME (loop_do_argument_missing:<name>:declared=[<the action's arguments>]) rather than per row, so one wrong step costs one repair and not a whole pass: fresh ground is tilled with `{ action: \"till_soil\", " +
+    planExampleCharge("till_soil") +
+    " }` - the range's own minimum is the one named tile, and a charge the held tool cannot reach is refused by name instead of being quietly reduced - while `by_kind` covers only the kinds whose work needs no per-action argument. " +
     forEachSourceText() +
     " And one loop document may be at most " +
     String(MAX_FOR_EACH_LOOP_DOCUMENT_CHARS) +
@@ -2636,7 +2663,11 @@ function deepFreeze<TValue>(value: TValue): TValue {
  * refuses a step that names one of them (`row_argument_reserved:<name>`), so the compiler's check below cannot drift
  * from the rule the row answers with.
  */
-const ROW_DERIVED_STEP_ARGUMENTS: readonly string[] = Object.freeze(["x", "y", PLAN_FOR_EACH_ROW_IDENTITY_ARGUMENT]);
+export const ROW_DERIVED_STEP_ARGUMENTS: readonly string[] = Object.freeze([
+  "x",
+  "y",
+  PLAN_FOR_EACH_ROW_IDENTITY_ARGUMENT,
+]);
 
 /**
  * The arguments a step may still leave out, and why it is not every argument.

@@ -547,6 +547,12 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     ["crop", "tool"],
   ),
   actionAdapter(
+    "sweep_scythe",
+    "Sweep the scythe arc",
+    "Swing the scythe ONCE along the arc the held weapon's own level reaches. x and y name the tile the actor must FACE, and no target id, because one swing covers a SET of tiles engine-side: the receipt reports the arc's own counts (arc_tiles, arc_sweepable, arc_clear) and the tiles that changed, and completion is the NAMED tile moving - a swing that left it alone is scythe_sweep_partial, never a completed sweep.",
+    ["tool", "weed", "grass"],
+  ),
+  actionAdapter(
     "craft_item",
     "Craft an item",
     "Craft one learned recipe from the Farmhand's own inventory through the native recipe path, with honest item conservation evidence.",
@@ -689,6 +695,7 @@ export const STARDEW_ACTION_TOOL_NAMES = {
   deposit_silo_hay: "stardew_deposit_silo_hay",
   toggle_tool_light: "stardew_toggle_tool_light",
   scythe_crop: "stardew_scythe_crop",
+  sweep_scythe: "stardew_sweep_scythe",
   craft_item: "stardew_craft_item",
   cook_recipe: "stardew_cook_recipe",
   collect_crab_pot_output: "stardew_collect_crab_pot_output",
@@ -864,6 +871,7 @@ export const STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS = Object.freeze([
   "tailor_clothing",
   "dye_clothing_with_item",
   "color_placed_object",
+  "sweep_scythe",
 ] as const);
 
 export type StardewDescriptorDerivedActionId = (typeof STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS)[number];
@@ -1270,6 +1278,9 @@ export const MOD_DESCRIPTOR_REQUIREMENTS = Object.freeze({
     WRITES_EFFECT,
     mintsPostcondition("clothing_dyed"),
   ],
+  // One swing at one FACED tile: the scythe comes from the action's own `tool:scythe` claim, so the request names no slot,
+  // and the arc is the engine's own - a target id would name one occupant of a set the swing covers.
+  sweep_scythe: [publishesArguments("x", "y"), WRITES_EFFECT, mintsPostcondition("scythe_arc_occupancy_changed")],
 } satisfies Record<StardewDescriptorDerivedActionId, readonly DescriptorRequirement[]>);
 
 /**

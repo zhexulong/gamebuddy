@@ -685,8 +685,9 @@
       "language": "ts",
       "name": "host/src/game-tools.ts#createStardewActionTools",
       "file": "host/src/game-tools.ts",
-      "line": 977,
-      "value": 111
+      "line": 995,
+      "value": 113,
+      "reason": "111 -> 113 for one mount block: `sweep_scythe` was enrolled as a staged candidate but no block handed it to the Agent, so the arm existed with no tool behind it. The block is a descriptor check plus a mount, i.e. the same two decisions every neighbouring arm makes; folding the arms into one table is the shape this number is pointing at, not something this unit takes on."
     },
     {
       "id": "ts:host/src/game-tools.ts#execute",

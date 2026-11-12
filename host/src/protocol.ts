@@ -3303,8 +3303,24 @@ export type ExecutionRequestRequirement = Readonly<{
    * demand against the Mod's published `argumentSchema` reads a key list instead of parsing a sentence.
    */
   argumentNames?: readonly string[];
+  /**
+   * The whole-number range this row pins, for the rows that pin one.
+   *
+   * The range used to exist only inside the predicate and the prose `shape`, so every surface that had to state the same
+   * argument again - the tool schema the model reads, the plan example it copies - wrote the bounds a second time, and a
+   * second copy of a range the validator enforces is a disagreement waiting for someone to change one of them.
+   */
+  integerBound?: ExecutionRequestIntegerBound;
   isMet: (reading: ExecutionRequestReading) => boolean;
   violated: (reading: ExecutionRequestReading) => ExecutionRequestReading;
+}>;
+
+/** One whole-number argument and the range the wire accepts for it, as data rather than as a sentence. */
+export type ExecutionRequestIntegerBound = Readonly<{
+  argument: string;
+  minimum: number;
+  /** `null` is no ceiling, which is not the same as a ceiling nobody wrote down. */
+  maximum: number | null;
 }>;
 
 /**
@@ -3328,12 +3344,17 @@ function requirement(
   isMet: ExecutionRequestRequirement["isMet"],
   violated: ExecutionRequestRequirement["violated"],
   argumentNames?: readonly string[],
+  integerBound?: ExecutionRequestIntegerBound,
 ): ExecutionRequestRequirement {
-  return Object.freeze(
-    argumentNames === undefined
-      ? { field, shape, refusal, isMet, violated }
-      : { field, shape, refusal, argumentNames, isMet, violated },
-  );
+  return Object.freeze({
+    field,
+    shape,
+    refusal,
+    ...(argumentNames === undefined ? {} : { argumentNames }),
+    ...(integerBound === undefined ? {} : { integerBound }),
+    isMet,
+    violated,
+  });
 }
 
 /** The reading with one argument value replaced, in the payload as well as in the key set the rows read. */
@@ -3501,6 +3522,8 @@ function integerRow(
       (reading.args[name] as number) >= minimum &&
       (maximum === null || (reading.args[name] as number) <= maximum),
     withArg(name, minimum - 1),
+    undefined,
+    Object.freeze({ argument: name, minimum, maximum }),
   );
 }
 
@@ -4253,6 +4276,22 @@ function isExecutionAction(value: unknown): value is ExecutionRequest["action"] 
  */
 function argumentRulesFor(action: unknown): readonly ExecutionRequestRequirement[] {
   return isExecutionAction(action) ? EXECUTION_REQUEST_ARGUMENT_RULES[action] : [];
+}
+
+/**
+ * The whole-number ranges one action's arguments pin, in declaration order.
+ *
+ * The readers that state an argument a second time - the tool schema the model is handed (`game-tools.ts`) and the plan
+ * example it copies (`body-program-script.ts`) - read the range from here instead of writing it again, so a bound that
+ * moves in the validator moves on both surfaces. A row that pins no range contributes nothing, and an action whose range
+ * is removed shows up as a missing bound in those readers rather than as a stale schema.
+ */
+export function executionRequestIntegerBounds(
+  action: ExecutionRequest["action"],
+): readonly ExecutionRequestIntegerBound[] {
+  return EXECUTION_REQUEST_ARGUMENT_RULES[action].flatMap((row) =>
+    row.integerBound === undefined ? [] : [row.integerBound],
+  );
 }
 
 /**

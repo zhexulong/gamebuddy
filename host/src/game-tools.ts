@@ -39,6 +39,7 @@ import {
   TOOL_SELECTOR_VALUES,
   type TileAreaRequest,
   type TileAreaResult,
+  executionRequestIntegerBounds,
   isValidObserveSceneResult,
   validateExecutionRequest,
 } from "./protocol.js";
@@ -964,6 +965,23 @@ function candidateArgumentSchema(name: string, declaredType?: string): TSchema {
 }
 
 /**
+ * One whole-number argument EXACTLY as the wire pins it, read from `EXECUTION_REQUEST_ARGUMENT_RULES`.
+ *
+ * The schema is what the model is shown and what a call is validated against before it is built, and the protocol is what
+ * decides whether the built request may leave the Host at all. Stating a bound here and enforcing it there are two
+ * statements of one fact, so this reads the declaration's own range: a mount for an action whose range the wire pins
+ * (a tool's `charge`) cannot describe a value the validator refuses, and cannot drift when the range moves.
+ */
+function declaredIntegerArgument(action: ExecutionRequest["action"], name: string): TSchema {
+  const bound = executionRequestIntegerBounds(action).find((candidate) => candidate.argument === name);
+  if (bound === undefined) throw new Error(`execution_request_integer_bound_missing:${action}:${name}`);
+  return Type.Integer({
+    minimum: bound.minimum,
+    ...(bound.maximum === null ? {} : { maximum: bound.maximum }),
+  });
+}
+
+/**
  * Mounts the complete Game Action tool surface for the life of a connected
  * session. The mounted tool NAME set is constant: per-action eligibility is
  * decided at execution time by executeGameAction against the Mod's live
@@ -1092,15 +1110,16 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.till_soil,
         label: "Till Stardew Soil",
         description:
-          "Use a live native Hoe on a soil tile. Only a Mod receipt with soil_tilled evidence reports completion.",
+          "Use a live native Hoe on a soil tile. charge is the tool charge ONE native use covers: 0 tills the named tile alone, and a wider charge tills the box the held hoe's own level reaches - a charge the held tool cannot reach is refused by name, never clamped. Only a Mod receipt with soil_tilled evidence reports completion.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
+          charge: declaredIntegerArgument("till_soil", "charge"),
           requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
         action: "till_soil",
-        toArgs: (params) => ({ x: params.x, y: params.y }),
+        toArgs: (params) => ({ x: params.x, y: params.y, charge: params.charge }),
       }),
     );
   }
@@ -1195,11 +1214,12 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.water_crop,
         label: "Water Stardew Crop",
         description:
-          "Water a live unwatered crop target. x, y and expectedTargetId must be copied exactly from the cropTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Only the authoritative native receipt can report completion.",
+          "Water a live unwatered crop target. x, y and expectedTargetId must be copied exactly from the cropTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). charge is the watering can's charge for ONE native use: 0 waters the named tile alone, and a wider charge waters the box the can's own level reaches - a charge the held can cannot reach is refused by name, never clamped. Only the authoritative native receipt can report completion.",
         parameters: Type.Object({
           x: Type.Integer({ minimum: 0, maximum: 1000 }),
           y: Type.Integer({ minimum: 0, maximum: 1000 }),
           expectedTargetId: Type.String({ minLength: 1, maxLength: 128 }),
+          charge: declaredIntegerArgument("water_crop", "charge"),
           requestId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
           idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
         }),
@@ -1208,6 +1228,7 @@ export function createStardewActionTools(
           x: params.x,
           y: params.y,
           expectedTargetId: params.expectedTargetId,
+          charge: params.charge,
         }),
       }),
     );
@@ -2680,6 +2701,24 @@ export function createStardewActionTools(
         }),
       }),
     );
+  }
+  {
+    // constant mount; per-action admission at execution
+    const registration = modRegistrations.find((entry) => entry.actionId === "sweep_scythe");
+    if (registration?.descriptor && isModDescriptorComplete("sweep_scythe", registration.descriptor)) {
+      const schema = buildCandidateToolSchema("sweep_scythe", registration.descriptor);
+      tools.push(
+        makeGameActionTool({
+          name: STARDEW_ACTION_TOOL_NAMES.sweep_scythe,
+          label: "Sweep the Scythe Arc",
+          description:
+            "Swing the scythe ONCE at a tile arc. x and y are only the tile the Farmhand must FACE, copied from the MOST RECENT observe result for the current location (never invent or guess coordinates) - there is no target id, because one swing covers a SET of tiles the engine itself samples, and the scythe comes from the action's own `tool:scythe` claim rather than a slot you name. The receipt is that arc's own measurement: arc_tiles, arc_sweepable and arc_clear count what it sampled, and changed names the tiles that moved with what stood on each before the swing. Completion is the NAMED tile moving (scythe_sweep_cut); a swing that left it alone comes back as scythe_sweep_partial rather than as a completed sweep, and nothing here claims a monster hit.",
+          parameters: schema,
+          action: "sweep_scythe",
+          toArgs: (params) => declaredArguments(registration.descriptor, params),
+        }),
+      );
+    }
   }
   {
     // constant mount; per-action admission at execution

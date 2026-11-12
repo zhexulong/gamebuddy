@@ -5,6 +5,12 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
+import {
+  ROW_DERIVED_STEP_ARGUMENTS,
+  STEP_ARGUMENTS_STILL_OMISSIBLE,
+  planWorkDescription,
+  planActionsFromRegistrations,
+} from "./body-program-script.js";
 import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import { createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
 import {
@@ -15,6 +21,7 @@ import {
   type ExecutionRequest,
   type Scope,
   type Snapshot,
+  executionRequestIntegerBounds,
   validateExecutionRequest,
 } from "./protocol.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
@@ -49,13 +56,23 @@ import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-ada
  * reaches the bridge, but it can only speak about a tool the model can already call: it reads the schema the tool
  * HAS. The equality test states the rule directly and takes its population from `EXECUTION_REQUEST_ARGUMENT_RULES`,
  * so an action the declaration grows is checked the moment it gets a tool, and a tool whose schema still carries an
- * earlier shape is named rather than measured. Deriving the schemas from the declaration itself is the remaining
- * step owed here: the rows carry a field and a prose `shape` per requirement, not a machine-readable per-field JSON
- * schema, so a derivation would first need the declaration to publish one.
+ * earlier shape is named rather than measured. The remaining derivation followed from the same table once it carried
+ * its whole-number ranges as data (`integerBound`): `executionRequestIntegerBounds` is what the `charge` mounts read,
+ * so a schema cannot state a range the validator refuses.
+ *
+ * THE FOURTH READER IS THE EXAMPLE. `stardew_plan_work` prints calls the model copies, and an example is a stronger
+ * instruction than the argument list beside it: `water_crop`'s batch example printed a call without `charge` while the
+ * wire demanded it, so the one call the model was shown was the one call it could not make. Its examples are read here
+ * against the same declaration, with the loop form's own row-derived and still-omissible names accounted for rather than
+ * invented.
  *
  * red-proof: leave `chest_store`'s schema on the pre-`chests` shape ->
  *   `stardew_chest_store (chest_store): the schema declares [expectedQualifiedItemId, expectedTargetId, slot, x, y]
  *    while the protocol pins [chestId, expectedQualifiedItemId]`
+ * red-proof, one per gate below (each run against the compiled artifact with that one fact removed):
+ *   drop a pinned argument from a mount's schema -> `tool_schema_missing_argument:stardew_till_soil:charge`, and the
+ *     end-to-end probe reports the schema's own `{"x":0,"y":0}` refused with `invalid_args`;
+ *   drop the charge clause from an example -> `plan_example_omits_argument:water_crop:charge`.
  */
 const hostRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const SURFACE_PATH = resolve(
@@ -520,4 +537,174 @@ test("no mount forwards a constant empty argument object", () => {
     0,
     "a mount that derives arguments and forwards none is a registered capability that can never execute",
   );
+});
+
+/**
+ * The argument names one action's declaration pins, read from the row that pins the exact set.
+ *
+ * Every gate below takes its population from this lookup, so an action the declaration grows is examined the moment it
+ * exists rather than when someone remembers to add it to a list here.
+ */
+function pinnedArguments(action: ExecutionRequest["action"]): readonly string[] | undefined {
+  return EXECUTION_REQUEST_ARGUMENT_RULES[action].find((row) => row.argumentNames !== undefined)?.argumentNames;
+}
+
+/**
+ * A wire-required argument the tool schema leaves out, named for the action that lost it.
+ *
+ * The equality test above already compares the two sets and reads as one sentence; this one states the rule the other
+ * implies, so the failure names the ARGUMENT a caller would have to invent instead of printing two arrays and letting the
+ * reader diff them. It is the difference between "a capability the model can call and never use" and the one name that
+ * makes it unusable.
+ */
+test("no tool schema leaves out an argument the wire requires", () => {
+  const mounted = new Map(mountedTools().map((tool) => [tool.action, tool]));
+  const findings: string[] = [];
+  let examined = 0;
+  for (const action of Object.keys(EXECUTION_REQUEST_ARGUMENT_RULES) as readonly ExecutionRequest["action"][]) {
+    const pinned = pinnedArguments(action);
+    const tool = mounted.get(action);
+    // An action with no tool is the equality test's finding, not this one's: this gate speaks about schemas that exist.
+    if (pinned === undefined || tool === undefined) continue;
+    examined += 1;
+    const declared = new Set(declaredArgumentKeys(tool.schema, false));
+    for (const argument of pinned)
+      if (!declared.has(argument)) findings.push(`tool_schema_missing_argument:${tool.name}:${argument}`);
+  }
+  assert.ok(examined >= 90, `expected the tooled declaration to be walked, examined ${examined} actions`);
+  assert.deepEqual(
+    findings,
+    [],
+    "the model is shown a schema that cannot carry an argument the validator demands, so the call is refused before the bridge",
+  );
+});
+
+/**
+ * The arguments a plan example names, taken at its TOP level only.
+ *
+ * An example's value can be an object of its own (`{ kind: "label", label: "probe" }`), so a comma split would read that
+ * value's inner keys as the example's arguments. The scanner counts brackets and only closes an entry at depth zero.
+ */
+function exampleArgumentNames(body: string): readonly string[] {
+  const names: string[] = [];
+  let depth = 0;
+  let entry = "";
+  const closeEntry = (): void => {
+    const name = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:/u.exec(entry)?.[1];
+    if (name !== undefined) names.push(name);
+    entry = "";
+  };
+  for (const character of body) {
+    if (character === "{" || character === "[" || character === "(") depth += 1;
+    else if (character === "}" || character === "]" || character === ")") depth -= 1;
+    if (character === "," && depth === 0) {
+      closeEntry();
+      continue;
+    }
+    entry += character;
+  }
+  closeEntry();
+  return names;
+}
+
+type PlanExample = Readonly<{ action: string; names: readonly string[]; source: "builder" | "step" }>;
+
+/**
+ * Every example the plan tool's own description prints, read off the rendered text.
+ *
+ * Both shapes are read because both are copied: a `builder.<action>({...})` call on a line of its own, and a loop step
+ * written as `{ action: "<id>", ... }` - including the one the prose teaches mid-sentence. Nothing else in the description
+ * is parsed: a line that is not a whole builder call, and an object that names no action, are not examples.
+ */
+function planExamples(description: string): readonly PlanExample[] {
+  const examples: PlanExample[] = [];
+  for (const line of description.split("\n")) {
+    const builder = /^\s*builder\.([a-z0-9_]+)\(\{(.*)\}\);?\s*$/u.exec(line);
+    if (builder !== null)
+      examples.push({ action: builder[1]!, names: exampleArgumentNames(builder[2]!), source: "builder" });
+    for (const step of line.matchAll(/\{ action: "([a-z0-9_]+)"([^}]*)\}/gu))
+      examples.push({ action: step[1]!, names: exampleArgumentNames(step[2]!), source: "step" });
+  }
+  return examples;
+}
+
+/**
+ * An argument a plan example omits and a caller would have to add before the example would run.
+ *
+ * The example is a STRONGER instruction than the argument list - a caller copies it - so an example that leaves out a
+ * wire-required argument teaches a call the compiler refuses (`loop_do_argument_missing:charge`) or the validator refuses
+ * (`invalid_args`). Two facts decide what an example must carry, and neither is invented here: a loop step's row supplies
+ * `x`, `y` and the minted target id (`ROW_DERIVED_STEP_ARGUMENTS`), and the two names the compiler still tolerates are
+ * `STEP_ARGUMENTS_STILL_OMISSIBLE` - the loop form's own measured gap, which this gate must not turn into a second, silent
+ * one.
+ */
+test("every plan example carries the arguments the wire requires of it", () => {
+  const registrations = publishedSurface().map(registrationFor);
+  const description = planWorkDescription(planActionsFromRegistrations(registrations));
+  const examples = planExamples(description);
+  const findings: string[] = [];
+  const examined: string[] = [];
+
+  for (const example of examples) {
+    if (!(example.action in EXECUTION_REQUEST_ARGUMENT_RULES)) continue;
+    const pinned = pinnedArguments(example.action as ExecutionRequest["action"]);
+    if (pinned === undefined) continue;
+    examined.push(`${example.source}:${example.action}`);
+    const supplied = new Set(example.names);
+    const required =
+      example.source === "builder"
+        ? pinned
+        : pinned.filter(
+            (name) => !ROW_DERIVED_STEP_ARGUMENTS.includes(name) && !STEP_ARGUMENTS_STILL_OMISSIBLE.includes(name),
+          );
+    for (const argument of required)
+      if (!supplied.has(argument)) findings.push(`plan_example_omits_argument:${example.action}:${argument}`);
+  }
+
+  // Zero population is BLOCKED, never green: a description whose examples the parser no longer recognises must fail here
+  // rather than agree with itself. `charge` is named because it is the argument this gate was written for.
+  assert.ok(examined.length >= 4, `expected the rendered examples to be walked, examined ${examined.join(", ")}`);
+  assert.ok(
+    examples.some((example) => example.names.includes("charge")),
+    "blocked: no rendered example carries a charge, so the parser is not reading the examples it exists for",
+  );
+  assert.deepEqual(findings, [], "an example a caller copies must be a call the compiler and the wire both accept");
+});
+
+/**
+ * The loop closes: a call built ONLY from the rendered `till_soil` schema passes the real validator.
+ *
+ * Every other test here compares statements about the schema - its names, its bounds, what the mount forwards. This one
+ * hands the schema's own required arguments to `validateExecutionRequest`, so the two halves are tied by behaviour: while
+ * the schema lacked `charge`, the arguments it declared were refused with `invalid_args` before the bridge, which is the
+ * Host-side spelling of the Mod's `row_argument_missing:charge`.
+ */
+test("a call built from the rendered till_soil schema passes the real validator", () => {
+  const tool = mountedTools().find((candidate) => candidate.action === "till_soil");
+  assert.ok(tool !== undefined, "till_soil must be mounted");
+  const snapshot = buildSnapshot(["till_soil"]);
+  const args = argsFor(tool.schema, declaredArgumentKeys(tool.schema, true), "till_soil");
+  const verdict = validateExecutionRequest(
+    {
+      requestId: "gateTillRequestId",
+      idempotencyKey: "gateTillIdempotencyKey",
+      action: "till_soil",
+      args,
+      expectedRevision: snapshot.revision,
+      deadlineMs: Date.now() + 30_000,
+    },
+    snapshot,
+  );
+  assert.equal(
+    verdict,
+    null,
+    `a schema-conformant till_soil call must pass the wire, but the schema's own ${JSON.stringify(args)} was refused with "${String(verdict)}"`,
+  );
+  // The bounded range is the declaration's, held against it rather than against a number this test would have to write
+  // twice: the schema must refuse what the wire refuses, so the two are compared as the same fact.
+  const declared = executionRequestIntegerBounds("till_soil").find((candidate) => candidate.argument === "charge");
+  assert.ok(declared !== undefined, "the till_soil declaration must pin a charge range");
+  const charge = propertiesOf(tool.schema).charge as JsonObject;
+  assert.equal(charge.minimum, declared.minimum, "the schema's charge floor must be the wire's");
+  assert.equal(charge.maximum, declared.maximum, "the schema's charge ceiling must be the wire's");
 });
