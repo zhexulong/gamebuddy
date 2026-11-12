@@ -184,6 +184,53 @@ test("public ST import confirmation denies runtime-identity inputs without a per
   }
 });
 
+/**
+ * The reviewed-field list is the CARD's population, and nothing else bounds it.
+ *
+ * The artifact validator used to cap `fields` - and the review record's
+ * `reviewedFields` - at a hand-written 32. The decoder bounds a card by BYTES,
+ * not by count: `characterBookEntries` is infinite and a `mes_example` may hold
+ * any number of `<START>` blocks, so a card well inside every decoder limit can
+ * declare more than 32 rows. The shipped default card already does (36).
+ *
+ * This case derives its card from the producer's own population instead of from
+ * a literal: forty exchange blocks plus a book entry, imported and reviewed end
+ * to end. It fails on any reintroduced count ceiling, whatever number it picks.
+ */
+test("a card whose population is larger than any hand-written ceiling still imports and reviews", async () => {
+  const root = await canonicalTestRoot("tavern-st-import-population-");
+  try {
+    const paths = resolveTavernPaths({ root } as never, identity);
+    const service = new StCardImportService(new TavernArtifactStore(root), paths);
+    const exchanges = Array.from(
+      { length: 40 },
+      (_, index) => `<START>\n{{user}}: 第${index + 1}句。\n{{char}}: 第${index + 1}句。`,
+    ).join("\n");
+    const card = JSON.stringify({
+      spec: "chara_card_v3",
+      data: {
+        name: "Population",
+        first_mes: "Hello.",
+        mes_example: exchanges,
+        character_book: { entries: [{ comment: "Lore", content: "inert background", keys: ["harvest"] }] },
+      },
+    });
+    const imported = await service.import("import_population", card);
+    const rowCount = imported.candidate.artifact.fields.length;
+    assert.ok(
+      rowCount > 32,
+      `the producer must be free to emit one row per card fact; got ${rowCount}, so the card no longer exceeds a 32-row ceiling and this case has stopped proving anything`,
+    );
+    const eligible = imported.candidate.artifact.fields
+      .filter((field) => field.eligibility === "profile_eligible_after_explicit_review")
+      .map((field) => field.field);
+    await service.recordReview("import_population", { reviewedFields: eligible, approvedAtMs: 1 });
+    assert.deepEqual([...(await service.readReview("import_population")).artifact.reviewedFields], eligible);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("ST card import carries alternate_greetings as reviewed variant fields, exactly once per entry", async () => {
   const root = await canonicalTestRoot("tavern-st-import-alternates-");
   try {
@@ -476,7 +523,12 @@ test("the shipped default card imports with no partition id in her persona and t
     const cardDescription = (JSON.parse(cardText) as { data: { description: string } }).data.description;
     const firstClause = cardDescription.split("\n").find((line) => line.startsWith("- 身份："));
     assert.ok(firstClause !== undefined, "the shipped card must still state her identity line");
-    const statedIdentity = firstClause.replace(/^- 身份：/u, "").split("、")[0]!;
+    // Rendered through the run's macro table, because the card writes `{{user}}` and the
+    // prompt can only carry the word that resolves to - the raw line is stored, not read.
+    const statedIdentity = renderMacros(
+      firstClause.replace(/^- 身份：/u, "").split("、")[0]!,
+      macroTable({ char: provisioned.profile.identity.name, locale: "zh-CN" }),
+    );
     assert.ok(
       renderedPersona(provisioned.profile).includes(statedIdentity),
       `the prompt must carry the card's own identity line ${JSON.stringify(statedIdentity)}`,

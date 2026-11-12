@@ -295,7 +295,7 @@ function candidate(v: Record<string, unknown>): CharacterCandidate {
     ])
   )
     fail();
-  const fields = array(v.fields, 32).map((x) => {
+  const fields = cardPopulation(v.fields).map((x) => {
     if (!record(x) || !only(x, ["field", "text", "eligibility"])) fail();
     return freeze({
       field: requiredId(x.field),
@@ -430,7 +430,7 @@ function candidateReview(v: Record<string, unknown>): CandidateReviewRecord {
     ])
   )
     fail();
-  const fields = array(v.reviewedFields, 32).map(requiredId);
+  const fields = cardPopulation(v.reviewedFields).map(requiredId);
   if (fields.length === 0 || new Set(fields).size !== fields.length) fail();
   const importId = requiredId(v.importId);
   const candidateId = requiredId(v.candidateId);
@@ -689,6 +689,26 @@ function only(v: Record<string, unknown>, keys: readonly string[]): boolean {
 }
 function array(v: unknown, max: number): unknown[] {
   if (!Array.isArray(v) || v.length > max) fail();
+  return v;
+}
+/**
+ * A list whose length IS the card's own population: one row per reviewed card
+ * fact, plus one per example, per alternate greeting and per world-book entry
+ * the decode carried.
+ *
+ * There is deliberately no count ceiling. The population is not a number this
+ * schema owns - it is whatever the card declared, and the decoder bounds that by
+ * BYTES (`inputBytesJson` 2 MiB, `examplesBytes` 2 MiB, `characterBookBytes`
+ * 16 MiB) rather than by count; a book may carry any number of entries
+ * (`characterBookEntries` is infinite) and a `mes_example` any number of
+ * `<START>` blocks. The earlier `32` was a hand-written guess, duplicated in
+ * this file and in the browser contract, and it refused the product's own
+ * shipped card (36 rows: 15 examples, 2 alternates, 11 book entries). What
+ * bounds a row is its own `id`/`text` limit below, and what bounds the file is
+ * the card budget the decoder already enforced before this record existed.
+ */
+function cardPopulation(v: unknown): unknown[] {
+  if (!Array.isArray(v)) fail();
   return v;
 }
 function id(v: unknown): v is string {
