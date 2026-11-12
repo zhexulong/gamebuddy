@@ -34,6 +34,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  CATALOG_MODULE_PATH,
   DECLARED_EXEMPTIONS,
   findCatalogFactCopies,
   formatFinding,
@@ -65,9 +66,19 @@ async function main(argv) {
   }
   const { models, disagreements, findings } = evaluated;
   const derived = [...models.keys()].sort();
+  // The population is the owner's declared facts: a fact is what this gate compares a copy AGAINST, so a run that
+  // holds none of them has compared nothing. `derived=…` alone states the model names and not that there was one.
+  const facts = [...models.values()].reduce((total, entry) => total + Object.keys(entry.facts).length, 0);
+  if (facts === 0) {
+    process.stderr.write(
+      `catalog_fact_ownership_blocked:owner_declares_no_fact: examined 0 fields over ${derived.length} model(s) ` +
+        `derived from ${CATALOG_MODULE_PATH}, so no copy had an owner value to disagree with\n`,
+    );
+    return 2;
+  }
 
   if (argv.includes("--json")) {
-    process.stdout.write(`${JSON.stringify({ derived, disagreements, findings }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ examined: facts, derived, disagreements, findings }, null, 2)}\n`);
     return findings.length === 0 && disagreements.length === 0 ? 0 : 1;
   }
 
@@ -77,8 +88,13 @@ async function main(argv) {
         `one entry states ${JSON.stringify(disagreement.first)}, another states ${JSON.stringify(disagreement.second)}`,
     );
   // The derived population is printed on every run, so a rename in the owner is
-  // visible as a changed set rather than as silence.
-  console.log(`catalog_fact_ownership: derived=${derived.length === 0 ? "none" : derived.join(",")}`);
+  // visible as a changed set rather than as silence - and the field count is what a
+  // reader needs beside `none`: `fields examined 24 · findings 0` is a measurement,
+  // `findings 0` alone is silence that reads like one.
+  console.log(
+    `catalog_fact_ownership: fields examined ${String(facts)} · models ${String(derived.length)} · ` +
+      `derived=${derived.length === 0 ? "none" : derived.join(",")}`,
+  );
   if (findings.length === 0 && disagreements.length === 0) {
     console.log("catalog_fact_ownership: none");
     return 0;

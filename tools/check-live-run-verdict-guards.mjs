@@ -90,9 +90,10 @@ function collectModules(root) {
   return files.sort();
 }
 
-export function findAbsencePassBranches({ root }) {
+export function scanAbsencePass({ root }) {
+  const modules = collectModules(root);
   const findings = [];
-  for (const file of collectModules(root)) {
+  for (const file of modules) {
     const lines = readFileSync(file, "utf8").split("\n");
     lines.forEach((line, index) => {
       if (/^\s*(\/\/|\*)/.test(line)) return;
@@ -122,7 +123,12 @@ export function findAbsencePassBranches({ root }) {
       });
     });
   }
-  return findings;
+  return { modules, findings };
+}
+
+/** The findings alone, for a caller that does not need the population beside them. */
+export function findAbsencePassBranches({ root }) {
+  return scanAbsencePass({ root }).findings;
 }
 
 function main() {
@@ -133,23 +139,42 @@ function main() {
     rootIndex >= 0 && typeof argv[rootIndex + 1] === "string"
       ? resolve(argv[rootIndex + 1])
       : join(repositoryRoot, "tools");
-  const findings = findAbsencePassBranches({ root });
+  const label = relative(repositoryRoot, root) || root;
+  let scanned;
+  try {
+    scanned = scanAbsencePass({ root });
+  } catch (error) {
+    process.stderr.write(
+      `live_run_verdict_guards_blocked:root_unreadable: ${label}: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    return 2;
+  }
+  const { modules, findings } = scanned;
+  // The population is the modules READ. A root with none of them matches no absence-as-pass branch either, and this
+  // guard's own history is the reason to say so out loud: its first version reported "zero findings" while skipping
+  // the very identifiers it existed to catch.
+  if (modules.length === 0) {
+    process.stderr.write(
+      `live_run_verdict_guards_blocked:no_module_examined: examined 0 modules under ${label}, so no verdict expression was read\n`,
+    );
+    return 2;
+  }
   if (json) {
-    process.stdout.write(`${JSON.stringify({ root, findings }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ root, examined: modules.length, findings }, null, 2)}\n`);
   } else if (findings.length === 0) {
     process.stdout.write(
-      `live-run verdict guards: 0 absence-as-pass branches under ${relative(repositoryRoot, root) || root}\n`,
+      `live-run verdict guards: modules examined ${String(modules.length)} · 0 absence-as-pass branches under ${label}\n`,
     );
   } else {
     process.stdout.write(
-      `live-run verdict guards: ${findings.length} absence-as-pass branch(es) - a gate must not pass because there was nothing to look at:\n`,
+      `live-run verdict guards: modules examined ${String(modules.length)} · ${findings.length} absence-as-pass branch(es) - a gate must not pass because there was nothing to look at:\n`,
     );
     for (const finding of findings) process.stdout.write(`  ${finding.file}:${finding.line}  ${finding.snippet}\n`);
     process.stdout.write(
       "  fix: judge it with tools/live-run/core/evidence-verdict.mjs, or mark it `absence-as-pass: <reason>` if the absence genuinely is the expected outcome\n",
     );
   }
-  process.exit(findings.length === 0 ? 0 : 1);
+  return findings.length === 0 ? 0 : 1;
 }
 
-if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exit(main());

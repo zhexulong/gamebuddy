@@ -177,9 +177,13 @@ export function readCoverageInputs({ surfacePath = SURFACE } = {}) {
 }
 
 if (import.meta.main) {
+  // The population is the artifact's published execution actions, and it is printed on every run: `covered 97 of 103`
+  // answers "how much" only beside `actions examined 103`.
   const report = taskActionCoverage(readCoverageInputs());
-  const lines = [`covered ${String(report.covered)} of ${String(report.total)}`];
-  lines.push(`tasks ${String(report.tasks)}, excluded ${String(report.excluded)}`);
+  const lines = [
+    `stardew_task_action_coverage: actions examined ${String(report.total)} · covered ${String(report.covered)} · ` +
+      `excluded ${String(report.excluded)} · tasks ${String(report.tasks)}`,
+  ];
   for (const entry of report.uncovered) {
     lines.push(
       entry.reason === null
