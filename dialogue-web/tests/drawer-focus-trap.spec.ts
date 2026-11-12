@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, test, type Page } from "./frontend-coverage";
+import { hostWorldBookReply } from "./host-world-book-reply";
 
 /**
  * A modal drawer keeps the keyboard inside it, including past its last control.
@@ -204,12 +205,12 @@ async function stubFullProfile(page: Page): Promise<void> {
         persona: { present: true, core: "Keeps the ledgers.", interactionStyle: null, expressionStyle: null },
         scenario: { present: true, name: "Winter on the ridge", description: "The pass closes in November." },
         greetings: { present: true, label: "The porch", variants: [{ label: "Default", text: "You are late." }] },
-        worldBook: {
+        worldBook: hostWorldBookReply({
           apiVersion: 1,
           present: true,
           revision: 3,
-          entries: [{ title: "The pact", keys: [], constant: true, content: "They split the ridge." }],
-        },
+          entries: [{ title: "The pact", keys: [], constant: true, enabled: true, content: "They split the ridge." }],
+        }),
       }),
     ),
   );

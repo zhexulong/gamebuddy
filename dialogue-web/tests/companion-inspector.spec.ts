@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "./frontend-coverage";
+import { hostWorldBookReply } from "./host-world-book-reply";
 
 /**
  * The read-only companion inspector: what a roster companion carries, and what she
@@ -167,15 +168,15 @@ test("a companion who carries her authored facts shows all of them, each one fol
         { label: "Rain", text: "Come in before the mud takes your boots." },
       ],
     },
-    worldBook: {
+    worldBook: hostWorldBookReply({
       apiVersion: 1,
       present: true,
       revision: 3,
       entries: [
-        { title: "The pact", keys: [], constant: true, content: "They agreed to split the ridge." },
-        { title: "Greenhouse", keys: ["glass", "seedling"], constant: false, content: "The glass was replaced." },
+        { title: "The pact", keys: [], constant: true, enabled: true, content: "They agreed to split the ridge." },
+        { title: "Greenhouse", keys: ["glass", "seedling"], constant: false, enabled: true, content: "The glass was replaced." },
       ],
-    },
+    }),
   };
   await stubCharacters(page, [{ handle: otherHandle, name: "Mira", isCurrent: false }], { [otherHandle]: profile });
   await openCharacters(page);

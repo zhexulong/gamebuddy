@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "./frontend-coverage";
 import { characterLabels } from "../src/components/character-domain-labels";
+import { hostWorldBookReply } from "./host-world-book-reply";
 
 /**
  * Removing a companion from the inspector - the one irreversible control on this surface.
@@ -117,15 +118,15 @@ const authoredProfile = (name: string) => ({
       { label: "Rain", text: "Come in before the mud takes your boots. Leave them by the door and do not tell me you walked the whole ridge in this." },
     ],
   },
-  worldBook: {
+  worldBook: hostWorldBookReply({
     apiVersion: 1,
     present: true,
     revision: 3,
     entries: [
-      { title: "The pact", keys: [], constant: true, content: "They agreed to split the ridge, and neither of them has said out loud what happens if one of them stops coming up." },
-      { title: "Greenhouse", keys: ["glass", "seedling"], constant: false, content: "The glass was replaced the spring after the storm, and the seedlings that survived it are the ones she trusts." },
+      { title: "The pact", keys: [], constant: true, enabled: true, content: "They agreed to split the ridge, and neither of them has said out loud what happens if one of them stops coming up." },
+      { title: "Greenhouse", keys: ["glass", "seedling"], constant: false, enabled: true, content: "The glass was replaced the spring after the storm, and the seedlings that survived it are the ones she trusts." },
     ],
-  },
+  }),
 });
 
 const profileFor = (name: string) => ({
