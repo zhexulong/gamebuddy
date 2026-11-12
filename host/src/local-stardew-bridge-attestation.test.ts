@@ -24,6 +24,8 @@ import {
 import { loadHostDeploymentManifest } from "./deployment-manifest.js";
 import { readSourceShape } from "./test-support/source-shape.test-support.js";
 import {
+  MAX_PLAN_NODES,
+  PLAN_ACTION_LIFECYCLES,
   PLAN_TOOL_SLOT_MEANING,
   planActionsFromRegistrations,
   planProgramId,
@@ -342,6 +344,9 @@ async function withHelloAck<T>(
                     catalogRevision: 1,
                     nodeId: null,
                     nodeAttempt: null,
+                    // Every journal event carries the monotonic millisecond it happened at; a page without it is
+                    // refused as an invalid result before any reader sees the event.
+                    atMs: 1,
                   },
                 ],
               },
@@ -602,6 +607,14 @@ test("actual attested pipe mounts only the program submit tool until a submissio
           accepted: false,
           nodeCount: 0,
           reasonCode: "plan_script_empty_no_builder_call",
+          // WHAT BECAME OF EVERY CALL SHE WROTE: the four lists partition the calls the script reached and the counts
+          // are the population, so a refusal that compiled nothing still says so instead of leaving the reader to guess.
+          dropped: [],
+          droppedCount: 0,
+          droppedTruncated: false,
+          acceptedSteps: [],
+          acceptedStepsCount: 0,
+          rejected: [],
         });
         const unpublishedPlan = await execute("stardew_plan_work", {
           script: "builder.move_to_tile({ x: 5, y: 8 });",
@@ -613,12 +626,24 @@ test("actual attested pipe mounts only the program submit tool until a submissio
           // Nothing was published for programs on this bridge, so the refusal lists no legal id - but it always
           // answers with the list, so a model reading it never has to guess whether an empty answer means "none".
           legalActionIds: [],
+          dropped: [],
+          droppedCount: 0,
+          droppedTruncated: false,
+          acceptedSteps: [],
+          acceptedStepsCount: 0,
+          rejected: [],
         });
         const forbiddenPlan = await execute("stardew_plan_work", { script: 'const fs = require("node:fs");' });
         assert.deepEqual(forbiddenPlan.details, {
           accepted: false,
           nodeCount: 0,
           reasonCode: "plan_script_uses_forbidden:require",
+          dropped: [],
+          droppedCount: 0,
+          droppedTruncated: false,
+          acceptedSteps: [],
+          acceptedStepsCount: 0,
+          rejected: [],
         });
         await assert.rejects(() => execute("stardew_plan_work", {}), /invalid_body_program_tool_arguments/);
         assert.equal(
@@ -737,17 +762,32 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
         );
 
         // A builder call with a missing argument answers with the action's own declaration, read straight off the
-        // catalog this bridge published: the refusal is the only place the shape is taught now.
+        // catalog this bridge published: the refusal is the only place the shape is taught now. Each argument carries
+        // its own `required` flag, the argument's declared label is the one the compiler refused it under, and the call
+        // that died is named in `dropped` and spelled out again in `rejected`.
         assert.deepEqual(await execute("stardew_plan_work", { script: "builder.move_to_tile({ x: 5 });" }), {
           accepted: false,
           nodeCount: 0,
-          reasonCode: "plan_script_missing_argument:move_to_tile.y:integer[non_negative]:snapshot.tile.y",
+          reasonCode: "plan_script_missing_argument:move_to_tile.y:integer[whole]:snapshot.tile.y",
           actionId: "move_to_tile",
           requiredArguments: [
-            { name: "x", type: "integer" },
-            { name: "y", type: "integer" },
+            { name: "x", type: "integer", required: true },
+            { name: "y", type: "integer", required: true },
           ],
           resourceClaims: [],
+          dropped: ["n01:plan_script_missing_argument:move_to_tile.y:integer[whole]:snapshot.tile.y"],
+          droppedCount: 1,
+          droppedTruncated: false,
+          acceptedSteps: [],
+          acceptedStepsCount: 0,
+          rejected: [
+            {
+              call: 1,
+              actionId: "move_to_tile",
+              reasonCode: "plan_script_missing_argument:move_to_tile.y:integer[whole]:snapshot.tile.y",
+              missingArguments: ["y"],
+            },
+          ],
         });
         // ...and the same declaration is reachable without writing a script, for one action or a whole family.
         assert.deepEqual(await execute("stardew_plan_shape", { actionId: "move_to_tile" }), {
@@ -757,8 +797,8 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
               familyId: "movement_navigation",
               lifecycle: "published",
               arguments: [
-                { name: "x", type: "integer" },
-                { name: "y", type: "integer" },
+                { name: "x", type: "integer", required: true },
+                { name: "y", type: "integer", required: true },
               ],
               outputFacts: [],
               resourceClaims: [],
@@ -768,6 +808,9 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
               // The same shape for the other pre-execution precondition: where the body has to stand. `57cd0af0` made
               // it declarable, and an action whose definitions do not declare it says so instead of staying silent.
               approachRequirement: { declared: false, reasonCode: "approach_requirement_undeclared" },
+              // An action that names no family declares none; `null` rather than an absent key, so a reader cannot
+              // read silence as "the field does not exist".
+              targetFamily: null,
             },
           ],
           // What a `slot` argument holds, answered once per shape rather than left to tool order.
@@ -775,15 +818,32 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
         });
         assert.deepEqual(await execute("stardew_plan_shape", { family: "brewing" }), {
           reasonCode: "plan_shape_unknown_family:brewing",
+          // What the caller actually sent, so a wrong parameter name is one turn to fix instead of nine guesses.
+          received: ["family"],
           legalFamilies: ["movement_navigation"],
         });
         assert.equal(submissions().length, 2, "reading a shape submits nothing");
 
-        // A plan of seventeen nodes is refused by name and nothing is submitted.
-        const refusedAtCap = await execute("stardew_plan_work", {
-          script: "for (let index = 0; index < 17; index++) builder.move_to_tile({ x: 5 + index, y: 8 });",
+        // A plan one node past the ceiling is refused by name and nothing is submitted. The ceiling is
+        // `MAX_PLAN_NODES` - the journal's read-back corruption bound - so the case is derived from it: seventeen nodes
+        // is an ordinary plan, and asserting it was refused is what let this case pass while the bound was 16.
+        const overCap =
+          `for (let index = 0; index < ${String(MAX_PLAN_NODES + 1)}; index++) ` +
+          "builder.move_to_tile({ x: 5 + (index % 100), y: 8 });";
+        const refusedAtCap = await execute("stardew_plan_work", { script: overCap });
+        assert.deepEqual(refusedAtCap, {
+          accepted: false,
+          nodeCount: 0,
+          reasonCode: `plan_cap_exceeded:${String(MAX_PLAN_NODES + 1)}`,
+          dropped: [],
+          droppedCount: 0,
+          droppedTruncated: false,
+          // The list is bounded by the compiler's own MAX_REPORTED_PLAN_CALLS (16) while the count is the population,
+          // so the answer states 256 accepted calls without spelling every one of them.
+          acceptedSteps: Array.from({ length: 16 }, (_, index) => `n${String(index + 1).padStart(2, "0")}`),
+          acceptedStepsCount: MAX_PLAN_NODES,
+          rejected: [],
         });
-        assert.deepEqual(refusedAtCap, { accepted: false, nodeCount: 0, reasonCode: "plan_cap_exceeded:17" });
         // A script that awaits is refused by the name of what it reached for, before it runs a single node.
         const refusedAtAwait = await execute("stardew_plan_work", {
           script: "await builder.move_to_tile({ x: 5, y: 8 });",
@@ -792,6 +852,12 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
           accepted: false,
           nodeCount: 0,
           reasonCode: "plan_script_uses_forbidden:await",
+          dropped: [],
+          droppedCount: 0,
+          droppedTruncated: false,
+          acceptedSteps: [],
+          acceptedStepsCount: 0,
+          rejected: [],
         });
         assert.equal(submissions().length, 2, "a refused plan submits nothing");
       } finally {
@@ -817,13 +883,17 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
               stopEpoch: 0,
               eventHighWater: 0,
               // The Mod records the candidate's own nodes as `pending`, which is what a just-accepted program looks
-              // like: the answer is read against real journal rows, not against an empty list.
-              nodes: (request.payload as { nodes: readonly { nodeId: string }[] }).nodes.map((node) => ({
-                nodeId: node.nodeId,
-                state: "pending",
-                nodeAttempt: 0,
-                admissionAttempt: 0,
-              })),
+              // like: the answer is read against real journal rows, not against an empty list. Every row names its
+              // action, which the wire requires of a node status: without it the answer is refused as an invalid result.
+              nodes: (request.payload as { nodes: readonly { nodeId: string; actionId: string }[] }).nodes.map(
+                (node) => ({
+                  nodeId: node.nodeId,
+                  actionId: node.actionId,
+                  state: "pending",
+                  nodeAttempt: 0,
+                  admissionAttempt: 0,
+                }),
+              ),
             },
           },
         }),
@@ -1233,8 +1303,14 @@ test("the Game surface offers one plan tool instead of the flat per-action tools
  */
 test("over the published catalog the mounted Game surface carries no per-action tool, and the plan builder carries every executable action", async () => {
   const registrations = publishedSurfaceRegistrations();
+  // "Executable" is the plan vocabulary's own lifecycle list, not "every execution-kind row": an action that ships
+  // experimental is not a builder method until its rung is earned, so a second definition here would count it as one.
   const executableActionIds = registrations
-    .filter((registration) => registration.kind === "execution")
+    .filter(
+      (registration) =>
+        registration.kind === "execution" &&
+        (PLAN_ACTION_LIFECYCLES as readonly string[]).includes(registration.lifecycle),
+    )
     .map((registration) => registration.actionId);
   await withHelloAck(
     "farmhand_client",
@@ -1376,9 +1452,12 @@ test("program readers mount only once a submission is recorded, because before t
         assert.ok(mounted().includes("stardew_action_program_status"));
         assert.ok(mounted().includes("stardew_action_program_events"));
         assert.equal((await execute("stardew_action_program_status", { programId: "farm_morning" })).code, "found");
+        // ONE submit per recorded candidate, and the readers ask for exactly what they answer. The reconciled program
+        // also starts the background settlement watch (`program-settlement-digest.ts`), whose own first read is a
+        // `program_status` - so the tail is the watch's read and then this call's, and no tool preflights anything.
         assert.deepEqual(
           requests.filter((request) => request.type.startsWith("program_")).map((request) => request.type),
-          ["program_submit", "program_submit", "program_status"],
+          ["program_submit", "program_submit", "program_status", "program_status"],
         );
       } finally {
         await materialized?.close();
@@ -1617,9 +1696,12 @@ test("attested status and events each emit one frame without preflight, cursor c
         });
         await execute("stardew_action_program_status", { programId: "program_03" });
         await execute("stardew_action_program_events", { programId: "program_03", cursor: 11, pageSize: 1 });
+        // Each tool sends its own frame and nothing before it. The accepted submission above also started the background
+        // settlement watch, whose first read is a `program_status` of its own - named here rather than filtered out, so
+        // a real preflight or a second page would still show up as an extra frame.
         assert.deepEqual(
           requests.filter((request) => request.type.startsWith("program_")).map((request) => request.type),
-          ["program_submit", "program_status", "program_events"],
+          ["program_submit", "program_status", "program_status", "program_events"],
         );
         assert.equal(
           requests.filter((request) => request.type === "observe_request").length,
@@ -2044,6 +2126,7 @@ test("attested fixed closure drains the held request before revocation", async (
   const requests: BridgeMessage[] = [];
   let heldStatus: BridgeMessage | undefined;
   let heldSocket: Socket | undefined;
+  let statusReads = 0;
   let resolveStatusSent!: () => void;
   const statusSent = new Promise<void>((resolve) => {
     resolveStatusSent = resolve;
@@ -2120,7 +2203,7 @@ test("attested fixed closure drains the held request before revocation", async (
             ),
           /action_program_runtime_unavailable/,
         );
-        assert.equal(requests.filter((request) => request.type === "program_status").length, 1);
+        assert.equal(requests.filter((request) => request.type === "program_status").length, 2);
         assert.ok(heldStatus);
         heldSocket!.write(
           frame({
@@ -2178,6 +2261,33 @@ test("attested fixed closure drains the held request before revocation", async (
         return true;
       }
       if (request.type === "program_status") {
+        statusReads += 1;
+        // The FIRST status read after an accepted submission belongs to the background settlement watch
+        // (`program-settlement-digest.ts`), not to the tool: it is answered here so the frame this case holds open is
+        // the one the tool owns, which is what `close()` has to drain.
+        if (statusReads === 1) {
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_program_status_watch",
+              type: "program_status_result",
+              payload: {
+                code: "found",
+                snapshot: {
+                  programId: request.payload.programId,
+                  state: "active",
+                  catalogRevision: 1,
+                  stopEpoch: 0,
+                  eventHighWater: 0,
+                  nodes: [],
+                },
+                programs: null,
+                programCount: 1,
+              },
+            }),
+          );
+          return true;
+        }
         heldStatus = request;
         heldSocket = socket;
         resolveStatusSent();
