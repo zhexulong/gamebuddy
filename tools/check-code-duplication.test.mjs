@@ -14,8 +14,13 @@
  *                    `code_duplication_examined_no_files`; a declared `typescript` format with no TypeScript file ->
  *                    `blocked` `format_examined_no_files:typescript`; a config naming another population ->
  *                    `jscpd_config_disagrees:<field>` for path, format, ignore and both thresholds.
+ * red-proof: inject  a fourth copy of a baselined group that is written but not staged -> `untracked_not_counted 1` and the
+ *                    verdict still `passed`, because the population is the index; `git add` the same file -> the same
+ *                    group reads `clone_group_grew:<hash>: now 4 sites ...` and `untracked_not_counted` disappears
+ *                    (tools/check-code-duplication.test.mjs)
  */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -40,6 +45,7 @@ import {
   normaliseSitePath,
   runJscpd,
   serialiseBaseline,
+  untrackedSources,
 } from "./check-code-duplication.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -48,6 +54,9 @@ const workspaces = [];
 after(() => {
   for (const workspace of workspaces) rmSync(workspace, { recursive: true, force: true });
 });
+
+/** `git` in a fixture tree. The gate's population is the index, so a fixture has to have one. */
+const git = (root, args) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
 
 /** A throwaway tree: `files` is `{ "host/src/a.cs": "..." }`, and `jscpd.json` declares `trees`/`formats`. */
 function workspace(files, { trees = ["host/src"], formats = ["csharp"] } = {}) {
@@ -64,6 +73,8 @@ function workspace(files, { trees = ["host/src"], formats = ["csharp"] } = {}) {
     JSON.stringify({ path: trees, format: formats, ignore: IGNORES, minTokens: MIN_TOKENS, minLines: MIN_LINES }),
     "utf8",
   );
+  git(root, ["init", "--quiet"]);
+  git(root, ["add", "-A"]);
   return { root, trees, formats };
 }
 
@@ -298,6 +309,7 @@ test("the same tree passes once its group is baselined, and a fourth copy is red
   assert.equal(checkCodeDuplication({ root, trees, formats, baseline }).status, "passed");
 
   writeFileSync(join(root, "host/src/Delta.cs"), pipeline("Delta", "Execute"), "utf8");
+  git(root, ["add", "host/src/Delta.cs"]);
   const grown = checkCodeDuplication({ root, trees, formats, baseline });
   assert.equal(grown.status, "failed");
   assert.deepEqual(
@@ -308,6 +320,35 @@ test("the same tree passes once its group is baselined, and a fourth copy is red
   const groups = groupClones(runJscpd({ root, trees, formats }).report.duplicates, root);
   assert.equal(groups.length, 1);
   assert.equal(groups[0].sites.length, 4);
+});
+
+test("a fourth copy in the worktree but not in the index is reported, and only counts once staged", () => {
+  const { root, trees, formats } = workspace(copies(["Alpha", "Bravo", "Charlie"]));
+  const baseline = baselinePayload(checkCodeDuplication({ root, trees, formats, baseline: { groups: [] } }).counted);
+  writeFileSync(join(root, "host/src/Delta.cs"), pipeline("Delta", "Execute"), "utf8");
+
+  // The defect this pins: a lane's half-written file used to join a baselined group and redden somebody else's ratchet
+  // against a tree no commit contains. It is now outside the population, and the reading says how many files it dropped.
+  const untracked = checkCodeDuplication({ root, trees, formats, baseline });
+  assert.equal(untracked.status, "passed");
+  assert.equal(untracked.untrackedNotCounted, 1);
+  assert.match(censusLine(untracked), / · untracked_not_counted 1$/);
+
+  git(root, ["add", "host/src/Delta.cs"]);
+  const staged = checkCodeDuplication({ root, trees, formats, baseline });
+  assert.equal(staged.status, "failed");
+  assert.equal(staged.untrackedNotCounted, 0);
+  assert.deepEqual(
+    staged.findings.map((entry) => entry.code),
+    ["clone_group_grew"],
+  );
+  assert.match(staged.findings[0].detail, /host\/src\/Delta\.cs:\d+/);
+});
+
+test("an index git cannot read is an error, never an empty untracked set", () => {
+  const reading = untrackedSources({ root: REPO, spawn: () => ({ status: 128 }) });
+  assert.match(reading.error, /^git_index_unreadable:/);
+  assert.equal(reading.files, undefined);
 });
 
 test("two copies left behind are a stale baseline entry, not a pass", () => {

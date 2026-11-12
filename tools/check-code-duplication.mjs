@@ -93,6 +93,17 @@
  *      which is a different fact from `stale_clone_baseline` and says so - an entry for a group the tree still has,
  *      under a name that no longer claims it is duplication.
  *
+ * THE POPULATION IS THE INDEX, NOT THE DIRECTORY. jscpd walks the working tree, so a file a lane has written but not
+ * staged is measured as if it were repository content - and on 2026-11-12 one was: `tools/check-test-await-deadlines.mjs`
+ * sat untracked in a shared checkout, cloned the `node:fs`/`node:path`/`node:url` preamble three tracked `tools/*.mjs`
+ * scripts already carry, and made the baselined group `269d6807cfe7` read `3 -> 4 sites`. Every lane's new file would
+ * then move somebody else's ratchet, and a baseline entry could name a path no commit holds. So the pair population is
+ * filtered to files git has in the index (`git ls-files --others --exclude-standard` names the complement), and what
+ * was dropped is published rather than silently excluded: `untracked_not_counted N` counts the distinct files removed
+ * from the comparison. Nothing dropped prints nothing; something dropped says so. A tree that is not a git work tree
+ * has no index to be outside of, so that reading is `blocked` with `git_index_unreadable:<root>` instead of being
+ * widened to whatever is on disk - this gate's own fixtures are `git init`ed for the same reason.
+ *
  * THE POPULATION IS PRINTED BOTH WAYS, so neither fact can hide inside the other: `clone groups N · of which
  * facade-only M · duplication K`. K is what the ratchet governs and what `--write-baseline` records; a new or grown
  * duplication group still fails, which is the hard failure this file always had.
@@ -518,6 +529,32 @@ export function readBaseline({ root = REPO } = {}) {
   return parsed;
 }
 
+/**
+ * The files under `trees` that are in the worktree but not in the index: the complement of the population
+ * (THE POPULATION IS THE INDEX, above).
+ *
+ * `error` rather than an empty set when git cannot answer. An empty set says "nothing is untracked", which is the
+ * opposite of what an unreadable index means for a population that is supposed to be the index, and it would let a
+ * fixture tree be measured as if every file in it were committed.
+ */
+export function untrackedSources({ root = REPO, trees = SOURCE_TREES, spawn = spawnSync } = {}) {
+  const outcome = spawn("git", ["ls-files", "--others", "--exclude-standard", "-z", "--", ...trees], {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+    maxBuffer: 1 << 26,
+  });
+  if (outcome.status !== 0) return { error: `git_index_unreadable:${root}` };
+  return {
+    files: new Set(
+      String(outcome.stdout ?? "")
+        .split("\0")
+        .filter((name) => name !== "")
+        .map((name) => name.replace(/\\/gu, "/")),
+    ),
+  };
+}
+
 /** The whole reading, for the CLI and for the test: population, rule, findings, verdict. */
 export function checkCodeDuplication({
   root = REPO,
@@ -536,9 +573,25 @@ export function checkCodeDuplication({
   });
   const run = runJscpd({ root, trees, formats, ignores, spawn });
   if (!run.ok) return { status: "blocked", reason: run.reason, disagreements, examined: 0 };
+  const untracked = untrackedSources({ root, trees });
+  if (untracked.error !== undefined) return { status: "blocked", reason: untracked.error, disagreements, examined: 0 };
   const examined = run.report.statistics?.total?.sources ?? 0;
   const populations = formatPopulations(run.report, formats);
-  const groups = groupClones(run.report.duplicates ?? [], root);
+  // The pairs git has no index entry for are dropped together with whatever they would have joined, and the files that
+  // were dropped are counted so a reading that shrank its population says so.
+  const pairs = [];
+  const outsideIndex = new Set();
+  for (const duplicate of run.report.duplicates ?? []) {
+    const first = normaliseSitePath(duplicate.firstFile.name, root);
+    const second = normaliseSitePath(duplicate.secondFile.name, root);
+    if (!untracked.files.has(first) && !untracked.files.has(second)) {
+      pairs.push(duplicate);
+      continue;
+    }
+    if (untracked.files.has(first)) outsideIndex.add(first);
+    if (untracked.files.has(second)) outsideIndex.add(second);
+  }
+  const groups = groupClones(pairs, root);
   const empty = Object.entries(populations)
     .filter(([, files]) => files === 0)
     .map(([format]) => format);
@@ -566,7 +619,14 @@ export function checkCodeDuplication({
     })),
     ...reading.findings,
   ];
-  return { status: findings.length === 0 ? "passed" : "failed", examined, populations, ...reading, findings };
+  return {
+    status: findings.length === 0 ? "passed" : "failed",
+    examined,
+    populations,
+    ...reading,
+    untrackedNotCounted: outsideIndex.size,
+    findings,
+  };
 }
 
 /** The report line `tools/check-harness-conformance.mjs` reads: the gate's own id, verdict and population. */
@@ -581,6 +641,7 @@ function reportLine(reading) {
     gate: "code_duplication",
     status: reading.status,
     examined: reading.examined,
+    ...(reading.untrackedNotCounted === undefined ? {} : { untrackedNotCounted: reading.untrackedNotCounted }),
     ...(reading.reason === undefined ? {} : { reason: reading.reason }),
     ...(reading.counted === undefined
       ? {}
@@ -609,7 +670,8 @@ export function censusLine(reading) {
     `${reading.facade.length} · duplication ${reading.duplication.length} · new ${reading.newGroups} · ` +
     `grown ${reading.grown} · baselined ${reading.baselined}` +
     `${reading.stale === 0 ? "" : ` · stale ${reading.stale}`}` +
-    `${reading.reclassified === 0 ? "" : ` · reclassified ${reading.reclassified}`}`
+    `${reading.reclassified === 0 ? "" : ` · reclassified ${reading.reclassified}`}` +
+    `${reading.untrackedNotCounted === undefined || reading.untrackedNotCounted === 0 ? "" : ` · untracked_not_counted ${reading.untrackedNotCounted}`}`
   );
 }
 
