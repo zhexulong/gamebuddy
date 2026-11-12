@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { DEFAULT_ACTION_POLICY } from "./action-registry.js";
-import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
 import { createStardewActionTools, createStardewObservationTools, type MoveCapableIntegration } from "./game-tools.js";
 import type { ExecutionReceipt, ExecutionRequest, Scope } from "./protocol.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
+import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
 
 const scope: Scope = {
   integrationId: "stardew",
@@ -211,20 +211,41 @@ function actionToolNames(integration: MoveCapableIntegration, policy = DEFAULT_A
   return createStardewActionTools(integration, policy, () => admission()).map((tool) => tool.name);
 }
 
+/**
+ * One observation tool, selected by NAME.
+ *
+ * These used to be destructured by position - `const [, , catalog] = createStardewObservationTools(...)` - and the
+ * mount order is not a contract: when `stardew_inspect_tiles` was inserted ahead of the catalog, the third slot became
+ * a different tool whose `details` carry no `actions`, and every catalog assertion in this file failed with
+ * `Cannot read properties of undefined`. An identity taken from a list position reports a change that did not happen and
+ * hides one that did, so the name is the handle.
+ */
+function observationTool(
+  integration: MoveCapableIntegration,
+  name: "stardew_interaction_catalog" | "stardew_search_interactions",
+  policy = DEFAULT_ACTION_POLICY,
+) {
+  const tool = createStardewObservationTools(integration, policy).find((candidate) => candidate.name === name);
+  assert.ok(tool !== undefined, `the observation mount must include ${name}`);
+  return tool;
+}
+
 async function catalogActionIds(
   integration: MoveCapableIntegration,
   policy = DEFAULT_ACTION_POLICY,
 ): Promise<string[]> {
-  const [, , catalog] = createStardewObservationTools(integration, policy);
-  assert.ok(catalog !== undefined, "the observation mount must include the catalog tool");
-  const result = await catalog.execute("projection", {}, new AbortController().signal, () => undefined, {} as never);
+  const result = await observationTool(integration, "stardew_interaction_catalog", policy).execute(
+    "projection",
+    {},
+    new AbortController().signal,
+    () => undefined,
+    {} as never,
+  );
   return (result.details as { actions: Array<{ actionId: string }> }).actions.map((entry) => entry.actionId);
 }
 
 async function searchActionIds(integration: MoveCapableIntegration, query: string): Promise<string[]> {
-  const [, , , search] = createStardewObservationTools(integration, DEFAULT_ACTION_POLICY);
-  assert.ok(search !== undefined, "the observation mount must include the search tool");
-  const result = await search.execute(
+  const result = await observationTool(integration, "stardew_search_interactions").execute(
     "projection",
     { query },
     new AbortController().signal,
