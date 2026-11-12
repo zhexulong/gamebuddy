@@ -177,6 +177,8 @@
     "test:code-duplication": "node --test tools/check-code-duplication.test.mjs",
     "test:complexity-gate": "node --test tools/scripts/check-file-complexity-gate.test.mjs",
     "test:cognitive-complexity": "node --test tools/check-cognitive-complexity.test.mjs",
+    "test:source-shape-readers": "node --test tools/check-source-shape-readers.test.mjs && node tools/check-source-shape-readers.mjs",
+    "test:await-deadlines": "node --test tools/check-test-await-deadlines.test.mjs && node tools/check-test-await-deadlines.mjs",
     "test:credential-export-isolation": "node --test tools/check-credential-export-isolation.test.mjs",
     "test:csharp-compile": "node --test tools/check-csharp-compile.test.mjs",
     "test:dependency-risk": "node --test tools/check-dependency-risk.test.mjs",
