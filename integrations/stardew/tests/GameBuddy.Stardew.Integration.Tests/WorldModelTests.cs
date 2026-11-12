@@ -33,7 +33,8 @@ public sealed class WorldModelTests
         bool toolCharged = false,
         bool selfAnimation = false,
         bool warping = false,
-        bool dayTransition = false)
+        bool dayTransition = false,
+        bool controlsFrozen = false)
         => new(
             eventUp,
             menuType,
@@ -46,7 +47,8 @@ public sealed class WorldModelTests
             toolCharged,
             selfAnimation,
             warping,
-            dayTransition);
+            dayTransition,
+            controlsFrozen);
 
     private static ActorDispositionKind Kind(in ActorWorldFacts facts) => WorldModel.Classify(facts).Kind;
 

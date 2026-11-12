@@ -48,7 +48,8 @@ public sealed class WorldInterruptionTests
                 ToolCharged: false,
                 SelfAnimation: false,
                 Warping: false,
-                DayTransition: false)).Kind;
+                DayTransition: false,
+                ControlsFrozen: false)).Kind;
     }
     // ---- disposition classification (WIA §4.1; ≈ Lane A ComputeDisposition) ----
 

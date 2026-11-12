@@ -64,7 +64,12 @@ internal readonly record struct ActorWorldFacts(
     // whose two `setUp` sites take the body (BirthingEvent.cs:34, PlayerCoupleBirthingEvent.cs:89); released
     // only by the engine (`Game1.cs:8567`, `:4193`, `:8606`). Minutes, not milliseconds.
     // Boundary: .tmp/boundary-day-transition.md.
-    bool DayTransition);
+    bool DayTransition,
+    // The engine's control freeze. Appended last for the same reason. Raised by the bus (`BusStop.cs:148`, `:268`,
+    // `Desert.cs:116`) and by `pauseThenDoFunction` (`Game1.cs:3927`); released only by the engine, through its own
+    // `Farmer.forceCanMove()` (`Farmer.cs:7090-7105`). Seconds, not milliseconds: the bus holds it for the walk to the
+    // door, the fade and the whole drive. Boundary: .tmp/boundary-controls-frozen.md.
+    bool ControlsFrozen);
 
 /// <summary>
 /// Read-only per-tick disposition payload (readonly record struct on the game
@@ -301,9 +306,14 @@ internal static class WorldModel
         // the overnight coroutine's own write (:8567); `farmEvent` is the scene the overnight sequence runs
         // (`BirthingEvent.setUp` :34) and is dropped by the sequence that drove it (:4193, :8606).
         bool dayTransition = Game1.newDay || Game1.farmEvent is not null;
+        // A Game1 static like `eventUp`, and the engine's own gate on control input: `UpdateControlInput` runs only
+        // when `!globalFade && !freezeControls && activeClickableMenu == null` (:4286), so while this flag is up the
+        // player's controls are not polled at all - the body is held even with CanMove still true. The release is the
+        // engine's universal body release, `Farmer.forceCanMove()` (Farmer.cs:7096).
+        bool controlsFrozen = Game1.freezeControls;
 
         if (player is null)
-            return new ActorWorldFacts(eventUp, menuType, dialogueUp, timeOfDay, 0f, false, false, false, false, false, warping, dayTransition);
+            return new ActorWorldFacts(eventUp, menuType, dialogueUp, timeOfDay, 0f, false, false, false, false, false, warping, dayTransition, controlsFrozen);
 
         return new ActorWorldFacts(
             eventUp,
@@ -321,7 +331,8 @@ internal static class WorldModel
             // engine counts it as a hold of the actor in its own right (Farmer.cs:7964).
             player.FarmerSprite.PauseForSingleAnimation,
             warping,
-            dayTransition);
+            dayTransition,
+            controlsFrozen);
     }
 
     private static bool OwnedByAction() => ModalActionOwnedCheck?.Invoke() ?? false;

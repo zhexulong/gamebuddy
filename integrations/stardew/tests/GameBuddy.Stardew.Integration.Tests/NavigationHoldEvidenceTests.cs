@@ -34,7 +34,8 @@ public sealed class NavigationHoldEvidenceTests
         bool toolCharged = false,
         bool selfAnimation = false,
         bool warping = false,
-        bool dayTransition = false) =>
+        bool dayTransition = false,
+        bool controlsFrozen = false) =>
         new(
             EventUp: eventUp,
             MenuType: menuType,
@@ -47,7 +48,8 @@ public sealed class NavigationHoldEvidenceTests
             ToolCharged: toolCharged,
             SelfAnimation: selfAnimation,
             Warping: warping,
-            DayTransition: dayTransition);
+            DayTransition: dayTransition,
+            ControlsFrozen: controlsFrozen);
 
     [Fact]
     public void ACutsceneHold_NamesTheCutsceneAndWhatEndsItsDialogueBox()

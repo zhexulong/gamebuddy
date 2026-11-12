@@ -189,7 +189,8 @@ public sealed class AdmissionForkReconciliationTests
         bool toolCharged = false,
         bool selfAnimation = false,
         bool warping = false,
-        bool dayTransition = false) =>
+        bool dayTransition = false,
+        bool controlsFrozen = false) =>
         new(
             EventUp: eventUp,
             MenuType: menuType,
@@ -202,7 +203,8 @@ public sealed class AdmissionForkReconciliationTests
             ToolCharged: toolCharged,
             SelfAnimation: selfAnimation,
             Warping: warping,
-            DayTransition: dayTransition);
+            DayTransition: dayTransition,
+            ControlsFrozen: controlsFrozen);
 
     private static int CountOccurrences(string haystack, string needle)
     {
