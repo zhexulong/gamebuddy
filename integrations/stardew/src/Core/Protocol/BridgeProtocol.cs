@@ -2308,6 +2308,11 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         "fish_here" => new[] { "x", "y", "expectedTargetId" },
         "plant_seed" or "fertilize_tile" or "place_wood_fence" or "place_crab_pot" or "bait_crab_pot" or "machine_load" or "plant_sapling" or "interact_npc_with_item" => new[] { "x", "y", "slot", "expectedQualifiedItemId", "expectedTargetId" },
         "clear_debris" or "collect_animal_product" or "feed_animal" or "chop_tree" or "break_rock" or "clear_hoedirt" or "dig_artifact_spot" or "chop_stump" or "cut_weeds" or "cut_grass" or "scythe_crop" => new[] { "x", "y", "slot", "expectedTargetId" },
+        // sweep_scythe names the tile to FACE and nothing else. No `slot`: the scythe comes from the action's own
+        // `tool:scythe` claim, exactly as till_soil takes its hoe. No `expectedTargetId`: the arc covers a SET of
+        // occupants, so one occupant's opaque id could not describe it - the same reason till_soil mints its own
+        // approach identity instead of taking one.
+        "sweep_scythe" => new[] { "x", "y" },
         "clear_cask" or "dress_mannequin" or "set_sign_display" or "deposit_silo_hay" => new[] { "x", "y", "slot", "expectedTargetId" },
             "withdraw_silo_hay" => new[] { "x", "y", "expectedTargetId" },
                 "toggle_animal_door" => new[] { "x", "y", "expectedTargetId" },

@@ -568,23 +568,27 @@ test("a do array is one ordered chain of steps on one tile, and the bound is the
 
   const chained = compile(
     `builder.for_each({ source: { area: ${PATCH} }, do: [
-       { action: "till_soil" },
-       { action: "water_crop" },
+       { action: "till_soil", charge: 0 },
+       { action: "water_crop", charge: 0 },
        { action: "plant_seed", seed: "hops" }
      ] });`,
   );
   const steps = loopOf(nodesOf(chained)[0]!).do;
   assert.deepEqual(
     steps,
-    [{ action: "till_soil" }, { action: "water_crop" }, { action: "plant_seed", seed: "hops" }],
+    [
+      { action: "till_soil", charge: 0 },
+      { action: "water_crop", charge: 0 },
+      { action: "plant_seed", seed: "hops" },
+    ],
     "the steps arrive in the order the caller wrote them, each with its own arguments",
   );
 
   // THE SINGLE FORM IS THE SAME VALUE, so a reader downstream has one shape to run and the Mod has one shape to report.
   const single = loopOf(
-    nodesOf(compile(`builder.for_each({ source: { area: ${PATCH} }, do: { action: "till_soil" } });`))[0]!,
+    nodesOf(compile(`builder.for_each({ source: { area: ${PATCH} }, do: { action: "till_soil", charge: 0 } });`))[0]!,
   );
-  assert.deepEqual(single.do, [{ action: "till_soil" }]);
+  assert.deepEqual(single.do, [{ action: "till_soil", charge: 0 }]);
 });
 
 /**
@@ -703,7 +707,7 @@ test("a row identity inside a later step is refused by name", () => {
 test("the plan description shows the chain and prints the bound the reader enforces", () => {
   const description = planWorkDescription(ACTIONS);
   assert.ok(
-    description.includes('do: [{ action: "till_soil" }, { action: "plant_seed", seed: "hops" }]'),
+    description.includes('do: [{ action: "till_soil", charge: 0 }, { action: "plant_seed", seed: "hops" }]'),
     "the description shows a two-step chain, or the companion never learns the form exists",
   );
   assert.ok(

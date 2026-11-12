@@ -20,7 +20,7 @@ import type { ActionRegistration, Snapshot } from "./protocol.js";
  *
  * <p>
  * MEASURED 2026-11-09, verbatim from a finished run. The companion wrote the only loop of its 68 plans -
- * `builder.for_each({ source: { area: { x: 54, y: 16, w: 16, h: 2 } }, do: { action: "till_soil" } })` - and the whole
+ * `builder.for_each({ source: { area: { x: 54, y: 16, w: 16, h: 2 } }, do: { action: "till_soil", charge: 0 } })` - and the whole
  * answer was `body_program_preflight_rejected:for_each:allowed=...(100+ ids)...:registrations=N:live=M:refused_present=none`.
  * A plan FORM is a node whose action id is declared by the plan-form catalogue and not by the action surface, so the
  * preflight refused it for not being an action, and the loop never ran. The loop is the only construct that can express
@@ -116,7 +116,9 @@ function nodesOf(result: CompiledPlan): readonly PlanNode[] {
  */
 function measuredLoopNodes(): readonly PlanNode[] {
   const nodes = nodesOf(
-    compile(`builder.for_each({ source: { area: { x: 54, y: 16, w: 16, h: 2 } }, do: { action: "till_soil" } });`),
+    compile(
+      `builder.for_each({ source: { area: { x: 54, y: 16, w: 16, h: 2 } }, do: { action: "till_soil", charge: 0 } });`,
+    ),
   );
   assert.equal(nodes.length, 1, "the measured plan is one node: the loop the whole pass lives in");
   return nodes;
@@ -184,7 +186,7 @@ test("a row that names the Mod's own classifier is not judged against this conne
     null,
     "a connection that offers no action at all still admits the form whose row is the Mod's classifier",
   );
-  const namedRow = [node(FOR_EACH_PLAN_ACTION_ID, "n01", { loop: loopDocument({ action: "till_soil" }) })];
+  const namedRow = [node(FOR_EACH_PLAN_ACTION_ID, "n01", { loop: loopDocument({ action: "till_soil", charge: 0 }) })];
   assert.equal(
     bodyProgramPreflightRefusal(namedRow, NOTHING_OFFERED),
     `body_program_preflight_rejected:n01:${FOR_EACH_PLAN_ACTION_ID}:row_action_not_enabled:till_soil`,
@@ -201,7 +203,7 @@ test("a row that names the Mod's own classifier is not judged against this conne
 test("a form-shaped node under an undeclared id is refused as an undeclared form", () => {
   const undeclaredFormId = `${FOR_EACH_PLAN_ACTION_ID}_patch`;
   assert.equal(PLAN_FORM_ACTION_IDS.includes(undeclaredFormId), false, "the fixture id must not be a declared form");
-  const disguised = [node(undeclaredFormId, "n01", { loop: loopDocument({ action: "till_soil" }) })];
+  const disguised = [node(undeclaredFormId, "n01", { loop: loopDocument({ action: "till_soil", charge: 0 }) })];
   assert.equal(
     bodyProgramPreflightRefusal(disguised, CATALOGUE),
     `body_program_preflight_rejected:n01:${undeclaredFormId}:plan_form_not_declared`,
@@ -214,7 +216,7 @@ test("a form-shaped node under an undeclared id is refused as an undeclared form
  */
 test("a plan-form document under a published action id cannot borrow that action's permission", () => {
   assert.ok(VISIBLE.includes("till_soil"), "the fixture needs an id this connection really offers");
-  const disguised = [node("till_soil", "n01", { loop: loopDocument({ action: "till_soil" }) })];
+  const disguised = [node("till_soil", "n01", { loop: loopDocument({ action: "till_soil", charge: 0 }) })];
   assert.equal(
     bodyProgramPreflightRefusal(disguised, CATALOGUE),
     "body_program_preflight_rejected:n01:till_soil:plan_form_not_declared",

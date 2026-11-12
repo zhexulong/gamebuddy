@@ -57,7 +57,7 @@ public sealed class AdmissionForkReconciliationTests
         ["farmhandexecutioncontroller.obeliskactions.cs"] = 1,
         ["farmhandexecutioncontroller.pedestalfenceactions.cs"] = 2,
         ["farmhandexecutioncontroller.petbowlactions.cs"] = 1,
-        ["farmhandexecutioncontroller.resourcetoolactions.cs"] = 9,
+        ["farmhandexecutioncontroller.resourcetoolactions.cs"] = 10,
         ["farmhandexecutioncontroller.shippingactions.cs"] = 1,
         ["farmhandexecutioncontroller.silohaywithdrawactions.cs"] = 1,
         ["farmhandexecutioncontroller.slimehutchtroughactions.cs"] = 1,

@@ -45,6 +45,7 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
             "chop_stump" => this.executions.RequestLocalChopStump(call.RequestId, call.Slot, call.X, call.Y, call.TargetId, call.DeadlineMs),
             "cut_weeds" => this.executions.RequestLocalCutWeeds(call.RequestId, call.Slot, call.X, call.Y, call.TargetId, call.DeadlineMs),
             "cut_grass" => this.executions.RequestLocalCutGrass(call.RequestId, call.Slot, call.X, call.Y, call.TargetId, call.DeadlineMs),
+            "sweep_scythe" => this.executions.RequestLocalSweepScythe(call.RequestId, call.X, call.Y, call.DeadlineMs),
             "toggle_fence_gate" => this.executions.RequestLocalToggleFenceGate(call.RequestId, call.X, call.Y, call.TargetId, call.DeadlineMs),
             "clear_cask" => this.executions.RequestLocalClearCask(call.RequestId, call.Slot, call.X, call.Y, call.TargetId, call.DeadlineMs),
             "dress_mannequin" => this.executions.RequestLocalDressMannequin(call.RequestId, call.Slot, call.X, call.Y, call.TargetId, call.DeadlineMs),

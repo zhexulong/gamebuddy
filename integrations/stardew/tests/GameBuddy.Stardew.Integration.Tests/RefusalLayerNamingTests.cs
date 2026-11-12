@@ -93,8 +93,18 @@ public sealed class RefusalLayerNamingTests
     /// and the ceiling the held tool actually has) are published as evidence rather than as a `blocked_by=` token.
     /// Inventing a `charge` layer would put a word on the wire that names no countermeasure.
     /// </para>
+    /// <para>
+    /// RAISED FROM 553 TO 555 by `sweep_scythe`, and the two sites are named rather than absorbed:
+    /// `sweep_arc_misses_target` and `sweep_nothing_to_cut` in `farmhandexecutioncontroller.resourcetoolactions.cs`.
+    /// Neither names a layer, and neither can: the first is the ENGINE's geometry answering that the arc it would sweep
+    /// does not sample the tile the caller named (the repair is in the detail - the tiles the arc WOULD reach - and no
+    /// layer of the world refused anything), and the second is the ABSENCE of an occupant on every tile the arc reaches,
+    /// which `blocked_by=none` would only restate. The action's other two refusals DO name layers, which is why the rise
+    /// is two and not four: a diagonal stance is the actor's own standing position (`range:stance`) and an arc that would
+    /// destroy a planted tuft or a crop is the thing on the tile (`terrain:<occupant>`).
+    /// </para>
     /// </summary>
-    private const int RecordedBare = 553;
+    private const int RecordedBare = 555;
     [Fact]
     public void TheLayerVocabularyIsClosedAndWireShaped()
     {

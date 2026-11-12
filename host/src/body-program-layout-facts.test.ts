@@ -34,6 +34,9 @@ const registrations: readonly ActionRegistration[] = [
         x: { type: "integer" },
         y: { type: "integer" },
         expectedTargetId: { type: "string" },
+        // The can's charge, declared by the Mod's surface since the area-tool unit: a plan that carried it while this
+        // fixture did not would be refused as an unknown argument, which is the drift the surface exists to prevent.
+        charge: { type: "integer" },
       },
       outputFacts: {},
       targetFamily: "cropTargets",

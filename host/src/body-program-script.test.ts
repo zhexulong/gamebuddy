@@ -263,6 +263,9 @@ test("a script's calls become one ordered program, ordered in the order it wrote
     x: { type: "integer", canonicalValue: "11" },
     y: { type: "integer", canonicalValue: "10" },
     expectedTargetId: { type: "string", canonicalValue: "crop_01" },
+    // The water can's charge, which the surface declares and the compiler carries: charge 0 is the one-tile tap, and a
+    // plan that omitted it would be a watering the Mod has to guess the power of.
+    charge: { type: "integer", canonicalValue: "0" },
   });
   assert.equal(nodes[1]!.bindings !== undefined && Object.keys(nodes[1]!.bindings).length, 0);
 });
@@ -306,15 +309,18 @@ function skipsOf(nodes: readonly PlanNode[], failedNodeId: string): readonly str
  */
 test("a strip of independent steps is ordered, not chained, so one failed tile skips no other tile", () => {
   const nodes = nodesOf(
-    compile("for (const tile of snapshot.soilTiles ?? []) { builder.till_soil({ x: tile.x, y: tile.y, charge: 0 }); }", {
-      enabledActionIds: ["till_soil"],
-      soilTiles: [
-        { x: 60, y: 18 },
-        { x: 61, y: 18 },
-        { x: 62, y: 18 },
-        { x: 63, y: 18 },
-      ],
-    }),
+    compile(
+      "for (const tile of snapshot.soilTiles ?? []) { builder.till_soil({ x: tile.x, y: tile.y, charge: 0 }); }",
+      {
+        enabledActionIds: ["till_soil"],
+        soilTiles: [
+          { x: 60, y: 18 },
+          { x: 61, y: 18 },
+          { x: 62, y: 18 },
+          { x: 63, y: 18 },
+        ],
+      },
+    ),
   );
   assert.deepEqual(
     nodes.map((node) => node.actionId),
@@ -511,6 +517,8 @@ test("a plan with no transition is exactly the plan the script wrote", () => {
         x: { type: "integer", canonicalValue: "11" },
         y: { type: "integer", canonicalValue: "10" },
         expectedTargetId: { type: "string", canonicalValue: "crop_01" },
+        // The can's charge, declared by the surface: 0 is the one-tile tap.
+        charge: { type: "integer", canonicalValue: "0" },
       },
       dependsOn: [],
       // The walk is not a producer: the watering waits for the body to be there, and a walk that failed is answered by
@@ -1403,7 +1411,7 @@ test("an unknown argument names the allowed set and the actions that do declare 
   const slot = refusalOf(compile(callScript(waterCrop, { add: { slot: "0" } })));
   assert.equal(
     slot,
-    "plan_script_unknown_argument:water_crop.slot:allowed:x,y,expectedTargetId:declared_by:use_raft,plant_seed,fertilize_tile",
+    "plan_script_unknown_argument:water_crop.slot:allowed:x,y,expectedTargetId,charge:declared_by:use_raft,plant_seed,fertilize_tile",
   );
   // Every action the answer names really declares a `slot`, so the correction is a fact the caller can check.
   for (const owner of slot.split(":declared_by:")[1]!.split(","))

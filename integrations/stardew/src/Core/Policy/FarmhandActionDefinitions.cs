@@ -440,6 +440,20 @@ public static class FarmhandActionCatalog
     private const string CutGrassRefusalDetail =
         "This grass is animal feed you paid for: a Grass Starter costs 100g and, with no silo, cutting it yields no hay - dispatch cut_grass yourself if that is your decision.";
 
+    /// <summary>
+    /// What `sweep_scythe` says when its arc reaches a planted tuft or a standing crop: the swing IS for them, and the
+    /// sentence exists because the first version of this rule refused them outright.
+    ///
+    /// <para>
+    /// THE LESSON, kept where the next reader will meet it: the sweep initially treated every `Destructive` occupant as
+    /// forbidden outside the tile the caller named, which made the one action built for pasture refuse every pasture - a
+    /// binary check where the intent has three values (an immature crop is a loss, a tuft and a ready crop are the work, an
+    /// occupant this action never declared is a surprise). A rule that refuses the normal case is not a safety rule.
+    /// </para>
+    /// </summary>
+    private const string SweepScytheRefusalDetail =
+        "This swing is FOR what it can cut: a planted grass tuft and a ready or dead crop are the work, and only an immature crop is refused - so it is the swing you want on pasture and on a wheat block, and cut_grass or scythe_crop remain the one-tile spellings.";
+
     public static readonly IReadOnlyList<FarmhandActionRegistration> Registrations = Array.AsReadOnly(new[]
     {
         E("move_to_tile", "movement_navigation", FarmhandActionHandlerGroup.Movement, A(null, null, "native_action_postcondition", ("x","integer"),("y","integer"))),
@@ -683,6 +697,35 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         E("load_building_chest", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(BuildingChestLoad()), FarmhandActionLifecycle.LiveVerified, "buildingChestTargets"),
         E("collect_building_chest_output", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(BuildingChestCollect()), FarmhandActionLifecycle.LiveVerified, "buildingChestTargets"),
         E("scythe_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, Clears(SelfWalked(SlotTargetWith("scythe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "scythe", destructive: true, ScytheCropRefusalDetail, "crop"), FarmhandActionLifecycle.LiveVerified, "scytheCropTargets"),
+        // ONE SWING, THE ENGINE'S WHOLE ARC. A scythe is a `MeleeWeapon` (`MeleeWeapon.cs:999`), so its area is NOT a
+        // rectangle a caller names: `DoDamage` derives one rectangle per swing frame from the wielder's bounding box plus
+        // a per-index offset (`MeleeWeapon.cs:694-867`) and sweeps the nine border/centre points of it
+        // (`Utility.cs:7437-7451`). `{x,y}` is therefore the tile the actor STANDS BESIDE AND FACES - the arc is rotated
+        // by `who.FacingDirection`, so a diagonal stance is refused by name rather than swung at a direction nobody
+        // chose. Measured on this target version: ten to sixteen distinct tiles per swing, and the named tile is inside
+        // the arc for every standing pixel in the actor's own tile (`.tmp/boundary-card-scythe-area.md` M0).
+        //
+        // IT IS NOT A WIDER cut_grass / cut_weeds / scythe_crop, and that is a fact about the other three. The `for_each`
+        // heal dispatches `cut_weeds` with NO arguments (`FarmhandForEachExpansion.cs:502`), which the row executor refuses
+        // as `row_argument_missing:<name>` for any declared argument it cannot supply, and `by_kind` maps grass and weed
+        // by action id (`FarmhandForEachKindActions.cs:54-61`). An area argument on those three would break two shipped
+        // forms to save one registration.
+        //
+        // IT IS FOR WHAT A SCYTHE CUTS, AND THAT INTENT IS READ FROM THE CATALOGUE rather than from its own `Clears`:
+        // `cut_weeds`, `cut_grass` and `scythe_crop` already declare weed, grass and crop, and a fourth declaration here
+        // would have to name the target family that publishes those rows (`ClearStepBlockerNamingTests`), which a sweep
+        // has none of - the arc, not the action, decides which tiles it reaches. So the mask reads those three
+        // declarations, allows a tuft and a ready crop, refuses an IMMATURE crop by name, and refuses any destructive
+        // occupant the scythe family never declared.
+        //
+        // THE FIRST VERSION OF THAT RULE WAS A BINARY CHECK AND IT TURNED THE CAPABILITY INTO DEAD CODE: it refused every
+        // swing whose arc held a tuft or a crop, so the one action built for pasture could never swing on pasture. A rule
+        // that refuses the normal case is not a safety rule, it is the absence of one - the intent has three values (a
+        // loss, the work, and a surprise) and a boolean cannot carry them.
+        //
+        // `Published`, not `LiveVerified`: the live gate is a separate step and promotion is the parent's edit, the way
+        // till_soil's was (`:504`).
+        E("sweep_scythe", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(A(null, ToolResource("scythe", FarmhandResourceTemplateValue.AnyUpgrade), "native_action_postcondition", ("x", "integer"), ("y", "integer"))), FarmhandActionLifecycle.Published),
         E("harvest_bush", "resource_gathering", FarmhandActionHandlerGroup.Farming, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "bushTargets"),
         E("harvest_fruit_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "fruitTreeTargets"),
         E("shake_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "shakeTreeTargets"),

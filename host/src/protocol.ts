@@ -1322,6 +1322,7 @@ export type ExecutionRequest = Readonly<{
     | "plant_sapling"
     | "cut_weeds"
     | "cut_grass"
+    | "sweep_scythe"
     | "clear_cask"
     | "dress_mannequin"
     | "set_sign_display"
@@ -4127,6 +4128,11 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
     exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
     ...toolTileAndTarget("invalid_tool_target"),
   ],
+  // sweep_scythe names the tile the actor must FACE and nothing else: no slot (the scythe comes from the action's own
+  // `tool:scythe` claim, as till_soil's hoe does) and no target id (the arc covers a SET of occupants, so one occupant's
+  // opaque id could not describe it). The Mod refuses a diagonal stance, an arc that misses the named tile, an arc that
+  // would destroy a planted tuft or a crop the caller did not name, and an arc with nothing cuttable on it.
+  sweep_scythe: [exactArgs(["x", "y"], "invalid_args"), tileRow("invalid_tool_target")],
   clear_cask: [
     exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
     ...toolTileAndTarget("invalid_cask_target"),

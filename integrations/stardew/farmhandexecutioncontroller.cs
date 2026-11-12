@@ -4664,6 +4664,84 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
+    /// The animation indices ONE scythe swing evaluates, and the only thing the Mod supplies to the engine's arc.
+    ///
+    /// <para>
+    /// A scythe is a <c>MeleeWeapon</c>, so its area is not a rectangle a caller names: <c>DoDamage</c> derives one
+    /// rectangle from the wielder's bounding box plus a per-index offset (`MeleeWeapon.cs:694-867`) and sweeps the nine
+    /// border/centre points of it (`Utility.cs:7437-7451`). The engine runs that once per swing frame, because
+    /// <c>Farmer.showSwordSwipe</c> is the <c>frameStartBehavior</c> of all six swing frames (`Farmer.cs:6599-6611`) and
+    /// <c>setFarmerAnimating</c> arms frame 0 before calling <c>DoDamage</c> itself (`MeleeWeapon.cs:1264-1270`) - so
+    /// vanilla's seven evaluations are these six rectangles with index 0 taken twice.
+    /// </para>
+    /// <para>
+    /// THE SET IS A DECLARATION ABOUT THE ENGINE, so a test derives it from the engine's own frame table and fails when
+    /// the two disagree (`ScytheSweepTests.TheSweepIndicesAreTheEnginesOwnSwingFrames`). A sweep that drove a different
+    /// set would silently cover a different area with no error anywhere - every rectangle is legal.
+    /// </para>
+    /// </summary>
+    internal static readonly int[] MeleeSweepIndices = { 0, 1, 2, 3, 4, 5 };
+
+    /// <summary>
+    /// The one native scythe swing: the engine's own <c>DoDamage</c> once per rectangle the animation would have
+    /// produced, driven synchronously instead of through the ~21-tick swing animation.
+    ///
+    /// <para>
+    /// WHY THIS IS NOT `setFarmerAnimating`. That entry arms the animation and lets six frame ticks land the effects, so
+    /// a receipt written in the tick of the call would describe a swing that had not finished. `DoDamage` is
+    /// <c>public virtual</c> (`MeleeWeapon.cs:1355`) and its rectangle is a function of
+    /// <c>who.FarmerSprite.currentAnimationIndex</c> (`:1369`), a public field (`AnimatedSprite.cs:55`) - so the engine's
+    /// own geometry and the engine's own per-tile statements (`:1390-1404`) run inside THIS call, in one tick, and the
+    /// reads on either side of it describe the whole swing. The visible swing animation is the price, and this Mod
+    /// already pays it everywhere: `UseNativeToolOnTile` above calls `DoFunction` directly for the same reason.
+    /// </para>
+    /// <para>
+    /// THE ACTOR STATE IS THE HAZARD, exactly as `who.toolPower` is for a charged tool use. The animation index is
+    /// written per rectangle and restored in a <c>finally</c> that runs on every exit - the engine's own next frame is the
+    /// only reader, so a value left behind would resume an animation nobody asked for. The section is synchronous on
+    /// purpose: no <c>await</c>, no continuation and no reentrancy inside it, or a STOP, a refusal or an exception could
+    /// leave the index written. `ScytheSweepTests` fails as `sweep_actor_state_not_restored_on:&lt;path&gt;` when any exit
+    /// can leave it behind.
+    /// </para>
+    /// <para>
+    /// NO COMBAT FACT IS CLAIMED ANYWHERE ABOVE THIS CALL. <c>DoDamage</c> also damages monsters inside each rectangle
+    /// (`GameLocation.cs:4637-4662`) and destroys projectiles it crosses (`MeleeWeapon.cs:1382-1389`); six evaluations
+    /// are not vanilla's seven, so a receipt that reported hits or kills would be describing a swing the engine did not
+    /// exactly perform. The receipt reports the terrain it measured and nothing else.
+    /// </para>
+    /// <para>
+    /// THE ARC REACHES BEHIND THE ACTOR, AND THAT IS MEASURED RATHER THAN ASSUMED. Over every pixel position the standing
+    /// pixel can take inside the actor's own tile, the arc covers tiles with a NEGATIVE projection on the facing axis for
+    /// 2304/4096 positions facing right, 4096/4096 facing down and 2560/4096 facing left (`.tmp/boundary-card-scythe-area.md`
+    /// M0, from `MeleeWeapon.cs:694-867` + `Utility.cs:7437-7451`). A swing facing DOWN always reaches tiles behind her, so
+    /// "she is aimed away from it" is not a defence: the destruction rule is a pre-swing FOOTPRINT check against the
+    /// occupant on every sampled tile, never a check on the facing.
+    /// </para>
+    /// </summary>
+    private static void UseNativeMeleeSweep(MeleeWeapon weapon, GameLocation location, int tileX, int tileY, Farmer who, float staminaBefore, int facing)
+    {
+        int restingIndex = who.FarmerSprite.currentAnimationIndex;
+        try
+        {
+            // The facing IS the arc here (the rectangles are rotated by it), so it is written before the first
+            // rectangle is asked for and is not restored: `UseNativeToolOnTile` leaves the facing it swung with too.
+            who.FacingDirection = facing;
+            foreach (int index in MeleeSweepIndices)
+            {
+                who.FarmerSprite.currentAnimationIndex = index;
+                weapon.DoDamage(location, tileX * 64 + 32, tileY * 64 + 32, facing, 1, who);
+            }
+        }
+        finally
+        {
+            who.FarmerSprite.currentAnimationIndex = restingIndex;
+        }
+
+        who.lastClick = Vector2.Zero;
+        who.checkForExhaustion(staminaBefore);
+    }
+
+    /// <summary>
     /// The ceiling a tool's own hold can reach: <c>Game1</c> increments <c>toolPower</c> only while
     /// <c>CurrentTool.upgradeLevel + (Reaching ? 1 : 0) &gt; toolPower</c> (<c>Game1.cs:13032-13051</c>), so the held
     /// tool's level IS the ceiling and the Reaching enchantment raises it by one. Read from the tool, never from a
@@ -5924,4 +6002,267 @@ internal static class AreaToolFootprint
         tiles.Count == 0
             ? "none"
             : string.Join("|", tiles.Select(tile => $"{tile.X:0}:{tile.Y:0}"));
+}
+
+/// <summary>
+/// The engine's own swing arc for ONE scythe swing, asked of the engine instead of reconstructed.
+///
+/// <para>
+/// `MeleeWeapon.getAreaOfEffect` is `public virtual` (`MeleeWeapon.cs:694`) and
+/// `Utility.getListOfTileLocationsForBordersOfNonTileRectangle` is `public static` (`Utility.cs:7437`), so the Mod can
+/// ask what one swing will reach BEFORE it swings, with the same inputs the swing itself uses - the named tile's pixel
+/// centre, the facing, the actor's bounding box and the animation index. That is one set of facts, not a prediction and
+/// an actual: `UseNativeMeleeSweep` drives `DoDamage` with exactly these indices, and `DoDamage` derives its rectangle
+/// from the same function (`MeleeWeapon.cs:1369`).
+/// </para>
+/// <para>
+/// Nothing here re-derives a constant from `MeleeWeapon.cs`. The offsets, the sample points and the dedupe are the
+/// engine's own code; this type only supplies the index set (`ExecutionManager.MeleeSweepIndices`) and unions the
+/// per-rectangle answers, which the engine does not do because it re-processes a tile that two rectangles share.
+/// </para>
+/// </summary>
+internal static class MeleeSweepArc
+{
+    /// <summary>
+    /// The distinct tiles the engine's six rectangles sample, in the order the swing reaches them.
+    ///
+    /// <para>
+    /// MEASURED, not assumed: on this target version a centred stance reaches 10 (facing up), 13 (right), 13 (down) and
+    /// 14 (left) distinct tiles over 24-28 `DoDamage` evaluations, and the NAMED tile is among them for every pixel
+    /// position the standing pixel can take inside the actor's own tile (4096/4096 per facing). The count moves by up to
+    /// two tiles as the actor's pixel position changes within one tile, which is why the footprint is NOT a fixed shape a
+    /// schema could publish: a consumer reading `arc_tiles` reads a MEASUREMENT of this swing's rectangles, and the
+    /// receipt's counts come from the two reads on either side of the call rather than from this comment.
+    /// </para>
+    /// <para>
+    /// It also reaches BEHIND the actor: 2304/4096 standing positions facing right, 4096/4096 facing down and 2560/4096
+    /// facing left sample at least one tile with a negative projection on the facing axis. That is why the destruction
+    /// check below is a footprint check and not a direction check.
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<Vector2> Sampled(MeleeWeapon weapon, Farmer who, int tileX, int tileY, int facing)
+    {
+        int x = tileX * 64 + 32;
+        int y = tileY * 64 + 32;
+        Microsoft.Xna.Framework.Rectangle boundingBox = who.GetBoundingBox();
+        HashSet<Vector2> seen = new();
+        List<Vector2> ordered = new();
+        foreach (int index in ExecutionManager.MeleeSweepIndices)
+        {
+            Vector2 swing = Vector2.Zero;
+            Vector2 collision = Vector2.Zero;
+            Microsoft.Xna.Framework.Rectangle area = weapon.getAreaOfEffect(x, y, facing, ref swing, ref collision, boundingBox, index);
+            foreach (Vector2 tile in Utility.removeDuplicates(Utility.getListOfTileLocationsForBordersOfNonTileRectangle(area)))
+                if (seen.Add(tile))
+                    ordered.Add(tile);
+        }
+        return ordered;
+    }
+}
+
+/// <summary>
+/// What one arc tile holds, in the vocabulary the action catalogue already speaks, plus the two counters that decide
+/// whether a scythe actually moved it.
+///
+/// <para>
+/// The WORD comes from the classifier a `for_each` row already uses (`FarmhandForEachFarmWorld.ReadRow`, which maps the
+/// engine's three containers onto <see cref="ClearableKind"/>'s names), so a tile is called `weed` here and there by the
+/// same code. The two counters are the engine's own reads of the tile the classifier named: a weed loses
+/// `minutesUntilReady` and a tuft loses `numberOfWeeds` (`Object.cs:1150-1179`, `Grass.cs:380-395`), which is why the
+/// word alone cannot say whether a swing changed anything - a weed at 2 that took 1 damage is still `weed`.
+/// </para>
+/// </summary>
+internal readonly record struct MeleeSweepTile(string Occupant, int WeedHealth, int GrassCount, bool Harvestable = false);
+
+/// <summary>
+/// The arc's occupants, and the one destruction rule a scythe swing needs.
+///
+/// <para>
+/// THE TWO SETS ARE DERIVED FROM THE CATALOGUE, not written here. `sweepable` is every occupant the scythe actions
+/// themselves declare they clear (`cut_weeds`, `cut_grass`, `scythe_crop`); `destructive` is the subset those same
+/// declarations mark <see cref="FarmhandClearingDeclaration.Destructive"/> - a grass tuft a starter planted, and a crop
+/// that is the player's own planting (`FarmhandActionDefinitions.cs:173-179`). A future declaration therefore teaches
+/// this rule without an edit here, and `ScytheSweepTests` fails by name for an occupant that drifted.
+/// </para>
+/// <para>
+/// WHY THE DESTRUCTION RULE EXISTS. The engine sweeps everything the nine points touch, including tiles BEHIND the actor
+/// (measured: 2304-4096 of 4096 standing positions for three of the four facings), so a swing aimed at one weed can cut
+/// a tuft the player planted two tiles away. The `for_each` heal already answered this question for a pass - it never
+/// proposes a destructive clear, and says `no_safe_clear:<occupant>:<action>` instead
+/// (`FarmhandForEachHealing.cs:181-196`) - and a sweep is the same pass over tiles nobody named. So: an arc tile the
+/// caller did NOT name may hold nothing the catalogue calls destructive, and the refusal names the tiles.
+/// </para>
+/// </summary>
+internal static class MeleeSweepOccupancy
+{
+    private const string ScytheTool = "scythe";
+
+    /// <summary>`ClearableKind`'s own word for a weed.</summary>
+    internal static readonly string Weed = ClearableKind.Map("object", "weed")!;
+
+    /// <summary>`ClearableKind`'s own word for a grass tuft.</summary>
+    internal static readonly string Grass = ClearableKind.Map("terrain", "grass")!;
+
+    /// <summary>`ClearableKind`'s own word for a crop standing on dirt.</summary>
+    internal static readonly string Crop = ClearableKind.Map("terrain", "crop")!;
+
+    /// <summary>Every occupant a scythe clears, from the scythe actions' own `Clears` declarations.</summary>
+    internal static readonly IReadOnlySet<string> Sweepable = Declared(_ => true);
+
+    /// <summary>The sweepable occupants the catalogue marks destructive: the only ones this action may not surprise her with.</summary>
+    internal static readonly IReadOnlySet<string> Destructive = Declared(clearing => clearing.Destructive);
+
+    /// <summary>
+    /// The occupants THIS action is for: everything the scythe family declares it clears, read from the catalogue
+    /// (`cut_weeds`, `cut_grass`, `scythe_crop`), intersected with what the mask asks about.
+    ///
+    /// <para>
+    /// The declaration lives in the catalogue and NOT on this action's own `Clears`, deliberately: a `Clears` row promises
+    /// that one dispatch removes the occupant of a NAMED tile and must therefore name the target family that publishes it
+    /// (`ClearStepBlockerNamingTests.EveryOccupantDeclarationNamesTheFamilyThatPublishesIt`), and a sweep publishes no
+    /// family because the arc, not the action, decides which tiles it reaches. So the intent is read from the three
+    /// per-tile verbs that DO own those families.
+    /// </para>
+    /// </summary>
+    internal static readonly IReadOnlySet<string> Intent = new HashSet<string>(
+        Sweepable.Where(occupant => Destructive.Contains(occupant)),
+        StringComparer.Ordinal);
+
+    /// <summary>One farm's tiles, as the `for_each` row reader classifies them. Nothing here enables an action.</summary>
+    internal static readonly IReadOnlySet<string> NoActionsEnabled = new HashSet<string>(StringComparer.Ordinal);
+
+    private static IReadOnlySet<string> Declared(Func<FarmhandClearingDeclaration, bool> predicate) =>
+        new HashSet<string>(
+            FarmhandActionCatalog.Registrations
+                .Where(registration => registration.Descriptor?.Clears is { } clearing
+                    && string.Equals(clearing.Cost.Tool, ScytheTool, StringComparison.Ordinal)
+                    && predicate(clearing))
+                .SelectMany(registration => registration.Descriptor!.Clears!.Occupants),
+            StringComparer.Ordinal);
+
+    /// <summary>What stands on one tile, read through the classifier `for_each` rows already use.</summary>
+    internal static MeleeSweepTile Read(GameLocation location, FarmhandForEachFarmWorld world, Vector2 tile)
+    {
+        FarmhandForEachRow? row = world.ReadRow((int)tile.X, (int)tile.Y, 0, 0);
+        string occupant = row is null
+            ? FarmhandForEachHealing.NoOccupant
+            : FarmhandForEachHealing.OccupantOf(row.Fields);
+        if (string.Equals(occupant, Weed, StringComparison.Ordinal)
+            && location.objects.TryGetValue(tile, out StardewValley.Object? weed)
+            && weed is not null)
+            return new MeleeSweepTile(occupant, weed.MinutesUntilReady, 0);
+        if (string.Equals(occupant, Grass, StringComparison.Ordinal)
+            && location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
+            && feature is StardewValley.TerrainFeatures.Grass grass)
+            return new MeleeSweepTile(occupant, 0, grass.numberOfWeeds.Value);
+        if (string.Equals(occupant, Crop, StringComparison.Ordinal)
+            && location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? cropFeature)
+            && cropFeature is StardewValley.TerrainFeatures.HoeDirt dirt
+            && dirt.crop is not null)
+        {
+            // HARVESTABLE, not merely planted. A dead crop is the engine's destroy branch (`HoeDirt.cs:732-735`) and a
+            // ready one is its harvest branch (`:711-731`); anything in between is an immature planting that a scythe
+            // must never touch, whatever the request declared.
+            bool harvestable = dirt.readyForHarvest() || dirt.crop.dead.Value;
+            return new MeleeSweepTile(occupant, 0, 0, harvestable);
+        }
+        return new MeleeSweepTile(occupant, 0, 0);
+    }
+
+    /// <summary>
+    /// Did the swing move this tile? A tile that stayed `weed` with one less point of health moved; a tile whose crop is
+    /// gone moved; a tile that held nothing did not, and is not a shortfall.
+    /// </summary>
+    internal static bool Changed(MeleeSweepTile before, MeleeSweepTile after)
+    {
+        if (string.Equals(before.Occupant, Weed, StringComparison.Ordinal))
+            return !string.Equals(after.Occupant, Weed, StringComparison.Ordinal) || after.WeedHealth != before.WeedHealth;
+        if (string.Equals(before.Occupant, Grass, StringComparison.Ordinal))
+            return !string.Equals(after.Occupant, Grass, StringComparison.Ordinal) || after.GrassCount != before.GrassCount;
+        return string.Equals(before.Occupant, Crop, StringComparison.Ordinal)
+            && !string.Equals(after.Occupant, Crop, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The tiles of ONE arc whose state moved, in receipt order, each with the occupant that stood there BEFORE the swing.
+    ///
+    /// <para>
+    /// THE CLAIM IS THE INTERSECTION, and that is the whole point of this function: only tiles the arc SAMPLED and the two
+    /// reads saw move can appear. A tile outside the arc is never looked at, and a sampled tile that did not move is not a
+    /// change - so `tiles_changed` is the size of this set and there is no second count anywhere. After a successful cut
+    /// the tile is empty, which is why the kind travels with it rather than being read back later.
+    /// </para>
+    /// </summary>
+    internal static List<(Vector2 Tile, string Kind)> Changes(
+        IReadOnlyList<Vector2> arc,
+        IReadOnlyDictionary<Vector2, MeleeSweepTile> before,
+        IReadOnlyDictionary<Vector2, MeleeSweepTile> after) =>
+        arc.Where(tile => Changed(before[tile], after[tile]))
+            .OrderBy(tile => tile.Y)
+            .ThenBy(tile => tile.X)
+            .Select(tile => (Tile: tile, Kind: before[tile].Occupant))
+            .ToList();
+
+    /// <summary>
+    /// A set of arc tiles as receipt evidence: <c>x:y:kind|x:y:kind</c>, or <c>none</c>. Neither <c>;</c> nor <c>=</c> is
+    /// usable - the detail is split on the first and then on the second - and <c>|</c> and <c>:</c> are
+    /// (<see cref="AreaToolFootprint.Format"/> uses the same two).
+    /// </summary>
+    internal static string Describe(IReadOnlyCollection<(Vector2 Tile, string Kind)> tiles) =>
+        tiles.Count == 0
+            ? "none"
+            : string.Join("|", tiles.Select(tile => $"{tile.Tile.X:0}:{tile.Tile.Y:0}:{tile.Kind}"));
+
+    /// <summary>
+    /// The arcs's tiles without a kind, for a refusal that is about geometry alone (<c>sweep_arc_misses_target</c>):
+    /// <c>x:y|x:y</c>.
+    /// </summary>
+    internal static string DescribeTiles(IReadOnlyCollection<Vector2> tiles) =>
+        tiles.Count == 0
+            ? "none"
+            : string.Join("|", tiles.OrderBy(tile => tile.Y).ThenBy(tile => tile.X).Select(tile => $"{tile.X:0}:{tile.Y:0}"));
+
+    /// <summary>
+    /// The arc tiles a scythe swing may NOT destroy, the caller's own tile excluded.
+    ///
+    /// <para>
+    /// THREE ANSWERS, NOT TWO, and the two-way version was a defect of its own: it refused every swing whose arc held a
+    /// grass tuft or a crop, so the one action built for pasture could never swing on pasture - a rule that refuses the
+    /// normal case is not a safety rule, it is the absence of one. What survives is the protection that matters:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>an IMMATURE crop is refused by name (<c>sweep_would_destroy:crop</c>) - that is the loss the rule exists to
+    /// prevent, and no declaration can authorise it because a scythe cannot harvest a crop that is not ready
+    /// (`Crop.harvest`'s own readiness test, `Crop.cs:554`);</item>
+    /// <item>a destructive occupant THIS ACTION declares it is for (`DeclaredBySweep`, read from its own `Clears`) is
+    /// allowed - a grass tuft and a ready or dead crop are what the swing is FOR;</item>
+    /// <item>anything destructive the declaration does not name is refused, with the occupant and the tile, so a future
+    /// occupant cannot be cut by an action that never said it was for it.</item>
+    /// </list>
+    /// </summary>
+    internal static List<(Vector2 Tile, string Kind)> Undeclared(
+        IReadOnlyList<Vector2> arc,
+        Func<Vector2, MeleeSweepTile> read,
+        Vector2 named,
+        IReadOnlySet<string>? declared = null)
+    {
+        IReadOnlySet<string> intent = declared ?? Intent;
+        List<(Vector2 Tile, string Kind)> found = new();
+        foreach (Vector2 tile in arc.OrderBy(tile => tile.Y).ThenBy(tile => tile.X))
+        {
+            if (tile == named)
+                continue;
+            MeleeSweepTile state = read(tile);
+            if (!Destructive.Contains(state.Occupant))
+                continue;
+            if (string.Equals(state.Occupant, Crop, StringComparison.Ordinal) && !state.Harvestable)
+            {
+                found.Add((tile, state.Occupant));
+                continue;
+            }
+            if (!intent.Contains(state.Occupant))
+                found.Add((tile, state.Occupant));
+        }
+        return found;
+    }
 }

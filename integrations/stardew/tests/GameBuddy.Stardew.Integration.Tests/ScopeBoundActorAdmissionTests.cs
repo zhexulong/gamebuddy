@@ -79,6 +79,7 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("plant_sapling")]
     [InlineData("refill_watering_can")]
     [InlineData("scythe_crop")]
+    [InlineData("sweep_scythe")]
     public void MatchingActorIdentity_IsAdmitted_AndRejectedOnlyByGameState(string action)
         => Run(action, actorId: long.Parse(ScopePlayerId))
             .Should().Be("cutscene_active",
@@ -160,6 +161,7 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("plant_seed")]
     [InlineData("refill_watering_can")]
     [InlineData("scythe_crop")]
+    [InlineData("sweep_scythe")]
     [InlineData("till_soil")]
     [InlineData("use_item")]
     [InlineData("water_crop")]
@@ -209,6 +211,7 @@ public sealed class ScopeBoundActorAdmissionTests
     [InlineData("plant_seed")]
     [InlineData("refill_watering_can")]
     [InlineData("scythe_crop")]
+    [InlineData("sweep_scythe")]
     [InlineData("till_soil")]
     [InlineData("use_item")]
     [InlineData("water_crop")]
@@ -385,6 +388,9 @@ public sealed class ScopeBoundActorAdmissionTests
         "chop_stump" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "stump_target_1" },
         "cut_weeds" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "weed_target_1" },
         "cut_grass" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedTargetId = "grass_target_1" },
+        // No `slot` and no target id: the scythe comes from the action's own claim, and the arc covers a SET of
+        // occupants, so one occupant's opaque id could not describe it.
+        "sweep_scythe" => new BridgeExecutionArgs { X = 5, Y = 5 },
         // slot, x, y, expectedQualifiedItemId, expectedTargetId.
         "plant_sapling" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 2, ExpectedQualifiedItemId = "(O)309", ExpectedTargetId = "sapling_target_1" },
         "machine_load" => new BridgeExecutionArgs { X = 5, Y = 5, Slot = 0, ExpectedQualifiedItemId = "(O)433", ExpectedTargetId = "machine_target_1" },

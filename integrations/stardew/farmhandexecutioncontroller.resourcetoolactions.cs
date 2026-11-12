@@ -1324,6 +1324,192 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
+    /// One scythe swing over the engine's own arc instead of one tile at a time.
+    ///
+    /// <para>
+    /// THE REQUEST NAMES THE TILE THE ACTOR MUST FACE, and nothing else. A scythe's area is not a footprint a caller can
+    /// state: `MeleeWeapon.DoDamage` derives one rectangle per animation frame from the wielder's bounding box and the
+    /// facing (`MeleeWeapon.cs:694-867`), so "cut here" can only mean "stand on a cardinal neighbour of this tile, face
+    /// it, swing once". A diagonal stance refuses `sweep_needs_cardinal_stance` rather than swinging at whatever
+    /// direction the actor last faced, because the facing IS the arc's orientation.
+    /// </para>
+    /// <para>
+    /// IT DESTROYS ONLY WHAT THE CALLER NAMED. The engine's arc reaches behind the actor as well as in front, so every
+    /// other arc tile is checked before the swing against the occupants the catalogue marks destructive (`grass`,
+    /// `crop`) and the action refuses `sweep_would_destroy:&lt;occupant&gt;` naming the tiles - the rule the `for_each`
+    /// heal already applies to a pass over tiles nobody named. The named tile is hers to destroy: `cut_grass` and
+    /// `scythe_crop` already let her, on one tile she can foresee.
+    /// </para>
+    /// <para>
+    /// THE RECEIPT IS TWO READS ON EITHER SIDE OF THE ONE CALL, and it claims no combat: `DoDamage` also damages
+    /// monsters and destroys projectiles, and six evaluations are not vanilla's seven, so nothing about hits or kills is
+    /// reported. `PartiallySucceeded` is the honest state when the arc held more work than the swing did - the named
+    /// tile is the completion condition and the rest of the arc is the footprint.
+    /// </para>
+    /// </summary>
+    public LocalExecutionReceipt RequestLocalSweepScythe(string requestId, int targetX, int targetY, long requestedDeadlineMs)
+    {
+        if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
+            return admissionRejection;
+        // Ask before walking, exactly as the three per-tile scythe actions do: a pack that cannot satisfy the action's
+        // own `tool:scythe` claim is refused now rather than after an approach leg it could never finish.
+        if (ResolveDeclaredTool(Game1.player.Items, "sweep_scythe").RefusalCode is { } toolRefusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "sweep_scythe", toolRefusal));
+        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
+        {
+            return this.TryBeginToolApproach(
+                requestId,
+                executionId,
+                "sweep_scythe",
+                Game1.player.currentLocation,
+                targetX,
+                targetY,
+                $"sweep_scythe_{targetX}_{targetY}",
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteSweepScythe(arrivalExecutionId, arrivalRequestId, targetX, targetY),
+                nowMs,
+                requestedDeadlineMs);
+        }
+
+        return this.ExecuteSweepScythe(executionId, requestId, targetX, targetY);
+    }
+
+    /// <summary>
+    /// Executes sweep_scythe against the current world, re-validating the tool, the stance and the arc because an
+    /// approach leg may have taken several ticks and left the actor facing or standing somewhere else. Shared by the
+    /// in-range path and the post-approach path so the two cannot drift.
+    /// </summary>
+    private LocalExecutionReceipt ExecuteSweepScythe(string executionId, string requestId, int targetX, int targetY)
+    {
+        if (!TrySelectDeclaredTool(Game1.player, "sweep_scythe", out DeclaredToolSelection selection, out string toolRefusalCode))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "sweep_scythe", toolRefusalCode));
+        Dictionary<string, string> evidence = ToolActionEvidence.SelectionFacts(selection);
+        ExecutionState state;
+        string reasonCode;
+        try
+        {
+            if (selection.Tool is not MeleeWeapon weapon || !weapon.isScythe())
+            {
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    $"tool_not_selected:{selection.Category}",
+                    $"slot={selection.Slot};blocked_by={new RefusalLayerToken(RefusalLayerKind.Tool, selection.Category).Format()}");
+            }
+            GameLocation location = Game1.player.currentLocation;
+            int actorX = (int)Game1.player.Tile.X;
+            int actorY = (int)Game1.player.Tile.Y;
+            // The engine rotates the whole arc by the facing, so a stance that cannot name one does not get a swing.
+            if (SwingFacing.For((actorX, actorY), (targetX, targetY)) is not { } facing)
+            {
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    "sweep_needs_cardinal_stance",
+                    $"target={targetX},{targetY};actor={actorX},{actorY};facing={Game1.player.FacingDirection.ToString(CultureInfo.InvariantCulture)};blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, "stance").Format()}");
+            }
+
+            // ONE SET OF FACTS: the arc the swing will use, asked of the engine with the swing's own inputs.
+            IReadOnlyList<Vector2> arc = MeleeSweepArc.Sampled(weapon, Game1.player, targetX, targetY, facing);
+            Vector2 named = new(targetX, targetY);
+            if (!arc.Contains(named))
+            {
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    "sweep_arc_misses_target",
+                    $"target={targetX},{targetY};arc={MeleeSweepOccupancy.DescribeTiles(arc)}");
+            }
+
+            FarmhandForEachFarmWorld world = new(location, MeleeSweepOccupancy.NoActionsEnabled, () => false);
+            Dictionary<Vector2, MeleeSweepTile> before = new();
+            foreach (Vector2 tile in arc)
+                before[tile] = MeleeSweepOccupancy.Read(location, world, tile);
+            List<(Vector2 Tile, string Kind)> wouldDestroy = MeleeSweepOccupancy.Undeclared(arc, tile => before[tile], named);
+            if (wouldDestroy.Count > 0)
+            {
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    $"sweep_would_destroy:{wouldDestroy[0].Kind}",
+                    $"target={targetX},{targetY};would_destroy={MeleeSweepOccupancy.Describe(wouldDestroy)};arc_tiles={arc.Count.ToString(CultureInfo.InvariantCulture)};blocked_by={new RefusalLayerToken(RefusalLayerKind.Terrain, wouldDestroy[0].Kind).Format()}");
+            }
+
+            int sweepable = arc.Count(tile => MeleeSweepOccupancy.Sweepable.Contains(before[tile].Occupant));
+            if (sweepable == 0)
+            {
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    "sweep_nothing_to_cut",
+                    $"target={targetX},{targetY};arc_tiles={arc.Count.ToString(CultureInfo.InvariantCulture)};sweepable=0");
+            }
+
+            float staminaBefore = Game1.player.Stamina;
+            UseNativeMeleeSweep(weapon, location, targetX, targetY, Game1.player, staminaBefore, facing);
+            float staminaAfter = Game1.player.Stamina;
+            float staminaDelta = staminaAfter - staminaBefore;
+            // The scythe is a MeleeWeapon: no native path deducts stamina for a melee swing, so the expected embodied
+            // cost is exactly zero, same as cut_grass and cut_weeds.
+            float expectedStaminaCost = 0f;
+            Dictionary<Vector2, MeleeSweepTile> after = new();
+            foreach (Vector2 tile in arc)
+                after[tile] = MeleeSweepOccupancy.Read(location, world, tile);
+            List<(Vector2 Tile, string Kind)> changed = MeleeSweepOccupancy.Changes(arc, before, after);
+            // The named tile's transition is the completion condition, exactly as till_soil's is the tile it hoes; the
+            // rest of the arc is a measured consequence and never the reason the action claims success.
+            bool namedMoved = MeleeSweepOccupancy.Changed(before[named], after[named]);
+            bool everySweepableMoved = arc
+                .Where(tile => MeleeSweepOccupancy.Sweepable.Contains(before[tile].Occupant))
+                .All(tile => MeleeSweepOccupancy.Changed(before[tile], after[tile]));            evidence["location"] = location.NameOrUniqueName;
+            evidence["target"] = $"{targetX},{targetY}";
+            evidence["before_occupant"] = before[named].Occupant;
+            evidence["after_occupant"] = after[named].Occupant;
+            // The completion condition as a fact, so the Host can check the claim instead of inferring it from two
+            // occupancy words: a weed that lost one point of health still reads `weed` on both sides.
+            evidence["named_moved"] = namedMoved.ToString().ToLowerInvariant();
+            evidence["arc_tiles"] = arc.Count.ToString(CultureInfo.InvariantCulture);
+            evidence["arc_sweepable"] = sweepable.ToString(CultureInfo.InvariantCulture);
+            evidence["arc_clear"] = arc
+                .Count(tile => string.Equals(before[tile].Occupant, FarmhandForEachHealing.NoOccupant, StringComparison.Ordinal))
+                .ToString(CultureInfo.InvariantCulture);
+            evidence["changed"] = MeleeSweepOccupancy.Describe(changed);
+            evidence["tiles_changed"] = changed.Count.ToString(CultureInfo.InvariantCulture);
+            evidence["stamina_before"] = staminaBefore.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["stamina_after"] = staminaAfter.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["stamina_delta"] = staminaDelta.ToString("0.####", CultureInfo.InvariantCulture);
+            evidence["expected_stamina_cost"] = expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture);
+            if (changed.Count == 0)
+            {
+                state = ExecutionState.Uncertain;
+                reasonCode = "sweep_postcondition_unavailable";
+            }
+            else if (namedMoved && everySweepableMoved)
+            {
+                state = ExecutionState.Succeeded;
+                reasonCode = "scythe_sweep_cut";
+            }
+            else
+            {
+                // The arc held more work than the swing did - the named tile among it or not. `changed` names what
+                // moved, so the caller can see exactly which tile the swing reached and which it did not.
+                state = ExecutionState.PartiallySucceeded;
+                reasonCode = "scythe_sweep_partial";
+            }
+        }
+        finally
+        {
+            RestoreToolSelection(Game1.player, selection);
+            evidence["tool_restored"] = DescribeToolCategory(Game1.player.CurrentTool);
+        }
+        return this.RememberTerminal(requestId, executionId, state, reasonCode, ToolActionEvidence.Compose(ToolActionEvidence.SweepScythe, evidence));
+    }
+
+    /// <summary>
     /// Executes cut_weeds against the current world, re-validating the target because an approach leg may have taken
     /// several ticks. The tool is not the caller's to name: the action's own registration claims `tool:scythe`, so this
     /// selects the scythe it needs and restores the actor's own selection afterwards. Shared by the in-range path and
@@ -1827,6 +2013,27 @@ internal static class ToolActionEvidence
         "target", "type", "tool", "tool_selected", "slot", "tool_before", "slot_before", "grass_type",
         "weeds_before", "weeds_after", "swings", "removed", "tuft_removed", "stamina_before", "stamina_after",
         "stamina_delta", "expected_stamina_cost", "tool_restored",
+    });
+
+    /// <summary>
+    /// sweep_scythe's detail, declared ONCE and compared against the Host's own copy by
+    /// `DeclaredToolSelectionTests.EveryToolActionStillPublishesExactlyTheEvidenceKeysTheHostPins`.
+    ///
+    /// <para>
+    /// `arc_tiles`/`arc_sweepable`/`arc_clear` describe the arc the engine's own six rectangles sampled: how many tiles
+    /// it held, how many of them carried something a scythe cuts, and how many carried nothing at all. Unlike the charged
+    /// tools' `window`, this box is not a superset - it is the exact set the engine samples - so "already clear" is a
+    /// measurement here rather than a class the Mod cannot tell apart. `changed` names the tiles that MOVED, each with
+    /// what stood there before the swing, because after a successful cut the tile is empty and the kind would otherwise
+    /// be unrecoverable. Nothing about hits, kills or projectiles is published: six `DoDamage` evaluations are not
+    /// vanilla's seven and a combat claim would describe a swing the engine did not exactly perform.
+    /// </para>
+    /// </summary>
+    internal static readonly IReadOnlyList<string> SweepScythe = Array.AsReadOnly(new[]
+    {
+        "location", "target", "before_occupant", "after_occupant", "named_moved", "arc_tiles", "arc_sweepable",
+        "arc_clear", "changed", "tiles_changed", "tool_selected", "slot", "tool_before", "slot_before",
+        "stamina_before", "stamina_after", "stamina_delta", "expected_stamina_cost", "tool_restored",
     });
 
     internal static readonly IReadOnlyList<string> BreakRockSource = Array.AsReadOnly(new[]

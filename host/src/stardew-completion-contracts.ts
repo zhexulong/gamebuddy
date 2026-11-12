@@ -608,6 +608,40 @@ const WATER_CROP_EVIDENCE_KEYS = Object.freeze([
   "tool_restored",
 ]);
 
+/**
+ * The receipt-detail keys a `sweep_scythe` success publishes, declared ONCE on each end (the Mod's copy is
+ * `ToolActionEvidence.SweepScythe`) and compared by
+ * `DeclaredToolSelectionTests.EveryToolActionStillPublishesExactlyTheEvidenceKeysTheHostPins`.
+ *
+ * `arc_tiles`/`arc_sweepable`/`arc_clear` describe the arc the engine's own six rectangles sampled: how many tiles it
+ * held, how many carried something a scythe cuts, and how many carried nothing at all. Unlike the charged tools'
+ * `window`, that set is not a superset - it is the exact tiles the engine samples - so "already clear" is a measurement
+ * here rather than a class the Mod cannot tell apart. `changed` names the tiles that MOVED, each with what stood there
+ * before the swing, because after a successful cut the tile is empty and the kind would be unrecoverable. No key claims
+ * a hit, a kill or a projectile: six `DoDamage` evaluations are not vanilla's seven.
+ */
+const SWEEP_SCYTHE_EVIDENCE_KEYS = Object.freeze([
+  "location",
+  "target",
+  "before_occupant",
+  "after_occupant",
+  "named_moved",
+  "arc_tiles",
+  "arc_sweepable",
+  "arc_clear",
+  "changed",
+  "tiles_changed",
+  "tool_selected",
+  "slot",
+  "tool_before",
+  "slot_before",
+  "stamina_before",
+  "stamina_after",
+  "stamina_delta",
+  "expected_stamina_cost",
+  "tool_restored",
+]);
+
 /** The tool-charge facts both generated-tool rows publish, read as one shape. */
 function hasToolChargeEvidence(evidence: Readonly<Record<string, string>>): boolean {
   const requested = integerEvidenceValue(evidence.charge_requested);
@@ -695,6 +729,56 @@ function hasWaterCropCompletionEvidence(detail: string): boolean {
       evidence.water_consumed === "true" &&
       hasToolChargeEvidence(evidence) &&
       hasAreaFootprintEvidence(evidence) &&
+      hasStaminaConservationEvidence(evidence)
+    );
+  });
+}
+
+/**
+ * The arc one scythe swing sampled and the tiles it moved, as `x:y:kind|x:y:kind` (or `none`).
+ *
+ * The three counts partition the arc, and the changed set is a subset of the tiles that carried something cuttable - so a
+ * receipt assembled from two different reads fails here instead of reaching a caller as an area nobody swung at.
+ */
+function hasScytheSweepArcEvidence(evidence: Readonly<Record<string, string>>): boolean {
+  const arcTiles = integerEvidenceValue(evidence.arc_tiles);
+  const arcSweepable = integerEvidenceValue(evidence.arc_sweepable);
+  const arcClear = integerEvidenceValue(evidence.arc_clear);
+  const tilesChanged = integerEvidenceValue(evidence.tiles_changed);
+  if (arcTiles === null || arcSweepable === null || arcClear === null || tilesChanged === null) return false;
+  // A swing that happened sampled a real arc, and the Mod refuses an arc with nothing cuttable on it BEFORE swinging
+  // (`sweep_nothing_to_cut`), so a success reporting either is describing a different swing.
+  if (!(arcTiles > 0) || !(arcSweepable > 0)) return false;
+  // The arc's counts partition it: a tile is sweepable, clear, or holding something a scythe does not cut.
+  if (arcSweepable + arcClear > arcTiles) return false;
+  // `changed` measures tiles the arc sampled and nothing else, and every one of them was sweepable before the swing.
+  if (!(tilesChanged > 0) || tilesChanged > arcSweepable) return false;
+  const changed = evidence.changed ?? "";
+  if (changed === "none") return false;
+  const entries = changed.split("|");
+  if (entries.length !== tilesChanged) return false;
+  return entries.every((entry) => /^-?(?:0|[1-9][0-9]*):-?(?:0|[1-9][0-9]*):[a-z][a-z_]*$/.test(entry));
+}
+
+/**
+ * `sweep_scythe`'s completion: the tile the caller NAMED moved, and the receipt says how far the swing's arc reached.
+ *
+ * `hasStardewCompletionEvidence` only reaches a contract for a `succeeded` receipt, so a partial sweep
+ * (`scythe_sweep_partial`, `PartiallySucceeded`) never claims completion through this rule.
+ */
+function hasSweepScytheCompletionEvidence(detail: string): boolean {
+  return declaredCompletionEvidence(detail, SWEEP_SCYTHE_EVIDENCE_KEYS, (evidence) => {
+    return (
+      hasBoundedNonemptyEvidenceValue(evidence.location) &&
+      evidence.location !== "none" &&
+      hasTileEvidenceValue(evidence.target) &&
+      hasOpaqueEvidenceValue(evidence.before_occupant) &&
+      hasOpaqueEvidenceValue(evidence.after_occupant) &&
+      // The named tile's own transition is the completion condition, stated as the fact it is: a weed that lost one point
+      // of health still reads `weed` on both sides, so the two occupancy words alone cannot carry this claim.
+      evidence.named_moved === "true" &&
+      hasToolSelectionEvidence(evidence, "scythe") &&
+      hasScytheSweepArcEvidence(evidence) &&
       hasStaminaConservationEvidence(evidence)
     );
   });
@@ -3541,6 +3625,13 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
           e.native_placement === "true",
       )
     );
+  },
+  sweep_scythe: (claim) => {
+    // farmhandexecutioncontroller.resourcetoolactions.cs ExecuteSweepScythe: ONE native swing drove the engine's own arc
+    // (MeleeWeapon.DoDamage once per animation index) and the named tile moved. The arc counts are a MEASUREMENT of the
+    // tiles the six rectangles sampled, never a promise about what the swing would reach, and nothing here claims a
+    // monster hit: six evaluations are not vanilla's seven.
+    return claim.reasonCode === "scythe_sweep_cut" && hasSweepScytheCompletionEvidence(claim.detail);
   },
   cut_weeds: (claim) => {
     // farmhandexecutioncontroller.resourcetoolactions.cs ExecuteCutWeeds: the native weed branch reported the cut

@@ -16,6 +16,7 @@ import {
   sameForEachSource,
   withForEachRule,
 } from "./body-program-for-each.js";
+import { heldToolChargeCeiling, packAreaSteps, packingKindOf } from "./body-program-packing.js";
 import type { ActionRegistration, BodyProgramCandidateRequest, Snapshot } from "./protocol.js";
 import { isNonNegativeSafeInteger, isOpaqueId, isRecord, isTileCoordinate } from "./protocol-target-facts.js";
 
@@ -1081,6 +1082,7 @@ export function compilePlanScript(
   const state: PlanScriptState = {
     nodes: [],
     refusal: null,
+    heldToolCeiling: heldToolChargeCeiling(snapshot),
     calls: 0,
     builderCalls: 0,
     rejected: [],
@@ -1371,6 +1373,13 @@ function refused(
 type PlanScriptState = {
   nodes: PlanNode[];
   refusal: string | null;
+  /**
+   * The held tool's charge ceiling at compile time, or `undefined` when the snapshot could not answer.
+   *
+   * Read ONCE, from `heldToolChargeCeiling`, because it decides how an area is packed: a `undefined` here is the
+   * difference between "this tool covers nine tiles" and "the plan must fall back and say why".
+   */
+  heldToolCeiling: number | undefined;
   requirement?: PlanArgumentRequirement;
   missingArguments?: readonly string[];
   calls: number;
@@ -2175,10 +2184,92 @@ function transitionApproachNode(
 }
 
 /**
+ * ONE PACKED AREA INSTEAD OF ONE LOOP: the native uses that cover the rectangle exactly, emitted as ordinary nodes.
+ *
+ * <p>
+ * WHY THE LOOP IS BYPASSED RATHER THAN TAUGHT TO PACK. `for_each` expands one target per tile on the game thread
+ * (`FarmhandForEachExpansion.cs:373`), so a loop over a 3x20 patch at `charge: 3` becomes 60 dispatches of which 57 are
+ * refused `soil_already_tilled` - every walk the packing saved, handed back. Teaching the loop to pack would make one form
+ * carry two meanings; emitting the packed steps as ordinary nodes keeps the loop's meaning intact and gives each native use
+ * its own receipt.
+ * </p>
+ * <p>
+ * THE CHARGE IS THE COMPILER'S CHOICE, not the caller's: the words a model should have to write are "till this 3x20", and a
+ * model that had to pick a charge would pick wrong and get a silent downgrade. A caller who does write a charge is bounded
+ * by the held tool and never raised to it.
+ * </p>
+ * <p>
+ * IT REFUSES TO GUESS. No readable held tool and no written charge is `plan_packing_footprint_unknown:held_tool` rather than
+ * a level-0 assumption, and a packing that would not save a single step is left as the loop, which resolves its rows live.
+ * </p>
+ */
+function tryEmitPackedArea(
+  loop: PlanForEachLoop,
+  actions: readonly PublishedPlanAction[],
+  state: PlanScriptState,
+): boolean {
+  const rules = forEachRules(loop);
+  if (rules.length !== 1) return false;
+  const effect = rules[0]!.do;
+  // A chain is several actions over the SAME tile: the last one's footprint is not the one the first needs, so a chain is
+  // never packed.
+  if (effect === null || effect.length !== 1) return false;
+  const step = effect[0]!;
+  const action = actions.find((candidate) => candidate.actionId === step.action);
+  if (action === undefined) return false;
+  if (packingKindOf(action.arguments.map((argument) => argument.name)) !== "charged_rectangle") return false;
+  const written = step.charge;
+  if (written !== undefined && (typeof written !== "number" || !Number.isInteger(written) || written < 0)) return false;
+  const requested = written ?? state.heldToolCeiling;
+  // NO READABLE CEILING, NO PACKING. A written charge is not a substitute: the plan would then promise footprints the held
+  // tool may not reach, and the Mod would refuse them one by one after the walk. The loop is still a correct program, so
+  // it is left exactly as the caller wrote it.
+  if (state.heldToolCeiling === undefined || requested === undefined) return false;
+  if (written !== undefined && written > state.heldToolCeiling) return false;
+  const packing = packAreaSteps({
+    area: loop.source.area,
+    kind: "charged_rectangle",
+    maximumCharge: requested,
+  });
+  if (packing.status !== "packed") return false;
+  const tiles = loop.source.area.w * loop.source.area.h;
+  // A packing that saves no step is left as the loop: one node covering the rectangle live is strictly better than the same
+  // number of pre-resolved ones, and emitting them would make the plan larger without making the walk shorter.
+  if (packing.steps.length >= tiles) return false;
+  if (state.nodes.length + packing.steps.length > MAX_PLAN_NODES) return false;
+  let previousNodeId: string | undefined = state.nodes[state.nodes.length - 1]?.nodeId;
+  for (const packed of packing.steps) {
+    const nodeId = `n${String(state.nodes.length + 1).padStart(2, "0")}`;
+    state.nodes.push(
+      Object.freeze({
+        nodeId,
+        actionId: step.action,
+        arguments: Object.freeze({
+          x: Object.freeze({ type: "integer" as const, canonicalValue: String(packed.x) }),
+          y: Object.freeze({ type: "integer" as const, canonicalValue: String(packed.y) }),
+          charge: Object.freeze({ type: "integer" as const, canonicalValue: String(packed.charge) }),
+        }),
+        // A packed step consumes nothing a previous step produced: it names its own tile, so it never binds an earlier
+        // node's output, and it is only ORDERED after the one before it.
+        dependsOn: Object.freeze([]),
+        ...(previousNodeId === undefined ? {} : { orderedAfter: Object.freeze([previousNodeId]) }),
+        bindings: Object.freeze({}),
+      }),
+    );
+    state.callOfNode.set(nodeId, state.builderCalls);
+    previousNodeId = nodeId;
+  }
+  state.acceptedSteps.push(state.builderCalls);
+  return true;
+}
+
+/**
  * Compiles one `builder.for_each({ source, where, do })` call into the single node the loop form is.
  *
- * ONE CALL, ONE NODE. The Mod expands it on the game thread against live state; a plan carrying 60 pre-resolved nodes
- * would be 60 tiles the caller had to see first, which is exactly the 13x13-bounded behaviour the form exists to remove.
+ * ONE CALL, ONE NODE - UNLESS THE LOOP IS A PACKABLE AREA, in which case the packing pass above turns it into the native
+ * uses that cover the rectangle exactly. That is the ONE exception, and it exists because the loop's own expansion is one
+ * target per tile (`FarmhandForEachExpansion.cs:373`): a packed area left as a loop is walked tile by tile again, which
+ * hands back every walk the packing saved.
  *
  * A loop this product could never run is refused BY NAME with the part of the declaration that broke it - a source the
  * caller did not write, a rectangle past the row bound with its own count, a stride that claims no index, an action the
@@ -2199,6 +2290,9 @@ function emitForEachNode(value: unknown, actions: readonly PublishedPlanAction[]
       state,
     );
   const loop: PlanForEachLoop = reading.loop;
+  // PACKING IS DECIDED BEFORE THE LOOP IS EMITTED, and it is decided here rather than in the Mod because the Host is the
+  // layer that knows the surface's declarations and the snapshot's held tool. See tryEmitPackedArea.
+  if (tryEmitPackedArea(loop, actions, state)) return;
   // The step's own arguments are checked HERE as well as per row: an argument only the caller can supply, left out of a
   // step, is a fact the compiler knows - and learning it from a spent pass costs the whole patch.
   refuseMissingStepArguments(loop, actions, state);

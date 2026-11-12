@@ -288,6 +288,10 @@ public sealed class DeclaredToolSelectionTests
             DeclaredEvidenceKeys(adapter, "const TILL_SOIL_EVIDENCE_KEYS = Object.freeze(["));
         ToolActionEvidence.WaterCrop.Should().BeEquivalentTo(
             DeclaredEvidenceKeys(adapter, "const WATER_CROP_EVIDENCE_KEYS = Object.freeze(["));
+        // The scythe sweep's arc counts and `named_moved` claim are the newest addition to this pin, and the two sides stay
+        // one edit apart for the same reason: the Host recognises `scythe_sweep_cut` only against its own declared key set.
+        ToolActionEvidence.SweepScythe.Should().BeEquivalentTo(
+            DeclaredEvidenceKeys(adapter, "const SWEEP_SCYTHE_EVIDENCE_KEYS = Object.freeze(["));
     }
 
     [Fact]
