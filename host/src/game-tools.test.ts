@@ -862,7 +862,9 @@ test("a dispatch deadline comes from the action's own published watchdog, not on
           idempotencyKey: "idempotency_till_01",
           x: 2,
           y: 3,
-          expectedTargetId: "target_01",
+          // The wire pins the hoe as `{x, y, charge}`, so a fixture without the charge is refused `invalid_args` before
+          // dispatch - and the deadline below is only observable on a request that reaches `execute`.
+          charge: 1,
         },
         new AbortController().signal,
         () => {},
