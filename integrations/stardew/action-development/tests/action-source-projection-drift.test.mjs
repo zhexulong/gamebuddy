@@ -45,6 +45,27 @@ function spawnProducer() {
   });
 }
 
+/**
+ * Name the byte, the line and the text at which the producer's stdout and the checked artefact part company.
+ *
+ * The byte comparison is the assertion; this only supplies its message. A bare `180614 !== 180548` says the artefact is
+ * behind the producer without saying which fact moved - and that fact is what the reader has to regenerate or fix.
+ */
+function describeDifference(produced, artifact) {
+  const limit = Math.min(produced.length, artifact.length);
+  let offset = 0;
+  while (offset < limit && produced[offset] === artifact[offset]) offset += 1;
+  const sideOf = (buffer) => {
+    const start = offset === 0 ? 0 : buffer.lastIndexOf(0x0a, offset - 1) + 1;
+    const end = buffer.indexOf(0x0a, offset);
+    let line = 1;
+    for (let index = 0; index < offset; index += 1) if (buffer[index] === 0x0a) line += 1;
+    return `line ${line} ${JSON.stringify(buffer.subarray(start, end === -1 ? buffer.length : end).toString("utf8"))}`;
+  };
+  return `they part company at byte ${offset} (produced ${produced.length} bytes, artefact ${artifact.length} bytes):`
+    + ` producer ${sideOf(produced)} / artefact ${sideOf(artifact)}`;
+}
+
 test("spawned producer emits the checked artifact byte-for-byte", async () => {
   const { code, signal, stdout, stderr } = await spawnProducer();
   assert.equal(code, 0, "producer must exit zero");
@@ -52,11 +73,16 @@ test("spawned producer emits the checked artifact byte-for-byte", async () => {
   assert.equal(stderr.length, 0, "producer must not write to stderr");
 
   const artifact = await readFile(artifactPath);
-  assert.equal(stdout.length, artifact.length, "spawned stdout length must match the checked artifact");
+  const difference = describeDifference(stdout, artifact);
+  assert.equal(
+    stdout.length,
+    artifact.length,
+    `spawned stdout length must match the checked artifact - ${difference}`,
+  );
   assert.equal(
     Buffer.compare(stdout, artifact),
     0,
-    "spawned stdout must be byte-identical to the checked artifact",
+    `spawned stdout must be byte-identical to the checked artifact - ${difference}`,
   );
 });
 
