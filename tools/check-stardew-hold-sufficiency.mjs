@@ -2,34 +2,36 @@
 /**
  * Hold-sufficiency counter-example search  (环境侧闭环：反例消除)
  *
- * THE QUESTION THIS ANSWERS, and why the earlier version did not:
+ * THE ASSERTION THIS DECIDES:
  *
- *   A whitelist of ~100 game filenames proves nothing. It only silences the linter. What has to be
- *   decided is the ASSERTION:
+ *     every site that writes `Farmer.canMove = false` in the decompiled tree has, in its own method or one same-file
+ *     callee, a write that ESTABLISHES one of the facts `WorldModel.ReadFacts` reads - or carries an adjudicated row
+ *     in the contract naming the fact that holds there (or, where no fact can name it, the reason and what evidence
+ *     would settle it).
  *
- *     every site that sets `canMove = false` is accompanied by at least one of the companion facts
- *     (activeClickableMenu / eventUp / dialogueUp / freezePause / isEating / UsingTool / isWarping /
- *      stamina<=-15 / timeOfDay>=2600)
+ *   because if one does not, the game holds the actor while our reads still say `Idle` - an orphan hold, a state we
+ *   cannot name, cannot report, and cannot remedy. That is a hole in the state space, not a documentation gap.
  *
- *   because if one is NOT, the game holds the actor while our reads still say `Idle` - an orphan hold,
- *   a state we cannot name, cannot report, and cannot remedy. That is a hole in the state space, not a
- *   documentation gap.
- *
- *   So the tool SEARCHES FOR COUNTER-EXAMPLES. Its output is the residual: the sites it could not
- *   accompany. The declaration then only ever lists that residual (each with a reason and an anchor),
- *   and the set is compared bidirectionally - a new orphan fails the check, and a fixed one fails until
- *   the row is deleted. Zero humans written down when the residual is empty.
+ * THE COMPANION SIDE IS THE CONTRACT'S, AND IT IS DIRECTIONAL. `environmentReads` is derived from `ReadFacts`, so the
+ * population cannot go stale (`tools/derive-stardew-actor-admissibility.mjs`), and each read carries the predicate it
+ * is HOLDING under (`bool` -> `= true`, `IClickableMenu` -> `!= null`, `freezePause` -> `> 0`, `timeOfDay` -> `>= 2600`,
+ * `Stamina` -> `<= -15`, `toolPower` -> `!= 0`). That predicate is not decoration: the earlier version of this search
+ * accepted ANY write to a companion member, so `PauseForSingleAnimation = false` (Farmer.cs:8448) and
+ * `globalFade = false` (ScreenFade.cs:82) counted as accompaniment for the holds those lines CREATE. Five sites were
+ * rescued that way and two of them are not accompanied at all - they are holds whose establishing write is elsewhere.
+ * A check that counts a CLEARING write as evidence for a hold is a check that says the opposite of what it claims.
  *
  * DECLARED BOUND OF THE ANALYSIS (a bound that is not stated is a lie):
  *   - lexical, not dataflow; brace matching over the decompiled C#
  *   - "accompanied" is decided at METHOD granularity, and follows same-file callees ONE level deep
- *   - a companion WRITE counts; a companion READ does not (a branch on `eventUp` does not establish it)
- *   Therefore a residual row is a PROMPT TO READ THE CODE, not a verdict. Each residual must be
- *   adjudicated as exactly one of:
- *       missing_read          -> the state space is incomplete; add the fact (the finding we want)
- *       deeper_accompaniment  -> established in a callee this analysis cannot see; name the anchor
- *       not_a_hold            -> the write does not hold the actor (e.g. it is followed by a release
- *                                in the same method, or it belongs to a debug/non-production entry)
+ *   - a write whose right-hand side is not a literal counts as establishing, because this analysis cannot evaluate
+ *     it; that is a bound, and it is why the residual rows exist rather than a claim of zero
+ *   - a companion established in another TYPE is invisible here (that is the `deeper_accompaniment` family)
+ *   Therefore a residual row is a JUDGEMENT about Stardew's source, checked against the engine on every run by the
+ *   row's own release anchor: the line that row blames for the release must still write what the row says it writes.
+ *
+ * WHAT IT REFUSES TO REPORT GREEN OVER: `examined: 0`. A search that scanned no file has not shown anything, so the
+ * report says `blocked` and the exit code says so too.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -38,54 +40,14 @@ import { reportBlockedInput } from "./lib/blocked-input-report.mjs";
 
 export const HELD_FACT = "Farmer.canMove";
 
-/**
- * The algebra both admissibility checks are properties OF: the states, the causes, the remedies, the adjudicated
- * decision sites and the residual this search has to account for.
- *
- * Nothing in this repository produces it and no commit has ever carried it, so a checkout has no subject for either
- * gate and neither can report on the invariants it exists to decide.
- *
- * WHY IT IS STILL BLOCKED, AND WHAT WOULD UNBLOCK IT (decided 2026-11-12; measured, not assumed):
- *
- *   The algebra half of this document IS derivable, and a producer should read it from the authorities that already
- *   own each part rather than restating them: the states from `ActorDispositionKind` and its wire spellings
- *   (`integrations/stardew/WorldModel.cs:23` and `:118`), the causes from `WorldModel.HoldReasonCode` (`:308`), the
- *   companion reads from `WorldModel.ReadFacts` (`:251` - the facts the disposition is a pure function of, and the
- *   only honest source for `environmentReads`), the actions and their `admissibleIn` from
- *   `FarmhandActionCatalog.ModalResolvingActionIds` / `EventActingActionIds` / `ModalFamilyActionsWithoutAnEventPath`
- *   (`integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs:895`, `:921`, `:936`) joined to the profile
- *   rule in `integrations/stardew/ExecutionAdmission.cs:353`, and the remedies from
- *   `host/src/stardew-action-remedy.ts:49`.
- *
- *   What cannot be derived is `orphanHoldResidual`, and it is the part that blocks the document. Run with the
- *   companion set above against `ref/external/StardewValleyDecompiled`, this search measures 948 files, 58 writes of
- *   `Farmer.canMove = false`, 41 accompanied, **17 orphans and 4 unparsed sites** - and 16 of the 17 are holds no
- *   declared read can name (the one exception releases the flag in its own method). Each row is a verdict about the
- *   ENGINE - `missing_read` (our state space is incomplete: add the fact), `deeper_accompaniment` (established in a
- *   callee this analysis cannot see: name the anchor) or `not_a_hold` (the write does not hold the actor: say why) -
- *   and writing one from here would be a claim about Stardew's source that only a read of that source can support.
- *   A `missing_read` verdict is not paperwork: it is a new fact in `ActorWorldFacts` plus a hold code in
- *   `WorldModel.HoldReasonCode`, which is the Mod's gameplay state and therefore the `game-action-boundary` ->
- *   `game-action-implement` pipeline's decision, not this gate's.
- *
- *   The four `unparsed` rows are this file's own bound rather than a decision (the brace walk in `enclosingMethod`
- *   loses GameLocation.cs:9287/9297/9321/9345), and they block the CLI's green as well; they are recorded here
- *   rather than silently dropped.
- *
- *   Once the residual is adjudicated and the rest is produced from the authorities above, this gate checks exactly
- *   what it checks today: every write of `Farmer.canMove = false` in the decompiled tree is accompanied by one of the
- *   declared reads, or carries an adjudicated row - compared bidirectionally, so a new orphan and a row that stopped
- *   describing one are both red.
- */
 export const ACTOR_ADMISSIBILITY_CONTRACT =
   "integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json";
 
 /**
  * The contract's text, or null when it is not there - the caller reports the blocked reading its own id names.
  *
- * This replaces `JSON.parse(readFileSync(...))` at both entry points, whose ENOENT stack trace was non-zero for a
- * reason no reader could tell from a defect in the gate reading it. An absent input is neither a pass nor a finding,
- * and it is the one verdict a gate with no subject can honestly reach.
+ * An absent input is neither a pass nor a finding, and it is the one verdict a gate with no subject can honestly
+ * reach.
  */
 export function readActorAdmissibilityContract(root) {
   try {
@@ -155,24 +117,83 @@ export function enclosingMethod(lines, index) {
   return null;
 }
 
-const COMPANION_RE = (members) => new RegExp(`(?:${members.join("|")})\\s*(?:=[^=]|\\.Value\\s*=|\\.Add)`, "i");
-
-function calledNames(body) {
-  const names = new Set();
-  for (const line of body) {
-    if (/^\s*\/\//.test(line) || /^\s*\/\*/.test(line)) continue;
-    for (const m of line.matchAll(/(?:\.|^|\s)([A-Za-z_]\w*)\s*\(/g)) names.add(m[1]);
+/** Whether `value` satisfies the read's holding predicate. */
+function satisfies(value, relation, threshold) {
+  switch (relation) {
+    case "=":
+      return value === threshold;
+    case "!=":
+      return value !== threshold;
+    case "<":
+      return value < threshold;
+    case "<=":
+      return value <= threshold;
+    case ">":
+      return value > threshold;
+    case ">=":
+      return value >= threshold;
+    default:
+      return false;
   }
-  return names;
 }
 
-export function searchCounterExamples({ root, heldFact = HELD_FACT, companionReads, residual = [] }) {
+/**
+ * Whether a write to `member` ESTABLISHES its read, i.e. moves it into the holding predicate.
+ *
+ * The value is read off the assignment's right-hand side. A literal is evaluated against the predicate; anything else
+ * (a call, a field, an expression) is counted as establishing, because this analysis cannot evaluate it - a stated
+ * bound, and the reason the residual rows exist.
+ */
+export function writeEstablishes(holdsWhen, rhsText) {
+  const rhs = rhsText.trim().replace(/;$/, "").trim();
+  const literal = /^-?\d+(?:\.\d+)?[fFdD]?$/.test(rhs) ? Number(rhs.replace(/[fFdD]$/, "")) : null;
+  if (holdsWhen.value === true || holdsWhen.value === false) {
+    if (rhs === "true") return true;
+    if (rhs === "false" || rhs === "0") return false;
+    return literal === null;
+  }
+  if (holdsWhen.value === null) return rhs !== "null";
+  if (literal === null) return true;
+  return satisfies(literal, holdsWhen.relation, holdsWhen.value);
+}
+
+/** The right-hand side of an assignment to `member` on this line, or null when the line does not assign it. */
+function assignmentTo(line, member) {
+  const match = new RegExp(`(?:${member})\\s*(\\.Value\\s*)?=(?!=)\\s*([^;]*);`, "i").exec(line);
+  return match === null ? null : match[2];
+}
+
+/** The events of a hold site, one per declared read, with the write that accompanies it (if any). */
+function accompaniment(body, companions) {
+  for (const companion of companions) {
+    for (const line of body) {
+      const rhs = assignmentTo(line, memberOf(companion.member));
+      if (rhs !== null && writeEstablishes(companion.holdsWhen, rhs))
+        return { member: companion.member, write: line.trim() };
+    }
+  }
+  return null;
+}
+
+/**
+ * The measured population: every literal `canMove = false` write, whether a declared read establishes a fact at that
+ * site, and the sites the brace walk cannot attribute at all.
+ *
+ * `companions` is `contract.environmentReads`; `residual` and `unattributed` are the contract's adjudications, compared
+ * bidirectionally so a new orphan fails and a row that stopped describing one fails too.
+ */
+export function searchCounterExamples({
+  root,
+  heldFact = HELD_FACT,
+  companions = [],
+  residual = [],
+  unattributed = [],
+}) {
   const gameRoot = join(root, "ref/external/StardewValleyDecompiled");
   const files = walk(gameRoot);
   const held = memberOf(heldFact);
-  const companions = companionReads.map(memberOf);
-  const companionRe = COMPANION_RE(companions);
   const heldFalseRe = new RegExp(`\\b${held}\\s*=\\s*false`, "i");
+  const repoPath = (file) => relative(root, file).replace(/\\/g, "/");
 
   const sites = [];
   const unparsed = [];
@@ -189,12 +210,13 @@ export function searchCounterExamples({ root, heldFact = HELD_FACT, companionRea
       if (i === declIndex) return; // the field initialiser
       const method = enclosingMethod(lines, i);
       if (method === null) {
-        unparsed.push({ file: relative(root, file).replace(/\\/g, "/"), line: i + 1 });
+        unparsed.push({ site: `${repoPath(file)}:${i + 1}` });
         return;
       }
-      const ownBody = method.lines.join("\n");
-      let accompanied = companionRe.test(ownBody);
-      let where = accompanied ? "own method" : null;
+      const own = accompaniment(method.lines, companions);
+      let accompanied = own !== null;
+      let where = own === null ? null : "own method";
+      let companion = own?.member ?? null;
       if (!accompanied) {
         // one level of same-file callees
         for (const name of calledNames(method.lines)) {
@@ -208,36 +230,92 @@ export function searchCounterExamples({ root, heldFact = HELD_FACT, companionRea
           if (calleeIndex < 0) continue;
           const callee = enclosingMethod(lines, calleeIndex);
           if (callee === null) continue;
-          if (companionRe.test(callee.lines.join("\n"))) {
+          const viaCallee = accompaniment(callee.lines, companions);
+          if (viaCallee !== null) {
             accompanied = true;
             where = `callee ${callee.name}`;
+            companion = viaCallee.member;
             break;
           }
         }
       }
       sites.push({
-        file: relative(root, file).replace(/\\/g, "/"),
-        line: i + 1,
+        site: `${repoPath(file)}:${i + 1}`,
         method: method.name,
         accompanied,
         where,
+        companion,
         text: line.trim().slice(0, 110),
       });
     });
   }
 
-  const asOrphan = sites.filter((s) => !s.accompanied);
+  const orphans = sites.filter((s) => !s.accompanied);
   const declaredKeys = new Set(residual.map((r) => r.site));
-  const key = (s) => `${s.file}:${s.line}`;
+  const key = (s) => s.site;
+  const declaredUnattributed = new Set(unattributed.map((r) => r.site));
   return {
     fileCount: files.length,
     siteCount: sites.length,
-    accompanied: sites.length - asOrphan.length,
-    orphans: asOrphan,
+    accompanied: sites.length - orphans.length,
+    orphans,
     unparsed,
-    undeclaredOrphans: asOrphan.filter((s) => !declaredKeys.has(key(s))),
-    staleRows: residual.filter((r) => !asOrphan.some((s) => key(s) === r.site)),
+    undeclaredOrphans: orphans.filter((s) => !declaredKeys.has(key(s))),
+    staleRows: residual.filter((r) => !orphans.some((s) => key(s) === r.site)),
+    undeclaredUnattributed: unparsed.filter((u) => !declaredUnattributed.has(u.site)),
+    staleUnattributed: unattributed.filter((row) => !unparsed.some((u) => u.site === row.site)),
   };
+}
+
+function calledNames(body) {
+  const names = new Set();
+  for (const line of body) {
+    if (/^\s*\/\//.test(line) || /^\s*\/\*/.test(line)) continue;
+    for (const m of line.matchAll(/(?:\.|^|\s)([A-Za-z_]\w*)\s*\(/g)) names.add(m[1]);
+  }
+  return names;
+}
+
+/**
+ * The release each residual row blames: the engine line must still say what the row says it says.
+ *
+ * This is the half the two gates were missing. Both counted ENTRY sites only, so a hold that lost its release kept
+ * every gate green - and "the engine can no longer leave this hold" is exactly the defect the residual exists to
+ * adjudicate. The statement is pinned by content (normalised, not by line number alone), so a moved, edited or deleted
+ * release is red here with the line it was on.
+ */
+export function releasePins(root, rows) {
+  const failures = [];
+  let examined = 0;
+  for (const row of rows) {
+    const release = row.release;
+    if (release?.anchor === undefined) {
+      failures.push(`${row.site}: no release anchor (a hold with no stated release is not adjudicated)`);
+      continue;
+    }
+    examined += 1;
+    const [, path, line] = /^(.*):(\d+)$/.exec(release.anchor) ?? [];
+    let text = null;
+    try {
+      text = readFileSync(join(root, path), "utf8").split("\n")[Number(line) - 1] ?? null;
+    } catch {
+      text = null;
+    }
+    if (text === null) {
+      failures.push(`${row.site}: release anchor ${release.anchor} does not resolve`);
+      continue;
+    }
+    const statement = text.replace(/\s+/g, " ").trim();
+    if (statement !== release.statement)
+      failures.push(
+        `${row.site}: release anchor ${release.anchor} now reads "${statement}", the row pinned "${release.statement}"`,
+      );
+    else if (
+      !/\b[Cc]anMove\s*=\s*true\b|\bcanMove\s*=\s*true\b|forceCanMove\s*\(|currentMinigame\s*=\s*null\b/.test(statement)
+    )
+      failures.push(`${row.site}: release anchor ${release.anchor} no longer writes a release ("${statement}")`);
+  }
+  return { examined, failures };
 }
 
 // ------------------------------------------------------------------ CLI
@@ -260,32 +338,89 @@ if (invokedDirectly) {
       checks: ["contract_readable"],
     });
   const model = JSON.parse(modelSource);
-  const companions = model.environmentReads
-    .map((r) => r.member)
-    .filter((m) => memberOf(m).toLowerCase() !== memberOf(HELD_FACT).toLowerCase());
+  const companions = (model.environmentReads ?? []).filter(
+    (read) => memberOf(read.member).toLowerCase() !== memberOf(HELD_FACT).toLowerCase(),
+  );
   const residual = model.orphanHoldResidual ?? [];
-  const r = searchCounterExamples({ root, companionReads: companions, residual });
+  const unattributed = model.unattributedHoldSites ?? [];
+  const found = searchCounterExamples({ root, companions, residual, unattributed });
+  const pins = releasePins(root, residual);
+
+  const checks = [
+    {
+      id: "contract_readable",
+      status: "passed",
+      detail: `${ACTOR_ADMISSIBILITY_CONTRACT}: ${companions.length} declared reads`,
+    },
+    {
+      id: "companions_declared",
+      status: companions.length > 0 ? "passed" : "failed",
+      detail:
+        companions.length > 0
+          ? `${companions.length} reads, each with the predicate it is holding under`
+          : "no declared read, so nothing could accompany a hold",
+    },
+    {
+      id: "residual_adjudicated",
+      status: found.undeclaredOrphans.length === 0 && found.staleRows.length === 0 ? "passed" : "failed",
+      detail:
+        `${found.orphans.length} orphan(s) against ${residual.length} adjudicated row(s)` +
+        (found.undeclaredOrphans.length > 0
+          ? `; UNADJUDICATED: ${found.undeclaredOrphans.map((o) => `${o.site} ${o.method}()`).join(", ")}`
+          : "") +
+        (found.staleRows.length > 0 ? `; STALE: ${found.staleRows.map((r) => r.site).join(", ")}` : ""),
+    },
+    {
+      id: "unattributed_named",
+      status: found.undeclaredUnattributed.length === 0 && found.staleUnattributed.length === 0 ? "passed" : "failed",
+      detail:
+        `${found.unparsed.length} site(s) the brace walk cannot attribute against ` +
+        `${unattributed.length} named one(s)` +
+        (found.undeclaredUnattributed.length > 0
+          ? `; UNNAMED: ${found.undeclaredUnattributed.map((u) => u.site).join(", ")}`
+          : "") +
+        (found.staleUnattributed.length > 0 ? `; STALE: ${found.staleUnattributed.map((r) => r.site).join(", ")}` : ""),
+    },
+    {
+      id: "release_pins",
+      status: pins.failures.length === 0 ? "passed" : "failed",
+      detail:
+        pins.failures.length === 0
+          ? `${pins.examined} release anchor(s) still write what their row says`
+          : pins.failures.join("; "),
+    },
+  ];
 
   console.log(`\n=== hold-sufficiency counter-example search  (${HELD_FACT} = false) ===\n`);
-  console.log(`  scanned files:                    ${r.fileCount}`);
-  console.log(`  writes of ${HELD_FACT}=false:      ${r.siteCount}`);
-  console.log(`  ACCOMPANIED by a companion fact:  ${r.accompanied}`);
-  console.log(`  ORPHANS (no companion in scope):  ${r.orphans.length}`);
-  console.log(`  unparsed (no method recognised):  ${r.unparsed.length}`);
-  console.log(`\n  --- orphans requiring adjudication ---`);
-  for (const o of r.orphans.slice(0, 40)) console.log(`  ${o.file}:${o.line}  ${o.method}()  ::  ${o.text}`);
-  if (r.orphans.length > 40) console.log(`  ... and ${r.orphans.length - 40} more`);
-  if (r.unparsed.length) {
+  console.log(`  scanned files:                    ${found.fileCount}`);
+  console.log(`  writes of ${HELD_FACT}=false:      ${found.siteCount}`);
+  console.log(`  ACCOMPANIED by a holding write:   ${found.accompanied}`);
+  console.log(`  ORPHANS (no holding write):       ${found.orphans.length}`);
+  console.log(`  unparsed (no method recognised):  ${found.unparsed.length}`);
+  console.log(`\n  --- orphans, each adjudicated in the contract ---`);
+  for (const o of found.orphans) {
+    const row = residual.find((r) => r.site === o.site);
+    console.log(
+      `  ${o.site}  ${o.method}()  ->  ${row === undefined ? "UNADJUDICATED" : `${row.verdict}${row.namedBy === null ? "" : ` (${row.namedBy})`}`}`,
+    );
+  }
+  if (found.unparsed.length) {
     console.log(`\n  --- unparsed (the analysis bound, stated rather than hidden) ---`);
-    for (const u of r.unparsed.slice(0, 10)) console.log(`  ${u.file}:${u.line}`);
+    for (const u of found.unparsed) console.log(`  ${u.site}`);
   }
-  if (r.undeclaredOrphans.length) {
-    console.log(`\n  FAIL  ${r.undeclaredOrphans.length} orphan(s) are NOT adjudicated in the contract`);
-  }
-  if (r.staleRows.length) {
-    console.log(`\n  FAIL  ${r.staleRows.length} adjudication row(s) no longer describe an orphan`);
-  }
-  const ok = r.undeclaredOrphans.length === 0 && r.staleRows.length === 0 && r.unparsed.length === 0;
-  console.log(`\n=== ${ok ? "ENVIRONMENT CLOSED: the reads are a sufficient statistic" : "NOT CLOSED"} ===\n`);
-  process.exit(ok ? 0 : 1);
+
+  const failed = checks.filter((check) => check.status === "failed");
+  const examined = found.siteCount + found.unparsed.length;
+  console.log(
+    `\n=== ${failed.length === 0 ? "ENVIRONMENT CLOSED: the declared reads are a sufficient statistic" : `${failed.length} check(s) FAILED`} ===\n`,
+  );
+  console.log(
+    JSON.stringify({
+      gate: "stardew_hold_sufficiency/v1",
+      status: failed.length === 0 ? "passed" : "failed",
+      examined,
+      checks,
+    }),
+  );
+  if (examined === 0 || failed.length > 0) process.exit(examined === 0 ? 2 : 1);
 }

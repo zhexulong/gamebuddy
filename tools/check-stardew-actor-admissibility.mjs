@@ -2,70 +2,53 @@
 /**
  * Actor-admissibility closure checker  (设计自闭环的判定器)
  *
- * It decides two DIFFERENT things, and keeping them apart is the point:
+ * WHAT IT DECIDES, and where each answer comes from:
  *
- *   DESIGN CLOSURE (offline, no game):
- *     INV-1 totality      every (action x state) is decided: either admissible, or a named cause
- *     INV-2 determinism   the algebra is decided in ONE place; every decision site is declared
- *     INV-3 liveness      every cause has a remedy, and the remedy's state makes the blocked actions admissible
- *     INV-4 acyclicity    the remedy graph over states is acyclic and settles at idle
- *     INV-5 no hidden input  no decision may key on a DERIVED boolean (e.g. `actionable`)
+ *   THE FACT ALGEBRA (the contract + the Mod + the decompiled tree):
+ *     FACT-1 population    every member of `ActorWorldFacts` has a row, in declaration order, and no row is stale
+ *     FACT-2 publishes     each row's kind / wire spelling / reason code / transient kind is the one `WorldModel`
+ *                          decides - checked against `Classify`, `KindForWire` and `HoldReasonCode`, not trusted
+ *     FACT-3 named         every kind `Classify` can return is either `Idle` (the word for a body that is NOT held) or
+ *                          published by at least one fact, and `Idle` carries the fallback code
+ *     IFACE-1 reads        every declared read resolves to a real member declaration in the decompiled tree
+ *     FACT-4 release       every row's release anchor still writes what the row says, and writes it in the direction
+ *                          that CLEARS the fact - a hold whose release was deleted or moved is red here
+ *     IFACE-2 sufficiency  the shared counter-example search: every `canMove = false` write is accompanied by a
+ *                          HOLDING write of a declared read, or carries an adjudicated residual row
+ *     DECISION-1 sites     every file that decides the hold vocabulary is adjudicated, no row is stale, and each
+ *                          `not_a_decision` row's matches are still prose rather than code
+ *     DECISION-2 inputs    no source line decides on a derived boolean the contract forbids
+ *     DECISION-3 owed      every `second_spelling_owed` row names an owner and the condition that closes it
  *
- *   INTERFACE VALIDATION (against the immutable game source):
- *     IFACE-1 every declared read resolves to a real member declaration in the decompiled tree
- *     IFACE-2 every writer of a declared read names its mechanism in the contract
+ * WHAT THIS GATE DOES NOT CLAIM, and why that is stated rather than dropped. It used to declare INV-1 totality,
+ * INV-3 liveness and INV-4 acyclicity over an ACTION algebra: which of the catalog's actions is admissible in which
+ * disposition, and which remedy restores it. That statement cannot be derived honestly here - `admissibleIn` for one
+ * action is decided by `ExecutionAdmission.Admit`'s own ladder over the action's `AdmissionProfile` and its event path,
+ * and a generator that re-encoded that ladder would be a second authority for a fact the Mod already owns, which is the
+ * duplicate-authority defect this repository has paid for repeatedly. The action algebra is therefore absent from the
+ * contract and unclaimed here; what is claimed is the fact algebra above, which the contract does own, plus the
+ * engine-side release and hold-sufficiency assertions the residual supplies.
  *
- * Exit 0 only when both halves pass. A report is printed either way, because a failing
- * check has to say WHICH row failed. With no contract on disk there is no algebra to
- * decide and the run reports `blocked` (exit 2) naming the path, rather than passing
- * over nothing or dying on an ENOENT that reads like a defect in this file.
- *
- * WHY IT IS STILL BLOCKED, AND WHAT WOULD UNBLOCK IT (decided 2026-11-12):
- *
- *   The document is one file and only one of its halves is missing from it. The algebra half has authorities that
- *   already own each part - `ActorDispositionKind` and `KindForWire` for the states, `WorldModel.HoldReasonCode` for
- *   the causes, `WorldModel.ReadFacts` for `environmentReads`, `FarmhandActionCatalog.ModalResolvingActionIds` /
- *   `EventActingActionIds` / `ModalFamilyActionsWithoutAnEventPath` joined to the profile rule in
- *   `ExecutionAdmission.Admit` for `admissibleIn`, and `host/src/stardew-action-remedy.ts` for the remedies - and
- *   `check-stardew-hold-sufficiency.mjs`'s header names them with their lines.
- *
- *   But deriving the algebra and then asserting INV-1/INV-3/INV-4 over it would assert nothing about the Mod: those
- *   three invariants are properties of a STATEMENT someone makes about the state space, and a producer that builds
- *   the statement from the code it describes makes every one of them true by construction. What this gate is for is
- *   the gap between the statement and the code, so the statement has to be somebody's.
- *
- *   The row that blocks it today is `orphanHoldResidual`, which is not derivable at all: measured with the companion
- *   set above against `ref/external/StardewValleyDecompiled` it holds 17 orphan holds and 4 unparsed sites, and 16 of
- *   the 17 are holds no declared read can name. Each row is a verdict about the ENGINE (`missing_read` /
- *   `deeper_accompaniment` / `not_a_hold`), and the `missing_read` ones are a change to the Mod's state space. The
- *   measurement, the verdict vocabulary and the owner are stated once, in `check-stardew-hold-sufficiency.mjs`.
- *
- *   When the residual is adjudicated and the algebra authored, this gate checks what its invariants name and nothing
- *   else: every blocked action is decided in every state, every cause has a remedy that restores the actions it
- *   blocks, the remedy graph settles at idle, every decision site is adjudicated, no decision keys on a derived
- *   boolean, and every declared read resolves in the decompiled tree.
+ * A report is printed either way, because a failing check has to say WHICH row failed. With no contract on disk there
+ * is no algebra to decide and the run reports `blocked` (exit 2) naming the path, rather than passing over nothing or
+ * dying on an ENOENT that reads like a defect in this file. A run that examined nothing is `blocked` for the same
+ * reason: `0 findings` means nothing without `examined N`.
  */
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import {
   ACTOR_ADMISSIBILITY_CONTRACT,
   readActorAdmissibilityContract,
+  repoRoot,
   searchCounterExamples,
+  writeEstablishes,
 } from "./check-stardew-hold-sufficiency.mjs";
 import { reportBlockedInput } from "./lib/blocked-input-report.mjs";
-import { join, basename, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 
-const ROOT = (() => {
-  let d = process.cwd();
-  for (let i = 0; i < 8; i++) {
-    try {
-      if (statSync(join(d, "AGENTS.md")).isFile()) return d;
-    } catch {}
-    d = join(d, "..");
-  }
-  throw new Error("repository root not found (no AGENTS.md above cwd)");
-})();
-
+const ROOT = repoRoot();
 const GAME_ROOT = join(ROOT, "ref/external/StardewValleyDecompiled");
+const WORLD_MODEL = "integrations/stardew/WorldModel.cs";
+
 const modelSource = readActorAdmissibilityContract(ROOT);
 if (modelSource === null)
   reportBlockedInput({
@@ -75,8 +58,9 @@ if (modelSource === null)
     checks: ["contract_readable"],
   });
 const model = JSON.parse(modelSource);
+const worldModel = readFileSync(join(ROOT, WORLD_MODEL), "utf8");
+const worldModelLines = worldModel.split("\n");
 
-const BLOCKED = new Set(model.blockedActions ?? []);
 const results = [];
 const record = (id, ok, headline, rows = []) => results.push({ id, ok, headline, rows });
 
@@ -98,134 +82,265 @@ function walk(dir, filter, acc = []) {
 
 const gameFiles = () => walk(GAME_ROOT, (n) => n.endsWith(".cs"));
 const repoFiles = (dir, filter) => walk(join(ROOT, dir), filter);
+const repoPath = (file) => relative(ROOT, file).replace(/\\/g, "/");
 
-// A read "Class.member" resolves to a declaration-shaped line in a file named Class.cs.
+// A read "Class.member" resolves to a declaration-shaped line in a file named Class.cs. A property's opening brace can
+// be on the NEXT line, so end-of-line is a legal terminator; an expression-bodied member ends with `=>`.
 function resolveRead(member) {
   const [cls, name] = member.split(".");
-  const candidates = gameFiles().filter((f) => basename(f) === cls + ".cs");
-  // A property's opening brace can be on the NEXT line, so end-of-line is a legal terminator; and an
-  // expression-bodied member ends with `=>`. Missing the first case made three real declarations
-  // (Game1.activeClickableMenu, Farmer.UsingTool, Farmer.stamina) look unresolvable.
+  const candidates = gameFiles().filter((f) => basename(f) === `${cls}.cs`);
   const decl = new RegExp(
     `^\\s*(?:public|internal|private|protected|readonly|static|virtual|override)[^;=()]*\\b${name}\\b\\s*(?:;[^;]*$|=|=>|\\{|$)`,
   );
   for (const f of candidates) {
     const lines = readFileSync(f, "utf8").split("\n");
-    for (let i = 0; i < lines.length; i++) {
+    for (let i = 0; i < lines.length; i++)
       if (decl.test(lines[i]))
-        return { file: relative(ROOT, f).replace(/\\/g, "/"), line: i + 1, text: lines[i].trim() };
-    }
+        return {
+          file: repoPath(f),
+          line: i + 1,
+          text: lines[i].trim().replace(/\s+/g, " "),
+        };
   }
   return null;
 }
 
-// Every place the game WRITES one of the declared reads.
-function writeSites(member) {
-  const [, name] = member.split(".");
-  // Case-insensitive: the field is `Farmer.canMove` and the property `Farmer.CanMove`, and writers use
-  // both spellings. A case-sensitive scan silently under-reported.
-  const re = new RegExp(`\\b${name}\\s*=[^=]`, "i");
-  const out = [];
-  for (const f of gameFiles()) {
-    const lines = readFileSync(f, "utf8").split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const t = lines[i];
-      if (!re.test(t)) continue;
-      if (/\bpublic\b[^;=]*\b/.test(t) && /(;|=|$)/.test(t) && /^\s*(public|internal|private|protected)/.test(t))
-        continue; // a declaration, not a write
-      out.push({ file: basename(f), line: i + 1 });
-    }
-  }
-  return out;
+/** The `ActorDispositionKind` a `return new ActorDisposition(...)` line names. */
+const kindOfReturnLine = (line) =>
+  /return new ActorDisposition\(ActorDispositionKind\.([A-Za-z_]\w*)/.exec(line)?.[1] ?? null;
+
+/** The arms of a `kind switch` expression (`KindForWire`, `HoldReasonCode`). */
+function kindSwitchArms(signature) {
+  const at = worldModel.indexOf(signature);
+  if (at < 0) return { arms: new Map(), fallback: undefined };
+  const end = worldModel.indexOf("};", at);
+  const body = worldModel.slice(worldModel.indexOf("{", at), end < 0 ? undefined : end);
+  const arms = new Map();
+  for (const match of body.matchAll(/ActorDispositionKind\.([A-Za-z_]\w*)\s*=>\s*"([^"]+)"/g))
+    arms.set(match[1], match[2]);
+  return { arms, fallback: /_\s*=>\s*"([^"]+)"/.exec(body)?.[1] };
 }
 
-// ---------------------------------------------------------------- INV-1 totality
+// ---------------------------------------------------------------- FACT-1 population
+const unionAt = worldModel.indexOf("record struct ActorWorldFacts(");
+const unionList = unionAt < 0 ? "" : worldModel.slice(worldModel.indexOf("(", unionAt));
+const unionMembers = [];
+{
+  let depth = 0;
+  let part = "";
+  for (const ch of unionList) {
+    if (ch === "(") depth += 1;
+    else if (ch === ")") {
+      depth -= 1;
+      if (depth === 0) break;
+    } else if (depth === 1) part += ch;
+  }
+  for (const declaration of part.split("\n").map((line) => line.replace(/\/\/.*$/u, "").trim())) {
+    const name = /([A-Za-z_]\w*)\s*,?$/.exec(declaration)?.[1];
+    if (name !== undefined && !/^$/.test(declaration)) unionMembers.push(name);
+  }
+}
 {
   const rows = [];
-  // Only the BLOCKED actions need a cause when a state refuses them: a remedy action is legitimately
-  // inapplicable in most states, and demanding otherwise was a mis-specified invariant.
-  for (const action of model.actions.filter((a) => BLOCKED.has(a.id))) {
-    for (const state of model.states) {
-      const admissible = (action.admissibleIn ?? []).includes(state.id);
-      const cause = model.causes.find((c) => c.state === state.id);
-      if (!admissible && !cause) rows.push(`${action.id} x ${state.id}: neither admissible nor a named cause`);
-    }
-  }
+  const declared = (model.facts ?? []).map((fact) => fact.fact);
+  for (const member of unionMembers) if (!declared.includes(member)) rows.push(`UNDECLARED fact: ${member}`);
+  for (const member of declared)
+    if (!unionMembers.includes(member)) rows.push(`STALE row: ${member} is not a member of ActorWorldFacts`);
+  if (unionMembers.length === 0) rows.push("ActorWorldFacts was not found, so no population could be derived");
   record(
-    "INV-1 totality",
+    "FACT-1 population",
     rows.length === 0,
-    `${model.actions.length} actions x ${model.states.length} states all decided`,
+    `${unionMembers.length} ActorWorldFacts member(s), ${declared.length} declared`,
     rows,
   );
 }
 
-// ---------------------------------------------------------------- INV-3 liveness
+// ---------------------------------------------------------------- FACT-2 publishes
 {
   const rows = [];
-  for (const cause of model.causes) {
-    const remedies = model.remedies.filter((r) => r.cause === cause.id);
-    if (remedies.length === 0) {
-      rows.push(`${cause.id}: no remedy declared`);
+  const wire = kindSwitchArms("public static string KindForWire(ActorDispositionKind kind) => kind switch");
+  const reason = kindSwitchArms("public static string HoldReasonCode(ActorDispositionKind kind) => kind switch");
+  for (const fact of model.facts ?? []) {
+    const line = worldModelLines[(fact.classifyAt?.line ?? 0) - 1] ?? "";
+    const kind = kindOfReturnLine(line);
+    if (kind === null) {
+      rows.push(
+        `${fact.fact}: classifyAt ${WORLD_MODEL}:${fact.classifyAt?.line} is not a \`return new ActorDisposition\``,
+      );
       continue;
     }
-    const blocked = model.actions.filter((a) => BLOCKED.has(a.id) && !(a.admissibleIn ?? []).includes(cause.state));
-    for (const r of remedies) {
-      if (r.kind === "action" && !model.actions.some((a) => a.id === r.action))
-        rows.push(`${cause.id}: remedy action "${r.action}" is not in the algebra`);
-      if (r.kind === "action") {
-        const remedyAdmissible = model.actions.find((a) => a.id === r.action)?.admissibleIn ?? [];
-        if (!remedyAdmissible.includes(cause.state))
-          rows.push(`${cause.id}: remedy "${r.action}" is NOT admissible in the state it must fix (${cause.state})`);
-      }
-      for (const a of blocked)
-        if (!(a.admissibleIn ?? []).includes(r.establishes))
-          rows.push(
-            `${cause.id}: after "${r.action ?? r.kind}" the state is ${r.establishes}, where ${a.id} is still inadmissible`,
-          );
+    if (kind !== fact.publishes.kind)
+      rows.push(
+        `${fact.fact}: Classify returns ${kind} at ${WORLD_MODEL}:${fact.classifyAt.line}, the contract says ${fact.publishes.kind}`,
+      );
+    if (wire.arms.get(kind) !== fact.publishes.wire)
+      rows.push(
+        `${fact.fact}: KindForWire(${kind}) = ${wire.arms.get(kind)}, the contract says ${fact.publishes.wire}`,
+      );
+    const code = reason.arms.get(kind) ?? reason.fallback;
+    if (code !== fact.publishes.reasonCode)
+      rows.push(`${fact.fact}: HoldReasonCode(${kind}) = ${code}, the contract says ${fact.publishes.reasonCode}`);
+    if ((fact.classifyAt?.condition ?? "").length > 0) {
+      const conditionSeen = worldModelLines
+        .slice(Math.max(0, fact.classifyAt.line - 20), fact.classifyAt.line)
+        .some((text) => text.includes(fact.classifyAt.condition.slice(0, 60)));
+      if (!conditionSeen)
+        rows.push(
+          `${fact.fact}: the branch condition "${fact.classifyAt.condition}" no longer precedes ${WORLD_MODEL}:${fact.classifyAt.line}`,
+        );
     }
   }
   record(
-    "INV-3 liveness",
+    "FACT-2 publishes",
     rows.length === 0,
-    `${model.causes.length} causes, each with a remedy that restores the blocked actions`,
+    `${(model.facts ?? []).length} kind(s) re-read from Classify/KindForWire/HoldReasonCode`,
     rows,
   );
 }
 
-// ---------------------------------------------------------------- INV-4 acyclicity
+// ---------------------------------------------------------------- FACT-3 named
 {
   const rows = [];
-  const edges = new Map();
-  for (const r of model.remedies) {
-    const cause = model.causes.find((c) => c.id === r.cause);
-    if (!cause) continue;
-    if (!edges.has(cause.state)) edges.set(cause.state, new Set());
-    edges.get(cause.state).add(r.establishes);
-  }
-  if (edges.has("idle")) rows.push("idle has an outgoing remedy edge: idle is not a sink");
-  const seen = new Set();
-  const stack = new Set();
-  const visit = (n) => {
-    if (stack.has(n)) {
-      rows.push(`cycle in the remedy graph through ${n}`);
-      return;
+  const kinds = [...new Set(worldModelLines.map(kindOfReturnLine).filter((kind) => kind !== null))];
+  const published = new Set((model.facts ?? []).map((fact) => fact.publishes.kind));
+  for (const kind of kinds)
+    if (kind !== "Idle" && !published.has(kind)) rows.push(`${kind} is returned by Classify and published by no fact`);
+  const idle = (model.holdReasons ?? []).find((entry) => entry.kind === "Idle");
+  if (idle === undefined) rows.push("no Idle row: the word for a body that is NOT held is missing");
+  else if (idle.reasonCode !== "player_not_actionable")
+    rows.push(`Idle carries ${idle.reasonCode}; a body that is not held must not carry a hold code`);
+  const kindsWithFacts = (model.holdReasons ?? []).filter(
+    (entry) => entry.kind !== "Idle" && entry.publishedBy.length === 0,
+  );
+  for (const entry of kindsWithFacts) rows.push(`${entry.kind} is published by no fact, so nothing can name it`);
+  record("FACT-3 named", rows.length === 0, `${kinds.length} kind(s) the classifier returns, each named or Idle`, rows);
+}
+
+// ---------------------------------------------------------------- IFACE-1 reads resolve
+{
+  const rows = [];
+  for (const read of model.environmentReads ?? []) {
+    const found = resolveRead(read.member);
+    if (found === null) {
+      rows.push(`UNRESOLVED read: ${read.member} - no declaration-shaped member found in the game source`);
+      continue;
     }
-    if (seen.has(n)) return;
-    stack.add(n);
-    for (const m of edges.get(n) ?? []) visit(m);
-    stack.delete(n);
-    seen.add(n);
-  };
-  for (const n of edges.keys()) visit(n);
+    if (read.declaredAt !== undefined && (read.declaredAt.line !== found.line || read.declaredAt.file !== found.file))
+      rows.push(
+        `${read.member}: declaration moved to ${found.file}:${found.line}, the contract cites ${read.declaredAt.file}:${read.declaredAt.line}`,
+      );
+  }
   record(
-    "INV-4 acyclicity",
+    "IFACE-1 reads resolve",
     rows.length === 0,
-    `${edges.size} non-idle states, remedy graph is a DAG settling at idle`,
+    `${(model.environmentReads ?? []).length} declared read(s) resolved against the decompiled tree`,
     rows,
   );
 }
 
-// ---------------------------------------------------------------- decision sites (shared by INV-2 and INV-5)
+// ---------------------------------------------------------------- FACT-4 release
+{
+  const rows = [];
+  let anchors = 0;
+  for (const fact of model.facts ?? []) {
+    const release = fact.release ?? {};
+    if (!Array.isArray(release.clears) || release.clears.length === 0) {
+      rows.push(`${fact.fact}: no release path - a hold nobody releases is not admissible`);
+      continue;
+    }
+    for (const clear of release.clears) {
+      anchors += 1;
+      const text = lineOf(clear.anchor);
+      if (text === null) {
+        rows.push(`${fact.fact}: release anchor ${clear.anchor} does not resolve`);
+        continue;
+      }
+      const statement = text.replace(/\s+/g, " ").trim();
+      if (statement !== clear.statement)
+        rows.push(`${fact.fact}: ${clear.anchor} now reads "${statement}", the contract pinned "${clear.statement}"`);
+      // The write must CLEAR the fact, not establish it: a release that raises the same fact would be the hold
+      // entering, not leaving. The engine spells one member twice (`Farmer.Stamina` the property over `stamina` the
+      // field), so every spelling this row resolves to is accepted - case-insensitively, because `CanMove` the
+      // property and `canMove` the field are the same fact and writers use both.
+      const read = fact.reads?.find((entry) => clear.reads.includes(entry.member));
+      const names = [
+        ...new Set([
+          clear.reads?.[0]?.split(".").slice(-1)[0],
+          read?.resolvesTo?.split(".").slice(-1)[0],
+          `_${clear.reads?.[0]?.split(".").slice(-1)[0]}`,
+        ]),
+      ]
+        .filter((name) => name !== undefined && name !== "_undefined")
+        .join("|");
+      const rhs = new RegExp(`(?:${names})\\s*(?:\\.Value\\s*)?=(?!=)\\s*([^;]*);`, "i").exec(statement)?.[1];
+      if (rhs === undefined) rows.push(`${fact.fact}: ${clear.anchor} no longer assigns ${clear.reads?.join("/")}`);
+      else {
+        // Only a LITERAL can be judged here. `writeEstablishes` counts an unevaluable right-hand side as
+        // establishing, which is the generous direction that belongs on the accompaniment side; reading it as
+        // "this release does nothing" would fail `stamina = maxStamina.Value`, which restores the actor.
+        const literal = /^-?\d+(?:\.\d+)?[fFdD]?$/.test(rhs.trim());
+        const holdsWhen = read?.holdsWhen;
+        if (literal && holdsWhen !== undefined && writeEstablishes(holdsWhen, rhs))
+          rows.push(
+            `${fact.fact}: ${clear.anchor} writes "${rhs.trim()}", which ESTABLISHES the fact rather than releasing it`,
+          );
+      }
+    }
+    const body = release.bodyRelease ?? {};
+    if (body.anchor !== undefined) {
+      anchors += 1;
+      const text = lineOf(body.anchor);
+      if (text === null) rows.push(`${fact.fact}: body release ${body.anchor} does not resolve`);
+      else if (text.replace(/\s+/g, " ").trim() !== body.statement)
+        rows.push(
+          `${fact.fact}: body release ${body.anchor} now reads "${text.trim()}", the contract pinned "${body.statement}"`,
+        );
+    } else if ((body.mechanism ?? "").trim() === "") {
+      rows.push(`${fact.fact}: the release names no body anchor and no mechanism - that is a silent unknown`);
+    }
+  }
+  record("FACT-4 release", rows.length === 0, `${anchors} release anchor(s) still write what their row says`, rows);
+}
+
+function lineOf(anchor) {
+  const [, path, number] = /^(.*):(\d+)$/.exec(anchor ?? "") ?? [];
+  if (path === undefined) return null;
+  try {
+    return readFileSync(join(ROOT, path), "utf8").split("\n")[Number(number) - 1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------- IFACE-2 hold sufficiency (shared with the search)
+{
+  const companions = (model.environmentReads ?? []).filter((read) => !/canmove$/i.test(read.member));
+  const found = searchCounterExamples({
+    root: ROOT,
+    companions,
+    residual: model.orphanHoldResidual ?? [],
+    unattributed: model.unattributedHoldSites ?? [],
+  });
+  const rows = [
+    `scanned ${found.fileCount} files: ${found.siteCount} writes of the move flag, ${found.accompanied} accompanied, ${found.orphans.length} orphans, ${found.unparsed.length} unparsed`,
+    ...found.undeclaredOrphans.map((o) => `UNADJUDICATED orphan: ${o.site} ${o.method}()`),
+    ...found.staleRows.map((r) => `stale residual row: ${r.site} is no longer an orphan`),
+    ...found.undeclaredUnattributed.map((u) => `UNNAMED site: ${u.site} is not adjudicated`),
+    ...found.staleUnattributed.map((r) => `stale unattributed row: ${r.site}`),
+  ];
+  record(
+    "IFACE-2 hold sufficiency",
+    found.undeclaredOrphans.length === 0 &&
+      found.staleRows.length === 0 &&
+      found.undeclaredUnattributed.length === 0 &&
+      found.staleUnattributed.length === 0 &&
+      found.siteCount > 0,
+    "every site that holds the actor is accompanied by a holding write of a declared read, or adjudicated",
+    rows,
+  );
+}
+
+// ---------------------------------------------------------------- decision sites
 const DECISION_PATTERNS = [
   {
     id: "body-env triple (fork)",
@@ -244,134 +359,141 @@ const ourSources = [
 ];
 
 const decisionSites = [];
+const scannedLines = [];
 for (const f of ourSources) {
-  const rel = relative(ROOT, f).replace(/\\/g, "/");
-  const lines = readFileSync(f, "utf8").split("\n");
-  lines.forEach((line, i) => {
-    for (const p of DECISION_PATTERNS)
-      if (p.re.test(line)) decisionSites.push({ file: rel, line: i + 1, kind: p.id, text: line.trim().slice(0, 110) });
-  });
+  const rel = repoPath(f);
+  readFileSync(f, "utf8")
+    .split("\n")
+    .forEach((line, i) => {
+      scannedLines.push({ file: rel, line: i + 1, text: line.trim() });
+      for (const p of DECISION_PATTERNS)
+        if (p.re.test(line))
+          decisionSites.push({ file: rel, line: i + 1, kind: p.id, text: line.trim().slice(0, 120) });
+    });
 }
 
-// The adjudication table is keyed by FILE, matching the enumerator's granularity.
-function declaredVerdict(file) {
-  return model.adjudication.decisionSites.find((d) => d.file === file) ?? null;
-}
-// ---------------------------------------------------------------- INV-2 determinism
+// ---------------------------------------------------------------- DECISION-1 sites
 {
   const rows = [];
+  const declared = new Map((model.adjudication?.decisionSites ?? []).map((entry) => [entry.file, entry]));
   const byFile = new Map();
-  for (const s of decisionSites) byFile.set(s.file, (byFile.get(s.file) ?? 0) + 1);
-
+  for (const site of decisionSites) byFile.set(site.file, (byFile.get(site.file) ?? 0) + 1);
   for (const [file, count] of [...byFile].sort()) {
-    const d = declaredVerdict(file);
-    if (!d) rows.push(`UNDECLARED decision site: ${file} (${count} occurrences)`);
-    else if (d.verdict === "fork_to_remove")
-      rows.push(`unconverged fork: ${file} (${count}) - declared as fork_to_remove`);
-  }
-  // The declaration must also be true: every adjudicated file must still DECIDE something, or the row is
-  // stale and is hiding a site that moved (or a mechanism that stopped deciding).
-  for (const d of model.adjudication.decisionSites) {
-    if (!byFile.has(d.file)) rows.push(`stale adjudication row: ${d.file} decides nothing any more`);
-  }
-  record(
-    "INV-2 determinism",
-    rows.length === 0,
-    `${decisionSites.length} decision sites in ${byFile.size} files; algebra must be decided in one place`,
-    rows,
-  );
-}
-
-// ---------------------------------------------------------------- INV-5 no hidden input
-{
-  const rows = [];
-  for (const d of model.derivedInputs) {
-    const hits = decisionSites.filter((s) => new RegExp(d.form.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).test(s.text));
-    const seenHidden = new Set();
-    for (const h of hits) {
-      const key = `${h.file}:${h.line}`;
-      if (seenHidden.has(key)) continue;
-      seenHidden.add(key);
-      rows.push(`${h.file}:${h.line} decides on ${d.form} (${d.id}) - ${d.why_forbidden.slice(0, 80)}`);
+    const entry = declared.get(file);
+    if (entry === undefined) {
+      rows.push(`UNDECLARED decision site: ${file} (${count} occurrences)`);
+      continue;
     }
+    if (!["not_a_decision", "second_spelling_owed"].includes(entry.verdict))
+      rows.push(`${file}: verdict "${entry.verdict}" is not in the closed set`);
+    // `not_a_decision` is a claim about the matches themselves: they are prose. A code line carrying the same text
+    // would make the claim false while the row stayed in place, so it is checked rather than believed.
+    const matches = decisionSites.filter((site) => site.file === file);
+    if (
+      entry.verdict === "not_a_decision" &&
+      matches.some(
+        (site) =>
+          !/^\s*(\/\/|\/\*|\*)/.test(scannedLines.find((l) => l.file === file && l.line === site.line)?.text ?? ""),
+      )
+    )
+      rows.push(`${file}: declared "not_a_decision" but a match is a code line, not prose`);
+    if (
+      entry.verdict === "second_spelling_owed" &&
+      matches.every((site) =>
+        /^\s*(\/\/|\/\*|\*)/.test(scannedLines.find((l) => l.file === file && l.line === site.line)?.text ?? ""),
+      )
+    )
+      rows.push(`${file}: declared "second_spelling_owed" but every match is prose`);
   }
+  for (const entry of declared.values())
+    if (!byFile.has(entry.file)) rows.push(`stale adjudication row: ${entry.file} decides nothing any more`);
   record(
-    "INV-5 no hidden input",
+    "DECISION-1 sites",
     rows.length === 0,
-    `${model.derivedInputs.length} derived input(s) forbidden as decision inputs`,
+    `${decisionSites.length} decision site(s) in ${byFile.size} file(s), ${declared.size} adjudicated`,
     rows,
   );
 }
 
-// ---------------------------------------------------------------- IFACE-1 reads resolve
+// ---------------------------------------------------------------- DECISION-2 derived inputs
 {
   const rows = [];
-  for (const r of model.environmentReads) {
-    const found = resolveRead(r.member);
-    if (!found) rows.push(`UNRESOLVED read: ${r.member} - no declaration-shaped member found in the game source`);
-    else r.resolved = found;
+  for (const derived of model.adjudication?.derivedInputs ?? []) {
+    for (const site of scannedLines)
+      if (site.text.includes(derived.form))
+        rows.push(`${site.file}:${site.line} decides on ${derived.form} (${derived.id})`);
   }
   record(
-    "IFACE-1 reads resolve",
+    "DECISION-2 derived inputs",
     rows.length === 0,
-    `${model.environmentReads.length} declared reads resolved against the decompiled tree`,
+    `${(model.adjudication?.derivedInputs ?? []).length} forbidden derived input(s) across ${scannedLines.length} scanned line(s)`,
     rows,
   );
 }
 
-// ---------------------------------------------------------------- IFACE-2 hold sufficiency
-// Replaced a filename whitelist, which proved nothing: it only suppressed the warning. The decidable
-// assertion is that every site setting the actor's move flag false is accompanied by a companion read,
-// i.e. that the declared reads are a SUFFICIENT STATISTIC. The tool searches for counter-examples and
-// the contract only has to adjudicate the residual - each row a reason plus an anchor, compared
-// bidirectionally, so a new orphan fails and an adjudicated-but-now-accompanied row fails too.
+// ---------------------------------------------------------------- DECISION-3 owed rows
 {
-  const companions = model.environmentReads.map((r) => r.member).filter((m) => !/canmove$/i.test(m));
-  const found = searchCounterExamples({
-    root: ROOT,
-    companionReads: companions,
-    residual: model.orphanHoldResidual ?? [],
-  });
-  const rows = [
-    `scanned ${found.fileCount} files: ${found.siteCount} writes of the move flag, ${found.accompanied} accompanied, ${found.orphans.length} orphans, ${found.unparsed.length} unparsed`,
-    ...found.undeclaredOrphans.map((o) => `UNADJUDICATED orphan: ${o.file}:${o.line} ${o.method}()`),
-    ...found.staleRows.map((r) => `stale residual row: ${r.site} is no longer an orphan`),
-  ];
+  const rows = [];
+  const owed = (model.adjudication?.decisionSites ?? []).filter((entry) => entry.verdict === "second_spelling_owed");
+  for (const entry of owed) {
+    if ((entry.owner ?? "").trim() === "") rows.push(`${entry.file}: owed row names no owner`);
+    if ((entry.closesWhen ?? "").trim() === "") rows.push(`${entry.file}: owed row names no closing condition`);
+    if ((entry.what ?? "").trim() === "") rows.push(`${entry.file}: owed row does not say what is second-spelled`);
+  }
   record(
-    "IFACE-2 hold sufficiency",
-    found.undeclaredOrphans.length === 0 && found.staleRows.length === 0,
-    "every site that holds the actor is accompanied by a declared read (sufficient statistic)",
+    "DECISION-3 owed",
+    rows.length === 0,
+    `${owed.length} second spelling(s) the tree still carries, each with an owner and a closing condition`,
     rows,
   );
 }
-// ---------------------------------------------------------------- algebra coverage (the "what action is missing" query)
-const catalog = (() => {
-  const f = join(ROOT, "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs");
-  try {
-    return [...new Set([...readFileSync(f, "utf8").matchAll(/E\("([a-z0-9_]+)"/g)].map((m) => m[1]))];
-  } catch {
-    return [];
-  }
-})();
-const inAlgebra = new Set(model.actions.map((a) => a.id));
-const notInAlgebra = catalog.filter((a) => !inAlgebra.has(a));
-const staleInAlgebra = model.actions.filter((a) => !catalog.includes(a.id)).map((a) => a.id);
 
 // ---------------------------------------------------------------- report
-let failed = 0;
 console.log(`\n=== actor-admissibility closure  (slice: ${model.slice}) ===\n`);
+let failed = 0;
 for (const r of results) {
   if (!r.ok) failed++;
   console.log(`${r.ok ? "PASS" : "FAIL"}  ${r.id.padEnd(24)} ${r.headline}`);
   for (const row of r.rows.slice(0, 12)) console.log(`        - ${row}`);
   if (r.rows.length > 12) console.log(`        ... and ${r.rows.length - 12} more`);
 }
-console.log(`\n-- algebra coverage (a QUERY, not a report to interpret) --`);
-console.log(`   registered actions:            ${catalog.length}`);
-console.log(`   with admissibility declared:   ${inAlgebra.size - staleInAlgebra.length}`);
+const owed = (model.adjudication?.decisionSites ?? []).filter((entry) => entry.verdict === "second_spelling_owed");
+if (owed.length > 0) {
+  console.log(`\n-- DECLARED, NOT CLOSED: ${owed.length} second spelling(s) of the hold vocabulary --`);
+  for (const entry of owed) console.log(`   ${entry.file}  (owner ${entry.owner})  closes when: ${entry.closesWhen}`);
+}
+// A QUERY, not a report to interpret: the catalog is not this contract's population, and neither number decides
+// anything above.
+const catalog = (() => {
+  try {
+    return new Set(
+      [
+        ...readFileSync(
+          join(ROOT, "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs"),
+          "utf8",
+        ).matchAll(/E\("([a-z0-9_]+)"/g),
+      ].map((m) => m[1]),
+    );
+  } catch {
+    return new Set();
+  }
+})();
 console.log(
-  `   NO admissibility declared:     ${notInAlgebra.length}  (first: ${notInAlgebra.slice(0, 8).join(", ") || "none"})`,
+  `\n-- query (not a verdict): ${catalog.size} registered action(s); the action algebra is NOT claimed by this gate --\n`,
 );
-if (staleInAlgebra.length) console.log(`   in the algebra but NOT in the catalog: ${staleInAlgebra.join(", ")}`);
-console.log(`\n=== ${failed === 0 ? "DESIGN CLOSED" : failed + " invariant(s) or interface check(s) FAILED"} ===\n`);
-process.exit(failed === 0 ? 0 : 1);
+
+const examined = (model.facts ?? []).length;
+console.log(`\n=== ${failed === 0 ? "DESIGN CLOSED over the fact algebra" : `${failed} check(s) FAILED`} ===\n`);
+console.log(
+  JSON.stringify({
+    gate: "stardew_actor_admissibility/v1",
+    status: failed === 0 ? "passed" : "failed",
+    examined,
+    checks: results.map((r) => ({
+      id: r.id,
+      status: r.ok ? "passed" : "failed",
+      ...(r.rows.length === 0 ? {} : { detail: r.rows.slice(0, 6).join("; ") }),
+    })),
+  }),
+);
+process.exit(examined === 0 ? 2 : failed === 0 ? 0 : 1);

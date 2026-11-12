@@ -1267,3 +1267,141 @@ members this batch found, two are green here and skip elsewhere, so a string gat
 guarded suite (the canary now) from an unguarded one (its old shape). The detection that does work is the one applied
 to each member: run it where its prerequisite is absent and read the exit code.
 
+## The thirteenth batch: the actor-admissibility contract written from the fact union, and two gates that finally run
+
+For weeks `tools/check-stardew-actor-admissibility.mjs` and `tools/check-stardew-hold-sufficiency.mjs` printed `blocked`
+with `examined: 0`, because `integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json`
+had never existed. An earlier lane refused to write it, and was right to: deriving the contract from the code the gate
+then checks makes every invariant true by construction. What changed is not the objection but the subject. The six holds
+the boundary card had to name by reading call paths now **exist in `ActorWorldFacts`** (`SelfAnimation`, `Warping`,
+`DayTransition`, `ScreenFade`, `ControlsFrozen`, `Minigame`), so the contract can be read out of the fact union and the
+Mod's own classifier, and the gates are left checking two things the contract cannot make true: the engine sites that
+hold the body, and the engine lines that release it.
+
+### The shape: population from code, judgement authored, both re-checked
+
+`tools/derive-stardew-actor-admissibility.mjs` (new, `pnpm derive:stardew-actor-admissibility`) derives, and derives
+only:
+
+| what | from |
+| --- | --- |
+| the fact population | the parameter list of `ActorWorldFacts`, in declaration order |
+| each fact's engine read | the argument `ReadFacts` passes for that parameter (positionally; both `new ActorWorldFacts(...)` calls must agree on arity or derivation fails) |
+| each fact's kind / wire / reason code / transient kind | the `Classify` branch that tests it (through `HasMountedModal` where the branch names a helper) crossed with `KindForWire` and `HoldReasonCode` |
+| each read's holding predicate (`holdsWhen`) | the comparison `Classify` applies to the fact, the comparison `ReadFacts` reads the member with, and the member's declared TYPE |
+| precedence | the order of the returns in `Classify` |
+
+Everything a reader might disagree with is authored in that file and re-checked by the gates: the release of each fact
+(clears-read anchor + body-release anchor or a stated mechanism), the 16 residual rows, the 4 unattributable sites, and
+the decision-site adjudication. A second run is byte-identical (`regenerated: byte-identical to the previous run`); the
+run that produced the committed file was printed as `CHANGED` and the one after it as identical.
+
+Resulting structure, printed by the generator: **facts 15 · release paths 16 · named unknowns 1**, over a residual of
+16 rows (15 `named_by_fact`, 1 `named_unknown`), 4 unattributed sites, 16 declared reads.
+
+### What the contract does not claim, and why that is written down instead of dropped
+
+The gate header it replaces declared INV-1 totality, INV-3 liveness and INV-4 acyclicity over an **action** algebra:
+which of the catalog's 103 actions is admissible in which disposition, and which remedy restores it. That half is not
+in this contract. `admissibleIn` for one action is decided by `ExecutionAdmission.Admit`'s own ladder over the action's
+`AdmissionProfile` and its event path (`ExecutionAdmission.cs:368-499`), and a generator that re-encoded that ladder
+would be a second authority for a fact the Mod already owns - the duplicate-authority defect this repository has paid
+for repeatedly. So the gate claims the algebra the contract does own (the fact algebra), and its header says what it no
+longer claims rather than leaving three checks silently empty.
+
+### The two rule changes the real data forced
+
+**1. Accompaniment is directional.** The search accepted ANY write to a companion member, so a write that **clears** a
+fact counted as evidence for a hold that fact exists to name - the check computing the opposite of its own docstring.
+Measured, three companion sets against the same 948 files and 58 held sites:
+
+| companion set | accompanied | orphans |
+| --- | --- | --- |
+| the 9 reads the disposition had before this lane | 41 | 17 |
+| those plus the 7 reads the six new facts added, no direction | 46 | 12 |
+| with each read's `holdsWhen` predicate evaluated | **42** | **16** |
+
+Five sites were rescued by the wider set and four of those rescues are clearing writes: `PauseForSingleAnimation = false`
+(Farmer.cs:8448, and Farmer.cs:9315 through `EndEmoteAnimation`), `globalFade = false` (ScreenFade.cs:88, and
+BusStop.cs:316 through `busLeftToDesert`). Only `Desert.cs:117` (`Game1.freezeControls = true`) is a real establishment.
+Those four rows are now adjudicated in the contract instead of passed over.
+
+**2. A release is asserted, not assumed.** Both gates counted ENTRY sites only, so a hold whose release was deleted or
+moved kept every gate green - and "the engine can no longer leave this hold" is exactly what the residual exists to
+adjudicate. Every fact (16 anchors) and every residual row (16 anchors) now pins the engine line **by content**: the
+gate re-reads it, requires the row's pinned statement to still be that line, and - for a fact release - requires the
+write to be a literal in the CLEARING direction (`_isWarping = false`, `globalFade = false`, `freezePause = 0`), so a
+release rewritten to raise its own fact is red.
+
+### The readings, from the same commands in the same checkout
+
+```
+before  node tools/check-stardew-hold-sufficiency.mjs
+        blocked: .../actor-admissibility.v1.json absent, so this was not measured
+        {"gate":"stardew_hold_sufficiency/v1","status":"blocked","examined":0,...}    exit 2
+after   scanned files: 948 · writes of Farmer.canMove=false: 58 · ACCOMPANIED 42 · ORPHANS 16 · unparsed 4
+        {"gate":"stardew_hold_sufficiency/v1","status":"passed","examined":62,...}    exit 0
+
+before  node tools/check-stardew-actor-admissibility.mjs
+        blocked: .../actor-admissibility.v1.json absent, so this was not measured
+        {"gate":"stardew_actor_admissibility/v1","status":"blocked","examined":0,...}  exit 2
+after   FACT-1 15/15 · FACT-2 15 · FACT-3 4 kinds · IFACE-1 16 reads · FACT-4 27 anchors · IFACE-2 948/58/42/16/4
+        DECISION-1 5 sites in 4 files · DECISION-2 180256 lines · DECISION-3 3 owed
+        {"gate":"stardew_actor_admissibility/v1","status":"passed","examined":15,...}   exit 0
+```
+
+### The four red proofs
+
+The contract was copied to `%TEMP%\actor-admissibility-red` (`AGENTS.md` copied; `ref/` and `host/` junctions to the
+real trees; the needed `integrations/stardew` files copied), and every case mutated **that** copy, ran the real gate with
+the fixture as cwd, and restored the copy afterwards (`node .tmp/red-proof-actor-admissibility.mjs`). The committed
+contract was never touched to watch a gate fail.
+
+| the injected lie | the gate's own line | exit |
+| --- | --- | --- |
+| a residual row points its release at an engine line that writes no release (`FarmerSprite.cs:783`, the declaration line) | `release_pins: .../Crop.cs:541: release anchor .../FarmerSprite.cs:783 now reads "private void doneWithAnimation()", the row pinned "owner.CanMove = true;"` | 1 |
+| a residual row cites a release line that is not in the engine tree (`FarmerSprite.cs:9999`) | `release_pins: .../Crop.cs:541: release anchor .../FarmerSprite.cs:9999 does not resolve` | 1 |
+| a fact of `ActorWorldFacts` has no row (`SelfAnimation` deleted) | `FAIL FACT-1 population 15 ActorWorldFacts member(s), 14 declared` + `- UNDECLARED fact: SelfAnimation` | 1 |
+| a fact's body release moved to a line that writes something else (`Game1.cs:6270`) | `FAIL FACT-4 release 27 release anchor(s) still write what their row says` + `- Warping: body release .../Game1.cs:6270 now reads "player.faceDirection(facingDirectionAfterWarp);", the contract pinned "player.forceCanMove();"` | 1 |
+
+### The census
+
+```
+gates examined 351 · with a red proof 326 · external 4 · declared without 19 · undeclared 0 · zero-population-pass 0
+judged here 118 (with a self-report 37 · declared without a report 81) · excluded 233 (233 proven, external or recorded)
+gate_falsifiers: passed
+```
+
+`326 + 4 + 19 = 349`, plus the two unreadable claims the header names (`check:code-duplication`, `test:format-ratchet`),
+is the 351 examined - unchanged, because no gate entered or left the population. What moved is the third reading: the
+`reported not measured N (...)` line is **gone**, because both stardew gates now print a report whose `examined` is 62
+and 15 instead of `0` with a stated reason. They remain *recorded* in `tools/gate-red-proof-baseline.json`, i.e. owed in
+the ledger rather than proven: adding a `red-proof:` marker to either would make that file's entry stale, and the
+baseline is another lane's file (`--update` is its own commit), so this lane left the ledger's arithmetic alone
+deliberately.
+
+### What a reader can now act on
+
+- **One named unknown.** `ParrotUpgradePerch.cs:797` is a real hold nothing in `ActorWorldFacts` can name: the release
+  lives in a per-location `NetMutex` (`RequestLock` defers both callbacks, `NetMutex.cs:44-59`, and runs them from
+  `Update`, `:83-90`). The row carries the reason and what would settle it (a 30 s live probe on the perch logging
+  `IsLocked()` per tick, or a `NetMutex`-scoped fact another lane would have to add).
+- **Three second spellings the tree still carries**, printed by every run of the admissibility gate and declared with an
+  owner and a closing condition: `farmhandexecutioncontroller.cookingactions.cs:178` and
+  `farmhandexecutioncontroller.modalactions.cs:546` answer a non-hold refusal with `player_not_actionable`, and
+  `StardewBodyController.cs:1127` answers a movement lock with it from `!localPlayer.CanMove` instead of
+  `WorldModel.DescribeNavigationHold`. Closing them is a Mod change and is not in this lane.
+- **Four sites the analysis cannot attribute at all** are named with the tool's own bound (`enclosingMethod` loses the
+  `switch` arm at `GameLocation.cs:9287/9297/9321/9345`) and re-checked bidirectionally, so the list can neither grow nor
+  quietly empty itself.
+
+### Three statements this lane could not correct
+
+- `tools/check-prelive-gate-registry.mjs:564-570` and `:621-627` still say "measured red at HEAD - ENOENT on
+  ...actor-admissibility.v1.json, an input nothing in this tree produces". Both statements are now false: the file
+  exists, `pnpm derive:stardew-actor-admissibility` produces it, and both gates exit 0. The registry is outside this
+  lane's pathspec.
+- `tools/lib/harness-conformance.mjs:500-507` carries the same sentence in the comment above the
+  `GATES_WITH_FALSIFIER` entries; the run it describes (`blocked`, `examined: 0`, `not_measured`) no longer happens.
+- `tools/gate-red-proof-baseline.json` still records both gates as owing a red proof, which is correct for the ledger
+  and will stay correct until a lane that owns that file writes the markers and runs `--update`.
