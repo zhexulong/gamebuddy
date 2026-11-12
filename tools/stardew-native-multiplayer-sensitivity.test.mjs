@@ -110,6 +110,45 @@ test("derives seam evidence by brace-balanced method extraction", () => {
   assert.deepEqual(evidence.contextTokens, ["team"]);
 });
 
+test("bounds a dispatch unit at the methods the dispatch really reaches", async () => {
+  // The reading the checker makes of a Mod handler. It ran from one handler's declaration
+  // to the NEXT handler's, so a handler's body silently carried every private helper
+  // declared after it - including another action's execution body. Measured on the real
+  // tree: `sweep_scythe`, which calls only `MeleeWeapon.DoDamage`, was credited with
+  // `Object.performToolAction` by the line `weed.performToolAction(weapon)` inside
+  // `ExecuteCutWeeds`, which belongs to `cut_weeds`. A unit that names a call the action
+  // does not make turns a missing seam into a passing one.
+  const { indexMethodBodies, collectDispatchUnit } = await import("./lib/stardew-native-multiplayer-sensitivity.mjs");
+  const handlers = [
+    "public LocalExecutionReceipt RequestLocalSweepScythe(string requestId)",
+    "{",
+    "    return this.ExecuteSweepScythe(requestId);",
+    "}",
+    "",
+    "private LocalExecutionReceipt ExecuteSweepScythe(string requestId)",
+    "{",
+    "    UseNativeMeleeSweep(weapon, location, 1, 1, Game1.player);",
+    "    return this.RememberTerminal(requestId);",
+    "}",
+    "",
+    "private LocalExecutionReceipt ExecuteCutWeeds(string requestId)",
+    "{",
+    "    bool cut = weed.performToolAction(weapon);",
+    "    return this.RememberTerminal(requestId);",
+    "}",
+  ].join("\n");
+  const bodies = indexMethodBodies(handlers, "public|private|internal|protected");
+  // Each body stops at its own closing brace: today's neighbouring method is not in it.
+  assert.equal(bodies.get("RequestLocalSweepScythe"), "{\n    return this.ExecuteSweepScythe(requestId);\n}");
+  const unit = collectDispatchUnit(bodies.get("RequestLocalSweepScythe"), bodies);
+  assert.ok(unit.includes("UseNativeMeleeSweep("), "the helper the dispatch calls must stay in the unit");
+  assert.ok(unit.includes("ExecuteSweepScythe("), "the helper the dispatch calls must stay in the unit");
+  assert.ok(
+    !unit.includes("weed.performToolAction(weapon)"),
+    "a neighbouring action's body must not be credited to this dispatch",
+  );
+});
+
 test("accepts a mod-owned seam and refuses to give it a native sensitivity", () => {
   const ok = validateMultiplayerSensitivityRegister(
     register([

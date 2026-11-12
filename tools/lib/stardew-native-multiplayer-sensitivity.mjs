@@ -249,9 +249,21 @@ const SKIPPED_SEAM_CALLS = new Set([
  * seam-terminal audit calls terminal_in_delegate).
  */
 function indexHelperBodies(sourceText) {
+  return indexMethodBodies(sourceText);
+}
+
+/**
+ * Every method body in one source text, keyed by member name, bounded at its OWN closing
+ * brace. `accessibility` is the modifier set the caller wants to index: a seam's helper hop
+ * reads only the non-public members (a public one is a second seam, not a hop), while a
+ * dispatch unit needs every member it can reach.
+ */
+export function indexMethodBodies(sourceText, accessibility = "private|protected|internal") {
   const bodies = new Map();
-  const re =
-    /(?:private|protected|internal)(?:\s+(?:static|virtual|override))*\s+[\w<>,\[\].\?]+\s+(\w+)\s*\([^)]*\)\s*(?:=>\s*[^;]+;|\{)/g;
+  const re = new RegExp(
+    `(?:${accessibility})(?:\\s+(?:static|virtual|override|async|sealed|partial))*\\s+[\\w<>,\\[\\].\\?]+\\s+(\\w+)\\s*\\([^)]*\\)\\s*(?:=>\\s*[^;]+;|\\{)`,
+    "g",
+  );
   let m;
   while ((m = re.exec(sourceText))) {
     const open = sourceText.indexOf("{", m.index + m[0].length - 1);
@@ -272,6 +284,37 @@ function indexHelperBodies(sourceText) {
     }
   }
   return bodies;
+}
+
+/**
+ * The dispatch unit of one handler: its own body plus every same-file method body it
+ * reaches through calls, transitively.
+ *
+ * Why bounded at all: the previous slice ran from one handler to the NEXT handler, so a
+ * handler's body silently carried every private helper declared after it - including
+ * another action's execution body. `sweep_scythe` was credited with
+ * `Object.performToolAction` by the line `weed.performToolAction(weapon)` inside
+ * `ExecuteCutWeeds`, a method sweep never calls. A unit that names a call the action does
+ * not make is worse than no unit: it turns a missing seam into a passing one.
+ *
+ * Cross-file helpers stay declared in the checker's `MOD_WRAPPER_TO_SEAM`, because no
+ * same-file index can see them.
+ */
+export function collectDispatchUnit(dispatchBody, methodBodies) {
+  const parts = [dispatchBody];
+  const seen = new Set();
+  const queue = [dispatchBody];
+  while (queue.length > 0) {
+    const body = queue.shift();
+    for (const match of body.matchAll(/\b([A-Za-z_]\w*)\s*\(/g)) {
+      const name = match[1];
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const callee = methodBodies.get(name);
+      if (callee !== undefined) queue.push(callee), parts.push(callee);
+    }
+  }
+  return parts.join("\n");
 }
 
 /**

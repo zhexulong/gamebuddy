@@ -19,8 +19,12 @@
  */
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { validateMultiplayerSensitivityRegister } from "./lib/stardew-native-multiplayer-sensitivity.mjs";
 import { assertStardewDecompileRoot } from "./lib/stardew-decompile-root.mjs";
+import {
+  collectDispatchUnit,
+  indexMethodBodies,
+  validateMultiplayerSensitivityRegister,
+} from "./lib/stardew-native-multiplayer-sensitivity.mjs";
 
 /** Admission tokens that constitute an outright multiplayer rejection. */
 const MP_REJECT_PATTERN =
@@ -149,6 +153,16 @@ const MOD_WRAPPER_TO_SEAM = Object.freeze([
   // `DoFunction` as the native seam (gameplay-capability-expansion §6.3), so the
   // wrapper reaches it on every tool-family handler's behalf.
   ["UseNativeToolOnTile", "DoFunction"],
+  // The melee sweep: `RequestLocalSweepScythe` hands the arc to `UseNativeMeleeSweep`,
+  // which is the caller of `MeleeWeapon.DoDamage` (farmhandexecutioncontroller.cs:4729-4732,
+  // once per sampled sweep index). That entry lives in a different file from the handler,
+  // so no same-file dispatch unit can see it.
+  ["UseNativeMeleeSweep", "DoDamage"],
+  // Any location question is answered through `TryAnswerLocationQuestion`
+  // (modalactions.cs:627, `Game1.currentLocation?.answerDialogue(answer)`), which is what
+  // `use_mine_ladder` uses to settle the game's own ExitMine question - the answer, not the
+  // checkAction, is what performs the warp.
+  ["TryAnswerLocationQuestion", "answerDialogue"],
 ]);
 
 /**
@@ -183,7 +197,21 @@ function deriveReadOnlyActions(definitionsText) {
   return readOnly;
 }
 
-async function deriveNativeSeamCalls(repoRoot, declaredSeamMembers = new Set()) {
+/**
+ * Every Mod action's dispatch entry point, as the two readings the axes need:
+ *
+ *   `body`  the handler's OWN method body, bounded at its closing brace. Admission is
+ *           derived from this and nothing else - a guard belongs to the handler.
+ *   `unit`  the handler plus every same-file method it reaches through calls,
+ *           transitively. Reachability is derived from this, so a helper the action
+ *           really delegates to counts and a neighbour's body does not.
+ *
+ * The previous reading ran from one handler's declaration to the NEXT handler's, which
+ * silently included every private helper in between: `sweep_scythe` was credited with
+ * `Object.performToolAction` by `weed.performToolAction(weapon)` inside
+ * `ExecuteCutWeeds`, a method sweep never calls.
+ */
+async function readDispatchUnits(repoRoot) {
   const handlerDir = path.join(repoRoot, "integrations/stardew/Handlers");
   const controllerDir = path.join(repoRoot, "integrations/stardew");
 
@@ -195,29 +223,29 @@ async function deriveNativeSeamCalls(repoRoot, declaredSeamMembers = new Set()) 
       actionToMethod.set(match[1], match[2]);
   }
 
-  const methodBody = new Map();
+  const methodBodies = new Map();
   for (const file of await readdir(controllerDir)) {
     if (!/^farmhandexecutioncontroller\..*\.cs$/.test(file)) continue;
-    const text = await readFile(path.join(controllerDir, file), "utf8");
-    const starts = [...text.matchAll(/public LocalExecutionReceipt (RequestLocal\w+)\(/g)];
-    for (let index = 0; index < starts.length; index += 1) {
-      const start = starts[index].index;
-      const end = index + 1 < starts.length ? starts[index + 1].index : text.length;
-      methodBody.set(starts[index][1], text.slice(start, end));
-    }
+    const bodies = indexMethodBodies(
+      await readFile(path.join(controllerDir, file), "utf8"),
+      "public|private|internal|protected",
+    );
+    for (const [name, body] of bodies) methodBodies.set(name, body);
   }
 
-  // Read-only descriptors: the action has no mutation, so no seam invocation is expected.
-  const definitions = await readFile(
-    path.join(repoRoot, "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs"),
-    "utf8",
-  );
-  const readOnlyActions = deriveReadOnlyActions(definitions);
-
-  const derived = new Map();
+  const units = new Map();
   for (const [actionId, method] of actionToMethod) {
-    const body = methodBody.get(method);
+    const body = methodBodies.get(method);
     if (!body) continue;
+    units.set(actionId, { method, body, unit: collectDispatchUnit(body, methodBodies) });
+  }
+  return units;
+}
+
+function deriveNativeSeamCalls(units, declaredSeamMembers, readOnlyActions) {
+  const derived = new Map();
+  for (const [actionId, { method, unit }] of units) {
+    const body = unit;
     const calledSet = new Set([...body.matchAll(NATIVE_CALL_PATTERN)].map((match) => match[1]));
     // The register is the authority for the seam an action claims, so an
     // invocation of a declared member counts even when the hard-coded
@@ -306,35 +334,16 @@ async function collectSources(root) {
   return sources;
 }
 
-/** Derive, from the Mod source, whether each action's admission rejects multiplayer. */
-async function deriveModAdmission(repoRoot) {
-  const handlerDir = path.join(repoRoot, "integrations/stardew/Handlers");
-  const controllerDir = path.join(repoRoot, "integrations/stardew");
-
-  const actionToMethod = new Map();
-  for (const file of await readdir(handlerDir)) {
-    if (!file.endsWith(".cs")) continue;
-    const text = await readFile(path.join(handlerDir, file), "utf8");
-    for (const match of text.matchAll(/"([a-z_]+)"\s*=>\s*this\.executions\.(RequestLocal\w+)\(/g))
-      actionToMethod.set(match[1], match[2]);
-  }
-
-  const methodBody = new Map();
-  for (const file of await readdir(controllerDir)) {
-    if (!/^farmhandexecutioncontroller\..*\.cs$/.test(file)) continue;
-    const text = await readFile(path.join(controllerDir, file), "utf8");
-    const starts = [...text.matchAll(/public LocalExecutionReceipt (RequestLocal\w+)\(/g)];
-    for (let index = 0; index < starts.length; index += 1) {
-      const start = starts[index].index;
-      const end = index + 1 < starts.length ? starts[index + 1].index : text.length;
-      methodBody.set(starts[index][1], text.slice(start, end));
-    }
-  }
-
+/**
+ * Derive, from the Mod source, whether each action's admission rejects multiplayer.
+ *
+ * The reading is the HANDLER's own body, not its helpers: an admission guard is something
+ * the entry point performs before its first mutation, and a guard inside a helper the
+ * handler calls later is not the admission of the action.
+ */
+function deriveModAdmission(units) {
   const derived = new Map();
-  for (const [actionId, method] of actionToMethod) {
-    const body = methodBody.get(method);
-    if (!body) continue;
+  for (const [actionId, { method, body }] of units) {
     // The admission block is the guard sequence before the first mutation.
     const admission = body.split("\n").slice(0, 45).join("\n");
     const rejects = MP_REJECT_PATTERN.test(admission);
@@ -375,14 +384,20 @@ const args = parseArgs(process.argv.slice(2));
 const repoRoot = process.cwd();
 
 try {
-  const [registerText, sources, modAdmission, pipelines] = await Promise.all([
+  const [registerText, sources, pipelines, definitions] = await Promise.all([
     readFile(args.register, "utf8"),
     collectSources(assertStardewDecompileRoot(path.resolve(args["source-root"]))),
-    deriveModAdmission(repoRoot),
     derivePipelineRoutedActions(repoRoot),
+    readFile(path.join(repoRoot, "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs"), "utf8"),
   ]);
   const register = JSON.parse(registerText);
-  const nativeSeamCalls = await deriveNativeSeamCalls(repoRoot, declaredSeamMembersOf(register));
+  const units = await readDispatchUnits(repoRoot);
+  const modAdmission = deriveModAdmission(units);
+  const nativeSeamCalls = deriveNativeSeamCalls(
+    units,
+    declaredSeamMembersOf(register),
+    deriveReadOnlyActions(definitions),
+  );
   const report = validateMultiplayerSensitivityRegister(register, sources);
 
   // Read-pipeline actions have no execution admission; the navigation action has
