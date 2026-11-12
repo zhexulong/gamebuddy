@@ -117,6 +117,88 @@ public sealed class TillSoilRefusalNamingTests
         receipt.Evidence.Should().NotContain("distance=", "the tile is dead nine tiles away and dead beside her");
     }
 
+    // ---- what WOULD be diggable: the half that decides whether to re-aim or re-read ----
+
+    [Fact]
+    public void ADeadTileNamesTheNearestGroundTheHoeWouldAdmit()
+    {
+        // The action is "this tile is dead"; the answer a caller can use is "that one is alive". Without it the only
+        // reading of `soil_not_diggable:not_map_diggable` is "wrong tile for now", which is what sent the companion
+        // re-aiming at ground that can never be farmed (see the class comment).
+        using TillSoilHarness harness = TillSoilHarness.Create();
+        harness.PlaceActorAt(12, 10);
+        harness.SetNotDiggable(13, 10);
+        harness.SetDiggable(12, 12);
+
+        LocalExecutionReceipt receipt = harness.RequestTill(13, 10);
+
+        receipt.ReasonCode.Should().Be("soil_not_diggable:not_map_diggable");
+        receipt.Evidence.Should().Contain("diggable_nearest=12,12", "the tile the hoe WOULD take, from the same predicate");
+        receipt.Evidence.Should().Contain("diggable_tiles=1", "and how many the searched box holds");
+        receipt.Evidence.Should().Contain("search_radius=3", "a count without its box is not a measurement");
+    }
+
+    [Fact]
+    public void ADeadStripSaysTheWholeStripIsWrongRatherThanNamingOneTile()
+    {
+        // The measured cost, 2026-11-10 (run A6): told one tile was farmed-but-empty, the companion hand-wrote 33
+        // coordinates OUTSIDE the strip and was refused 27 times. `diggable_tiles=0` is the fact that ends that search -
+        // it says the ground around here is dead, so the next attempt is a different row, not a neighbouring tile.
+        using TillSoilHarness harness = TillSoilHarness.Create();
+        harness.PlaceActorAt(5, 10);
+
+        foreach (int x in new[] { 6, 7, 8 })
+        {
+            LocalExecutionReceipt receipt = harness.RequestTill(x, 10);
+
+            receipt.ReasonCode.Should().Be("soil_not_diggable:not_map_diggable");
+            receipt.Evidence.Should().Contain(
+                "diggable_tiles=0",
+                $"tile {x},10 is one of a dead row, and the refusal must say the row is dead rather than only the tile");
+            receipt.Evidence.Should().NotContain("diggable_nearest=", "a zero count has no nearest tile to name");
+        }
+    }
+
+    [Fact]
+    public void EverySoilRefusalCarriesTheGuidanceNotOnlyTheTileItWasAskedAbout()
+    {
+        // Every member of the closed set, at both refusal sites: water and an occupant are refused in range, the dead
+        // tile out of range. The guidance is not a property of one branch.
+        using TillSoilHarness harness = TillSoilHarness.Create();
+        harness.PlaceActorAt(13, 9);
+        harness.SetDiggable(13, 10);
+        harness.SetWater(13, 10);
+        harness.SetDiggable(14, 10);
+        harness.PlaceObject(14, 10, new StardewValley.Objects.Chest());
+        harness.SetNotDiggable(15, 10);
+
+        foreach (int x in new[] { 13, 14, 15 })
+        {
+            LocalExecutionReceipt receipt = harness.RequestTill(x, 10);
+
+            string site = x == 15 ? "the out-of-range site" : "the in-range site";
+            receipt.State.Should().Be(ExecutionState.Rejected);
+            receipt.Evidence.Should().Contain($"target={x},10", "the tile it was asked about, first");
+            receipt.Evidence.Should().Contain("diggable_tiles=", $"at {site} the refusal says where farmable ground is");
+            receipt.Evidence.Should().Contain("search_radius=", $"and the box that count is over, at {site}");
+        }
+    }
+
+    [Fact]
+    public void TheGuidanceIsProducedInOnePlaceAndBothSitesAskIt()
+    {
+        // The drift the closed set already dodges: a third refusal path that names the tile and stops. One producer, two
+        // readers, the same shape `BothSitesAskTheOnePredicateAndNothingElseDecidesTheWording` pins for the predicate.
+        string source = Read(ResourceToolActions);
+
+        MethodBody(source, "public LocalExecutionReceipt RequestLocalTillSoil(")
+            .Should().Contain("DescribeSoilGuidance(", "the request path publishes the guidance");
+        MethodBody(source, "private LocalExecutionReceipt ExecuteTillSoil(")
+            .Should().Contain("DescribeSoilGuidance(", "and so does the execution body");
+        Count(ReadMod(), ";diggable_tiles=")
+            .Should().Be(1, "the guidance has exactly one producer, so its fields cannot be spelled twice");
+    }
+
     [Fact]
     public void ADiggableTileWithNothingOnIt_IsNotRefusedForItsSoil()
     {

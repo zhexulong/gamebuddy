@@ -4157,6 +4157,66 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal static string DescribeSoilRefusalCode(string refusal) => $"soil_not_diggable:{refusal}";
 
     /// <summary>
+    /// How far from a refused tile the guidance searches for ground the Hoe WOULD admit, in tiles.
+    ///
+    /// <para>
+    /// Three, not the observation's own six (<see cref="TargetDiscoveryRadius"/>): this answers "you named the wrong
+    /// tile, here is one that works", and a radius that reached the whole discovery window would call ground across the
+    /// farm "nearby". Seven by seven is also the smallest box in which a guess that is off by a row or a column is still
+    /// answered with a tile.
+    /// </para>
+    /// </summary>
+    internal const int SoilGuidanceRadius = 3;
+
+    /// <summary>
+    /// What WOULD be diggable around a refused tile, as `;`-prefixed receipt evidence fields - or the empty string when
+    /// there is no world to ask.
+    ///
+    /// <para>
+    /// The refusal alone named the tile the caller guessed and nothing else. Measured 2026-11-10 (run A6): told "already
+    /// tilled but empty", the companion hand-wrote 33 coordinates OUTSIDE the strip and was refused 27 times with
+    /// `soil_not_diggable:not_map_diggable` - the code said that one tile was dead, never that the row she was aiming
+    /// along was dead too. `diggable_tiles=0` is the fact that ends that search: it says the ground here is dead, so the
+    /// next attempt is a different row rather than a neighbouring tile.
+    /// </para>
+    /// <para>
+    /// The question asked of every tile in the box is <see cref="DescribeSoilRefusal"/> itself - the one predicate that
+    /// refuses - so a tile this reports as farmable is a tile the Hoe would admit, and a second list of "diggable"
+    /// conditions cannot drift from the check that produced the refusal.
+    /// </para>
+    /// <para>
+    /// Empty for a location-less refusal: there is nothing to search, and answering `diggable_tiles=0` there would claim
+    /// a measurement nobody made.
+    /// </para>
+    /// </summary>
+    internal static string DescribeSoilGuidance(StardewValley.GameLocation? location, int x, int y)
+    {
+        if (location?.map is null || location.map.Layers.Count == 0) return string.Empty;
+        int width = location.map.Layers[0].LayerWidth;
+        int height = location.map.Layers[0].LayerHeight;
+        List<(int Distance, int X, int Y)> farmable = new();
+        for (int scanX = Math.Max(0, x - SoilGuidanceRadius); scanX <= Math.Min(width - 1, x + SoilGuidanceRadius); scanX++)
+            for (int scanY = Math.Max(0, y - SoilGuidanceRadius); scanY <= Math.Min(height - 1, y + SoilGuidanceRadius); scanY++)
+                if (DescribeSoilRefusal(location, scanX, scanY) is null)
+                    farmable.Add((Math.Max(Math.Abs(scanX - x), Math.Abs(scanY - y)), scanX, scanY));
+        var evidence = new System.Text.StringBuilder();
+        evidence.Append(CultureInfo.InvariantCulture, $";diggable_tiles={farmable.Count}");
+        // Nearest first, then Y, then X - the tie order `DiscoverSoilTiles` publishes with, so two readings of an
+        // unchanged world name the same tile.
+        if (farmable.Count > 0)
+        {
+            (int Distance, int X, int Y) nearest = farmable
+                .OrderBy(candidate => candidate.Distance)
+                .ThenBy(candidate => candidate.Y)
+                .ThenBy(candidate => candidate.X)
+                .First();
+            evidence.Append(CultureInfo.InvariantCulture, $";diggable_nearest={nearest.X},{nearest.Y}");
+        }
+        evidence.Append(CultureInfo.InvariantCulture, $";search_radius={SoilGuidanceRadius}");
+        return evidence.ToString();
+    }
+
+    /// <summary>
     /// The engine's own name for whatever stands on this tile, or <c>none</c> when nothing does.
     ///
     /// <para>

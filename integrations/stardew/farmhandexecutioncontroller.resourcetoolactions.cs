@@ -501,7 +501,7 @@ internal sealed partial class ExecutionManager
                     executionId,
                     ExecutionState.Rejected,
                     DescribeSoilRefusalCode(soilRefusal),
-                    $"target={targetX},{targetY}");
+                    $"target={targetX},{targetY}{DescribeSoilGuidance(distantLocation, targetX, targetY)}");
             }
 
             // Farmable ground: the only question left is where the actor must stand, and the approach leg answers it
@@ -541,7 +541,7 @@ internal sealed partial class ExecutionManager
         if (dirtBefore is not null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "soil_already_tilled", $"target={targetX},{targetY};before={before}");
         if (DescribeSoilRefusal(location, targetX, targetY) is { } soilRefusal)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, DescribeSoilRefusalCode(soilRefusal), $"target={targetX},{targetY}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, DescribeSoilRefusalCode(soilRefusal), $"target={targetX},{targetY}{DescribeSoilGuidance(location, targetX, targetY)}");
         // The selection half is written into the detail from the same four facts the other tool family states, and
         // `tool_restored` is added after `RestoreToolSelection` has run.
         if (!TrySelectDeclaredTool(Game1.player, "till_soil", out DeclaredToolSelection selection, out string toolRefusalCode))
