@@ -2634,14 +2634,19 @@ export function createTavernManagementDialogueWebRequestHandler(
         if (status === 413) {
           response.setHeader("Connection", "close");
           sendProblem(response, status, code);
-          const destroySocket = () => {
-            request.socket?.destroy();
+          // The connection is closed only once the refusal is on the wire, and it is closed rather than reset.
+          // `destroy()` here was both: it could run before the response was flushed, and a reset takes back
+          // bytes the client has not read yet - an oversized body then looked like a server that died instead
+          // of a request that was refused. `end()` flushes the queued response and half-closes; the rest of the
+          // upload is drained by `readJsonBody`, so the peer is never answered with a reset.
+          const closeConnection = () => {
+            request.socket?.end();
           };
           if (response.writableFinished) {
-            destroySocket();
+            closeConnection();
           } else {
-            response.once("finish", destroySocket);
-            response.once("close", destroySocket);
+            response.once("finish", closeConnection);
+            response.once("close", closeConnection);
           }
           return;
         }
@@ -3360,7 +3365,7 @@ async function listenLoopback(server: Server): Promise<number> {
  * throw unwinds, so on any run where the response write was still queued in the socket the `setImmediate` fired
  * first and the client saw a bare connection reset instead of `payload_too_large`. A refusal has to reach the
  * caller with its status and body, so the close belongs to the one place that writes the refusal - the dispatcher's
- * 413 branch, which destroys the socket only after the response has finished.
+ * 413 branch, which closes the connection only after the response has finished.
  */
 async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown> {
   if (!/^application\/json(?:;|$)/i.test(request.headers["content-type"] ?? "")) throw new Error("invalid_request");

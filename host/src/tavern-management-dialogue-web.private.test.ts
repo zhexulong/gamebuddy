@@ -1525,7 +1525,7 @@ test("management handler rejects oversized request bodies with HTTP 413 and clos
   }
 });
 
-test("management dispatcher destroys request socket and returns 413 payload_too_large for oversized payloads", async () => {
+test("management dispatcher closes the connection after answering 413 payload_too_large for oversized payloads", async () => {
   const recorder = { lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 };
   const handler = createTavernManagementDialogueWebRequestHandler({
     managementStateFacade: facade,
@@ -1536,18 +1536,21 @@ test("management dispatcher destroys request socket and returns 413 payload_too_
     bootstrapToken: token,
   });
   try {
-    let socketDestroyed = false;
-    const mockSocket = {
-      get destroyed() {
-        return socketDestroyed;
+    // `end` is what a flushed refusal needs; `destroy` resets the connection and can take the response back, so
+    // the mock records both and the assertions below pin which one the dispatcher used.
+    const socket = {
+      ended: false,
+      destroyed: false,
+      end() {
+        this.ended = true;
       },
       destroy() {
-        socketDestroyed = true;
+        this.destroyed = true;
       },
     };
     const oversizedBody = JSON.stringify({ apiVersion: 1, bootstrapToken: token }) + " ".repeat(MAX_BODY_BYTES + 1024);
     const req = request("POST", "/api/tavern/v1/bootstrap", { origin: "http://127.0.0.1:7331" }, oversizedBody);
-    Object.defineProperty(req, "socket", { value: mockSocket, configurable: true });
+    Object.defineProperty(req, "socket", { value: socket, configurable: true });
 
     const output = new ControlledResponse("finish");
     await dispatch(handler, req, output);
@@ -1557,7 +1560,8 @@ test("management dispatcher destroys request socket and returns 413 payload_too_
     const payload = JSON.parse(output.body) as { code: string; status: number };
     assert.equal(payload.code, "payload_too_large");
     assert.equal(payload.status, 413);
-    assert.equal(socketDestroyed, true);
+    assert.equal(socket.ended, true, "a refused oversized payload still closes its connection");
+    assert.equal(socket.destroyed, false, "a refusal closes the connection instead of resetting it");
   } finally {
     await handler.close();
   }
@@ -1574,18 +1578,19 @@ test("management dispatcher keeps the connection open until the 413 refusal has 
     bootstrapToken: token,
   });
   try {
-    let socketDestroyed = false;
-    const mockSocket = {
-      get destroyed() {
-        return socketDestroyed;
+    const socket = {
+      ended: false,
+      destroyed: false,
+      end() {
+        this.ended = true;
       },
       destroy() {
-        socketDestroyed = true;
+        this.destroyed = true;
       },
     };
     const oversizedBody = JSON.stringify({ apiVersion: 1, bootstrapToken: token }) + " ".repeat(MAX_BODY_BYTES + 1024);
     const req = request("POST", "/api/tavern/v1/bootstrap", { origin: "http://127.0.0.1:7331" }, oversizedBody);
-    Object.defineProperty(req, "socket", { value: mockSocket, configurable: true });
+    Object.defineProperty(req, "socket", { value: socket, configurable: true });
 
     // `deferred_finish` is the ordinary case the wire actually produces: the response is written to a socket whose
     // write has not completed yet. Closing the connection here would take the 413 with it, and the client would see
@@ -1595,10 +1600,11 @@ test("management dispatcher keeps the connection open until the 413 refusal has 
 
     assert.equal(output.status, 413);
     assert.equal(output.writableEnded, true);
-    assert.equal(socketDestroyed, false, "the connection must outlive the refusal it is closing");
+    assert.equal(socket.ended, false, "the connection must outlive the refusal it is closing");
 
     output.flush();
-    assert.equal(socketDestroyed, true, "the connection still closes once the refusal has been flushed");
+    assert.equal(socket.ended, true, "the connection still closes once the refusal has been flushed");
+    assert.equal(socket.destroyed, false, "a refusal closes the connection instead of resetting it");
   } finally {
     await handler.close();
   }
