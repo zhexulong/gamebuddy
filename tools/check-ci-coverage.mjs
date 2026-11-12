@@ -92,7 +92,8 @@ const REGISTER = Object.freeze([
   {
     script: "check:architecture",
     reason: "superseded",
-    detail: "publint and report:clones each run on their own ci.yml step; the third member is an echo promising a gate",
+    detail:
+      "every member also runs on its own ci.yml step (check:publint, report:clones, check:knip, check:host-module-graph, check:host-production-import-boundary); this script only repeats them locally",
   },
   {
     script: "typecheck:voice-protocol",

@@ -30,7 +30,7 @@
     "build:player-distribution": "pnpm build:desktop-launcher && node host/scripts/package-player-distribution.mjs host/dist desktop/dist/payload.zip && pnpm build:desktop-setup",
     "build:stardew": "dotnet build integrations/stardew/GameBuddy.Stardew.csproj -c Release",
     "build:voice-protocol": "pnpm --dir vendor/pi-koe run build:protocol",
-    "check:architecture": "pnpm check:publint && pnpm report:clones && echo \"[110] knip/module-graph/import-boundary gated by live WIP; see design/110 Task 5\"",
+    "check:architecture": "pnpm check:publint && pnpm report:clones && pnpm check:knip && pnpm check:host-module-graph && pnpm check:host-production-import-boundary",
     "check:build-artifact-producers": "node tools/check-build-artifact-producers.mjs",
     "check:sbom": "node tools/generate-sbom.mjs --verify",
     "check:catalog-fact-ownership": "node tools/check-catalog-fact-ownership.mjs",
