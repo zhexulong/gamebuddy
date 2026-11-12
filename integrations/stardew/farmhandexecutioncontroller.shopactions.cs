@@ -355,6 +355,20 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     continue;
                 // First entry wins: two rows can resolve to the same item id, and the menu sells the first of them at
                 // that price. Overwriting would publish the last row's number as if it were the only one.
+                //
+                // This is the price the menu CHARGES, published verbatim. It must not be clamped, floored or
+                // re-derived here, because `ShopBuilder.GetBasePrice` already applied the engine's own rule to the
+                // declared number before this dictionary existed: a negative declared price is replaced with the
+                // item's `salePrice(ignoreProfitMargins: true)` (ShopBuilder.cs:221-237 - the substitution at
+                // :224-227, the single `(int)` cast at :236), and `GetShopStock` stores that result (:58, :94, :102).
+                // `0` keeps the meaning `ItemStockInformation.Price` documents - no gold price.
+                //
+                // A negative can only survive to this line from the substitution itself (a modded negative
+                // `Data/Objects` price read with `ignoreProfitMargins`, Object.cs:7246-7251) or from a price modifier
+                // that moved the number below zero, and in both cases the menu charges that negative
+                // (`ItemStockInformation.Price * stockToBuy`, ShopMenu.cs:1337) while its row hides the price
+                // (:1920). Falling back to a sale price here would publish a number the menu does NOT charge, which
+                // is the defect a guard in this place looks like it fixes.
                 priceByQualifiedItemId.TryAdd(qualifiedItemId, entry.Value.Price);
                 if (stockItemIds.Count < 16)
                     stockItemIds.Add(qualifiedItemId);

@@ -21,6 +21,16 @@ namespace GameBuddy.Stardew.Integration.Tests;
 ///   <item>the waypoint's id and tile are READ from the published shop row, never re-minted: a second copy of the
 ///       identity agrees with the shop family today and disagrees with it after the next change.</item>
 /// </list>
+/// <para>
+/// The same rule covers the PRICE the row publishes: it is <c>ItemStockInformation.Price</c> verbatim, because the
+/// engine's own builder already applied its rule to the declared number before the dictionary existed
+/// (<c>ShopBuilder.GetBasePrice</c>, ShopBuilder.cs:221-237, reached from <c>GetShopStock</c> at :58). What this class
+/// CANNOT assert is the number itself: <c>GetShopStock</c> builds an <c>ItemQueryContext</c> that reads
+/// <c>Game1.currentLocation</c>/<c>Game1.player</c> and returns its stock through <c>Game1.player.team</c>, so in a plain
+/// xUnit process the call throws <c>NullReferenceException</c> - the same limit <c>SeedSupplyProjectionTests</c> records
+/// for the owner condition and <c>ShopMenuHeadlessProbe</c> records for the menu constructor. The pin is therefore on the
+/// producer line, which is the only place the published number can be spelled a second time.
+/// </para>
 /// </summary>
 [Trait("kind", "source-shape")]
 public sealed class SeedSupplyAddressSourceShapeTests
@@ -97,6 +107,33 @@ public sealed class SeedSupplyAddressSourceShapeTests
         Occurrences(code, "DiscoverShopTargets(")
             .Should()
             .Be(1, "the shop family must be discovered exactly once per snapshot, or the two readers can disagree");
+    }
+
+    /// <summary>
+    /// The published charged price is the engine's own stock price, spelled once: a clamp, a floor or a sale-price
+    /// fallback on this line would publish a number the menu does not charge.
+    ///
+    /// Measured 2026-11-12 against the real <c>ShopBuilder</c>: a <c>Data/Shops</c> row declaring <c>Price = -1</c> for a
+    /// 100g item produces <c>GetBasePrice = 200</c> - the item's <c>salePrice(ignoreProfitMargins: true)</c> - and a
+    /// declared <c>0</c> stays <c>0</c> ("no gold price"). So the substitution is already done upstream and this line
+    /// must carry it unchanged; re-deriving it here is the two-spellings defect, and clamping a surviving negative to
+    /// zero would state a free purchase for a row the menu would charge.
+    /// </summary>
+    [Fact]
+    public void TheChargedPriceIsTheEnginesStockPricePublishedVerbatim()
+    {
+        string reader = MethodBody(StripLineComments(ReadSource(ShopActionsFile)), "private static void ReadShopStock(");
+
+        reader.Should().Contain(
+            "priceByQualifiedItemId.TryAdd(qualifiedItemId, entry.Value.Price)",
+            "the entry's own price IS what the menu charges; anything computed around it is a second answer");
+        reader.Should().NotContain(
+            "salePrice",
+            "the sale-price substitution belongs to `ShopBuilder.GetBasePrice`, which already ran before this dictionary "
+            + "existed - repeating it here would publish a price the menu does not charge");
+        reader.Should().NotContain(
+            "Math.Max",
+            "a floor turns a row the menu would charge into a row it would not; `0` already means 'no gold price'");
     }
 
     private static int Occurrences(string source, string needle)
