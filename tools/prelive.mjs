@@ -206,6 +206,11 @@ export const L0_GATES = Object.freeze([
   // summed 391 ms, and a hang reports nothing. Measured here: `awaits examined 12 · with a deadline 12`, 426 test files,
   // 1.2 s.
   "tools/check-test-await-deadlines.mjs",
+  // The leak, measured: 787 Node crash reports in the repository root, 238 of them carrying a plaintext credential,
+  // because `NODE_OPTIONS` on this machine fires a report into every dying child's cwd. The `.gitignore` entry that
+  // covered the root is not containment - this gate reads the disk at any depth and names the variable, never the
+  // value. Milliseconds here after the walk's concurrency: 591 ms for 113,061 files.
+  "tools/check-crash-report-containment.mjs",
   "tools/check-prelive-gate-registry.mjs",
 ]);
 

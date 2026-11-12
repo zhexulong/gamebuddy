@@ -357,6 +357,14 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // (`exemption_count_mismatch`), and an empty population (`blocked`, exit 1).
   "check-switch-exhaustiveness.mjs",
   "check-contrast-tokens.mjs",
+  // Prints `examined N files, 0 crash reports · pruned …` plus a two-entry `checks[]` verdict (no report inside the
+  // tree, no report carrying a credential), so its default run is the report this suite reads. Its falsifier is
+  // tools/check-crash-report-containment.test.mjs: a planted `report.1.json` at the root and one two directories deep
+  // are both named, a credential-shaped assignment is named by VARIABLE and the planted value never printed, an empty
+  // tree is `blocked` (exit 2) instead of green, an unlistable directory blocks and names itself, a nested checkout and
+  // a dependency tree are pruned with the counts printed, and two real Node children that throw show the report
+  // landing inside the child's cwd for the inherited environment and outside the tree for the contained one.
+  "check-crash-report-containment.mjs",
   "check-credential-export-isolation.mjs",
   // Prints `refusal_detail_states examined N · agree M · missing K` plus a `checks[]` verdict enumerating its three
   // rules (both declarations readable, every mapped token in the Host's own state table, the two sets equal), so its
