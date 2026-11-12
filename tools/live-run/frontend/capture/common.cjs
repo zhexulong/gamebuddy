@@ -134,16 +134,17 @@ window.__shots = {
  * Whether this mount can start a turn at all - the one rule every turn-dependent driver asks.
  *
  * The question is the composer's own two refusals, and NOT the send button's `disabled` attribute.
- * `Composer.tsx` disables that button on `disabled || sendUnavailable || !value.trim()`: the third
- * term is the field being empty, which is the state every driver is in when it asks, because it has
- * not typed yet. Reading the button therefore answered "this mount cannot send" on every mount,
- * including one with a seeded, active connection - three drivers took a named skip, and the run
- * reported a green `DONE-CAPTURE` with a whole family of screenshots missing.
+ * `Composer.tsx` refuses that button on `sendRefused(uiState.send) || !value.trim()`: the second term
+ * is the field being empty, which is the state every driver is in when it asks, because it has not
+ * typed yet. Reading the button therefore answered "this mount cannot send" on every mount, including
+ * one with a seeded, active connection - three drivers took a named skip, and the run reported a green
+ * `DONE-CAPTURE` with a whole family of screenshots missing.
  *
- * The two terms that are the product's own answer are read where the product states them:
- * `disabled` (`= !submitAvailable`: the Host would not accept a submission now) is the field's own
- * lock, and `sendUnavailable` (the surface's `ChatModelRoute = none`) is the standing banner that
- * route renders. The credential flag is a third, separate fact the drivers already check.
+ * The two refusals are read where the product states them: `fieldLocked(uiState.send)` is the
+ * textarea's own `disabled` (the Host would not accept a submission now, or this surface is
+ * rewriting the transcript), and `replyHasNoModel(uiState.send)` is the standing
+ * `[data-chat-no-model]` banner (the surface's `ChatModelRoute = none`). Send is refused for either,
+ * which is `sendRefused`. The credential flag is a third, separate fact the drivers already check.
  */
 async function canStartTurn(page) {
   return classifyComposer(
