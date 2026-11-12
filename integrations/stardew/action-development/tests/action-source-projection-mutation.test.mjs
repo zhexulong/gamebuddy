@@ -43,7 +43,7 @@ test("in-process derivation from the actual sources binds to the checked artifac
   assert.equal(artifact.schema, ACTION_SOURCE_PROJECTION_SCHEMA);
   assert.equal(artifact.gameId, ACTION_SOURCE_PROJECTION_GAME_ID);
   assert.equal(artifact.developmentOnly, true);
-  assert.equal(artifact.sources.length, 15);
+  assert.equal(artifact.sources.length, 11);
   assert.deepEqual(artifact.absentRoutes, [
     "adoption",
     "dual_read",
@@ -244,18 +244,47 @@ test("TryExecute/TryRoute guard-order drift is rejected from mutated Mod sources
   );
 });
 
-test("native handler declarations remain integrity-only evidence", () => {
-  const handlerDeclarationRemoved = sources.mod_handler_farming.replace(
-    "class FarmingActionHandler : IFarmhandActionHandler",
-    "class FarmingActionHandler",
+test("handler ownership is read from the published catalog artifact, never from handler source text", () => {
+  const groups = JSON.parse(sources.canonical_handler_groups);
+
+  // The reader used to match `"<actionId>" =>` in `Handlers/*.cs`. A family respelled as a dictionary entry (or moved)
+  // simply vanished from the projection: the population shrank and every assertion around it still passed. A family
+  // that loses its actions is now refused by name instead.
+  const emptied = structuredClone(groups);
+  emptied.actions = emptied.actions.filter((row) => row.handlerGroup !== "resource_tools");
+  expectRejection(
+    () => deriveWith({ canonical_handler_groups: JSON.stringify(emptied) }),
+    "handler_group_empty:ResourceTools",
   );
-  assert.notEqual(handlerDeclarationRemoved, sources.mod_handler_farming, "handler declaration anchor must match");
-  expectRejection(() => deriveWith({ mod_handler_farming: handlerDeclarationRemoved }), "handler_declaration_missing:Farming");
+
+  // A single action leaving its family is observable rather than silent.
+  const dropped = structuredClone(groups);
+  dropped.actions = dropped.actions.filter((row) => row.actionId !== "chop_tree");
+  const projection = deriveWith({ canonical_handler_groups: JSON.stringify(dropped) });
+  assert.equal(projection.nativeOwnership.ResourceTools.length, 41);
+  assert.ok(!projection.nativeOwnership.ResourceTools.includes("chop_tree"));
+
+  // A row that is not an action identity is refused rather than skipped.
+  const malformed = structuredClone(groups);
+  malformed.actions[0].handlerGroup = 7;
+  expectRejection(
+    () => deriveWith({ canonical_handler_groups: JSON.stringify(malformed) }),
+    "handler_groups_row_invalid",
+  );
+
+  // Ownership stays integrity evidence: a family may not claim an action the catalog does not dispatch. The row is
+  // injected for the read-only registration `observe_scene`, which the catalog answers from the snapshot path.
+  const readOnlyClaimed = structuredClone(groups);
+  readOnlyClaimed.actions.push({ actionId: "observe_scene", handlerGroup: "farming" });
+  expectRejection(
+    () => deriveWith({ canonical_handler_groups: JSON.stringify(readOnlyClaimed) }),
+    "native_handler_non_execution_action:observe_scene",
+  );
 
   const canonical = JSON.parse(sources.canonical_action_surface);
   canonical.actions[1].resourceTemplate.claims = [];
-  const projection = deriveWith({ canonical_action_surface: JSON.stringify(canonical) });
-  assert.ok(!projection.mod.executableActionIds.includes("equip_tool"));
+  const withoutClaims = deriveWith({ canonical_action_surface: JSON.stringify(canonical) });
+  assert.ok(!withoutClaims.mod.executableActionIds.includes("equip_tool"));
 });
 
 test("obsolete-route absence drift is rejected from mutated canonical descriptor source", () => {

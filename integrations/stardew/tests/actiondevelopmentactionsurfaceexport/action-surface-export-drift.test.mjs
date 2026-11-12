@@ -31,6 +31,15 @@ const GENERATED_DEADLINE_WINDOWS = path.join(
   "generated",
   "action-deadline-windows.v1.json",
 );
+const GENERATED_HANDLER_GROUPS = path.join(
+  TEST_DIRECTORY,
+  "..",
+  "..",
+  "action-development",
+  "contracts",
+  "generated",
+  "action-handler-groups.v1.json",
+);
 
 function runExporter(args = []) {
   return new Promise((resolve, reject) => {
@@ -96,4 +105,25 @@ test("producer exporter bytes do not drift from the generated action-deadline-wi
   assert.equal(exported.includes(0x0d), false, "export must not contain a carriage return");
   assert.equal(artifact[0], 0x7b, "artifact must start with UTF-8 JSON, not a BOM");
   assert.deepEqual(exported, artifact, "the committed windows differ from the producer's own output");
+});
+
+/**
+ * The handler group each dispatchable registration belongs to, which
+ * `integrations/stardew/action-development/src/action-source-projection-producer.mjs` reads as
+ * `nativeOwnership`. The producer used to match the quoted arm labels of `Handlers/*.cs` as text, so a family
+ * respelled as a dictionary entry emptied itself out of the projection with nothing raised. The artifact must stay the
+ * harness's own output: a hand-edited copy would be a second spelling of a catalog fact, which is the defect this
+ * reader exists to remove.
+ */
+test("producer exporter bytes do not drift from the generated action-handler-groups artifact", async () => {
+  const [exported, artifact] = await Promise.all([
+    runExporter(["--handler-groups"]),
+    readFile(GENERATED_HANDLER_GROUPS),
+  ]);
+
+  assert.equal(exported[0], 0x7b, "export must start with UTF-8 JSON, not a BOM");
+  assert.equal(exported.includes(0x0a), false, "export must not contain a newline");
+  assert.equal(exported.includes(0x0d), false, "export must not contain a carriage return");
+  assert.equal(artifact[0], 0x7b, "artifact must start with UTF-8 JSON, not a BOM");
+  assert.deepEqual(exported, artifact, "the committed handler groups differ from the producer's own output");
 });

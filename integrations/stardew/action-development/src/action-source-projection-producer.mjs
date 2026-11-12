@@ -34,12 +34,21 @@ const ABSENT_ROUTE_TOKENS = Object.freeze([
   "read_repair",
   "withdrawn",
 ]);
-const HANDLER_GROUP_CLASS_NAMES = Object.freeze({
-  Farming: "FarmingActionHandler",
-  Gathering: "GatheringActionHandler",
-  Movement: "MovementActionHandler",
-  MachinesAndAnimals: "MachineAndAnimalActionHandler",
-  ResourceTools: "ResourceToolActionHandler",
+const ACTION_HANDLER_GROUPS_SCHEMA = "gamebuddy-action-handler-groups/v1";
+const ACTION_HANDLER_GROUPS_RELATIVE_PATH =
+  "integrations/stardew/action-development/contracts/generated/action-handler-groups.v1.json";
+/**
+ * The handler families this projection publishes ownership for, keyed by the section name it uses and valued by the
+ * catalog's own wire spelling. The Mod dispatches eight groups and its artifact publishes all eight; these five are
+ * the ones the pinned `nativeOwnership` section carries, so widening this list is a projection revision rather than a
+ * reader change.
+ */
+const PROJECTED_HANDLER_GROUPS = Object.freeze({
+  Farming: "farming",
+  Gathering: "gathering",
+  Movement: "movement",
+  MachinesAndAnimals: "machines_and_animals",
+  ResourceTools: "resource_tools",
 });
 const SHARED_RUNNER_IMPORT = 'from "./lib/stardew-native-smoke-harness-v1.mjs"';
 const OBSOLETE_RUNNER_FILENAMES = Object.freeze([
@@ -96,29 +105,9 @@ const ACTION_SOURCE_PATHS = Object.freeze([
     maxBytes: 64 * 1024,
   },
   {
-    category: "mod_handler_farming",
-    path: "integrations/stardew/Handlers/FarmingActionHandler.cs",
-    maxBytes: 256 * 1024,
-  },
-  {
-    category: "mod_handler_gathering",
-    path: "integrations/stardew/Handlers/GatheringActionHandler.cs",
-    maxBytes: 256 * 1024,
-  },
-  {
-    category: "mod_handler_movement",
-    path: "integrations/stardew/Handlers/MovementActionHandler.cs",
-    maxBytes: 256 * 1024,
-  },
-  {
-    category: "mod_handler_machines_animals",
-    path: "integrations/stardew/Handlers/MachineAndAnimalActionHandler.cs",
-    maxBytes: 256 * 1024,
-  },
-  {
-    category: "mod_handler_resource_tools",
-    path: "integrations/stardew/Handlers/ResourceToolActionHandler.cs",
-    maxBytes: 256 * 1024,
+    category: "canonical_handler_groups",
+    path: ACTION_HANDLER_GROUPS_RELATIVE_PATH,
+    maxBytes: 64 * 1024,
   },
   {
     category: "host_registry",
@@ -387,15 +376,32 @@ function parseTryRouteGuardOrder(router) {
   ]);
 }
 
-function parseNativeHandlers(handlerSources) {
-  const ownership = {};
-  for (const [group, className] of Object.entries(HANDLER_GROUP_CLASS_NAMES)) {
-    const source = handlerSources[group];
-    if (!source.match(new RegExp(`class ${className}\\s*:\\s*IFarmhandActionHandler`))) {
-      fail(`handler_declaration_missing:${group}`);
+/**
+ * Which actions each handler family owns, read from the Mod's own registration catalog.
+ *
+ * The catalog is the authority `ModEntry`'s router switches on, and `ActionDefinitionRoutingParityTests` proves from
+ * the handlers' IL that every `Execute` switch covers exactly the group its registration declares. This reader used to
+ * match the arm labels of `Handlers/*.cs` as text (`"<actionId>" =>`), which meant a family respelled as a dictionary
+ * - or a handler file that moved - emptied the family out of the projection without raising anything: the projection
+ * recorded a smaller population and every coherence assertion around it still passed.
+ */
+function parseHandlerGroups(source) {
+  let artifact;
+  try { artifact = JSON.parse(source); } catch { fail("handler_groups_json_invalid"); }
+  if (!artifact || artifact.schema !== ACTION_HANDLER_GROUPS_SCHEMA
+    || !Number.isSafeInteger(artifact.catalogRevision) || artifact.catalogRevision < 1
+    || !Array.isArray(artifact.actions) || artifact.actions.length === 0) fail("handler_groups_unreadable");
+  const wireToGroup = new Map(Object.entries(PROJECTED_HANDLER_GROUPS).map(([group, wire]) => [wire, group]));
+  const ownership = Object.fromEntries(Object.keys(PROJECTED_HANDLER_GROUPS).map((group) => [group, []]));
+  for (const row of artifact.actions) {
+    if (!row || typeof row !== "object" || !IDENTIFIER.test(row.actionId) || typeof row.handlerGroup !== "string") {
+      fail("handler_groups_row_invalid");
     }
-    const matches = [...source.matchAll(/"([a-z][a-z0-9_]*)"\s*=>/g)].map((entry) => entry[1]);
-    ownership[group] = assertUnique(matches, `handler_action_duplicates:${group}`);
+    const group = wireToGroup.get(row.handlerGroup);
+    if (group !== undefined) ownership[group].push(row.actionId);
+  }
+  for (const [group, ids] of Object.entries(ownership)) {
+    if (ids.length === 0) fail(`handler_group_empty:${group}`);
   }
   return ownership;
 }
@@ -581,17 +587,11 @@ export function deriveActionSourceProjection(sources) {
   const tryExecuteGuardOrder = parseTryExecuteGuardOrder(sources.mod_bridge_session);
   const tryRouteGuardOrder = parseTryRouteGuardOrder(sources.mod_router);
 
-  // Native handler declarations are source-integrity evidence only. They must
-  // name canonical execution actions, but do not expand the executable set or
-  // impose ownership requirements on experimental/read-only/Navigation IDs.
+  // Handler ownership is integrity evidence only. Every row must name a canonical
+  // execution action, and it does not expand the executable set or impose ownership
+  // requirements on experimental/read-only/Navigation IDs.
   const provenance = parseModProvenance(sources.mod_bridge_session, sources.mod_execution_controller);
-  const nativeOwnership = parseNativeHandlers({
-    Farming: sources.mod_handler_farming,
-    Gathering: sources.mod_handler_gathering,
-    Movement: sources.mod_handler_movement,
-    MachinesAndAnimals: sources.mod_handler_machines_animals,
-    ResourceTools: sources.mod_handler_resource_tools,
-  });
+  const nativeOwnership = parseHandlerGroups(sources.canonical_handler_groups);
   const canonicalExecutionIds = new Set(
     registrations.filter((registration) => registration.kind === "execution").map((registration) => registration.actionId),
   );
