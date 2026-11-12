@@ -1405,3 +1405,102 @@ deliberately.
   `GATES_WITH_FALSIFIER` entries; the run it describes (`blocked`, `examined: 0`, `not_measured`) no longer happens.
 - `tools/gate-red-proof-baseline.json` still records both gates as owing a red proof, which is correct for the ledger
   and will stay correct until a lane that owns that file writes the markers and runs `--update`.
+
+## The generated-artefact census: one gate for a class that cost two days
+
+`tools/check-generated-artifact-reproducibility.mjs` (L0, `check:`/`test:` pair, measured 0.7-0.8 s). The class is an
+artefact that says it is generated and that its own producer cannot reproduce, and it has cost two days in three shapes:
+`native-multiplayer-sensitivity.v1.json` hand-edited into a state its derive tool REFUSED (96 actions against a
+106-action catalog, four retired ids, found only because a test compared action sets), `action-surface.v1.json` stale
+twice in one day, and `action-source-projection.v1.json` drifting by three lines whose only signal was
+`180614 !== 180548`. In each case the file claimed derivation, nothing asserted that it COULD be derived, and the truth
+was recovered by diffing a hundred kilobytes by hand.
+
+### The population, derived and paired
+
+Two claim forms, both read from the tree: a tracked path under `generated/` or `derived/`, and a comment marker on one of
+the first three lines naming the file as generated. A tree named `inputs/` is the one stated exclusion - a pinned input
+copy of another tree's artefact - and it is printed rather than folded away. Every claimant is then paired with a
+producer from the gate's own `ARTEFACT_PRODUCERS` map; a claimant with no producer is
+`generated_artifact_without_producer:<path>`, a finding and never a pass, which is exactly the mp-sensitivity shape.
+
+Measured on this tree: `artefacts examined 6 · with a declared producer 6 · undeclared 0 · declared_by_test 1 ·
+reproduced 1 · not re-derived 5 (inputs_unchanged 4, declared_by_test 1) · pinned inputs 1`.
+
+### What reproduces, byte for byte, measured rather than assumed
+
+| artefact | producer | bytes | measured |
+| --- | --- | --- | --- |
+| `contracts/generated/action-surface.v1.json` | `dotnet <ActionDevelopmentActionSurfaceExport.dll>` | 63 891 | equal, 0.6 s for this and the two below together |
+| `contracts/generated/action-deadline-windows.v1.json` | the same DLL, `--deadline-windows` | 5 342 | equal |
+| `contracts/generated/action-handler-groups.v1.json` | the same DLL, `--handler-groups` | 6 463 | equal |
+| `contracts/generated/native-multiplayer-sensitivity.v1.json` | `tools/derive-stardew-native-multiplayer-sensitivity-register.mjs` | 81 835 | equal, 262 ms, 106 actions |
+| `contracts/projection/action-source-projection.v1.json` | `src/action-source-projection-producer.mjs` | 180 614 | equal, 88 ms - the incident's own byte count |
+| `contracts/generated/snapshot-sample.v1.json` | `xunit SnapshotLoopbackExportTests.PublishesEveryFamilyTheHeadlessWorldCanHonestlyConstruct` | 12 451 | equal under `--with-test-producers` |
+
+The register's derive tool writes a cwd-relative path, so the gate runs it in a sandbox under
+`.tmp/generated-artefact-reproducibility/` whose read paths are junctions (`ref/`, `Handlers/`, `src/`) and 45 hard links
+(`farmhandexecutioncontroller.*.cs`) into the real tree and whose output path is a real empty directory. The tracked file
+is never opened for writing by the default run, and the one producer that writes in place (the xunit export) is behind
+`--with-test-producers`, which compares and then restores the artefact's original bytes - it left this tree byte-identical
+(hash `620A4110…` before and after).
+
+### The two red proofs, replayed from history
+
+Both ran in a copy of HEAD outside the repository (`git archive HEAD` extracted to `E:/tmp/gateproof/repro`, with `ref/`
+and the exporter's `bin/` junctioned in and its own `git init`/commit), because the population is the index.
+
+| injected | what the gate said |
+| --- | --- |
+| `230775c7^`'s `native-multiplayer-sensitivity.v1.json` laid over the copy (95 actions, four retired ids) | `generated_artifact_not_reproducible:…native-multiplayer-sensitivity.v1.json:61:$.declaredActionIds`, naming `break_container_source`, `chop_tree_source`, `break_rock_source`, `advance_day` as members the artefact carries and fifteen the producer emits that it does not (`use_mine_ladder` among them), exit 1 |
+| the three-line projection drift put back (`sweep_scythe` dropped from the host lists) | `generated_artifact_not_reproducible:…contracts/projection/action-source-projection.v1.json:4642:$.mod.experimentalActionIds`, naming `sweep_scythe` and each of `$.host.adapterActionIds`, `$.host.toolActionIds`, `$.host.toolRouteActionIds`, exit 1 - the line and the member, not two byte counts |
+| an empty `contracts/generated/probe.v1.json` added | `generated_artifact_without_producer:<path>`, exit 1 |
+
+The falsifier suite's own two injections were measured the same way: dropping the `inputs/` exclusion reads
+`examined 9 · undeclared 3` and names the pinned copy; reducing `describeMismatch` to two byte counts reddens the drift
+case at `actual '(bytes)' / expected '$.a'`.
+
+### The deletion this unit carries, and what was proven before it
+
+`contracts/generated/action-source-projection.v1.json` (91 524 bytes) was found by the population scan and cannot be
+reproduced: it is an obsolete revision of the projection - 65 registrations against the producer's 106, a `sources` list
+still naming `integrations/stardew/Handlers/*.cs` (the list the producer replaced with `canonical_handler_groups`), and
+the producer's declared output is `contracts/projection/`, which is byte-exact. Unreferenced three ways before deleting:
+`git grep` finds no reader of the path, no reader of its distinctive keys (`mod_handler_farming`,
+`mod_handler_machines_animals`, `mod_handler_resource_tools`), and no reader of its basename; and the `design/` mount
+names neither the path, the basename, nor those keys - so it was a duplicate, not an input. An unreferenced artefact
+marked generated that nothing can regenerate is a trap for the next reader, and the gate names a re-introduction as
+`generated_artifact_without_producer` because no producer is declared for that path.
+
+### What this gate does not verify, stated
+
+- A declared input that is a DIRECTORY contributes that directory's own mtime, so a change deep inside it does not move
+  the number that decides whether to spend the producer's cost. `--re-derive-all` is the reading that covers a
+  re-decompile or a directory reshuffle; it re-derived all five runnable artefacts in 1.1 s.
+- A JSON artefact that claims derivation only in prose has no header to read, so the scan does not find it. The declared
+  map covers the JSON artefacts this tree has (`contracts/projection/` carries no marker and is declared instead).
+- The `declared_by_test` bucket is a COUNT, not a measurement, in the default run: `snapshot-sample.v1.json` is named and
+  never folded into the pass, and `--with-test-producers` is the run that measures it (it did, above).
+
+### The census
+
+Measured 2026-11-13 with the unit's files staged in a private index (`GIT_INDEX_FILE` + `git read-tree HEAD` + `git add`,
+so the reading is the commit's, not the worktree's): `gates examined 353 · with a red proof 328 · external 4 · declared
+without 19 · undeclared 0 · zero-population-pass 0`, with `proven:check:generated-artifact-reproducibility
+kind=history` and `proven:test:generated-artifact-reproducibility kind=inject`. The previous line was
+`351 · 326 · 4 · 19 · 0 · 0`, so this unit adds the two scripts and proves both.
+
+One registration is pending and is named here rather than done by this unit: `tools/lib/harness-conformance.mjs`'s
+`GATES_WITH_FALSIFIER` still needs the entry for `check-generated-artifact-reproducibility.mjs`, and the file currently
+holds another lane's hunk (its `check-gate-populations.mjs` entry). Until that entry lands,
+`check-harness-conformance` reports `unlisted 1 (check:generated-artifact-reproducibility)` and
+`gate_without_falsifier`. The line to add is the file name, under a comment saying what its default run prints
+(`artefacts examined 6 · with a declared producer 6 · undeclared 0 · reproduced 5 · not re-derived 1` plus the four-entry
+`checks[]` and `examined`) and what its falsifier proves (the `inputs/` exclusion dropped → `examined 9 · undeclared 3`;
+`describeMismatch` degraded to byte counts → the drift case red at `actual '(bytes)' / expected '$.a'`).
+
+The other three red members of the L0 rung on this worktree are not this unit's and are recorded as named debt:
+`check-code-duplication` (`clone groups 319 · new 14 · grown 1`, in C# partials another lane holds uncommitted),
+`check-cognitive-complexity`, and `check-harness-conformance`'s own `falsifier_entry_stale: check-gate-populations.mjs`
+(another lane's untracked gate that the register already declares). This unit's gate is green in that rung: `exit 0`,
+829 ms.

@@ -211,6 +211,17 @@ export const L0_GATES = Object.freeze([
   // covered the root is not containment - this gate reads the disk at any depth and names the variable, never the
   // value. Milliseconds here after the walk's concurrency: 591 ms for 113,061 files.
   "tools/check-crash-report-containment.mjs",
+  // The artefact census: every file in the tree that SAYS it is generated, paired with the tool or Mod export that emits
+  // it, re-derived into a temp path and compared byte for byte. Measured 2026-11-13 before it was wired: the projection
+  // producer reproduces its 180 614 bytes in 88 ms, the Mod export DLL reproduces all three of its artefacts in 600 ms,
+  // and the register's derive tool reproduces its 81 835 bytes in 262 ms inside the sandbox. Items whose declared inputs
+  // have not moved are not re-derived (`not_re_derived:inputs_unchanged`) and are still named in the population; the one
+  // artefact whose only writer is an xunit export test is its own bucket (`declared_by_test`), never a pass. This rung
+  // exists because three files were found stale in two days and each time the reader diffed a hundred kilobytes by hand:
+  // a hand-edited register its derive tool refused, a surface regenerated while a declaration lagged, and a projection
+  // that drifted by three lines whose only signal was `180614 !== 180548`. Measured 0.7 s here (three `dotnet`
+  // invocations and one sandboxed derive), so it runs on the ladder rather than in a document a lane reads afterwards.
+  "tools/check-generated-artifact-reproducibility.mjs",
   "tools/check-prelive-gate-registry.mjs",
 ]);
 
