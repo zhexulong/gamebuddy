@@ -855,4 +855,88 @@ with a no-op makes the runner name **all five** mutations as `STILL GREEN` and e
 exists for — it reports a survivor rather than passing over it. What that does **not** establish is that the suite
 currently catches each of the five; the runner's own green did that before the injection, and this proof is about the
 runner.
+### Part two — the eighty-five unreached suites, triaged
 
+The reachability lane wired sixty-eight suites and left eighty-five with their failure lines. Nobody had run them since.
+Each was run three times from the live tree (`node --test <file>`, 90 s and then 150 s deadlines, with the whole output kept on the last pass), which is the
+first time these lines existed as data rather than as a note:
+
+| bucket | count | what the measurement says |
+| --- | --- | --- |
+| `real-and-now-fixed` | **4** | green on this tree — a lane fixed the product since: `tools/live-run/core/persona.test.mjs`, `tools/replay-stardew-navigation-multisource-characterization.test.mjs`, `tools/replay-stardew-navigation-operation.test.mjs`, `tools/run-game-operational-gate.test.mjs` |
+| `stale` | **62** | one cause for sixty of them, measured below; two more assert a spelling that moved |
+| `real-and-red` | **18** | own rule still fails after the family cause is removed — named below |
+| `cannot-run` | **1** | `tools/prepare-tavern-live-fixture.test.mjs`: it bootstraps a live Tavern fixture through Host artifact envelopes and did not finish inside 150 s here |
+
+`4 + 62 + 18 + 1 = 85`, and the bucket counts come from one experiment rather than from reading each failure.
+
+#### The sixty have one cause, and it is a shared harness requirement the fakes never got
+
+Sixty-two of the eighty-three that failed assert `blocked` against the `passed` a live result was supposed to read. The reason
+behind `blocked` is not visible in most of their logs, so it was measured instead of inferred: the shared harness gained
+`publishedActionWatchdogMs(client, action)`, which reads `client.state.catalogRegistrations` and throws
+`native_catalog_registrations_missing` when the session's own advertisement carries none — that is the rule that closed
+`test:stardew-branch-writeset`'s sibling defect earlier, and every fake client in these suites was written before it.
+
+One edit to `tools/lib/stardew-native-smoke-harness-v1.mjs` **inside the copy** — `return 60_000` where it throws — was
+applied and all eighty-three failing suites were run again: **sixty-two went green**, including two of the four
+`real-and-now-fixed` members, which leaves sixty that this cause alone accounts for. The harness in the copy was restored
+from its own commit afterwards. That is the family: one field (`state.catalogRegistrations`) absent from sixty
+`createFake` bodies, and the repair is one line per suite — mechanical, sixty files wide, and deliberately **not** done
+here: this lane's bounds are `tools/**` gate files (docblock markers only), `package.json` script lines, and the two
+baselines this document cites. Naming the cause and proving it by experiment is the honest unit; editing sixty suites is
+the next one, and it needs a lane whose bound covers them.
+
+Two of the sixty-two are not the watchdog at all, and they are the task's `stale` shape rather than a product defect:
+`tools/stardew-policy-isolation.test.mjs` asserts `result.EnabledActions`, a policy field the fixture writer retired, and
+`tools/verify-stardew-action-projection.test.mjs` asserts the harness exports `assertExactCapabilities`, where it now
+exports `assertRequiredCapabilities`. Both were red before the experiment and red after it, so the measurement cannot
+tell them apart from the eighteen; the **repair** can — each is a renamed field or a removed helper, which is why they
+are counted in the sixty-two and not in the eighteen.
+
+#### The eighteen that are red on their own rule
+
+Each names the assertion that fires, so nobody has to re-derive it:
+
+| suite | the failure line |
+| --- | --- |
+| `tools/audit-stardew-nogame-subset.test.mjs` | `✖ the project compiles exactly the headless files that read no gitignored input`, `✖ no game-free file is left out of the no-game lane` |
+| `tools/check-refusal-informativeness.test.mjs` | `✖ every reason family the tree emits is classified, and the verdict follows the findings` |
+| `tools/check-stardew-snapshot-family-bounds.test.mjs` | `✖ every shipped snapshot family's producer ceiling is readable and within the Host's cap` |
+| `tools/check-terminal-commit-single-entry.test.mjs` | `✖ the converted bus family reaches the ledger through the seam` — also the one file no reachable command names |
+| `tools/derive-stardew-action-cancellation.test.mjs` | `✖ delegation is followed and inline slots are seen` |
+| `tools/replay-stardew-navigation-read-only-gate.test.mjs` | the file itself fails to load |
+| `tools/run-tavern-management-operation-evidence.test.mjs` | `✖ the producer exercises every operation the mounted profile declares` |
+| `tools/run-tavern-narrative-gate.test.mjs` | `✖ Reference live runner stays on the composition bootstrap and authenticated Chat API and never opens SQLite or auto-promotes` |
+| `tools/stardew-native-local-player-fixture.test.mjs` | `✖ a fixture whose mod has no config yet still prepares, and the config it writes is complete` |
+| and nine `run-stardew-native-local-player-*-smoke.test.mjs` whose own assertion still fails with the watchdog supplied: `craft-partial-recovery-chain`, `enter-mine-ladder`, `navigation-mutation`, `place-crab-pot`, `place-crab-pot-fixture`, `place-wood-fence`, `stamina-recovery-chain`, `talk-to-npc`, `water-crop` | the shape `till-soil` shows is representative: `blocked` where `passed` was asserted |
+
+#### What was wired, and the reading it moved
+
+The four `real-and-now-fixed` suites are now named by commands the corpus reaches — `tools/live-run/core/persona.test.mjs`
+in `suite:live-run-harness`, the two navigation replays in `suite:stardew-tooling`, and
+`tools/run-game-operational-gate.test.mjs` in `suite:tools-utilities` — and `tools/spec-reachability-baseline.json` lost
+exactly those four entries. Each was run green after the edit. One first attempt glued `persona.test.mjs` to the next
+token in the script string, which the reachability gate caught immediately as a **new** unreached file
+(`tools/live-run/dialogue-gates.test.mjs`): a `package.json` edit that silently removes a suite from its own command is
+exactly the failure this gate exists for, and it named the casualty.
+
+| reading | before | after |
+| --- | --- | --- |
+| `node tools/check-harness-conformance.mjs` census | `348 · 308 · 4 · 34 · 0 · 0` | `348 · 321 · 4 · 21 · 0 · 0` |
+| the partition | `308 + 4 + 34 + 2 unreadable = 348` | `321 + 4 + 21 + 2 unreadable = 348` |
+| `node tools/check-spec-reachability.mjs` | `tools_suites: 85 of 402 unreached · held 84` | `tools_suites: 81 of 402 unreached · held 80` |
+
+Neither tool exits 0 before or after, and the reasons are other lanes' and are named rather than repaired:
+
+- `red_proof_kind_unknown:check:code-duplication` and `red_proof_pointer_missing:test:format-ratchet` are the two
+  unreadable claims the header has carried since the eighth batch. They are outside the `declared without` bucket, so
+  they are outside this unit's queue; the files are gate files this lane could edit for markers only, and rewriting
+  another gate's claim into a readable one without reproducing its red would be the silencer this mechanism exists to
+  prevent.
+- `gate_declaration_stale:test:tool-corpus` — the untracked `tools/run-tool-test-corpus.test.mjs` proves that gate in
+  this worktree and is absent from the commit, so its baseline entry reads stale here and is needed at HEAD. Deleting it
+  would trade one red for another the moment that file lands.
+- `spec_reachability_unreached_suite:tools/check-terminal-commit-single-entry.test.mjs` — a tracked suite no command
+  names, and it is `real-and-red`, so wiring it would turn the corpus red. It is the eighty-fifth file and the only one
+  of the eighty-five that was never in the baseline.
