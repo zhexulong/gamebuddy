@@ -1302,11 +1302,28 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // is still there. A second shape - which is what my earlier fix wrote - let the Mod mint
             // `Succeeded/item_picked_up` for a receipt the Host then refused as incomplete.
             string pickupEvidence = $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};native_auto_collect=true;chunk_removed={chunkRemoved}{chunkReason};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}";
+            // The engine's own answer to WHERE this body is, which every settlement below that found no delivery has to
+            // carry; `chunk=gone` is the honest reading when there is no chunk left to measure against.
+            string pickupReach = target is null
+                ? "chunk=gone"
+                : DescribeItemPickupReach(Game1.player, GetChunkTile(target.Value.Chunk), MagneticPickupReach.Subject(target.Value.Debris));
             if (approachSettled && targetGone && inventoryGained)
             {
                 this.slots.ItemPickup.Clear();
                 this.revision++;
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "item_picked_up", pickupEvidence);
+            }
+            else if (approachSettled && !inventoryGained && target is not null
+                && BrokenItemPickupPrecondition(Game1.player, target.Value.Debris) is { } brokenPrecondition)
+            {
+                // A precondition the engine re-asks on every update, re-asked here. Waiting out the request's deadline
+                // for a chunk the engine has already refused to take is the 60 s silence, and it is a lie about the
+                // reason: nothing is pending, the condition stopped holding.
+                this.slots.ItemPickup.Clear();
+                this.revision++;
+                this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain,
+                    $"pickup_precondition_broken:{brokenPrecondition}",
+                    $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};precondition={brokenPrecondition};{pickupReach};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}");
             }
             else if ((!sameLocation || nowMs > specification.DeadlineMs) && approachSettled)
             {

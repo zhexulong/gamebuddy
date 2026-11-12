@@ -235,6 +235,54 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
+    /// Which of the engine's own pickup preconditions this body no longer satisfies, or <see langword="null"/> when
+    /// the wait it is in still has a way to end.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>Debris.updateChunks</c> re-asks two things about a waiting chunk on EVERY game update: whether the body is
+    /// still inside the pixel rectangle <c>playerInRange</c> reads (Debris.cs:582-595, re-asked at :678) and whether
+    /// this farmer's pack will take the item (:732-744). The bridge asked the first of those once, when the request
+    /// arrived - so a chunk that slid while she walked, or a body that finished its walk a pixel outside the rectangle,
+    /// was never re-tested and the action waited out its whole deadline with nothing left that could happen.
+    /// </para>
+    /// <para>
+    /// The engine's other two guards - <c>shouldControlThis</c> (Debris.cs:621-628) and <c>IsLocalPlayer</c> (:758) -
+    /// are topology rather than a condition that can change while one request is being served, so they are answered at
+    /// admission and not re-asked here. The bounce timer (:636-637) is a wait, not a refusal: it is what
+    /// <c>ItemPickupMagnetWindowTicks</c> bounds.
+    /// </para>
+    /// </remarks>
+    private static string? BrokenItemPickupPrecondition(Farmer actor, Debris debris)
+    {
+        if (!MagneticPickupReach.WithinMagnet(MagneticPickupReach.Subject(debris), actor.StandingPixel, MagneticPickupReach.ReachPixels(actor)))
+            return "player_in_range";
+        bool acceptsTheDrop = debris.item is { } held
+            ? actor.couldInventoryAcceptThisItem(held)
+            : actor.couldInventoryAcceptThisItem(debris.itemId.Value, 1, debris.itemQuality);
+        return acceptsTheDrop ? null : "inventory_full";
+    }
+
+    /// <summary>
+    /// Where the body stands relative to the chunk, in the units <c>Debris.playerInRange</c> compares: both tiles, the
+    /// per-axis pixel distance between the chunk's centre and the body's standing pixel, and the reach it is compared
+    /// against.
+    /// </summary>
+    /// <remarks>
+    /// A settlement that says only "no" sends the caller back to re-observe and guess. These four facts are the whole
+    /// geometry of the refusal, and they are the engine's own measurements rather than a tile count of ours, so a
+    /// caller can step one tile toward <c>chunk_tile</c> and try again knowing why.
+    /// </remarks>
+    private static string DescribeItemPickupReach(Farmer actor, Point chunkTile, Vector2 subject)
+    {
+        Point standing = actor.StandingPixel;
+        float distanceX = subject.X + MagneticPickupReach.ChunkCentreOffset - standing.X;
+        float distanceY = subject.Y + MagneticPickupReach.ChunkCentreOffset - standing.Y;
+        return $"actor_tile={(int)actor.Tile.X},{(int)actor.Tile.Y};chunk_tile={chunkTile.X},{chunkTile.Y};"
+            + $"axis_distance_px={distanceX.ToString("0.#", CultureInfo.InvariantCulture)},{distanceY.ToString("0.#", CultureInfo.InvariantCulture)};radius={MagneticPickupReach.ReachPixels(actor)}";
+    }
+
+    /// <summary>
     /// Settles a <c>pickup_item</c> whose chunk has already left the ground, when the actor's OWN backpack shows the
     /// delivery - i.e. the engine's magnet collected the drop before this request arrived.
     /// </summary>

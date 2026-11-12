@@ -182,6 +182,101 @@ public sealed class MagnetPickupItemTests
             "standing there puts the body inside the rectangle Debris.playerInRange reads");
     }
 
+    // ---- the engine's gate, asked again on every tick ---------------------------------
+
+    /// <summary>
+    /// THE CONDITION THE WAIT DEPENDS ON, ASKED MORE THAN ONCE. The request path asks the engine's rectangle when the
+    /// request arrives and nothing ever asked it again, so a body that finished its walk a pixel outside the rectangle,
+    /// or a chunk that slid while she walked, left the action waiting out its deadline with nothing left that could
+    /// happen: measured nine <c>pickup_item</c> executions at 59.8-60.0 s, their receipts reporting an unchanged
+    /// backpack.
+    ///
+    /// <para>
+    /// The settlement now follows the engine's own answer on the next tick, and it carries the four numbers a caller
+    /// needs to act instead of retrying blind: the tile the body stood on, the chunk's tile, the per-axis pixel distance
+    /// <c>Debris.playerInRange</c> compares, and the reach it compares against.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ABodyThatLeftTheMagnetSettlesOnTheNextTickAndNamesThePrecondition()
+    {
+        using var harness = MagnetPickupHarness.Create(debrisTileX: 4, debrisTileY: 2, heldAtPublication: 0);
+        string targetId = harness.PublishTargetId();
+        ExecutionManager manager = harness.Manager;
+
+        harness.StandAt(3, 2);
+        harness.OccupyTile(4, 2);
+        LocalExecutionReceipt accepted = manager.RequestLocalPickupItem(
+            "req_drift", 4, 2, DroppedItemId, targetId, harness.DeadlineMs);
+        accepted.State.Should().Be(ExecutionState.Accepted, accepted.Evidence);
+
+        // The body stops exactly one pixel short of the rectangle - the sub-pixel drift a tile-based check cannot see,
+        // on the edge `playerInRange` compares with `<=`. The fixture is only useful if the engine agrees it is out.
+        int radius = harness.MagnetRadius;
+        harness.StandOnePixelBeyondTheMagnet();
+        harness.EngineSeesTheChunk().Should().BeFalse(
+            "the fixture must be a body the engine itself says is out of reach, not a guess about one");
+
+        long startedAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        LocalExecutionReceipt settled = harness.Settle(manager, "req_drift", "settled_drift");
+        long settleAfterMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - startedAtMs;
+
+        settled.State.Should().Be(ExecutionState.Uncertain, settled.Evidence);
+        settled.ReasonCode.Should().Be(
+            "pickup_precondition_broken:player_in_range", "the settlement names the precondition that stopped holding");
+        settleAfterMs.Should().BeLessThan(
+            2_000,
+            $"the engine's answer settles the wait on the next tick, and the request's deadline is {harness.DeadlineMs - startedAtMs} ms away");
+
+        Dictionary<string, string> evidence = ParseEvidence(settled.Evidence!);
+        evidence["precondition"].Should().Be("player_in_range");
+        evidence["target"].Should().Be(targetId);
+        evidence["item"].Should().Be(DroppedItemId);
+        evidence["chunk_tile"].Should().Be("4,2", "the caller has to be able to walk toward the chunk it could not collect");
+        (int actorX, int actorY) = ParseTile(evidence["actor_tile"]);
+        (actorX, actorY).Should().Be(((int)harness.Actor.Tile.X, (int)harness.Actor.Tile.Y));
+        (float distanceX, float distanceY) = ParsePixels(evidence["axis_distance_px"]);
+        Math.Abs(distanceX).Should().Be(
+            radius + 1, "the distance published is the engine's own per-axis measurement, one pixel past the reach");
+        Math.Abs(distanceY).Should().BeLessThan(radius, "the other axis was never the reason this body was out of reach");
+        evidence["radius"].Should().Be(radius.ToString(), "the reach published is the engine's GetAppliedMagneticRadius");
+        evidence["inventory_before"].Should().Be("0");
+        evidence["inventory_after"].Should().Be(
+            "0", "nothing was collected, so no settlement may suggest that something was");
+    }
+
+    /// <summary>
+    /// A pack that cannot take the drop is the other way this wait is fruitless, and it is the engine's own
+    /// acceptance test (<c>Debris.updateChunks</c> asks it every update, Debris.cs:732-744) rather than an inference of
+    /// ours. The request was accepted while there was room, so the packing happened during the wait - which only a
+    /// re-test can catch.
+    /// </summary>
+    [Fact]
+    public void APackThatCannotTakeTheDropSettlesAndNamesTheAcceptanceTest()
+    {
+        using var harness = MagnetPickupHarness.Create(debrisTileX: 4, debrisTileY: 2, heldAtPublication: 0);
+        string targetId = harness.PublishTargetId();
+        ExecutionManager manager = harness.Manager;
+
+        harness.StandAt(3, 2);
+        harness.OccupyTile(4, 2);
+        LocalExecutionReceipt accepted = manager.RequestLocalPickupItem(
+            "req_full", 4, 2, DroppedItemId, targetId, harness.DeadlineMs);
+        accepted.State.Should().Be(ExecutionState.Accepted, accepted.Evidence);
+        harness.EngineSeesTheChunk().Should().BeTrue("the body is inside the rectangle, so the reach is not the answer here");
+
+        harness.FillPack();
+        LocalExecutionReceipt settled = harness.Settle(manager, "req_full", "settled_full");
+
+        settled.State.Should().Be(ExecutionState.Uncertain, settled.Evidence);
+        settled.ReasonCode.Should().Be("pickup_precondition_broken:inventory_full");
+        Dictionary<string, string> evidence = ParseEvidence(settled.Evidence!);
+        evidence["precondition"].Should().Be("inventory_full");
+        evidence["chunk_tile"].Should().Be("4,2", "the numbers travel with every broken precondition, not only the geometric one");
+        evidence["radius"].Should().Be(harness.MagnetRadius.ToString());
+        evidence["inventory_after"].Should().Be("0", "the drop never arrived");
+    }
+
     // ---- the gate: the magnet's delivery IS this action's success -----------------
     /// <summary>
     /// Before this change the preflight refused with <c>item_target_changed</c> because it asked only "is the chunk on
@@ -524,6 +619,14 @@ public sealed class MagnetPickupItemTests
         return (int.Parse(parts[0]), int.Parse(parts[1]));
     }
 
+    private static (float X, float Y) ParsePixels(string pair)
+    {
+        string[] parts = pair.Split(',');
+        return (
+            float.Parse(parts[0], System.Globalization.CultureInfo.InvariantCulture),
+            float.Parse(parts[1], System.Globalization.CultureInfo.InvariantCulture));
+    }
+
     private static string Read(string fileName) => File.ReadAllText(RepositorySourcePath(
         Path.Combine("integrations", "stardew", fileName)));
 
@@ -834,9 +937,60 @@ public sealed class MagnetPickupItemTests
         internal Vector2 ChunkPositionAt(Point standingPixel) =>
             new(standingPixel.X - MagneticPickupReach.ChunkCentreOffset, standingPixel.Y - MagneticPickupReach.ChunkCentreOffset);
 
+        /// <summary>
+        /// The engine's own answer to "does the body standing where it stands pull this chunk in": the rectangle
+        /// <c>Debris.playerInRange</c> reads, asked of this body's current position.
+        /// </summary>
+        internal bool EngineSeesTheChunk() => MagneticPickupReach.WithinMagnet(
+            MagneticPickupReach.Subject(this.debris), this.Actor.StandingPixel, this.MagnetRadius);
+
+        /// <summary>
+        /// Puts the body one pixel past the rectangle on the axis that decides this fixture, the way a walk that stopped
+        /// short of its stand tile does: the reach comparison is `<=`, so one pixel is the whole difference between a
+        /// chunk the magnet can take and one it never will.
+        /// </summary>
+        internal void StandOnePixelBeyondTheMagnet()
+        {
+            Point standing = this.Actor.StandingPixel;
+            Vector2 subject = MagneticPickupReach.Subject(this.debris);
+            int targetX = (int)(subject.X + MagneticPickupReach.ChunkCentreOffset) - (this.MagnetRadius + 1);
+            this.Actor.position.Set(new Vector2(
+                this.Actor.position.Value.X + (targetX - standing.X),
+                this.Actor.position.Value.Y));
+        }
+
         /// <summary>The walk the request armed, read from the one slot the body is owned through.</summary>
         internal LocalMoveSpec? ArmedMove(ExecutionManager manager) =>
             (LocalMoveSpec?)BodySlotSeeding.Peek(manager, "active");
+
+        /// <summary>
+        /// Runs the completion pass for a number of ticks, returning the receipt read after the last one - the shape a
+        /// bounded wait is measured in.
+        /// </summary>
+        internal LocalExecutionReceipt Ticks(ExecutionManager manager, string requestId, int ticks)
+        {
+            LocalExecutionReceipt? receipt = null;
+            for (int index = 0; index < ticks; index++)
+            {
+                manager.Update();
+                receipt = manager.TryGetReceipt(requestId, out LocalExecutionReceipt read) ? read : null;
+            }
+
+            return receipt ?? throw new InvalidOperationException($"no receipt for {requestId}");
+        }
+
+        /// <summary>
+        /// A pack with no room in it: every slot holds a full stack of a DIFFERENT item, so the engine's acceptance
+        /// test starts answering no while this actor's own count of the drop stays where it was.
+        /// </summary>
+        internal void FillPack()
+        {
+            for (int slot = 0; slot < PackCapacity; slot++)
+                this.Actor.Items[slot] = NewItem(stack: 999, itemId: "388");
+            // The engine's refusal path shows a red message through Game1.content, which a process without a save does
+            // not have; one pending message is the state it checks before it reaches for it.
+            Game1.hudMessages.Add((HUDMessage)FormatterServices.GetUninitializedObject(typeof(HUDMessage)));
+        }
 
         /// <summary>
         /// The completion pass, run as production runs it: one <see cref="ExecutionManager.Update"/> per tick, with the
@@ -877,11 +1031,11 @@ public sealed class MagnetPickupItemTests
         /// A real <c>(O)24</c> stack. The net fields are supplied because a process without a save never ran their
         /// initializers, and <c>QualifiedItemId</c>/<c>Stack</c> are the two facts this action's count reads.
         /// </summary>
-        private static StardewValley.Object NewItem(int stack)
+        private static StardewValley.Object NewItem(int stack, string itemId = "24")
         {
             var item = (StardewValley.Object)FormatterServices.GetUninitializedObject(typeof(StardewValley.Object));
             SeedMissingNetFields(item);
-            Set(item, "itemId", new NetString("24"));
+            Set(item, "itemId", new NetString(itemId));
             Set(item, "stack", new NetInt(stack));
             Set(item, "quality", new NetInt(0));
             Set(item, "bigCraftable", new NetBool(false));
