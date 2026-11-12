@@ -432,6 +432,18 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // the defect is not the await, an empty population blocks, and the CLI's 0/1/2 exit codes are asserted on throwaway
   // roots.
   "check-test-await-deadlines.mjs",
+  // Prints `matches examined N · through the shape reader M · through raw text K · reads R · files F` plus the
+  // `[verdict]` tree/reading lines, so its default run is the report this suite reads. Its falsifier is
+  // tools/check-source-shape-readers.test.mjs: a raw read matched across three tokens is named with its file, its line,
+  // its token count and its pattern, the same pattern over the normalised shape is not a finding, negative and
+  // membership matches across tokens are findings, a pattern that tolerates any whitespace between its tokens is not a
+  // finding (it survives reformatting already), a single-token seek in raw text is not a finding (its position may be
+  // the claim), a value passed through a call the gate cannot resolve leaves the population rather than passing, a tree
+  // whose test files read no text at all is blocked rather than green, the CLI's 0/1/2 exit codes are asserted on
+  // throwaway roots, and the shipped raw-text signature at contained-game-runtime.internal.test.ts:205 is named when
+  // the revision it shipped at is read. That last case replays a defect that shipped, which is the strongest kind of
+  // red proof this census accepts - not an injected one.
+  "check-source-shape-readers.mjs",
   // Its default run prints `{gate:"presentation-delivery-account", status, examined, checks[]}` and reads whatever
   // bundle it is pointed at, so the report is the gate's own verdict rather than prose. Its falsifier is
   // tools/lib/presentation-delivery-account.test.mjs: 59 pieces against an account of 46 parts is reconciled as 46 text
