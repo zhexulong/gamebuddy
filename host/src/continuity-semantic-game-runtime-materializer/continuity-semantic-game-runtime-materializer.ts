@@ -58,6 +58,7 @@ import type {
   IntegrationStateView,
 } from "../game-integration-adapter.js";
 import type { GameConnection, StardewBridgeConnection } from "../game-connection.js";
+import type { ChatVoiceSpeechPublisher } from "../voice.js";
 import type { RuntimeSession } from "../runtime.js";
 import { formatGameEnvironmentFacts } from "../game-world-vocabulary.js";
 import { identityProfileMetadata } from "../identity-profile.js";
@@ -1407,6 +1408,62 @@ export type HostGameRuntimeMaterializerOptions = Readonly<{
   worldBook?: import("../worldbook.js").WorldBookBinding;
 }>;
 
+/**
+ * What the Game composition hands its loop besides the session: the integration route a stale reading is refreshed through,
+ * and the route a fact this pump minted is published by.
+ */
+export type GameCompanionLoopInput = Readonly<{
+  session: RuntimeSession["session"];
+  /** Preview-only parent IPC attestation; absent for every ordinary production launch. */
+  liveSourceAttester?: LiveSourceAttester | undefined;
+  voiceSink?: ChatVoiceSpeechPublisher | undefined;
+  volatileContext?: CompanionTurnVolatileContext | undefined;
+  /** The integration the companion is attached to; its own observation route is what a refresh asks. */
+  connection: GameConnection;
+  /** Where a fact this pump minted goes: the Host's Host-minted-fact route. */
+  publish: (fact: WorldFact) => void;
+}>;
+
+/**
+ * The Game companion loop, with the pump's stale-reading refresh installed on the two routes that own it.
+ *
+ * <p>
+ * ONE construction path, because "is the refresh attached?" is not a reading the composed Host can answer: the pump is
+ * the loop's own and nothing the materializer returns carries it, so a wiring that only exists inside
+ * `materializeEnter` can be seen in no artifact. Measured 2026-11-10 (`round45`): fifty turns on `revision 352` while
+ * every layer that could have asked for a fresh observation stayed silent. The loop the composition drives therefore
+ * cannot be built without the port, and `world-state-refresh-attach.test.ts` reads the attachment off the pump this
+ * function returns.
+ * </p>
+ *
+ * <p>
+ * `observe` is the integration's own route (`StardewBridgeConnection.observe`, the one `stardew_observe` calls), so the
+ * pump asks the Mod exactly what the model's own tool asks, and `publish` is `acceptHostMintedFact`, so a refusal cannot
+ * become a second way to start a turn.
+ * </p>
+ */
+export function createGameCompanionLoop(input: GameCompanionLoopInput): CompanionLoop {
+  const loop = new CompanionLoop(
+    input.session,
+    undefined,
+    input.liveSourceAttester,
+    input.voiceSink,
+    input.volatileContext,
+  );
+  loop.pump.attachWorldStateRefresh(
+    Object.freeze({
+      observe: () => {
+        const observe = (input.connection as StardewBridgeConnection).observe;
+        return observe === undefined
+          ? Promise.reject(new Error("world_state_observation_route_unavailable"))
+          : observe.call(input.connection);
+      },
+      publish: (fact) => input.publish(fact),
+    }),
+  );
+  return loop;
+}
+
 export function createHostGameRuntimeMaterializer(
   options: HostGameRuntimeMaterializerOptions = {},
 ): GameRuntimeMaterializer {
@@ -1471,9 +1528,10 @@ export function createHostGameRuntimeMaterializer(
         // Resolve exactly once for this construction; closures and adapter tools
         // share this same object while live state remains freshly read per call.
         let revealProgramReaders = (): void => {};
-        // The settled digest's route onto the pump. Assigned the moment the Host service exists - the tools are built
-        // first and cannot see it - and a fact that arrives before then (it cannot: nothing has been submitted) is
-        // dropped by the no-op rather than queued somewhere else.
+        // The settled digest's route onto the pump, and the one a refused stale-reading refresh takes. Assigned the
+        // moment the Host service exists - the tools and the pump's port are built first and cannot see it - and a fact
+        // that arrives before then (it cannot: nothing has been submitted and no turn has been opened) is dropped by the
+        // no-op rather than queued somewhere else.
         let announceHostFact: (fact: WorldFact) => void = () => {};
         const fixedTools = bodyProgramMounted
           ? createBodyProgramTools(
@@ -1542,13 +1600,16 @@ export function createHostGameRuntimeMaterializer(
           options.gameVoicePresentation === undefined
             ? undefined
             : consumeGameVoicePresentationAttachment(options.gameVoicePresentation);
-        const loop = new CompanionLoop(
-          runtime.session,
-          undefined,
+        const loop = createGameCompanionLoop({
+          session: runtime.session,
           liveSourceAttester,
-          gameVoicePayload?.streamingSink,
-          constructed.volatileAuthoredContext,
-        );
+          voiceSink: gameVoicePayload?.streamingSink,
+          volatileContext: constructed.volatileAuthoredContext,
+          connection: execution.connection,
+          // The Host's Host-minted-fact route, which is the same one the settled digest rides: assigned the moment the
+          // service exists, and unreachable before then because the Host is what drives a stale reading's measurement.
+          publish: (fact) => announceHostFact(fact),
+        });
         const lifecycle = new IntegrationLifecycleSnapshot(execution.connection.module, execution.connection);
         const host = new CompanionHostService(
           loop,
@@ -1609,20 +1670,6 @@ export function createHostGameRuntimeMaterializer(
         // The settled digest rides the pump from here on. `host` is the only layer that owns it, which is why the
         // tools' sink was left unbound until this line.
         announceHostFact = (fact) => host.acceptHostMintedFact(fact);
-        // A stale reading is acted on from here on, for the same reason and with the same two owners: the observation is
-        // the integration's own route (`StardewBridgeConnection.observe`, the one `stardew_observe` calls) and the
-        // refusal goes back through `acceptHostMintedFact`, so the pump never starts a turn of its own.
-        loop.pump.attachWorldStateRefresh(
-          Object.freeze({
-            observe: () => {
-              const observe = (execution.connection as StardewBridgeConnection).observe;
-              return observe === undefined
-                ? Promise.reject(new Error("world_state_observation_route_unavailable"))
-                : observe.call(execution.connection);
-            },
-            publish: (fact) => host.acceptHostMintedFact(fact),
-          }),
-        );
         const operationalGateEvidence =
           options.gameOperationalGateNonceSha256 === undefined
             ? undefined
