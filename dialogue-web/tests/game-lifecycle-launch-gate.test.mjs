@@ -39,10 +39,13 @@ import { createStardewRoleLifecycleFacade } from "../../host/src/stardew-role-li
 import { createGameBrowserStateProvider } from "../../host/src/game-browser/game-browser-state-provider.js";
 import { composeGameProfile } from "../../host/src/game-browser-contract/index.js";
 import {
+  deriveCabinHandoffActions,
   deriveGameLifecycleControlAvailability,
   deriveGameSessionControls,
   GAME_SESSION_INPUTS,
   GAME_SESSION_PHASES,
+  CABIN_HANDOFF_INPUTS,
+  CABIN_HANDOFF_KINDS,
 } from "../src/game-lifecycle-controls.ts";
 import { messages } from "../src/i18n.ts";
 
@@ -563,4 +566,126 @@ test("session-forward-path.6: the phase list, the union and the derivation are o
     "the session phase list is imported from the module that owns it",
   );
   t.diagnostic(`session-forward-path.6: ${GAME_SESSION_PHASES.length} session phase(s) declared, enumerated and reachable`);
+});
+
+/**
+ * The cabin handoff's own state machine.
+ *
+ * It is the third step of the first run, and the failure this gate exists for was measured in
+ * the shell: an `uncertain` confirmation - the one outcome whose publication no one knows -
+ * rendered a warning sentence and no control at all, so the only exit was reloading the page,
+ * which drops the Host connection and this surface's own attachment.
+ *
+ * The population is the module's own union, listed and given an input per kind, exactly as the
+ * session phases are, so a kind added there fails here until somebody states its step.
+ */
+
+/** The rule over any population, so a planted kind drives the exact comparison the gate runs. */
+export function cabinZeroForwardPathFindings(kinds, inputs, derive) {
+  const findings = [];
+  for (const kind of kinds) {
+    const declared = inputs[kind];
+    if (declared === undefined) {
+      findings.push(`${kind}: reachable kind with no declared input, so nothing can reach it`);
+      continue;
+    }
+    if (declared.kind !== kind) {
+      findings.push(`${kind}: its declared input is ${JSON.stringify(declared.kind)}, so the kind is unreachable`);
+      continue;
+    }
+    if (derive(declared).length === 0) findings.push(`${kind}: reachable kind with no forward action`);
+  }
+  return findings;
+}
+
+test("cabin-forward-path.1: every reachable cabin-handoff state offers the player a step", (t) => {
+  const findings = cabinZeroForwardPathFindings(CABIN_HANDOFF_KINDS, CABIN_HANDOFF_INPUTS, deriveCabinHandoffActions);
+  t.diagnostic(
+    `cabin-forward-path.1: ${CABIN_HANDOFF_KINDS.length} kind(s): ` +
+      CABIN_HANDOFF_KINDS.map((kind) => `${kind}->${deriveCabinHandoffActions(CABIN_HANDOFF_INPUTS[kind]).join("+")}`).join(
+        ", ",
+      ),
+  );
+  assert.deepEqual(findings, [], "a reachable handoff state with nothing to press and no step named is a dead end");
+});
+
+test("cabin-forward-path.2: the union, the kind list and the inputs are one authority", (t) => {
+  const source = readFileSync(MODULE, "utf8");
+  const start = source.indexOf("export type CabinViewState");
+  assert.notEqual(start, -1, "the cabin view state is still declared where this gate reads it");
+  const end = source.indexOf("export type CabinHandoffAction", start);
+  assert.notEqual(end, -1, "the cabin step union follows the state union");
+  const declared = [...source.slice(start, end).matchAll(/kind:\s*"([a-z_]+)"/gu)].map((match) => match[1]);
+  assert.deepEqual(
+    [...declared].sort(),
+    [...CABIN_HANDOFF_KINDS].sort(),
+    `the union declares ${declared.length} kind(s) and the list enumerates ${CABIN_HANDOFF_KINDS.length}: ` +
+      "a kind in one and not the other is a state the gate never looks at",
+  );
+  t.diagnostic(`cabin-forward-path.2: ${CABIN_HANDOFF_KINDS.length} cabin kind(s) declared, enumerated and reachable`);
+});
+
+test("cabin-forward-path.3: only an admitted handoff is over, and only an in-flight one waits", (t) => {
+  const terminal = CABIN_HANDOFF_KINDS.filter((kind) => deriveCabinHandoffActions(CABIN_HANDOFF_INPUTS[kind]).includes("terminal"));
+  assert.deepEqual(terminal, ["admitted"], "the handoff is over exactly where the companion is moving in");
+  const waiting = CABIN_HANDOFF_KINDS.filter((kind) =>
+    deriveCabinHandoffActions(CABIN_HANDOFF_INPUTS[kind]).includes("wait_for_read"),
+  );
+  assert.deepEqual(
+    waiting.sort(),
+    ["confirming", "loading"],
+    "only the two states whose own operation is in flight are a wait - any other one would be a silent trap",
+  );
+  // The two reads are a real choice, not a synonym: the confirm button is drawn exactly where a
+  // choice may be confirmed, and the cabin read exactly where no confirmation is in doubt.
+  const confirming = CABIN_HANDOFF_KINDS.filter((kind) =>
+    deriveCabinHandoffActions(CABIN_HANDOFF_INPUTS[kind]).includes("confirm"),
+  );
+  assert.deepEqual(confirming, ["choices"]);
+  t.diagnostic(`cabin-forward-path.3: terminal=${terminal.join(", ")}, waiting=${waiting.join(", ")}`);
+});
+
+/**
+ * The one rule an `uncertain` confirmation has: the cabins are never read again from it.
+ *
+ * Re-reading would re-offer a confirm button the Host refuses for the life of the attempt - the
+ * confirmed choice handle stays consumed and any later confirmation answers
+ * `stardew_cabin_confirmation_conflict` (`stardew-production-lifecycle-coordinator.internal.ts`).
+ * So the step is the panel's own read of the game, which sends no handoff command at all, and
+ * the attachment the Host publishes once that confirmation landed is what answers the question.
+ */
+test("cabin-forward-path.4: an unconfirmed confirmation offers the game read and never the cabin read", (t) => {
+  const uncertain = deriveCabinHandoffActions(CABIN_HANDOFF_INPUTS.uncertain);
+  assert.deepEqual([...uncertain], ["read_game_again"]);
+  assert.ok(!uncertain.includes("read_cabins_again"), "the cabin read would re-arm a confirmation the Host refuses");
+  assert.ok(
+    !uncertain.includes("confirm"),
+    "a second confirmation is the one thing the state forbids, and the Host refuses it",
+  );
+  // The copy beside that control has to say what it does and does not do, and what happens when
+  // the answer has not changed - the state is otherwise an identical screen after the press.
+  assert.match(MESSAGES.stardewCabinCheckGameHint, /never sent a second time/u);
+  assert.match(MESSAGES.stardewCabinCheckGameHint, /waiting for recovery/u);
+  t.diagnostic(`cabin-forward-path.4: uncertain -> ${uncertain.join("+")}`);
+});
+
+test("cabin-forward-path.5 (mutation): a kind whose state offers nothing is reported by name", (t) => {
+  const findings = cabinZeroForwardPathFindings(
+    ["uncertain", "planted_silent", "planted_unreachable"],
+    {
+      uncertain: CABIN_HANDOFF_INPUTS.uncertain,
+      planted_silent: { kind: "planted_silent" },
+      planted_unreachable: { kind: "loading" },
+    },
+    (input) => (input.kind === "planted_silent" ? [] : deriveCabinHandoffActions(CABIN_HANDOFF_INPUTS.uncertain)),
+  );
+  assert.equal(findings.length, 2, `exactly the two planted kinds must fail, saw ${JSON.stringify(findings)}`);
+  assert.match(findings[0], /^planted_silent: reachable kind with no forward action$/u);
+  assert.match(findings[1], /^planted_unreachable: its declared input is "loading"/u);
+  assert.deepEqual(
+    findings.filter((finding) => finding.startsWith("uncertain:")),
+    [],
+    "the real kind in the same population passes: the comparison is not simply always-red",
+  );
+  t.diagnostic(`cabin-forward-path.5: planted -> ${findings.join(" | ")}`);
 });

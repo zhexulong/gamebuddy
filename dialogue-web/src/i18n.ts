@@ -137,6 +137,9 @@ const en = {
     "Confirmation is still awaiting verification. Do not confirm again. Wait for recovery or reload the page to recover manually.",
 
   // Navigation & Drawers
+  stardewCabinCheckGame: "Check the game again",
+  stardewCabinCheckGameHint:
+    "This only reads the game: the cabin confirmation is never sent a second time. If it had landed, the game shows up here as connected; if it had not, this step keeps waiting for recovery.",
   chats: "Chats",
   characters: "Characters",
   worldInfo: "World Info",
@@ -1315,6 +1318,9 @@ const zh: Messages = {
   // Navigation & Drawers
   chats: "会话",
   characters: "角色",
+  stardewCabinCheckGame: "再查一次游戏状态",
+  stardewCabinCheckGameHint:
+    "这一步只重新读取游戏状态，不会再次发送小屋确认。如果确认已经生效，这里会显示游戏已连接；如果还没有，这一步会继续等待恢复。",
   worldInfo: "世界书",
   persona: "用户设定",
   memory: "记忆",

@@ -19,7 +19,8 @@ import type { ReactNode } from "react";
 import { gameOperationFailureSentence, type GameOperationFailure } from "../composed-problem-view";
 import type { Messages } from "../i18n";
 import type { GameBrowserStateV1, StardewCabinChoiceV1 } from "../composed-reference-game-browser-api";
-import type { GameSessionControls } from "../game-lifecycle-controls";
+import { deriveCabinHandoffActions } from "../game-lifecycle-controls";
+import type { CabinViewState, GameSessionControls } from "../game-lifecycle-controls";
 import {
   compatibilityLabel,
   connectionLabel,
@@ -117,28 +118,7 @@ const GAME_CREATE_FORM_ID = "game-create-form";
  * - every status sentence is still the `role="status"` line it was.
  */
 
-export type CabinViewState =
-  | Readonly<{ kind: "loading" }>
-  | Readonly<{ kind: "choices"; choices: readonly StardewCabinChoiceV1[] }>
-  | Readonly<{ kind: "confirming"; choices: readonly StardewCabinChoiceV1[]; choiceHandle: string }>
-  | Readonly<{ kind: "admitted" }>
-  | Readonly<{ kind: "uncertain" }>
-  /** The read could not be made, and the panel offers the control that makes it again. */
-  | Readonly<{ kind: "unavailable"; reread: boolean }>
-  /**
-   * No cabin this companion may use in the current host world.
-   *
-   * Distinct from `unavailable`, and the distinction is the whole point: this state has a CURE the player can act
-   * on - have Robin build one - while `unavailable` is "the read could not be made". The Host has always known the
-   * difference (`stardew_player_host_cabin_unavailable`); it was flattened to `state_unavailable` on the read route
-   * until 2026-10-28, so the panel had one word for two situations and a player reading the wrong one retried
-   * forever.
-   *
-   * `reread` is the shell's answer to "did my click do anything": true once the player asked again and the answer was
-   * still this state. Without it the refresh button under it is a control whose result is the screen the player is
-   * already looking at. The shell is the only party that knows, so it carries the fact rather than the panel guessing.
-   */
-  | Readonly<{ kind: "missing"; reread: boolean }>;
+export type { CabinViewState };
 
 type StatusDotTone = "progress" | "warning" | "danger" | "neutral";
 
@@ -328,6 +308,7 @@ export function GameStatePanel({
       awaitsSession={game !== null && game.game.instance.status === "none"}
       onConfirm={handlers.confirmCabin}
       onRefresh={handlers.refreshCabins}
+      onReread={handlers.reread}
     />
   );
   return (
@@ -909,13 +890,26 @@ function CabinHandoff({
    * runs from one `useEffect` keyed on `ready` (`GameSurface.tsx:146-150`), so a player who started the game
    * and loaded the farm SAW `stardewCabinsUnavailable` forever - there is no poll, no game event stream, and
    * there was no control here to ask again. The only recovery was reloading the browser, which loses the
+   *
+   * The controls are not decided here: `deriveCabinHandoffActions`
+   * (`../game-lifecycle-controls`) names the one step each state offers, and the
+   * handoff's totality gate drives every kind through it. The panel renders that
+   * step, so a state cannot be reachable with nothing to press and no sentence
+   * saying what happens next.
    * Game surface's own attachment.
    */
-  onRefresh?(): void;
+  onRefresh(): void;
+  /**
+   * The panel's own authoritative read of the game, which is the step an unconfirmed
+   * confirmation leaves: it sends no handoff command, and the attachment the Host
+   * publishes once that confirmation landed is what answers the question.
+   */
+  onReread(): void;
 }) {
   return (
     <section className="stardew-cabin-handoff game-subpanel" aria-label={labels.stardewCabinSelection}>
       <h4 className="section-subtitle">{labels.stardewCabinSelection}</h4>
+      onReread,
       {state.kind === "loading" && <p className="game-subpanel-note">{labels.stardewCabinsLoading}</p>}
       {state.kind === "missing" && (
         <p className="game-status" data-tone="action" role="status">
@@ -932,6 +926,7 @@ function CabinHandoff({
             {labels.stardewCabinsUnavailable}
           </p>
         ))}
+      const actions = deriveCabinHandoffActions(state);
       {/* What the refresh just found, stated where the control is: a player who has built
           a cabin and pressed again needs to know the click was read, and that the answer
           had not changed yet. It sits between the sentence and the control, so neither of
@@ -951,7 +946,7 @@ function CabinHandoff({
         the Host connection and this surface's own session attachment, so the instruction to reload destroyed the
         setup it belonged to.
       */}
-      {(state.kind === "unavailable" || state.kind === "missing") && onRefresh !== undefined && (
+      {actions.includes("read_cabins_again") && (
         <button type="button" className="game-secondary-action" onClick={onRefresh}>
           {labels.stardewCabinsRefresh}
         </button>
@@ -980,6 +975,21 @@ function CabinHandoff({
               >
                 <Check size={16} aria-hidden="true" />
                 {labels.stardewCabinConfirm}
+                {/* The one honest step out of an unconfirmed confirmation. It is not the cabin read:
+          that would re-offer a confirm button the Host refuses for the life of this attempt
+          (`stardew_cabin_confirmation_conflict`, because the confirmed choice is consumed).
+          This sends no handoff command at all, and the sentence beside it says what it can and
+          cannot change, so a press that finds the same answer is a stated outcome rather than
+          a control that quietly did nothing. */}
+                {actions.includes("read_game_again") && (
+                  <>
+                    <button type="button" className="game-secondary-action" onClick={onReread}>
+                      <RefreshCw size={16} aria-hidden="true" />
+                      {labels.stardewCabinCheckGame}
+                    </button>
+                    <p className="game-subpanel-note">{labels.stardewCabinCheckGameHint}</p>
+                  </>
+                )}
               </button>
             </li>
           ))}

@@ -1,4 +1,4 @@
-import type { GameBrowserStateV1 } from "./composed-reference-game-browser-api";
+import type { GameBrowserStateV1, StardewCabinChoiceV1 } from "./composed-reference-game-browser-api";
 
 /**
  * The single derivation of the three lifecycle controls the player sees
@@ -456,3 +456,110 @@ export const GAME_SESSION_INPUTS: Readonly<Record<GameSessionPhase, Parameters<t
       attached_resume_failed: input(attached("failed"), { resumeFailureSurface: true, resumeAttemptFailed: true }),
     });
   })();
+
+/**
+ * Every state the cabin handoff can be in.
+ *
+ * The handoff is the third step of the first run: the Host offers the cabins this companion
+ * may use in the loaded farm, the player confirms one, and the companion moves in. It lives
+ * here rather than in the panel for the reason the session phases do: the states are the
+ * product's, so the zero-forward-path rule over them has one population to read instead of a
+ * panel whose shape only its own JSX knows.
+ *
+ * It is declared in this module and not in `GameStatePanel.tsx` because a node gate cannot
+ * import a `.tsx` module, and a rule only a browser gate can read is a rule half the suite
+ * cannot see.
+ */
+export type CabinViewState =
+  /** The handoff's first read is in flight; the answer settles it. */
+  | Readonly<{ kind: "loading" }>
+  | Readonly<{ kind: "choices"; choices: readonly StardewCabinChoiceV1[] }>
+  | Readonly<{ kind: "confirming"; choices: readonly StardewCabinChoiceV1[]; choiceHandle: string }>
+  | Readonly<{ kind: "admitted" }>
+  | Readonly<{ kind: "uncertain" }>
+  /** The read could not be made, and the panel offers the control that makes it again. */
+  | Readonly<{ kind: "unavailable"; reread: boolean }>
+  /**
+   * No cabin this companion may use in the current host world.
+   *
+   * Distinct from `unavailable`, and the distinction is the whole point: this state has a CURE the player can act
+   * on - have Robin build one - while `unavailable` is "the read could not be made". The Host has always known the
+   * difference (`stardew_player_host_cabin_unavailable`); it was flattened to `state_unavailable` on the read route
+   * until 2026-10-28, so the panel had one word for two situations and a player reading the wrong one retried
+   * forever.
+   *
+   * `reread` is the shell's answer to "did my click do anything": true once the player asked again and the answer was
+   * still this state. Without it the refresh button under it is a control whose result is the screen the player is
+   * already looking at. The shell is the only party that knows, so it carries the fact rather than the panel guessing.
+   */
+  | Readonly<{ kind: "missing"; reread: boolean }>;
+
+/**
+ * The step each cabin-handoff state offers, named rather than implied.
+ *
+ * `AGENTS.md`'s zero-forward-path rule is why this exists: a state the handoff can really be
+ * in, from which the player could do nothing, is a dead end whose only exit is reloading the
+ * page - and reloading drops the Host connection and this surface's own attachment. The three
+ * members that are not a press on this page are still steps a player takes:
+ *
+ * - `wait_for_read` is the handoff's own in-flight read or confirmation settling it
+ *   (`loading`, `confirming`). The panel states it rather than offering a control whose
+ *   command is already in flight.
+ * - `terminal` is the handoff being over (`admitted`): the companion is moving in and the game
+ *   is what happens next.
+ * - `read_cabins_again` / `read_game_again` are the reads this surface owns, and they are
+ *   deliberately two different ones - see `deriveCabinHandoffActions`.
+ */
+export type CabinHandoffAction = "terminal" | "confirm" | "wait_for_read" | "read_cabins_again" | "read_game_again";
+
+/**
+ * The one step each state offers, in reading order.
+ *
+ * `uncertain` is the state that forced the distinction between the two reads. Its fact is a
+ * confirmation whose publication is unknown (`stardew_cabin_publication_uncertain`), and the
+ * one thing that must not happen next is a second confirmation: the Host keeps the confirmed
+ * choice handle consumed and answers any later confirmation with
+ * `stardew_cabin_confirmation_conflict` for the life of the coordinator. Re-reading the cabin
+ * choices would therefore re-arm a confirm button the Host can only refuse, so the honest step
+ * is the panel's own authoritative read of the game: it sends no handoff command at all, and
+ * the attachment the Host publishes once the confirmation landed is what answers the question.
+ * When it did not land, the state stays exactly as it is, and the panel says so.
+ */
+export function deriveCabinHandoffActions(state: CabinViewState): readonly CabinHandoffAction[] {
+  switch (state.kind) {
+    case "loading":
+    case "confirming":
+      return Object.freeze(["wait_for_read"]);
+    case "choices":
+      return Object.freeze(["confirm"]);
+    case "unavailable":
+    case "missing":
+      return Object.freeze(["read_cabins_again"]);
+    case "uncertain":
+      return Object.freeze(["read_game_again"]);
+    case "admitted":
+      return Object.freeze(["terminal"]);
+  }
+}
+
+/** Every kind the union above declares, for the handoff's totality gate to enumerate. */
+export const CABIN_HANDOFF_KINDS: readonly CabinViewState["kind"][] = Object.freeze([
+  "loading",
+  "choices",
+  "confirming",
+  "admitted",
+  "uncertain",
+  "unavailable",
+  "missing",
+]);
+
+/** The cheapest instance of each kind, so the gate drives the real derivation per state. */
+export const CABIN_HANDOFF_INPUTS: Readonly<Record<CabinViewState["kind"], CabinViewState>> = Object.freeze({
+  loading: Object.freeze({ kind: "loading" as const }),
+  choices: Object.freeze({ kind: "choices" as const, choices: Object.freeze([]) }),
+  confirming: Object.freeze({ kind: "confirming" as const, choices: Object.freeze([]), choiceHandle: "CHOICE" }),
+  admitted: Object.freeze({ kind: "admitted" as const }),
+  uncertain: Object.freeze({ kind: "uncertain" as const }),
+  unavailable: Object.freeze({ kind: "unavailable" as const, reread: false }),
+  missing: Object.freeze({ kind: "missing" as const, reread: false }),
+});
