@@ -916,6 +916,68 @@ test("her own world book that could not be read says so, and offers the read aga
 });
 
 /**
+ * A Host that answered 200 with a book this app cannot parse is a DIFFERENT fact from a Host that
+ * refused the read, and the surface says which one it is.
+ *
+ * `readOnce` caught every failure into one `failed` view, so a legitimate 200 whose body the client
+ * mirror refuses (an entry the contract says must carry `enabled`, and this one does not) was told to
+ * the player as "her own world book could not be read" - the sentence for a read the Host refused or
+ * never served. Two different faults, one sentence, and the one the player needs to act on ("update
+ * GameBuddy": the Host is newer than this browser) is indistinguishable from the one she should
+ * simply retry.
+ *
+ * The mirror being strict is the point and is not relaxed here: the contract makes `enabled` required,
+ * and a client that accepted a book missing it would render every such entry as switched off. What is
+ * wrong is REPORTING a parse failure as a read failure.
+ */
+test("a read the Host refused and a reply this app cannot read are two different states", async ({ page }) => {
+  const labels = characterLabels("en");
+  const book = {
+    apiVersion: 1,
+    present: true,
+    revision: 3,
+    entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, enabled: true, content: "Her greenhouse." }],
+  };
+  await stubCharacters(page, book);
+  // What the Host answers once the read is allowed through: the same book, with the entry's
+  // `enabled` key dropped - a shape the published contract says the Host cannot produce, and the
+  // one a stale browser meeting a newer Host would be handed.
+  const malformed = {
+    apiVersion: 1,
+    present: true,
+    revision: 3,
+    entries: [{ title: "Greenhouse", keys: ["greenhouse"], constant: false, content: "Her greenhouse." }],
+  };
+  let answer: "refused" | "unreadable" = "refused";
+  // Registered after the stub, so it answers first.
+  await page.route(`**/api/tavern/v1/companions/${handle}/worldbook`, (route) =>
+    route.fulfill(answer === "refused" ? problem(503, "runtime_unavailable") : jsonOk(malformed)),
+  );
+
+  const surface = await openCharacters(page, "Characters");
+
+  // The Host said no: the read-failed state, its own sentence, and not the unreadable one.
+  const failed = surface.locator("[data-companion-world-book-failed]");
+  await expect(failed).toBeVisible();
+  await expect(failed).toContainText(labels.companionWorldBookReadFailed);
+  await expect(surface.locator("[data-companion-world-book-unreadable]")).toHaveCount(0);
+
+  // The Host said yes and the reply is not one this app can read: its own state and its own
+  // sentence, and it must NOT claim the read failed.
+  answer = "unreadable";
+  const reread = page.waitForRequest((request) => request.url().includes(`/companions/${handle}/worldbook`));
+  await failed.locator("[data-companion-world-book-retry]").click();
+  await reread;
+  const unreadable = surface.locator("[data-companion-world-book-unreadable]");
+  await expect(unreadable).toBeVisible();
+  await expect(unreadable).toContainText(labels.companionWorldBookReplyUnreadable);
+  await expect(unreadable).not.toContainText(labels.companionWorldBookReadFailed);
+  await expect(surface.locator("[data-companion-world-book-failed]")).toHaveCount(0);
+  // The retry is offered on this state too: it is the one action that can tell the two apart.
+  await expect(unreadable.locator("[data-companion-world-book-retry]")).toBeVisible();
+});
+
+/**
  * The attachable World Info LIBRARY is the other list on this surface, and its failed read had the
  * same defect pointing the other way: `error` and `unavailable` shared one sentence, so a read that
  * failed was told to the player as "the world book is temporarily unavailable" with no way to ask

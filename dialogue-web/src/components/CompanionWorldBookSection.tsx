@@ -2,7 +2,12 @@ import { ChevronDown } from "lucide-react";
 import { type ReactElement, useEffect, useState } from "react";
 import { problemTextWithCode } from "../composed-problem-view";
 import { type Locale, type Messages, messages } from "../i18n";
-import { type CompanionWorldBookV1, type ManagementPipelineApi, TavernProblemError } from "../management-pipeline-api";
+import {
+  type CompanionWorldBookV1,
+  type ManagementPipelineApi,
+  TavernProblemError,
+  TavernProtocolError,
+} from "../management-pipeline-api";
 import { useArmedConfirmation } from "./armed-confirmation";
 import { type CharacterLabels, characterLabels } from "./character-domain-labels";
 import { useRecordDraft } from "./surface-drafts";
@@ -12,16 +17,23 @@ type CompanionWorldBookView =
   | Readonly<{ kind: "loading" }>
   | Readonly<{ kind: "absent" }>
   | Readonly<{ kind: "failed" }>
+  | Readonly<{ kind: "unreadable" }>
   | Readonly<{ kind: "ready"; handle: string; worldBook: CompanionWorldBookV1 }>;
 
 /**
- * The outcome of one read of the book: the projection, or the fact that the read failed.
+ * The outcome of one read of the book: the projection, or the fact that there is none.
  *
- * The two are separate because they are separate facts to the editor. `absent` projects as "she
- * has no book" and renders no block; a failed read is not a book state at all, and re-rendering
- * a ready surface as `absent` because one re-read failed would unmount the editor and the
- * player's unsigned entries with it - which is why a re-read's failure leaves the view alone
- * rather than taking the mount's `failed` branch.
+ * `absent` projects as "she has no book" and renders no block; the two failure states are not book
+ * states at all. `failed` is a read the Host refused or never served, and `unreadable` is a reply it
+ * DID serve that the client mirror refuses - a different fault, with a different sentence, because
+ * the first is answered by reading again and the second by a build that knows what the Host now says.
+ *
+ * Neither borrows the other's words: reporting a parse failure as a read failure sent the player to
+ * retry a read that had already succeeded.
+ *
+ * A re-read's failure (either kind) leaves a ready view alone rather than taking the mount's failure
+ * branch, because re-rendering a ready surface as `absent` would unmount the editor and the player's
+ * unsigned entries with it.
  */
 type CompanionWorldBookRead = CompanionWorldBookView;
 
@@ -95,6 +107,20 @@ function newCompanionWorldBookEntryDraft(): CompanionWorldBookEntryDraft {
 }
 
 /**
+ * Which of the two failure states a read that produced no book is.
+ *
+ * `TavernProtocolError` is the client's one "the reply did not conform" fact - a 200 whose body the
+ * mirror refuses, a body that is not JSON at all, a success status the route does not answer with.
+ * Everything else (a problem envelope the Host sent, a transport that never reached it) is the Host
+ * not serving the read. The mirror's strictness is not negotiable here: the published contract makes
+ * an entry's `enabled` required, and a client that accepted a book without it would render every such
+ * entry as switched off. What the panel may not do is call the second fact the first one's name.
+ */
+function companionWorldBookReadFailure(error: unknown): "failed" | "unreadable" {
+  return error instanceof TavernProtocolError ? "unreadable" : "failed";
+}
+
+/**
  * Whether the draft is what the Host accepts: every entry carries a title and a body.
  *
  * The two are the durable validator's own required fields, so an incomplete draft is
@@ -153,12 +179,14 @@ function companionWorldBookRefusal(labels: CharacterLabels, error: unknown, prob
  * `companion.worldbook.update` as one whole-list CAS on the revision this read carried.
  *
  * `absent` is "she has no book" and renders no block: the surface never invents one, and an empty
- * book it did not read would be a book it made up. `failed` is the OTHER fact - the read itself
- * could not be served - and it renders its own line with the read again, because collapsing it into
+ * book it did not read would be a book it made up. The two failure states are the OTHER fact - no
+ * book came back - and each renders its own line with the read again, because collapsing either into
  * `absent` made a read the Host never answered look exactly like a companion who has no world book:
- * the block simply was not there, and nothing on the surface said why. A book that exists is
- * editable even when it carries no entries: an empty book is exactly the one a player has to be
- * able to add to.
+ * the block simply was not there, and nothing on the surface said why. `failed` is the Host not
+ * serving the read; `unreadable` is a reply the client mirror refuses, which `failed`'s sentence
+ * cannot say without sending the player to retry a read that had already succeeded. A book that
+ * exists is editable even when it carries no entries: an empty book is exactly the one a player has
+ * to be able to add to.
  *
  * The draft carries two different things with two different owners: the revision its save
  * CASes on, which follows the book (`submit` moves it to the revision a conflict re-read
@@ -200,8 +228,8 @@ export function CompanionWorldBookSection({
       if (current === undefined) return { kind: "absent" };
       const worldBook = await api.readCompanionWorldBook(current.handle);
       return worldBook.present ? { kind: "ready", handle: current.handle, worldBook } : { kind: "absent" };
-    } catch {
-      return { kind: "failed" };
+    } catch (error) {
+      return { kind: companionWorldBookReadFailure(error) };
     }
   };
 
@@ -271,9 +299,9 @@ export function CompanionWorldBookSection({
       } catch (error) {
         failure = companionWorldBookRefusal(labels, error, messages(locale));
         const reread = await readOnce();
-        // A re-read that failed leaves the surface as it was: the editor and the player's
-        // entries stay, and the refusal is reported on its own.
-        const rereadView = reread.kind === "failed" ? null : reread;
+        // A re-read that failed - refused or unreadable - leaves the surface as it was: the editor and
+        // the player's entries stay, and the refusal is reported on its own.
+        const rereadView = reread.kind === "failed" || reread.kind === "unreadable" ? null : reread;
         if (rereadView !== null) setView(rereadView);
         if (isCompanionWorldBookConflict(error) && rereadView !== null && rereadView.kind === "ready") {
           const revision = rereadView.worldBook.revision;
@@ -303,12 +331,21 @@ export function CompanionWorldBookSection({
     bookDraft.type({ ...current, entries: current.entries.filter((entry) => entry.rowId !== rowId) });
   };
 
-  if (view.kind === "failed") {
+  if (view.kind === "failed" || view.kind === "unreadable") {
+    // One shell for both, because both offer the same one action - the read again - and two facts,
+    // because the player needs to know which side broke. The attribute and the sentence are the
+    // whole of the difference, and they are the difference a journey can read.
+    const unreadable = view.kind === "unreadable";
     return (
-      <section aria-label={labels.companionWorldBookTitle} data-companion-world-book data-companion-world-book-failed>
+      <section
+        aria-label={labels.companionWorldBookTitle}
+        data-companion-world-book
+        data-companion-world-book-failed={unreadable ? undefined : true}
+        data-companion-world-book-unreadable={unreadable ? true : undefined}
+      >
         <h3>{labels.companionWorldBookTitle}</h3>
         <p className="management-settings-hint">{labels.companionWorldBookHint}</p>
-        <p>{labels.companionWorldBookReadFailed}</p>
+        <p>{unreadable ? labels.companionWorldBookReplyUnreadable : labels.companionWorldBookReadFailed}</p>
         <button type="button" className="small-button" data-companion-world-book-retry onClick={reload}>
           {problemLabels.problemRetryRead}
         </button>

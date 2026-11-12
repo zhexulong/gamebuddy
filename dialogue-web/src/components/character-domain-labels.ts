@@ -321,6 +321,12 @@ export type CharacterLabels = Readonly<{
    * ("she has none"): the two facts are different, and the read is the one the retry performs again.
    */
   companionWorldBookReadFailed: string;
+  /**
+   * Said when the Host's answer about her own book is one this app cannot read. Its own sentence
+   * because it is its own fact: `companionWorldBookReadFailed` is a read the Host refused or never
+   * served, and telling the player the same words for both hides which side broke.
+   */
+  companionWorldBookReplyUnreadable: string;
   companionWorldBookCount: string;
   companionWorldBookTriggerWords: string;
   companionWorldBookKeySeparator: string;
@@ -657,6 +663,7 @@ const en: CharacterLabels = Object.freeze({
   companionWorldBookHint:
     "The world book her card carried, kept here with her. An entry is used when your own words match one of its trigger words, unless it is marked as always on.",
   companionWorldBookReadFailed: "Her own world book could not be read.",
+  companionWorldBookReplyUnreadable: "GameBuddy could not make sense of what the Host sent about her own world book.",
   companionWorldBookCount: "Entries in her own book: {{count}}",
   companionWorldBookTriggerWords: "Trigger words: {{keys}}",
   companionWorldBookKeySeparator: ", ",
@@ -950,6 +957,7 @@ const zh: CharacterLabels = Object.freeze({
   companionWorldBookHint:
     "她卡片自带的世界书，一直保存在她这里。当你自己的话命中某条词条的触发词时，这条词条才会被用到；标为常驻的除外。",
   companionWorldBookReadFailed: "无法读取她自己的世界书。",
+  companionWorldBookReplyUnreadable: "GameBuddy 读不懂 Host 返回的她自己的世界书。",
   companionWorldBookCount: "她自己的世界书里有 {{count}} 条词条",
   companionWorldBookTriggerWords: "触发词：{{keys}}",
   companionWorldBookKeySeparator: "、",
