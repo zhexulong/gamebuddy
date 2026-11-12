@@ -137,8 +137,52 @@ public sealed class MagnetPickupItemTests
         settled.ReasonCode.Should().Be("item_picked_up");
     }
 
-    // ---- the gate: the magnet's delivery IS this action's success -----------------
+    // ---- the refusal keeps the facts the walk was for -------------------------------
 
+    /// <summary>
+    /// A refused approach used to DROP the magnet facts. They were attached with `??`, so they travelled only when the
+    /// body controller produced no evidence at all: every refusal that named its own cause - here the engine's
+    /// pathfinder holding the body - lost `radius` and `stand_at`, the two facts that say whether stepping closer
+    /// would help or the drop is out of this body's reach.
+    ///
+    /// <para>
+    /// ADDITIVE: the controller's own `tile=2,2` is untouched beside them, and `within_magnet` still states that the
+    /// walk existed to put the body in the engine's rectangle. The three keys are the magnet's; the fourth is the
+    /// refusal's.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ARefusedApproachKeepsTheMagnetFactsBesideItsOwnCause()
+    {
+        using var harness = MagnetPickupHarness.Create(debrisTileX: 5, debrisTileY: 2, heldAtPublication: 0);
+        string targetId = harness.PublishTargetId();
+        ExecutionManager manager = harness.Manager;
+
+        harness.StandAt(2, 2);
+        harness.OccupyTile(5, 2);
+        int radius = harness.MagnetRadius;
+        // The engine's own pathfinder holds this body. That is the one hold that passes admission and is then refused
+        // by the walk WITH evidence of its own, which is the branch the magnet facts used to be dropped from.
+        harness.EngineOwnsTheBody();
+
+        LocalExecutionReceipt receipt = manager.RequestLocalPickupItem(
+            "req_owned", 5, 2, DroppedItemId, targetId, harness.DeadlineMs);
+
+        receipt.State.Should().Be(ExecutionState.Rejected, receipt.Evidence);
+        receipt.ReasonCode.Should().Be("native_controller_owned", $"the walk is refused for its own reason: {receipt.Evidence}");
+        Dictionary<string, string> evidence = ParseEvidence(receipt.Evidence!);
+        evidence["tile"].Should().Be("2,2", "the controller's evidence is carried untouched");
+        evidence["within_magnet"].Should().Be("true", "the walk existed to put the body inside the engine's rectangle");
+        evidence["radius"].Should().Be(
+            radius.ToString(), "without the reach beside the refusal a reader cannot tell whether stepping closer helps");
+        (int standX, int standY) = ParseTile(evidence["stand_at"]);
+        StardewBodyController.IsStandableTile(harness.Farm, harness.Actor, new Vector2(standX, standY))
+            .Should().BeTrue("the stand tile the refusal names is one the planner would actually stand on");
+        harness.EngineCollectsFrom(standX, standY).Should().BeTrue(
+            "standing there puts the body inside the rectangle Debris.playerInRange reads");
+    }
+
+    // ---- the gate: the magnet's delivery IS this action's success -----------------
     /// <summary>
     /// Before this change the preflight refused with <c>item_target_changed</c> because it asked only "is the chunk on
     /// the tile" - which is false for a drop the actor has in their bag. The receipt must now be the action's own
@@ -744,6 +788,15 @@ public sealed class MagnetPickupItemTests
 
         /// <summary>The same tile, a different stack - and so a different opaque identity for the chunk on it.</summary>
         internal void SetObservedStack(int stack) => this.debris.item!.Stack = stack;
+
+        /// <summary>
+        /// The engine's OWN pathfinder holding the body, which is the one hold admission does not answer: it is not a
+        /// disposition hold and the body controller owns no execution, so the request reaches the walk and the walk
+        /// refuses it with evidence of its own.
+        /// </summary>
+        internal void EngineOwnsTheBody() =>
+            this.Actor.controller = (StardewValley.Pathfinding.PathFindController)FormatterServices
+                .GetUninitializedObject(typeof(StardewValley.Pathfinding.PathFindController));
 
         /// <summary>An object on the tile, which is the geometry no farmer can stand on.</summary>
         internal void OccupyTile(int tileX, int tileY)

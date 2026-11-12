@@ -28,6 +28,12 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// beyond it holding the target. Every number asserted below is read from the receipt the producer returns, so the
 /// fixture never states the answer.
 /// </para>
+///
+/// <para>
+/// Two more questions are asked of the same producer here, because they are about the same sentence: the POPULATION the
+/// answer was chosen from (a wall presents as many candidates as it has rim tiles, and pricing every one of them is
+/// bounded), and the target's OWN ring when her own ring has no free tile.
+/// </para>
 /// </summary>
 [Collection(HeadlessGameWorld.Collection)]
 public sealed class PocketFrontierTests
@@ -122,9 +128,200 @@ public sealed class PocketFrontierTests
     }
 
     // -------------------------------------------------------------------------
-    // The world: a pocket of four tiles inside a ring of walls, with the rim's
-    // clearable tiles as weeds and the rest as the unpriced clumps `BuildCorridor`
-    // already uses for walls.
+    // What the answer was chosen from: pricing is per-candidate, and a wall has many.
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// A hundred-tile corridor with a weed on EVERY rim tile - the row above it and the row below it - so the rim is two
+    /// hundred clearable candidates. That is the weed-choked wall the receipt has to describe, and the shape whose price
+    /// is measured below.
+    ///
+    /// <para>
+    /// Two tiles beyond the wall, above the tenth column, are left free and the target stands on one of them: its own
+    /// ring keeps a standable tile it cannot be walked to (<c>standable_neighbour=unreachable</c>), so this case stays
+    /// about the frontier's population rather than about the ring the target's own description answers.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AWallOfTwoHundredCandidatesNamesTheNearestAndSaysHowManyWerePriced()
+    {
+        using ClearStepMoveTests.CorridorHarness harness = ClearStepMoveTests.CorridorHarness.Create(width: 100);
+        BuildLongWeedWall(harness);
+        harness.Actor.position.Set(new Vector2(10 * 64 + 8, 3 * 64));
+
+        (string code, string? evidence, _) = Refuse(harness, (10, 1));
+
+        code.Should().Be("no_reachable_approach:10:1", $"the placement has no approach, and the code still names it - evidence={evidence}");
+        evidence!.Should().Contain(
+            "candidates=200;described=8",
+            $"the wall holds two hundred candidates and the nearest eight were priced - got: {evidence}");
+        evidence.Should().Contain(
+            "blocker_occupant=weed@10,2",
+            "the nearest candidate to the target is still the one the sentence names, exactly as it was when every candidate was priced");
+    }
+
+    /// <summary>
+    /// The price itself, as a counted measurement rather than a claim. Each candidate costs one
+    /// <see cref="ExecutionManager.StepsToActAfterClear"/> flood, and every visited tile asks the caller's walkability
+    /// predicate - the one collision query the pricing spends. Two hundred candidates therefore spend two hundred
+    /// futures' worth of queries, and the point of the truncation is that they no longer do: the two-hundred-candidate
+    /// run and the eight-candidate run spend the SAME count, so the farther hundred and ninety-two are never consulted.
+    /// </summary>
+    [Fact]
+    public void TheOrderPricesOnlyTheEightNearestCandidates()
+    {
+        (int X, int Y) actor = (0, 2);
+        (int X, int Y) target = (250, 0);
+        (int X, int Y)[] wall = Enumerable.Range(0, 200).Select(x => (x, 1)).ToArray();
+        Func<(int X, int Y), bool> walkable = tile => tile.Y == 2 && tile.X >= 0 && tile.X < 200;
+
+        int wide = 0;
+        IReadOnlyList<ExecutionManager.FrontierPick> priced = ExecutionManager.OrderFrontierBlockers(
+            actor,
+            target,
+            wall,
+            tile =>
+            {
+                wide += 1;
+                return walkable(tile);
+            });
+
+        priced.Select(pick => pick.Tile).Should().Equal(
+            Enumerable.Range(0, 8).Select(offset => (199 - offset, 1)).ToArray(),
+            "the eight nearest to the target, nearest first, and the other hundred and ninety-two not at all");
+        priced.Should().OnlyContain(
+            pick => pick.StepsToAct == null,
+            "nothing behind this wall opens a way to the target, so null is the honest price for every candidate");
+
+        int narrow = 0;
+        ExecutionManager.OrderFrontierBlockers(
+            actor,
+            target,
+            priced.Select(pick => pick.Tile).ToArray(),
+            tile =>
+            {
+                narrow += 1;
+                return walkable(tile);
+            });
+
+        wide.Should().BeGreaterThan(0, "a count of zero would agree with itself");
+        wide.Should().Be(
+            narrow,
+            $"the farther candidates cost no walkability query at all: {wide} queries for two hundred candidates against {narrow} for the same eight");
+    }
+
+    // -------------------------------------------------------------------------
+    // The other description: the target's OWN ring, when her own ring has no free tile.
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// <c>standable_neighbour=none</c> used to stop at the count. "No free tile in the target's ring" is a fact about
+    /// the island, not about what stands there, and the controller already answers the second question:
+    /// <c>DescribeTargetApproaches</c> is the same ring the walk's own refusal publishes as <c>approaches=</c>, and it
+    /// describes the four approaches without searching for anything new.
+    /// </summary>
+    [Fact]
+    public void ARefusalWithNoStandableNeighbourDescribesTheTargetsOwnRing()
+    {
+        using ClearStepMoveTests.CorridorHarness harness = ClearStepMoveTests.CorridorHarness.Create();
+        BuildPocket(harness);
+        // The target is walled in on all eight sides, so its own ring has no free tile: the `none` branch, beside the
+        // pocket's rim - which still holds the weed the frontier names, so the placement keeps its own code.
+        WallTheTargetRing(harness);
+        harness.Actor.position.Set(new Vector2(ActorTile.X * 64 + 8, ActorTile.Y * 64));
+
+        (string code, string? evidence, _) = Refuse(harness, TargetTile);
+
+        code.Should().Be("no_reachable_approach:9:3", "a rim she can open keeps the placement's own name");
+        evidence!.Should().Contain("standable_neighbour=none", "the target's ring has no free tile at all");
+        evidence.Should().Contain(
+            "described_by=target_ring", $"the refusal names which description it carries - got: {evidence}");
+        evidence.Should().Contain(
+            "approaches=north:clump:ResourceClump@9,2,east:clump:ResourceClump@10,3,south:clump:ResourceClump@9,4,west:clump:ResourceClump@8,3",
+            $"and the geometry itself: what stands on each of the four approaches - got: {evidence}");
+    }
+
+    /// <summary>
+    /// One answer, one predicate. The ring this branch publishes is asked with the REFUSAL's own standability predicate,
+    /// so it cannot call a tile <c>open</c> that the sentence beside it has just counted as unstandable - the
+    /// two-spellings defect that once put <c>approaches=east:open</c> beside <c>route_exists_cardinal=false</c>.
+    /// </summary>
+    [Fact]
+    public void TheRingTheRefusalDescribesIsAskedWithTheRefusalsOwnPredicate()
+    {
+        using ClearStepMoveTests.CorridorHarness harness = ClearStepMoveTests.CorridorHarness.Create();
+        harness.BuildCorridor();
+        harness.Actor.position.Set(new Vector2(2 * 64 + 8, 3 * 64));
+
+        // The corridor row is free ground, so the harness's own standability would call the target's east and west
+        // neighbours `open`. This predicate refuses them - as the tool approach does for a warp buffer - and the ring
+        // published beside the refusal has to answer the same question the count did.
+        (string code, string? evidence, _) = ExecutionManager.DescribeNoReachableApproach(
+            (4, 3),
+            (2, 3),
+            _ => false,
+            new[] { (4, 3) },
+            location: harness.Location,
+            player: harness.Actor);
+
+        code.Should().Be("no_reachable_approach:4:3");
+        evidence!.Should().Contain("standable_neighbour=none");
+        evidence.Should().Contain("described_by=target_ring");
+        evidence.Should().NotContain(":open", $"the ring answers the predicate the refusal used - got: {evidence}");
+    }
+
+    // -------------------------------------------------------------------------
+    // The worlds: the long weed-choked wall, the walled-in target, and the pocket.
+    // -------------------------------------------------------------------------
+
+    /// <summary>Clumps on all eight tiles around the target, so its own ring holds nothing a body could stand on.</summary>
+    private static void WallTheTargetRing(ClearStepMoveTests.CorridorHarness harness)
+    {
+        for (int dx = -1; dx <= 1; dx += 1)
+        {
+            for (int dy = -1; dy <= 1; dy += 1)
+            {
+                if (dx == 0 && dy == 0)
+                    continue;
+                harness.Location.resourceClumps.Add(
+                    new StardewValley.TerrainFeatures.ResourceClump(0, 1, 1, new Vector2(TargetTile.X + dx, TargetTile.Y + dy)));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The long wall: a hundred-tile corridor (row y=3) whose two rim rows are weeds - two hundred clearable candidates -
+    /// with unpriced clumps everywhere else, and two free tiles at (10,1)/(11,1) forming the target.
+    ///
+    /// <para>
+    /// The free pair matters: the target's ring holds one standable tile it cannot be walked to, so this case sees the
+    /// <c>standable_neighbour=unreachable</c> sentence and stays about the frontier's population rather than about the
+    /// target's own ring.
+    /// </para>
+    /// </summary>
+    private static void BuildLongWeedWall(ClearStepMoveTests.CorridorHarness harness)
+    {
+        GameLocation location = harness.Location;
+        for (int x = 0; x < 100; x += 1)
+        {
+            for (int y = 0; y < 16; y += 1)
+            {
+                // The two rim rows are weeds and the corridor row is hers, so only the rest is wall - minus the free
+                // pair the target occupies. A clump on a weed's own tile would answer `OccupantAt` for both of them
+                // (the clump is read first, and an unpriced one is an unnamed wall).
+                if (y is 2 or 3 or 4 || (y == 1 && x is 10 or 11))
+                    continue;
+                location.resourceClumps.Add(new StardewValley.TerrainFeatures.ResourceClump(0, 1, 1, new Vector2(x, y)));
+            }
+
+            harness.PlaceWeed(x, 2);
+            harness.PlaceWeed(x, 4);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // The pocket: four tiles inside a ring of walls, with the rim's clearable tiles
+    // as weeds and the rest as the unpriced clumps `BuildCorridor` already uses.
     // -------------------------------------------------------------------------
 
     private static void BuildPocket(ClearStepMoveTests.CorridorHarness harness)

@@ -394,6 +394,20 @@ internal sealed partial class ExecutionManager
             ? $"{NoReachableApproachReasonCode}:{target.X}:{target.Y}"
             : $"{reasonCodePrefix}:{neighbour}";
         string hint = $"no_approach;standable_neighbour={neighbour}";
+        // A RING WITH NO FREE TILE says less than the controller knows. `standable_tiles=0` is the count; WHAT stands on
+        // each of the four approaches - off the map, a named occupant, free ground walled off - is the geometry that
+        // separates "pick another target" from "walk around or clear this". `DescribeTargetApproaches` is the same ring
+        // the walk's own refusal publishes as `approaches=`, asked of the same world: a description, not a second search.
+        //
+        // It is asked with THIS refusal's standability predicate, not the controller's own: a ring that called a tile
+        // `open` beside a sentence that had just counted it unstandable would be two answers to one question.
+        if (standableTiles == 0
+            && location is not null
+            && player is not null
+            && ((int)player.Tile.X, (int)player.Tile.Y) == actor)
+        {
+            evidence += $";described_by=target_ring;approaches={StardewBodyController.DescribeTargetApproaches(player, location, new Vector2(target.X, target.Y), tile => isStandable(((int)tile.X, (int)tile.Y)))}";
+        }
         // THE RIM of her own walkable component. A pocket is the one refusal distance cannot explain: her component is a
         // few tiles, the target is outside it, and the fact that ends the loop is WHICH rim tile to cut. Asked of the
         // world the caller named, and only when that body IS the tile this refusal names - a refusal about a tile nobody
@@ -442,6 +456,24 @@ internal sealed partial class ExecutionManager
     /// </summary>
     private const int FrontierFloodLimit = 8000;
 
+    /// <summary>
+    /// How many of the rim's candidates one refusal PRICES: the nearest to the target by <see cref="FrontierDistance"/>,
+    /// north-most then west-most at the cut.
+    ///
+    /// <para>
+    /// Pricing is not free and it is not shared: each candidate costs its own <see cref="StepsToActAfterClear"/> flood,
+    /// and that flood may visit <see cref="FrontierFloodLimit"/> tiles of collision queries. A weed-choked wall presents
+    /// as many candidates as it has rim tiles - a measured farm corner presented ~200 - so pricing the whole rim is
+    /// ~1.6M collision queries on the game thread inside one refusal. Eight keeps one answer at 8 x 8000, the same
+    /// order as the single flood the rest of this file already spends.
+    /// </para>
+    /// <para>
+    /// The number is visible in the sentence the refusal publishes (<c>candidates=</c> beside <c>described=</c>), which
+    /// is what makes it revisable: raising it costs nothing but price, and the receipt says what was charged.
+    /// </para>
+    /// </summary>
+    private const int FrontierPricedCandidateLimit = 8;
+
     /// <summary>One occupant-bearing tile on the rim of the actor's own walkable component that a published action removes.</summary>
     /// <param name="Tile">The wall to swing at.</param>
     /// <param name="StandAt">The component tile a swing reaches it from - inside the pocket, by construction.</param>
@@ -484,6 +516,12 @@ internal sealed partial class ExecutionManager
     /// need a second clear before it opens anything is still named - it is still the thing in the way - but it is
     /// ranked after every tile that opens the way alone.
     /// </para>
+    /// <para>
+    /// Only the <see cref="FrontierPricedCandidateLimit"/> nearest candidates are priced, so the order is over the part
+    /// of the rim one answer may afford. The caller publishes that population beside the choice
+    /// (<c>candidates=</c>/<c>described=</c>), because an order over a truncated set that did not say so would read as
+    /// an order over the whole rim.
+    /// </para>
     /// </summary>
     internal static System.Collections.Generic.IReadOnlyList<FrontierPick> OrderFrontierBlockers(
         (int X, int Y) actor,
@@ -491,11 +529,39 @@ internal sealed partial class ExecutionManager
         System.Collections.Generic.IReadOnlyList<(int X, int Y)> clearable,
         Func<(int X, int Y), bool> isWalkable)
     {
-        var picks = new System.Collections.Generic.List<FrontierPick>(clearable.Count);
-        foreach ((int X, int Y) tile in clearable)
+        System.Collections.Generic.List<(int X, int Y)> nearest = NearestCandidates(clearable, target);
+        var picks = new System.Collections.Generic.List<FrontierPick>(nearest.Count);
+        foreach ((int X, int Y) tile in nearest)
             picks.Add(new FrontierPick(tile, StepsToActAfterClear(actor, target, tile, isWalkable)));
         picks.Sort((left, right) => CompareFrontierPicks(left, right, target));
         return picks;
+    }
+
+    /// <summary>
+    /// The candidates worth pricing: the <see cref="FrontierPricedCandidateLimit"/> nearest to the target, and the rest
+    /// not at all.
+    ///
+    /// <para>
+    /// "Nearest" is <see cref="FrontierDistance"/>, the same measurement the ranking's third key uses, and the cut is
+    /// decided north-most then west-most on a tie - so a rim listed in a different order prices the same tiles, which is
+    /// the property the whole answer rests on (one world state, one answer).
+    /// </para>
+    /// </summary>
+    private static System.Collections.Generic.List<(int X, int Y)> NearestCandidates(
+        System.Collections.Generic.IReadOnlyList<(int X, int Y)> clearable,
+        (int X, int Y) target)
+    {
+        var ordered = new System.Collections.Generic.List<(int X, int Y)>(clearable);
+        ordered.Sort((left, right) =>
+        {
+            int byDistance = FrontierDistance(left, target).CompareTo(FrontierDistance(right, target));
+            if (byDistance != 0)
+                return byDistance;
+            return left.Y != right.Y ? left.Y.CompareTo(right.Y) : left.X.CompareTo(right.X);
+        });
+        if (ordered.Count > FrontierPricedCandidateLimit)
+            ordered.RemoveRange(FrontierPricedCandidateLimit, ordered.Count - FrontierPricedCandidateLimit);
+        return ordered;
     }
 
     /// <summary>The planner's own four-way step set, so this order cannot disagree with the route it prices.</summary>
@@ -642,7 +708,14 @@ internal sealed partial class ExecutionManager
                 candidates.ConvertAll(candidate => candidate.Tile),
                 tile => StardewBodyController.IsWalkableTile(location, player, new Vector2(tile.X, tile.Y)));
             (int X, int Y) head = ordered[0].Tile;
-            return new FrontierClearance(DescribeFrontierBlocker(candidates.Find(candidate => candidate.Tile == head), player), Code: null);
+            // WHAT the answer was chosen from. A wall can present more candidates than one answer may price, and a
+            // sentence that named the winner alone would read as "this is the only one there is": `candidates=8;
+            // described=8` says the whole rim was weighed, `candidates=200;described=8` says the nearest eight were and
+            // the rest were not consulted. Both numbers, so the truncation is visible rather than silent.
+            string population = $";candidates={candidates.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)};described={ordered.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            return new FrontierClearance(
+                DescribeFrontierBlocker(candidates.Find(candidate => candidate.Tile == head), player) + population,
+                Code: null);
         }
 
         if (walls.Count == 0)

@@ -220,7 +220,13 @@ internal sealed partial class ExecutionManager
             {
                 this.slots.Active.Clear();
                 this.slots.ItemPickup.Clear();
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode, approachEvidence ?? $"target={expectedTargetId};{magnetFacts}");
+                // WHAT the walk was for, published whether or not the walk said why it refused. `??` made the two
+                // exclusive, so every refusal that named its own cause dropped `within_magnet`, `radius` and
+                // `stand_at` - the facts that say whether stepping closer would have helped or the drop is out of this
+                // body's reach. Additive: the controller's own evidence is carried untouched, ahead of them.
+                string magnetRefusal = $"target={expectedTargetId};{magnetFacts}";
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode,
+                    approachEvidence is null ? magnetRefusal : $"{approachEvidence};{magnetRefusal}");
             }
         }
 

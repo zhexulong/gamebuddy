@@ -1602,12 +1602,23 @@ internal sealed class StardewBodyController
     /// other probe in this file, and a component that exceeded it is left UNDECIDED (every free tile counts as
     /// reachable) so the native planner rules - an exhausted probe must never be read as "nothing is reachable".
     /// </para>
+    /// <para>
+    /// <paramref name="isStandable"/> is the caller's own answer to "may a body stand here", when it has one that is
+    /// narrower than <see cref="IsStandableTile"/> (the tool approach also refuses a warp buffer). A ring asked with a
+    /// different predicate than the sentence beside it would report `open` for a tile that sentence had just counted as
+    /// unstandable, which is two answers to one question.
+    /// </para>
     /// </summary>
-    internal static CardinalRing RingAroundGoal(Farmer? actor, GameLocation? location, Vector2 goalTile)
+    internal static CardinalRing RingAroundGoal(
+        Farmer? actor,
+        GameLocation? location,
+        Vector2 goalTile,
+        Func<Vector2, bool>? isStandable = null)
     {
         Func<Vector2, bool>? reachable = actor is null || location is null
             ? null
             : BuildWalkableComponent(location, actor);
+        Func<Vector2, bool> standable = isStandable ?? (tile => location is not null && IsStandableTile(location, actor, tile));
         var entries = new List<CardinalRingEntry>(CardinalOffsets.Length);
         foreach (Point offset in CardinalOffsets)
         {
@@ -1620,7 +1631,7 @@ internal sealed class StardewBodyController
                     direction, tile, CardinalRingKind.Blocked, $"{direction}:off_map", $"off_map@{tile.X},{tile.Y}"));
                 continue;
             }
-            if (!IsStandableTile(location, actor, tileAsVector))
+            if (!standable(tileAsVector))
             {
                 string occupant = DescribeTargetOccupant(location, tileAsVector, actor).Format();
                 bool removable = location.objects.TryGetValue(tileAsVector, out StardewValley.Object? blockedItem)
@@ -1671,8 +1682,12 @@ internal sealed class StardewBodyController
     /// guessed, and it names a free-but-walled tile `unreachable` where it used to say `open`.
     /// </para>
     /// </summary>
-    internal static string DescribeTargetApproaches(Farmer actor, GameLocation location, Vector2 tile) =>
-        RingAroundGoal(actor, location, tile).Evidence;
+    internal static string DescribeTargetApproaches(
+        Farmer actor,
+        GameLocation location,
+        Vector2 tile,
+        Func<Vector2, bool>? isStandable = null) =>
+        RingAroundGoal(actor, location, tile, isStandable).Evidence;
 
     private static string RingDirection(Point offset) => offset switch
     {
