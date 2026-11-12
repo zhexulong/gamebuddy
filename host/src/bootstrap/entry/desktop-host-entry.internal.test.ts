@@ -7,6 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { assertStatementOrder, functionBody } from "../../test-support/function-body-order.test-support.js";
+import { readSourceShape } from "../../test-support/source-shape.test-support.js";
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const packageRoot = findPackageRoot(sourceDirectory);
@@ -210,13 +211,11 @@ test("Host bootstrap rejects a valid root until private Guardian session admissi
 });
 
 test("Desktop bootstrap source consumes only frame facts before fresh root validation and acknowledgement", async () => {
-  const source = await readFile(
+  const { raw: source, shape: sourceShape } = readSourceShape(
     resolve(sourceRoot, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.ts"),
-    "utf8",
   );
-  const entrySource = await readFile(
+  const { shape: entrySource } = readSourceShape(
     resolve(sourceRoot, "bootstrap", "entry", "desktop-host-entry.internal.ts"),
-    "utf8",
   );
 
   for (const forbidden of ["process.argv", "node:child_process", "spawn(", "console.", "current.json"])
@@ -229,10 +228,10 @@ test("Desktop bootstrap source consumes only frame facts before fresh root valid
   assert.match(source, /inspectWindowsPathIdentityChain/);
   assert.match(source, /inspectWindowsPathSecurity/);
   assert.match(source, /currentUserOwner/);
-  assert.match(source, /strictlyContains\(layout\.programRoot, artifactRoot\)/);
-  assert.match(source, /strictlyContains\(artifactRoot, mutableRoot\)/);
-  assert.match(source, /new WeakSet<object>/);
-  assert.match(source, /new WeakMap<object, DesktopRootLayout>/);
+  assert.match(sourceShape, /strictlyContains\(layout\.programRoot, artifactRoot\)/);
+  assert.match(sourceShape, /strictlyContains\(artifactRoot, mutableRoot\)/);
+  assert.match(sourceShape, /new WeakSet<object>/);
+  assert.match(sourceShape, /new WeakMap<object, DesktopRootLayout>/);
   assert.doesNotMatch(source, /host-runtime-admission/);
   assert.doesNotMatch(source, /runtimeClosure|enumerateRuntimeTree|sameRuntimeTree/);
   assert.doesNotMatch(

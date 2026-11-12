@@ -24,6 +24,7 @@ import { openRecoverableStardewBootstrapOwner } from "../../games/stardew/lifecy
 import { bindWindowsStaleLockReclaimer } from "../../path-lock.js";
 import { createTestWindowsStaleLockReclaimer } from "../../windows-stale-lock-reclaimer/index.test-support.js";
 import { assertStatementOrder, functionBody } from "../../test-support/function-body-order.test-support.js";
+import { readSourceShape } from "../../test-support/source-shape.test-support.js";
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 const packageRoot = findPackageRoot(sourceDirectory);
@@ -1326,12 +1327,11 @@ async function withTimeout<T>(promise: Promise<T>, milliseconds: number, label: 
 }
 
 test("desktop bootstrap helper remains private and has no entrypoint", async () => {
-  const source = await readFile(
+  const { raw: source, shape: sourceShape } = readSourceShape(
     resolve(sourceRoot, "bootstrap", "wire", "desktop-runtime-bootstrap.internal.ts"),
-    "utf8",
   );
 
-  assert.match(source, /export async function runDesktopHostBootstrap\(artifactRoot: string\)/);
+  assert.match(sourceShape, /export async function runDesktopHostBootstrap\(artifactRoot: string\)/);
   assert.doesNotMatch(source, /import.meta.main/);
   assert.doesNotMatch(source, /desktop-host-entry.internal.js/);
   // The private bootstrap factory is invoked once, positionally, through the three
@@ -1344,21 +1344,21 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   // The game-facing Mod step is reached through the composition seam and never
   // through a game import of this wire: the step and its named outcome are
   // announced as two bounded status frames before the Host composition starts.
-  assert.match(source, /await writeStatus\("companion-mod"\);/);
-  assert.match(source, /await writeStatus\(await deployCompanionGameMod\(artifactRoot\)\);/);
-  assert.match(source, /new WeakSet<object>\(\)/);
-  assert.match(source, /new WeakMap<object, DesktopRootLayout>\(\)/);
+  assert.match(sourceShape, /await writeStatus\("companion-mod"\);/);
+  assert.match(sourceShape, /await writeStatus\(await deployCompanionGameMod\(artifactRoot\)\);/);
+  assert.match(sourceShape, /new WeakSet<object>\(\)/);
+  assert.match(sourceShape, /new WeakMap<object, DesktopRootLayout>\(\)/);
   assert.match(source, /consumeDesktopRootLayoutCapability\(rootAuthority\)/);
   // The Host-owned env seam selects the composed surface and the narrative-gate
   // marker nonce digest; every invalid value fails closed before any guardian contact.
   assert.match(source, /GAMEBUDDY_HOST_SURFACE/);
-  assert.match(source, /surface !== "composed-reference-game"/);
+  assert.match(sourceShape, /surface !== "composed-reference-game"/);
   assert.match(source, /GAMEBUDDY_TAVERN_NARRATIVE_GATE_NONCE_SHA256/);
   assert.ok(source.includes("/^[a-f0-9]{64}$/.test(tavernNarrativeGateNonceSha256)"));
   // The composed launch URL is published over the child IPC channel only; the
   // production Desktop spawn carries no IPC channel so the publication is a no-op.
   assert.match(source, /gamebuddy-desktop-composition-ready\/v1/);
-  assert.match(source, /typeof process\.send !== "function" \|\| process\.connected !== true\)/);
+  assert.match(sourceShape, /typeof process\.send !== "function" \|\| process\.connected !== true\)/);
   assert.match(source, /consumeDesktopGuardianSessionCapability\(guardianAuthority\)/);
   assert.doesNotMatch(source, /stardew/);
   // The recovery wire tolerates the durable engine's refusal by the identity the
@@ -1366,7 +1366,7 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   // literal to fall back on, because a message match is exactly what silently
   // re-broke a resumed recovery.
   assert.match(
-    source,
+    sourceShape,
     /import \{ ContainmentRoleAlreadyContainedError \} from "\.\.\/\.\.\/containment\/runtime\/contract\/game-runtime\.js"/,
   );
   assert.doesNotMatch(source, /role_already_contained/);
@@ -1397,11 +1397,11 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   // object plus one newline), announced immediately before the step it names and always before the
   // acknowledgement; the acknowledgement keeps its own schema and stays the only frame that ends
   // the channel.
-  assert.match(source, /const statusSchema = "gamebuddy-desktop-host-bootstrap-status\/v1"/);
-  assert.match(source, /const statusToken = \/\^\[a-z\]\[a-z0-9-\]\{0,63\}\$\//);
+  assert.match(sourceShape, /const statusSchema = "gamebuddy-desktop-host-bootstrap-status\/v1"/);
+  assert.match(sourceShape, /const statusToken = \/\^\[a-z\]\[a-z0-9-\]\{0,63\}\$\//);
   // Formatting-tolerant: the write callback is a block the formatter may break across lines.
   assert.match(
-    source,
+    sourceShape,
     /process\.stdout\.write\(\s*bytes,\s*\(\) => \{\s*process\.stdout\.off\("error", onError\);\s*resolveWrite\(\);\s*\}\);/,
   );
   assert.match(source, /process\.stdout\.end\(acknowledgement/);
@@ -1424,9 +1424,9 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   );
   // No status frame is written from inside a loop, and none of them carries a wait statement: the
   // pre-acknowledgement path waits for no human decision.
-  assert.doesNotMatch(source, /for \([^)]*\)\s*\{[^}]*writeStatus\(/s);
+  assert.doesNotMatch(sourceShape, /for \([^)]*\)\s*\{[^}]*writeStatus\(/s);
   assert.doesNotMatch(source, /writeStatus\([^)]*,\s*"/);
-  assert.doesNotMatch(source, /export (function|async function) (mint|create|consume)Desktop/);
+  assert.doesNotMatch(sourceShape, /export (function|async function) (mint|create|consume)Desktop/);
   assert.doesNotMatch(source, /DesktopGuardianSession(?:Capability|Binding)?\s*\}\s*from/);
   assert.doesNotMatch(source, /installDesktopGuardianSessionFactoryForTest/);
   // The composition call site inside runDesktopHostBootstrap precedes the
@@ -1435,8 +1435,8 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   // The composition must stay a static binding: a deferred relative dynamic
   // import would be rejected by the production artifact validator, and the
   // release closure already weaves the whole product chain at build time.
-  assert.match(source, /from "\.\.\/\.\.\/composition\/desktop-host-composition\.js"/);
-  assert.doesNotMatch(source, /await import\("\.\.\/\.\.\/composition/);
+  assert.match(sourceShape, /from "\.\.\/\.\.\/composition\/desktop-host-composition\.js"/);
+  assert.doesNotMatch(sourceShape, /await import\("\.\.\/\.\.\/composition/);
 });
 
 function findPackageRoot(directory: string): string {
