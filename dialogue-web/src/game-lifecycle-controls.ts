@@ -1,3 +1,4 @@
+import { assertNever } from "./assert-never";
 import type { GameBrowserStateV1, StardewCabinChoiceV1 } from "./composed-reference-game-browser-api";
 
 /**
@@ -590,6 +591,13 @@ export function deriveCabinHandoffActions(state: CabinViewState): readonly Cabin
       return Object.freeze(["read_game_again"]);
     case "admitted":
       return Object.freeze(["terminal"]);
+    // The assertion travels with the switch. The declared return type already refuses a new kind -
+    // `strict` answers `TS2366: Function lacks ending return statement and return type does not include
+    // 'undefined'` the moment one is added - but that guarantee belongs to this signature, while
+    // `assertNever` belongs to the switch: a later edit that returns a value, relaxes the type or puts a
+    // statement after it keeps the refusal only if the guard is here.
+    default:
+      return assertNever(state);
   }
 }
 
