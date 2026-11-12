@@ -25,6 +25,51 @@ internal sealed partial class ExecutionManager
     /// </remarks>
     private const int ItemPickupMagnetClaimTicks = 60 * 60 * 5;
 
+    /// <summary>
+    /// How many of this Mod's own updates the engine's magnet may have to deliver a ground chunk before the wait is
+    /// settled. Not the catalogue's watchdog, which bounds liveness for every action and stays where it is.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Reading the engine's own path rather than guessing: a chunk may not move until <c>timeSinceDoneBouncing</c>
+    /// reaches 600 ms (Debris.cs:636-637), it then travels at most 0.8 px per axis per update with the ramp capped at 8
+    /// (Debris.cs:760-778), and it is collected only once its centre is inside 64 px per axis of the body's standing
+    /// pixel (Debris.cs:779-783, then <c>farmer.addItemToInventoryBool(item)</c> at :485 and the chunk leaving
+    /// <c>Chunks</c> at :793). So the worst case is the 600 ms of settling - 36 updates at the game's 60 per second -
+    /// plus the 13 the ramp needs to close the last 64 px of a 128 px reach: about 50 updates. 120 is that budget with
+    /// the same kind of margin the pedestal's mutex window gives its own hand-over, and because it counts UPDATES a
+    /// slower machine only lengthens it in seconds, never shortens it in fairness.
+    /// </para>
+    /// <para>
+    /// The silence it replaces was measured across one receipt channel (269 <c>pickup_item</c> executions): p50 0 ms,
+    /// p95 3.3 s, and nine at 59.8-60.0 s - those nine were waiting for the watchdog, not for the magnet.
+    /// </para>
+    /// </remarks>
+    internal const int ItemPickupMagnetWindowTicks = 120;
+
+    /// <summary>
+    /// The execution whose magnet window is being measured, and the tick this Mod's update first saw the walk hand the
+    /// body back with the pickup still owed. Keyed by execution identity so a later pickup cannot inherit the elapsed
+    /// time of an earlier one.
+    /// </summary>
+    private string? itemPickupMagnetExecutionId;
+    private long itemPickupMagnetStartedTick;
+
+    /// <summary>
+    /// How many of this Mod's updates the magnet phase has had, stamping its first one. Called only on a tick where the
+    /// walk has released the body: a walk that spends the request's deadline is the walk's budget, not the magnet's.
+    /// </summary>
+    private int ItemPickupMagnetTicks(string executionId)
+    {
+        if (!string.Equals(this.itemPickupMagnetExecutionId, executionId, StringComparison.Ordinal))
+        {
+            this.itemPickupMagnetExecutionId = executionId;
+            this.itemPickupMagnetStartedTick = this.tick;
+        }
+
+        return (int)(this.tick - this.itemPickupMagnetStartedTick);
+    }
+
     /// <summary>Published native forage pickup. The native location action owns inventory and object removal.</summary>
     public LocalExecutionReceipt RequestLocalPickupForage(string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {

@@ -1303,10 +1303,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // `Succeeded/item_picked_up` for a receipt the Host then refused as incomplete.
             string pickupEvidence = $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};native_auto_collect=true;chunk_removed={chunkRemoved}{chunkReason};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}";
             // The engine's own answer to WHERE this body is, which every settlement below that found no delivery has to
-            // carry; `chunk=gone` is the honest reading when there is no chunk left to measure against.
+            // carry. Empty when no chunk of this identity is left to measure against - `target_gone` is that fact, and
+            // it does not get a second spelling.
             string pickupReach = target is null
-                ? "chunk=gone"
-                : DescribeItemPickupReach(Game1.player, GetChunkTile(target.Value.Chunk), MagneticPickupReach.Subject(target.Value.Debris));
+                ? string.Empty
+                : $"{DescribeItemPickupReach(Game1.player, GetChunkTile(target.Value.Chunk), MagneticPickupReach.Subject(target.Value.Debris))};";
+            // The magnet phase begins when the walk hands the body back.
+            int magnetTicks = approachSettled ? this.ItemPickupMagnetTicks(specification.ExecutionId) : 0;
             if (approachSettled && targetGone && inventoryGained)
             {
                 this.slots.ItemPickup.Clear();
@@ -1323,7 +1326,25 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 this.revision++;
                 this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain,
                     $"pickup_precondition_broken:{brokenPrecondition}",
-                    $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};precondition={brokenPrecondition};{pickupReach};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}");
+                    $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};precondition={brokenPrecondition};{pickupReach}inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}");
+            }
+            else if (approachSettled && sameLocation && magnetTicks >= ItemPickupMagnetWindowTicks)
+            {
+                // The magnet has had the time its own path needs. The backpack is the authority on whether it delivered:
+                // a count that rose by the stack IS this action's success, and one that did not is settled here instead
+                // of at the request's deadline, which is where the 60 s silences came from.
+                this.slots.ItemPickup.Clear();
+                this.revision++;
+                if (inventoryGained)
+                {
+                    this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Succeeded, "item_picked_up", pickupEvidence);
+                }
+                else
+                {
+                    this.RememberTerminal(specification.RequestId, specification.ExecutionId, ExecutionState.Uncertain,
+                        "item_pickup_magnet_window_expired",
+                        $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};target_gone={targetGone.ToString().ToLowerInvariant()};{pickupReach}inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter};magnet_ticks={magnetTicks};magnet_window_ticks={ItemPickupMagnetWindowTicks}");
+                }
             }
             else if ((!sameLocation || nowMs > specification.DeadlineMs) && approachSettled)
             {

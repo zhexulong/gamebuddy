@@ -277,6 +277,94 @@ public sealed class MagnetPickupItemTests
         evidence["inventory_after"].Should().Be("0", "the drop never arrived");
     }
 
+    // ---- the bound the engine's own magnet justifies -----------------------------------
+
+    /// <summary>
+    /// The number, with its derivation, so a later change has to restate why it moved: 600 ms of settling is 36 updates
+    /// at the game's 60 per second, the velocity ramp needs 13 more to close the last 64 px inside a 128 px reach, and
+    /// 120 doubles that with margin.
+    /// </summary>
+    [Fact]
+    public void TheMagnetWindowIsDerivedFromTheEnginesOwnPickupPath()
+    {
+        ExecutionManager.ItemPickupMagnetWindowTicks.Should().Be(
+            120,
+            "36 updates of settling (Debris.cs:636-637) plus 13 of ramp (Debris.cs:760-783) is about 50; the window is that doubled");
+    }
+
+    /// <summary>
+    /// THE WAIT ENDS ON THE ENGINE'S OWN CLOCK, NOT ON THE REQUEST'S DEADLINE. Nothing happens here - the chunk stays on
+    /// the ground and the backpack stays empty - so the old behaviour was 60 s of silence followed by an `uncertain`
+    /// receipt that named a postcondition instead of the wait. The boundary is asserted on both sides: the magnet keeps
+    /// its whole window, and the tick after it settles with the numbers the caller needs.
+    /// </summary>
+    [Fact]
+    public void APickupTheMagnetNeverDeliversSettlesAtTheEndOfItsWindow()
+    {
+        using var harness = MagnetPickupHarness.Create(debrisTileX: 4, debrisTileY: 2, heldAtPublication: 0);
+        string targetId = harness.PublishTargetId();
+        ExecutionManager manager = harness.Manager;
+
+        harness.StandAt(3, 2);
+        harness.OccupyTile(4, 2);
+        LocalExecutionReceipt accepted = manager.RequestLocalPickupItem(
+            "req_window", 4, 2, DroppedItemId, targetId, harness.DeadlineMs);
+        accepted.State.Should().Be(ExecutionState.Accepted, accepted.Evidence);
+
+        int window = ExecutionManager.ItemPickupMagnetWindowTicks;
+        // The tick that first sees the walk finished is the magnet's tick zero, so the window's end is one tick after it.
+        LocalExecutionReceipt waiting = harness.Ticks(manager, "req_window", window);
+        waiting.State.Should().Be(ExecutionState.Accepted, "the magnet gets its whole window before anything is settled");
+
+        LocalExecutionReceipt settled = harness.Ticks(manager, "req_window", 1);
+        settled.State.Should().Be(ExecutionState.Uncertain, settled.Evidence);
+        settled.ReasonCode.Should().Be("item_pickup_magnet_window_expired");
+        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().Should().BeLessThan(
+            harness.DeadlineMs, "the request's own deadline is still in the future; the window is what settled this");
+
+        Dictionary<string, string> evidence = ParseEvidence(settled.Evidence!);
+        evidence["magnet_ticks"].Should().Be(window.ToString());
+        evidence["magnet_window_ticks"].Should().Be(window.ToString());
+        evidence["target_gone"].Should().Be("false", "the chunk never left the ground, and the receipt says so");
+        evidence["chunk_tile"].Should().Be("4,2", "a caller that has to try again has to know where the chunk is");
+        evidence["radius"].Should().Be(harness.MagnetRadius.ToString());
+        evidence["inventory_before"].Should().Be("0");
+        evidence["inventory_after"].Should().Be("0");
+    }
+
+    /// <summary>
+    /// THE OTHER HALF OF THE SAME WINDOW, and the half that was also 60 s of silence: the engine delivered the drop but a
+    /// chunk of the same identity is still lying there (deferred or shared cleanup), so the chunk-based success could
+    /// never fire. The count is the authority for the pickup, so the window settles it as this action's success - the
+    /// same nine keys, the same `chunk_removed=false` / `reason=chunk_still_present` shape the Host admits.
+    /// </summary>
+    [Fact]
+    public void ADeliveryWhoseChunkSurvivedSettlesAtTheWindowInsteadOfTheDeadline()
+    {
+        using var harness = MagnetPickupHarness.Create(debrisTileX: 4, debrisTileY: 2, heldAtPublication: 0);
+        string targetId = harness.PublishTargetId();
+        ExecutionManager manager = harness.Manager;
+
+        harness.StandAt(3, 2);
+        harness.OccupyTile(4, 2);
+        LocalExecutionReceipt accepted = manager.RequestLocalPickupItem(
+            "req_delivered", 4, 2, DroppedItemId, targetId, harness.DeadlineMs);
+        accepted.State.Should().Be(ExecutionState.Accepted, accepted.Evidence);
+        harness.DeliversWithoutRemovingTheChunk();
+
+        LocalExecutionReceipt settled = harness.Ticks(manager, "req_delivered", ExecutionManager.ItemPickupMagnetWindowTicks + 1);
+
+        settled.State.Should().Be(ExecutionState.Succeeded, settled.Evidence);
+        settled.ReasonCode.Should().Be("item_picked_up");
+        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().Should().BeLessThan(
+            harness.DeadlineMs, "the count settled this well before the request's deadline");
+        Dictionary<string, string> evidence = ParseEvidence(settled.Evidence!);
+        evidence["chunk_removed"].Should().Be("false");
+        evidence["reason"].Should().Be("chunk_still_present");
+        evidence["inventory_before"].Should().Be("0");
+        evidence["inventory_after"].Should().Be("1");
+    }
+
     // ---- the gate: the magnet's delivery IS this action's success -----------------
     /// <summary>
     /// Before this change the preflight refused with <c>item_target_changed</c> because it asked only "is the chunk on
