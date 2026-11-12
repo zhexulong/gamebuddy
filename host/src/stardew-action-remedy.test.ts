@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
+import { STARDEW_ACTION_TOOL_NAMES } from "./action-registry.js";
+import { planActionsFromRegistrations } from "./body-program-script.js";
+import { ADVERTISED, MOUNTED_GAME_SURFACE_TOOL_NAMES } from "./game-surface-prompt-floor.test-support.js";
 import { evidenceDetailOf, evidenceField, remedyForBodyHold } from "./stardew-action-remedy.js";
 
 test("every named hold gets a countermeasure, and none of them is the same text", () => {
@@ -20,17 +27,19 @@ test("every named hold gets a countermeasure, and none of them is the same text"
   );
 });
 
-test("a modal points at the tool that matches whether an answer is owed", () => {
+test("a modal points at the plan step that matches whether an answer is owed", () => {
   const question = remedyForBodyHold("actor_held_by_modal", "modal_type=DialogueBox;is_question=true;can_move=false");
-  assert.equal(question?.action, "stardew_answer_dialogue");
-  assert.match(question?.guidance ?? "", /stardew_answer_dialogue/);
+  assert.equal(question?.action, "stardew_plan_work");
+  assert.match(question?.guidance ?? "", /'answer_dialogue'/);
+  assert.match(question?.guidance ?? "", /stardew_plan_work/);
 
   const informational = remedyForBodyHold(
     "actor_held_by_modal",
     "modal_type=DialogueBox;is_question=false;can_move=false",
   );
-  assert.equal(informational?.action, "stardew_dismiss_modal");
-  assert.match(informational?.guidance ?? "", /stardew_dismiss_modal/);
+  assert.equal(informational?.action, "stardew_plan_work");
+  assert.match(informational?.guidance ?? "", /'dismiss_modal'/);
+  assert.match(informational?.guidance ?? "", /stardew_plan_work/);
 });
 
 test("an unreadable answer state is honest rather than promising a close that may be refused", () => {
@@ -40,7 +49,7 @@ test("an unreadable answer state is honest rather than promising a close that ma
     "actor_held_by_modal",
     "modal_type=LetterViewerMenu;is_question=unknown;can_move=false",
   );
-  assert.equal(remedy?.action, "stardew_dismiss_modal");
+  assert.equal(remedy?.action, "stardew_plan_work");
   assert.match(remedy?.guidance ?? "", /refuses menus it is not allowed to close/);
   assert.match(remedy?.guidance ?? "", /report the blockage/, "the Agent must be told what to do if the remedy fails");
 });
@@ -64,7 +73,7 @@ test("a hold with no countermeasure says so instead of naming a tool", () => {
   }
 });
 
-test("a cutscene points at the tool that acts on the box it is showing", () => {
+test("a cutscene points at the plan step that acts on the box it is showing", () => {
   // A cutscene is not one state. Two handlers act on its own dialogue box, and the evidence says which box is on
   // screen - the same fact the modal hold publishes. The dead end this replaces: one sentence for both, telling a run
   // that could have advanced the box that no action can run (four retries over twenty minutes).
@@ -72,21 +81,23 @@ test("a cutscene points at the tool that acts on the box it is showing", () => {
     "cutscene_active",
     "event_up=true;dialogue_box=true;is_question=true;admissible_actions=answer_dialogue,dismiss_modal;can_move=false",
   );
-  assert.equal(question?.action, "stardew_answer_dialogue");
-  assert.match(question?.guidance ?? "", /stardew_answer_dialogue/);
-  assert.match(question?.guidance ?? "", /stardew_dismiss_modal/, "the way to learn the offered keys must be named");
+  assert.equal(question?.action, "stardew_plan_work");
+  assert.match(question?.guidance ?? "", /'answer_dialogue'/);
+  assert.match(question?.guidance ?? "", /'dismiss_modal'/, "the way to learn the offered keys must be named");
 
   const informational = remedyForBodyHold(
     "cutscene_active",
     "event_up=true;dialogue_box=true;is_question=false;admissible_actions=answer_dialogue,dismiss_modal;can_move=false",
   );
-  assert.equal(informational?.action, "stardew_dismiss_modal");
-  assert.match(informational?.guidance ?? "", /stardew_dismiss_modal/);
+  assert.equal(informational?.action, "stardew_plan_work");
+  assert.match(informational?.guidance ?? "", /'dismiss_modal'/);
   assert.match(
     informational?.guidance ?? "",
-    /stardew_answer_dialogue/,
+    /'answer_dialogue'/,
     "a question box must name the action that answers it",
   );
+  for (const guidance of [question?.guidance, informational?.guidance])
+    assert.match(guidance ?? "", /stardew_plan_work/, "a step needs the route that can submit it");
 
   // No box: nothing to act on, and the guidance must not name a tool that would be refused.
   const bare = remedyForBodyHold(
@@ -217,4 +228,119 @@ test("the Mod's evidence is read in both the shapes it arrives in", () => {
   assert.equal(evidenceField(null, "is_question"), null);
   // A value that itself contains '=' must survive, or a modal type with punctuation would be truncated.
   assert.equal(evidenceField("modal_type=DialogueBox;x=a=b", "x"), "a=b");
+});
+
+/** The remedy table's own source: the population the reachability test below reads. */
+const REMEDY_SOURCE = join(dirname(fileURLToPath(import.meta.url)), "stardew-action-remedy.ts");
+
+/** The module's own string constants, so a route it names through one is resolved rather than guessed. */
+function moduleStringConstants(sourceFile: ts.SourceFile): Map<string, string> {
+  const constants = new Map<string, string>();
+  const walk = (node: ts.Node | undefined): void => {
+    if (node === undefined) return;
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer !== undefined &&
+      ts.isStringLiteral(node.initializer)
+    )
+      constants.set(node.name.text, node.initializer.text);
+    ts.forEachChild(node, walk);
+  };
+  walk(sourceFile);
+  return constants;
+}
+
+/**
+ * The text of one `guidance` initializer, its literal chunks joined as the model reads them, with a
+ * substitution the module declares as a constant resolved to its value.
+ */
+function guidanceText(initializer: ts.Node, constants: Map<string, string>): string {
+  const parts: string[] = [];
+  const collect = (node: ts.Node | undefined): void => {
+    if (node === undefined) return;
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      parts.push(node.text);
+      return;
+    }
+    if (ts.isTemplateExpression(node)) {
+      parts.push(node.head.text);
+      for (const span of node.templateSpans) {
+        if (ts.isIdentifier(span.expression) && constants.has(span.expression.text))
+          parts.push(constants.get(span.expression.text) ?? "");
+        parts.push(span.literal.text);
+      }
+      return;
+    }
+    ts.forEachChild(node, collect);
+  };
+  collect(initializer);
+  return parts.join("");
+}
+
+/**
+ * Every route the remedy table names: each `action:` value, and every tool name inside a `guidance`
+ * sentence, each tagged with the reason code whose case declares it. A bare action id in a sentence is
+ * the plan-step spelling, so it is resolved to the id itself.
+ */
+function namedRemedyRoutes(): readonly Readonly<{ route: string; remedy: string; bare: boolean }>[] {
+  const sourceFile = ts.createSourceFile(
+    REMEDY_SOURCE,
+    readFileSync(REMEDY_SOURCE, "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const constants = moduleStringConstants(sourceFile);
+  const routes: { route: string; remedy: string; bare: boolean }[] = [];
+  const walk = (node: ts.Node | undefined, remedy: string): void => {
+    if (node === undefined) return;
+    const owner = ts.isCaseClause(node) && ts.isStringLiteral(node.expression) ? node.expression.text : remedy;
+    if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.initializer !== undefined) {
+      if (node.name.text === "action") {
+        if (ts.isStringLiteral(node.initializer))
+          routes.push({ route: node.initializer.text, remedy: owner, bare: false });
+        else if (ts.isIdentifier(node.initializer) && constants.has(node.initializer.text))
+          routes.push({ route: constants.get(node.initializer.text) ?? "", remedy: owner, bare: false });
+      }
+      if (node.name.text === "guidance") {
+        const text = guidanceText(node.initializer, constants);
+        for (const match of text.matchAll(/stardew_[a-z0-9_]+/gu))
+          routes.push({ route: match[0], remedy: owner, bare: false });
+        for (const actionId of Object.keys(STARDEW_ACTION_TOOL_NAMES))
+          if (new RegExp(`(?<![A-Za-z0-9_])${actionId}(?![A-Za-z0-9_])`, "u").test(text))
+            routes.push({ route: actionId, remedy: owner, bare: true });
+      }
+    }
+    ts.forEachChild(node, (child) => walk(child, owner));
+  };
+  walk(sourceFile, "<no case>");
+  return routes;
+}
+
+test("every route a remedy names is one the mounted surface can take", (t) => {
+  // The population is the module's own table, so a remedy added tomorrow is judged by the same rule
+  // without editing this test. It named `stardew_dismiss_modal` and `stardew_answer_dialogue` until
+  // 2026-11-12: both are declared by the module that builds the flat tools, and `planActionSurface`
+  // drops every one of them, so the only sentence the Agent got after a hold pointed at a tool that
+  // was not in the request. A mounted tool is a route; a step the plan builder admits is a route.
+  const mounted = new Set<string>(MOUNTED_GAME_SURFACE_TOOL_NAMES);
+  const admitted = new Set<string>(planActionsFromRegistrations(ADVERTISED).map((action) => action.actionId));
+  assert.ok(mounted.size > 0, "blocked: the recorded mounted Game tool set is empty, so every route would fail");
+  assert.ok(admitted.size > 0, "blocked: the plan builder admits no action, so no step could be a route");
+  const routes = namedRemedyRoutes();
+  assert.ok(routes.length > 0, "blocked: the remedy table names no route at all, so this reads nothing");
+  // A prefixed name is a tool the Agent calls, so it has to be MOUNTED; a bare id is a plan step, so it
+  // has to be admitted by the plan builder. Neither may borrow the other's authority.
+  const findings = routes
+    .filter((entry) => (entry.bare ? !admitted.has(entry.route) : !mounted.has(entry.route)))
+    .map((entry) => `remedy_names_an_unreachable_route:${entry.route}:${entry.remedy}`);
+  t.diagnostic(
+    `every route a remedy names: ${routes.length} route mention(s) (${routes.filter((entry) => entry.bare).length} plan step(s), ${routes.filter((entry) => !entry.bare).length} tool name(s)) · ${mounted.size} mounted · ${admitted.size} plan-admissible; ${findings.length} unreachable`,
+  );
+  assert.deepEqual(
+    findings,
+    [],
+    "a remedy that points at a route the game cannot take is the defect this module's own header rules out",
+  );
 });

@@ -10,7 +10,11 @@
  * and the Mod's evidence, so the whole table is testable without a game.
  *
  * It never promises a remedy it cannot deliver: a modal the audited whitelist will not close reports that
- * honestly rather than pointing at a tool that will refuse.
+ * honestly rather than pointing at a tool that will refuse, and every route it names is one the Game surface
+ * actually hands over - a mounted tool, or a step the plan builder admits (`stardew-action-remedy.test.ts`
+ * holds both directions). It named `stardew_dismiss_modal` and `stardew_answer_dialogue` until 2026-11-12;
+ * both are flat per-action tools a plan surface drops, so the one sentence the Agent got after a hold pointed
+ * at a tool that was not in the request at all - the same defect the Game conduct carried for body language.
  */
 
 export type StardewActionRemedy = Readonly<{
@@ -53,26 +57,28 @@ export function remedyForBodyHold(reasonCode: string | null, detail: string | nu
       const isQuestion = evidenceField(detail, "is_question");
       if (isQuestion === "true")
         return {
-          action: "stardew_answer_dialogue",
+          action: "stardew_plan_work",
           guidance:
-            `The farmhand cannot act because a ${modalType} is waiting for an answer. Call ` +
-            `'stardew_answer_dialogue' with the responseKey you want, then re-issue the same request.`,
+            `The farmhand cannot act because a ${modalType} is waiting for an answer. Answering it is an ` +
+            `action in the plan you submit with stardew_plan_work: submit 'answer_dialogue' with the responseKey ` +
+            `you want, then re-issue the same request.`,
         };
       if (isQuestion === "false")
         return {
-          action: "stardew_dismiss_modal",
+          action: "stardew_plan_work",
           guidance:
-            `The farmhand cannot act because a ${modalType} is on screen. Call 'stardew_dismiss_modal' to ` +
-            `close it, then re-issue the same request with the same target.`,
+            `The farmhand cannot act because a ${modalType} is on screen. Closing it is an action in the ` +
+            `plan you submit with stardew_plan_work: submit 'dismiss_modal', then re-issue the same request with ` +
+            `the same target.`,
         };
       // No answer state was readable, which is the case for an operation menu rather than a dialogue. Say
       // what will actually happen instead of promising a close that the whitelist may refuse.
       return {
-        action: "stardew_dismiss_modal",
+        action: "stardew_plan_work",
         guidance:
-          `The farmhand cannot act because a ${modalType} is on screen. Try 'stardew_dismiss_modal'; it ` +
-          `refuses menus it is not allowed to close, and if it refuses, report the blockage instead of ` +
-          `retrying the original request.`,
+          `The farmhand cannot act because a ${modalType} is on screen. Dismissing it is an action in the ` +
+          `plan you submit with stardew_plan_work: submit 'dismiss_modal'; it refuses menus it is not allowed to ` +
+          `close, and if it refuses, report the blockage instead of retrying the original request.`,
       };
     }
     case "transient_busy": {
@@ -101,19 +107,20 @@ export function remedyForBodyHold(reasonCode: string | null, detail: string | nu
       const isQuestion = evidenceField(detail, "is_question");
       if (dialogueBox === "true" && isQuestion === "true")
         return {
-          action: "stardew_answer_dialogue",
+          action: "stardew_plan_work",
           guidance:
-            "A cutscene is holding the farmhand and its dialogue is waiting for an answer. Call " +
-            "'stardew_answer_dialogue' with the responseKey the box offers - and if you do not have the keys, call " +
-            "'stardew_dismiss_modal' once: it refuses a question box and that refusal lists the keys and the question.",
+            "A cutscene is holding the farmhand and its dialogue is waiting for an answer. Answering it is an " +
+            `action in the plan you submit with stardew_plan_work: submit 'answer_dialogue' with the responseKey the ` +
+            "box offers - and if you do not have the keys, submit 'dismiss_modal' once: it refuses a question box " +
+            "and that refusal lists the keys and the question.",
         };
       if (dialogueBox === "true")
         return {
-          action: "stardew_dismiss_modal",
+          action: "stardew_plan_work",
           guidance:
-            "A cutscene is holding the farmhand and its dialogue box is on screen. Call 'stardew_dismiss_modal' to " +
-            "advance it; if the box is asking a question that call is refused with the offered response keys, which " +
-            "is what 'stardew_answer_dialogue' needs.",
+            "A cutscene is holding the farmhand and its dialogue box is on screen. Advancing it is an action in " +
+            `the plan you submit with stardew_plan_work: submit 'dismiss_modal'; if the box is asking a question that ` +
+            "step is refused with the offered response keys, which is what 'answer_dialogue' needs.",
         };
       return {
         action: null,

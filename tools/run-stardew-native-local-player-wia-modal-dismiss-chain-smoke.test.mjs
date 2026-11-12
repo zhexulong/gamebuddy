@@ -3,7 +3,10 @@ import test from "node:test";
 import { runWiaModalDismissChain } from "./run-stardew-native-local-player-wia-modal-dismiss-chain-smoke.mjs";
 import { publishedActionRegistrations } from "./lib/stardew-native-smoke-harness-v1.mjs";
 
-const REAL_REMEDY = { action: "stardew_dismiss_modal", guidance: "Call 'stardew_dismiss_modal'" };
+const REAL_REMEDY = {
+  action: "stardew_plan_work",
+  guidance: "Closing it is an action in the plan you submit with stardew_plan_work: submit 'dismiss_modal'",
+};
 /** A host-module loader whose gateway admits, so a guard test can move past phase 2a. */
 function hostLoader({ gateway = () => null, remedy = () => REAL_REMEDY } = {}) {
   return async (name) =>
@@ -162,7 +165,7 @@ test("wia dismiss chain passes the full interrupt → dismiss → resume loop", 
   assert.equal(result.gatewayVerdict, null, "the gateway must ADMIT a held body and let the Mod name the hold");
   assert.equal(result.holdNamed, true);
   assert.equal(result.holdRemedyOk, true);
-  assert.equal(result.holdRemedy.action, "stardew_dismiss_modal");
+  assert.equal(result.holdRemedy.action, "stardew_plan_work");
   assert.equal(result.dismissOk, true);
   assert.equal(result.phases.interrupt.reasonCode, "modal_interrupted");
   assert.equal(result.phases.dismiss.reasonCode, "modal_dismissed");

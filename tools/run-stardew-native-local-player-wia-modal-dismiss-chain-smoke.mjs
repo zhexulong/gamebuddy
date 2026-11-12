@@ -136,7 +136,7 @@ export async function runWiaModalDismissChain(
     // The sentence the Agent would read comes from the PRODUCTION helper the tool layer also calls, so this
     // cannot pass on wording the tool layer does not emit.
     const holdRemedy = describeBodyHoldRefusal(holdTerminal.reasonCode, holdTerminal.evidence);
-    const holdRemedyOk = holdRemedy?.action === "stardew_dismiss_modal";
+    const holdRemedyOk = holdRemedy?.action === "stardew_plan_work" && /'dismiss_modal'/u.test(holdRemedy.guidance);
 
     // ---- phase 2: dismiss (admission half-loop) ----
     const fresh2 = await waitForFreshSnapshot(client, {
