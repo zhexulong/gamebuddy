@@ -1,6 +1,6 @@
 {
   "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`.",
-  "revision": "b7eddd74",
+  "revision": "b047bb19",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -75,7 +75,7 @@
       "language": "cs",
       "name": "ExecutionManager.Cancel(string,string,string)",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 1493,
+      "line": 1379,
       "value": 40
     },
     {
@@ -91,7 +91,7 @@
       "language": "cs",
       "name": "ExecutionManager.CreateBridgeSnapshot()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 2400,
+      "line": 2286,
       "value": 107
     },
     {
@@ -99,7 +99,7 @@
       "language": "cs",
       "name": "ExecutionManager.CreateSnapshot()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 2294,
+      "line": 2180,
       "value": 34
     },
     {
@@ -107,7 +107,7 @@
       "language": "cs",
       "name": "ExecutionManager.DescribeActiveExecution()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 2670,
+      "line": 2556,
       "value": 99
     },
     {
@@ -179,7 +179,7 @@
       "language": "cs",
       "name": "ExecutionManager.Update()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 1695,
+      "line": 1581,
       "value": 97
     },
     {
@@ -1177,7 +1177,7 @@
       "parts": 47,
       "file": "integrations/stardew/farmhandexecutioncontroller.actorstateactions.cs",
       "line": 143,
-      "value": 4683
+      "value": 4648
     },
     {
       "id": "cs:ModEntry",
@@ -1290,9 +1290,9 @@
       "files": 46,
       "file": "integrations/stardew/farmhandexecutioncontroller.actorstateactions.cs",
       "line": 143,
-      "lines": 27374,
-      "methods": 789,
-      "reason": "27,825 -> 27,374 lines and 789 -> 792 -> 789 methods over the same 47 parts, measured at each revision with this gate's own measureCSharp so the arithmetic is re-runnable. 889b9630, where this record was first taken: 27,825 lines / 789 methods. 053614d7 added FindVillagerByTargetId, the single reader of the identity-bound villager lookup four NPC actions each spelled (27,828 / 790). ef4f82ae added BeginLocalExecution and AdmitLocalExecution, the replay lookup, revision advance, execution identity and admission clock that 62 actions repeated (27,509 / 792, -319 lines). 3f365f73 then moved the receipt ledger out of the class into ExecutionReceiptStore.cs, 245 new lines in their own file: BindAction, TryBindDispatch, NewExecutionId, Remember, PublishIdleAfterRelease and DrainPendingIdleAfterRelease left ExecutionManager and two explicit IActiveBodyOwnership implementations joined it, leaving 27,374 lines / 789 declarations / complexity 4,683 (-135 lines, -3 declarations, -25 complexity). Net across the three commits: -451 lines, the same 789 methods it started with, complexity 4,770 -> 4,683. Every step is a shrink or a seam; 27,374 / 789 is the frozen ceiling now. This supersedes the 4da075af note, whose 28,104 describes no field this record holds."
+      "lines": 27239,
+      "methods": 804,
+      "reason": "27,825 -> 27,239 lines and 789 -> 792 -> 789 -> 804 methods over the same 47 parts, measured at each revision with this gate's own measureCSharp so the arithmetic is re-runnable. 889b9630, where this record was first taken: 27,825 lines / 789 methods. 053614d7 added FindVillagerByTargetId, the single reader of the identity-bound villager lookup four NPC actions each spelled (27,828 / 790). ef4f82ae added BeginLocalExecution and AdmitLocalExecution, the replay lookup, revision advance, execution identity and admission clock that 62 actions repeated (27,509 / 792, -319 lines). 3f365f73 then moved the receipt ledger out of the class into ExecutionReceiptStore.cs, 245 new lines in their own file: BindAction, TryBindDispatch, NewExecutionId, Remember, PublishIdleAfterRelease and DrainPendingIdleAfterRelease left ExecutionManager and two explicit IActiveBodyOwnership implementations joined it, leaving 27,374 lines / 789 declarations / complexity 4,683 (-135 lines, -3 declarations, -25 complexity). ae02fa38 moved the in-flight body state into ActiveBodySlots.cs and left read-only projections under the names every action family already reads: 16 slot fields in this class became expression-bodied properties over BodySlot<T>.Peek() (+16 members) while OwnerToken left for the new class (-1 member), so 27,374 -> 27,239 lines (-135) reads as 789 -> 804 methods (+15). The +15 is a field becoming an accessor, not growth: this gate counts a property_declaration as a member and a field_declaration as none, and no projection getter carries a branch. Net across the four commits: -586 lines, complexity 4,770 -> 4,648. Every step is a shrink or a seam; 27,239 / 804 is the frozen ceiling now. This supersedes the 4da075af note, whose 28,104 describes no field this record holds."
     },
     {
       "id": "cs:FarmhandActionCatalog",
