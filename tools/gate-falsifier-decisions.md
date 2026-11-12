@@ -2053,3 +2053,57 @@ and reproducing, the newest of two builds winning (in both directions, Debug nam
 blocked with the project and the command printed, and a junctioned configuration still found. All four were seen red
 against `HEAD`'s gate file before they were green - `actual ['--deadline-windows']` where
 `['…/bin/Release/net6.0/…', '--deadline-windows']` was expected, and `actual 0` where exit 2 was expected.
+
+## The Mod export build joins the ladder, and two readings that were not gate defects
+
+### The missing rung: a build output the gate runs, and the ladder never built
+
+`tools/check-generated-artifact-reproducibility.mjs` runs
+`bin/<configuration>/net6.0/GameBuddy.Stardew.ActionDevelopmentActionSurfaceExport.dll` as the producer of three
+generated artefacts (`action-surface`, `action-deadline-windows`, `action-handler-groups`). The section above unpinned
+the *configuration* the resolver looks for and left this open in its own words: "A tree with no build at all is green in
+the default run and blocked under `--re-derive-all`". Measured on a clean `git clone --shared` of HEAD `42a2d6b8` (no
+`bin/` anywhere, no `ref/`):
+
+| reading | the line |
+| --- | --- |
+| the clone as checked out | `generated_artifact_producer_unavailable:<each surface artefact>:missing_built_assembly:<project>` with `build it with: dotnet build <project> -c Release`, `blockedBy: missing_input:ref`, exit 2 |
+| the same clone after that command | `artefacts examined 6 · … · reproduced 4 · not re-derived 1 (declared_by_test 1)`, `producerAssemblies` naming `bin/Release/net6.0/…` for the three, and the one remaining blocker `missing_input:ref`, exit 2 |
+| the same clone with the `ref` decompile present | `reproduced 5 · not re-derived 1 (declared_by_test 1)`, `blockedBy: null`, all four rules `passed`, exit 0 |
+
+So the export assembly was a *build* prerequisite a checkout can satisfy and the ladder did not: `tools/prelive.mjs`
+now runs a `prep` rung before L0 with exactly the command the gate's own detail names. The skip is MSBuild's
+(`dotnet build` compiles nothing while its outputs are newer than every source - 0.7 s warm, measured 2026-11-12), not
+a mtime rule written beside it, because the input list belongs to the gate and a copy of it would drift. `dotnet`
+absent is UNAVAILABLE and leaves the verdict to the gate that names what it could not run; a build that fails stops the
+ladder, because a Mod that does not compile is a cause no later gate states better.
+
+`ref` is the other prerequisite and it is **not** a build: the decompiled reference tree is a developer-machine input
+(no `.gitmodules` entry carries it), which is why the middle reading still blocks and the third one exists. A lane that
+has `ref/` and runs the ladder gets the gate resolved; a lane that does not gets `missing_input:ref` from the gate
+itself, which is the honest reading and not a rung's job to fake.
+
+### `test:tool-corpus`: the proof was orphaned, not missing
+
+The ledger answered `gate_undeclared: test:tool-corpus: no red-proof: marker in tools/run-tool-test-corpus.mjs` in a
+clean checkout and `proven:test:tool-corpus kind=inject at=tools/run-tool-test-corpus.test.mjs:11` in this worktree,
+because `tools/run-tool-test-corpus.test.mjs` existed on one disk and in no commit on any branch (`git log --all -- <path>`
+printed nothing). The audit's ownership rule already accepts a marker in a gate's sibling falsifier, so the gate was
+never missing a proof, and no marker was added to its entry file: a second spelling of one claim is a second authority.
+The suite is committed (`a61f32a3`, nine cases green) and the marker now lives in history rather than beside it.
+
+### One switch finding that was an assertion which had moved
+
+`dialogue-web/src/game-lifecycle-controls.ts:580` was red with `switch_default_does_not_assert_never`, on a switch with
+no `default` at all. The gate's sentence - "a new member compiles and falls through" - is **false** for it: the declared
+return type is `readonly CabinHandoffAction[]`, so `strict` answers `TS2366: Function lacks ending return statement and
+return type does not include 'undefined'` the moment a kind is added (driven over a scratch copy of the same shape:
+green with today's members, `TS2366` with one more). The assertion was not missing; it had moved into the signature, and
+a second guard reads the module's own union (`dialogue-web/tests/game-lifecycle-launch-gate.test.mjs`
+cabin-forward-path.1 and .2).
+
+The fix is the `default: return assertNever(state)` anyway (`0f0e7500`), because of the difference the gate cannot
+state: the return type's guarantee belongs to that signature and is lost by a later edit that returns a value, puts a
+statement after the switch or relaxes the type, while `assertNever` travels with the switch. This is **not** recorded as
+a defect in the gate's reading - it cannot see a return type, and its rule is a uniform spelling with no
+side-condition - but the narrower finding is kept: this gate's message asserted a consequence it had not measured.
