@@ -9,7 +9,9 @@
  *   node tools/check-presentation-delivery-account.mjs --run-dir DIR   # one named run
  *
  * A bundle that predates `presentation.deliveryAccount` is BLOCKED, not passed: the question cannot be answered from
- * it, and a check whose population is empty must not agree with itself.
+ * it, and a check whose population is empty must not agree with itself. A tree with no bundle under `.live-runs` at all
+ * exits 2 and prints the same report with `examined 0` and a stated `allowEmpty` reason, so the third verdict is a
+ * measurement that did not happen rather than a gate that printed nothing.
  *
  * red-proof: history  round41's own bundle carried `pieceCount: 59` against thirteen named pieces -> this entry point
  *                    exits 1 on it, and the reconciling cases beside it (a piece no record names, parts that do not add
@@ -58,6 +60,21 @@ function main() {
           .map((entry) => entry.path);
   if (targets.length === 0 || targets[0] === undefined) {
     console.error("delivery_account_not_measured: no run bundle exists under .live-runs");
+    // The report, printed on this path too: `tools/lib/harness-conformance.mjs` reads a gate's own report and has none
+    // to read when the blocked branch says only that it blocked. `examined 0` beside the stated `allowEmpty` reason is
+    // `not_measured` - counted apart from the passes, never green - and the exit code stays 2, because a prerequisite
+    // that is absent is not a verdict about any bundle.
+    console.log("examined 0 bundle(s)");
+    console.log(
+      JSON.stringify({
+        gate: "presentation-delivery-account",
+        status: "not_measured",
+        examined: 0,
+        allowEmpty:
+          "a run bundle under .live-runs is what this account reconciles, and no live run has left one in this tree",
+        checks: [{ id: "delivery_account", status: "not_measured", reasonCode: "delivery_account_not_measured" }],
+      }),
+    );
     process.exit(2);
   }
   let failed = 0;
