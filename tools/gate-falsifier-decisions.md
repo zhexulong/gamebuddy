@@ -1425,45 +1425,49 @@ batch built the check that does: `tools/check-gate-populations.mjs`, wired as a 
 ### The reading at this commit
 
 ```
-gates examined 345 · with a population line 288 · without 56 · unreadable 1
-findings 56 · without_population 45 · skip_can_pass 11 · pairs_a_subset 0 (causes are not disjoint: a gate can be silent for two reasons)
+gates examined 346 · with a population line 288 · without 57 · unreadable 1
+findings 57 · without_population 45 · skip_can_pass 12 · pairs_a_subset 0 (causes are not disjoint: a gate can be silent for two reasons)
 outside 13 (no source file to read; counted apart from the partition, named with the command)
-self: with a population line - check:gate-populations is in the population and is classified by the same call, not by an exemption
-gate_population_baseline_current
+population: the index, which does not carry 0 gate file(s) yet
+self: with a population line - check:gate-populations is a member of the population and is classified by the same call, not by an exemption
 ```
 
-`288 + 56 + 1 = 345`: every member of the derived population lands in exactly one bucket, and the causes line splits
-the 56. The `outside` half is the population's other members - `pnpm knip`, `dotnet test`, a PowerShell transcript, the
+`288 + 57 + 1 = 346`: every member of the derived population lands in exactly one bucket, and the causes line splits
+the 57. The `outside` half is the population's other members - `pnpm knip`, `dotnet test`, a PowerShell transcript, the
 aggregates whose command is another script - and it is printed with the command rather than dropped, because a gate whose
-reading cannot be taken is not a gate that passed.
+reading cannot be taken is not a gate that passed. The 57 are not all this batch's: `test:action-surface-parity` landed in
+another lane's commit between this lane's readings and is recorded here, because the baseline is the TREE's measured debt.
 
 **Reconciliation with the other gate-meta tools.** The population is `tools/lib/gate-population.mjs` - the ONE derivation
 (every `package.json` script in the `audit:`/`check:`/`test:` namespace, plus every `tools/check-*.mjs` file no script
-names) - and the ladder's `PRELUDE_RUNGS` is imported rather than parsed. On the committed tree the same two numbers read
-`examined 338 + outside 13 = 351`, which is the `population=351` line `tools/audit-gate-red-proofs.mjs` prints; the worktree
-reads 345 + 13 = 358 because gate files other lanes hold untracked are visible to a directory scan, which that tool drops
-from its index-derived population and publishes as `untracked_not_counted`. `node tools/check-harness-conformance.mjs`
-judges this gate in its 119 with a self-report, because the default run prints `gate: gate_populations/v1` with a status, an
-`examined` and a `checks[]` - and the same shared judge (`tools/lib/assert-non-vacuous.mjs`) reads that `examined`, which is
-what makes "would this gate catch itself" a measurement rather than a promise. Run against this commit's index it reads
-`gates examined 353 · with a red proof 328 · external 4 · declared without 19 · undeclared 0`, and its partition reconciles
-the same way the header of this document reconciles it: `proven 328 + external 4 + owed 21 = 353`, where the 21 owed are
-the 19 recorded rows plus the two unreadable claims (`check:code-duplication`, `test:format-ratchet`) that no bucket of
-that line can hold. This batch moved it by exactly two - `check:gate-populations` and `test:gate-populations`, both proven
-by the markers above - and declared nothing.
+names) - restricted to what the INDEX carries, which is `tools/lib/indexed-sources.mjs`'s rule and the reason this gate's
+baseline cannot be moved by a file another lane has not staged. The arithmetic, measured in one run rather than reasoned
+about: `357` indexed members, `13` of them naming no source file (the `outside` line), plus the `2` ladder suites
+`deriveGatePopulation` does not name at all
+(`integrations/stardew/action-development/tests/action-{source-projection,projection-parity}-drift.test.mjs`), which is
+`357 − 13 + 2 = 346` examined - and `346 + 13 = 359` is that tool's own total on this tree. `node
+tools/audit-gate-red-proofs.mjs` moves from `population=351` to `357` with this batch and the two gates that landed beside
+it. `node tools/check-harness-conformance.mjs`, run against the index this commit was staged in, reads
+`gates examined 357 · with a red proof 331 · external 4 · declared without 19 · undeclared 1`, and its partition is exact
+as a four-term sum: `proven 331 + external 4 + owed 21 + undeclared 1 = 357`, where the 21 owed are the 19 recorded rows
+plus the two unreadable claims (`check:code-duplication`, `test:format-ratchet`) that no bucket of that line can hold, and
+the single `undeclared` row is `check:generated-artifact-reproducibility` - another lane's gate, with no `red-proof:` marker
+and no baseline row, which this lane does not own and does not silently declare. This batch moved that census by exactly
+two, both proven by the markers above.
 
 ### The three red proofs, and how each copy was made
 
 Every proof is a copy of the tree OUTSIDE the repository: `git archive HEAD package.json tools` extracted to
 `E:/tmp/gatepop/<name>`, then one member restored to the shape that shipped. The live worktree was never the injection
 site. Each copy carries `package.json` and `tools/` only, which is why each reads `unreadable 22` - entries whose command
-names a `host/` or `integrations/` source are BLOCKED and named, never counted as passes - and 338 examined instead of 345.
+names a `host/` or `integrations/` source are BLOCKED and named, never counted as passes - and `339 examined` instead of
+344. A copy has no index, so the population is the directory scan there and `populationSource: "directory"` says so.
 
 | proof | what was restored | the line it produced |
 | --- | --- | --- |
 | pre-fix `check:publint` | `git show b00e40a4^:tools/check-publint.mjs` | `gate_without_population: check:publint: prints no count of the objects it examined` + `gate_population_finding_unrecorded: gate_without_population check:publint`, exit 1 |
 | pre-fix `test:stardew-soil-itm-canary` | `9918a084^`'s script (`node --test tools/stardew-soil-itm-canary.test.mjs`) and its suite | `gate_skip_can_pass: test:stardew-soil-itm-canary: runs node --test over 1 suite(s) that can all skip, and nothing decides before the runner` + `gate_population_finding_unrecorded: gate_skip_can_pass test:stardew-soil-itm-canary`, exit 1 |
-| pre-fix wire parity verdict | the unpaired frame stopped reaching `gaps` - collected and printed, no longer blocking - which is the shape `2738fa62` describes ("31 of 37 frames, six named in prose below the verdict") | `gate_pairs_a_subset_and_passes: check:cross-language-wire-parity` + `gate_population_finding_unrecorded: gate_pairs_a_subset_and_passes check:cross-language-wire-parity`, exit 1 |
+| pre-fix wire parity verdict | the unpaired frame stopped reaching `gaps` - collected and printed, no longer blocking - which is the shape `2738fa62` describes ("31 of 37 frames, six named in prose below the verdict") | `gate_pairs_a_subset_and_passes: check:cross-language-wire-parity: holds unpaired and nothing compares that count or the refusal it feeds, so the verdict cannot read it` + `gate_population_finding_unrecorded: gate_pairs_a_subset_and_passes check:cross-language-wire-parity`, exit 1 |
 
 The third proof is the only one that is a reconstruction rather than a restored blob: `2738fa62` CREATED the wire parity
 gate already fixed, so its pre-fix version is in no commit. The injection restores exactly what that commit message says
@@ -1519,6 +1523,17 @@ and this document gained this section; both are outside the four paths the brief
 without it that suite reports `gate_without_falsifier: check-gate-populations.mjs`, L0 stops on it, and the gate would be
 wired into the ladder as a red rung - the one outcome a gate about false readings must not produce. The same line was added
 by `2738fa62` for the wire parity gate when it entered L0.
+
+### The unit this batch had to split, and how it was verified
+
+`27a0bc83` (another lane's whole-tree commit, `fix(gates): an artefact marked generated must be reproducible by its
+producer`) swept up this lane's in-flight `package.json` - the two scripts - `tools/prelive.mjs` - the one rung - and
+`tools/lib/harness-conformance.mjs` - the registration - while this gate was still being finished. The lines are in `HEAD`
+byte for byte (`git show HEAD:package.json` names both scripts; `git show HEAD:tools/prelive.mjs` names the rung), so
+nothing was lost, but the rule this breaks is "one unit, one commit": the unit is finished by the commit that carries the
+three new files and this section, and the pathspec it used is printed in its own body. What the incident costs a reader is
+one cross-reference, written here rather than discovered later. It also cost a baseline regeneration: the same commit
+brought `check:generated-artifact-reproducibility` into the population, so the row count is the tree's and moves with it.
 
 ### Unchanged by this batch
 

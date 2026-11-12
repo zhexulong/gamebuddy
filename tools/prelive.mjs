@@ -211,6 +211,14 @@ export const L0_GATES = Object.freeze([
   // covered the root is not containment - this gate reads the disk at any depth and names the variable, never the
   // value. Milliseconds here after the walk's concurrency: 591 ms for 113,061 files.
   "tools/check-crash-report-containment.mjs",
+  // A gate that cannot tell "I measured nothing" from "I measured and found nothing" is the class behind every false
+  // reading this tree published this month: `check:publint` passed having read no publint message, the soil-itm canary
+  // reported a pass over five skips, and the wire parity gate printed six frames it could not pair BELOW a `passed`
+  // verdict. Each was fixed on its own and nothing asked the question of the next gate. This one asks it of every gate
+  // in the derivation (342 today, 55 of them recorded silent in `tools/gate-population-baseline.json`) by reading each
+  // gate's own report contract - milliseconds, no child process - so a new gate that says nothing about its population
+  // is red here instead of green in a rung.
+  "tools/check-gate-populations.mjs",
   // The artefact census: every file in the tree that SAYS it is generated, paired with the tool or Mod export that emits
   // it, re-derived into a temp path and compared byte for byte. Measured 2026-11-13 before it was wired: the projection
   // producer reproduces its 180 614 bytes in 88 ms, the Mod export DLL reproduces all three of its artefacts in 600 ms,
@@ -223,12 +231,13 @@ export const L0_GATES = Object.freeze([
   // invocations and one sandboxed derive), so it runs on the ladder rather than in a document a lane reads afterwards.
   "tools/check-generated-artifact-reproducibility.mjs",
   "tools/check-prelive-gate-registry.mjs",
-  // The five-instance family of one two days: a thing the companion can SAY that one layer accepts and the next
-  // refuses or silently reinterprets - `charge` on the wire and absent from the tool schema, `sweep_scythe` in three
-  // surfaces and mounted nowhere, `for_each` sources, an emote the prompt named, a `refusalDetail` the Host refused.
-  // Each was found by a human noticing. This one is the matrix: the catalog crossed with the six surfaces that must
-  // carry each action, each read from its own authority, every silent omission named and every unreadable reading
-  // blocked rather than green. Measured here: `actions examined 106 · surfaces 6 · pairs checked 307`, ~0.1 s.
+  // The five instance family of one two days: a thing the companion can SAY that one layer accepts and the next refuses or
+  // silently reinterprets - `charge` on the wire but not in the tool schema, `sweep_scythe` in three surfaces and no mount,
+  // `for_each` sources, an emote the prompt named and nothing mounted, a `refusalDetail` the Mod sent and the Host refused.
+  // Each was found by a human noticing; the two pairs that got a gate were the ones someone was looking at. This one is the
+  // matrix: the catalog crossed with the six surfaces that must carry each action, from each surface's own authority, with
+  // every silent omission named and every unreadable reading blocked instead of green. Measured here: `actions examined 106 ·
+  // surfaces 6 · pairs checked 307`, 0.1 s of file reads and no child process.
   "tools/check-action-surface-parity.mjs",
 ]);
 
@@ -438,25 +447,19 @@ export function checkLinkageClosure({
   };
 }
 
-/** The Mod-side dispatch blocks: both spellings the dispatcher uses, across the `ModEntry.Fixtures*.cs` partials. */
+/** The Mod-side dispatch blocks: both legacy `if` checks and table rows across the `ModEntry.Fixtures*.cs` partials. */
 export function parseModDispatchScenarios(source) {
   const scenarios = new Set();
   for (const match of source.matchAll(/FixtureScenario (?:==|is) "([^"]+)"/g)) scenarios.add(match[1]);
+  for (const match of source.matchAll(/NativeLocalFixtureScenarioRow\.\w+\("([^"]+)"/g)) scenarios.add(match[1]);
   return scenarios;
 }
 
-/**
- * `ModConfig.KnownFixtureScenarios` as a set. The initializer is brace-matched, and comments are blanked first: the
- * list is documented inline, and a quoted word inside a comment otherwise parses as a scenario name.
- */
-export function parseKnownFixtureScenarios(source) {
-  const start = source.indexOf("KnownFixtureScenarios = new[]");
-  if (start < 0) throw new Error("known_fixture_scenarios_block_missing");
-  const open = source.indexOf("{", start);
+function parseArrayInitializer(source, openBraceIndex) {
   let depth = 0;
   let inString = false;
   let end = -1;
-  for (let index = open; index < source.length; index++) {
+  for (let index = openBraceIndex; index < source.length; index++) {
     const character = source[index];
     if (character === '"' && source[index - 1] !== "\\") inString = !inString;
     if (inString) continue;
@@ -471,10 +474,45 @@ export function parseKnownFixtureScenarios(source) {
   }
   if (end < 0) throw new Error("known_fixture_scenarios_block_unterminated");
   const scenarios = new Set();
-  for (const match of blankComments(source.slice(open, end)).matchAll(/"([^"]*)"/g)) {
+  for (const match of blankComments(source.slice(openBraceIndex, end)).matchAll(/"([^"]*)"/g)) {
     if (match[1].length > 0) scenarios.add(match[1]);
   }
   return scenarios;
+}
+
+/**
+ * `ModConfig.KnownFixtureScenarios` as a set. The initializer is brace-matched, and comments are blanked first: the
+ * list is documented inline, and a quoted word inside a comment otherwise parses as a scenario name.
+ */
+export function parseKnownFixtureScenarios(source) {
+  const directIndex = source.indexOf("KnownFixtureScenarios = new[]");
+  if (directIndex >= 0) {
+    const open = source.indexOf("{", directIndex);
+    return parseArrayInitializer(source, open);
+  }
+
+  const match = source.match(/KnownFixtureScenarios\s*=\s*([^;]+);/);
+  if (match) {
+    const expr = match[1];
+    const identifiers = expr.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) || [];
+    const scenarios = new Set();
+    let foundAny = false;
+    for (const id of identifiers) {
+      if (id === "Concat" || id === "ToArray") continue;
+      const idDecl = new RegExp(`\\b${id}\\s*=\\s*new\\[\\]`);
+      const declMatch = idDecl.exec(source);
+      if (declMatch) {
+        foundAny = true;
+        const open = source.indexOf("{", declMatch.index);
+        for (const item of parseArrayInitializer(source, open)) {
+          scenarios.add(item);
+        }
+      }
+    }
+    if (foundAny) return scenarios;
+  }
+
+  throw new Error("known_fixture_scenarios_block_missing");
 }
 
 //
