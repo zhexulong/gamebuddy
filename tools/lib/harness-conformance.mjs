@@ -348,6 +348,15 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // (`frontend_route_population_empty`, exit 1), a Host side with no registration position and one with no source at
   // all (`not_measured`, never passed), and a closed union whose third member has no producer (named on its own).
   "check-frontend-reads-have-producers.mjs",
+  // Prints `gates examined N · with a population line M · without K · unreadable R` plus a `checks[]` verdict whose last
+  // entry is the baseline ratchet, so its default run is the report this suite reads - and its `examined` is judged by
+  // `tools/lib/assert-non-vacuous.mjs`, the same rule it applies to every other gate, which is how the answer to "would
+  // this gate catch itself" is a measurement. Its falsifier is tools/check-gate-populations.test.mjs: the pre-fix publint
+  // source is `gate_without_population`, the pre-fix soil-itm suite is `gate_skip_can_pass`, the wire parity gate's
+  // pre-fix verdict is `gate_pairs_a_subset_and_passes`, each fixed shape is clean, a subset word inside a string is not
+  // a count, and the CLI over a throwaway root goes blocked (no baseline) -> `--update` -> green -> red for a new silent
+  // gate and red again for a baseline row whose finding is gone.
+  "check-gate-populations.mjs",
   // Prints `examined N (closed unions X, open vocabularies Y, not a union Z)` plus a two-entry `checks[]` verdict, so
   // its default run is the report this suite reads. Its falsifier is tools/check-switch-exhaustiveness.test.mjs, which
   // builds a throwaway workspace per case: a union switch missing a member (named, `gamma`), the same switch complete
@@ -688,6 +697,16 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "its falsifier is tools/check-class-name-declarations.test.mjs, which plants an undeclared className, an " +
       "unreadable expression, an unearned exemption and the real pre-fix commit, and the gate's own red-proof " +
       "markers name both",
+  },
+  {
+    gate: "check-action-surface-parity.mjs",
+    reason:
+      "static source gate: the catalog crossed with the six surfaces that must carry each action, read from each " +
+      "surface's own declaration - no install, no build, no run. Its default run prints the population line and one " +
+      "line per finding rather than a JSON report, so this suite reads its own falsifier instead: " +
+      "tools/check-action-surface-parity.test.mjs replays two real commits (pre-0d4ce1b2 and pre-8c53105e) out of " +
+      "this repository into a copy under the OS temp directory, and injects a dropped argument, a dropped wire key, a " +
+      "dropped Mod arm, an extra grammar skip, an unenumerable `toArgs` and an empty tree",
   },
   {
     gate: "check-live-run-isolation.mjs",

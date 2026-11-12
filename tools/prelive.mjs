@@ -223,6 +223,13 @@ export const L0_GATES = Object.freeze([
   // invocations and one sandboxed derive), so it runs on the ladder rather than in a document a lane reads afterwards.
   "tools/check-generated-artifact-reproducibility.mjs",
   "tools/check-prelive-gate-registry.mjs",
+  // The five-instance family of one two days: a thing the companion can SAY that one layer accepts and the next
+  // refuses or silently reinterprets - `charge` on the wire and absent from the tool schema, `sweep_scythe` in three
+  // surfaces and mounted nowhere, `for_each` sources, an emote the prompt named, a `refusalDetail` the Host refused.
+  // Each was found by a human noticing. This one is the matrix: the catalog crossed with the six surfaces that must
+  // carry each action, each read from its own authority, every silent omission named and every unreadable reading
+  // blocked rather than green. Measured here: `actions examined 106 · surfaces 6 · pairs checked 307`, ~0.1 s.
+  "tools/check-action-surface-parity.mjs",
 ]);
 
 /**

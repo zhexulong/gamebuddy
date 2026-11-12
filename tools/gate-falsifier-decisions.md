@@ -1406,6 +1406,127 @@ deliberately.
 - `tools/gate-red-proof-baseline.json` still records both gates as owing a red proof, which is correct for the ledger
   and will stay correct until a lane that owns that file writes the markers and runs `--update`.
 
+## The thirteenth batch: a gate over the registry of gates, for the check that measured nothing
+
+Four false readings in one month, all one shape: a check exits 0 having read nothing, and its exit status is the only
+thing downstream reads.
+
+| gate | what it reported | what it had read |
+| --- | --- | --- |
+| `check:publint` | `publint exited null but every failure maps to a known vendor baseline gap; non-blocking here`, exit 0 | nothing: `spawnSync("bun", …)` with `shell: false` starts no file where `bun` is an npm shim, so the message list was empty and the tolerance branch read that emptiness as a pass |
+| `test:stardew-soil-itm-canary` | a passing suite | `tests 5 · pass 0 · skipped 5`, exit 0 - `node --test` does not fail an all-skip run |
+| `check:cross-language-wire-parity` | `passed` over `fields examined 178` | 31 of 37 frames paired; the six it could not pair were named in prose BELOW the verdict |
+| `check:stardew-native-multiplayer-sensitivity` | green | a register marked generated, 96 of 106 actions, refused by its own producer |
+
+Each was fixed on its own (`b00e40a4`, `9918a084`, `2738fa62`). Nothing asked the question of the NEXT gate, so this
+batch built the check that does: `tools/check-gate-populations.mjs`, wired as a prelude L0 rung, with
+`check:gate-populations` / `test:gate-populations` in `package.json`.
+
+### The reading at this commit
+
+```
+gates examined 345 · with a population line 288 · without 56 · unreadable 1
+findings 56 · without_population 45 · skip_can_pass 11 · pairs_a_subset 0 (causes are not disjoint: a gate can be silent for two reasons)
+outside 13 (no source file to read; counted apart from the partition, named with the command)
+self: with a population line - check:gate-populations is in the population and is classified by the same call, not by an exemption
+gate_population_baseline_current
+```
+
+`288 + 56 + 1 = 345`: every member of the derived population lands in exactly one bucket, and the causes line splits
+the 56. The `outside` half is the population's other members - `pnpm knip`, `dotnet test`, a PowerShell transcript, the
+aggregates whose command is another script - and it is printed with the command rather than dropped, because a gate whose
+reading cannot be taken is not a gate that passed.
+
+**Reconciliation with the other gate-meta tools.** The population is `tools/lib/gate-population.mjs` - the ONE derivation
+(every `package.json` script in the `audit:`/`check:`/`test:` namespace, plus every `tools/check-*.mjs` file no script
+names) - and the ladder's `PRELUDE_RUNGS` is imported rather than parsed. On the committed tree the same two numbers read
+`examined 338 + outside 13 = 351`, which is the `population=351` line `tools/audit-gate-red-proofs.mjs` prints; the worktree
+reads 345 + 13 = 358 because gate files other lanes hold untracked are visible to a directory scan, which that tool drops
+from its index-derived population and publishes as `untracked_not_counted`. `node tools/check-harness-conformance.mjs`
+judges this gate in its 119 with a self-report, because the default run prints `gate: gate_populations/v1` with a status, an
+`examined` and a `checks[]` - and the same shared judge (`tools/lib/assert-non-vacuous.mjs`) reads that `examined`, which is
+what makes "would this gate catch itself" a measurement rather than a promise. Run against this commit's index it reads
+`gates examined 353 · with a red proof 328 · external 4 · declared without 19 · undeclared 0`, and its partition reconciles
+the same way the header of this document reconciles it: `proven 328 + external 4 + owed 21 = 353`, where the 21 owed are
+the 19 recorded rows plus the two unreadable claims (`check:code-duplication`, `test:format-ratchet`) that no bucket of
+that line can hold. This batch moved it by exactly two - `check:gate-populations` and `test:gate-populations`, both proven
+by the markers above - and declared nothing.
+
+### The three red proofs, and how each copy was made
+
+Every proof is a copy of the tree OUTSIDE the repository: `git archive HEAD package.json tools` extracted to
+`E:/tmp/gatepop/<name>`, then one member restored to the shape that shipped. The live worktree was never the injection
+site. Each copy carries `package.json` and `tools/` only, which is why each reads `unreadable 22` - entries whose command
+names a `host/` or `integrations/` source are BLOCKED and named, never counted as passes - and 338 examined instead of 345.
+
+| proof | what was restored | the line it produced |
+| --- | --- | --- |
+| pre-fix `check:publint` | `git show b00e40a4^:tools/check-publint.mjs` | `gate_without_population: check:publint: prints no count of the objects it examined` + `gate_population_finding_unrecorded: gate_without_population check:publint`, exit 1 |
+| pre-fix `test:stardew-soil-itm-canary` | `9918a084^`'s script (`node --test tools/stardew-soil-itm-canary.test.mjs`) and its suite | `gate_skip_can_pass: test:stardew-soil-itm-canary: runs node --test over 1 suite(s) that can all skip, and nothing decides before the runner` + `gate_population_finding_unrecorded: gate_skip_can_pass test:stardew-soil-itm-canary`, exit 1 |
+| pre-fix wire parity verdict | the unpaired frame stopped reaching `gaps` - collected and printed, no longer blocking - which is the shape `2738fa62` describes ("31 of 37 frames, six named in prose below the verdict") | `gate_pairs_a_subset_and_passes: check:cross-language-wire-parity` + `gate_population_finding_unrecorded: gate_pairs_a_subset_and_passes check:cross-language-wire-parity`, exit 1 |
+
+The third proof is the only one that is a reconstruction rather than a restored blob: `2738fa62` CREATED the wire parity
+gate already fixed, so its pre-fix version is in no commit. The injection restores exactly what that commit message says
+the first version did - the frame is still collected and still printed, and it no longer reaches the verdict - and both the
+gate and its falsifier record the shape it was reconstructed from.
+
+Two of the three proofs also taught the classifier something it had wrong, which is why they were run instead of the rule
+being declared correct:
+
+- a 90-character window between a population word and its number read the pre-fix publint sentence "missing types
+  condition for exports: ${path}" as a population line, and passed the exact defect it was built for. The window is one
+  token now;
+- blanking quoted literals without respecting template literals let the wire gate's own
+  `${report.frames.unpaired.join(", ")}` open a quote that never closed, and the reconstructed pre-fix gate read as clean.
+  The blanking is template-aware now.
+
+### Why the debt is a baseline and not a list of exemptions
+
+The brief for this check said: no allow-list of gates; a gate that legitimately cannot print a population declares that and
+says why. The 56 findings are not exemptions - they are the debt - and they live in `tools/gate-population-baseline.json`,
+written by `--update` from a real reading and never by hand. The ratchet turns both ways: a finding the baseline does not
+record is red (a new silent gate cannot land), and a baseline row that is no longer a finding is red too (a paid debt must
+be deleted, so a row cannot outlive what it described). That is the same mechanism `tools/audit-gate-red-proofs.mjs` uses
+for gates never seen red, and the same `--update` shape as `tools/cognitive-complexity-baseline.json`.
+
+What makes 56 rows acceptable where a 56-line allow-list would not be: the rows ARE the measurement. They are keyed by
+cause and gate (`gate_without_population check:diff`), they expire in both directions, and the number is printed on every
+run. The alternative - a gate that can never be green - is a gate nobody keeps running, which is how this debt stayed
+invisible for a month.
+
+### What this check does not see, stated rather than implied
+
+- It is a SOURCE reading. It runs no gate. A population word in a dead branch reads exactly like one on the verdict line:
+  the rule says a gate NAMES what it examined and can tell the two outcomes apart, not that the number is right. The design
+  that would say so - run every gate's default invocation and judge its output - is the ladder inside the ladder for 345
+  gates including C# compiles, which is why `tools/lib/harness-conformance.mjs` runs the `tools/check-*.mjs` half and this
+  one reads the report contract of all of them.
+- `gate_pairs_a_subset` accepts two shapes: the count compared against zero, or the block that collects it handing the same
+  failure to a collection the verdict compares (the wire parity gate is the second shape, and a rule that accepted only the
+  first would have reported the FIXED gate). A count routed through a helper two functions away is accepted as clean
+  although this reading cannot follow it.
+- `gate_without_population` has three accepted answers, and the third is the strongest: a report key the shared judge reads
+  (`tools/lib/assert-non-vacuous.mjs`), a printed count naming a read object, or a not-measured verdict carrying a non-zero
+  exit. A gate that prints `0 findings` has answered none of them, which is the defect.
+- The vocabulary is a declaration, not a derivation: `POPULATION_WORDS` and `SUBSET_WORDS` are two short lists in the gate.
+  A gate that counts `witnesses`, `hunks` or `deltas` is reported silent until a word is added - and that is visible, because
+  the finding names the gate and the cause on the line a reader is already reading.
+
+### The deviation this batch had to make, and why
+
+`tools/lib/harness-conformance.mjs` gained one registration line (`check-gate-populations.mjs` in `GATES_WITH_FALSIFIER`)
+and this document gained this section; both are outside the four paths the brief named. The registration is not optional:
+without it that suite reports `gate_without_falsifier: check-gate-populations.mjs`, L0 stops on it, and the gate would be
+wired into the ladder as a red rung - the one outcome a gate about false readings must not produce. The same line was added
+by `2738fa62` for the wire parity gate when it entered L0.
+
+### Unchanged by this batch
+
+The 56 rows are recorded, not repaired. Eight of them are in files this lane may not edit
+(`integrations/stardew/action-development/tests/*`), one is a register derived against a decompiled tree, and the rest are
+`tools/` gates whose owner is whoever next touches them. Each already names what it prints today and what it would have to
+print instead: a count of the objects it examined, on the line a reader already reads.
+
 ## The generated-artefact census: one gate for a class that cost two days
 
 `tools/check-generated-artifact-reproducibility.mjs` (L0, `check:`/`test:` pair, measured 0.7-0.8 s). The class is an
@@ -1504,3 +1625,60 @@ The other three red members of the L0 rung on this worktree are not this unit's 
 `check-cognitive-complexity`, and `check-harness-conformance`'s own `falsifier_entry_stale: check-gate-populations.mjs`
 (another lane's untracked gate that the register already declares). This unit's gate is green in that rung: `exit 0`,
 829 ms.
+
+## The fourteenth batch: the matrix between the surfaces, and two red proofs replayed from this repository's own history
+
+`check:action-surface-parity` / `test:action-surface-parity`. One defect class, five instances in two days: a thing the
+companion can SAY that one layer accepts and the next refuses or silently reinterprets - `charge` required by the wire and
+absent from the tool schema, `sweep_scythe` in the catalog and in the completion contract and mounted nowhere, a
+`for_each` source the grammar accepted and the Mod answered `for_each_source_unavailable`, an `express_emote` the prompt
+named and no surface mounted, a `refusalDetail` the Mod sent and the Host refused. Each was found by a human noticing, and
+the two gates written afterwards each covered one PAIR (tool schema vs wire, plan example vs wire). The matrix is the unit
+this section records: the action catalog crossed with the six surfaces that must carry each action, every one of them read
+from its own authority - the wire's `exactArgs` rows (following a shared frozen list and `textOnlyRow` by name), the
+Mod's `ExecutionArgumentProperties` switch, the catalog's `argumentSchema`, the plan grammar's two published admission sets
+plus its descriptor derivation, and the tool surface twice (what `parameters` declares, what `toArgs` forwards).
+
+**The falsifier is history first.** Two real commits are replayed into a copy under the OS temp directory rather than
+synthesized: at `0d4ce1b2~1` the wire required `charge` on `till_soil` and `water_crop` while the tool schema and the
+projector did not offer it, and the gate names both refusals
+(`surface_refuses_what_another_accepts:till_soil:charge:tool-schema:catalog` and
+`...:till_soil:charge:tool-args:catalog`, and the same pair for `water_crop`); at `8c53105e~1` the catalog carried
+`sweep_scythe` and no tool mounted it (`surface_silently_omits_action:sweep_scythe:tool-schema` and `:tool-args`). Both
+suites skip with a named reason when those commits are not in the clone, so a shallow checkout reads `not measured`
+instead of green.
+
+**Four injections on the real declarations, each seen red once.** Deleting `charge` from the `till_soil` mount's
+`parameters` names the schema refusing it; deleting `charge` from its `toArgs` names the projector in its place;
+deleting `sleep` from the wire declaration and deleting its arm from the Mod's switch each name an omission. Two
+blocked cases prove the third verdict: a `toArgs` spread this reader cannot enumerate is
+`tool_args_unreadable:till_soil`, and an empty source tree is `action_surface_population_empty` with `examined 0`.
+
+**One decision made rather than assumed.** The plan grammar's per-action vocabulary IS the descriptor's
+(`declaredArgumentsOf(registration)`), so this gate does not invent a second copy of the names: it reads that dependency
+and blocks if the derivation changes shape. A `continue` added beside the grammar's two declared filters is
+`plan_grammar_vocabulary_not_descriptor_derived:undeclared_skip:...` and the run is BLOCKED, because an arbitrary skip
+condition is a hand-written vocabulary this reader cannot enumerate - and a matrix over the actions it removed would be
+exactly the false reading the gate exists to prevent. Dropping a lifecycle from `PLAN_ACTION_LIFECYCLES` instead stays
+green on purpose: that set IS the declaration, and the report prints `plan grammar admission: lifecycles ... (omits 7)`
+on every run so a shrink is visible rather than silent.
+
+**What it does not cover, said in the gate's own header.** Value-level constraints (enums, ranges) are one owner per
+fact and are read from their declaration by the tool schema itself; the JSON wire schema's action enum is
+`check-stardew-action-promotion.mjs` (`missing_schema_execution_action`); `for_each` sources and `where` words are not a
+per-action argument; frame fields belong to `check-cross-language-wire-parity.mjs` and
+`check-refusal-detail-state-parity.mjs`.
+
+### The census
+
+Measured on this worktree: `actions examined 106 · surfaces 6 · pairs checked 307`, population per authority
+`catalog 106 · mod 103 · plan-grammar 96 · tool-schema 103 · tool-args 103 · wire 103`, and the only omission
+declarations used are `plan-grammar-lifecycle 7` and `read_only 15`. The gate is green here (`exit 0`, ~120 ms of file
+reads and no child process), and the matrix has no live hole today: the five instances above are all closed on this tree,
+each by the surface that owned it.
+
+It is registered in `tools/lib/harness-conformance.mjs`'s `GATES_WITHOUT_FALSIFIER` with the reason that its default run
+prints a population line and findings rather than a `checks[]` report, so the harness reads its falsifier suite instead.
+The one `falsifier_entry_stale` that remains in `check-harness-conformance` is the one named in the previous section -
+`check-gate-populations.mjs`, another lane's untracked gate that the register already declares - not this unit's.
+
