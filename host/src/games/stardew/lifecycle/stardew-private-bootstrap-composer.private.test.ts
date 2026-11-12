@@ -4191,7 +4191,11 @@ test("staged Player Host starts exactly one direct Player Host with the admitted
   // staged Player Host consumes only the Player Host reservation; future closed materialized AI Client
   // still has its same-composition material while the AI reservation remains.
   assert.equal(ownerTestView(owner).hasPrivateMaterial(), true);
-  assert.deepEqual(result, { status: { kind: "awaiting_player_host_attestation" } });
+  assert.deepEqual(result, {
+    status: { kind: "awaiting_player_host_attestation" },
+    // The admitted fixture root carries no `Mods` folder of its own.
+    modsRoot: { kind: "empty", reason: "player_mods_root_absent" },
+  });
   assert.deepEqual(harness.playerHostSpawnCalls, [
     {
       executable: admissionExecutable,
@@ -4219,7 +4223,7 @@ test("staged Player Host starts exactly one direct Player Host with the admitted
   assert.deepEqual(harness.playerHostKillCalls, [5432]);
 });
 
-test("staged Player Host returns only a redacted status and leaks no child, recipe, or generation", async () => {
+test("staged Player Host returns only a redacted status and the mods population, and leaks no child, recipe, or generation", async () => {
   const packageSource = await createStageBPackage();
   const harness = createHarness({ staging: stageCStaging(packageSource) });
   const owner = await stageCStageB(harness, await createRoot());
@@ -4228,10 +4232,22 @@ test("staged Player Host returns only a redacted status and leaks no child, reci
 
   const result = await launchStagedPlayerHostForTesting(owner, installation);
 
-  assert.deepEqual(Reflect.ownKeys(result), ["status"]);
+  assert.deepEqual(Reflect.ownKeys(result), ["status", "modsRoot"]);
   assert.deepEqual(Reflect.ownKeys(result.status), ["kind"]);
+  assert.deepEqual(result.modsRoot, { kind: "empty", reason: "player_mods_root_absent" });
   const serialized = JSON.stringify(result);
-  for (const forbidden of ["pid", "5432", "generation", "executable", "args", "cwd", "StardewModdingAPI", "Mods"]) {
+  for (const forbidden of [
+    "pid",
+    "5432",
+    "generation",
+    "executable",
+    "args",
+    "cwd",
+    "StardewModdingAPI",
+    "Mods",
+    "\\",
+    "/",
+  ]) {
     assert.equal(serialized.includes(forbidden), false, forbidden);
   }
   const status = harness.composition.playerHostProcessOwner.readStatus();
@@ -4376,7 +4392,10 @@ test("staged Player Host changed admission identity means zero spawn and restore
   // A complete retry of the exact launch succeeds once now that the identity
   // chain is stable: exactly one direct Player Host spawn with the exact recipe.
   const retried = await launchStagedPlayerHostForTesting(owner, installation);
-  assert.deepEqual(retried, { status: { kind: "awaiting_player_host_attestation" } });
+  assert.deepEqual(retried, {
+    status: { kind: "awaiting_player_host_attestation" },
+    modsRoot: { kind: "empty", reason: "player_mods_root_absent" },
+  });
   assert.deepEqual(harness.playerHostSpawnCalls, [
     {
       executable: admissionExecutable,
@@ -5390,7 +5409,10 @@ test("a host world that advertises no cabin leaves the AI-client launch reservat
   const ownerView = testCore.bindOwnedPlayerHostPhaseAOwner(owner);
   const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
   const launchResult = await testCore.launchStagedPlayerHost(owner, installation);
-  assert.deepEqual(launchResult, { status: { kind: "awaiting_player_host_attestation" } });
+  assert.deepEqual(launchResult, {
+    status: { kind: "awaiting_player_host_attestation" },
+    modsRoot: { kind: "empty", reason: "player_mods_root_absent" },
+  });
 
   const sessionDirectory = join(ownerView.transactionDirectory, "session");
   const sessionToken = "session-secret-stagec-012345";
@@ -5478,7 +5500,10 @@ test("connected no-live C1 composition privately provisions Bridge scope before 
 
   const installation = await admitForStageC([admissionChain(), admissionChain(), admissionChain()]);
   const launchResult = await testCore.launchStagedPlayerHost(owner, installation);
-  assert.deepEqual(launchResult, { status: { kind: "awaiting_player_host_attestation" } });
+  assert.deepEqual(launchResult, {
+    status: { kind: "awaiting_player_host_attestation" },
+    modsRoot: { kind: "empty", reason: "player_mods_root_absent" },
+  });
   assert.equal(harness.playerHostSpawnCalls.length, 1);
   assert.equal(harness.playerHostSpawnCalls[0]?.environmentGeneration, playerHostGeneration);
   assert.deepEqual(testCore.composition.playerHostProcessOwner.readStatus(), {

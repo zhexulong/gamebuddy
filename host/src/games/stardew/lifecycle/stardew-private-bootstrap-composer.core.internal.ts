@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, rmdir, writeFile } from "node:fs/promises";
+import { cp, link, lstat, mkdir, readdir, readFile, rmdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { platform } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type {
@@ -96,6 +96,23 @@ import type {
   StardewOwnedPlayerHostBootstrapOwnerRecord,
   StardewPrivateBootstrapOwnerRecord,
 } from "./stardew-private-bootstrap-owner-records.private.js";
+
+/**
+ * Composition-private Player Host profile staging and role launch.
+ *
+ * One thing here is a DECISION POINT rather than an accident: the Player Host is
+ * launched with `--mods-path <attempt>/player-host/Mods`, so that isolated root
+ * is the WHOLE set of Mods the game loads - SMAPI ignores `<game>/Mods` the
+ * moment it is handed this path. Isolation is deliberate (the attempt needs its
+ * own session-scoped GameBuddy config), but an isolated root that carries only
+ * that one Mod would silently start the player's world without every Mod their
+ * save was built on. So the launch carries the player's own Mods into that root
+ * and reports what it carried as `StardewPlayerHostModsRoot`; a root that ends
+ * up carrying no player Mod at all is a named state on the launch result, never
+ * an unremarked one. The carried entries are the only links this attempt ever
+ * creates, and no link is ever followed - see `readProfileModsEntries` and
+ * `removeDeclaredDirectoryLinks`.
+ */
 
 /**
  * Whether the Mod will accept this as a farmhand's name.
@@ -594,7 +611,33 @@ export type StardewOwnedPlayerHostPhaseACoreTestView = Readonly<{
 
 export type StardewOwnedPlayerHostStageCResult = Readonly<{
   status: StardewPlayerHostProcessStatus;
+  modsRoot: StardewPlayerHostModsRoot;
 }>;
+
+/**
+ * What the launch found in the player's own `Mods` folder and carried into the
+ * isolated SMAPI profile root it hands over as `--mods-path`.
+ *
+ * `kind: "empty"` is the named state a caller reads when a launch carries no
+ * player Mod at all. It is deliberately NOT a refusal: a vanilla player, and a
+ * game folder SMAPI has not created `Mods` in yet, are both legitimate and both
+ * playable. What is refused is a launch whose profile root ends up without the
+ * staged Mod itself, and every step that cannot carry an entry names itself
+ * (`mods_root_target_missing:<name>`, `mods_root_copy_failed:<name>`), while a
+ * link that could not be made is named in `linkRefusals` and carried by copy.
+ */
+export type StardewPlayerHostModsRoot =
+  | Readonly<{
+      kind: "carried";
+      /** The player's Mod directory names now present in the profile root, sorted. */
+      entries: readonly string[];
+      /** One `mods_root_link_refused:<errno>` per entry a link could not carry and a copy did. */
+      linkRefusals: readonly string[];
+    }>
+  | Readonly<{
+      kind: "empty";
+      reason: "player_mods_root_absent" | "player_mods_root_holds_only_staged_mod";
+    }>;
 
 export type StardewOwnedAiClientStageDResult = Readonly<{
   status: StardewAiClientProcessStatus;
@@ -2174,7 +2217,11 @@ async function launchStagedPlayerHost(
 
   let launchEntered = false;
   try {
-    const result = await consumeAdmittedStardewInstallation(installation, (root, executable) => {
+    const launched = await consumeAdmittedStardewInstallation(installation, async (root, executable) => {
+      // Carried before the launch consumer runs: the profile root is what SMAPI
+      // will read as the game's whole Mod list, and a failure here spawns nothing
+      // so the staged marker still restores for a complete retry.
+      const modsRoot = await carryPlayerModsIntoProfileRoot(root, modsPath, transactionDirectory);
       launchEntered = true;
       const recipe: StardewPrivateRoleLaunchRecipe = Object.freeze({
         role: "player_host",
@@ -2183,17 +2230,18 @@ async function launchStagedPlayerHost(
         args: Object.freeze(["--mods-path", modsPath]),
         launchGeneration: facts.playerHostRegistration.launchGeneration,
       });
-      return facts.consumePlayerHostLaunch((launch) =>
+      const result = facts.consumePlayerHostLaunch((launch) =>
         launch({
           executable: recipe.executable,
           args: recipe.args,
           cwd: recipe.cwd,
         }),
       );
+      return Object.freeze({ result, modsRoot });
     });
     // Launch succeeded: the staged profile has been used.
     facts.playerHostProfileStagingState.value = "not_staged";
-    return result;
+    return Object.freeze({ status: launched.result.status, modsRoot: launched.modsRoot });
   } catch (error) {
     // A fresh identity failure never enters the Player Host launch consumer:
     // zero spawns happened, so the staged marker restores for a complete
@@ -2240,8 +2288,12 @@ async function launchStagedPlayerHostContained(
   const modsPath = join(transactionDirectory, HOST_PROFILE_ROOT, MODS_DIRECTORY);
 
   let claimAttempted = false;
+  let carriedModsRoot: StardewPlayerHostModsRoot | undefined;
   try {
-    await consumeAdmittedStardewInstallation(installation, (root, executable) => {
+    await consumeAdmittedStardewInstallation(installation, async (root, executable) => {
+      // Carried before the claim: nothing is spawned until the profile root holds
+      // the whole Mod list the game will load.
+      carriedModsRoot = await carryPlayerModsIntoProfileRoot(root, modsPath, transactionDirectory);
       const recipe: StardewPrivateRoleLaunchRecipe = Object.freeze({
         role: "player_host",
         executable,
@@ -2275,10 +2327,14 @@ async function launchStagedPlayerHostContained(
     // cannot have committed the one-shot reservation: fail closed before the
     // staged marker drains so a retry remains possible. The direct-spawn
     // consumer is equivalent (success is only produced by consuming the launch).
-    if (!claimAttempted) throw new Error("stardew_contained_player_host_launch_claim_not_attempted");
+    if (!claimAttempted || carriedModsRoot === undefined)
+      throw new Error("stardew_contained_player_host_launch_claim_not_attempted");
     // The contained launch succeeded: the staged profile has been used.
     facts.playerHostProfileStagingState.value = "not_staged";
-    return Object.freeze({ status: { kind: "awaiting_player_host_attestation" as const } });
+    return Object.freeze({
+      status: { kind: "awaiting_player_host_attestation" as const },
+      modsRoot: carriedModsRoot,
+    });
   } catch (error) {
     // A fresh identity failure never reaches the seam: zero claims happened, so
     // the staged marker restores for a complete retry. Any claim-attempt
@@ -2818,7 +2874,7 @@ async function assertC1ExistingInventory(transactionDirectory: string, root: str
   const hostMod = join(hostMods, MOD_DIRECTORY);
   if (
     JSON.stringify(await readSafeDirectory(hostProfile, root)) !== JSON.stringify([MODS_DIRECTORY]) ||
-    JSON.stringify(await readSafeDirectory(hostMods, root)) !== JSON.stringify([MOD_DIRECTORY])
+    !(await readProfileModsEntries(hostMods, root)).includes(MOD_DIRECTORY)
   ) {
     throw new Error("stardew_ai_client_profile_materialization_inventory_invalid");
   }
@@ -2841,7 +2897,7 @@ async function assertMaterializedC1Inventory(transactionDirectory: string, root:
     const mod = join(mods, MOD_DIRECTORY);
     if (
       JSON.stringify(await readSafeDirectory(profile, root)) !== JSON.stringify([MODS_DIRECTORY]) ||
-      JSON.stringify(await readSafeDirectory(mods, root)) !== JSON.stringify([MOD_DIRECTORY])
+      !(await readProfileModsEntries(mods, root)).includes(MOD_DIRECTORY)
     ) {
       throw new Error("stardew_ai_client_profile_inventory_invalid");
     }
@@ -2883,6 +2939,119 @@ async function assertAiClientDestinationAbsent(transactionDirectory: string, roo
     throw error;
   }
   throw new Error("stardew_ai_client_profile_materialization_occupied");
+}
+
+/**
+ * The player's own `Mods` entries, carried into this attempt's SMAPI profile root.
+ *
+ * A directory is carried by a junction and a file by a hard link, so neither
+ * duplicates the player's bytes; a link the filesystem refuses (another volume, a
+ * target that will not take one) falls back to a copy and names the refusal in
+ * `linkRefusals` instead of hiding it. Only the staged Mod is skipped - it is
+ * this attempt's own, written at staging with the session-scoped config, and the
+ * player's copy of it must never replace it.
+ */
+async function carryPlayerModsIntoProfileRoot(
+  gameRoot: string,
+  profileModsRoot: string,
+  transactionDirectory: string,
+): Promise<StardewPlayerHostModsRoot> {
+  const playerModsRoot = join(gameRoot, MODS_DIRECTORY);
+  let names: readonly string[];
+  try {
+    names = await readdir(playerModsRoot);
+  } catch (error) {
+    // A loader that has never run has no `Mods` folder; the player has nothing to
+    // fix there, so this is the named empty state rather than a failure.
+    if (isNodeError(error) && (error.code === "ENOENT" || error.code === "ENOTDIR"))
+      return Object.freeze({ kind: "empty" as const, reason: "player_mods_root_absent" as const });
+    throw new Error(`mods_root_target_missing:${isNodeError(error) ? (error.code ?? "unknown") : "unknown"}`, {
+      cause: error,
+    });
+  }
+  const entries: string[] = [];
+  const linkRefusals: string[] = [];
+  for (const name of [...names].sort()) {
+    if (name === MOD_DIRECTORY) continue;
+    const source = join(playerModsRoot, name);
+    const destination = join(profileModsRoot, name);
+    await verifySafePathBoundary(destination, transactionDirectory);
+    let sourceState: Awaited<ReturnType<typeof lstat>>;
+    try {
+      sourceState = await lstat(source);
+    } catch (error) {
+      if (isNodeError(error) && error.code === "ENOENT")
+        throw new Error(`mods_root_target_missing:${name}`, { cause: error });
+      throw error;
+    }
+    const refusal = sourceState.isDirectory()
+      ? await refusedLink(() => symlink(source, destination, "junction"))
+      : sourceState.isFile()
+        ? await refusedLink(() => link(source, destination))
+        : "not_a_regular_entry";
+    if (refusal === undefined) {
+      entries.push(name);
+      continue;
+    }
+    await copyPlayerMod(source, destination, name);
+    if (refusal !== "not_a_regular_entry") linkRefusals.push(`mods_root_link_refused:${refusal}`);
+    entries.push(name);
+  }
+  // The staged Mod is this attempt's whole reason for the isolated root: a root
+  // that lost it would start a game with none of GameBuddy's own Mod either.
+  if (!(await readProfileModsEntries(profileModsRoot, transactionDirectory)).includes(MOD_DIRECTORY))
+    throw new Error("stardew_player_host_mods_root_staged_mod_missing");
+  if (entries.length === 0)
+    return Object.freeze({ kind: "empty" as const, reason: "player_mods_root_holds_only_staged_mod" as const });
+  return Object.freeze({
+    kind: "carried" as const,
+    entries: Object.freeze(entries),
+    linkRefusals: Object.freeze(linkRefusals),
+  });
+}
+
+/** The errno of a refused link, or `undefined` when the link was made. */
+async function refusedLink(carry: () => Promise<void>): Promise<string | undefined> {
+  try {
+    await carry();
+    return undefined;
+  } catch (error) {
+    return isNodeError(error) ? (error.code ?? "unknown") : "unknown";
+  }
+}
+
+/** Copies one entry, dereferencing so the profile root never inherits the player's own links. */
+async function copyPlayerMod(source: string, destination: string, name: string): Promise<void> {
+  try {
+    await cp(source, destination, { recursive: true, dereference: true, errorOnExist: true, force: false });
+  } catch (error) {
+    throw new Error(`mods_root_copy_failed:${name}`, { cause: error });
+  }
+}
+
+/**
+ * The profile root's entries, read without following a single link.
+ *
+ * `readSafeDirectory` refuses a directory holding any link child, which is right
+ * for every artifact this attempt wrote itself - and wrong for the one directory
+ * it deliberately fills with links into the player's own `Mods`. Those links are
+ * named here and never resolved, so the inventory still proves what staging put
+ * there without ever walking outside the attempt.
+ *
+ * The root itself is proven through the staged Mod's config leaf rather than by
+ * `verifySafePathBoundary(profileModsRoot)`, which accepts only a regular-file
+ * leaf: the ancestors of that leaf are exactly the directory chain this has to
+ * stand on, and an absent leaf still verifies every one of them.
+ */
+async function readProfileModsEntries(profileModsRoot: string, root: string): Promise<readonly string[]> {
+  await verifySafePathBoundary(join(profileModsRoot, MOD_DIRECTORY, MOD_CONFIG_FILE), root);
+  const entries = await readdir(profileModsRoot);
+  for (const entry of entries) {
+    const entryPath = resolve(profileModsRoot, entry);
+    const state = await lstat(entryPath);
+    if (!state.isDirectory() && !state.isFile() && !state.isSymbolicLink()) throw new Error("unsafe_path_boundary");
+  }
+  return Object.freeze(entries);
 }
 
 async function stagePlayerHostModProfile(
@@ -4882,6 +5051,7 @@ async function consumeRecoveredAttemptCleanup(
       // points at, which the record never declared.
       if (stat.isSymbolicLink()) throw new Error("unsafe_path_boundary");
       if (stat.isDirectory()) {
+        await removeDeclaredDirectoryLinks(target);
         await readSafeDirectory(target, runtimeRoot);
         await rmdir(target);
       } else {
@@ -4891,6 +5061,24 @@ async function consumeRecoveredAttemptCleanup(
       if (isNodeError(error) && (error.code === "ENOENT" || error.code === "ENOTEMPTY")) continue;
       throw new Error("stardew_bootstrap_attempt_cleanup_failed", { cause: error });
     }
+  }
+}
+
+/**
+ * Removes the link children a declared directory may hold - the player Mods
+ * population a Player Host launch carried in - without ever following one: the
+ * link itself is unlinked, so a junction into the player's own `Mods` costs its
+ * directory entry and nothing under its target is touched.
+ *
+ * Recursion is deliberately absent. `readSafeDirectory` still refuses a link
+ * child that remains, so a link this cannot remove fails the cleanup loudly
+ * instead of being walked, and an undeclared real child still keeps its parent
+ * exactly as before.
+ */
+async function removeDeclaredDirectoryLinks(directory: string): Promise<void> {
+  for (const entry of await readdir(directory)) {
+    const entryPath = resolve(directory, entry);
+    if ((await lstat(entryPath)).isSymbolicLink()) await unlink(entryPath);
   }
 }
 
