@@ -253,7 +253,7 @@
     "test:stardew-execution-receipt-field-parity": "node --test tools/check-stardew-execution-receipt-field-parity.test.mjs",
     "test:stardew-execution-terminal-uniqueness": "node --test tools/check-stardew-execution-terminal-uniqueness.test.mjs",
     "test:stardew-fixture-profile": "node --test tools/stardew-fixture-profile.test.mjs",
-    "test:stardew-fixture-readiness": "node tools/await-stardew-fixture-readiness.test.mjs",
+    "test:stardew-fixture-readiness": "node --test tools/await-stardew-fixture-readiness.test.mjs",
     "test:stardew-fixture-roots": "node --test tools/stardew-fixture-roots.test.mjs",
     "test:stardew-fixture-scenario-resolution": "node --test tools/stardew-fixture-scenario-resolution.test.mjs",
     "test:stardew-fixture-scenario-wiring": "node --test tools/check-stardew-fixture-scenario-wiring.test.mjs",

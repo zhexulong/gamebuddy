@@ -3,7 +3,6 @@
   "note": "Files no reachable command names, measured at this commit. A record of debt, not an acceptance of it: delete an entry by making the file reachable, never by recording more.",
   "files": [
     "tools/audit-stardew-nogame-subset.test.mjs",
-    "tools/await-stardew-fixture-readiness.test.mjs",
     "tools/check-refusal-informativeness.test.mjs",
     "tools/check-stardew-snapshot-family-bounds.test.mjs",
     "tools/derive-stardew-action-cancellation.test.mjs",
