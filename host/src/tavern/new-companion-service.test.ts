@@ -16,6 +16,7 @@ import { identityKey, resolveRuntimePaths } from "../runtime.js";
 import { TavernArtifactStore } from "./artifact-store.js";
 import { createChatThreadStore } from "./chat-thread-store.js";
 import { companionAvatarPath } from "./companion-avatar/index.js";
+import { readCompanionWorldBook } from "./companion-world-book-service.js";
 import { createGreetingManagementService } from "./greeting-management/greeting-management.js";
 import { createTavernLibraryService } from "./library-service.js";
 import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
@@ -436,6 +437,57 @@ test("reviewed card world book lands as the bound worldbook.json and threads car
       // The binding a chat creator will mount (createNewChat already carries
       // TavernStableWorldBookBinding) is exactly the on-disk revision metadata.
       assert.match(worldbook.canonicalHash, /^[a-f0-9]{64}$/);
+    } finally {
+      threadStore.close?.();
+    }
+  } finally {
+    await cleanupTestRoot(root);
+  }
+});
+test("an entry the card author switched off is provisioned switched off, not switched back on by the read", async () => {
+  const root = await canonicalTestRoot("tavern-new-companion-worldbook-disabled-");
+  const candidates = {
+    ...candidate,
+    worldBookCandidates: [
+      {
+        entryId: "entry-live",
+        title: "夜里巡田",
+        content: "她每晚绕着农场走一圈。",
+        scope: "setting" as const,
+        provenance: "reviewed-import" as const,
+        tokenBudget: "small" as const,
+      },
+      {
+        entryId: "entry-off",
+        title: "旧设定",
+        content: "作者关掉的一条背景。",
+        scope: "setting" as const,
+        provenance: "reviewed-import" as const,
+        tokenBudget: "small" as const,
+        enabled: false,
+      },
+    ],
+  };
+  try {
+    const review = createNewCompanionService({
+      async create() {
+        throw new Error("not_used");
+      },
+    }).review(candidates, { reviewedFields: ["persona_core"], approvedAtMs: 10 });
+    const threadStore = createChatThreadStore(root, "e".repeat(64));
+    try {
+      const created = await provisionNewCompanion(root, "player", candidates, review, threadStore);
+      const book = await readCompanionWorldBook(resolveRuntimePaths(created.identity, root).runtimeCwd);
+      // Both entries are kept: an author's switched-off entry is still part of the book the player
+      // may switch back on, so "disabled" and "never written" must stay different rows.
+      assert.deepEqual(
+        book.entries.map((entry) => entry.title),
+        ["夜里巡田", "旧设定"],
+      );
+      assert.equal(book.entries[0]?.enabled, true);
+      // The switch itself is the fact under test: `worldbook.json` has no `enabled` for the second
+      // entry unless provisioning carried it, and an absent switch reads as ON.
+      assert.equal(book.entries[1]?.enabled, false);
     } finally {
       threadStore.close?.();
     }

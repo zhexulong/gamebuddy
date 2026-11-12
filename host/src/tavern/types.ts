@@ -1,4 +1,6 @@
 /** Pure Tavern artifact schemas. These values are inert product data, never prompts or executable imports. */
+import type { WorldBookEntry } from "../worldbook.js";
+
 const TAVERN_SCHEMA_VERSION = 1 as const;
 const ID = /^[A-Za-z0-9._-]{1,128}$/u;
 const TEXT = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u;
@@ -7,6 +9,18 @@ const SINGLE_LINE = /[\u0000-\u001F\u007F-\u009F]/u;
 const MAX_CANDIDATE_WORLDBOOK_SCAN_DEPTH = 64;
 type RuntimeEligibility = "candidate_only" | "profile_eligible_after_explicit_review" | "never_runtime";
 type ArtifactRevision = Readonly<{ schemaVersion: typeof TAVERN_SCHEMA_VERSION; revision: number }>;
+/**
+ * One reviewed-card world-book entry: every member the persisted `WorldBookEntry` carries,
+ * minus the game-scope identifiers a card entry never has.
+ *
+ * Derived from the persisted shape instead of restated beside it. Restated, this list omitted
+ * `enabled` while this file's own validator persisted it (see `candidate()` below), so the field
+ * existed at every runtime seam and in no type - and the provisioning copy, itself a hand-written
+ * member list, dropped it, turning an entry the author switched off back on (`worldbook.ts` reads
+ * an absent `enabled` as enabled). A member the persisted entry gains now reaches the candidate
+ * type, the validator and the provisioning copy together, or the build fails.
+ */
+export type CandidateWorldBookEntry = Omit<WorldBookEntry, "integrationId" | "saveId" | "worldId">;
 export type CharacterCandidate = ArtifactRevision &
   Readonly<{
     candidateId: string;
@@ -18,30 +32,7 @@ export type CharacterCandidate = ArtifactRevision &
     fields: readonly Readonly<{ field: string; text: string; eligibility: RuntimeEligibility }>[];
     /** Reviewed-card world book candidates (S3): the reviewed import folds the
      *  card's book into the companion's worldbook.json at provision time. */
-    worldBookCandidates?: readonly Readonly<{
-      entryId: string;
-      title: string;
-      content: string;
-      scope: "companion" | "setting" | "integration" | "world";
-      provenance: "authored" | "st-card-import" | "reviewed-import";
-      tokenBudget: "small" | "medium";
-      constant?: boolean;
-      /**
-       * The card's own trigger words, carried through review like the worldbook's
-       * own `keys`: volatile selection matches them against what the player said,
-       * so a keyword-gated entry is unreachable without them.
-       */
-      keys?: readonly string[];
-      /**
-       * The card's own secondary trigger words (`secondary_keys`), applied through
-       * `selectiveLogic` once `keys` matched. They ride the reviewed candidate into
-       * `worldbook.json` for the same reason `keys` do: the selector's four modes
-       * need them, and an entry that lost them selects where its author excluded it.
-       */
-      secondaryKeys?: readonly string[];
-      /** The card's `selectiveLogic`: 0 AND ANY, 1 NOT ALL, 2 NOT ANY, 3 AND ALL. */
-      selectiveLogic?: 0 | 1 | 2 | 3;
-    }>[];
+    worldBookCandidates?: readonly CandidateWorldBookEntry[];
     /**
      * The card's own `character_book.scan_depth`, when it declared one. It rides
      * the book into `worldbook.json` and bounds per-turn World Info selection;

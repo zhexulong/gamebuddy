@@ -24,7 +24,13 @@ import { writeCompanionPostHistoryInstructions } from "./post-history-instructio
 import { createScenarioManagementService } from "./scenario-management/scenario-management.js";
 import { resolveTavernPaths } from "./tavern-paths.js";
 import type { CharacterCandidate, TavernCompanion } from "./types.js";
-import { validateWorldBook, worldBookMetadata, writeWorldBook, type WorldBook } from "../worldbook.js";
+import {
+  validateWorldBook,
+  worldBookMetadata,
+  writeWorldBook,
+  type WorldBook,
+  type WorldBookEntry,
+} from "../worldbook.js";
 
 /** Explicit review boundary: candidates cannot alter an existing companion. */
 export type NewCompanionReview = Readonly<{
@@ -218,6 +224,12 @@ async function provisionNewCompanionNamespace(
       // The thread carries only the metadata binding; the body stays at the
       // independently-audited runtime path.
       if (card?.worldBookCandidates !== undefined && card.worldBookCandidates.length > 0) {
+        // The candidate entry IS the authority for its own fields, and the typed binding below is
+        // what keeps that true: spelled out by hand here, every member the persisted `WorldBookEntry`
+        // gained was silently dropped on the way to `worldbook.json` - `enabled` was, so an entry the
+        // author switched off came back switched on (`worldbook.ts` reads an absent `enabled` as
+        // enabled). `validateWorldBook` owns the persisted shape and does the copying.
+        const entries: readonly WorldBookEntry[] = Object.freeze(card.worldBookCandidates);
         const book: WorldBook = validateWorldBook(
           Object.freeze({
             schemaVersion: 1,
@@ -225,25 +237,7 @@ async function provisionNewCompanionNamespace(
             revision: 1,
             alwaysOnPremise: "",
             ...(card.worldBookScanDepth === undefined ? {} : { scanDepth: card.worldBookScanDepth }),
-            entries: Object.freeze(
-              card.worldBookCandidates.map((entry) =>
-                Object.freeze({
-                  entryId: entry.entryId,
-                  title: entry.title,
-                  content: entry.content,
-                  scope: entry.scope,
-                  provenance: entry.provenance,
-                  tokenBudget: entry.tokenBudget,
-                  ...(entry.constant === undefined ? {} : { constant: entry.constant }),
-                  ...(entry.keys === undefined ? {} : { keys: entry.keys }),
-                  // The card's secondary gate and its logic are part of the book the companion
-                  // carries: a provisioning that copied only `keys` would persist a book whose
-                  // entries select where the card said they should not.
-                  ...(entry.secondaryKeys === undefined ? {} : { secondaryKeys: entry.secondaryKeys }),
-                  ...(entry.selectiveLogic === undefined ? {} : { selectiveLogic: entry.selectiveLogic }),
-                }),
-              ),
-            ),
+            entries,
           }),
         );
         await writeWorldBook(join(paths.runtimeCwd, "worldbook.json"), book);
