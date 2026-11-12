@@ -26,7 +26,8 @@ public sealed class BodyHoldAttributionTests
         bool freezePaused = false,
         bool eating = false,
         bool usingTool = false,
-        bool toolCharged = false) =>
+        bool toolCharged = false,
+        bool selfAnimation = false) =>
         new(
             EventUp: eventUp,
             MenuType: menuType,
@@ -36,7 +37,8 @@ public sealed class BodyHoldAttributionTests
             FreezePaused: freezePaused,
             Eating: eating,
             UsingTool: usingTool,
-            ToolCharged: toolCharged);
+            ToolCharged: toolCharged,
+            SelfAnimation: selfAnimation);
 
     [Fact]
     public void EveryHoldingKindHasItsOwnCode()

@@ -46,7 +46,11 @@ internal readonly record struct ActorWorldFacts(
     bool FreezePaused,
     bool Eating,
     bool UsingTool,
-    bool ToolCharged);
+    bool ToolCharged,
+    // The engine's single-animation pause. Appended last so `default(ActorWorldFacts)` still means
+    // "no hold". Between 400 ms and 2000 ms of body, entered by six native sites that write
+    // `CanMove = false` and leave no other declared fact up (boundary: .tmp/boundary-self-animation.md).
+    bool SelfAnimation);
 
 /// <summary>
 /// Read-only per-tick disposition payload (readonly record struct on the game
@@ -256,7 +260,7 @@ internal static class WorldModel
         int timeOfDay = Game1.timeOfDay;
 
         if (player is null)
-            return new ActorWorldFacts(eventUp, menuType, dialogueUp, timeOfDay, 0f, false, false, false, false);
+            return new ActorWorldFacts(eventUp, menuType, dialogueUp, timeOfDay, 0f, false, false, false, false, false);
 
         return new ActorWorldFacts(
             eventUp,
@@ -267,7 +271,12 @@ internal static class WorldModel
             player.freezePause > 0,
             player.isEating,
             player.UsingTool,
-            player.toolPower is { Value: not 0 });
+            player.toolPower is { Value: not 0 },
+            // The flag itself, which the engine raises in `FarmerSprite.animateOnce` (FarmerSprite.cs:673)
+            // and lowers only in its own release writes (`doneWithAnimation` :792, `animateBackwardsOnce`
+            // :1024), so the fact clears on the engine's tick rather than on a duration of ours. The
+            // engine counts it as a hold of the actor in its own right (Farmer.cs:7964).
+            player.FarmerSprite.PauseForSingleAnimation);
     }
 
     private static bool OwnedByAction() => ModalActionOwnedCheck?.Invoke() ?? false;

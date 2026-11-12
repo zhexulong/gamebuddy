@@ -30,8 +30,9 @@ public sealed class WorldModelTests
         bool freezePaused = false,
         bool eating = false,
         bool usingTool = false,
-        bool toolCharged = false)
-        => new(eventUp, menuType, dialogueUp, timeOfDay, stamina, freezePaused, eating, usingTool, toolCharged);
+        bool toolCharged = false,
+        bool selfAnimation = false)
+        => new(eventUp, menuType, dialogueUp, timeOfDay, stamina, freezePaused, eating, usingTool, toolCharged, selfAnimation);
 
     private static ActorDispositionKind Kind(in ActorWorldFacts facts) => WorldModel.Classify(facts).Kind;
 

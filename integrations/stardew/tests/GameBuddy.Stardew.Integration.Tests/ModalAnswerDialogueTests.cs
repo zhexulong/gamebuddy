@@ -299,6 +299,7 @@ public sealed class ModalAnswerDialogueTests
         typeof(Farmer)
             .GetField("toolPower", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
             .SetValue(actor, new NetInt(0));
+        ProbeFarmerSprite.Attach(actor);
         typeof(Farmer)
             .GetField("currentLocationRef", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
             .SetValue(actor, new NetLocationRef());

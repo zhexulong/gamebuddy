@@ -794,6 +794,7 @@ public sealed class ModalDismissActionTests
         typeof(Farmer)
             .GetField("toolPower", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
             .SetValue(actor, new NetInt(0));
+        ProbeFarmerSprite.Attach(actor);
         // Character.currentLocation getter dereferences currentLocationRef; a
         // bare NetLocationRef keeps the trace publisher (AddPublicTrace) from
         // NRE-ing headless, exactly like the admission probe fixtures.

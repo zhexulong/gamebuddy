@@ -366,6 +366,7 @@ public sealed class BodyOwnerNamingTests
         typeof(Farmer)
             .GetField("toolPower", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
             .SetValue(actor, new NetInt(0));
+        ProbeFarmerSprite.Attach(actor);
         return actor;
     }
 

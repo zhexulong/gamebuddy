@@ -317,6 +317,7 @@ public sealed class LevelUpMilestoneChoiceTests
         SetFarmerField(actor, "usingTool", new NetBool(false));
         SetFarmerField(actor, "netStamina", new NetFloat(270f));
         SetFarmerField(actor, "toolPower", new NetInt(0));
+        ProbeFarmerSprite.Attach(actor);
         // Character.currentLocation dereferences currentLocationRef; a bare ref keeps the trace publisher from
         // NRE-ing headless.
         SetFarmerField(actor, "currentLocationRef", new NetLocationRef());

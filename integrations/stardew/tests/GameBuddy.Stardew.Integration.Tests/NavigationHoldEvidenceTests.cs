@@ -31,7 +31,8 @@ public sealed class NavigationHoldEvidenceTests
         bool freezePaused = false,
         bool eating = false,
         bool usingTool = false,
-        bool toolCharged = false) =>
+        bool toolCharged = false,
+        bool selfAnimation = false) =>
         new(
             EventUp: eventUp,
             MenuType: menuType,
@@ -41,7 +42,8 @@ public sealed class NavigationHoldEvidenceTests
             FreezePaused: freezePaused,
             Eating: eating,
             UsingTool: usingTool,
-            ToolCharged: toolCharged);
+            ToolCharged: toolCharged,
+            SelfAnimation: selfAnimation);
 
     [Fact]
     public void ACutsceneHold_NamesTheCutsceneAndWhatEndsItsDialogueBox()
