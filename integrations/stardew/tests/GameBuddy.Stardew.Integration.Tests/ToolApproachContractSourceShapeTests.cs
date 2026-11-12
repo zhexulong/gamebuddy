@@ -206,13 +206,13 @@ public sealed class ToolApproachContractSourceShapeTests
         string controller = Read("integrations/stardew/farmhandexecutioncontroller.cs");
 
         // Ownership gates: an approach must count as a busy body so a second action
-        // cannot start on top of it. Pinned inside AdmitExecution specifically, because
+        // cannot start on top of it. Pinned inside the admission's body-exclusivity chain specifically, because
         // a global count also passes when the admission line is the one that lost the check.
-        string admission = MethodBody(controller, "private LocalExecutionReceipt? AdmitExecution(");
-        admission.Should().Contain("this.activeToolApproach is not null",
+        string admission = MethodBody(Read("integrations/stardew/ExecutionAdmission.cs"), "internal AdmissionOutcome Admit(");
+        admission.Should().Contain("this.slots.ToolApproach.Peek() is not null",
             "admission must refuse while an approach walks, not only the snapshot/teardown paths");
-        CountOccurrences(controller, "this.activeToolApproach").Should().BeGreaterThanOrEqualTo(6,
-            "admission, identity, teardown, cancel, snapshot and invalidation all need to see it");
+        CountOccurrences(controller, "this.activeToolApproach").Should().BeGreaterThanOrEqualTo(5,
+            "identity, teardown, cancel, snapshot and invalidation all need to see it");
 
         // Halt clears it.
         string halt = MethodBody(controller, "public void Halt(");

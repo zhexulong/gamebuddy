@@ -73,7 +73,8 @@ public sealed class NativeSleepPromptTests
     [Theory]
     [InlineData("integrations/stardew/Sensory/NpcDialoguePager.cs", "private void ObserveCore(")]
     [InlineData("integrations/stardew/SleepAndAdvanceDayLifecycle.cs", "private bool TryEnterEligibility(")]
-    [InlineData("integrations/stardew/farmhandexecutioncontroller.cs", "private LocalExecutionReceipt? AdmitExecution(")]
+    // The shared admission moved to its own type; the seam is its body, not the projector the action bodies call.
+    [InlineData("integrations/stardew/ExecutionAdmission.cs", "internal AdmissionOutcome Admit(")]
     [InlineData("integrations/stardew/farmhandexecutioncontroller.modalactions.cs", "public LocalExecutionReceipt RequestLocalAnswerDialogue(")]
     public void EverySeamThatCouldTakeTheBedPromptAsksTheOneIdentity(string file, string signature)
     {

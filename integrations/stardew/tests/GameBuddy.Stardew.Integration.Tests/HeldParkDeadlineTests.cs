@@ -240,19 +240,24 @@ public sealed class HeldParkDeadlineTests
         /// The bridge that parked the request goes away mid-wait: the exact state a replaced session leaves behind,
         /// where the park's window is the only thing that can still end the wait.
         /// </summary>
-        internal void DropTheResolver() =>
-            typeof(ExecutionManager)
-                .GetField("heldRequestResolver", BindingFlags.NonPublic | BindingFlags.Instance)!
-                .SetValue(this.Executions, null);
+        internal void DropTheResolver() => AdmissionField("heldRequestResolver").SetValue(this.Admission(), null);
 
         /// <summary>The native animation ends: the actor is idle again, and nothing else about the world changed.</summary>
         internal void FreeTheBody() =>
             this.Executions.SetTestActorResolver(() => CreateActor(canMove: true, usingTool: false));
 
         internal int ParkedCount() =>
-            ((System.Collections.IDictionary)typeof(ExecutionManager)
-                .GetField("heldRequestsByRequestId", BindingFlags.NonPublic | BindingFlags.Instance)!
-                .GetValue(this.Executions)!).Count;
+            ((System.Collections.IDictionary)AdmissionField("heldRequestsByRequestId").GetValue(this.Admission())!).Count;
+
+        /// <summary>The parked requests live in the admission, which is where the wait is pumped from.</summary>
+        private ExecutionAdmission Admission() =>
+            (ExecutionAdmission)typeof(ExecutionManager)
+                .GetField("admission", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .GetValue(this.Executions)!;
+
+        private static FieldInfo AdmissionField(string name) =>
+            typeof(ExecutionAdmission).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)
+                ?? throw new InvalidOperationException($"ExecutionAdmission.{name} field unavailable.");
 
         internal BridgeEnvelope<BridgeReceipt> TakeAnswer()
         {

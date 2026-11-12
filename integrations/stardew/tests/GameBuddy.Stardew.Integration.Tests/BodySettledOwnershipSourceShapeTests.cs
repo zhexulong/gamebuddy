@@ -40,22 +40,26 @@ public sealed class BodySettledOwnershipSourceShapeTests
         return directory.FullName;
     }
 
-    /// <summary>The slot names in the body_owned chain inside AdmitExecution.</summary>
+    /// <summary>The slot names in the body_owned chain inside <see cref="ExecutionAdmission.Admit"/>.</summary>
     private static List<string> AdmissionSlots()
     {
-        string source = Source("integrations/stardew/farmhandexecutioncontroller.cs");
+        string source = Source("integrations/stardew/ExecutionAdmission.cs");
         // The rejection call is unique; the chain immediately precedes it.
-        int rejection = source.IndexOf("this.RejectBodyOwned(requestId, executionId)", StringComparison.Ordinal);
+        int rejection = source.IndexOf("return this.RejectBodyOwned(requestId, executionId);", StringComparison.Ordinal);
         rejection.Should().BeGreaterThan(0, "the admission body-exclusivity rejection must exist");
-        int chainEnd = source.IndexOf("HasActiveExecution", rejection - 400, StringComparison.Ordinal);
-        chainEnd.Should().BeGreaterThan(0, "the chain must close on the controller");
-        int chainStart = source.LastIndexOf("this.active is not null", chainEnd, StringComparison.Ordinal);
-        chainStart.Should().BeGreaterThan(0, "the chain must open with this.active");
+        int chainEnd = source.IndexOf("this.controller.HasActiveExecution", rejection - 900, StringComparison.Ordinal);
+        chainEnd.Should().BeGreaterThan(0, "the chain must close on the body controller's own lease");
+        int chainStart = source.LastIndexOf("this.slots.Active.Peek() is not null", chainEnd, StringComparison.Ordinal);
+        chainStart.Should().BeGreaterThan(0, "the chain must open with the local-movement slot");
         string chain = source.Substring(chainStart, chainEnd - chainStart);
         var slots = new List<string>();
-        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(chain, @"this\.(active[A-Za-z]*)\s+is not null"))
-            if (!slots.Contains(match.Groups[1].Value))
-                slots.Add(match.Groups[1].Value);
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(chain, @"this\.slots\.(\w+)\.Peek\(\)"))
+        {
+            string field = FieldName(match.Groups[1].Value);
+            if (!slots.Contains(field))
+                slots.Add(field);
+        }
+
         return slots;
     }
 
@@ -145,17 +149,17 @@ public sealed class BodySettledOwnershipSourceShapeTests
     [Fact]
     public void TheOnlyStateExemptionInTheChainIsTheNightThatHasNotBegun()
     {
-        string source = Source("integrations/stardew/farmhandexecutioncontroller.cs");
-        int rejection = source.IndexOf("this.RejectBodyOwned(requestId, executionId)", StringComparison.Ordinal);
+        string source = Source("integrations/stardew/ExecutionAdmission.cs");
+        int rejection = source.IndexOf("return this.RejectBodyOwned(requestId, executionId);", StringComparison.Ordinal);
         rejection.Should().BeGreaterThan(0);
-        int chainEnd = source.IndexOf("HasActiveExecution", rejection - 900, StringComparison.Ordinal);
+        int chainEnd = source.IndexOf("this.controller.HasActiveExecution", rejection - 900, StringComparison.Ordinal);
         chainEnd.Should().BeGreaterThan(0);
-        int chainStart = source.LastIndexOf("this.active is not null", chainEnd, StringComparison.Ordinal);
+        int chainStart = source.LastIndexOf("this.slots.Active.Peek() is not null", chainEnd, StringComparison.Ordinal);
         chainStart.Should().BeGreaterThan(0);
         string chain = source.Substring(chainStart, chainEnd - chainStart);
 
         var conditionals = System.Text.RegularExpressions.Regex
-            .Matches(chain, @"&&\s*!this\.(\w+)")
+            .Matches(chain, @"&&\s*!this\.slots\.(\w+)")
             .Select(match => match.Groups[1].Value)
             .Distinct()
             .ToList();

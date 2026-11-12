@@ -113,10 +113,13 @@ public sealed class ModalDismissActionTests
     public void SharedAdmission_NeverEvictsTheModal_TheNamedRefusalIsTheOnlyPath()
     {
         string code = StripLineComments(ReadRepositoryText("integrations", "stardew", "farmhandexecutioncontroller.cs"));
+        string admission = StripLineComments(ReadRepositoryText("integrations", "stardew", "ExecutionAdmission.cs"));
 
         code.Should().NotContain("closeDialogue");
         code.Should().NotContain("exitActiveMenu");
-        code.Should().Contain(
+        admission.Should().NotContain("closeDialogue", "the admission refuses the hold; it never evicts the box");
+        admission.Should().NotContain("exitActiveMenu", "the admission refuses the hold; it never evicts the box");
+        admission.Should().Contain(
             "WorldModel.DescribeCurrentBodyHold(admissionDisposition, admissionFacts, boundActor.CanMove)",
             "the refusal names the hold and carries the modal facts the remedy needs; an eviction here would delete that fact");
     }

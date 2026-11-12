@@ -19,7 +19,7 @@ namespace GameBuddy.Stardew;
 /// native Game1.player and replays a request's current receipt on duplicates;
 /// it never starts a second body process for the same request.
 /// </summary>
-internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger, IActiveBodyOwnership
+internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger, IActiveBodyOwnership, IAdmissionCommit
 {
     private const int DefaultDeadlineTicks = 60 * 20;
     // The ACTING radius for every interaction stays Chebyshev-adjacent (1); this
@@ -53,17 +53,14 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private readonly StardewBodyController controller;
     // The body state, and the only writer of it: the slots, the modal lease and the deferred warp replan.
     private readonly ActiveBodySlots slots;
+    // The shared admission: the bound actor, the mechanical gate every executing action runs and the bounded wait a
+    // request is parked in. It reads the slots and the receipts above and commits its rulings through this class.
+    private readonly ExecutionAdmission admission;
     private readonly Func<FarmhandCapabilityPublication> capabilityPublicationProvider;
     private readonly Action<LocalExecutionReceipt>? receiptPublished;
     private readonly Action<ExecutionTrace>? tracePublished;
     private readonly FarmhandExecutionJournal? executionJournal;
     private readonly BridgeScope? executionScope;
-    private readonly Dictionary<string, FarmhandExecutionAdmission> durableAdmissionsByRequestId = new(StringComparer.Ordinal);
-    // Requests whose admission found the actor TRANSIENTLY held, parked so the body can free inside the Mod
-    // instead of being refused back to the Agent for a model round-trip. Bounded by
-    // WorldModel.TransientRetryWindowMs; keyed by requestId, holding the request as the admission saw it.
-    private readonly Dictionary<string, HeldRequest> heldRequestsByRequestId = new(StringComparer.Ordinal);
-    private HeldRequestResolver? heldRequestResolver;
     // The actor's in-flight body state lives in one type (ActiveBodySlots), which is also the only writer of it. These
     // are read-only projections under the names every family already reads: a write has no setter, so it cannot be
     // forgotten - it does not compile.
@@ -307,6 +304,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.ledger = new ExecutionReceiptStore(
             this.slots,
             publishBodyIdleTrace: (executionId, requestId) => this.AddPublicTrace("body_idle", executionId, requestId));
+        this.admission = new ExecutionAdmission(this.slots, this.controller, this.ledger, this, this.executionJournal, this.executionScope);
         // WIA §4.2 owner arbitration (review #3, 2026-10-02): the L0 binary
         // "is the current modal the current action's own modal" is answered by
         // THIS ledger's single-field lease. Production is single-ExecutionManager
@@ -316,7 +314,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // The lease alone is not enough: it names an execution, and the modal is that execution's own only while the
         // execution is still active (see WorldModel.OwnsCurrentModal).
         WorldModel.ModalActionOwnedCheck = () =>
-            WorldModel.OwnsCurrentModal(this.slots.ModalOwnerExecutionId, this.IsExecutionActive);
+            WorldModel.OwnsCurrentModal(this.slots.ModalOwnerExecutionId, this.admission.IsExecutionActive);
     }
 
     /// <summary>
@@ -329,22 +327,6 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal string? ActiveModalOwnerExecutionId => this.slots.ModalOwnerExecutionId;
 
     internal void RegisterModalOwner(string executionId) => this.slots.RegisterModalOwner(executionId);
-
-    /// <summary>
-    /// Whether the named execution still holds work, asked of the stored receipt record: <see cref="ExecutionReceiptStore.Remember"/>
-    /// is its only writer, so "the latest receipt is not terminal" is the one place that knows an execution ended. An
-    /// execution that never reported - or that has already settled - answers false, which keeps its lease from
-    /// suppressing a world interruption.
-    /// </summary>
-    private bool IsExecutionActive(string executionId)
-    {
-        foreach (LocalExecutionReceipt receipt in this.receiptsByRequestId.Values)
-        {
-            if (string.Equals(receipt.ExecutionId, executionId, StringComparison.Ordinal))
-                return !receipt.State.IsTerminal();
-        }
-        return false;
-    }
 
     /// <summary>Releases the owner lease; only the owning execution may clear it.</summary>
     internal void ReleaseModalOwner(string executionId) => this.slots.ReleaseModalOwner(executionId);
@@ -365,107 +347,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     public bool IsBodyBusy => !this.IsBodySettled;
     public IReadOnlyList<ExecutionTrace> Trace => this.trace;
 
-    internal bool TryAdmitNavigation(BridgeExecutionRequest request, string executionId, out string reasonCode)
-    {
-        if (this.ledger.HasDurabilityFailure(request.RequestId))
-        {
-            reasonCode = "execution_durability_quarantined";
-            return false;
-        }
-        reasonCode = "accepted";
-        if (this.executionJournal is null || this.executionScope is null || request.Args.Destination is null)
-        {
-            reasonCode = "execution_durability_unavailable";
-            return false;
-        }
+    /// <summary>The journal admission of a navigation request, which is the only one with a destination lineage.</summary>
+    internal bool TryAdmitNavigation(BridgeExecutionRequest request, string executionId, out string reasonCode) =>
+        this.admission.TryAdmitNavigation(request, executionId, out reasonCode);
 
-        if (!this.ledger.TryBindDispatch(request.RequestId, request.Action, executionId, out reasonCode)
-            && reasonCode != "execution_identity_already_bound")
-        {
-            return false;
-        }
-
-        BridgeNavigationDestinationSelector destination = request.Args.Destination;
-        FarmhandExecutionAdmission admission = new(
-            this.executionScope,
-            request.RequestId,
-            request.IdempotencyKey,
-            request.Action,
-            FarmhandCanonicalRequest.NavigationDestination(request.Action, destination.Kind, destination.Label, destination.Ref),
-            request.ExpectedRevision,
-            request.DeadlineMs,
-            executionId);
-        FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryRecordAdmission(admission);
-        if (!result.IsSuccess)
-        {
-            this.ledger.MarkDurabilityFailure(request.RequestId);
-            reasonCode = result.Code.ToString();
-            return false;
-        }
-
-        this.durableAdmissionsByRequestId[request.RequestId] = admission;
-        reasonCode = "accepted";
-        return true;
-    }
-
-    internal bool TryAdmitCandidate(BridgeExecutionRequest request, string executionId, out string reasonCode)
-    {
-        if (this.ledger.HasDurabilityFailure(request.RequestId))
-        {
-            reasonCode = "execution_durability_quarantined";
-            return false;
-        }
-        reasonCode = "accepted";
-        if (this.executionJournal is null || this.executionScope is null)
-        {
-            reasonCode = "execution_durability_unavailable";
-            return false;
-        }
-
-        FarmhandCanonicalRequest canonicalRequest;
-        if (request.Action == "express_emote" && request.Args.Emote is not null)
-        {
-            canonicalRequest = FarmhandCanonicalRequest.EmoteRequest(request.Action, request.Args.Emote);
-        }
-        else if (request.Action == "face_direction" && request.Args.Direction is not null)
-        {
-            canonicalRequest = FarmhandCanonicalRequest.DirectionRequest(request.Action, request.Args.Direction);
-        }
-        else
-        {
-            reasonCode = "invalid_execution_request";
-            return false;
-        }
-
-        if (!this.ledger.TryBindDispatch(request.RequestId, request.Action, executionId, out reasonCode)
-            && reasonCode != "execution_identity_already_bound")
-        {
-            return false;
-        }
-
-        FarmhandExecutionAdmission admission = new(
-            this.executionScope,
-            request.RequestId,
-            request.IdempotencyKey,
-            request.Action,
-            canonicalRequest,
-            request.ExpectedRevision,
-            request.DeadlineMs,
-            executionId);
-        FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> result = this.executionJournal.TryRecordAdmission(admission);
-        if (!result.IsSuccess)
-        {
-            this.ledger.MarkDurabilityFailure(request.RequestId);
-            reasonCode = result.Code.ToString();
-            return false;
-        }
-
-        this.durableAdmissionsByRequestId[request.RequestId] = admission;
-        reasonCode = "accepted";
-        return true;
-    }
-
-    private Func<Farmer?>? testActorResolver;
+    /// <summary>The journal admission of a candidate action (an emote or a facing), which carry no body.</summary>
+    internal bool TryAdmitCandidate(BridgeExecutionRequest request, string executionId, out string reasonCode) =>
+        this.admission.TryAdmitCandidate(request, executionId, out reasonCode);
 
 
     /// <summary>
@@ -475,51 +363,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     private ActorDisposition disposition = ActorDisposition.Idle;
 
-    internal void SetTestActorResolver(Func<Farmer?>? resolver)
-    {
-        this.testActorResolver = resolver;
-    }
+    internal void SetTestActorResolver(Func<Farmer?>? resolver) => this.admission.SetTestActorResolver(resolver);
 
-    internal bool TryGetBoundActor(out Farmer? actor, out string reasonCode)
-    {
-        if (this.testActorResolver is not null)
-        {
-            actor = this.testActorResolver();
-            if (actor is null)
-            {
-                reasonCode = "world_not_ready";
-                return false;
-            }
-            if (this.executionScope is not null
-                && !string.Equals(this.executionScope.PlayerId, actor.UniqueMultiplayerID.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal))
-            {
-                actor = null;
-                reasonCode = "execution_scope_mismatch";
-                return false;
-            }
-            reasonCode = "accepted";
-            return true;
-        }
-
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
-        {
-            actor = null;
-            reasonCode = "world_not_ready";
-            return false;
-        }
-
-        actor = Game1.player;
-        if (this.executionScope is not null
-            && !string.Equals(this.executionScope.PlayerId, actor.UniqueMultiplayerID.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal))
-        {
-            actor = null;
-            reasonCode = "execution_scope_mismatch";
-            return false;
-        }
-
-        reasonCode = "accepted";
-        return true;
-    }
+    /// <summary>
+    /// The one actor an admission may bind to: the local player, or a probe supplied by a suite, and only while it is
+    /// the player the execution scope names. <see cref="ExecutionAdmission.TryGetBoundActor"/> is its only describer.
+    /// </summary>
+    internal bool TryGetBoundActor(out Farmer? actor, out string reasonCode) =>
+        this.admission.TryGetBoundActor(out actor, out reasonCode);
 
     /// <summary>
     /// The actionability profile an action declares to the shared mechanical
@@ -534,8 +385,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         /// It used to ADD a tool-swing check (`UsingTool` / nonzero `toolPower`) on top of menu / event /
         /// unmovable. It no longer does, and deliberately: since the WorldModel swap an in-progress swing and
         /// an eating actor are `Transient` DISPOSITIONS, and every non-Modal profile refuses those. So
-        /// `Physical` and `General` are BEHAVIOURALLY IDENTICAL today (see `AdmitExecution`, which branches on
-        /// `Modal` alone). The label says which family the action belongs to; it does not add a check.
+        /// `Physical` and `General` are BEHAVIOURALLY IDENTICAL today (see `ExecutionAdmission.Admit`, which
+        /// branches on `Modal` alone). The label says which family the action belongs to; it does not add a check.
         /// </summary>
         Physical,
 
@@ -619,7 +470,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// WorldModel 对 probe farmer 安全后，删除本投影与本判定，AdmitExecution
     /// 单读 WorldModel.ComputeDisposition(actor).Kind。
     /// </summary>
-    private enum LocalDispositionKind
+    internal enum LocalDispositionKind
     {
         Idle,
         Modal,
@@ -642,45 +493,21 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal const string HeldRequestNeverAnsweredPrefix = "held_request_never_answered:";
 
     /// <summary>
-    /// Answers one request the admission parked while the actor was Transiently held. <paramref name="refusal"/>
-    /// is null when the body is free and the request must be dispatched now through the normal path, and is
-    /// the named refusal when the bounded wait passed without the body freeing. Registered by the bridge,
-    /// which owns the request as received and produces its response; the admission owns only the wait.
+    /// The resolver the bridge registers so a parked request is answered on the path it arrived on. The wait itself is
+    /// <see cref="ExecutionAdmission.PumpHeld"/>; this class only forwards the registration.
     /// </summary>
-    internal delegate void HeldRequestResolver(string requestId, LocalExecutionReceipt? refusal);
-
-    /// <summary>
-    /// One parked request: the action identity the request was dispatched with, the execution the admission minted for
-    /// it, the hold it was parked for, and when the bounded wait started.
-    /// </summary>
-    private sealed record HeldRequest(
-        string ActionId,
-        string ExecutionId,
-        string HoldCode,
-        string HoldEvidence,
-        long ParkedAtUnixMs);
-
-    internal void SetHeldRequestResolver(HeldRequestResolver? resolver) => this.heldRequestResolver = resolver;
-
-    /// <summary>
-    /// The WIA §4.2 admission ruling, delegated to the single authority
-    /// (<see cref="WorldModel.Classify"/>). This wrapper only narrows the kind set
-    /// for the admission decision and preserves the pre-convergence
-    /// <c>!CanMove</c> reading: a movement lock that is neither an event, a menu,
-    /// nor a pass-out still keeps the body non-actionable for the body-owning
-    /// profiles (the pre-WIA short-circuit chain decided exactly this).
-    /// </summary>
-    private static LocalDispositionKind ClassifyAdmissionDisposition(Farmer actor)
-    {
-        ActorWorldFacts facts = WorldModel.ReadFacts(actor);
-        return ProjectAdmissionDisposition(WorldModel.Classify(facts), actor);
-    }
+    internal void SetHeldRequestResolver(HeldRequestResolver? resolver) => this.admission.SetHeldRequestResolver(resolver);
 
     /// <summary>
     /// The admission projection of a disposition: the closed kind, plus the <c>!CanMove</c> tail that keeps
     /// a movement lock (eating / knockback / warp transition) non-Idle for the body-owning profiles.
+    ///
+    /// <para>
+    /// It stays on this class, beside the per-tick <c>disposition</c> it projects, because the <c>CanMove</c> read here is
+    /// the one `tools/audit-stardew-state-coverage.mjs` names as that engine state's reader; the admission calls it.
+    /// </para>
     /// </summary>
-    private static LocalDispositionKind ProjectAdmissionDisposition(ActorDisposition disposition, Farmer actor)
+    internal static LocalDispositionKind ProjectAdmissionDisposition(ActorDisposition disposition, Farmer actor)
     {
         LocalDispositionKind projected = disposition.Kind switch
         {
@@ -697,6 +524,8 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     // The frozen body-owner vocabulary. ONE definition per code so the refusal vocabulary and the snapshot's
     // occupant projection cannot drift; the table below (slot -> code + interruptible) is the single judgement.
+    // `body_owned` is the unnameable hold: the code the describer falls back to when no row can name its owner.
+    internal const string BodyOwned = "body_owned";
     internal const string BodyOwnedByNavigation = "body_owned_by_navigation";
     internal const string BodyOwnedByTravel = "body_owned_by_travel";
     internal const string BodyOwnedByMovement = "body_owned_by_movement";
@@ -746,26 +575,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     /// <summary>
     /// The SINGLE describer of who owns the body. Every body-exclusivity refusal (the shared admission path and
-    /// each action's own guard) mints its receipt through <see cref="RejectBodyOwned"/>, and the snapshot's
-    /// occupant projection reads the same result, so no site can carry its own judgement of who is in the way.
+    /// each action's own guard) mints its receipt through <see cref="ExecutionAdmission.RejectBodyOwned"/>, and the
+    /// snapshot's occupant projection reads the same result, so no site can carry its own judgement of who is in the way.
     /// </summary>
-    private BodyOwner DescribeBodyOwner() =>
-        this.PeekBodyOwner() ?? new BodyOwner("body_owned", "owner_execution_id=unknown;owner_action=unknown;interruptible=false;phase=unknown;cancel_safe=false", false, "unknown", false);
-    /// <summary>
-    /// The owner of the body right now, or <see langword="null"/> when nothing of this actor's own is in flight.
-    ///
-    /// <para>
-    /// Null is the fact a WAIT needs: the parked-wait pump re-reads this every tick, so "the body is free again" and
-    /// "who was in the way" are one answer from one describer rather than a second predicate that could disagree with
-    /// the refusal that parked the request. <see cref="DescribeBodyOwner"/> keeps the non-null shape the refusal
-    /// vocabulary and the snapshot's occupant projection read.
-    /// </para>
-    /// </summary>
-    /// <summary>
-    /// The occupant kind, interruptibility and PHASE of the current holder, plus the evidence string a refusal carries;
-    /// <see cref="ActiveBodySlots.PeekOwner"/> is its one describer.
-    /// </summary>
-    private BodyOwner? PeekBodyOwner() => this.slots.PeekOwner();
+    private BodyOwner DescribeBodyOwner() => this.admission.Describe();
 
     /// <summary>
     /// The hold a request waits out when the actor's OWN in-flight execution owns the body, named after that owner and
@@ -779,54 +592,20 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     internal const string WaitingForBodyPrefix = "waiting_for_body:";
 
-    private static string WaitingForBodyHold(string ownerCode) => $"{WaitingForBodyPrefix}{ownerCode}";
-
-    /// <summary>
-    /// Whether a request that collides with this owner may WAIT for it instead of being refused.
-    ///
-    /// <para>
-    /// These are the executions whose whole life is one short intent of the actor's own: an in-flight local move and the
-    /// activity family (petting, animal produce, item use, pickup, pedestal taking). They end on their own inside the
-    /// bounded window, so the collision is a QUEUE. The other owners are not queued: a ride, a map transition, a
-    /// navigation or a committed night outlives the window every time, so parking behind one would delay the same named
-    /// refusal and hold a request that cannot be dispatched in time. A request whose admission tuple is JOURNALLED is
-    /// refused for a different reason - a different lineage owns it, and a later dispatch would read as a lost-receipt
-    /// recovery - which <see cref="RejectBodyOwned"/> checks beside this one.
-    /// </para>
-    /// </summary>
-    private static bool IsQueueableBodyOwner(string ownerCode) =>
-        ownerCode is BodyOwnedByMovement or BodyOwnedByActivity;
-
-    /// <summary>Mints the named body-exclusivity refusal through the single owner describer.</summary>
-    ///
-    /// One ownership is parked instead of refused: a collision with the actor's OWN in-flight work is a queue. Measured
-    /// 2026-10-19 by the hold-absorption gate, a follow-up sent 400 ms into an in-flight move came back
-    /// `body_owned_by_movement`; measured 2026-10-19 19:31, a request that met a background `pickup_item` came back
-    /// `body_owned_by_activity` and the run went quiet. Either way the Mod already knows the owner clears inside the
-    /// bounded window and pays the wait itself rather than the model round-trip whose median is 3.4 s and whose p90 is
-    /// 25 s. Everything else - a mount, a bus ride, an owned overnight, a day advance, a journalled admission - keeps
-    /// the named refusal it always had. The two exceptions are checked here, together, because they answer one question:
-    /// may this request wait for that owner?
-    /// </summary>
-    private LocalExecutionReceipt RejectBodyOwned(string requestId, string executionId)
-    {
-        BodyOwner owner = this.DescribeBodyOwner();
-        if (IsQueueableBodyOwner(owner.ReasonCode)
-            && this.heldRequestResolver is not null
-            // A durable admission is never waited out: its tuple is journalled WITHOUT a receipt, so re-dispatching it
-            // later would read as a lost-receipt recovery rather than a first dispatch.
-            && !this.durableAdmissionsByRequestId.ContainsKey(requestId))
-            return this.ParkHeldRequest(requestId, executionId, WaitingForBodyHold(owner.ReasonCode), owner.Evidence);
-        return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, owner.ReasonCode, owner.Evidence);
-    }
-
     /// <summary>
     /// The named refusal for the ONE ownership the body controller itself can hold: an in-flight local move, which
     /// a newer movement directive may supersede. Shared with <see cref="StardewBodyController"/> so the code, the
     /// action and the interruptible verdict keep the single definition the owner table gives them.
     /// </summary>
     internal static (string ReasonCode, string Evidence) LocalMoveOwner(string? executionId) =>
-        (BodyOwnedByMovement, $"owner_execution_id={ActiveBodySlots.OwnerToken(executionId)};owner_action=move_to_tile;interruptible=true");
+        ExecutionAdmission.LocalMoveOwner(executionId);
+
+    /// <summary>
+    /// The named body-exclusivity refusal, for the actions that hold their own slot guard instead of going through the
+    /// shared chain: the admission decides it, and this projects the answer onto the receipt those call sites return.
+    /// </summary>
+    private LocalExecutionReceipt RejectBodyOwned(string requestId, string executionId) =>
+        this.admission.RejectBodyOwned(requestId, executionId).Withholding!;
 
     /// <summary>
     /// Whether the accepted night has not begun: it has dispatched nothing native - no walk, no answer, no save - and
@@ -918,24 +697,16 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.BeginLocalExecution(requestId, out executionId, out nowMs) is LocalExecutionReceipt existing
             ? existing
             : this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, profile);
-    /// The mechanical admission every executing action shares, in the single
-    /// order invariant 1 fixes: identity → actionability → deadline → body
-    /// exclusivity. Geometry, target identity and postconditions are
-    /// deliberately absent — they belong to the action body.
+    /// <summary>
+    /// The shared admission, projected onto the shape every action body reads: the receipt the dispatch must answer
+    /// with instead of doing its work, or <see langword="null"/> when the request is admitted.
     ///
-    /// Actionability is disposition-driven (WIA §4.2): the non-Modal profiles
-    /// require the body to be Idle; the Modal profile (modal-handling family)
-    /// requires the modal to actually be present — the open modal is its
-    /// working precondition — and is exempt from the body-lease check, while
-    /// deadline and identity/scope/revision checks stay unchanged. A running
-    /// event is a refusal for every action EXCEPT the modal family's two
-    /// event-acting members, whose working precondition a cutscene's own
-    /// dialogue box is.
-    ///
-    /// Returns <see langword="null"/> when the request is admitted. Otherwise it
-    /// returns the terminal rejection, whose reasonCode is byte-identical to the
-    /// pre-convergence inline sequence (behavior equivalence is a hard
-    /// requirement: no reasonCode may change).
+    /// <para>
+    /// <see cref="ExecutionAdmission.Admit"/> is the authority, and it answers an <see cref="AdmissionOutcome"/> because a
+    /// refusal and a park are different things. This projects that answer onto the one form the action bodies already
+    /// branch on. It stays private, and stays here: the pre-WIA source pin (<c>ToolApproachContractTests</c>) requires the
+    /// gate's entry point to be this member.
+    /// </para>
     /// </summary>
     private LocalExecutionReceipt? AdmitExecution(
         string requestId,
@@ -945,224 +716,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         AdmissionActionabilityProfile profile,
         // The deadline ceiling the caller's action family declares. One minute for an ordinary action; the
         // lifecycle passes its own ten-minute watchdog rather than forking this gate to get one.
-        long maxDurationMs = FarmhandActionCatalog.OrdinaryActionCeilingMs)
-    {
-        // Kept private by the pre-WIA source pin (ToolApproachContractTests:
-        // admission must count an approach as a busy body).
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string guardReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, guardReason, null);
-
-        // WIA §4.2: read the disposition projection instead of re-deriving
-        // CanMove/menu/event. Only the Modal profile may act while the world
-        // holds a modal; every other profile still requires Idle (menu / event /
-        // pass-out / transient → player_not_actionable as before). The explicit
-        // eventUp clause keeps the §4.2 "and !eventUp" precondition even if the
-        // WorldModel swap ever reorders the precedence.
-        ActorWorldFacts admissionFacts = WorldModel.ReadFacts(boundActor);
-        ActorDisposition admissionDisposition = WorldModel.Classify(admissionFacts);
-        LocalDispositionKind disposition = ProjectAdmissionDisposition(admissionDisposition, boundActor);
-        // The Modal profile decides whether the action may be ATTEMPTED; whether a modal is actually
-        // present is the handler business, because it names that far better (no_modal_present,
-        // modal_not_answerable, modal_not_dismissible). Refusing here on `disposition != Modal` made those
-        // codes unreachable and replaced them with the generic player_not_actionable - a diagnosis
-        // regression the modal tests caught.
-        //
-        // A cutscene is the one thing that outranks a mounted modal (WorldModel.Classify gives Modal
-        // precedence over PassOut and Transient), and the explicit eventUp clause keeps that true even if
-        // the precedence ever changes.
-        //
-        // ...but a cutscene is not one obstacle. Two of the modal family's three handlers act on the cutscene's OWN
-        // dialogue box - `dismiss_modal` closes it (the native close advances the event, DialogueBox.cs:230-235) and
-        // `answer_dialogue` answers a question raised inside it (`Event.answerDialogue`) - so refusing the family here
-        // refused the only actions that can end a cutscene, which is the deadlock a live run spent twenty minutes
-        // retrying (`cutscene_active` x4: "Persistent cutscene ... I just wait."). The ruling is therefore per ACTION,
-        // read from the identity the dispatch path bound to this request, and everything without an event path keeps
-        // the named hold it always had.
-        bool eventRunning = disposition == LocalDispositionKind.Event || Game1.eventUp;
-        bool actsOnRunningEvent = eventRunning && this.RequestHasEventPath(requestId);
-        // The cross-day lifecycle is the ONE caller whose own prompt is its precondition: `advance_day` answers the
-        // engine's bed question, and that box is what holds the actor. The exemption is the ONE identity
-        // (`NativeSleepPrompt`), never "a question is up" - another question, a cutscene, a faint or a transient swing
-        // still refuses exactly as it does for every other profile.
-        bool ownBedPrompt = profile is AdmissionActionabilityProfile.Overnight
-            && disposition is LocalDispositionKind.Modal
-            && WorldModel.HasDialogueBox(admissionFacts)
-            && NativeSleepPrompt.IsStanding(Game1.activeClickableMenu as DialogueBox);
-        bool notActionable = profile is AdmissionActionabilityProfile.Modal
-            ? eventRunning && !actsOnRunningEvent
-            : disposition != LocalDispositionKind.Idle && !ownBedPrompt;
-        if (notActionable)
-        {
-            // WIA 4.?? : the refusal NAMES the hold and carries the facts a countermeasure needs. A single
-            // `player_not_actionable` for a menu, a cutscene, a faint, an eating animation and a tool swing
-            // told the Agent nothing it could act on, and the Agent's only visible option was to retry the
-            // same request.
-            (string holdCode, string holdEvidence) =
-                WorldModel.DescribeCurrentBodyHold(admissionDisposition, admissionFacts, boundActor.CanMove);
-            // A Transient hold is the ONE hold that clears on its own inside a bounded window
-            // (WorldModel.TransientRetryWindowMs, the very number this evidence publishes as `retry_window_ms`
-            // and the number the body loop waits), so a request that meets one is PARKED here and dispatched
-            // the moment the body frees, instead of being paid for with a model round-trip whose median is
-            // 3.4 s and whose p90 is 25 s (measured 2026-10-19, run g99cross: four refusals in 62 dispatches,
-            // each on a follow-up that arrived 49-154 ms after the previous action settled, and each followed
-            // by the companion standing still). This is the gate that owns the refusal, so it is also the gate
-            // that decides to wait instead - and only while something can resolve the wait: with no bridge
-            // attached (a fixture, or the body-program re-entry) the same caller reads the same named refusal
-            // it always has. Every other hold - a menu, a cutscene, a faint, a day advance - does not clear
-            // inside any bounded window and keeps refusing right here, because parking an action behind one
-            // would be exactly the stale execution the revision rules exist to prevent.
-            if (disposition == LocalDispositionKind.Transient
-                && this.heldRequestResolver is not null
-                // A request that already owns a durable journal admission cannot be waited out: its exact
-                // tuple is recorded WITHOUT a receipt, so a later dispatch of it would be read as a
-                // lost-receipt recovery rather than a first dispatch. Those are the candidate actions, which
-                // carry no actionability gate of their own and so never arrive here.
-                && !this.durableAdmissionsByRequestId.ContainsKey(requestId))
-                return this.ParkHeldRequest(requestId, executionId, holdCode, holdEvidence);
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, holdCode, holdEvidence);
-        }
-
-        // The event-acting half, refused by a DIFFERENT name. A modal is these actions' working precondition in a
-        // cutscene exactly as it is outside one: with nothing on screen there is no box to answer or dismiss, and no
-        // action in the catalog advances an event's command program. Refusing that here is what keeps the two facts
-        // apart - the cutscene hold every other action reads, and the missing box these two need.
-        if (actsOnRunningEvent && !WorldModel.HasMountedModal(admissionFacts))
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                EventHasNoDialogueBox,
-                WorldModel.DescribeBodyHold(admissionDisposition, admissionFacts, boundActor.CanMove));
-
-        if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + maxDurationMs)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline",
-                $"deadline={requestedDeadlineMs};now={nowMs};ceiling={nowMs + maxDurationMs}");
-
-        if (profile is not AdmissionActionabilityProfile.Modal
-            && (this.active is not null || this.activeTravel is not null || this.activePet is not null || this.activeAnimalProduct is not null || this.activeItemUse is not null || this.activeItemPickup is not null || this.activePedestalTaking is not null || this.activeToolApproach is not null
-            // Three long-lived slots were missing here, which meant a mount pending, a bus
-            // ride in flight, or an owned overnight could coexist with any action admitted
-            // through this path: two executions owning one body. Each of those actions
-            // checked only its own slot inline, so nothing caught the overlap.
-            || this.activeMountTransport is not null || this.activeBusRide is not null
-            // activeNavigate is added for the same reason those three were: a navigation in
-            // AwaitingWarp has released active/activeTravel but still owns the body, and
-            // IsBodySettled counts it. This chain and IsBodySettled now cover the SAME ownership
-            // set — keep them that way, because they answer the same question and a divergence means
-            // one of them is lying: this one refuses an action, that one tells the Host the actor is
-            // idle. (An earlier version of this comment claimed four slots were missing from THIS
-            // list; they were not, and the real gap was the other way round.)
-            || this.activeNavigate is not null
-            || this.activeFishing is not null
-            // The night is an occupier once it can begin, and ONLY then: a night that has not begun dispatches
-            // nothing, so refusing a request against it denies a body nobody is using (that is how the `enter_exit`
-            // that would have brought the actor home was refused until the engine passed it out at 2 AM, and how a
-            // `sleep` retry came back owned by itself). It keeps its slot in this sentence so the body-set gate still
-            // reads the slot, and its one conditional is named here rather than hidden in the describer.
-            || (this.activeDayAdvance is not null && !this.NightAcceptedButNotBegun)
-            || this.controller.HasActiveExecution))
-            return this.RejectBodyOwned(requestId, executionId);
-
-        // The request is admitted, and if it IS a night it now owns the slot exclusively: a night already accepted but
-        // not begun cannot keep the handle the next `sleep` is about to take (RequestLocalAdvanceDay holds ONE slot), so
-        // it is retired here with its own terminal rather than being overwritten into a receipt nobody ever closes.
-        if (profile is AdmissionActionabilityProfile.Overnight)
-            this.SupersedeNightThatHasNotBegun(executionId);
-
-        return null;
-    }
+        long maxDurationMs = FarmhandActionCatalog.OrdinaryActionCeilingMs) =>
+        this.admission.Admit(requestId, executionId, requestedDeadlineMs, nowMs, profile, maxDurationMs).Withholding;
 
     /// <summary>
-    /// Whether THIS request's action is one whose handler acts on a running event
-    /// (<see cref="FarmhandActionCatalog.EventActingActionIds"/>), read from the action identity the dispatch path bound
-    /// to the request before the handler ran.
-    ///
-    /// The bound lineage, not a parameter: `FarmhandActionRouter` writes `request.Action` into the ledger before it
-    /// hands the request to a handler, so this is the same identity the receipt carries and a handler cannot claim to
-    /// be an action it is not. An unbound request (a direct in-process call outside the router) answers false, which
-    /// is the behaviour every caller had before this gate.
+    /// Re-attempts every parked request, once per game tick: the tick's single call into the wait, whose window, hold
+    /// and named refusal live in <see cref="ExecutionAdmission.PumpHeld"/>.
     /// </summary>
-    private bool RequestHasEventPath(string requestId) =>
-        this.ledger.TryGetActionId(requestId, out string boundActionId)
-        && FarmhandActionCatalog.IsEventActing(boundActionId);
-
-    /// <summary>
-    /// Parks one request whose body is held and answers it with the marker the bridge reads as "still waiting", instead
-    /// of starting the native effect: the wait is the Mod's, and the request is dispatched through the path it arrived
-    /// on the moment the body frees. The marker is returned rather than stored or published, so the request's single
-    /// published identity is the one its dispatch (or its refusal) mints, and the Host never sees a transition for an
-    /// action that has not started.
-    /// </summary>
-    private LocalExecutionReceipt ParkHeldRequest(
-        string requestId,
-        string executionId,
-        string holdCode,
-        string holdEvidence)
-    {
-        string actionId = this.ledger.TryGetActionId(requestId, out string boundAction) ? boundAction : requestId;
-        // The FIRST park owns the request's answer and its window: a caller that retries while the body is
-        // still held does not buy itself a fresh window.
-        if (!this.heldRequestsByRequestId.ContainsKey(requestId))
-            this.heldRequestsByRequestId[requestId] = new HeldRequest(
-                actionId,
-                executionId,
-                holdCode,
-                holdEvidence,
-                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-        return new LocalExecutionReceipt(executionId, requestId, ExecutionState.Accepted, HeldRequestMarker, this.revision, holdEvidence, ActionId: actionId);
-    }
-
-    /// <summary>
-    /// Re-attempts every parked request, once per game tick. The body is re-read through the same authority the
-    /// admission reads, so the wait's two ends cannot disagree with the gate that parked the request: the moment it is
-    /// free the request goes back to the bridge, which dispatches it through the path it arrived on - every revision,
-    /// deadline, profile and ownership check runs again at THAT moment, because this is a wait and not a replay. Past
-    /// <see cref="WorldModel.TransientRetryWindowMs"/> the wait ends in the named hold the admission captured on
-    /// arrival.
-    ///
-    /// <para>
-    /// That window is enforced whether or not a bridge is left to take the answer. A park exists only while a bridge
-    /// does, so a missing resolver means the bridge that parked it went away mid-wait - and the park must still end,
-    /// in the same window every other park ends in. It is not a second, shorter deadline: the one branch that mints
-    /// <see cref="HeldRequestNeverAnsweredPrefix"/> differs in the CODE it names, never in the window.
-    /// </para>
-    /// </summary>
-    internal void PumpHeldRequests()
-    {
-        if (this.heldRequestsByRequestId.Count == 0)
-            return;
-        foreach ((string requestId, HeldRequest held) in this.heldRequestsByRequestId.ToArray())
-        {
-            long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            (string HoldCode, string HoldEvidence)? hold = this.ReadCurrentHold();
-            HeldRequestResolver? resolver = this.heldRequestResolver;
-            if (hold is null && resolver is not null)
-            {
-                this.heldRequestsByRequestId.Remove(requestId);
-                this.RecordHoldWait(requestId, nowMs - held.ParkedAtUnixMs);
-                resolver(requestId, null);
-                continue;
-            }
-            if (nowMs - held.ParkedAtUnixMs <= WorldModel.TransientRetryWindowMs)
-                continue;
-            // The wait ended in a hold that is still in force. While it is the parked hold, the code and
-            // evidence are the pair the admission captured on arrival - byte for byte the refusal the Agent
-            // would have read then; a world that changed behind the wait is named as it is NOW, because
-            // pointing the Agent at a hold that has ended would give it the wrong countermeasure. A body that
-            // freed with no bridge left to take the dispatch names the hold that arrived with the park, which is
-            // the only one this wait can claim.
-            (string holdCode, string holdEvidence) = hold is null || hold.Value.HoldCode == held.HoldCode
-                ? (held.HoldCode, held.HoldEvidence)
-                : (hold.Value.HoldCode, hold.Value.HoldEvidence);
-            this.heldRequestsByRequestId.Remove(requestId);
-            if (resolver is null)
-            {
-                this.RefuseHeldRequest(requestId, held, $"{HeldRequestNeverAnsweredPrefix}{holdCode}", holdEvidence);
-                continue;
-            }
-            resolver(requestId, this.RefuseHeldRequest(requestId, held, holdCode, holdEvidence));
-        }
-    }
+    internal void PumpHeldRequests() => this.admission.PumpHeld();
 
     /// <summary>
     /// The named refusal for a request whose bounded wait passed without the actor becoming actionable. The
@@ -1172,6 +733,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// <paramref name="reasonCode"/>: its caller passes <see cref="HeldRequestNeverAnsweredPrefix"/> and the hold
     /// it waited on. The action identity travels on the receipt because no dispatch lineage exists to resolve
     /// it from: the handler that would have bound it never ran.
+    ///
+    /// <para>
+    /// The DECISION moved to <see cref="ExecutionAdmission"/>, which says which refusal a wait ended in; this member
+    /// writes it. It stays on the class that owns the delivery funnel because it is a store-and-publish pair that cannot
+    /// become <see cref="RememberTerminal"/> without a behaviour change: a request refused while it was still held was
+    /// never dispatched, so it owns no body to release and publishes no <c>body_idle</c>. That debt is recorded against
+    /// this member by <c>tools/terminal-commit-seam-exemptions.json</c>, and a second copy of the pair in the admission
+    /// would be exactly the bypass the seam gate exists to find.
+    /// </para>
     /// </summary>
     private LocalExecutionReceipt RefuseHeldRequest(string requestId, HeldRequest held, string reasonCode, string holdEvidence)
     {
@@ -1182,52 +752,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
-    /// The hold the body is under right now, or null when it is free. Read through the same authority the admission
-    /// reads, so the wait can never dispatch into a body the admission would have refused.
-    ///
-    /// <para>
-    /// Two things can hold the body, and this asks about BOTH: the actor's disposition (a menu, a cutscene, a tool
-    /// swing) and an execution of the actor's own that owns it. The second is what makes a queued request wait for the
-    /// owner that parked it instead of dispatching on the next tick straight back into `body_owned_by_activity`, and the
-    /// code it reports is the wait's own name for that owner.
-    /// </para>
-    /// </summary>
-    private (string HoldCode, string HoldEvidence)? ReadCurrentHold()
-    {
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out _) || boundActor is null)
-            return null;
-        ActorWorldFacts facts = WorldModel.ReadFacts(boundActor);
-        ActorDisposition disposition = WorldModel.Classify(facts);
-        LocalDispositionKind projected = ProjectAdmissionDisposition(disposition, boundActor);
-        if (projected == LocalDispositionKind.Idle)
-            return this.PeekBodyOwner() is { } owner
-                ? (WaitingForBodyHold(owner.ReasonCode), owner.Evidence)
-                : null;
-        (string holdCode, string holdEvidence) = WorldModel.DescribeCurrentBodyHold(disposition, facts, boundActor.CanMove);
-        return (holdCode, holdEvidence);
-    }
-
-    /// <summary>
     /// Records how long a request waited for the actor to become actionable, so the first receipt its
     /// dispatch stores carries <c>held_ms=&lt;n&gt;</c>: the trace then shows a hold rather than a mystery.
     /// </summary>
     internal void RecordHoldWait(string requestId, long heldMs) => this.ledger.RecordHoldWait(requestId, heldMs);
-
-    /// <summary>
-    /// Ends every parked wait at once, with the named refusal for the hold that is still in force. A
-    /// lifecycle boundary or a halt must never leave a request parked to dispatch later: the wait belongs to
-    /// the hold, and the world that held the body is the one that just ended.
-    /// </summary>
-    private void CloseHeldRequests()
-    {
-        foreach ((string requestId, HeldRequest held) in this.heldRequestsByRequestId.ToArray())
-        {
-            this.heldRequestsByRequestId.Remove(requestId);
-            if (this.heldRequestResolver is null)
-                continue;
-            this.heldRequestResolver(requestId, this.RefuseHeldRequest(requestId, held, held.HoldCode, held.HoldEvidence));
-        }
-    }
 
     internal BridgeLocalObservation CreateLocalObservation(Farmer actor)
     {
@@ -1352,6 +880,15 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     void IActiveBodyOwnership.ReleaseModalLease(string executionId) => this.ReleaseModalOwner(executionId);
 
+    LocalExecutionReceipt IAdmissionCommit.RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence) =>
+        this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
+
+    LocalExecutionReceipt IAdmissionCommit.RefuseHeldRequest(string requestId, HeldRequest held, string reasonCode, string holdEvidence) =>
+        this.RefuseHeldRequest(requestId, held, reasonCode, holdEvidence);
+
+    void IAdmissionCommit.SupersedeNightThatHasNotBegun(string incomingExecutionId) =>
+        this.SupersedeNightThatHasNotBegun(incomingExecutionId);
+
     /// <summary>Returns the latest authoritative receipt for idempotent bridge replay.</summary>
     public bool TryGetReceipt(string requestId, out LocalExecutionReceipt receipt) => this.ledger.TryGetReceipt(requestId, out receipt);
 
@@ -1362,7 +899,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     public void Halt(string reasonCode = "halted")
     {
-        this.CloseHeldRequests();
+        this.admission.Close();
         this.controller.Halt();
         this.slots.Active.Clear();
         this.slots.Travel.Clear();
@@ -2056,7 +1593,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     public void InvalidateForLifecycle(string reasonCode)
     {
-        this.CloseHeldRequests();
+        this.admission.Close();
         this.InvalidateWoodFenceResult();
         this.InvalidateCrabPotResult();
         this.InvalidateBaitCrabPotResult();
@@ -6000,7 +5537,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             ExecutionState.Failed or ExecutionState.Expired or ExecutionState.Uncertain => "execution_settled_failed",
             _ => null,
         };
-        if (this.durableAdmissionsByRequestId.TryGetValue(receipt.RequestId, out FarmhandExecutionAdmission? admission)
+        if (this.admission.TryGetDurableAdmission(receipt.RequestId, out FarmhandExecutionAdmission admission)
             && this.executionJournal is not null)
         {
             FarmhandExecutionReceipt durableReceipt = new(
