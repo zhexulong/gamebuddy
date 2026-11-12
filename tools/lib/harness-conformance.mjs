@@ -33,6 +33,11 @@
  * read `tools/lib/gate-population.mjs`, this suite judges the members it can execute, and the census prints the bucket
  * it excluded, the reason, and the two numbers that make a pass honest: gates nobody declared, and gates whose report
  * cannot show that it measured anything.
+ *
+ * THE POPULATION IS THE INDEX (`tools/lib/indexed-sources.mjs`), because a gate that is not in the index cannot be run by
+ * CI and therefore cannot be proven or owed anything yet. A lane's half-written gate file is inert here instead of
+ * failing the census for every lane - and it is still published, as `untracked_not_counted N: <paths>`, so it neither
+ * blocks nor disappears.
  */
 import { spawnSync } from "node:child_process";
 import {
@@ -55,7 +60,8 @@ import {
   STARDEW_PUBLISHED_ACTION_GATES,
 } from "../stardew-action-gate-descriptors.mjs";
 import { assertNonVacuous, POPULATION_FIELDS } from "./assert-non-vacuous.mjs";
-import { deriveGatePopulation, gateFileNames, gateMemberNames, isGateFile } from "./gate-population.mjs";
+import { gateFileNames, gateMemberNames, isGateFile } from "./gate-population.mjs";
+import { indexedGatePopulation } from "./indexed-sources.mjs";
 import { importsWithoutStarting, preflightLiveRun } from "./live-run-preflight.mjs";
 import { STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
 import { fixtureActions, fixtureScenario } from "./stardew-native-local-player-fixture.mjs";
@@ -907,9 +913,9 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   },
 ]);
 
-/** Every gate file this suite enumerates: the population's `tools/check-*.mjs` members, by file name. */
+/** Every gate file this suite enumerates: the `tools/check-*.mjs` members the index carries, by file name. */
 export function harnessGateNames(toolsDir) {
-  return gateFileNames(deriveGatePopulation({ root: dirname(toolsDir) }));
+  return gateFileNames(indexedGatePopulation({ root: dirname(toolsDir) }));
 }
 
 /**
@@ -1054,12 +1060,17 @@ export function checkGateFalsifiers({
  * `unlisted` is the debt inside the judged set: a gate file the registry names neither with a report nor without one.
  * It is always a finding (`gate_without_falsifier`), and it is counted here so a reader can see which gate it is without
  * reading 106 lines.
+ *
+ * `untrackedNotCounted` is the opposite reading, and it belongs on the same line: a gate file on disk that the index does
+ * not carry is dropped from `population` before this counts anything, and named here so the drop is published rather
+ * than taken on trust.
  */
 export function gateFalsifierCensus({
   population = [],
   withFalsifier = GATES_WITH_FALSIFIER,
   withoutFalsifier = GATES_WITHOUT_FALSIFIER,
   ledger = EMPTY_LEDGER,
+  untrackedNotCounted = [],
 } = {}) {
   const members = population.map((member) => (typeof member === "string" ? { id: member, entryFiles: [] } : member));
   const namesOf = (member) => (member.entryFiles.length === 0 ? [member.id] : gateMemberNames(member));
@@ -1085,6 +1096,7 @@ export function gateFalsifierCensus({
     undeclared: [...undeclaredNames],
     external: [...ledger.external],
     zeroPopulationPass: [...ledger.zeroPopulationPass],
+    untrackedNotCounted: [...untrackedNotCounted],
   };
 }
 
@@ -1092,8 +1104,9 @@ export function gateFalsifierCensus({
  * The census as the lines the CLI prints beside the verdict.
  *
  * Line one is the answer to "how much of this is measured", in the words both tools use: the population, the gates with
- * a red proof, the gates whose missing proof someone recorded, the gates nobody declared at all, and the gates whose
- * report cannot show whether it measured anything. Line two names the bucket this suite excluded and the reason.
+ * a red proof, the gates whose missing proof someone recorded, the gates nobody declared at all, the gates whose report
+ * cannot show whether it measured anything, and the gate files the index does not carry yet. Line two names the bucket
+ * this suite excluded and the reason.
  */
 export function describeGateFalsifierCensus(census) {
   return [
@@ -1104,7 +1117,9 @@ export function describeGateFalsifierCensus(census) {
       recorded: census.recorded,
       undeclared: census.undeclared.length,
       zeroPopulationPass: census.zeroPopulationPass.length,
-    }) + (census.unlisted.length === 0 ? "" : ` · unlisted ${census.unlisted.length} (${census.unlisted.join(", ")})`),
+      unlisted: census.unlisted,
+      untrackedNotCounted: census.untrackedNotCounted,
+    }),
     `judged here ${census.judged} (with a self-report ${census.withReport} · declared without a report ${census.without}) · ` +
       `excluded ${census.excluded.length} (a package.json gate script whose entry is not a tools/check-*.mjs gate file, ` +
       `so this suite has no default run to read): ` +
@@ -1188,7 +1203,7 @@ function describeNotMeasuredGates(notMeasured) {
 
 /** Run the five checks against a real checkout and return `{ id, findings }` for each, plus the numbers it prints. */
 export function runHarnessConformance({ toolsDir, repoRoot }) {
-  const population = deriveGatePopulation({ root: repoRoot });
+  const population = indexedGatePopulation({ root: repoRoot });
   const ledger = gateRedProofLedger({ root: repoRoot });
   const gateNames = gateFileNames(population);
   // Run first, then describe: the not-measured set is a result of the runs, not of the declarations the census counts.
@@ -1218,7 +1233,13 @@ export function runHarnessConformance({ toolsDir, repoRoot }) {
       // The population the verdict rests on, printed beside it: `0 findings` means nothing without `examined N`, and
       // the excluded half is a DECLARED exclusion (a script-backed gate this suite cannot run), not a scanner gap.
       notes: [
-        ...describeGateFalsifierCensus(gateFalsifierCensus({ population: population.gates, ledger })),
+        ...describeGateFalsifierCensus(
+          gateFalsifierCensus({
+            population: population.gates,
+            ledger,
+            untrackedNotCounted: population.untrackedNotCounted,
+          }),
+        ),
         ...describeNotMeasuredGates(notMeasured),
       ],
       // A run that hides an undeclared gate or a report that cannot show its population is not a pass: it is blocked,

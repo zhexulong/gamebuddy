@@ -29,6 +29,14 @@
  * conformance suite reads the same derivation and judges only the members whose default run it can execute;
  * it prints the bucket it excluded and why, and the census line is built from these numbers.
  *
+ * THE POPULATION IS THE INDEX (`tools/lib/indexed-sources.mjs`), because a gate that is not in the index
+ * cannot be run by CI and therefore cannot be proven or owed anything yet. Measured 2026-11-12: an untracked
+ * `tools/check-source-shape-readers.mjs` from another lane was counted as a proven gate here and as an
+ * undeclared one there, so the census went red for every lane over a file no commit contained. It is now
+ * dropped from the population and published by name as `untracked_not_counted N: <paths>`. The restriction
+ * is about which gate is judged, never about how its claim is parsed: a gate that IS in the index has its
+ * markers read exactly as before, and one whose marker cannot be read still fails the run.
+ *
  * THE QUESTION, per gate: has this gate been shown to fail on a real injected violation? The answer is a
  * `red-proof:` marker in a comment line of a file the gate owns - its entry file or its falsifier suite -
  * naming the kind of falsifier and the violation it injects:
@@ -92,7 +100,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { POPULATION_FIELDS, populationFieldPattern } from "./lib/assert-non-vacuous.mjs";
-import { deriveGatePopulation } from "./lib/gate-population.mjs";
+import { describeUntracked, indexedGatePopulation } from "./lib/indexed-sources.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE_PATH = "tools/gate-red-proof-baseline.json";
@@ -324,10 +332,11 @@ export function zeroPopulationPass({ root, files }) {
  * `unassessed` (the command runs no file in this repo, so there is nothing to read).
  */
 export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
-  // One derivation, shared with the conformance suite: `tools/lib/gate-population.mjs`. A `tools/check-*.mjs` a
-  // script runs is ONE gate there, and the script is its id - what an operator types and what CI's derived job
-  // names - so the directory half contributes only the gates no script names at all.
-  const { gates, scripts, gateFiles: files, unclaimedByScript } = deriveGatePopulation({ root });
+  // One derivation, shared with the conformance suite: `tools/lib/gate-population.mjs`, restricted to the index. A
+  // `tools/check-*.mjs` a script runs is ONE gate there, and the script is its id - what an operator types and what
+  // CI's derived job names - so the directory half contributes only the gates no script names at all.
+  const { gates, gateFiles: files, untrackedNotCounted } = indexedGatePopulation({ root });
+  const scripts = gates.filter((gate) => gate.kind === "script");
   const scriptNames = new Set(scripts.map((gate) => gate.id));
   const runnerText = declaredRunnerText(root);
   const declarations = declaredRedProofMarkers(root);
@@ -341,7 +350,8 @@ export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
       total: records.length,
       scripts: scripts.length,
       gateFiles: files.length,
-      unclaimedByScript,
+      unclaimedByScript: gates.length - scripts.length,
+      untrackedNotCounted,
     },
     records: records.map((record) => ({ ...record, status: status.get(record.id) })),
     proven: records.filter((record) => status.get(record.id) === "proven"),
@@ -403,14 +413,27 @@ function inheritedStatus(memberStatuses) {
  * how many owe one with the debt recorded, how many nobody has declared at all, and how many print a report that cannot
  * show whether it measured anything.
  *
- * It lives here rather than in each printer because these five numbers are one reading of one population. Two printers
- * writing them out separately is how "we have N gates" acquired two answers in the first place; a caller that adds a
- * bucket (the conformance suite adds `unlisted`) appends to this line rather than restating it.
+ * It lives here rather than in each printer because these numbers are one reading of one population. Two printers writing
+ * them out separately is how "we have N gates" acquired two answers in the first place. The two trailing buckets are the
+ * ones a caller adds to the ledger's five: `unlisted` (a judged gate nobody declared) and `untracked_not_counted` (a gate
+ * file the index does not carry, so it is nobody's yet). Both are named, not counted alone, and both vanish from the line
+ * when they are empty.
  */
-export function describeGateCensus({ examined, withRedProof, external, recorded, undeclared, zeroPopulationPass }) {
+export function describeGateCensus({
+  examined,
+  withRedProof,
+  external,
+  recorded,
+  undeclared,
+  zeroPopulationPass,
+  unlisted = [],
+  untrackedNotCounted = [],
+}) {
   return (
     `gates examined ${examined} · with a red proof ${withRedProof} · external ${external} · ` +
-    `declared without ${recorded} · undeclared ${undeclared} · zero-population-pass ${zeroPopulationPass}`
+    `declared without ${recorded} · undeclared ${undeclared} · zero-population-pass ${zeroPopulationPass}` +
+    (unlisted.length === 0 ? "" : ` · unlisted ${unlisted.length} (${unlisted.join(", ")})`) +
+    (untrackedNotCounted.length === 0 ? "" : ` · untracked_not_counted ${describeUntracked(untrackedNotCounted)}`)
   );
 }
 
@@ -539,6 +562,7 @@ function report({ reading, held, gaps, undeclared = 0 }) {
       recorded: held,
       undeclared,
       zeroPopulationPass: zero.invisible.length,
+      untrackedNotCounted: population.untrackedNotCounted,
     })}\n`,
   );
   process.stdout.write(

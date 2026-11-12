@@ -1,5 +1,6 @@
 /**
- * What a ratchet's population is, shared by the two ratchets that scan a directory: the index, not the directory.
+ * What a population read from a directory is: the index, not the directory. Shared by the two ratchets that scan one
+ * (`tools/scripts/check-format-ratchet.mjs`, `check-lint-ratchet.mjs`), the clone gate, and both gate-meta tools.
  *
  * The population is the index because a baseline can only be recorded against a tree state that exists in history; a
  * file that is not in the index is not yet anyone's. `biome format` and `biome lint` both walk the working tree, so
@@ -14,6 +15,7 @@
  * is published with the paths rather than swallowed.
  */
 import { execFileSync } from "node:child_process";
+import { deriveGatePopulation } from "./gate-population.mjs";
 
 /** How many paths the published complement names before it summarises the rest. */
 const NAMED_LIMIT = 5;
@@ -56,4 +58,38 @@ export function describeUntracked(files) {
   const shown = sorted.slice(0, NAMED_LIMIT).join(", ");
   const rest = sorted.length - NAMED_LIMIT;
   return `${sorted.length}: ${shown}${rest > 0 ? `, … and ${rest} more` : ""}`;
+}
+
+/**
+ * A derived population restricted to the members the index carries, and the names of the members it dropped.
+ *
+ * A member is in the index when at least one of the files it names is; a member naming no file is declared in
+ * `package.json`, which the index carries. A dropped member is named by its first entry file, because that is the path a
+ * reader would run `git add` on.
+ */
+function indexOnlyMembers({ members, untracked }) {
+  const kept = [];
+  const untrackedNotCounted = [];
+  for (const member of members) {
+    const files = member.entryFiles ?? [];
+    if (files.length > 0 && files.every((file) => untracked.has(file))) untrackedNotCounted.push(files[0]);
+    else kept.push(member);
+  }
+  return { members: kept, untrackedNotCounted };
+}
+
+/**
+ * The gate population both gate-meta tools judge: `tools/lib/gate-population.mjs`'s derivation, restricted to the index.
+ *
+ * The population is the index because a gate that is not in the index cannot be run by CI and therefore cannot be proven
+ * or owed anything yet. So a lane's new gate file is inert until it is staged - it does not fail the census, and it does
+ * not vanish either: it is dropped from `gates` and `gateFiles` and published by name in `untrackedNotCounted`. The one
+ * derivation is here rather than in each caller, because two tools printing one census cannot derive two populations.
+ */
+export function indexedGatePopulation({ root }) {
+  const population = deriveGatePopulation({ root });
+  const untracked = untrackedSources({ root, roots: ["."] });
+  const gates = indexOnlyMembers({ members: population.gates, untracked });
+  const gateFiles = indexOnlyMembers({ members: population.gateFiles, untracked });
+  return { gates: gates.members, gateFiles: gateFiles.members, untrackedNotCounted: gates.untrackedNotCounted };
 }

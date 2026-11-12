@@ -1,13 +1,14 @@
 // One falsifier per check: each check must be able to report its own finding when the wiring it guards is
 // broken, and must stay silent on the real checkout's good wiring.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { auditGateRedProofs } from "../audit-gate-red-proofs.mjs";
-import { deriveGatePopulation } from "./gate-population.mjs";
+import { indexedGatePopulation } from "./indexed-sources.mjs";
 import {
   checkExperimentalRunners,
   checkGateFalsifiers,
@@ -288,6 +289,7 @@ test("the census counts each gate in exactly one bucket and names the ones nobod
       },
     ],
     zeroPopulationPass: ["check-c.mjs"],
+    untrackedNotCounted: [],
   });
   assert.deepEqual(describeGateFalsifierCensus(census), [
     "gates examined 6 · with a red proof 2 · external 1 · declared without 1 · undeclared 1 · zero-population-pass 1 · " +
@@ -303,10 +305,20 @@ test("the census counts each gate in exactly one bucket and names the ones nobod
 // bucket, the judged half is exactly the gate files, and the audit's own population is the same number - so the next
 // scan added to either tool fails here instead of shipping a second answer.
 test("the real tree is one population, and the gates no ledger covers are named one by one", () => {
-  const population = deriveGatePopulation({ root: repoRoot });
+  const population = indexedGatePopulation({ root: repoRoot });
   const ledger = gateRedProofLedger({ root: repoRoot });
-  const census = gateFalsifierCensus({ population: population.gates, ledger });
-  assert.equal(census.examined, auditGateRedProofs({ root: repoRoot }).population.total);
+  const census = gateFalsifierCensus({
+    population: population.gates,
+    ledger,
+    untrackedNotCounted: population.untrackedNotCounted,
+  });
+  const audit = auditGateRedProofs({ root: repoRoot });
+  assert.equal(census.examined, audit.population.total);
+  assert.deepEqual(
+    census.untrackedNotCounted,
+    audit.population.untrackedNotCounted,
+    "both tools publish the same complement from the same reading",
+  );
   assert.equal(census.judged + census.excluded.length, census.examined);
   assert.equal(census.withReport + census.without + census.unlisted.length, census.judged);
   // Both halves are populated on the real tree, so neither number can be a green zero.
@@ -318,6 +330,70 @@ test("the real tree is one population, and the gates no ledger covers are named 
     ledger.undeclared.map((entry) => entry.gate),
     "the census must name the same undeclared gates the findings name",
   );
+});
+
+// The population is the index (`tools/lib/indexed-sources.mjs`), so a lane's new gate file is nobody's yet: it must not
+// fail the census, and it must not disappear either - the drop is published. Staging the same file is what makes it a
+// gate, and an undeclared one then blocks exactly as it did before.
+test("the census judges the index: an untracked gate is published, and the same gate staged is unlisted", () => {
+  const root = mkdtempSync(join(tmpdir(), "harness-index-"));
+  const git = (...args) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
+  const declared = [{ gate: "check-declared.mjs", reason: "its falsifier is its own test" }];
+  const read = () => {
+    const population = indexedGatePopulation({ root });
+    return {
+      census: gateFalsifierCensus({
+        population: population.gates,
+        withFalsifier: [],
+        withoutFalsifier: declared,
+        ledger: {
+          withRedProof: 0,
+          recorded: 0,
+          undeclared: [],
+          stale: [],
+          external: [],
+          externalWithoutRunner: [],
+          zeroPopulationPass: [],
+        },
+        untrackedNotCounted: population.untrackedNotCounted,
+      }),
+      findings: checkGateFalsifiers({
+        gateNames: harnessGateNames(join(root, "tools")),
+        withFalsifier: [],
+        withoutFalsifier: declared,
+        toolsDir: join(root, "tools"),
+      }),
+    };
+  };
+  try {
+    mkdirSync(join(root, "tools"), { recursive: true });
+    writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: {} }));
+    writeFileSync(join(root, "tools", "check-declared.mjs"), "// a gate its own registry names\n");
+    git("init", "-q");
+    git("add", "-A");
+    writeFileSync(join(root, "tools", "check-planted.mjs"), "// a lane's new gate, in no commit\n");
+
+    const untracked = read();
+    assert.deepEqual(untracked.census.untrackedNotCounted, ["tools/check-planted.mjs"]);
+    assert.deepEqual(untracked.census.unlisted, [], "an untracked gate is not declared debt");
+    assert.deepEqual(untracked.findings, [], "an untracked gate must not fail the census");
+    assert.match(
+      describeGateFalsifierCensus(untracked.census)[0],
+      / · untracked_not_counted 1: tools\/check-planted\.mjs$/u,
+    );
+
+    git("add", "tools/check-planted.mjs");
+    const staged = read();
+    assert.deepEqual(staged.census.untrackedNotCounted, []);
+    assert.deepEqual(staged.census.unlisted, ["tools/check-planted.mjs"]);
+    assert.deepEqual(
+      staged.findings.map((entry) => entry.code),
+      ["gate_without_falsifier"],
+    );
+    assert.match(describeGateFalsifierCensus(staged.census)[0], / · unlisted 1 \(tools\/check-planted\.mjs\)$/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // The registry itself drifts: an entry exempting a gate that is not there exempts nothing, and would otherwise keep

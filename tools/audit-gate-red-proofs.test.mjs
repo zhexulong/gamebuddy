@@ -15,6 +15,7 @@
  *                    exit 1; the unmodified audit passes all ten cases, exit 0 (tools/audit-gate-red-proofs.test.mjs)
  */
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -27,6 +28,9 @@ import { POPULATION_FIELDS } from "./lib/assert-non-vacuous.mjs";
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const KEYWORD = ["red", "proof"].join("-");
 const marker = (kind, claim, pointer) => `\n * ${KEYWORD}: ${kind}  ${claim} (${pointer})\n`;
+
+/** The fixture tree is a git repository with its files staged: the population is the index, not the directory. */
+const git = (root, ...args) => execFileSync("git", args, { cwd: root, stdio: "ignore" });
 
 function makeTree(files, packageExtra = {}) {
   const root = mkdtempSync(join(tmpdir(), "gamebuddy-red-proofs-"));
@@ -47,6 +51,8 @@ function makeTree(files, packageExtra = {}) {
   );
   write("tools/check-a.test.mjs", "// the falsifier suite\n");
   for (const [path, contents] of Object.entries(files)) write(path, contents);
+  git(root, "init", "-q");
+  git(root, "add", "-A");
   return root;
 }
 
@@ -176,6 +182,37 @@ test("the population is the declared gate scripts plus the gate files no script 
     assert.ok(ids.includes("tools/check-orphan.mjs"), `orphan gate missing from ${ids.join(", ")}`);
     assert.equal(reading.population.unclaimedByScript, 1);
     assert.equal(statusOf(reading, "tools/check-orphan.mjs"), "unproven");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The population is the index, so a gate file no commit carries is nobody's yet: it must not fail the census, and it
+// must not disappear either. Staging the same file makes it a gate like any other, and its unreadable marker then fails
+// the run - the leniency is about which gate is judged, never about how a marker is parsed.
+test("a gate file the index does not carry is inert and published; staged, it is judged", () => {
+  const root = makeTree({ "tools/check-a.mjs": gateSource("// no proof here") });
+  try {
+    writeFileSync(
+      join(root, "tools/check-planted.mjs"),
+      gateSource(`\n * ${KEYWORD}: vibes  it felt red when I ran it by hand\n`),
+      "utf8",
+    );
+    const untracked = auditGateRedProofs({ root });
+    assert.deepEqual(untracked.population.untrackedNotCounted, ["tools/check-planted.mjs"]);
+    assert.equal(untracked.population.total, 2, "the untracked gate is not in the population");
+    assert.equal(statusOf(untracked, "tools/check-planted.mjs"), undefined);
+    assert.deepEqual(evaluateAgainst(root, ["check:a", "check:aggregate"]).findings, []);
+
+    git(root, "add", "tools/check-planted.mjs");
+    const staged = auditGateRedProofs({ root });
+    assert.deepEqual(staged.population.untrackedNotCounted, [], "a staged gate file is in the index");
+    assert.equal(staged.population.total, 3);
+    assert.equal(statusOf(staged, "tools/check-planted.mjs"), "malformed");
+    assert.deepEqual(
+      codesFor(evaluateAgainst(root, ["check:a", "check:aggregate"]).findings, "tools/check-planted.mjs"),
+      ["red_proof_kind_unknown"],
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -317,14 +354,18 @@ test("an aggregate whose members are proven or external is external, and one wit
   }
 });
 
-test("the real tree: every gate file reaches a record, and this audit shows its own red proof", () => {
+test("the real tree: every gate file reaches a record or the published complement, and this audit shows its own red proof", () => {
   const reading = auditGateRedProofs({ root: REPOSITORY_ROOT });
   const claimed = new Set(reading.records.flatMap((record) => record.entryFiles));
   const onDisk = readdirSync(join(REPOSITORY_ROOT, "tools"))
     .filter((name) => /^check-.*\.mjs$/u.test(name) && !/\.(?:test|mutation)\.mjs$/u.test(name))
     .map((name) => `tools/${name}`);
+  // A gate file is either judged or published as one the index does not carry - never silently absent from both.
+  const untrackedNotCounted = new Set(reading.population.untrackedNotCounted);
   assert.deepEqual(
-    onDisk.filter((file) => !claimed.has(file) && statusOf(reading, file) === undefined),
+    onDisk.filter(
+      (file) => !claimed.has(file) && statusOf(reading, file) === undefined && !untrackedNotCounted.has(file),
+    ),
     [],
   );
   const self = reading.records.find((record) => record.id === "audit:gate-red-proofs");
