@@ -20,6 +20,7 @@ public sealed class CropApproachWiringTests
 {
     private const string Relative = "integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs";
     private const string Machines = "integrations/stardew/farmhandexecutioncontroller.machinesanimalsitemsactions.cs";
+    private const string Controller = "integrations/stardew/farmhandexecutioncontroller.cs";
 
     [Theory]
     [InlineData(Machines, "machine_inspect", "IsMachineTargetInRange", "InspectMachine")]
@@ -146,9 +147,15 @@ public sealed class CropApproachWiringTests
         })
         {
             string executed = MethodBody(source, body);
-            executed.Should().Contain("BuildNpcRelationshipTargetId(location, candidate.Name)",
+            executed.Should().Contain("FindVillagerByTargetId(location, expectedTargetId)",
                 $"{body} must re-resolve the villager by name-binding, not by tile");
             executed.Should().Contain(refusal, $"{body} must name the moved-out-of-reach refusal");
         }
+
+        // ...and the lookup both bodies share is the name-binding one, so neither can drift back to the walk-start tile.
+        string resolver = MethodBody(
+            System.IO.File.ReadAllText(RepositoryFile(Controller)),
+            "private static StardewValley.NPC? FindVillagerByTargetId(");
+        resolver.Should().Contain("BuildNpcRelationshipTargetId(location, candidate.Name)");
     }
 }

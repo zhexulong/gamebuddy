@@ -992,11 +992,7 @@ internal sealed partial class ExecutionManager
         // follows a daily schedule, so binding the request to the tile it occupied
         // at snapshot time made every attempt a race.
         StardewValley.GameLocation location = Game1.player.currentLocation;
-        StardewValley.NPC? npc = location.characters
-            .OfType<StardewValley.NPC>()
-            .FirstOrDefault(candidate => candidate.IsVillager
-                && !string.IsNullOrWhiteSpace(candidate.Name)
-                && string.Equals(BuildNpcRelationshipTargetId(location, candidate.Name), expectedTargetId, StringComparison.Ordinal));
+        StardewValley.NPC? npc = FindVillagerByTargetId(location, expectedTargetId);
         if (npc is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_relationship_target_gone", $"target={expectedTargetId}");
         // Range against the villager's current tile -- what the inspection needs. Out of range means
@@ -1017,11 +1013,7 @@ internal sealed partial class ExecutionManager
     private LocalExecutionReceipt ExecuteInspectNpcRelationship(string executionId, string requestId, string expectedTargetId, long requestedDeadlineMs)
     {
         StardewValley.GameLocation location = Game1.player.currentLocation;
-        StardewValley.NPC? npc = location.characters
-            .OfType<StardewValley.NPC>()
-            .FirstOrDefault(candidate => candidate.IsVillager
-                && !string.IsNullOrWhiteSpace(candidate.Name)
-                && string.Equals(BuildNpcRelationshipTargetId(location, candidate.Name), expectedTargetId, StringComparison.Ordinal));
+        StardewValley.NPC? npc = FindVillagerByTargetId(location, expectedTargetId);
         if (npc is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_relationship_target_gone", $"target={expectedTargetId}");
         if (!IsTileWithinChebyshevRadius(Game1.player, (int)npc.Tile.X, (int)npc.Tile.Y, 1))
@@ -1107,11 +1099,7 @@ internal sealed partial class ExecutionManager
         // snapshot time would be refused as soon as it walked, even though the
         // caller meant that villager.
         StardewValley.GameLocation location = Game1.player.currentLocation;
-        StardewValley.NPC? npc = location.characters
-            .OfType<StardewValley.NPC>()
-            .FirstOrDefault(candidate => candidate.IsVillager
-                && !string.IsNullOrWhiteSpace(candidate.Name)
-                && string.Equals(BuildNpcRelationshipTargetId(location, candidate.Name), expectedTargetId, StringComparison.Ordinal));
+        StardewValley.NPC? npc = FindVillagerByTargetId(location, expectedTargetId);
         if (npc is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_interaction_target_gone", $"target={expectedTargetId}");
         // Range against the villager's current tile -- what the interaction needs. Out of range means
@@ -1136,11 +1124,7 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"slot={slot}");
         if (!string.Equals(offered.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_slot_changed", $"slot={slot}");
-        StardewValley.NPC? npc = location.characters
-            .OfType<StardewValley.NPC>()
-            .FirstOrDefault(candidate => candidate.IsVillager
-                && !string.IsNullOrWhiteSpace(candidate.Name)
-                && string.Equals(BuildNpcRelationshipTargetId(location, candidate.Name), expectedTargetId, StringComparison.Ordinal));
+        StardewValley.NPC? npc = FindVillagerByTargetId(location, expectedTargetId);
         if (npc is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "npc_interaction_target_gone", $"target={expectedTargetId}");
         if (!IsTileWithinChebyshevRadius(Game1.player, (int)npc.Tile.X, (int)npc.Tile.Y, 1))

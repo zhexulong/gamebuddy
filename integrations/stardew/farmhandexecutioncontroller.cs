@@ -3073,6 +3073,25 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
+    /// The villager one request's <c>expectedTargetId</c> names, read from the actor's CURRENT location.
+    ///
+    /// <para>
+    /// The lookup behind every NPC action bound by relationship identity. A villager follows a daily schedule, so
+    /// admitting against the tile it occupied when the snapshot was taken refused requests the caller meant - the
+    /// identity is (location, name), and this is the one place that turns it back into a subject. Null means the person
+    /// the caller named is not here any more; each caller answers that with its own named refusal.
+    /// </para>
+    /// </summary>
+    private static StardewValley.NPC? FindVillagerByTargetId(StardewValley.GameLocation location, string expectedTargetId)
+    {
+        return location.characters
+            .OfType<StardewValley.NPC>()
+            .FirstOrDefault(candidate => candidate.IsVillager
+                && !string.IsNullOrWhiteSpace(candidate.Name)
+                && string.Equals(BuildNpcRelationshipTargetId(location, candidate.Name), expectedTargetId, StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// Where every instantiated villager currently is, across the loaded world.
     ///
     /// <para>
