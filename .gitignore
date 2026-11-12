@@ -126,6 +126,14 @@ tmp_*
 /host/native/windows-reparse-inspector/.release-bootstrap-inspector/
 /host/tmp-*.mjs
 /host/tsconfig.*.tmp.json
+# `host/scripts/test-artifact-protocol-worker.mjs` writes `<lockPath>.ready` and `<lockPath>.release`; no tracked file
+# names a `.live-proof-*` lock path, so that name is an operator's ad-hoc proof path under host/, not a writer to move.
+host/.live-proof-*
+# `host/scripts/repair-test-artifact-lock.mjs` moves an unrecoverable lock aside as
+# `<lock>.{malformed,owner-absent}-quarantine-<uuid>` plus its `.recovery-report.json`; the pattern follows the
+# module's own `quarantinePath` construction, so both repair reasons are covered. It cannot live anywhere else:
+# `assertSafeLockPath` refuses a lock path outside `host/`, and the quarantine is moved and restored by `link()`.
+host/.test-artifact.lock.*-quarantine-*
 /test-results/
 /tavern-gate-output.json
 /contentprobe.err
@@ -241,3 +249,6 @@ integrations/stardew/action-development/tests/.tmp-*
 
 # Crash and diagnostic reports the harness writes at the repo root (one per failed child, hundreds per day).
 /report.*.json
+# Node's crash reporter writes into the cwd of the child that died, so a crashed child whose cwd is dialogue-web/
+# leaves `report.<date>.<time>.<pid>.<n>.<n>.json` there; the entry above only covers the repository root.
+dialogue-web/report.*.json
