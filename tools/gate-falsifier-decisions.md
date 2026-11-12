@@ -12,15 +12,16 @@ line's five buckets cannot place them: it partitions proven / external / declare
 partition, and the next reader is owed the difference. Both gates belong to files another lane may not touch
 (`tools/check-code-duplication.mjs`, `tools/scripts/*ratchet*`), so they are recorded, not repaired.
 
-The 66 gates still recorded as owing a proof are not all provable today: 20 were closed by this batch (the sixth
-section below names each and the line that fired), and the rows the fourth table still carries are split between
-· arg-driven gates whose input set no commit produces (`check:stardew-native-normal-player-ingress-register`,
-`check:stardew-native-source-closure`, `check:stardew-native-transition-ledger`),
-· gates whose only marker file lives under `integrations/stardew/**` (`test:stardew-action-candidates`,
-`test:stardew-action-inventory-reconciliation`, `test:stardew-action-seam-terminals`, `test:stardew-branch-writeset`,
-`test:stardew-method-resolution`),
-· the five kept `proof owed` rows of the first table (a C# lane, a submodule lane, a live machine),
-· and 19 suites that are red at HEAD or wait on a machine (the fifth section lists the three found red this batch).
+The 68 rows the baseline records (the 66 readable debt rows the census prints as `declared without`, plus the 2
+unreadable claims) divide exactly, and the split is what the fourth table is not responsible for: **48** are that
+table's `provable` rows, **3** are the gates this batch found red at HEAD (named below), **1** reads something other
+than it checks (`check:architecture`), **6** are the first table's kept rows (`check:live-run-isolation`,
+`test:stardew:core`, `test:stardew:integration`, `test:voice-protocol`, and the two `not measured` tools gates
+`tools/check-stardew-actor-admissibility.mjs` and `tools/check-stardew-hold-sufficiency.mjs`), and **8** were moved out
+by the third batch for the environment or another lane (`check:publint`, `check:sandbox-acceptance`,
+`test:gameplay-capability-catalog`, `test:frontend-turn-gate`, `check:dialogue-web-boundaries`,
+`test:dialogue-web-boundaries`, `check:host-module-graph`, `audit:stardew-action-seam-terminals`).
+`48 + 3 + 1 + 6 + 8 = 66`, and the 2 unreadable claims make the 68 the file holds.
 
 
 `check-harness-conformance` prints the same numbers from the same reading (`tools/lib/harness-conformance.mjs` over
