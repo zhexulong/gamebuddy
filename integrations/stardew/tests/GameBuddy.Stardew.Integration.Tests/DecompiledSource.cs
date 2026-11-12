@@ -80,6 +80,15 @@ internal static class DecompiledSource
     }
 
     /// <summary>
+    /// The method name out of a one-line declaration, for a finding that has to name WHICH release went missing.
+    /// </summary>
+    internal static string MethodName(string declaration)
+    {
+        int at = declaration.IndexOf('(', StringComparison.Ordinal);
+        return at < 0 ? declaration : declaration[..at].Split(' ')[^1];
+    }
+
+    /// <summary>
     /// The body of the method that encloses <paramref name="index"/>: the nearest preceding declaration whose brace
     /// block actually contains that line.
     /// </summary>

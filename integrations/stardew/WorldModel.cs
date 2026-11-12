@@ -58,7 +58,13 @@ internal readonly record struct ActorWorldFacts(
     // stays "no hold". ≈580 ms of body - the fade's own 1.1 alpha at 0.0019/ms (ScreenFade.cs:38, :70) -
     // entered by the warp handler (`_isWarping = true`, Game1.cs:10031) and released only by the engine
     // (`_isWarping = false`, Game1.cs:6271). Boundary: .tmp/boundary-warping.md.
-    bool Warping);
+    bool Warping,
+    // The engine's day transition. Appended after `Warping` for the same reason: `default` stays "no hold".
+    // Raised for the whole overnight sequence (`newDay = true`, Game1.cs:10370) and by any mounted `FarmEvent`,
+    // whose two `setUp` sites take the body (BirthingEvent.cs:34, PlayerCoupleBirthingEvent.cs:89); released
+    // only by the engine (`Game1.cs:8567`, `:4193`, `:8606`). Minutes, not milliseconds.
+    // Boundary: .tmp/boundary-day-transition.md.
+    bool DayTransition);
 
 /// <summary>
 /// Read-only per-tick disposition payload (readonly record struct on the game
@@ -290,9 +296,14 @@ internal static class WorldModel
         // `performWarpFarmer` (:10031) and lowered only in `onFadeToBlackComplete` (:6271), so the fact clears on the
         // engine's tick rather than on a duration of ours.
         bool warping = Game1.isWarping;
+        // Two more Game1 statics, read for the same reason: the engine's day transition holds the body whoever
+        // reads it, so a null player still reports it. `newDay` is raised by `NewDay` (:10370) and lowered only by
+        // the overnight coroutine's own write (:8567); `farmEvent` is the scene the overnight sequence runs
+        // (`BirthingEvent.setUp` :34) and is dropped by the sequence that drove it (:4193, :8606).
+        bool dayTransition = Game1.newDay || Game1.farmEvent is not null;
 
         if (player is null)
-            return new ActorWorldFacts(eventUp, menuType, dialogueUp, timeOfDay, 0f, false, false, false, false, false, warping);
+            return new ActorWorldFacts(eventUp, menuType, dialogueUp, timeOfDay, 0f, false, false, false, false, false, warping, dayTransition);
 
         return new ActorWorldFacts(
             eventUp,
@@ -309,7 +320,8 @@ internal static class WorldModel
             // :1024), so the fact clears on the engine's tick rather than on a duration of ours. The
             // engine counts it as a hold of the actor in its own right (Farmer.cs:7964).
             player.FarmerSprite.PauseForSingleAnimation,
-            warping);
+            warping,
+            dayTransition);
     }
 
     private static bool OwnedByAction() => ModalActionOwnedCheck?.Invoke() ?? false;

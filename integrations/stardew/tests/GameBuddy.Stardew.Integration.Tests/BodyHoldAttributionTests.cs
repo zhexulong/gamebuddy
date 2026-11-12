@@ -28,7 +28,8 @@ public sealed class BodyHoldAttributionTests
         bool usingTool = false,
         bool toolCharged = false,
         bool selfAnimation = false,
-        bool warping = false) =>
+        bool warping = false,
+        bool dayTransition = false) =>
         new(
             EventUp: eventUp,
             MenuType: menuType,
@@ -40,7 +41,8 @@ public sealed class BodyHoldAttributionTests
             UsingTool: usingTool,
             ToolCharged: toolCharged,
             SelfAnimation: selfAnimation,
-            Warping: warping);
+            Warping: warping,
+            DayTransition: dayTransition);
 
     [Fact]
     public void EveryHoldingKindHasItsOwnCode()
