@@ -21,3 +21,5 @@ One line per deliberate change:
 | --- | --- | --- | --- | --- |
 | 2026-11-11 | pending | presets, card.json, worldbook.json | split game and chat specialized presets and worldbooks | user |
 | 2026-11-11 | pending | card.json, worldbook.json, presets | purge preachy elderly moralizing ('比工位上的报表实在'), enforce 24yo peer trauma resonance and banter | user |
+| 2026-11-12 | pending | card.json (system_prompt, mes_example) | restore the four clauses a card replacement dropped (person-first, 对讲机/拒绝报备, 去班味冷幽默) and strip the `*…*` beats + third sentence from the examples, so the shipped samples are spoken turns again | user |
+| 2026-11-12 | pending | worldbook.json (entries.6.keys) | drop the single-character 锅 keyword, which fired on the very sentence the always-on premise guard measures | user |
