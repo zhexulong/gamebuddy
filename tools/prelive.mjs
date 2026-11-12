@@ -42,6 +42,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveStardewFixtureRoots } from "./lib/stardew-fixture-roots.mjs";
+import { containedChildEnvironment } from "./lib/crash-report-containment.mjs";
 import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
 import { GATE_EXEMPT_PUBLISHED_ACTIONS } from "./lib/stardew-published-action-registry.mjs";
 import {
@@ -306,7 +307,12 @@ export function runGateRung({
   id = "l0",
   gates = L0_GATES,
   resolveCommand = resolveGateCommand,
-  run = (command) => spawnSync(process.execPath, [command.replace(/^node\s+/, "")], { cwd: REPO, encoding: "utf8" }),
+  run = (command) =>
+    spawnSync(process.execPath, [command.replace(/^node\s+/, "")], {
+      cwd: REPO,
+      encoding: "utf8",
+      env: containedChildEnvironment(),
+    }),
 } = {}) {
   const results = gates.map((gate) => {
     const resolved = resolveCommand(gate);
@@ -627,6 +633,7 @@ export function compileHostTestArtifact({
     cwd: HOST_DIR,
     encoding: "utf8",
     timeout: timeoutMs,
+    env: containedChildEnvironment(),
   });
   const ms = Date.now() - startedAt;
   if (outcome.error?.code === "ETIMEDOUT")

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { types } from "node:util";
 import { StringDecoder } from "node:string_decoder";
+import { containedChildEnvironment } from "../../tools/lib/crash-report-containment.mjs";
 
 export const DEFAULT_SUITE_TIMEOUT_MS = 15 * 60_000;
 export const CLEANUP_TIMEOUT_MS = 5_000;
@@ -600,6 +601,7 @@ export async function runOneShotControlChild({
     windowsHide: true,
     detached: process.platform !== "win32",
     stdio: ["pipe", "pipe", "pipe"],
+    env: containedChildEnvironment(),
     ...spawnOptions,
   });
   if (!hasEventSurface(child) || !child.stdin || typeof child.stdin.end !== "function" ||
@@ -761,6 +763,7 @@ export async function runBoundedChild({
     windowsHide: true,
     detached: process.platform !== "win32",
     stdio,
+    env: containedChildEnvironment(),
     ...spawnOptions,
   });
   if (!hasEventSurface(child) || (stdio === "pipe" &&
