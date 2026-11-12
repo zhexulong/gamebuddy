@@ -12,6 +12,14 @@
  * It runs in a mounted child, exactly like `world-info-binding-management-service.test.ts` and
  * `chat-management-service.test.ts`: the semantic production authority owns durable process-wide
  * resources, and the child is what makes its teardown deterministic.
+ *
+ * The child declares the capability SLICE it serves rather than the production management profile, and that is a
+ * property of the harness, not of the surface: the production profile (`composeTavernManagementProfile`) names about
+ * sixty routes across the whole management surface, and the dispatcher fails closed at composition for any declared
+ * route whose service is not bound - so passing it here would mean binding about seventeen services inside the child,
+ * which is the production composition duplicated in a test. The profile's own completeness is gated where it belongs:
+ * `composition/desktop-presentation-admission-owner.private.test.ts:442` holds it against the dispatcher's canonical
+ * groups and `:467` holds it against every settings pair the contract publishes.
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -21,7 +29,7 @@ import test from "node:test";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 
 const mountPreamble = `
-  const [contractUrl, compositionUrl, coordinatorUrl, deploymentUrl, storeUrl, runtimeUrl, repoUrl, bindingUrl, chatUrl, dispatchUrl, root] = process.argv.slice(1);
+  const [contractUrl, coordinatorUrl, deploymentUrl, storeUrl, runtimeUrl, repoUrl, bindingUrl, chatUrl, dispatchUrl, root] = process.argv.slice(1);
   const { createHash } = await import("node:crypto");
   const { EventEmitter } = await import("node:events");
   const { Readable } = await import("node:stream");
@@ -30,7 +38,7 @@ const mountPreamble = `
   const manifestPath = root + "/manifest.json";
   await writeFile(manifestPath, JSON.stringify({ schemaVersion: 2, topology: "independent_chat_and_game_surfaces", runtimeRoot: root, principal, bootstrapOperationId: "bootstrap_01", authorityGeneration: 1 }));
   const { loadHostDeploymentManifest } = await import(deploymentUrl);
-  const { composeTavernManagementProfile } = await import(compositionUrl);
+  const { composeTavernProfile } = await import(contractUrl);
   const { createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest } = await import(coordinatorUrl);
   const { createChatThreadStore, createProfileAwareChatThreadCreationCapability } = await import(storeUrl);
   const { identityKey } = await import(runtimeUrl);
@@ -44,13 +52,23 @@ const mountPreamble = `
   const token = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
   const threadIds = { chatThreadId: "chat-" + "1".repeat(16), chatSurfaceSessionId: "surface-" + "1".repeat(16) };
   const manifest = await loadHostDeploymentManifest(manifestPath);
-  const profile = composeTavernManagementProfile();
+  // THE HARNESS'S CAPABILITY SLICE, declared here and nowhere else. It is the dispatcher's CORE group (without the
+  // memory routes) followed in canonical order by exactly the optional groups whose routes this child serves. A
+  // dispatcher that refuses a partially declared group is why every group is written whole, and a child that mounts
+  // only these services must not declare one it cannot serve. The production profile's own completeness is gated in
+  // composition/desktop-presentation-admission-owner.private.test.ts (it fits the canonical groups, and it declares
+  // every settings pair the contract publishes).
+  const profileSpec = { profileId: "gamebuddy.tavern-management.chat-list-title", releaseTier: "tavern_management", routeIds: ["bootstrap", "state.read", "draft.read", "draft.save", "draft.discard", "chat.list", "chat.rename", "world-info.read", "world-info.bind", "settings.voice.read", "settings.voice.consent", "world-info.import", "world-info.export", "chat.export"], operationIds: ["draft.save", "draft.discard", "chat.rename", "world-info.bind", "settings.voice.read", "settings.voice.consent"], navigationItemIds: ["chat", "characters"] };
+  const profile = composeTavernProfile(profileSpec);
   const authority = await createFreshSemanticChatRuntimeProductionAuthorityFromDeploymentManifest(manifest);
   const lease = await authority.startMountedChatRuntime();
   const store = createChatThreadStore(root, identityKey(principal));
   const creation = createProfileAwareChatThreadCreationCapability(store, { async readExact() { return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) }; } });
   await creation.createExplicit({ ...threadIds, companionId: "companion_01", continuityId: "continuity_01", opening: { messageId: "opening_01", text: "The parsnips took.", source: { greetingSetId: "greetings_01", sourceRevision: 1, canonicalHash: "a".repeat(64), variantId: "first", profileRevision: 1, scenarioRevision: null } } });
-  const chatHandle = createHash("sha256").update(threadIds.chatThreadId + "\\u0000" + threadIds.chatSurfaceSessionId, "utf8").digest("base64url").slice(0, 43);
+  // The Chat handle is the LEASE's own projection, because that is the only thing the management service resolves a
+  // handle against (chat-management-service.ts:172). A sha256 written here was a second spelling of that fact and
+  // disagreed with the lease; the export route then answered chat_not_found for a Chat it had just created.
+  const chatHandle = lease.browserProjection.projectChatHandle(threadIds.chatThreadId, threadIds.chatSurfaceSessionId);
   const companionHandle = createHash("sha256").update("companion_01", "utf8").digest("base64url").slice(0, 43);
   const repository = createWorldInfoManagementRepository(root);
   const worldInfoService = createWorldInfoBindingManagementService({ manifest, lease, profile, repository });
@@ -59,14 +77,30 @@ const mountPreamble = `
     read: async () => Object.freeze({ selection: { chatHandle: chatHandle, generation: 1, stateRevision: chatHandle }, companionDisplayName: "Mira", companionHandle, title: null, transcript: [], draft: { revision: 0, text: null }, turn: null, operations: [], worldInfo: null }),
     close: async () => undefined,
   });
-  const handler = createTavernManagementDialogueWebRequestHandler({
+  const handlerOptions = {
     managementStateFacade: facade,
     managementService,
     worldInfoService,
     playerPreferenceStore: Object.freeze({ read: async () => ({ revision: 0, locale: null, disclosureVersion: null, consent: "undecided", decidedAtMs: null, outputDevice: null, persona: null, paced: false }), update: async () => { throw new Error("preference_not_used"); } }),
     profile,
     bootstrapToken: token,
-  });
+  };
+  const handler = createTavernManagementDialogueWebRequestHandler(handlerOptions);
+  // The slice above is this harness's own capability declaration, not a shape the dispatcher tolerates: a profile
+  // widened by one optional group whose service this child does not bind fails closed at composition. That is the
+  // reading that turned red while this file still passed the production profile, so keeping it here means widening
+  // the slice is a visible act rather than an edit to setup. The preset readout is the widening because it is the one
+  // group that is a read rather than an operation, so it can be appended whole without inventing an operation id.
+  const assertCompositionRefused = (widenedGroupRouteIds) => {
+    try {
+      createTavernManagementDialogueWebRequestHandler({ ...handlerOptions, profile: composeTavernProfile({ ...profileSpec, routeIds: [...profileSpec.routeIds, ...widenedGroupRouteIds] }) });
+    } catch (error) {
+      if (String((error ?? {}).message ?? error) === "tavern_management_composition_unavailable") return;
+      throw error;
+    }
+    throw new Error("widened_management_profile_was_accepted:" + widenedGroupRouteIds.join(","));
+  };
+  assertCompositionRefused(["presets.read"]);
   class ControlledResponse extends EventEmitter {
     writableEnded = false;
     writableFinished = false;
@@ -81,13 +115,19 @@ const mountPreamble = `
   const request = (method, path, headers, body) => {
     const hasBody = body !== undefined;
     const encoded = hasBody ? JSON.stringify(body) : "";
-    return Object.assign(Readable.from([encoded]), { method, url: path, headers: { host: "127.0.0.1:7331", ...(hasBody ? { "content-type": "application/json", "content-length": String(Buffer.byteLength(encoded)) } : {}), ...headers } });
+    // Header NAMES are lower-cased here because node:http delivers them that way: the dispatcher reads
+    // request.headers.origin, and a fake that kept the caller's capital O answered 401 to every bootstrap.
+    const delivered = Object.fromEntries(Object.entries(headers ?? {}).map(([name, value]) => [name.toLowerCase(), value]));
+    return Object.assign(Readable.from([encoded]), { method, url: path, headers: { host: "127.0.0.1:7331", ...(hasBody ? { "content-type": "application/json", "content-length": String(Buffer.byteLength(encoded)) } : {}), ...delivered } });
   };
   const dispatch = async (input) => {
     const output = new ControlledResponse();
     handler.handle(input, output, "http://127.0.0.1:7331");
-    await new Promise((resolve) => setImmediate(resolve));
-    await new Promise((resolve) => setImmediate(resolve));
+    // Wait for the response the dispatcher actually ends, not for a tick count: these services are the real ones, so
+    // a bootstrap that reads the durable store finishes after its own I/O, and two setImmediate turns are a guess
+    // about how much of it has run.
+    for (let attempt = 0; attempt < 400 && !output.writableEnded; attempt++) await new Promise((resolve) => setTimeout(resolve, 5));
+    if (!output.writableEnded) throw new Error("management_dispatch_did_not_finish");
     return output;
   };
   const code = async (fn) => { try { return { ok: true, value: await fn() }; } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; } };
@@ -105,7 +145,6 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
       "--eval",
       mountPreamble + body,
       url("./browser-contract/index.js"),
-      url("../composition/desktop-presentation-admission-owner.js"),
       url("../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js"),
       url("../deployment-manifest.js"),
       url("./chat-thread-store.js"),
@@ -143,8 +182,11 @@ test("the lorebook-import route serves the library's own importer and the librar
     const imported = await dispatch(request("POST", "/api/tavern/v1/world-info/import", { Origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf }, { apiVersion: 1, selectionGeneration: 1, expectedRevision: before.revision, lorebook }));
     const listed = await repository.list();
     const detail = await repository.detail("Teyvat Geography");
-    // A file the importer refuses is a bounded refusal, never a fake success.
-    const refused = await dispatch(request("POST", "/api/tavern/v1/world-info/import", { Origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf }, { apiVersion: 1, selectionGeneration: 1, expectedRevision: JSON.parse(imported.body).revision, lorebook: {} }));
+    // A file the importer refuses is a bounded refusal, never a fake success. The fixture is a book the library
+    // already holds: ImportTavernLorebook gives a title-less book the default "Tavern World Info" and imports it, so
+    // an empty object is NOT the refused file this reading was written against - the duplicate title is
+    // (world-info-management.ts:146, surfacing as world_info_already_exists).
+    const refused = await dispatch(request("POST", "/api/tavern/v1/world-info/import", { Origin: "http://127.0.0.1:7331", cookie, "x-csrf-token": csrf }, { apiVersion: 1, selectionGeneration: 1, expectedRevision: JSON.parse(imported.body).revision, lorebook }));
     const listedAfterRefusal = await repository.list();
     process.stdout.write(JSON.stringify({
       beforeItems: before.items.length,
