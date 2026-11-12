@@ -73,12 +73,22 @@ export const OPEN_VOCABULARY_EXEMPTIONS = Object.freeze([
       "branch's `problemTextWithCode` sentence is the designed answer for a code this build does not know.",
   },
   {
-    file: "dialogue-web/src/components/CharactersSurfacePanel.tsx",
+    file: "dialogue-web/src/components/CompanionCardExportSection.tsx",
     subject: "code",
-    count: 2,
+    count: 1,
     reason:
-      "The export and world-book refusals, both reading `TavernProblemError.code` (`string`): an unknown " +
-      "code keeps the base sentence with the code appended, which is the fallback those two functions exist for.",
+      "The export refusal reads `TavernProblemError.code` (`string`): an unknown code keeps the base sentence with " +
+      "the code appended, which is the fallback this function exists for. It lived in CharactersSurfacePanel " +
+      "until that file was split; the exemption follows the switch rather than the file that used to hold it.",
+  },
+  {
+    file: "dialogue-web/src/components/CompanionWorldBookSection.tsx",
+    subject: "code",
+    count: 1,
+    reason:
+      "The world-book refusal reads `TavernProblemError.code` (`string`) for the same reason as the export one: an " +
+      "unknown code keeps the base sentence with the code appended. Split out of CharactersSurfacePanel with the " +
+      "rest of her own world book.",
   },
   {
     file: "dialogue-web/src/components/CompanionInspectorDrawer.tsx",
