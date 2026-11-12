@@ -2650,14 +2650,17 @@ test("companion.worldbook.update rewrites the real durable book through the rout
       ["琥珀把温室的玻璃换成了新的。", "洒水器接在井边。"],
     );
 
-    // A rewrite without the CSRF header is refused before it can touch the book.
+    // A rewrite without the CSRF header is refused before it can touch the book. Each row in these bodies is an
+    // editor row - the exact shape `companion.worldbook.read` projects - and an editor row names the switch, so
+    // `enabled` is required here exactly as `title`, `keys` and `constant` are. Only the durable entry in
+    // `worldbook.ts` may omit it and mean enabled: that is the file's shape, not the shape an edit sends back.
     const noCsrf = await fetch(`${origin}${worldBookPath}`, {
       method: "PUT",
       headers: { ...session, "Content-Type": "application/json" },
       body: JSON.stringify({
         apiVersion: 1,
         expectedRevision: 7,
-        entries: [{ title: "温室", keys: [], constant: false, content: "改过了。" }],
+        entries: [{ title: "温室", keys: [], constant: false, enabled: true, content: "改过了。" }],
       }),
     });
     assert.equal(noCsrf.status, 403);
@@ -2678,7 +2681,7 @@ test("companion.worldbook.update rewrites the real durable book through the rout
       body: JSON.stringify({
         apiVersion: 1,
         expectedRevision: 7,
-        entries: [{ title: "温室", keys: [], constant: false, content: "改过了。" }],
+        entries: [{ title: "温室", keys: [], constant: false, enabled: true, content: "改过了。" }],
       }),
     });
     assert.equal(unknownHandle.status, 404);
@@ -2692,9 +2695,15 @@ test("companion.worldbook.update rewrites the real durable book through the rout
         apiVersion: 1,
         expectedRevision: 7,
         entries: [
-          { title: "温室", keys: ["温室", "玻璃房"], constant: false, content: "{{user}}说这扇玻璃是她挑的。" },
+          {
+            title: "温室",
+            keys: ["温室", "玻璃房"],
+            constant: false,
+            enabled: true,
+            content: "{{user}}说这扇玻璃是她挑的。",
+          },
           before.entries[1]!,
-          { title: "雨天", keys: ["下雨", "雨天"], constant: false, content: "{{char}}喜欢雨天。" },
+          { title: "雨天", keys: ["下雨", "雨天"], constant: false, enabled: true, content: "{{char}}喜欢雨天。" },
         ],
       }),
     });
@@ -2751,7 +2760,7 @@ test("companion.worldbook.update rewrites the real durable book through the rout
       body: JSON.stringify({
         apiVersion: 1,
         expectedRevision: 7,
-        entries: [{ title: "温室", keys: [], constant: false, content: "旧版本。" }],
+        entries: [{ title: "温室", keys: [], constant: false, enabled: true, content: "旧版本。" }],
       }),
     });
     assert.equal(stale.status, 409);
@@ -2767,7 +2776,7 @@ test("companion.worldbook.update rewrites the real durable book through the rout
       body: JSON.stringify({
         apiVersion: 1,
         expectedRevision: 9,
-        entries: [{ title: "温室", keys: [], constant: false, content: "" }],
+        entries: [{ title: "温室", keys: [], constant: false, enabled: true, content: "" }],
       }),
     });
     assert.equal(invalidEntry.status, 400);
@@ -2852,7 +2861,7 @@ test("companion.worldbook.update names a companion with no book and a book it ca
         body: JSON.stringify({
           apiVersion: 1,
           expectedRevision: 1,
-          entries: [{ title: "温室", keys: [], constant: false, content: "正文。" }],
+          entries: [{ title: "温室", keys: [], constant: false, enabled: true, content: "正文。" }],
         }),
       });
       assert.equal(refused.status, expectedStatus);
