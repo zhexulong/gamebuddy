@@ -433,7 +433,9 @@ test("an empty store answers an empty readout, and that is the store's answer ra
       const response = await readPresets(server.origin, session);
       const body = await response.text();
       assert.equal(response.status, 200, body);
-      assert.deepEqual(JSON.parse(body), { apiVersion: 1, presets: [] });
+      // An empty store is an empty row list beside the named binding fact, not a body missing a key: the panel reads
+      // `activePreset` to tell "nothing is in force" from "nobody looked", so the read answers it even here.
+      assert.deepEqual(JSON.parse(body), { apiVersion: 1, presets: [], activePreset: { state: "none" } });
     } finally {
       await server.close();
     }
