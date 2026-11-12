@@ -2,7 +2,6 @@
   "schema": "gamebuddy-gate-population-baseline/v1",
   "note": "Gates measured silent about their own population at this commit. A record of debt, not an acceptance of it: delete a row by making the gate say what it examined, never by adding one by hand. `--update` writes this file.",
   "gates": [
-    "gate_skip_can_pass test:action-surface-parity",
     "gate_skip_can_pass test:await-deadlines",
     "gate_skip_can_pass test:ci-snapshot",
     "gate_skip_can_pass test:gameplay-capability-catalog",
