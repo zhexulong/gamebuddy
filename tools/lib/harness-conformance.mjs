@@ -357,6 +357,13 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // a count, and the CLI over a throwaway root goes blocked (no baseline) -> `--update` -> green -> red for a new silent
   // gate and red again for a baseline row whose finding is gone.
   "check-gate-populations.mjs",
+  // Prints `artefacts examined N · with a declared producer M · undeclared K · reproduced R · not re-derived D` plus a
+  // single-entry `checks[]` verdict whose last entry is the reproduction ratchet, so its default run is the report this
+  // suite reads. Its falsifier is tools/check-generated-artifact-reproducibility.test.mjs: dropping the `inputs/`
+  // exclusion turns the pinned-input tree into claimants (`examined 9 · undeclared 3`, each named), and degrading
+  // `describeMismatch` to byte counts makes the drift case red at `actual '(bytes)' / expected '$.a'` - the two
+  // injections that keep this entry auditable rather than decorative.
+  "check-generated-artifact-reproducibility.mjs",
   // Prints `examined N (closed unions X, open vocabularies Y, not a union Z)` plus a two-entry `checks[]` verdict, so
   // its default run is the report this suite reads. Its falsifier is tools/check-switch-exhaustiveness.test.mjs, which
   // builds a throwaway workspace per case: a union switch missing a member (named, `gamma`), the same switch complete
