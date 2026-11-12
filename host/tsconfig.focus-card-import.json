@@ -9,6 +9,6 @@
   "files": [
     "src/st-card-import.test.ts",
     "src/tavern/st-card-import-service.test.ts",
-    "src/tavern/compatibility-manifest.v1.test.ts"
+    "src/tavern/compatibility-manifest.v1.private.test.ts"
   ]
 }

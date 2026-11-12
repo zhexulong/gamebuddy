@@ -359,7 +359,7 @@ function createScope(overrides: ScopeOverrides = {}) {
       // was refused from an attempt that never armed and from an already-terminal
       // ledger, but NOT over a claimed cancel - which is how the pre-fix reading could
       // replace a claimed interruption with a failure. The store refuses that now
-      // (`chat-thread-store.cancel-authority.test.ts`), and this double keeps the
+      // (`chat-thread-store.cancel-authority.private.test.ts`), and this double keeps the
       // permissive shape on purpose: the planted test below drives that reading to its
       // real outcome instead of letting a fixed store hide it.
       if (

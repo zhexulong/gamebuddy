@@ -7,6 +7,6 @@
   },
   "include": [],
   "files": [
-    "src/tavern/chat-companion-binding.test.ts"
+    "src/tavern/chat-companion-binding.private.test.ts"
   ]
 }

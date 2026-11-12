@@ -13,6 +13,6 @@
     "src/companion-scaffolding.test.ts",
     "src/companion-presentation-callers.test.ts",
     "src/tavern/p4-provider-start-execution.test.ts",
-    "src/tavern/chat-thread-store.presentation.test.ts"
+    "src/tavern/chat-thread-store.presentation.private.test.ts"
   ]
 }

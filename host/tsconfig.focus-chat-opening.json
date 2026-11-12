@@ -7,7 +7,7 @@
   },
   "include": [],
   "files": [
-    "src/tavern/browser-contract/index.test.ts",
+    "src/tavern/browser-contract/index.private.test.ts",
     "src/tavern/library-service.test.ts",
     "src/tavern/greeting-management/greeting-management.test.ts"
   ]

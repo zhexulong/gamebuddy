@@ -9,9 +9,9 @@
   "files": [
     "src/tavern/chat-thread-store.ts",
     "src/tavern/chat-thread-store.mounted-turn-transition.internal.ts",
-    "src/tavern/chat-thread-store.cancel-authority.test.ts",
-    "src/tavern/chat-thread-store.presentation.test.ts",
-    "src/tavern/chat-thread-store.route-ownership.test.ts",
-    "src/tavern/chat-thread-store.test.ts"
+    "src/tavern/chat-thread-store.cancel-authority.private.test.ts",
+    "src/tavern/chat-thread-store.presentation.private.test.ts",
+    "src/tavern/chat-thread-store.route-ownership.private.test.ts",
+    "src/tavern/chat-thread-store.private.test.ts"
   ]
 }

@@ -2,7 +2,7 @@
 /**
  * Gate for "a test opened a file-handle resource and never closed it".
  *
- * The incident: every test in `host/src/tavern/chat-thread-store.presentation.test.ts` opened its
+ * The incident: every test in `host/src/tavern/chat-thread-store.presentation.private.test.ts` opened its
  * own chat-thread store and none of them was ever closed. `removeTestRoot` then called a recursive
  * `fs.rm` on a directory holding the live continuity SQLite files (`tavern.sqlite`, `-wal`, `-shm`),
  * and on Windows that `rm` neither failed nor resolved: it sat pending for 12 s, then 60 s+, while

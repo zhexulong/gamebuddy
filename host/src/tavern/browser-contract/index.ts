@@ -1564,7 +1564,7 @@ export const CompanionCardExportV1Schema = Type.Union([
  * decoder's own `inputBytesPng` - the avatar IS the card's picture, so the number that
  * bounds an importable card is the number that bounds its picture. This module cannot
  * import that one (`host/src/tavern/companion-avatar/index.ts` reaches `node:fs`), so
- * `browser-contract/index.test.ts` holds `MAX_COMPANION_AVATAR_BYTES` and this bound to
+ * `browser-contract/index.private.test.ts` holds `MAX_COMPANION_AVATAR_BYTES` and this bound to
  * the same number.
  *
  * The bound is enforced twice before any picture is written: the transport reads at most

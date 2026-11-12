@@ -12,7 +12,7 @@
     "src/tavern/new-companion-service.test.ts",
     "src/tavern/st-card-import-history.test.ts",
     "src/tavern/library-service.test.ts",
-    "src/tavern/compatibility-manifest.v1.test.ts",
+    "src/tavern/compatibility-manifest.v1.private.test.ts",
     "src/tavern/types.test.ts",
     "src/tavern/initial-chat-exact-content-port.test.ts"
   ]

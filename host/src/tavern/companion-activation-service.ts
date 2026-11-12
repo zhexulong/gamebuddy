@@ -127,7 +127,7 @@ export function createCompanionActivationService(
  * Whether a Game session occupies this installation right now.
  *
  * The classification is TOTAL over the connection union on purpose: every member is named
- * either occupying or free, with the reason, and `companion-activation-service.test.ts`
+ * either occupying or free, with the reason, and `companion-activation-service.private.test.ts`
  * asserts that the two lists cover exactly the members the contract declares. That gate is
  * what makes a newly added connection state fail loudly here instead of silently defaulting
  * to "free" and permitting a switch under a live session.

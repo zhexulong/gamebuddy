@@ -12,7 +12,7 @@
  * resolve back to the source). So the closed marker set and the placement reading sit in one import-free module,
  * and the assembler imports them from here - one table, one reading, no second copy to drift.
  *
- * `preset-placement.test.ts` holds this module to the assembler's REAL output: every entry's segment here must
+ * `preset-placement.private.test.ts` holds this module to the assembler's REAL output: every entry's segment here must
  * be the bucket `assemblePreset` put it in, for a document that exercises all of them.
  */
 
