@@ -268,11 +268,16 @@ test("handler ownership is read from the published catalog artifact, never from 
     "handler_group_empty:ResourceTools",
   );
 
-  // A single action leaving its family is observable rather than silent.
+  // A single action leaving its family is observable rather than silent. The expected population is derived from the
+  // artifact's own rows, not pinned: a magic count here fails the next time a family gains an action, which is a change
+  // this test has no opinion about.
   const dropped = structuredClone(groups);
   dropped.actions = dropped.actions.filter((row) => row.actionId !== "chop_tree");
   const projection = deriveWith({ canonical_handler_groups: JSON.stringify(dropped) });
-  assert.equal(projection.nativeOwnership.ResourceTools.length, 41);
+  assert.equal(
+    projection.nativeOwnership.ResourceTools.length,
+    groups.actions.filter((row) => row.handlerGroup === "resource_tools").length - 1,
+  );
   assert.ok(!projection.nativeOwnership.ResourceTools.includes("chop_tree"));
 
   // A row that is not an action identity is refused rather than skipped.

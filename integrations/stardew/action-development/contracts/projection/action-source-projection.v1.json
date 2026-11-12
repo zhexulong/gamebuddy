@@ -3328,12 +3328,12 @@
       {
         "actionId": "sweep_scythe",
         "identityVersion": 1,
-        "lifecycle": "published",
+        "lifecycle": "experimental",
         "kind": "execution",
         "descriptor": {
           "actionId": "sweep_scythe",
           "identityVersion": 1,
-          "lifecycle": "published",
+          "lifecycle": "experimental",
           "kind": "execution",
           "argumentSchema": {
             "x": {
@@ -4502,7 +4502,6 @@
       "load_building_chest",
       "collect_building_chest_output",
       "scythe_crop",
-      "sweep_scythe",
       "harvest_bush",
       "harvest_fruit_tree",
       "shake_tree",
@@ -4639,6 +4638,7 @@
       "put_item_in_fish_tank",
       "place_item_on_pedestal",
       "break_resource_clump",
+      "sweep_scythe",
       "open_geode"
     ],
     "helloAdvertisement": "catalog_projection",
@@ -5598,6 +5598,7 @@
       "remove_placed_item",
       "rotate_furniture",
       "set_sign_display",
+      "sweep_scythe",
       "tailor_clothing",
       "toggle_animal_door",
       "toggle_fence_gate",

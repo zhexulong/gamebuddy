@@ -723,9 +723,14 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // that refuses the normal case is not a safety rule, it is the absence of one - the intent has three values (a
         // loss, the work, and a surprise) and a boolean cannot carry them.
         //
-        // `Published`, not `LiveVerified`: the live gate is a separate step and promotion is the parent's edit, the way
-        // till_soil's was (`:504`).
-        E("sweep_scythe", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(A(null, ToolResource("scythe", FarmhandResourceTemplateValue.AnyUpgrade), "native_action_postcondition", ("x", "integer"), ("y", "integer"))), FarmhandActionLifecycle.Published),
+        // `Experimental`, because the rung is EARNED BY A RUN and this swing has not had one. `published` is defined as an
+        // action with native live evidence (`tools/stardew-action-gate-descriptors.mjs`), and there is none here: the
+        // recorded receipt corpus holds no sweep, there is no target-version evidence file, and the promotion gate
+        // correctly refuses a published action that owns no live-run gate row - that row IS the claim, so writing one
+        // without the run would be the half-promotion the gate exists for. Experimental is where the other unrun actions
+        // sit (`open_geode`, `break_resource_clump`, `place_item_on_pedestal`, ...); promotion to `LiveVerified` after the
+        // live gate passes is a separate catalog edit, the way till_soil's was (`:504`).
+        E("sweep_scythe", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(A(null, ToolResource("scythe", FarmhandResourceTemplateValue.AnyUpgrade), "native_action_postcondition", ("x", "integer"), ("y", "integer"))), FarmhandActionLifecycle.Experimental),
         E("harvest_bush", "resource_gathering", FarmhandActionHandlerGroup.Farming, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "bushTargets"),
         E("harvest_fruit_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "fruitTreeTargets"),
         E("shake_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, SelfWalked(Target()), FarmhandActionLifecycle.LiveVerified, "shakeTreeTargets"),

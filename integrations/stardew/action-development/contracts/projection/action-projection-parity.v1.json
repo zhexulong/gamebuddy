@@ -339,6 +339,9 @@
           },
           "y": {
             "type": "integer"
+          },
+          "charge": {
+            "type": "integer"
           }
         },
         "outputFacts": {},
@@ -442,6 +445,9 @@
           },
           "expectedTargetId": {
             "type": "string"
+          },
+          "charge": {
+            "type": "integer"
           }
         },
         "outputFacts": {},
@@ -2574,6 +2580,37 @@
         "targetFamily": "scytheCropTargets"
       },
       {
+        "actionId": "sweep_scythe",
+        "identityVersion": 1,
+        "lifecycle": "experimental",
+        "kind": "execution",
+        "argumentSchema": {
+          "x": {
+            "type": "integer"
+          },
+          "y": {
+            "type": "integer"
+          }
+        },
+        "outputFacts": {},
+        "resourceTemplate": {
+          "claims": [
+            {
+              "key": "embodied_actor",
+              "value": "ScopePlayer"
+            },
+            {
+              "key": "tool:scythe",
+              "value": "AnyUpgrade"
+            }
+          ]
+        },
+        "effect": "write",
+        "postcondition": {
+          "name": "native_action_postcondition"
+        }
+      },
+      {
         "actionId": "harvest_bush",
         "identityVersion": 1,
         "lifecycle": "live_verified",
@@ -3523,6 +3560,7 @@
       "put_item_in_fish_tank",
       "place_item_on_pedestal",
       "break_resource_clump",
+      "sweep_scythe",
       "open_geode"
     ]
   },
