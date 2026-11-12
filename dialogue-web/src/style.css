@@ -2030,7 +2030,8 @@
   }
 
   .primary-button:disabled {
-    opacity: 0.5;
+    background-color: var(--surface-raised);
+    color: var(--text-disabled);
     cursor: not-allowed;
   }
 
@@ -2058,8 +2059,16 @@
       color var(--motion-duration-fast) var(--motion-ease-out);
   }
 
+  /* A disabled small control states its plate, its frame and its ink, and attenuates with the ink
+   alone. `opacity` used to do this in one line and could not: at 50% a filled variant kept its
+   accent plate (1.96:1 over the light canvas) while the enabled control beside it was flat (0.51),
+   so the button the player could not press was the loud one. One attenuation only, for the reason
+   `.swipe-btn:disabled` records: a muted tone *and* an opacity compound into a label nobody reads.
+   The order this holds is gated by `tests/disabled-controls-are-quieter.spec.ts`. */
   .small-button:disabled {
-    opacity: 0.5;
+    background-color: var(--surface-raised);
+    border-color: var(--border-subtle);
+    color: var(--text-disabled);
     cursor: not-allowed;
   }
 
@@ -2069,7 +2078,17 @@
     color: #fff;
   }
 
-  .small-button:hover {
+  /* A modifier is written after the state rule, so it wins unless the shape states the disabled
+   paint itself - which is where a filled primary quietly kept its fill and lost only half its
+   strength. Each toned variant states this in the layer it is declared in: `theme.polish` is a
+   later layer than `theme.legacy`, so a rule here would lose to it whatever its specificity. */
+  .small-button.primary:disabled {
+    background-color: var(--surface-raised);
+    border-color: var(--border-subtle);
+    color: var(--text-disabled);
+  }
+
+  .small-button:hover:not(:disabled) {
     background-color: var(--palette-gray-700);
   }
 
@@ -3014,9 +3033,19 @@
     border-color: var(--border-strong);
   }
 
+  /* The same disabled paint `.small-button:disabled` states, for the same reason: a game action that
+   cannot run states its quiet plate instead of keeping its fill at half strength. */
   .game-action:disabled {
-    opacity: 0.5;
+    background-color: var(--surface-raised);
+    border-color: var(--border-subtle);
+    color: var(--text-disabled);
     cursor: not-allowed;
+  }
+
+  .game-action.primary:disabled {
+    background-color: var(--surface-raised);
+    border-color: var(--border-subtle);
+    color: var(--text-disabled);
   }
 
   .game-action svg {
@@ -5508,6 +5537,13 @@
     border-color: var(--danger);
   }
 
+  /* Same rule, same layer as the toned small button: the disabled state takes the tone back. */
+  .game-action.danger:disabled {
+    background-color: var(--surface-raised);
+    border-color: var(--border-subtle);
+    color: var(--text-disabled);
+  }
+
   /* ==========================================================================
    The optimistic player message (send lane)
 
@@ -5722,6 +5758,15 @@
   .small-button.danger:hover:not(:disabled) {
     background-color: color-mix(in srgb, var(--danger) 18%, transparent);
     border-color: var(--danger);
+  }
+
+  /* The danger tone is a border and an ink, so the disabled state has to take the tone back as well
+   as the strength: stated in this layer, because `theme.polish` is later than the layer the shared
+   disabled paint lives in. */
+  .small-button.danger:disabled {
+    background-color: var(--surface-raised);
+    border-color: var(--border-subtle);
+    color: var(--text-disabled);
   }
   /* ==========================================================================
      The card-import review and result are prose, not a label/value read-back
