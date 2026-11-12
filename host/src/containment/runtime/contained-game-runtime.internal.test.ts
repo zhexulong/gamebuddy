@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { createContainedGameRuntime, type ContainedGameRuntimePlatform } from "./core/contained-game-runtime.js";
+import { fileURLToPath } from "node:url";
+import { readSourceShape } from "../../test-support/source-shape.test-support.js";
 import type {
   RoleLaunchOperation,
   TypedPrivateGameAuthorizationProducer,
   TypedPrivateGameFacts,
 } from "./contract/game-runtime.js";
+import { type ContainedGameRuntimePlatform, createContainedGameRuntime } from "./core/contained-game-runtime.js";
 
 const armFacts: TypedPrivateGameFacts = Object.freeze({ revision: "r" });
 const binding = Object.freeze({
@@ -198,18 +198,18 @@ test("native containment failure is terminal and duplicate contain rejects befor
 });
 
 test("runtime source keeps native frame construction out of the generic core", () => {
-  const source = readFileSync(
+  const { shape } = readSourceShape(
     resolve(dirname(fileURLToPath(import.meta.url)), "../../../src/containment/runtime/core/contained-game-runtime.ts"),
-    "utf8",
   );
   assert.match(
-    source,
+    shape,
     /launchRole\(role, launchOperation: RoleLaunchOperation, produceAuthorization: TypedPrivateGameAuthorizationProducer\)/,
+    "launchRole takes the role, the launch operation and the authorization producer, in that order and with those types",
   );
-  assert.match(source, /const authorization: InternalAuthorization/);
-  assert.match(source, /containRole\(role\)/);
-  assert.doesNotMatch(source, /encodePrivateFacts|Uint8Array|privateFrame/);
-  assert.doesNotMatch(source, /export\s+(?:(?:async)\s+)?(?:function|const|let|var)\s+\w*(?:mint|authoriz)/i);
+  assert.match(shape, /const authorization: InternalAuthorization/);
+  assert.match(shape, /containRole\(role\)/);
+  assert.doesNotMatch(shape, /encodePrivateFacts|Uint8Array|privateFrame/);
+  assert.doesNotMatch(shape, /export\s+(?:(?:async)\s+)?(?:function|const|let|var)\s+\w*(?:mint|authoriz)/i);
 });
 
 test("serialized Promise.all operations never overlap platform calls", async () => {

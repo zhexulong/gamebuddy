@@ -5,43 +5,44 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
+  type ActionExecutionCoordinator,
+  createActionExecutionCoordinator,
+} from "../action-execution-coordinator.internal.js";
+import {
   brandRuntimeOwnerIdentity,
   drainBindingMaterializations,
+  type GameRuntimeBindingExecution,
   mintBindingToken,
   mintGameRuntimeBindingFacts,
-  revokeBindingToken,
-  stopAcceptingBindingMaterialization,
-  type GameRuntimeBindingExecution,
   type OpaqueGameRuntimeBindingToken,
   type ReservedGameRuntimeMaterialization,
   reserveGameRuntimeMaterialization,
+  revokeBindingToken,
+  stopAcceptingBindingMaterialization,
   withConsumedBindingExecution,
 } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.internal.js";
 import type { GameRuntimeBinding } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
 import type { ProductionGamePermit } from "../continuity-semantic-store/continuity-semantic-production-store.js";
+import type { GameConnection } from "../game-connection.js";
+import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "../game-integration-adapter.js";
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "../integration-launcher.js";
-import {
-  createActionExecutionCoordinator,
-  type ActionExecutionCoordinator,
-} from "../action-execution-coordinator.internal.js";
-import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "../game-integration-adapter.js";
-import type { GameConnection } from "../game-connection.js";
-import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
-import { StardewExecutionRecoverySupervisor } from "../stardew-execution-recovery-supervisor.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
+import { StardewExecutionRecoverySupervisor } from "../stardew-execution-recovery-supervisor.js";
+import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
+import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
+import { readSourceShape } from "../test-support/source-shape.test-support.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
-import { createTestGameRuntimeMaterializer } from "./continuity-semantic-game-runtime-materializer.test-support.js";
 import {
   gameTurnWorldStateText,
   MAX_PLAN_VERIFICATION_DIAGNOSTICS,
   MAX_PLAN_VERIFICATION_TEXT_CHARS,
   planRefusalAnswer,
 } from "./continuity-semantic-game-runtime-materializer.js";
+import { createTestGameRuntimeMaterializer } from "./continuity-semantic-game-runtime-materializer.test-support.js";
 
 const principal = Object.freeze({ continuityId: "continuity_01", companionId: "companion_01", playerId: "player_01" });
 
@@ -847,11 +848,10 @@ test("Game materializer assembles canonical Game context through the tested asse
     dirname(fileURLToPath(import.meta.url)),
     "../../src/continuity-semantic-game-runtime-materializer",
   );
-  const materializerSource = await readFile(
+  const { shape: materializerSource } = readSourceShape(
     join(materializerDirectory, "continuity-semantic-game-runtime-materializer.ts"),
-    "utf8",
   );
-  const assemblySource = await readFile(join(materializerDirectory, "game-runtime-context-assembly.ts"), "utf8");
+  const { shape: assemblySource } = readSourceShape(join(materializerDirectory, "game-runtime-context-assembly.ts"));
   // System assembly, not caller/script injection: the materializer delegates to
   // the shared seam inside the runtime constructor and forwards both resolved
   // values to the runtime core.
@@ -862,7 +862,9 @@ test("Game materializer assembles canonical Game context through the tested asse
   assert.match(materializerSource, /initialProfile: assembledProfile/);
   assert.match(materializerSource, /worldBook: assembledWorldBook/);
   // The scenario reaches the Game catalog alongside the book: a companion whose
-  // card carries only a scenario (no character book) still publishes it.
+  // card carries only a scenario (no character book) still publishes it. Read as the normalised shape: the condition
+  // spans two tokens, and the committed text puts `&&` at the end of the first line, which is where this assertion went
+  // red on 2026-11-12 with the product unchanged.
   assert.match(materializerSource, /assembledWorldBook === undefined && assembledScenario === undefined/);
   assert.match(materializerSource, /buildGameSurfaceAuthoredCatalog\(/);
   // Both resolved layers reach the catalog call. The pin names the call and the arguments it carries,
@@ -1186,7 +1188,7 @@ test("the plan tool hands its compiled program to the one submission path a mode
     "the family list names `chests`, the container family that replaced the flattened pair",
   );
   assert.deepEqual(
-    families.filter((family) => !FAMILIES_NOT_IN_PLAN_PARAMETERS[family] && !listed.has(family)),
+    families.filter((family) => !(FAMILIES_NOT_IN_PLAN_PARAMETERS[family] || listed.has(family))),
     [],
     "every family the Host validates is either listed for scripts or excluded here with a reason",
   );
