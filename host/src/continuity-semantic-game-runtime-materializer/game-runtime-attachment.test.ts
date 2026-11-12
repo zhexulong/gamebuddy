@@ -18,6 +18,7 @@ import { modelProviderEntry } from "../tavern/pi-provider-store.js";
 import { catalogProvider } from "../tavern/provider-catalog.js";
 import { ModelProfileStore } from "../settings/model-profile-store.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
+import { readSourceShape } from "../test-support/source-shape.test-support.js";
 import { createBuildWindowsStaleLockReclaimer } from "../windows-stale-lock-reclaimer/index.js";
 import { createGameRuntimeAttachment, type GameRuntimeRecoveryAttachment } from "./game-runtime-attachment.js";
 
@@ -262,12 +263,11 @@ test("the attachment builder keeps its named refusal for a Game surface it canno
   // about which function the file asks, not about the shape of the expression that calls it - an earlier
   // version matched `requireSelectedModelConfig(await resolveSurfaceModelSelection(`, which broke the
   // moment the call was split across a `const` and said nothing about behaviour.
-  const source = await readFile(
+  const { shape: source } = readSourceShape(
     resolve(
       dirname(fileURLToPath(import.meta.url)),
       "../../src/continuity-semantic-game-runtime-materializer/game-runtime-attachment.ts",
     ),
-    "utf8",
   );
   assert.match(source, /from "..\/settings\/model-selection\.js"/, "it asks the one owner of the rule");
   assert.match(source, /resolveSurfaceModelSelection\(\{?/, "and calls that owner");

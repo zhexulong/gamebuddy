@@ -808,12 +808,11 @@ test("public runtime facade, attachment, GameConnection, and adapter surfaces do
 });
 
 test("production Game presentation composition supplies session and opaque admission only inside materialization", async () => {
-  const source = await readFile(
+  const { raw: rawSource, shape: source } = readSourceShape(
     join(
       resolve(dirname(fileURLToPath(import.meta.url)), "../../src/continuity-semantic-game-runtime-materializer"),
       "continuity-semantic-game-runtime-materializer.ts",
     ),
-    "utf8",
   );
   assert.match(source, /gameVoicePresentation\?: GameVoicePresentationAttachment/);
   assert.doesNotMatch(source, /gamePresentation\?:/);
@@ -839,8 +838,11 @@ test("production Game presentation composition supplies session and opaque admis
   assert.match(source, /host\.attachVoiceStopper\(\s*gameVoicePayload\.stopVoice\s*\)/);
   assert.match(source, /const gameVoicePayload =\s*\n?\s*options\.gameVoicePresentation === undefined/);
   assert.match(source, /const activateIngress/);
-  assert.doesNotMatch(source, /trace.*sink/i);
-  assert.doesNotMatch(source, /inputId.*admission/i);
+  // These two read the COMMITTED BYTES, and the `.*` is why: neither may cross a line break, so each says "no LINE of
+  // the composition carries both of these". Against the shape, which is one line, the same patterns would match across
+  // the whole module - a different statement, and one the product would fail for reasons the assertion never meant.
+  assert.doesNotMatch(rawSource, /trace.*sink/i);
+  assert.doesNotMatch(rawSource, /inputId.*admission/i);
 });
 
 test("Game materializer assembles canonical Game context through the tested assembly seam", async () => {
@@ -893,12 +895,11 @@ test("Game materializer assembles canonical Game context through the tested asse
 });
 
 test("Game materializer source mints origin-free receipts and exposes only close teardown", async () => {
-  const source = await readFile(
+  const { shape: source } = readSourceShape(
     join(
       resolve(dirname(fileURLToPath(import.meta.url)), "../../src/continuity-semantic-game-runtime-materializer"),
       "continuity-semantic-game-runtime-materializer.internal.ts",
     ),
-    "utf8",
   );
   for (const forbidden of [
     "teardownReturn",
@@ -1111,9 +1112,8 @@ test("a plan does not hold the turn unless the caller asks it to", async () => {
   // `append` or redirect, so `program_stop` is unreachable exactly when a player needs it, and a steering message waits
   // behind the call for up to MAX_PROGRAM_STATUS_WAIT_MS. A companion you cannot interrupt mid-swing is not the product.
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
-  const source = await readFile(
+  const { shape: source } = readSourceShape(
     join(root, "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts"),
-    "utf8",
   );
   const plan = source.slice(source.indexOf("const submitted = await submitProgram({ programId, nodes });"));
   const guard = plan.indexOf("waitMs <= 0");
@@ -1140,9 +1140,8 @@ test("a plan does not hold the turn unless the caller asks it to", async () => {
 
 test("the plan tool hands its compiled program to the one submission path a model-authored program takes", async () => {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
-  const source = await readFile(
+  const { shape: source } = readSourceShape(
     join(root, "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts"),
-    "utf8",
   );
   // One call site reaches the port at all: a plan cannot arrive at the Mod by a route a program authored by the
   // model cannot, and a second copy of the submission could drift from the preflight, the journal answer or the
@@ -1157,13 +1156,13 @@ test("the plan tool hands its compiled program to the one submission path a mode
   // Both tools enter that one function: the raw tool with its own arguments, the plan tool with what it compiled.
   assert.match(
     source,
-    /execute: async \(_toolCallId, params\) => \{\n\s+if \(!isBodyProgramCandidateRequest\(params\)\) throw new Error\("invalid_body_program_tool_arguments"\);\n\s+return submitProgram\(params\);/u,
+    /execute: async \(_toolCallId, params\) => \{\s+if \(!isBodyProgramCandidateRequest\(params\)\) throw new Error\("invalid_body_program_tool_arguments"\);\s+return submitProgram\(params\);/u,
   );
   assert.match(source, /const submitted = await submitProgram\(\{ programId, nodes \}\);/u);
   // The plan is compiled and submitted in the same call, inside the same frozen closure as the raw program tool.
   assert.match(
     source,
-    /return Object\.freeze\(\[\n\s+submitTool\(\),\n\s+Object\.freeze\(\n\s+defineTool\(\{\n\s+name: "stardew_plan_work",/u,
+    /return Object\.freeze\(\[\s*submitTool\(\),\s*Object\.freeze\(\s*defineTool\(\{\s+name: "stardew_plan_work",/u,
   );
   assert.match(source, /compilePlanScript\(readPlanScriptRequest\(params\), \{/u);
   // It carries the companion's own plan in its own words, and the description says what the Mod does with it.
@@ -1314,7 +1313,7 @@ test("the plan tool hands its compiled program to the one submission path a mode
   // Every outcome answers the same two questions; a refusal adds the compiler's own reason name, unchanged.
   assert.match(
     source,
-    /return planDetails\(\{\n\s+accepted: false,\n\s+nodeCount: 0,\n\s+reasonCode: compiled\.reasonCode,/u,
+    /return planDetails\(\{\s+accepted: false,\s+nodeCount: 0,\s+reasonCode: compiled\.reasonCode,/u,
   );
   // What the accepted plan ANSWERS, as a property rather than as one line of source: it must name the program, it must
   // say whether the plan settled, and it must carry the same status payload a status call would have - because the
@@ -1330,16 +1329,21 @@ test("the plan tool hands its compiled program to the one submission path a mode
     /const accepted = code === "accepted" \|\| code === "idempotent";/u,
     "an accepted submission is named once",
   );
-  assert.match(source, /^\s+accepted,$/mu, "and every branch reports that same fact");
-  assert.match(source, /^\s+nodeCount: nodes\.length,$/mu, "the plan reports how many steps it carries");
+  // A FIELD, not a line of its own. These five used to be written `/^\s+nodeCount: nodes\.length,$/mu` and its
+  // neighbours, which required the `//` comment above `status:` not to exist and the field to sit on a line by itself:
+  // a claim about where the line breaks sat rather than about what the answer carries. Read against the normalised
+  // shape there are no line breaks, so each names the field and the value it is handed - which is what the sentences
+  // beside them always said.
+  assert.match(source, /accepted,/, "and every branch reports that same fact");
+  assert.match(source, /nodeCount: nodes\.length,/, "the plan reports how many steps it carries");
   assert.match(
     source,
-    /^\s+settled: answer\.settled,$/mu,
+    /settled: answer\.settled,/,
     "the plan reports whether the BATCH settled, not whether this call waited",
   );
-  assert.match(source, /^\s+remaining: answer\.remaining,$/mu, "and how many nodes have not stopped yet");
-  assert.match(source, /^\s+nodes: answer\.nodes,$/mu, "with one row per node, at the index the caller wrote it");
-  assert.match(source, /^\s+status: settled\.result,$/mu, "and carries the status a second call would have fetched");
+  assert.match(source, /remaining: answer\.remaining,/, "and how many nodes have not stopped yet");
+  assert.match(source, /nodes: answer\.nodes,/, "with one row per node, at the index the caller wrote it");
+  assert.match(source, /status: settled\.result,/, "and carries the status a second call would have fetched");
   assert.match(
     source,
     /await waitForTerminalProgramStatus\(readStatus, first, bounded\)/u,
@@ -1349,7 +1353,7 @@ test("the plan tool hands its compiled program to the one submission path a mode
   // replayed and audited instead of guessed at.
   assert.match(
     source,
-    /runTrace\.begin\("plan\.script", \{\n\s+scriptSource: compiled\.scriptSource,\n\s+snapshotRevision: compiled\.snapshotRevision \?\? -1,\n\s+producedProgram: compiled\.ok \? JSON\.stringify\(compiled\.program\) : "",/u,
+    /runTrace\.begin\("plan\.script", \{\s+scriptSource: compiled\.scriptSource,\s+snapshotRevision: compiled\.snapshotRevision \?\? -1,\s+producedProgram: compiled\.ok \? JSON\.stringify\(compiled\.program\) : ""/u,
   );
 });
 
@@ -1450,14 +1454,17 @@ test("a refused plan carries the rejected node and the Mod's own reason, and nam
 
   // AND THE PLAN TOOL SPENDS IT. Without this the projector could exist and the model would still read one word.
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
-  const source = await readFile(
+  // Read as the committed bytes, not as the normalised shape: this window is split into lines and every `//` line is
+  // dropped, because a comment that quotes the call is not the call. Line splitting is the reading here, and the shape
+  // has no lines.
+  const refusalSource = await readFile(
     join(root, "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts"),
     "utf8",
   );
-  const refusalAt = source.indexOf("if (!accepted)");
+  const refusalAt = refusalSource.indexOf("if (!accepted)");
   assert.notEqual(refusalAt, -1, "the plan tool still has a branch for a submission the Mod did not accept");
   // Read as CODE: a comment that quotes the call is not the call, and pinning the whole window would accept one.
-  const branch = source
+  const branch = refusalSource
     .slice(refusalAt, refusalAt + 900)
     .split("\n")
     .filter((line) => !line.trim().startsWith("//"));

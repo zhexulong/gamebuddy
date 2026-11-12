@@ -220,7 +220,7 @@ test("Game facade graph keeps construction-only dependencies private", async () 
     { fileURLToPath } = await import("node:url");
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../src/continuity-semantic-deployment-composition");
   const publicSource = await readFile(join(root, "continuity-semantic-deployment-composition.ts"), "utf8"),
-    internalSource = await readFile(join(root, "continuity-semantic-game-facade.internal.ts"), "utf8"),
+    { shape: internalSource } = readSourceShape(join(root, "continuity-semantic-game-facade.internal.ts")),
     testSupport = await readFile(join(root, "continuity-semantic-game-facade.test-support.ts"), "utf8");
   for (const segment of [
     "test-support",
